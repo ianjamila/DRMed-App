@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "db:types": "supabase gen types typescript --linked > src/types/database.ts",
     "db:diff": "supabase db diff -f",
-    "db:reset": "supabase db reset"
+    "db:reset": "supabase db reset",
+    "seed:test": "tsx --env-file=.env.local scripts/seed-test-users.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
@@ -27,6 +28,7 @@
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-hook-form": "^7.74.0",
+    "server-only": "^0.0.1",
     "shadcn": "^4.6.0",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.5.0",
@@ -43,6 +45,7 @@
     "eslint-config-next": "16.2.4",
     "supabase": "^2.95.6",
     "tailwindcss": "^4",
+    "tsx": "^4.21.0",
     "typescript": "^5"
   }
 }
