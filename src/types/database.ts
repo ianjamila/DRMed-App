@@ -118,6 +118,51 @@ export type Database = {
           },
         ]
       }
+      contact_messages: {
+        Row: {
+          created_at: string
+          email: string | null
+          handled: boolean
+          handled_at: string | null
+          handled_by: string | null
+          id: string
+          ip_address: unknown
+          message: string
+          name: string
+          phone: string | null
+          subject: string | null
+          user_agent: string | null
+        }
+        Insert: {
+          created_at?: string
+          email?: string | null
+          handled?: boolean
+          handled_at?: string | null
+          handled_by?: string | null
+          id?: string
+          ip_address?: unknown
+          message: string
+          name: string
+          phone?: string | null
+          subject?: string | null
+          user_agent?: string | null
+        }
+        Update: {
+          created_at?: string
+          email?: string | null
+          handled?: boolean
+          handled_at?: string | null
+          handled_by?: string | null
+          id?: string
+          ip_address?: unknown
+          message?: string
+          name?: string
+          phone?: string | null
+          subject?: string | null
+          user_agent?: string | null
+        }
+        Relationships: []
+      }
       patients: {
         Row: {
           address: string | null

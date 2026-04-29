@@ -8,8 +8,7 @@
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-sans);
-  --font-mono: var(--font-geist-mono);
-  --font-heading: var(--font-sans);
+  --font-heading: var(--font-heading);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -46,6 +45,18 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+
+  /* DRMed brand tokens — match the existing drmed.ph site. */
+  --color-brand-navy: #284570;
+  --color-brand-steel: #4682b4;
+  --color-brand-cyan: #06aef1;
+  --color-brand-cyan-light: #7fbeff;
+  --color-brand-cyan-mid: #3eafe3;
+  --color-brand-bg: #f0f6fc;
+  --color-brand-bg-mid: #e3eef9;
+  --color-brand-text: #1a2537;
+  --color-brand-text-mid: #374151;
+  --color-brand-text-soft: #6b7280;
 }
 
 :root {

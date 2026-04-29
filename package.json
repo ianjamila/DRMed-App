@@ -11,7 +11,8 @@
     "db:types": "supabase gen types typescript --linked > src/types/database.ts",
     "db:diff": "supabase db diff -f",
     "db:reset": "supabase db reset",
-    "seed:test": "tsx --env-file=.env.local scripts/seed-test-users.ts"
+    "seed:test": "tsx --env-file=.env.local scripts/seed-test-users.ts",
+    "seed:services": "tsx --env-file=.env.local scripts/seed-services.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
