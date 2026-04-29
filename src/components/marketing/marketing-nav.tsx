@@ -1,5 +1,7 @@
+import Image from "next/image";
 import Link from "next/link";
 import { NAV_LINKS, SITE } from "@/lib/marketing/site";
+import { PatientPortalLauncher } from "./patient-portal-launcher";
 
 export function MarketingNav() {
   return (
@@ -7,10 +9,17 @@ export function MarketingNav() {
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
         <Link
           href="/"
-          className="flex items-center gap-2 font-[family-name:var(--font-heading)] text-lg font-extrabold tracking-tight text-[color:var(--color-brand-navy)]"
+          aria-label={SITE.name}
+          className="flex items-center gap-2"
         >
-          <span>drmed</span>
-          <span className="text-[color:var(--color-brand-cyan)]">.ph</span>
+          <Image
+            src="/logo.png"
+            alt={SITE.name}
+            width={140}
+            height={40}
+            priority
+            className="h-9 w-auto"
+          />
         </Link>
 
         <nav className="hidden items-center gap-1 md:flex">
@@ -26,21 +35,15 @@ export function MarketingNav() {
         </nav>
 
         <div className="flex items-center gap-2">
+          <PatientPortalLauncher />
           <Link
-            href="/portal/login"
-            className="hidden rounded-md border border-[color:var(--color-brand-navy)] px-3 py-1.5 text-sm font-semibold text-[color:var(--color-brand-navy)] transition-colors hover:bg-[color:var(--color-brand-navy)] hover:text-white sm:inline-block"
-          >
-            Patient Portal
-          </Link>
-          <Link
-            href="/contact"
+            href="/#packages"
             className="rounded-md bg-[color:var(--color-brand-cyan)] px-4 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[color:var(--color-brand-cyan-mid)]"
           >
             Book Now
           </Link>
         </div>
       </div>
-      <span className="sr-only">{SITE.name}</span>
     </header>
   );
 }

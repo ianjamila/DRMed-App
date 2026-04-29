@@ -144,8 +144,9 @@ export const PACKAGE_GROUPS = [
 ] as const;
 
 export const NAV_LINKS = [
-  { href: "/services", label: "Services" },
-  { href: "/schedule", label: "Schedule" },
-  { href: "/about", label: "About" },
-  { href: "/contact", label: "Contact" },
+  { href: "/#services", label: "Services" },
+  { href: "/packages", label: "Packages" },
+  { href: "/physicians", label: "Specialists" },
+  { href: "/#hmo", label: "HMO" },
+  { href: "/#contact", label: "Contact" },
 ] as const;

@@ -50,6 +50,9 @@ supabase/.branches/
 # ad-hoc screenshots
 audit-*.png
 
+# firecrawl scrape cache
+.firecrawl/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

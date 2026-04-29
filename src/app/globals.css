@@ -137,5 +137,21 @@
   }
   html {
     @apply font-sans;
+    scroll-behavior: smooth;
   }
+}
+
+/* HMO partners marquee — paired duplicate markup so -50% equals one full cycle. */
+@keyframes hmo-ticker-scroll {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+.hmo-ticker {
+  animation: hmo-ticker-scroll 40s linear infinite;
+}
+.hmo-ticker:hover {
+  animation-play-state: paused;
+}
+@media (prefers-reduced-motion: reduce) {
+  .hmo-ticker { animation: none; }
 }
