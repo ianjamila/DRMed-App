@@ -44,6 +44,12 @@ supabase/.branches/
 # claude code local state
 .claude/settings.local.json
 
+# playwright MCP temp dir
+.playwright-mcp/
+
+# ad-hoc screenshots
+audit-*.png
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

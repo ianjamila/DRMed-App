@@ -5,7 +5,7 @@ import {
   verifyPatientSession,
 } from "@/lib/auth/patient-session";
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // ---- Patient portal: verify HttpOnly JWT cookie ----------------------------
