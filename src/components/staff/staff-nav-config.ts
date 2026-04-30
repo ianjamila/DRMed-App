@@ -35,6 +35,11 @@ export const STAFF_NAV: StaffNavSection[] = [
     heading: "Reception",
     items: [
       {
+        href: "/staff/appointments",
+        label: "Appointments",
+        roles: ["reception", "admin"],
+      },
+      {
         href: "/staff/patients",
         label: "Patients",
         roles: ["reception", "admin"],
