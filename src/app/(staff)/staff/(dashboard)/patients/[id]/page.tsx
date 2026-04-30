@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { formatPhp } from "@/lib/marketing/format";
+import { ReissuePinButton } from "./reissue-pin-button";
 
 export const metadata = {
   title: "Patient — staff",
@@ -62,12 +63,15 @@ export default async function PatientDetailPage({ params }: Props) {
             </p>
           ) : null}
         </div>
-        <Link
-          href={`/staff/visits/new?patient_id=${patient.id}`}
-          className="rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
-        >
-          + Start visit
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          <ReissuePinButton patientId={patient.id} />
+          <Link
+            href={`/staff/visits/new?patient_id=${patient.id}`}
+            className="rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
+          >
+            + Start visit
+          </Link>
+        </div>
       </header>
 
       <section className="mt-6 grid gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5 sm:grid-cols-3">
