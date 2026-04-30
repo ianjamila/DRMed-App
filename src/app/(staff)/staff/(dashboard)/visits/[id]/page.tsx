@@ -177,13 +177,12 @@ export default async function VisitDetailPage({ params }: Props) {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      {t.status === "ready_for_release" ? (
-                        <ReleaseButton
-                          testRequestId={t.id}
-                          visitId={visit.id}
-                          paid={isPaid}
-                        />
-                      ) : null}
+                      <TestAction
+                        status={t.status}
+                        testRequestId={t.id}
+                        visitId={visit.id}
+                        paid={isPaid}
+                      />
                     </td>
                   </tr>
                 );
@@ -300,4 +299,69 @@ function Field({
       </p>
     </div>
   );
+}
+
+interface TestActionProps {
+  status: string;
+  testRequestId: string;
+  visitId: string;
+  paid: boolean;
+}
+
+// Renders a context-appropriate cell for the Action column on the visit
+// detail tests table. Tells the receptionist what's blocking each test and
+// where to go next.
+function TestAction({ status, testRequestId, visitId, paid }: TestActionProps) {
+  if (status === "ready_for_release") {
+    return (
+      <ReleaseButton
+        testRequestId={testRequestId}
+        visitId={visitId}
+        paid={paid}
+      />
+    );
+  }
+
+  if (status === "requested" || status === "in_progress") {
+    const hint = status === "requested" ? "Awaiting claim" : "Awaiting result";
+    return (
+      <div className="flex flex-col items-end gap-0.5">
+        <span className="text-xs text-[color:var(--color-brand-text-soft)]">
+          {hint}
+        </span>
+        <Link
+          href={`/staff/queue/${testRequestId}`}
+          className="text-xs font-bold text-[color:var(--color-brand-cyan)] hover:underline"
+        >
+          Open in queue →
+        </Link>
+      </div>
+    );
+  }
+
+  if (status === "result_uploaded") {
+    return (
+      <span className="text-xs text-[color:var(--color-brand-text-soft)]">
+        Awaiting sign-off
+      </span>
+    );
+  }
+
+  if (status === "released") {
+    return (
+      <span className="text-xs font-semibold text-emerald-700">
+        Released ✓
+      </span>
+    );
+  }
+
+  if (status === "cancelled") {
+    return (
+      <span className="text-xs text-[color:var(--color-brand-text-soft)]">
+        —
+      </span>
+    );
+  }
+
+  return null;
 }
