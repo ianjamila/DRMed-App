@@ -1,10 +1,9 @@
-import Image from "next/image";
 import Link from "next/link";
 import { PageHero } from "@/components/marketing/page-hero";
+import { DoctorAvatar } from "@/components/marketing/doctor-avatar";
 import {
   PHYSICIAN_GROUPS,
   PHYSICIANS,
-  physicianInitials,
   physiciansByGroup,
   type Physician,
 } from "@/lib/marketing/physicians";
@@ -105,18 +104,7 @@ function PhysicianGroupSection({
             key={doc.slug}
             className="flex gap-4 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5"
           >
-            <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-full border-2 border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-bg)]">
-              <Image
-                src={`/doctors/${doc.slug}.jpg`}
-                alt={doc.name}
-                fill
-                sizes="80px"
-                className="object-cover"
-              />
-              <span className="absolute inset-0 flex items-center justify-center bg-[color:var(--color-brand-bg)] font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-cyan)] [.group:has(>img:not([alt='']))]:opacity-0 sr-only">
-                {physicianInitials(doc.name)}
-              </span>
-            </div>
+            <DoctorAvatar slug={doc.slug} name={doc.name} />
             <div className="flex-1 min-w-0">
               <h3 className="font-[family-name:var(--font-heading)] text-base font-bold leading-tight text-[color:var(--color-brand-navy)]">
                 {doc.name}

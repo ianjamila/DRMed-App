@@ -43,6 +43,7 @@ supabase/.branches/
 
 # claude code local state
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
 
 # playwright MCP temp dir
 .playwright-mcp/
