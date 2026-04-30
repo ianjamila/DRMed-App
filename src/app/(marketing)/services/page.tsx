@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { PageHero } from "@/components/marketing/page-hero";
-import { formatPhp, listActiveServices } from "@/lib/marketing/services";
+import { listActiveServices } from "@/lib/marketing/services";
+import { formatPhp } from "@/lib/marketing/format";
 
 export const metadata = {
   title: "Services & Tests",

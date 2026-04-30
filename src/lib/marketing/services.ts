@@ -43,11 +43,4 @@ export async function getServiceByCode(
   return data;
 }
 
-export function formatPhp(amount: number): string {
-  return new Intl.NumberFormat("en-PH", {
-    style: "currency",
-    currency: "PHP",
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
-  }).format(amount);
-}
+export { formatPhp } from "./format";

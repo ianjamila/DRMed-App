@@ -5,7 +5,7 @@ import {
   PACKAGE_GROUPS_ORDERED,
   type PackageGroup,
 } from "@/lib/marketing/packages";
-import { formatPhp } from "@/lib/marketing/services";
+import { formatPhp } from "@/lib/marketing/format";
 
 export const metadata = {
   title: "Detailed Diagnostic Packages",

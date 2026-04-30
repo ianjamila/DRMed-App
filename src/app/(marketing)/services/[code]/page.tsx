@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
-import { formatPhp, getServiceByCode } from "@/lib/marketing/services";
+import { getServiceByCode } from "@/lib/marketing/services";
+import { formatPhp } from "@/lib/marketing/format";
 
 interface ServicePageProps {
   params: Promise<{ code: string }>;
