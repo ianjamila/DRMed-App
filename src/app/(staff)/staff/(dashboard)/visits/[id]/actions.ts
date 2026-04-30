@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
+import { notifyResultReleased } from "@/lib/notifications/notify-released";
 
 export type ReleaseResult =
   | { ok: true }
@@ -44,6 +45,14 @@ export async function releaseTestAction(
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),
   });
+
+  // Fire-and-forget notification. Failures are audit-logged inside, never
+  // bubble up — release is the source of truth.
+  try {
+    await notifyResultReleased({ testRequestId, visitId });
+  } catch (err) {
+    console.error("notifyResultReleased threw", err);
+  }
 
   revalidatePath(`/staff/visits/${visitId}`);
   return { ok: true };
