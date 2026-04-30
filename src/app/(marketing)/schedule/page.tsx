@@ -1,12 +1,27 @@
 import { PageHero } from "@/components/marketing/page-hero";
 import { CONTACT } from "@/lib/marketing/site";
+import { listActiveServices } from "@/lib/marketing/services";
+import { BookingForm } from "./booking-form";
 
 export const metadata = {
   title: "Schedule & Location",
   description: `Visit DRMed Clinic & Laboratory at ${CONTACT.address.full}. Open ${CONTACT.hours}.`,
 };
 
-export default function SchedulePage() {
+// Manila is UTC+8 with no DST. Shift the UTC time and slice to get the
+// "YYYY-MM-DDTHH:mm" string the datetime-local picker expects.
+function manilaLocal(d: Date): string {
+  return new Date(d.getTime() + 8 * 60 * 60 * 1000).toISOString().slice(0, 16);
+}
+
+export const dynamic = "force-dynamic";
+
+export default async function SchedulePage() {
+  const services = await listActiveServices();
+  // eslint-disable-next-line react-hooks/purity -- per-request bounds for the picker.
+  const now = Date.now();
+  const minDt = manilaLocal(new Date(now + 60 * 60 * 1000));
+  const maxDt = manilaLocal(new Date(now + 60 * 24 * 60 * 60 * 1000));
   return (
     <>
       <PageHero
@@ -60,21 +75,41 @@ export default function SchedulePage() {
           </article>
         </div>
 
-        <div className="mt-12 rounded-2xl border border-dashed border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] p-10 text-center">
-          <p className="font-[family-name:var(--font-heading)] text-xl font-bold text-[color:var(--color-brand-navy)]">
-            Online booking is coming soon.
+        <section
+          id="book"
+          className="mt-12 rounded-2xl border border-[color:var(--color-brand-bg-mid)] bg-white p-8 sm:p-10"
+        >
+          <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
+            Book online
           </p>
-          <p className="mt-2 text-sm text-[color:var(--color-brand-text-mid)]">
-            For now, please walk in during operating hours, or{" "}
+          <h2 className="mt-2 font-[family-name:var(--font-heading)] text-2xl font-extrabold text-[color:var(--color-brand-navy)] md:text-3xl">
+            Reserve your slot
+          </h2>
+          <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-mid)]">
+            New patient? Use this form to register and book in one step. We
+            verify your identity at the counter on arrival. For corporate
+            packages or HMO,{" "}
             <a
               href="/contact"
               className="font-bold text-[color:var(--color-brand-cyan)] hover:underline"
             >
-              send us a message
-            </a>{" "}
-            to set up an appointment.
+              message us instead
+            </a>
+            .
           </p>
-        </div>
+
+          <div className="mt-8">
+            <BookingForm
+              services={services.map((s) => ({
+                id: s.id,
+                code: s.code,
+                name: s.name,
+              }))}
+              defaultMin={minDt}
+              defaultMax={maxDt}
+            />
+          </div>
+        </section>
       </section>
     </>
   );
