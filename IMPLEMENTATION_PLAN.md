@@ -623,7 +623,217 @@ The route handler:
 | 4 | Staff portal | 4–5 days |
 | 5 | Patient portal + notifications | 2 days |
 | 6 | Online booking | 1 day |
+| 6.5 | Booking refinements (lab/doctor split + slot picker + holidays) | 1–1.5 days |
 | 7 | Accounting sync | 1 day |
 | 8 | Hardening | 2 days |
+| 9 | Physician schedules (full availability-driven booking) | 3 days |
 
-Total: roughly 3 weeks of focused work for a single developer.
+Total: roughly 3.5 weeks of focused work for a single developer.
+
+---
+
+## Phase 6.5 — Booking refinements (lab/doctor split + slot picker)
+
+**Goal:** Replace the flat services dropdown with a Lab vs Doctor branch, and replace `<input type="datetime-local">` with a custom slot picker that only renders open slots — Mon–Sat 8 AM – 5 PM, excluding Philippine public holidays and admin-defined clinic closures.
+
+This is a retroactive amendment to Phase 6. Phase 6 shipped a working but flat booking form; the user clarified post-ship that lab requests and doctor consultations are different mental models for patients, and that the picker shouldn't even let users pick out-of-hours or holiday slots.
+
+### Schema delta
+
+New migration `0005_services_kind_and_closures.sql`:
+
+```sql
+-- Categorize services so the booking form can branch.
+alter table public.services
+  add column kind text not null default 'lab_test'
+    check (kind in ('lab_test', 'lab_package', 'doctor_consultation'));
+
+create index idx_services_kind on public.services(kind);
+
+-- Clinic closures (PH public holidays + ad-hoc closures). The slot picker
+-- reads this to grey out unavailable days. closed_on is YYYY-MM-DD in the
+-- Asia/Manila timezone.
+create table public.clinic_closures (
+  closed_on   date primary key,
+  reason      text not null,
+  created_at  timestamptz not null default now(),
+  created_by  uuid references auth.users(id)
+);
+
+alter table public.clinic_closures enable row level security;
+
+create policy "clinic_closures: public read"
+  on public.clinic_closures for select to anon, authenticated using (true);
+
+create policy "clinic_closures: admin manage"
+  on public.clinic_closures for all to authenticated
+  using (public.has_role(array['admin']))
+  with check (public.has_role(array['admin']));
+```
+
+### Seeds
+
+**Doctor consultation services** — one row per specialty appearing in `src/lib/marketing/physicians.ts`. Suggested codes:
+
+`CONSULT_OBGYN`, `CONSULT_FAMMED`, `CONSULT_PEDIA`, `CONSULT_IM_CARDIO`, `CONSULT_IM_PULMO`, `CONSULT_IM_GASTRO`, `CONSULT_IM_ONCO`, `CONSULT_IM_DIABE`, `CONSULT_IM_NEPHRO`, `CONSULT_ENT`, `CONSULT_OPHTHA`, `CONSULT_RADIO`, `CONSULT_SURGERY`, `CONSULT_PSYCH`.
+
+Set `kind='doctor_consultation'`, `price_php=500` as a starting baseline (admin can tune per specialty), `turnaround_hours=null`. Update `scripts/seed-services.ts` and re-run.
+
+**Initial Philippine public holidays** — seed the next 12 months into `clinic_closures`. Admin maintains thereafter via `/staff/admin/closures` (a small CRUD page modeled on `/staff/services`). Confirm movable feast dates (Maundy Thursday, Good Friday, Eid'l Fitr, Eid'l Adha) against the official Proclamation each year before seeding.
+
+### Booking form rewrite
+
+`src/app/(marketing)/schedule/booking-form.tsx` becomes branch-aware:
+
+1. Top-level radio: **Laboratory request** vs **Doctor appointment**.
+2. **Laboratory branch:** service dropdown filtered to `kind in ('lab_test', 'lab_package')`. Same patient details + slot picker.
+3. **Doctor branch:** dropdown filtered to `kind = 'doctor_consultation'` (one row per specialty). Same patient details + slot picker. Note under the dropdown: *"Reception assigns the specific doctor based on availability — we'll confirm by SMS/email after booking."*
+
+`submitBookingAction` accepts the same payload; it now also asserts the chosen `service.kind` is one of the three allowed values and that the chosen slot is not in `clinic_closures`.
+
+### Custom slot picker
+
+New component `src/components/marketing/slot-picker.tsx` replacing `<input type="datetime-local">`:
+
+- **Day grid:** next 60 days starting from tomorrow. Sundays are visually disabled. Days listed in `clinic_closures` are visually disabled with the closure `reason` shown on hover.
+- **Time grid:** 30-minute slots from 08:00 to 16:30 inclusive (last appointment finishes by 17:00). Slots in the past on the chosen day are disabled.
+- **Output:** combines day + time into a Manila-local ISO string and stores it in a hidden input named `scheduled_at` so the existing server action consumes it unchanged.
+- **Loading:** the page server-component loads `clinic_closures` rows where `closed_on` is in the next 60 days and passes the array as a prop. Cached aggressively (closures change rarely).
+- **Server re-validation:** `submitBookingAction` re-checks `clinic_closures` and operating-hour bounds at submit time so closures added between page load and submit are caught.
+
+### Admin: closures CRUD
+
+New page `/staff/admin/closures`:
+- List of upcoming closures (`closed_on`, `reason`, who added it).
+- Form to add a new one (date + reason).
+- Delete button (with confirm) for ad-hoc closures; recommend leaving public holidays untouched.
+
+Add a nav link under Admin in `staff-nav-config.ts`: `{ href: "/staff/admin/closures", label: "Closures", roles: ["admin"] }`.
+
+### Verification
+
+- [ ] Day picker hides Sundays and any date in `clinic_closures` (tested with at least one seeded holiday in the next week)
+- [ ] Time picker only renders slots between 08:00 and 16:30 in 30-minute steps
+- [ ] Submitting a closure date via crafted FormData is rejected server-side
+- [ ] Lab branch only shows lab services; doctor branch only shows consultations
+- [ ] Booking a doctor consultation produces an `appointments` row + `appointment.booked` audit entry; reception sees it on `/staff/appointments` and can note the assigned doctor in the existing notes column on arrival
+- [ ] `/staff/admin/closures` create + delete both audit-log
+
+---
+
+## Phase 9 — Physician schedules (full availability-driven booking)
+
+**Goal:** Replace Phase 6.5's "reception assigns the doctor on day-of" with picker-driven physician selection based on actual recurring availability and one-off overrides. The marketing physicians page (`/physicians`) also moves from a static TS module to live DB data.
+
+This is the proper version of doctor booking. Phase 6.5 ships a usable shortcut (specialty + manual assignment); this phase delivers what the original drmed.ph hinted at — patients pick a doctor and see only that doctor's open slots.
+
+### Schema
+
+Migration `0006_physicians_and_schedules.sql`:
+
+```sql
+-- Promote the static src/lib/marketing/physicians.ts roster into the DB.
+create table public.physicians (
+  id           uuid primary key default gen_random_uuid(),
+  slug         text unique not null,
+  full_name    text not null,
+  specialty    text not null,
+  group_label  text,
+  is_active    boolean not null default true,
+  photo_path   text,
+  bio          text,
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);
+
+-- Recurring weekly availability blocks.
+create table public.physician_schedules (
+  id            uuid primary key default gen_random_uuid(),
+  physician_id  uuid not null references public.physicians(id) on delete cascade,
+  day_of_week   int not null check (day_of_week between 0 and 6),
+  start_time    time not null,
+  end_time      time not null check (end_time > start_time),
+  valid_from    date not null default current_date,
+  valid_until   date,
+  notes         text,
+  created_at    timestamptz not null default now()
+);
+
+create index idx_physician_schedules_physician on public.physician_schedules(physician_id);
+
+-- One-off overrides (vacation, conference, swap).
+create table public.physician_schedule_overrides (
+  id            uuid primary key default gen_random_uuid(),
+  physician_id  uuid not null references public.physicians(id) on delete cascade,
+  override_on   date not null,
+  start_time    time,    -- null = unavailable all day
+  end_time      time,
+  reason        text,
+  created_at    timestamptz not null default now()
+);
+
+create index idx_physician_overrides_lookup
+  on public.physician_schedule_overrides(physician_id, override_on);
+
+-- Tag the booked doctor on appointments.
+alter table public.appointments
+  add column physician_id uuid references public.physicians(id);
+
+-- Public read on physicians + schedules (the marketing page reads it);
+-- admin manages.
+alter table public.physicians enable row level security;
+alter table public.physician_schedules enable row level security;
+alter table public.physician_schedule_overrides enable row level security;
+
+create policy "physicians: public read active" on public.physicians
+  for select to anon, authenticated using (is_active = true);
+create policy "physicians: admin manage" on public.physicians
+  for all to authenticated
+  using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
+
+create policy "physician_schedules: public read" on public.physician_schedules
+  for select to anon, authenticated using (true);
+create policy "physician_schedules: admin manage" on public.physician_schedules
+  for all to authenticated
+  using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
+
+create policy "physician_overrides: public read" on public.physician_schedule_overrides
+  for select to anon, authenticated using (true);
+create policy "physician_overrides: admin manage" on public.physician_schedule_overrides
+  for all to authenticated
+  using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
+```
+
+### Photo storage
+
+Doctor photos move from `public/doctors/*.jpg` (static) to a new public Supabase Storage bucket `physician-photos`. Admin upload UI replaces ad-hoc commit-then-deploy. Marketing `/physicians` reads `photo_path` and renders signed-or-public URLs as appropriate.
+
+### Booking flow (Doctor branch update)
+
+Replaces the Phase 6.5 specialty-only flow:
+
+1. Pick specialty → loads `physicians` filtered by that specialty.
+2. Render physician cards (photo + name + schedule preview).
+3. Pick physician → loads their `physician_schedules` (recurring) and the next 60 days of overrides + `clinic_closures`.
+4. Slot picker now intersects: open day (not a clinic closure, weekday matches a recurring block, no full-day override) ∩ open time (within recurring start/end, minus any override window).
+5. On submit, `appointments.physician_id` is set; reception sees the assignment without having to ask.
+
+### Admin pages
+
+- `/staff/admin/physicians` — CRUD, photo upload to the new bucket.
+- `/staff/admin/physicians/[id]/schedule` — edit recurring blocks + overrides. Calendar-style preview helpful but optional.
+
+Add to `staff-nav-config.ts` Admin section: `{ href: "/staff/admin/physicians", label: "Physicians", roles: ["admin"] }`.
+
+### Migration of existing roster
+
+`src/lib/marketing/physicians.ts` is the seed source for `physicians` rows. Recurring schedules come from the schedule strings ("Monday and Wednesday · 10:00 AM – 12:00 NN") parsed into `physician_schedules` rows by a one-off script `scripts/seed-physicians.ts`. After the seed, `/physicians` (marketing) is rewritten to read from the DB. The static module is deleted.
+
+### Verification
+
+- [ ] Marketing `/physicians` reads from DB; updates in `/staff/admin/physicians` reflect immediately
+- [ ] Doctor booking can't pick a slot outside the chosen physician's recurring schedule
+- [ ] An override (e.g. one-day full unavailability) makes that day's slots disappear in the picker
+- [ ] Reception sees the assigned physician on `/staff/appointments`
+- [ ] Photo upload via admin UI ends up in `physician-photos` bucket and renders on the marketing page
+- [ ] Removing a physician's `is_active` flag hides them from the booking flow but preserves historical appointment FK
