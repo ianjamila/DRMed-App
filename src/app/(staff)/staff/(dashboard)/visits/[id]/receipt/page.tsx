@@ -5,7 +5,6 @@ import { peekVisitPinFlash } from "@/lib/auth/visit-pin-flash";
 import { formatPhp } from "@/lib/marketing/format";
 import { CONTACT, SITE } from "@/lib/marketing/site";
 import { PrintButton } from "./print-button";
-import { ClearPinOnMount } from "./clear-pin-on-mount";
 
 export const metadata = {
   title: "Receipt — staff",
@@ -42,7 +41,6 @@ export default async function ReceiptPage({ params }: Props) {
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6 lg:px-8 print:p-0">
-      {plainPin ? <ClearPinOnMount /> : null}
       <div className="mb-4 flex items-center justify-between gap-2 print:hidden">
         <Link
           href={`/staff/visits/${visit.id}`}
@@ -50,7 +48,7 @@ export default async function ReceiptPage({ params }: Props) {
         >
           ← Visit
         </Link>
-        <PrintButton />
+        <PrintButton hasFlash={Boolean(plainPin)} />
       </div>
 
       <article className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-8 print:border-0 print:p-0">
