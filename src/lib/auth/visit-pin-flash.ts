@@ -42,8 +42,16 @@ export async function peekVisitPinFlash(
   }
 }
 
-// Mutating — must be called from a Server Action (e.g. via a client effect).
+// Mutating — must be called from a Server Action.
+// `cookies().delete(name)` matches on path "/" by default; we set the cookie
+// with path "/staff", so we have to expire it on that same path explicitly.
 export async function clearVisitPinFlash(): Promise<void> {
   const c = await cookies();
-  c.delete(COOKIE_NAME);
+  c.set(COOKIE_NAME, "", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict",
+    path: "/staff",
+    maxAge: 0,
+  });
 }
