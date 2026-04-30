@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { consumeVisitPinFlash } from "@/lib/auth/visit-pin-flash";
+import { peekVisitPinFlash } from "@/lib/auth/visit-pin-flash";
 import { formatPhp } from "@/lib/marketing/format";
 import { CONTACT, SITE } from "@/lib/marketing/site";
 import { PrintButton } from "./print-button";
+import { ClearPinOnMount } from "./clear-pin-on-mount";
 
 export const metadata = {
   title: "Receipt — staff",
@@ -34,12 +35,14 @@ export default async function ReceiptPage({ params }: Props) {
   const patient = Array.isArray(visit.patients) ? visit.patients[0] : visit.patients;
   if (!patient) notFound();
 
-  // Plain PIN — present only on the redirect from createVisit. Re-loading
-  // the page after print clears the cookie and the PIN goes away forever.
-  const plainPin = await consumeVisitPinFlash(visit.id);
+  // Plain PIN — present only on the redirect from createVisit. The cookie
+  // is read here (server component is read-only) and cleared right after
+  // mount by ClearPinOnMount.
+  const plainPin = await peekVisitPinFlash(visit.id);
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6 lg:px-8 print:p-0">
+      {plainPin ? <ClearPinOnMount /> : null}
       <div className="mb-4 flex items-center justify-between gap-2 print:hidden">
         <Link
           href={`/staff/visits/${visit.id}`}
