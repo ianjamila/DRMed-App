@@ -18,9 +18,9 @@ const ROLE_LABEL: Record<StaffSession["role"], string> = {
 
 export function StaffShell({ session, children }: Props) {
   return (
-    <div className="flex min-h-screen bg-[color:var(--color-brand-bg)]">
+    <div className="flex min-h-screen bg-[color:var(--color-brand-bg)] print:bg-white">
       {/* Sidebar */}
-      <aside className="hidden w-64 shrink-0 flex-col border-r border-[color:var(--color-brand-bg-mid)] bg-white md:flex">
+      <aside className="hidden w-64 shrink-0 flex-col border-r border-[color:var(--color-brand-bg-mid)] bg-white md:flex print:hidden">
         <Link
           href="/staff"
           className="flex items-center gap-2 px-5 py-5 font-[family-name:var(--font-heading)] text-lg font-extrabold tracking-tight text-[color:var(--color-brand-navy)]"
@@ -54,7 +54,7 @@ export function StaffShell({ session, children }: Props) {
       {/* Main */}
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Mobile topbar — sidebar is hidden on small screens */}
-        <header className="flex items-center justify-between border-b border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-3 md:hidden">
+        <header className="flex items-center justify-between border-b border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-3 md:hidden print:hidden">
           <Link
             href="/staff"
             className="font-[family-name:var(--font-heading)] text-base font-extrabold text-[color:var(--color-brand-navy)]"
