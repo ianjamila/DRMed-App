@@ -1,34 +1,55 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  SlotPicker,
+  type ClosureLite,
+} from "@/components/marketing/slot-picker";
 import { submitBookingAction, type BookingResult } from "./actions";
+
+export type ServiceKind = "lab_test" | "lab_package" | "doctor_consultation";
 
 interface ServiceLite {
   id: string;
   code: string;
   name: string;
+  kind: ServiceKind;
 }
+
+type Branch = "lab" | "doctor";
 
 interface Props {
   services: ServiceLite[];
-  defaultMin: string; // local datetime-local string for `min`
-  defaultMax: string;
+  closures: ClosureLite[];
+  startDate: string; // tomorrow Manila YYYY-MM-DD
 }
 
-export function BookingForm({ services, defaultMin, defaultMax }: Props) {
+export function BookingForm({ services, closures, startDate }: Props) {
   const [state, formAction, pending] = useActionState<
     BookingResult | null,
     FormData
   >(submitBookingAction, null);
+  const [branch, setBranch] = useState<Branch>("lab");
+
+  const filteredServices = useMemo(
+    () =>
+      services.filter((s) =>
+        branch === "lab"
+          ? s.kind === "lab_test" || s.kind === "lab_package"
+          : s.kind === "doctor_consultation",
+      ),
+    [services, branch],
+  );
 
   if (state?.ok && state.appointment_id) {
     const when = state.scheduled_at
       ? new Date(state.scheduled_at).toLocaleString("en-PH", {
           dateStyle: "long",
           timeStyle: "short",
+          timeZone: "Asia/Manila",
         })
       : "";
     return (
@@ -60,12 +81,34 @@ export function BookingForm({ services, defaultMin, defaultMax }: Props) {
   }
 
   return (
-    <form action={formAction} className="grid gap-4">
+    <form action={formAction} className="grid gap-5">
       {/* Honeypot */}
       <div aria-hidden="true" style={{ position: "absolute", left: "-9999px" }}>
         <label htmlFor="website">Website</label>
         <input id="website" name="website" tabIndex={-1} autoComplete="off" />
       </div>
+
+      <fieldset className="grid gap-2">
+        <legend className="text-sm font-bold text-[color:var(--color-brand-navy)]">
+          What are you booking?
+        </legend>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <BranchOption
+            checked={branch === "lab"}
+            onChange={() => setBranch("lab")}
+            value="lab"
+            title="Laboratory request"
+            blurb="Blood work, urinalysis, ECG, X-ray, ultrasound, panels."
+          />
+          <BranchOption
+            checked={branch === "doctor"}
+            onChange={() => setBranch("doctor")}
+            value="doctor"
+            title="Doctor appointment"
+            blurb="Consultation with one of our specialists."
+          />
+        </div>
+      </fieldset>
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="First name" name="first_name" required maxLength={80} />
@@ -103,37 +146,37 @@ export function BookingForm({ services, defaultMin, defaultMax }: Props) {
 
       <Field label="Address (optional)" name="address" maxLength={200} />
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="grid gap-1.5">
-          <Label htmlFor="service_id">Service</Label>
-          <select
-            id="service_id"
-            name="service_id"
-            required
-            className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
-          >
-            <option value="">— Pick a service —</option>
-            {services.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name} ({s.code})
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="grid gap-1.5">
-          <Label htmlFor="scheduled_at">Date and time</Label>
-          <Input
-            id="scheduled_at"
-            name="scheduled_at"
-            type="datetime-local"
-            required
-            min={defaultMin}
-            max={defaultMax}
-          />
+      <div className="grid gap-1.5">
+        <Label htmlFor="service_id">
+          {branch === "lab" ? "Lab service" : "Specialty"}
+        </Label>
+        {/* Re-mount the select when branch changes so the value resets. */}
+        <select
+          key={branch}
+          id="service_id"
+          name="service_id"
+          required
+          className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+        >
+          <option value="">
+            — Pick a {branch === "lab" ? "service" : "specialty"} —
+          </option>
+          {filteredServices.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name} ({s.code})
+            </option>
+          ))}
+        </select>
+        {branch === "doctor" ? (
           <p className="text-xs text-[color:var(--color-brand-text-soft)]">
-            Mon–Sat, 8 AM – 5 PM. Up to 60 days ahead.
+            Reception assigns the specific doctor based on availability —
+            we&apos;ll confirm by SMS/email after booking.
           </p>
-        </div>
+        ) : null}
+      </div>
+
+      <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] p-4">
+        <SlotPicker startDate={startDate} closures={closures} />
       </div>
 
       <div className="grid gap-1.5">
@@ -193,5 +236,46 @@ function Field({ label, name, type = "text", ...rest }: FieldProps) {
       <Label htmlFor={name}>{label}</Label>
       <Input id={name} name={name} type={type} {...rest} />
     </div>
+  );
+}
+
+interface BranchOptionProps {
+  checked: boolean;
+  onChange: () => void;
+  value: Branch;
+  title: string;
+  blurb: string;
+}
+
+function BranchOption({
+  checked,
+  onChange,
+  value,
+  title,
+  blurb,
+}: BranchOptionProps) {
+  return (
+    <label
+      className={`flex cursor-pointer flex-col rounded-xl border p-4 transition ${
+        checked
+          ? "border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-bg)] shadow"
+          : "border-[color:var(--color-brand-bg-mid)] bg-white hover:border-[color:var(--color-brand-cyan)]"
+      }`}
+    >
+      <input
+        type="radio"
+        name="branch"
+        value={value}
+        checked={checked}
+        onChange={onChange}
+        className="sr-only"
+      />
+      <span className="text-sm font-extrabold text-[color:var(--color-brand-navy)]">
+        {title}
+      </span>
+      <span className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
+        {blurb}
+      </span>
+    </label>
   );
 }

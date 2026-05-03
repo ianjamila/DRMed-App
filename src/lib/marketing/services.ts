@@ -1,6 +1,8 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 
+export type ServiceKind = "lab_test" | "lab_package" | "doctor_consultation";
+
 export type PublicService = {
   id: string;
   code: string;
@@ -8,13 +10,16 @@ export type PublicService = {
   description: string | null;
   price_php: number;
   turnaround_hours: number | null;
+  kind: ServiceKind;
 };
 
 export async function listActiveServices(): Promise<PublicService[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("services")
-    .select("id, code, name, description, price_php, turnaround_hours")
+    .select(
+      "id, code, name, description, price_php, turnaround_hours, kind",
+    )
     .eq("is_active", true)
     .order("name", { ascending: true });
 
@@ -22,7 +27,10 @@ export async function listActiveServices(): Promise<PublicService[]> {
     console.error("listActiveServices failed", error);
     return [];
   }
-  return data ?? [];
+  return (data ?? []).map((s) => ({
+    ...s,
+    kind: s.kind as ServiceKind,
+  }));
 }
 
 export async function getServiceByCode(
@@ -31,7 +39,9 @@ export async function getServiceByCode(
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("services")
-    .select("id, code, name, description, price_php, turnaround_hours")
+    .select(
+      "id, code, name, description, price_php, turnaround_hours, kind",
+    )
     .eq("code", code.toUpperCase())
     .eq("is_active", true)
     .maybeSingle();
@@ -40,7 +50,7 @@ export async function getServiceByCode(
     console.error("getServiceByCode failed", error);
     return null;
   }
-  return data;
+  return data ? { ...data, kind: data.kind as ServiceKind } : null;
 }
 
 export { formatPhp } from "./format";

@@ -1,6 +1,11 @@
 import { PageHero } from "@/components/marketing/page-hero";
 import { CONTACT } from "@/lib/marketing/site";
 import { listActiveServices } from "@/lib/marketing/services";
+import {
+  addDaysISO,
+  listClosuresInRange,
+  tomorrowManilaISO,
+} from "@/lib/marketing/closures";
 import { BookingForm } from "./booking-form";
 
 export const metadata = {
@@ -8,20 +13,14 @@ export const metadata = {
   description: `Visit DRMed Clinic & Laboratory at ${CONTACT.address.full}. Open ${CONTACT.hours}.`,
 };
 
-// Manila is UTC+8 with no DST. Shift the UTC time and slice to get the
-// "YYYY-MM-DDTHH:mm" string the datetime-local picker expects.
-function manilaLocal(d: Date): string {
-  return new Date(d.getTime() + 8 * 60 * 60 * 1000).toISOString().slice(0, 16);
-}
-
 export const dynamic = "force-dynamic";
 
 export default async function SchedulePage() {
   const services = await listActiveServices();
-  // eslint-disable-next-line react-hooks/purity -- per-request bounds for the picker.
-  const now = Date.now();
-  const minDt = manilaLocal(new Date(now + 60 * 60 * 1000));
-  const maxDt = manilaLocal(new Date(now + 60 * 24 * 60 * 60 * 1000));
+  const startDate = tomorrowManilaISO();
+  const endDate = addDaysISO(startDate, 60);
+  const closures = await listClosuresInRange(startDate, endDate);
+
   return (
     <>
       <PageHero
@@ -104,9 +103,10 @@ export default async function SchedulePage() {
                 id: s.id,
                 code: s.code,
                 name: s.name,
+                kind: s.kind,
               }))}
-              defaultMin={minDt}
-              defaultMax={maxDt}
+              closures={closures}
+              startDate={startDate}
             />
           </div>
         </section>

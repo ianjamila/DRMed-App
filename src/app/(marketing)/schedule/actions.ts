@@ -3,8 +3,17 @@
 import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
-import { BookingSchema } from "@/lib/validations/booking";
+import {
+  BookingSchema,
+  manilaSlotFor,
+} from "@/lib/validations/booking";
 import { notifyAppointmentBooked } from "@/lib/notifications/notify-appointment-booked";
+
+const ALLOWED_KINDS = new Set([
+  "lab_test",
+  "lab_package",
+  "doctor_consultation",
+]);
 
 export type BookingResult =
   | {
@@ -60,11 +69,27 @@ export async function submitBookingAction(
 
   const { data: service, error: svcErr } = await admin
     .from("services")
-    .select("id, name, is_active")
+    .select("id, name, is_active, kind")
     .eq("id", parsed.data.service_id)
     .maybeSingle();
   if (svcErr || !service || !service.is_active) {
     return { ok: false, error: "Selected service is no longer available." };
+  }
+  if (!ALLOWED_KINDS.has(service.kind)) {
+    return { ok: false, error: "Selected service cannot be booked online." };
+  }
+
+  // Re-check closures + operating-hour bounds at submit time so closures added
+  // between page load and submit are caught. The Zod schema validated the
+  // weekday + 30-min slot already; here we only need to consult the DB.
+  const slot = manilaSlotFor(new Date(parsed.data.scheduled_at));
+  const { data: closure } = await admin
+    .from("clinic_closures")
+    .select("closed_on")
+    .eq("closed_on", slot.dateISO)
+    .maybeSingle();
+  if (closure) {
+    return { ok: false, error: "That day is closed. Please pick another." };
   }
 
   // Create the patient as pre-registered. Reception verifies on arrival.

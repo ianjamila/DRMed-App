@@ -9,15 +9,33 @@ const optionalText = (max: number) =>
     .transform((v) => (v === "" ? null : v))
     .nullable();
 
-// Manila is UTC+8, no DST. Operating hours Mon-Sat 8 AM – 5 PM.
-function isWithinOperatingHours(d: Date): boolean {
-  // Convert to Manila wall-clock by offsetting +8h from UTC.
+// Manila is UTC+8, no DST. Operating hours Mon-Sat. Slots are 30-min
+// boundaries from 08:00 to 16:30 inclusive (last appointment finishes 17:00).
+export interface ManilaSlot {
+  dayOfWeek: number; // 0=Sun … 6=Sat
+  hour: number;
+  minute: number;
+  dateISO: string; // YYYY-MM-DD in Manila
+}
+
+export function manilaSlotFor(d: Date): ManilaSlot {
   const ms = d.getTime() + 8 * 60 * 60 * 1000;
   const manila = new Date(ms);
-  const dow = manila.getUTCDay(); // 0=Sun … 6=Sat
-  if (dow === 0) return false;
-  const hour = manila.getUTCHours();
-  return hour >= 8 && hour < 17;
+  return {
+    dayOfWeek: manila.getUTCDay(),
+    hour: manila.getUTCHours(),
+    minute: manila.getUTCMinutes(),
+    dateISO: `${manila.getUTCFullYear()}-${String(manila.getUTCMonth() + 1).padStart(2, "0")}-${String(manila.getUTCDate()).padStart(2, "0")}`,
+  };
+}
+
+export function isValidSlot(slot: ManilaSlot): boolean {
+  if (slot.dayOfWeek === 0) return false; // Sunday closed
+  if (slot.minute !== 0 && slot.minute !== 30) return false;
+  if (slot.hour < 8) return false;
+  if (slot.hour > 16) return false;
+  // 16:30 is the last slot; 16:00 is also fine.
+  return true;
 }
 
 export const BookingSchema = z.object({
@@ -70,10 +88,12 @@ export const BookingSchema = z.object({
         });
         return z.NEVER;
       }
-      if (!isWithinOperatingHours(d)) {
+      const slot = manilaSlotFor(d);
+      if (!isValidSlot(slot)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: "Pick a slot Mon–Sat between 8 AM and 5 PM.",
+          message:
+            "Pick a 30-minute slot Mon–Sat between 8:00 AM and 4:30 PM.",
         });
         return z.NEVER;
       }
