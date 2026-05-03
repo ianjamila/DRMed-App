@@ -499,35 +499,246 @@ Add env vars: `RESEND_API_KEY`, `SEMAPHORE_API_KEY`, `SEMAPHORE_SENDER_NAME`.
 
 ---
 
-## Phase 7 — Accounting Sync (Google Sheets)
+## Phase 7 — Accounting Sync (three Google Sheets)
 
-**Goal:** Daily export of visits, payments, and results to a Google Sheet for the accountant. (Per your "to follow" requirement: migrations or Google Drive accounting & invoicing.)
+**Goal:** Faithfully replicate reception's existing Google Sheets accounting (Lab Services, Doctor Consultations, Doctor Procedures HMO) so the accountant's workflow is preserved during beta. The full in-app accounting (HMO billing, doctor PF disbursement, financial statements) ships in a later phase. Until then, the Google Sheets remain the source of truth and the app is a faithful capture-and-export layer.
 
-### Setup
+This phase has three sequential sub-phases. Do not start 7C before 7B is done — the export shape depends on the new schema.
 
-1. Create a Google Cloud project, enable Sheets API, create a service account, download JSON key.
-2. Create a target Google Sheet, share with the service account email.
-3. Store the JSON key as a Vercel env var (`GOOGLE_SERVICE_ACCOUNT_JSON`) and the spreadsheet ID (`ACCOUNTING_SHEET_ID`).
+### Real-world context (from reception's current sheets)
 
-### Cron job
+Three separate Google Sheets the accountant maintains today, each with its own row grain and column set:
 
-Vercel Cron `vercel.json`:
-```json
-{ "crons": [{ "path": "/api/cron/sync-accounting", "schedule": "0 17 * * *" }] }
+1. **Lab Services (Reception)** — one row per **service line** (a 4-test patient gets 4 rows sharing a control number). Columns: Date, Control No, Patient Name, HMO block (Yes/No, Provider, Approval Date), Service, Base Price, Senior/PWD (20%), Discount (10%), Discount (5%), Actual Discount, Final Price, Payment Method (Cash / HMO / Card / GCash / BPI), Paid Ref, Result Release block (Preferred Medium = Physical / Email / Viber / GCash, Date Released), Receptionist Remarks (last name).
+2. **Doctor Consultations** — one row per consultation. Columns: Control No, **Test No**, Patient Name, HMO block, **Doctor Consultant** (last name), **Base Price (variable — each doctor sets their own)**, Senior/PWD (20%), Other Discounts (20%), Final Price, **Clinic Fee** (separate from doctor PF), Paid block (Yes/No, Reference), Remarks (CASH / MEDCERT / CLEARANCE / PRE-EMPLOYMENT, etc.).
+3. **Doctor Procedures HMO** — one row per procedure. Columns: Date, Patient Name, HMO Provider, Approval Date, Service Description (free-text procedure list, e.g. "NASAL ENDOSCOPY, NASAL DECONGESTION, SUCTIONING…"), Doctor Consultant, **Approved Amount** (HMO grants a specific peso figure post-approval).
+
+HMO providers actively in use (admin maintains the list, but seed with these 11): **Maxicare, Valucare, Cocolife, Med Asia, Intellicare, Avega, Generali, Etiqa, Amaphil, iCare, Pacific Cross**. The historical sheets only show six of these — the rest are either new or low-volume; reception will start tagging them once the staff UI ships.
+
+The April 2026 test list (≈150 items) has three price columns per test: **DRMed Price (cash)**, **HMO Price** (≈2.2× cash but not always — store as data, not a multiplier), **Senior Discount** (peso amount, not the final price). Five sections: Packages, Individual Tests, X-Ray, Ultrasound, Vaccines, Hi Precision send-outs (asterisked items routed to an external lab). Some entries (e.g. Hepatitis B Vaccine, Executive Packages) have only the DRMed price — HMO column is N/A.
+
+### Phase 7A — Schema deltas to capture sheet data
+
+After reviewing the live ops Sheet (`https://docs.google.com/spreadsheets/d/199CjfHAO9XqVJ1Yty4eheqCTkg1CJn9YtmPeR6muVDM`), the Sheet contains **13 distinct tabs**, not three. Some are pure exports (Phase 7C); others surface schema we don't yet have. The ones that affect schema are folded into 7A below; the ones that are full new operational surfaces (inquiry CRM, vouchers) are listed under "Deferred to later phases" at the end of this section.
+
+**Sheet tabs and how they map to this app**
+
+| Sheet tab | App home | Phase |
+|---|---|---|
+| Patient master | `patients` table | 7A schema additions |
+| Lab reception (per-line log) | `test_requests` + `visits` | 7A + 7C export |
+| Doctor consultations | `test_requests` (kind=doctor_consultation) + `clinic_fee_php`, `doctor_pf_php` | 7A + 7C export |
+| Doctor procedures HMO | `test_requests` (kind=doctor_procedure) + `hmo_approved_amount_php` | 7A + 7C export |
+| Per-patient test history | derived view from `test_requests`+`visits` | 7B reception UI |
+| Registration & consent form | `patients.consent_signed_at` + printable PDF | 7B reception UI |
+| Schedule sheet | `appointments` (already exists) | no change |
+| Inquiry log (phone CRM) | `inquiries` table | **Phase 10** — deferred |
+| Home service log | `test_requests` already covers via `kind=home_service`; add `home_address`, `assigned_medtech_id` | 7A |
+| Sent-out tracker | derived view of `test_requests` where `is_send_out` and `released_at is null` | 7B reception UI |
+| HMO contract mgmt | `hmo_providers` extended fields | 7A |
+| Gift codes / vouchers | `gift_codes` table | **Phase 11** — deferred |
+| Test list / prices | `services` (already covered by Phase 6.6) | n/a |
+
+New migration `0006_accounting_capture.sql` (numbering may shift if interim migrations land first):
+
+```sql
+-- HMO providers as a managed list. Admin maintains via /staff/admin/hmo-providers.
+-- Contract fields mirror the "HMO contract management" tab in reception's Sheet
+-- so accounting can stop double-entering provider info.
+create table public.hmo_providers (
+  id                       uuid primary key default gen_random_uuid(),
+  name                     text unique not null,
+  is_active                boolean not null default true,
+  due_days_for_invoice     int,                    -- e.g. Maxicare = 30
+  contract_start_date      date,
+  contract_end_date        date,
+  contact_person_name      text,
+  contact_person_address   text,
+  contact_person_phone     text,
+  contact_person_email     text,
+  notes                    text,
+  created_at               timestamptz not null default now()
+);
+
+alter table public.hmo_providers enable row level security;
+create policy "hmo_providers: public read active" on public.hmo_providers
+  for select to anon, authenticated using (is_active = true);
+create policy "hmo_providers: admin manage" on public.hmo_providers
+  for all to authenticated
+  using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
+
+-- services additions: dual price + send-out flag + section label.
+alter table public.services
+  add column hmo_price_php       numeric(10,2),       -- null = not billable to HMO
+  add column senior_discount_php numeric(10,2),       -- peso discount, sourced from the test list (not a percentage)
+  add column is_send_out         boolean not null default false,
+  add column send_out_lab        text,                -- e.g. 'Hi Precision'
+  add column section             text;                -- 'package' | 'chemistry' | 'hematology' | 'immunology' | 'urinalysis' | 'microbiology' | 'imaging_xray' | 'imaging_ultrasound' | 'vaccine' | 'send_out' | 'consultation' | 'procedure' | 'home_service'
+
+-- Extend the kind check to cover doctor procedures and home services seen in the catalog.
+alter table public.services drop constraint services_kind_check;
+alter table public.services
+  add constraint services_kind_check
+  check (kind in ('lab_test', 'lab_package', 'doctor_consultation', 'doctor_procedure', 'home_service', 'vaccine'));
+
+-- Per-line snapshot + discounts on test_requests so the export is reproducible
+-- even after a price change.
+alter table public.test_requests
+  add column test_number          bigint unique,     -- global running counter (sheet's TEST NO column, e.g. 16700+) — distinct from visit_number
+  add column base_price_php       numeric(10,2),
+  add column hmo_provider_id      uuid references public.hmo_providers(id),
+  add column hmo_approval_date    date,
+  add column hmo_authorization_no text,
+  add column hmo_approved_amount_php numeric(10,2),  -- procedures sometimes get a flat HMO grant, separate from base_price
+  add column discount_kind        text check (discount_kind in ('senior_pwd_20', 'pct_10', 'pct_5', 'other_pct_20', 'custom')),
+  add column discount_amount_php  numeric(10,2) not null default 0,
+  add column clinic_fee_php       numeric(10,2),     -- consultations only
+  add column doctor_pf_php        numeric(10,2),     -- consultations + procedures (final amount paid to the doctor; computed = final_price - clinic_fee for consultations, or HMO approved amount for procedures)
+  add column final_price_php      numeric(10,2),
+  add column release_medium       text check (release_medium in ('physical', 'email', 'viber', 'gcash', 'pickup', 'other')),
+  add column released_at          timestamptz,
+  add column receptionist_remarks text,              -- last name / initials of the encoding receptionist
+  -- Home-service workflow (sheet's Home Service Log tab):
+  add column home_service_address text,
+  add column home_service_fee_php numeric(10,2),
+  add column assigned_medtech_id  uuid references public.staff_profiles(id),
+  -- Procedures: free-text service description (e.g. "NASAL ENDOSCOPY, NASAL DECONGESTION, …"):
+  add column procedure_description text;
+
+-- Global TEST NO sequence so receptionists don't have to allocate by hand.
+-- Backfill needs to start at the value reception is currently using (~16800
+-- as of mid-March 2026); admin will set the sequence start at migration time.
+create sequence public.test_number_seq start with 1 increment by 1;
+-- Default for new test_requests; allows manual override for backfill / corrections.
+alter table public.test_requests
+  alter column test_number set default nextval('public.test_number_seq');
+
+-- Visit-level HMO authorization (one per visit, denormalized for the export).
+alter table public.visits
+  add column hmo_provider_id      uuid references public.hmo_providers(id),
+  add column hmo_approval_date    date,
+  add column hmo_authorization_no text;
+
+-- Patient-level metadata that the sheet's master roster carries:
+-- referral source for marketing attribution and a default release medium so
+-- reception doesn't re-ask every visit.
+alter table public.patients
+  add column referral_source       text check (referral_source in ('doctor_referral', 'customer_referral', 'online_facebook', 'online_website', 'online_google', 'walk_in', 'tenant_employee_northridge', 'other')),
+  add column referred_by_doctor    text,             -- "DR. KATHERINE GAYO", "DR. ROBERT VICENCIO", etc; free-text until Phase 9 ships physicians table
+  add column preferred_release_medium text check (preferred_release_medium in ('physical', 'email', 'viber', 'gcash', 'pickup')),
+  add column senior_pwd_id_kind    text check (senior_pwd_id_kind in ('senior', 'pwd')),
+  add column senior_pwd_id_number  text,
+  add column consent_signed_at     timestamptz,      -- RA 10173 consent capture, set when patient signs the registration form
+  add column is_repeat_patient     boolean not null default false; -- maintained by trigger when 2nd visit lands
+
+-- Service price history: one row written per change, by trigger.
+create table public.service_price_history (
+  id                   bigint generated always as identity primary key,
+  service_id           uuid not null references public.services(id) on delete cascade,
+  price_php            numeric(10,2),
+  hmo_price_php        numeric(10,2),
+  senior_discount_php  numeric(10,2),
+  effective_from       timestamptz not null default now(),
+  changed_by           uuid references auth.users(id),
+  change_reason        text
+);
+
+create index idx_service_price_history_service on public.service_price_history(service_id, effective_from desc);
+
+alter table public.service_price_history enable row level security;
+create policy "service_price_history: staff read" on public.service_price_history
+  for select to authenticated using (public.has_role(array['reception','medtech','pathologist','admin']));
+create policy "service_price_history: admin write" on public.service_price_history
+  for insert to authenticated with check (public.has_role(array['admin']));
+
+-- Trigger to snapshot price changes.
+create or replace function public.snapshot_service_price()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if (tg_op = 'INSERT') or
+     (new.price_php is distinct from old.price_php) or
+     (new.hmo_price_php is distinct from old.hmo_price_php) or
+     (new.senior_discount_php is distinct from old.senior_discount_php) then
+    insert into public.service_price_history
+      (service_id, price_php, hmo_price_php, senior_discount_php, changed_by)
+    values
+      (new.id, new.price_php, new.hmo_price_php, new.senior_discount_php, auth.uid());
+  end if;
+  return new;
+end;
+$$;
+
+create trigger trg_services_price_history
+  after insert or update on public.services
+  for each row execute function public.snapshot_service_price();
+
+-- payments.method enum extension: existing values are 'cash', 'card', 'gcash'; add 'hmo', 'bpi', 'maybank', 'bank_transfer'.
+-- Verify against current enum/check constraint before writing the migration.
+
+-- sync_state for the cron watermark.
+create table public.sync_state (
+  key             text primary key,    -- 'lab_services' | 'doctor_consultations' | 'doctor_procedures'
+  last_synced_at  timestamptz not null,
+  last_visit_id   uuid,                -- belt-and-suspenders dedupe alongside the timestamp
+  notes           text
+);
 ```
-(5pm Manila daily; adjust timezone offset.)
 
-The route handler:
-1. Verifies the Vercel cron secret header.
-2. Pulls today's visits, payments, and released results.
-3. Appends rows to the Sheet using the Google Sheets API.
-4. Records last-synced timestamp in a `sync_state` table to make it resumable.
+**Seed deltas:**
+- Replace the current 12-item seed with the **April 2026 test list** (~150 items). Source: `LAB SERVICES (RECEPTION) - TEST LIST APRIL 2026.pdf`. Build a one-time importer (`scripts/import-test-list.ts`) that parses the PDF (or, easier: ask the user for the underlying CSV/Sheet) and upserts into `services` with `kind`, `section`, `price_php`, `hmo_price_php`, `senior_discount_php`, `is_send_out`. Run idempotently.
+- Seed `hmo_providers` with: Maxicare, Intellicare, Etiqa, Avega, Valucare, iCare. Admin can extend.
+
+### Phase 7B — Reception encoding UI
+
+Extend the staff portal forms so reception captures everything the sheet needs. None of these are new pages — they're field additions to existing flows:
+
+- **/staff/visits/new** and **/staff/visits/[id]** — HMO block (provider dropdown, approval date, authorization no), receptionist remarks text input.
+- **Test request line editor** (currently inline in the visit detail page) — per-line discount selector (none / Senior-PWD 20% / Other 20% / 10% / 5% / Custom amount), computed discount amount preview, final price preview. Base price snapshots from `services.price_php` or `services.hmo_price_php` based on whether the visit has an `hmo_provider_id`.
+- **/staff/visits/[id]** release action — when reception marks results released, capture `release_medium` (radio: Physical / Email / Viber / GCash / Pickup / Other) and `released_at` (defaults to now).
+- **Doctor consultation visits** — same flow but with two extra fields per line: `clinic_fee_php` and `doctor_pf_php` (defaults: clinic fee = 100, PF = base − clinic fee, both editable by reception).
+- **Doctor procedure visits** — free-text `service_description` (saved to `test_requests.notes` or a new column), `hmo_approved_amount_php` field for the post-approval HMO grant.
+
+`/staff/admin/hmo-providers` — small CRUD modeled on `/staff/services`.
+
+### Phase 7C — Three Google Sheets exports
+
+Setup (out-of-app, user does this once):
+1. Create a Google Cloud project, enable Sheets API, create a service account, download JSON key.
+2. Create three target sheets (or three tabs in one spreadsheet — preferred): `Lab Services`, `Doctor Consultations`, `Doctor Procedures HMO`. Share with the service account email.
+3. Set Vercel env vars: `GOOGLE_SERVICE_ACCOUNT_JSON`, `ACCOUNTING_SHEET_ID`, `ACCOUNTING_TAB_LAB`, `ACCOUNTING_TAB_CONSULT`, `ACCOUNTING_TAB_PROCEDURE`.
+
+`vercel.ts` cron config (5pm Manila daily = 09:00 UTC):
+```ts
+crons: [{ path: '/api/cron/sync-accounting', schedule: '0 9 * * *' }]
+```
+
+Route handler `/api/cron/sync-accounting`:
+1. Verifies `Authorization: Bearer ${CRON_SECRET}` header.
+2. For each sheet key, reads `sync_state.last_synced_at` (default: 24h ago).
+3. Pulls rows whose `released_at >= last_synced_at` (lab) or `created_at >= last_synced_at` (consultations/procedures).
+4. Maps DB rows → spreadsheet row arrays in **exact column order matching the existing sheets** (see references in Phase 7 context).
+5. Appends to the corresponding tab via `spreadsheets.values.append` (USER_ENTERED so currency formatting renders).
+6. Updates `sync_state.last_synced_at` to the maximum row timestamp seen.
+7. Audit-logs `accounting.sync.completed` with row counts per tab.
+
+Idempotency: re-running the sync within the same window should produce zero new rows (the watermark advances). A manual "Re-sync from date X" admin action exists at `/staff/admin/accounting` for backfills — it accepts a `from` timestamp and sets `last_synced_at` to it before triggering the route.
 
 ### Verification
 
-- [ ] Cron triggers at the configured time
-- [ ] Yesterday's data appears in the Sheet by the next morning
-- [ ] Re-running the sync doesn't duplicate rows (use `last_synced_at` watermark)
+- [ ] Migration 0006 applies cleanly; types regenerated; trigger fires on services price update
+- [ ] `service_price_history` accumulates a row per price change with `changed_by` populated
+- [ ] Reception can record HMO + discount + release-medium fields end-to-end without leaving the staff UI
+- [ ] All three sheets receive yesterday's rows by the next morning, in the exact column order the accountant expects
+- [ ] Re-running the cron doesn't duplicate rows
+- [ ] A doctor consultation with clinic fee 100 + PF computed-from-base lands on the Doctor Consultations tab with both columns filled
+- [ ] A doctor procedure with HMO approval + approved amount lands on the Doctor Procedures HMO tab with the approved amount in the right column
+- [ ] Admin manual re-sync from `/staff/admin/accounting` produces the same rows the cron would have
+
+### Deferred to later phases (seen in the live Sheet but out of scope for 7)
+
+- **Phase 10 — Inquiry CRM.** The Sheet has an "Inquiry log" tab that captures inbound phone leads (name, contact, date/time of call, who received it, status = "Confirmed (In Calendar)" / pending / dropped, eventual booking details). Build as a small `inquiries` table + `/staff/inquiries` page when reception asks for it.
+- **Phase 11 — Gift codes / vouchers.** The Sheet has a Gift Codes tab with pre-issued codes (e.g. `GC-EM6J-SB8K-TSJA`, ₱500 value) tracked through generation → purchase → redemption. Build as a `gift_codes` table + admin code generator + counter redemption flow.
+- **Phase 12 — HMO receivables dashboard.** The Sheet's HMO contract tab tracks "OVERDUE RECEIVABLES" (oldest unpaid date, days delayed, total pending) per provider — this is the deferred full accounting module. Defer until reception has been on the new app long enough for the data to be trustworthy.
 
 ---
 
@@ -624,11 +835,15 @@ The route handler:
 | 5 | Patient portal + notifications | 2 days |
 | 6 | Online booking | 1 day |
 | 6.5 | Booking refinements (lab/doctor split + slot picker + holidays) | 1–1.5 days |
-| 7 | Accounting sync | 1 day |
+| 6.6 | Test catalog + quick-quote tool + price history | 1.5 days |
+| 7 | Accounting sync — schema deltas, reception encoding UI, three Sheets exports | 4–5 days |
 | 8 | Hardening | 2 days |
 | 9 | Physician schedules (full availability-driven booking) | 3 days |
+| 10 | Inquiry CRM (phone leads → bookings) | 1.5 days |
+| 11 | Gift codes / vouchers | 1 day |
+| 12 | HMO receivables dashboard (start of full accounting module) | 2–3 days |
 
-Total: roughly 3.5 weeks of focused work for a single developer.
+Total: roughly 5.5–6 weeks of focused work for a single developer.
 
 ---
 
@@ -718,6 +933,58 @@ Add a nav link under Admin in `staff-nav-config.ts`: `{ href: "/staff/admin/clos
 - [ ] Lab branch only shows lab services; doctor branch only shows consultations
 - [ ] Booking a doctor consultation produces an `appointments` row + `appointment.booked` audit entry; reception sees it on `/staff/appointments` and can note the assigned doctor in the existing notes column on arrival
 - [ ] `/staff/admin/closures` create + delete both audit-log
+
+---
+
+## Phase 6.6 — Test catalog, quick-quote tool, and price history
+
+**Goal:** Receptionist can answer "how much is X?" over the phone in seconds without opening a spreadsheet, and admin can update prices with a full historical record. Patients on the marketing site get a credible, filterable services catalog that mirrors the actual price list reception uses.
+
+This phase prepares the data and the UI surfaces; Phase 7 then exports the captured data to Google Sheets.
+
+### Public marketing catalog — `/services` upgrade
+
+The current `/services` page lists 12 hand-picked services from the seed. After Phase 7A's import of the April 2026 test list (~150 items), the page becomes:
+
+- **Search-as-you-type** filter (debounced 150ms, plain client-side fuzzy match against name + code).
+- **Section tabs**: Packages, Tests (chemistry / hematology / immunology / urinalysis / microbiology), Imaging (X-ray / Ultrasound), Vaccines, Send-out (Hi Precision). Section comes from `services.section`.
+- **Per-row data**: code, name, **DRMed (cash) price**, "HMO available" badge if `hmo_price_php is not null`, send-out badge if `is_send_out = true`. Do **not** show the HMO peso price publicly — HMO billing happens at the counter and price varies in practice.
+- **Sticky disclaimer** at the page foot: "HMO members are billed via their provider — please bring your card to reception. Senior/PWD discount applies per RA 9994 / 10754."
+- **Services page does not link to "book online"** for individual tests; the booking form (`/schedule`) stays the canonical entry point and uses the same filtered services list.
+
+### Staff quick-quote — `/staff/quote`
+
+Reception-only page (also visible to admin). One purpose: phone/walk-in quotes.
+
+- Single search input that focuses on load and stays focused (Cmd+K opens it from anywhere in /staff).
+- Results table with code, name, **DRMed price**, **HMO price**, **Senior discount (peso)**, **Senior price after discount** (computed: price − senior_discount), section badge.
+- Click a row → expands to show "Copy quote" button that puts a formatted multi-line text on the clipboard, ready to paste into Viber/SMS:
+  ```
+  CBC + PC — ₱360 (cash) / ₱792 (HMO) / Senior ₱288
+  Turnaround: 4 hours
+  ```
+- "Quote builder" mode: tick multiple services, see a running total with optional senior/PWD toggle and a copy-out summary.
+
+Add a nav entry under "Reception" in `staff-nav-config.ts`: `{ href: "/staff/quote", label: "Quick quote", roles: ["reception", "medtech", "admin"] }`.
+
+### Admin price editor with history
+
+The existing `/staff/services/[id]/edit` page gains:
+
+- Three price fields side by side: DRMed price, HMO price (nullable), Senior discount (nullable).
+- A **"Price history"** panel below the form showing the last 20 entries from `service_price_history`: timestamp, all three values, who changed it. The trigger added in Phase 7A populates this automatically — the editor just reads it.
+- A confirmation modal before saving any price change: "This change will be recorded in price history with your name. Continue?"
+
+A separate `/staff/admin/services/import` page (admin only) accepts a CSV in the format reception's price-list spreadsheet exports. Each row updates the matching `services.code`; new codes are inserted; codes missing from the CSV are NOT deactivated automatically (admin must do that manually to avoid surprises).
+
+### Verification
+
+- [ ] `/services` (public) renders all ~150 items with section tabs and search; HMO badge appears on rows that have an HMO price
+- [ ] Public `/services` does not display the HMO peso price anywhere
+- [ ] `/staff/quote` returns 5+ matches on a 2-character query in <100ms (client-side filter)
+- [ ] Cmd+K from `/staff/dashboard` opens the quick-quote search (or jumps to /staff/quote with focus)
+- [ ] Editing a service price writes a `service_price_history` row with the changing user as `changed_by`
+- [ ] CSV import upserts on `code`, does not deactivate missing codes, and audit-logs `services.bulk_import` with row counts
 
 ---
 
