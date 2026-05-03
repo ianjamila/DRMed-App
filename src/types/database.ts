@@ -12,6 +12,31 @@ export type Database = {
   __InternalSupabase: {
     PostgrestVersion: "14.5"
   }
+  graphql_public: {
+    Tables: {
+      [_ in never]: never
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      graphql: {
+        Args: {
+          extensions?: Json
+          operationName?: string
+          query?: string
+          variables?: Json
+        }
+        Returns: Json
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
+  }
   public: {
     Tables: {
       appointments: {
@@ -117,6 +142,27 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      clinic_closures: {
+        Row: {
+          closed_on: string
+          created_at: string
+          created_by: string | null
+          reason: string
+        }
+        Insert: {
+          closed_on: string
+          created_at?: string
+          created_by?: string | null
+          reason: string
+        }
+        Update: {
+          closed_on?: string
+          created_at?: string
+          created_by?: string | null
+          reason?: string
+        }
+        Relationships: []
       }
       contact_messages: {
         Row: {
@@ -309,6 +355,7 @@ export type Database = {
           description: string | null
           id: string
           is_active: boolean
+          kind: string
           name: string
           price_php: number
           requires_signoff: boolean
@@ -321,6 +368,7 @@ export type Database = {
           description?: string | null
           id?: string
           is_active?: boolean
+          kind?: string
           name: string
           price_php: number
           requires_signoff?: boolean
@@ -333,6 +381,7 @@ export type Database = {
           description?: string | null
           id?: string
           is_active?: boolean
+          kind?: string
           name?: string
           price_php?: number
           requires_signoff?: boolean
@@ -674,6 +723,9 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
+  graphql_public: {
+    Enums: {},
+  },
   public: {
     Enums: {},
   },

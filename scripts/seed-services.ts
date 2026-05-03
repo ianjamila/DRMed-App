@@ -23,12 +23,15 @@ const admin = createClient<Database>(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
+type ServiceKind = "lab_test" | "lab_package" | "doctor_consultation";
+
 interface ServiceSeed {
   code: string;
   name: string;
   description: string;
   price_php: number;
-  turnaround_hours: number;
+  turnaround_hours: number | null;
+  kind: ServiceKind;
 }
 
 const services: ServiceSeed[] = [
@@ -39,6 +42,7 @@ const services: ServiceSeed[] = [
       "Measures red and white blood cells, hemoglobin, hematocrit, and platelets. Routine screening for anemia, infection, and other conditions.",
     price_php: 200,
     turnaround_hours: 4,
+    kind: "lab_test",
   },
   {
     code: "URINALYSIS",
@@ -47,6 +51,7 @@ const services: ServiceSeed[] = [
       "Routine urine examination — physical, chemical, and microscopic — for screening of urinary-tract conditions and metabolic issues.",
     price_php: 150,
     turnaround_hours: 2,
+    kind: "lab_test",
   },
   {
     code: "FBS",
@@ -55,6 +60,7 @@ const services: ServiceSeed[] = [
       "Blood glucose measurement after at least 8 hours of fasting. Used to screen and monitor diabetes.",
     price_php: 120,
     turnaround_hours: 4,
+    kind: "lab_test",
   },
   {
     code: "LIPID",
@@ -63,6 +69,7 @@ const services: ServiceSeed[] = [
       "Total cholesterol, HDL, LDL, and triglycerides — heart-disease risk panel.",
     price_php: 500,
     turnaround_hours: 8,
+    kind: "lab_package",
   },
   {
     code: "THYROID",
@@ -71,6 +78,7 @@ const services: ServiceSeed[] = [
       "Screens for thyroid disorders by measuring thyroid-stimulating hormone and free T4.",
     price_php: 650,
     turnaround_hours: 24,
+    kind: "lab_package",
   },
   {
     code: "CREA",
@@ -78,6 +86,7 @@ const services: ServiceSeed[] = [
     description: "Kidney-function screening; commonly paired with BUN.",
     price_php: 180,
     turnaround_hours: 4,
+    kind: "lab_test",
   },
   {
     code: "SGPT",
@@ -85,6 +94,7 @@ const services: ServiceSeed[] = [
     description: "Liver-enzyme test for hepatitis and liver-injury screening.",
     price_php: 200,
     turnaround_hours: 4,
+    kind: "lab_test",
   },
   {
     code: "SGOT",
@@ -92,6 +102,7 @@ const services: ServiceSeed[] = [
     description: "Liver-enzyme test, often run alongside SGPT.",
     price_php: 200,
     turnaround_hours: 4,
+    kind: "lab_test",
   },
   {
     code: "HBSAG",
@@ -99,6 +110,7 @@ const services: ServiceSeed[] = [
     description: "Screens for active Hepatitis B infection.",
     price_php: 350,
     turnaround_hours: 4,
+    kind: "lab_test",
   },
   {
     code: "ECG",
@@ -107,6 +119,7 @@ const services: ServiceSeed[] = [
       "Electrocardiogram with same-day results and physician interpretation.",
     price_php: 400,
     turnaround_hours: 1,
+    kind: "lab_test",
   },
   {
     code: "XRAYCHEST",
@@ -115,6 +128,7 @@ const services: ServiceSeed[] = [
       "Digital chest X-ray with rapid radiologist interpretation. PA view standard.",
     price_php: 550,
     turnaround_hours: 2,
+    kind: "lab_test",
   },
   {
     code: "USABDOMEN",
@@ -123,6 +137,138 @@ const services: ServiceSeed[] = [
       "Ultrasound imaging of the liver, gallbladder, pancreas, spleen, kidneys, and bladder.",
     price_php: 1500,
     turnaround_hours: 2,
+    kind: "lab_test",
+  },
+
+  // Doctor consultations — one row per specialty appearing in
+  // src/lib/marketing/physicians.ts. Reception assigns the specific doctor
+  // on day-of based on availability (Phase 6.5 behavior; Phase 9 will let
+  // patients pick a physician directly).
+  {
+    code: "CONSULT_OBGYN",
+    name: "OB-GYN consultation",
+    description:
+      "Consultation with an OB-GYN. Reception assigns the specific doctor based on availability.",
+    price_php: 500,
+    turnaround_hours: null,
+    kind: "doctor_consultation",
+  },
+  {
+    code: "CONSULT_FAMMED",
+    name: "Family Medicine consultation",
+    description:
+      "Consultation with a Family Medicine physician. Reception assigns the specific doctor based on availability.",
+    price_php: 500,
+    turnaround_hours: null,
+    kind: "doctor_consultation",
+  },
+  {
+    code: "CONSULT_PEDIA",
+    name: "Pediatric consultation",
+    description:
+      "Consultation with a Pediatrician. Reception assigns the specific doctor based on availability.",
+    price_php: 500,
+    turnaround_hours: null,
+    kind: "doctor_consultation",
+  },
+  {
+    code: "CONSULT_IM_CARDIO",
+    name: "Cardiology consultation",
+    description:
+      "Internal Medicine — Cardiology consultation. Reception assigns the specific doctor based on availability.",
+    price_php: 500,
+    turnaround_hours: null,
+    kind: "doctor_consultation",
+  },
+  {
+    code: "CONSULT_IM_PULMO",
+    name: "Pulmonology consultation",
+    description:
+      "Internal Medicine — Pulmonology consultation. Reception assigns the specific doctor based on availability.",
+    price_php: 500,
+    turnaround_hours: null,
+    kind: "doctor_consultation",
+  },
+  {
+    code: "CONSULT_IM_GASTRO",
+    name: "Gastroenterology consultation",
+    description:
+      "Internal Medicine — Gastroenterology consultation. Reception assigns the specific doctor based on availability.",
+    price_php: 500,
+    turnaround_hours: null,
+    kind: "doctor_consultation",
+  },
+  {
+    code: "CONSULT_IM_ONCO",
+    name: "Oncology consultation",
+    description:
+      "Internal Medicine — Oncology consultation. Reception assigns the specific doctor based on availability.",
+    price_php: 500,
+    turnaround_hours: null,
+    kind: "doctor_consultation",
+  },
+  {
+    code: "CONSULT_IM_DIABE",
+    name: "Diabetology consultation",
+    description:
+      "Internal Medicine — Diabetology consultation. Reception assigns the specific doctor based on availability.",
+    price_php: 500,
+    turnaround_hours: null,
+    kind: "doctor_consultation",
+  },
+  {
+    code: "CONSULT_IM_NEPHRO",
+    name: "Nephrology consultation",
+    description:
+      "Internal Medicine — Nephrology consultation. Reception assigns the specific doctor based on availability.",
+    price_php: 500,
+    turnaround_hours: null,
+    kind: "doctor_consultation",
+  },
+  {
+    code: "CONSULT_ENT",
+    name: "ENT consultation",
+    description:
+      "Ear, Nose, and Throat consultation. Reception assigns the specific doctor based on availability.",
+    price_php: 500,
+    turnaround_hours: null,
+    kind: "doctor_consultation",
+  },
+  {
+    code: "CONSULT_OPHTHA",
+    name: "Ophthalmology consultation",
+    description:
+      "Eye consultation. Reception assigns the specific doctor based on availability.",
+    price_php: 500,
+    turnaround_hours: null,
+    kind: "doctor_consultation",
+  },
+  {
+    code: "CONSULT_RADIO",
+    name: "Radiology consultation",
+    description:
+      "Radiology consultation. Reception assigns the specific doctor based on availability.",
+    price_php: 500,
+    turnaround_hours: null,
+    kind: "doctor_consultation",
+  },
+  {
+    code: "CONSULT_SURGERY",
+    name: "Surgery consultation",
+    description:
+      "Surgery consultation. Reception assigns the specific doctor based on availability.",
+    price_php: 500,
+    turnaround_hours: null,
+    kind: "doctor_consultation",
+  },
+  {
+    code: "CONSULT_PSYCH",
+    name: "Psychiatry consultation",
+    description:
+      "Psychiatry consultation. Reception assigns the specific doctor based on availability.",
+    price_php: 500,
+    turnaround_hours: null,
+    kind: "doctor_consultation",
   },
 ];
 

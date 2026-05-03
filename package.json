@@ -12,7 +12,8 @@
     "db:diff": "supabase db diff -f",
     "db:reset": "supabase db reset",
     "seed:test": "tsx --env-file=.env.local scripts/seed-test-users.ts",
-    "seed:services": "tsx --env-file=.env.local scripts/seed-services.ts"
+    "seed:services": "tsx --env-file=.env.local scripts/seed-services.ts",
+    "seed:closures": "tsx --env-file=.env.local scripts/seed-closures.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
