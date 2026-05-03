@@ -54,8 +54,13 @@ export async function createClosureAction(
     actor_type: "staff",
     action: "closure.created",
     resource_type: "clinic_closure",
-    resource_id: parsed.data.closed_on,
-    metadata: { reason: parsed.data.reason },
+    // clinic_closures uses the date as its primary key; audit_log.resource_id
+    // is uuid, so the date lives in metadata.
+    resource_id: null,
+    metadata: {
+      closed_on: parsed.data.closed_on,
+      reason: parsed.data.reason,
+    },
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),
   });
@@ -96,8 +101,8 @@ export async function deleteClosureAction(
     actor_type: "staff",
     action: "closure.deleted",
     resource_type: "clinic_closure",
-    resource_id: closedOn,
-    metadata: { reason: existing.reason },
+    resource_id: null,
+    metadata: { closed_on: closedOn, reason: existing.reason },
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),
   });
