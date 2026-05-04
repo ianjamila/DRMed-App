@@ -485,7 +485,7 @@ export type Database = {
           generation_kind: string
           id: string
           notes: string | null
-          storage_path: string
+          storage_path: string | null
           test_request_id: string
           updated_at: string
           uploaded_at: string
@@ -499,7 +499,7 @@ export type Database = {
           generation_kind?: string
           id?: string
           notes?: string | null
-          storage_path: string
+          storage_path?: string | null
           test_request_id: string
           updated_at?: string
           uploaded_at?: string
@@ -513,7 +513,7 @@ export type Database = {
           generation_kind?: string
           id?: string
           notes?: string | null
-          storage_path?: string
+          storage_path?: string | null
           test_request_id?: string
           updated_at?: string
           uploaded_at?: string

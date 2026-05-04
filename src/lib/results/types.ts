@@ -82,6 +82,16 @@ export function filterParamsForPatient(
   return params.filter((p) => p.gender === null || p.gender === target);
 }
 
+// Patients.sex is stored as 'male' | 'female' | null in the DB. Result
+// template gender flags use 'F' | 'M'. Normalise at the boundary so the
+// rendering / filtering code only deals with one shape.
+export function normalisePatientSex(raw: string | null): PatientSex {
+  if (raw === "male") return "M";
+  if (raw === "female") return "F";
+  if (raw === "M" || raw === "F") return raw;
+  return null;
+}
+
 export function calculateAge(
   birthdateIso: string | null,
   asOf: Date = new Date(),

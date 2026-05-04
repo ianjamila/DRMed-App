@@ -6,10 +6,451 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
+import { renderResultPdf } from "@/lib/results/render-pdf";
+import {
+  filterParamsForPatient,
+  normalisePatientSex,
+  type ResultDocumentInput,
+  type ResultLayout,
+  type TemplateParam,
+  type ParamValue,
+} from "@/lib/results/types";
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
 
 export type UploadResult = { ok: true } | { ok: false; error: string };
+
+// ---------------------------------------------------------------------------
+// Structured-result actions (Phase 13 Slice 2)
+// ---------------------------------------------------------------------------
+
+// Wire-format value sent from the client form. The client never sends `flag`
+// — that's computed by the DB trigger from the value vs. ref ranges.
+export interface StructuredValueInput {
+  numeric_value_si: number | null;
+  numeric_value_conv: number | null;
+  text_value: string | null;
+  select_value: string | null;
+  is_blank: boolean;
+}
+
+export interface StructuredPayload {
+  values: Record<string, StructuredValueInput>; // keyed by param_id
+}
+
+export type StructuredResult =
+  | { ok: true; resultId: string; controlNo: number | null }
+  | { ok: false; error: string };
+
+interface PreparedContext {
+  testRequestId: string;
+  visitId: string;
+  patientId: string;
+  serviceId: string;
+  templateId: string;
+  paramIds: Set<string>;
+  resultId: string;
+  isNewResult: boolean;
+}
+
+// Validate request preconditions and ensure a results row exists. Used by
+// both saveDraftAction and finaliseStructuredAction so the upsert is shared.
+async function prepareStructured(
+  testRequestId: string,
+  payload: StructuredPayload,
+): Promise<{ ok: true; ctx: PreparedContext } | { ok: false; error: string }> {
+  const session = await requireActiveStaff();
+  const supabase = await createClient();
+  const admin = createAdminClient();
+
+  const { data: tr } = await supabase
+    .from("test_requests")
+    .select(
+      `
+        id, status, assigned_to, visit_id, service_id,
+        services!inner ( id, is_send_out ),
+        visits!inner ( id, patient_id )
+      `,
+    )
+    .eq("id", testRequestId)
+    .maybeSingle();
+
+  if (!tr) return { ok: false, error: "Test not found." };
+  if (tr.assigned_to !== session.user_id) {
+    return { ok: false, error: "You haven't claimed this test." };
+  }
+  if (!["in_progress", "result_uploaded"].includes(tr.status)) {
+    return {
+      ok: false,
+      error: `Cannot edit values while status is ${tr.status}.`,
+    };
+  }
+
+  const svc = Array.isArray(tr.services) ? tr.services[0] : tr.services;
+  const visit = Array.isArray(tr.visits) ? tr.visits[0] : tr.visits;
+  if (!svc || !visit) return { ok: false, error: "Missing service or visit." };
+  if (svc.is_send_out) {
+    return {
+      ok: false,
+      error: "Send-out tests use the PDF upload flow, not structured entry.",
+    };
+  }
+
+  const { data: tpl } = await supabase
+    .from("result_templates")
+    .select("id")
+    .eq("service_id", tr.service_id)
+    .maybeSingle();
+  if (!tpl) {
+    return { ok: false, error: "No template configured for this service." };
+  }
+
+  // Restrict the payload to params that actually belong to this template.
+  const { data: paramRows } = await supabase
+    .from("result_template_params")
+    .select("id")
+    .eq("template_id", tpl.id);
+  const paramIds = new Set((paramRows ?? []).map((r) => r.id));
+  for (const k of Object.keys(payload.values)) {
+    if (!paramIds.has(k)) {
+      return { ok: false, error: "Unknown parameter in payload." };
+    }
+  }
+
+  // Ensure a draft results row exists (one per test_request).
+  const { data: existing } = await admin
+    .from("results")
+    .select("id, generation_kind")
+    .eq("test_request_id", testRequestId)
+    .maybeSingle();
+
+  let resultId = existing?.id ?? null;
+  let isNewResult = false;
+
+  if (!resultId) {
+    const { data: inserted, error: insErr } = await admin
+      .from("results")
+      .insert({
+        test_request_id: testRequestId,
+        generation_kind: "structured",
+        storage_path: null,
+        uploaded_by: session.user_id,
+      })
+      .select("id")
+      .single();
+    if (insErr || !inserted) {
+      return {
+        ok: false,
+        error: `Could not create result: ${insErr?.message ?? "unknown"}`,
+      };
+    }
+    resultId = inserted.id;
+    isNewResult = true;
+  } else if (existing?.generation_kind !== "structured") {
+    return {
+      ok: false,
+      error:
+        "This test already has an uploaded PDF result; structured entry is not available.",
+    };
+  }
+
+  return {
+    ok: true,
+    ctx: {
+      testRequestId,
+      visitId: visit.id,
+      patientId: visit.patient_id,
+      serviceId: tr.service_id,
+      templateId: tpl.id,
+      paramIds,
+      resultId,
+      isNewResult,
+    },
+  };
+}
+
+async function upsertValues(
+  resultId: string,
+  payload: StructuredPayload,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const admin = createAdminClient();
+  const rows = Object.entries(payload.values).map(([paramId, v]) => ({
+    result_id: resultId,
+    parameter_id: paramId,
+    numeric_value_si: v.numeric_value_si,
+    numeric_value_conv: v.numeric_value_conv,
+    text_value: v.text_value,
+    select_value: v.select_value,
+    is_blank: v.is_blank,
+  }));
+
+  if (rows.length === 0) return { ok: true };
+
+  const { error } = await admin
+    .from("result_values")
+    .upsert(rows, { onConflict: "result_id,parameter_id" });
+
+  if (error) {
+    return { ok: false, error: `Could not save values: ${error.message}` };
+  }
+  return { ok: true };
+}
+
+export async function saveDraftAction(
+  testRequestId: string,
+  payload: StructuredPayload,
+): Promise<StructuredResult> {
+  const prep = await prepareStructured(testRequestId, payload);
+  if (!prep.ok) return prep;
+
+  const ups = await upsertValues(prep.ctx.resultId, payload);
+  if (!ups.ok) return ups;
+
+  const session = await requireActiveStaff();
+  const h = await headers();
+  await audit({
+    actor_id: session.user_id,
+    actor_type: "staff",
+    action: "result.draft_saved",
+    resource_type: "result",
+    resource_id: prep.ctx.resultId,
+    metadata: {
+      test_request_id: testRequestId,
+      param_count: Object.keys(payload.values).length,
+      first_save: prep.ctx.isNewResult,
+    },
+    ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    user_agent: h.get("user-agent"),
+  });
+
+  revalidatePath(`/staff/queue/${testRequestId}`);
+  return { ok: true, resultId: prep.ctx.resultId, controlNo: null };
+}
+
+export async function finaliseStructuredAction(
+  testRequestId: string,
+  payload: StructuredPayload,
+): Promise<StructuredResult> {
+  const prep = await prepareStructured(testRequestId, payload);
+  if (!prep.ok) return prep;
+  const ctx = prep.ctx;
+
+  // 1) Persist the values first so the trigger computes flags before we read
+  //    them back for the PDF render.
+  const ups = await upsertValues(ctx.resultId, payload);
+  if (!ups.ok) return ups;
+
+  // 2) Validate that every non-header param has a value or is_blank=true.
+  const admin = createAdminClient();
+  const { data: paramRows } = await admin
+    .from("result_template_params")
+    .select(
+      "id, sort_order, section, is_section_header, parameter_name, input_type, unit_si, unit_conv, ref_low_si, ref_high_si, ref_low_conv, ref_high_conv, gender, si_to_conv_factor, allowed_values, abnormal_values, placeholder",
+    )
+    .eq("template_id", ctx.templateId)
+    .order("sort_order", { ascending: true });
+
+  const params: TemplateParam[] = (paramRows ?? []).map((r) => ({
+    id: r.id,
+    sort_order: r.sort_order,
+    section: r.section,
+    is_section_header: r.is_section_header,
+    parameter_name: r.parameter_name,
+    input_type: r.input_type as TemplateParam["input_type"],
+    unit_si: r.unit_si,
+    unit_conv: r.unit_conv,
+    ref_low_si: r.ref_low_si,
+    ref_high_si: r.ref_high_si,
+    ref_low_conv: r.ref_low_conv,
+    ref_high_conv: r.ref_high_conv,
+    gender: (r.gender ?? null) as TemplateParam["gender"],
+    si_to_conv_factor: r.si_to_conv_factor,
+    allowed_values: r.allowed_values,
+    abnormal_values: r.abnormal_values,
+    placeholder: r.placeholder,
+  }));
+
+  // Validate against only the params relevant to this patient's sex —
+  // gender-specific rows (e.g. Hemoglobin F + Hemoglobin M) are filtered to
+  // the matching one so the form's view and the server's view agree.
+  const { data: patientSexRow } = await admin
+    .from("patients")
+    .select("sex")
+    .eq("id", ctx.patientId)
+    .single();
+  const visibleParams = filterParamsForPatient(
+    params,
+    normalisePatientSex(patientSexRow?.sex ?? null),
+  );
+
+  const missing = visibleParams
+    .filter((p) => !p.is_section_header)
+    .filter((p) => {
+      const v = payload.values[p.id];
+      if (!v) return true;
+      if (v.is_blank) return false;
+      if (p.input_type === "numeric") {
+        return v.numeric_value_si == null && v.numeric_value_conv == null;
+      }
+      if (p.input_type === "select") {
+        return !v.select_value;
+      }
+      return !v.text_value || !v.text_value.trim();
+    });
+
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      error: `Missing values for: ${missing
+        .slice(0, 5)
+        .map((p) => p.parameter_name)
+        .join(", ")}${missing.length > 5 ? "…" : ""}. Mark blank if you didn't run the sub-test.`,
+    };
+  }
+
+  // 3) Re-read the persisted values (with computed flags) for the PDF.
+  const { data: valueRows } = await admin
+    .from("result_values")
+    .select(
+      "parameter_id, numeric_value_si, numeric_value_conv, text_value, select_value, flag, is_blank",
+    )
+    .eq("result_id", ctx.resultId);
+
+  const values: Record<string, ParamValue> = {};
+  for (const r of valueRows ?? []) {
+    values[r.parameter_id] = {
+      numeric_value_si: r.numeric_value_si,
+      numeric_value_conv: r.numeric_value_conv,
+      text_value: r.text_value,
+      select_value: r.select_value,
+      flag: r.flag as ParamValue["flag"],
+      is_blank: r.is_blank,
+    };
+  }
+
+  // 4) Load template + service + patient + medtech for the document.
+  const { data: tplRow } = await admin
+    .from("result_templates")
+    .select("layout, header_notes, footer_notes")
+    .eq("id", ctx.templateId)
+    .single();
+
+  const { data: svc } = await admin
+    .from("services")
+    .select("code, name")
+    .eq("id", ctx.serviceId)
+    .single();
+
+  const { data: visit } = await admin
+    .from("visits")
+    .select("visit_number")
+    .eq("id", ctx.visitId)
+    .single();
+
+  const { data: patient } = await admin
+    .from("patients")
+    .select("drm_id, first_name, last_name, sex, birthdate")
+    .eq("id", ctx.patientId)
+    .single();
+
+  const session = await requireActiveStaff();
+  const { data: medtech } = await admin
+    .from("staff_profiles")
+    .select("full_name, prc_license_kind, prc_license_no")
+    .eq("id", session.user_id)
+    .single();
+
+  if (!tplRow || !svc || !visit || !patient) {
+    return { ok: false, error: "Failed to load record for PDF render." };
+  }
+
+  // 5) Read control_no — set by the sequence default on insert, so always
+  //    present by the time we get here.
+  const { data: pre } = await admin
+    .from("results")
+    .select("control_no")
+    .eq("id", ctx.resultId)
+    .single();
+  const controlNo = pre?.control_no ?? null;
+
+  // 6) Render the PDF.
+  const docInput: ResultDocumentInput = {
+    template: {
+      layout: tplRow.layout as ResultLayout,
+      header_notes: tplRow.header_notes,
+      footer_notes: tplRow.footer_notes,
+    },
+    params,
+    values,
+    service: { code: svc.code, name: svc.name },
+    patient: {
+      drm_id: patient.drm_id,
+      last_name: patient.last_name,
+      first_name: patient.first_name,
+      sex: normalisePatientSex(patient.sex),
+      birthdate: patient.birthdate,
+    },
+    visit: { visit_number: visit.visit_number },
+    controlNo,
+    finalisedAt: new Date(),
+    medtech: medtech
+      ? {
+          full_name: medtech.full_name,
+          prc_license_kind: medtech.prc_license_kind,
+          prc_license_no: medtech.prc_license_no,
+        }
+      : null,
+  };
+
+  const pdf = await renderResultPdf(docInput);
+
+  // 7) Upload to storage.
+  const path = `${ctx.patientId}/${ctx.visitId}/${ctx.testRequestId}.pdf`;
+  const { error: upErr } = await admin.storage
+    .from("results")
+    .upload(path, pdf, { contentType: "application/pdf", upsert: true });
+  if (upErr) return { ok: false, error: `PDF upload failed: ${upErr.message}` };
+
+  // 8) Mark the row finalised. The trigger advances test_requests.status when
+  //    finalised_at transitions NULL → not-NULL.
+  const { error: finErr } = await admin
+    .from("results")
+    .update({
+      storage_path: path,
+      file_size_bytes: pdf.byteLength,
+      finalised_at: new Date().toISOString(),
+      uploaded_by: session.user_id,
+    })
+    .eq("id", ctx.resultId);
+  if (finErr) {
+    await admin.storage.from("results").remove([path]);
+    return { ok: false, error: `Finalise failed: ${finErr.message}` };
+  }
+
+  const h = await headers();
+  await audit({
+    actor_id: session.user_id,
+    actor_type: "staff",
+    action: "result.finalised",
+    resource_type: "result",
+    resource_id: ctx.resultId,
+    metadata: {
+      test_request_id: testRequestId,
+      visit_id: ctx.visitId,
+      control_no: controlNo,
+      param_count: Object.keys(payload.values).length,
+      abnormal_count: Object.values(values).filter((v) => v.flag).length,
+      pdf_size_bytes: pdf.byteLength,
+    },
+    ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    user_agent: h.get("user-agent"),
+  });
+
+  revalidatePath(`/staff/queue`);
+  revalidatePath(`/staff/queue/${testRequestId}`);
+  revalidatePath(`/staff/visits/${ctx.visitId}`);
+  return { ok: true, resultId: ctx.resultId, controlNo };
+}
 
 export async function uploadResultAction(
   testRequestId: string,
@@ -127,6 +568,9 @@ export async function getResultDownloadUrl(
     .maybeSingle();
 
   if (!result) return { ok: false, error: "No result file." };
+  if (!result.storage_path) {
+    return { ok: false, error: "Result is still a draft — no PDF yet." };
+  }
 
   const { data: signed, error } = await admin.storage
     .from("results")

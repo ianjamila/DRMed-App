@@ -4,6 +4,13 @@ import { createClient } from "@/lib/supabase/server";
 import { ClaimButton } from "../claim-button";
 import { UploadResultForm } from "./upload-form";
 import { ViewResultButton } from "./view-result-button";
+import { StructuredResultForm } from "./structured-form";
+import {
+  normalisePatientSex,
+  type ParamValue,
+  type ResultLayout,
+  type TemplateParam,
+} from "@/lib/results/types";
 
 export const metadata = {
   title: "Test — staff",
@@ -34,12 +41,12 @@ export default async function QueueTestDetailPage({ params }: Props) {
     .select(
       `
         id, status, requested_at, started_at, completed_at, assigned_to,
-        services!inner ( id, code, name, turnaround_hours, requires_signoff ),
+        services!inner ( id, code, name, turnaround_hours, requires_signoff, is_send_out ),
         visits!inner (
           id, visit_number,
-          patients!inner ( id, drm_id, first_name, last_name, phone )
+          patients!inner ( id, drm_id, first_name, last_name, phone, sex, birthdate )
         ),
-        results ( id, uploaded_at, file_size_bytes, notes )
+        results ( id, uploaded_at, file_size_bytes, notes, generation_kind, finalised_at, control_no )
       `,
     )
     .eq("id", id)
@@ -56,8 +63,89 @@ export default async function QueueTestDetailPage({ params }: Props) {
   const result = Array.isArray(test.results) ? test.results[0] : test.results;
   const ownedByMe = test.assigned_to === user?.id;
   const claimable = test.status === "requested";
-  const uploadable =
-    test.status === "in_progress" && (ownedByMe || !test.assigned_to);
+  const editable =
+    ["in_progress", "result_uploaded"].includes(test.status) &&
+    (ownedByMe || !test.assigned_to);
+
+  // Phase 13: load template + (existing values, if any) so we can render
+  // the structured form when applicable. Send-out tests skip this entirely.
+  let templateLayout: ResultLayout | null = null;
+  let templateParams: TemplateParam[] = [];
+  const initialValues: Record<string, ParamValue> = {};
+
+  if (!svc.is_send_out) {
+    const { data: tpl } = await supabase
+      .from("result_templates")
+      .select("id, layout, is_active")
+      .eq("service_id", svc.id)
+      .maybeSingle();
+    if (tpl?.is_active) {
+      templateLayout = tpl.layout as ResultLayout;
+
+      const { data: paramRows } = await supabase
+        .from("result_template_params")
+        .select(
+          "id, sort_order, section, is_section_header, parameter_name, input_type, unit_si, unit_conv, ref_low_si, ref_high_si, ref_low_conv, ref_high_conv, gender, si_to_conv_factor, allowed_values, abnormal_values, placeholder",
+        )
+        .eq("template_id", tpl.id)
+        .order("sort_order", { ascending: true });
+
+      templateParams = (paramRows ?? []).map((r) => ({
+        id: r.id,
+        sort_order: r.sort_order,
+        section: r.section,
+        is_section_header: r.is_section_header,
+        parameter_name: r.parameter_name,
+        input_type: r.input_type as TemplateParam["input_type"],
+        unit_si: r.unit_si,
+        unit_conv: r.unit_conv,
+        ref_low_si: r.ref_low_si,
+        ref_high_si: r.ref_high_si,
+        ref_low_conv: r.ref_low_conv,
+        ref_high_conv: r.ref_high_conv,
+        gender: (r.gender ?? null) as TemplateParam["gender"],
+        si_to_conv_factor: r.si_to_conv_factor,
+        allowed_values: r.allowed_values,
+        abnormal_values: r.abnormal_values,
+        placeholder: r.placeholder,
+      }));
+
+      if (result?.id) {
+        const { data: valRows } = await supabase
+          .from("result_values")
+          .select(
+            "parameter_id, numeric_value_si, numeric_value_conv, text_value, select_value, flag, is_blank",
+          )
+          .eq("result_id", result.id);
+        for (const v of valRows ?? []) {
+          initialValues[v.parameter_id] = {
+            numeric_value_si: v.numeric_value_si,
+            numeric_value_conv: v.numeric_value_conv,
+            text_value: v.text_value,
+            select_value: v.select_value,
+            flag: v.flag as ParamValue["flag"],
+            is_blank: v.is_blank,
+          };
+        }
+      }
+    }
+  }
+
+  // Decide which workflow surface to render in the action card.
+  // Order of precedence:
+  //   structured-form  → in-house service with a template, editable, no
+  //                      uploaded-PDF result already in place
+  //   upload-form      → send-out OR no template; editable
+  //   nothing          → claimable / no actions
+  const canStructured =
+    editable &&
+    templateLayout != null &&
+    templateParams.length > 0 &&
+    (!result || result.generation_kind === "structured");
+  const canUpload =
+    editable &&
+    !canStructured &&
+    (!result || result.generation_kind === "uploaded");
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
@@ -135,15 +223,44 @@ export default async function QueueTestDetailPage({ params }: Props) {
           </div>
         ) : null}
 
-        {uploadable ? (
+        {canStructured ? (
+          <div>
+            <h2 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+              Enter result values
+            </h2>
+            <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
+              {svc.requires_signoff
+                ? "After Finalise the test moves to result_uploaded — pathologist sign-off required before release."
+                : "After Finalise the test moves to ready_for_release — reception can release it once the visit is paid."}
+              {result?.finalised_at
+                ? " Editing a finalised result will re-render the PDF on the next Finalise."
+                : ""}
+            </p>
+            <div className="mt-5">
+              <StructuredResultForm
+                testRequestId={test.id}
+                layout={templateLayout!}
+                params={templateParams}
+                patientSex={normalisePatientSex(patient.sex)}
+                initial={initialValues}
+                alreadyFinalised={false}
+              />
+            </div>
+          </div>
+        ) : null}
+
+        {canUpload ? (
           <div>
             <h2 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
               Upload result
             </h2>
             <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
+              {svc.is_send_out
+                ? "Send-out test: attach the partner-lab PDF."
+                : "No structured template configured for this service yet — falling back to PDF upload."}
               {svc.requires_signoff
-                ? "After upload the test moves to result_uploaded — pathologist sign-off required before release."
-                : "After upload the test moves to ready_for_release — reception can release it once the visit is paid."}
+                ? " After upload the test moves to result_uploaded — pathologist sign-off required before release."
+                : " After upload the test moves to ready_for_release — reception can release it once the visit is paid."}
             </p>
             <div className="mt-4">
               <UploadResultForm testRequestId={test.id} />
@@ -151,13 +268,18 @@ export default async function QueueTestDetailPage({ params }: Props) {
           </div>
         ) : null}
 
-        {result ? (
-          <div className={uploadable || claimable ? "mt-6" : ""}>
+        {result?.finalised_at || (result && result.generation_kind === "uploaded") ? (
+          <div className={canStructured || canUpload || claimable ? "mt-6" : ""}>
             <h2 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
               Result on file
             </h2>
             <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
-              Uploaded {new Date(result.uploaded_at).toLocaleString("en-PH")}
+              {result.generation_kind === "structured"
+                ? `Auto-generated from structured values. Control No. ${result.control_no?.toString().padStart(6, "0") ?? "—"}.`
+                : "Uploaded PDF (legacy / send-out path)."}
+              {result.uploaded_at
+                ? ` ${new Date(result.uploaded_at).toLocaleString("en-PH")}`
+                : ""}
               {result.file_size_bytes
                 ? ` · ${(result.file_size_bytes / 1024).toFixed(0)} KB`
                 : ""}
@@ -179,7 +301,7 @@ export default async function QueueTestDetailPage({ params }: Props) {
           </div>
         ) : null}
 
-        {!claimable && !uploadable && !result ? (
+        {!claimable && !canStructured && !canUpload && !result ? (
           <p className="text-sm text-[color:var(--color-brand-text-soft)]">
             No actions available for this test in its current state.
           </p>
