@@ -34,6 +34,17 @@ const PAYMENT_METHOD_LABEL: Record<string, string> = {
   maya: "Maya",
   card: "Card",
   bank_transfer: "Bank transfer",
+  hmo: "HMO",
+  bpi: "BPI",
+  maybank: "Maybank",
+};
+
+const DISCOUNT_KIND_LABEL: Record<string, string> = {
+  senior_pwd_20: "Sr/PWD",
+  pct_10: "10% off",
+  pct_5: "5% off",
+  other_pct_20: "Other 20%",
+  custom: "Custom",
 };
 
 export default async function VisitDetailPage({ params }: Props) {
@@ -46,7 +57,9 @@ export default async function VisitDetailPage({ params }: Props) {
       `
         id, visit_number, visit_date, payment_status,
         total_php, paid_php, notes, created_at,
-        patients!inner ( id, drm_id, first_name, last_name )
+        hmo_provider_id, hmo_approval_date, hmo_authorization_no,
+        patients!inner ( id, drm_id, first_name, last_name ),
+        hmo_providers ( id, name )
       `,
     )
     .eq("id", id)
@@ -55,6 +68,9 @@ export default async function VisitDetailPage({ params }: Props) {
   if (!visit) notFound();
   const patient = Array.isArray(visit.patients) ? visit.patients[0] : visit.patients;
   if (!patient) notFound();
+  const hmo = Array.isArray(visit.hmo_providers)
+    ? visit.hmo_providers[0]
+    : visit.hmo_providers;
 
   const [{ data: tests }, { data: payments }] = await Promise.all([
     supabase
@@ -62,6 +78,7 @@ export default async function VisitDetailPage({ params }: Props) {
       .select(
         `
           id, status, requested_at, completed_at, released_at,
+          base_price_php, discount_kind, discount_amount_php, final_price_php,
           services!inner ( id, code, name, price_php )
         `,
       )
@@ -136,6 +153,40 @@ export default async function VisitDetailPage({ params }: Props) {
         </div>
       </section>
 
+      {hmo ? (
+        <section className="mt-6 rounded-xl border border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-bg)] p-5">
+          <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
+            HMO authorisation
+          </p>
+          <div className="mt-2 grid gap-3 text-sm sm:grid-cols-3">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+                Provider
+              </p>
+              <p className="font-semibold text-[color:var(--color-brand-navy)]">
+                {hmo.name}
+              </p>
+            </div>
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+                Approval date
+              </p>
+              <p className="text-[color:var(--color-brand-text-mid)]">
+                {visit.hmo_approval_date ?? "—"}
+              </p>
+            </div>
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+                Authorization no.
+              </p>
+              <p className="font-mono text-[color:var(--color-brand-text-mid)]">
+                {visit.hmo_authorization_no ?? "—"}
+              </p>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
       <section className="mt-8">
         <h2 className="mb-3 font-[family-name:var(--font-heading)] text-xl font-extrabold text-[color:var(--color-brand-navy)]">
           Tests
@@ -144,9 +195,10 @@ export default async function VisitDetailPage({ params }: Props) {
           <table className="w-full text-sm">
             <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
               <tr>
-                <th className="px-4 py-3">Code</th>
                 <th className="px-4 py-3">Service</th>
-                <th className="px-4 py-3">Price</th>
+                <th className="px-4 py-3 text-right">Base</th>
+                <th className="px-4 py-3 text-right">Discount</th>
+                <th className="px-4 py-3 text-right">Final</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3 text-right">Action</th>
               </tr>
@@ -155,18 +207,60 @@ export default async function VisitDetailPage({ params }: Props) {
               {(tests ?? []).map((t) => {
                 const svc = Array.isArray(t.services) ? t.services[0] : t.services;
                 if (!svc) return null;
+                // Snapshot fields on the line; fall back to live service price
+                // for legacy rows created before P7B.2.
+                const base =
+                  t.base_price_php != null
+                    ? Number(t.base_price_php)
+                    : Number(svc.price_php);
+                const discount =
+                  t.discount_amount_php != null
+                    ? Number(t.discount_amount_php)
+                    : 0;
+                const finalPrice =
+                  t.final_price_php != null
+                    ? Number(t.final_price_php)
+                    : base - discount;
+                const discountLabel = t.discount_kind
+                  ? DISCOUNT_KIND_LABEL[t.discount_kind] ?? t.discount_kind
+                  : null;
                 return (
                   <tr
                     key={t.id}
                     className="hover:bg-[color:var(--color-brand-bg)]"
                   >
-                    <td className="px-4 py-3 font-mono text-[color:var(--color-brand-text-mid)]">
-                      {svc.code}
+                    <td className="px-4 py-3">
+                      <p className="text-[color:var(--color-brand-navy)]">
+                        {svc.name}
+                      </p>
+                      <p className="font-mono text-[10px] text-[color:var(--color-brand-text-soft)]">
+                        {svc.code}
+                      </p>
                     </td>
-                    <td className="px-4 py-3 text-[color:var(--color-brand-navy)]">
-                      {svc.name}
+                    <td className="px-4 py-3 text-right font-mono text-xs">
+                      {formatPhp(base)}
                     </td>
-                    <td className="px-4 py-3">{formatPhp(svc.price_php)}</td>
+                    <td className="px-4 py-3 text-right font-mono text-xs">
+                      {discount > 0 ? (
+                        <>
+                          <span className="text-red-600">
+                            −{formatPhp(discount)}
+                          </span>
+                          {discountLabel ? (
+                            <span className="ml-1 text-[10px] uppercase text-[color:var(--color-brand-text-soft)]">
+                              {discountLabel}
+                            </span>
+                          ) : null}
+                        </>
+                      ) : (
+                        <span className="text-[color:var(--color-brand-text-soft)]">
+                          —
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right font-mono text-sm font-semibold text-[color:var(--color-brand-navy)]">
+                      {formatPhp(finalPrice)}
+                    </td>
                     <td className="px-4 py-3">
                       <span
                         className={`rounded-md px-2 py-0.5 text-xs font-semibold ${
@@ -190,7 +284,7 @@ export default async function VisitDetailPage({ params }: Props) {
               {(tests ?? []).length === 0 ? (
                 <tr>
                   <td
-                    colSpan={5}
+                    colSpan={6}
                     className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]"
                   >
                     No tests on this visit yet.

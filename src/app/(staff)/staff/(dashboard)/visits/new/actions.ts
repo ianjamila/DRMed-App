@@ -10,11 +10,48 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { generatePin, hashPin } from "@/lib/auth/pin";
 import { setVisitPinFlash } from "@/lib/auth/visit-pin-flash";
 
+const DiscountKindEnum = z.enum([
+  "senior_pwd_20",
+  "pct_10",
+  "pct_5",
+  "other_pct_20",
+  "custom",
+]);
+
+const optionalUuid = z
+  .union([z.string(), z.null(), z.undefined()])
+  .transform((v) => {
+    const t = (v ?? "").toString().trim();
+    return t.length === 0 ? null : t;
+  })
+  .pipe(z.string().uuid().nullable());
+
+const optionalDate = z
+  .union([z.string(), z.null(), z.undefined()])
+  .transform((v) => {
+    const t = (v ?? "").toString().trim();
+    return t.length === 0 ? null : t;
+  })
+  .pipe(z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable());
+
+const optionalText = (max: number) =>
+  z
+    .union([z.string(), z.null(), z.undefined()])
+    .transform((v) => {
+      const t = (v ?? "").toString().trim();
+      return t.length === 0 ? null : t;
+    })
+    .pipe(z.string().max(max).nullable());
+
 const Schema = z.object({
   patient_id: z.string().uuid("Pick a valid patient."),
   service_ids: z
     .array(z.string().uuid())
     .min(1, "Select at least one service."),
+  hmo_provider_id: optionalUuid,
+  hmo_approval_date: optionalDate,
+  hmo_authorization_no: optionalText(80),
+  receptionist_remarks: optionalText(40),
   notes: z.string().trim().max(2000).optional(),
 });
 
@@ -31,6 +68,10 @@ export async function createVisitAction(
   const parsed = Schema.safeParse({
     patient_id: formData.get("patient_id"),
     service_ids: formData.getAll("service_ids"),
+    hmo_provider_id: formData.get("hmo_provider_id"),
+    hmo_approval_date: formData.get("hmo_approval_date"),
+    hmo_authorization_no: formData.get("hmo_authorization_no"),
+    receptionist_remarks: formData.get("receptionist_remarks"),
     notes: formData.get("notes") ?? "",
   });
 
@@ -43,21 +84,64 @@ export async function createVisitAction(
 
   const supabase = await createClient();
 
-  // Total = sum of selected service prices.
   const { data: services, error: svcErr } = await supabase
     .from("services")
-    .select("id, price_php")
+    .select("id, price_php, hmo_price_php, senior_discount_php")
     .in("id", parsed.data.service_ids);
 
   if (svcErr || !services || services.length !== parsed.data.service_ids.length) {
-    return {
-      ok: false,
-      error: "One or more services could not be found.",
-    };
+    return { ok: false, error: "One or more services could not be found." };
   }
-  const totalPhp = services.reduce((sum, s) => sum + Number(s.price_php), 0);
 
-  // Create the visit.
+  // Snapshot pricing per line — same arithmetic as the client form so the
+  // server is the source of truth even if the client sent stale values.
+  const hmoSelected = parsed.data.hmo_provider_id !== null;
+  const lines = parsed.data.service_ids.map((service_id) => {
+    const s = services.find((x) => x.id === service_id)!;
+    const cashPrice = Number(s.price_php);
+    const hmoPrice = s.hmo_price_php != null ? Number(s.hmo_price_php) : null;
+    const seniorPesoOff =
+      s.senior_discount_php != null ? Number(s.senior_discount_php) : null;
+
+    const base = hmoSelected && hmoPrice != null ? hmoPrice : cashPrice;
+
+    const rawKind = formData.get(`discount_kind__${service_id}`)?.toString() ?? "";
+    const parsedKind = DiscountKindEnum.safeParse(rawKind);
+    const discount_kind = parsedKind.success ? parsedKind.data : null;
+
+    let discount_amount_php = 0;
+    if (discount_kind === "senior_pwd_20") {
+      discount_amount_php =
+        seniorPesoOff != null
+          ? Math.min(seniorPesoOff, base)
+          : Math.round(base * 0.2 * 100) / 100;
+    } else if (discount_kind === "pct_10") {
+      discount_amount_php = Math.round(base * 0.1 * 100) / 100;
+    } else if (discount_kind === "pct_5") {
+      discount_amount_php = Math.round(base * 0.05 * 100) / 100;
+    } else if (discount_kind === "other_pct_20") {
+      discount_amount_php = Math.round(base * 0.2 * 100) / 100;
+    } else if (discount_kind === "custom") {
+      const raw = formData.get(`custom_discount__${service_id}`)?.toString() ?? "";
+      const n = Number(raw);
+      if (Number.isFinite(n) && n >= 0) {
+        discount_amount_php = Math.min(n, base);
+      }
+    }
+
+    const final_price_php = Math.max(0, base - discount_amount_php);
+    return {
+      service_id,
+      base_price_php: base,
+      discount_kind,
+      discount_amount_php,
+      final_price_php,
+    };
+  });
+
+  const totalPhp = lines.reduce((sum, l) => sum + l.final_price_php, 0);
+
+  // Create the visit, including the HMO authorisation if provided.
   const { data: visit, error: visitErr } = await supabase
     .from("visits")
     .insert({
@@ -65,22 +149,32 @@ export async function createVisitAction(
       total_php: totalPhp,
       notes: parsed.data.notes ?? null,
       created_by: session.user_id,
+      hmo_provider_id: parsed.data.hmo_provider_id,
+      hmo_approval_date: parsed.data.hmo_approval_date,
+      hmo_authorization_no: parsed.data.hmo_authorization_no,
     })
     .select("id, visit_number")
     .single();
 
   if (visitErr || !visit) {
-    return {
-      ok: false,
-      error: visitErr?.message ?? "Could not create visit.",
-    };
+    return { ok: false, error: visitErr?.message ?? "Could not create visit." };
   }
 
-  // Test requests, one per service.
-  const requestRows = parsed.data.service_ids.map((service_id) => ({
+  // Test requests with snapshotted prices + per-line discount info. The
+  // visit-level HMO id/date/auth are denormalised onto each line too so the
+  // accounting export rows are self-contained.
+  const requestRows = lines.map((l) => ({
     visit_id: visit.id,
-    service_id,
+    service_id: l.service_id,
     requested_by: session.user_id,
+    base_price_php: l.base_price_php,
+    discount_kind: l.discount_kind,
+    discount_amount_php: l.discount_amount_php,
+    final_price_php: l.final_price_php,
+    hmo_provider_id: parsed.data.hmo_provider_id,
+    hmo_approval_date: parsed.data.hmo_approval_date,
+    hmo_authorization_no: parsed.data.hmo_authorization_no,
+    receptionist_remarks: parsed.data.receptionist_remarks,
   }));
   const { error: trErr } = await supabase
     .from("test_requests")
@@ -114,6 +208,8 @@ export async function createVisitAction(
       visit_number: visit.visit_number,
       total_php: totalPhp,
       service_count: parsed.data.service_ids.length,
+      hmo_provider_id: parsed.data.hmo_provider_id,
+      discounted_lines: lines.filter((l) => l.discount_amount_php > 0).length,
     },
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),

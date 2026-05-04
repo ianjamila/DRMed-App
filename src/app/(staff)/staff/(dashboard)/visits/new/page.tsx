@@ -19,18 +19,26 @@ export default async function NewVisitPage({ searchParams }: Props) {
 
   const supabase = await createClient();
 
-  const [{ data: patient }, { data: services }] = await Promise.all([
-    supabase
-      .from("patients")
-      .select("id, drm_id, first_name, last_name")
-      .eq("id", patient_id)
-      .maybeSingle(),
-    supabase
-      .from("services")
-      .select("id, code, name, price_php")
-      .eq("is_active", true)
-      .order("name", { ascending: true }),
-  ]);
+  const [{ data: patient }, { data: services }, { data: hmoProviders }] =
+    await Promise.all([
+      supabase
+        .from("patients")
+        .select("id, drm_id, first_name, last_name")
+        .eq("id", patient_id)
+        .maybeSingle(),
+      supabase
+        .from("services")
+        .select(
+          "id, code, name, price_php, hmo_price_php, senior_discount_php",
+        )
+        .eq("is_active", true)
+        .order("name", { ascending: true }),
+      supabase
+        .from("hmo_providers")
+        .select("id, name")
+        .eq("is_active", true)
+        .order("name", { ascending: true }),
+    ]);
 
   if (!patient) {
     redirect("/staff/patients");
@@ -53,7 +61,19 @@ export default async function NewVisitPage({ searchParams }: Props) {
       </p>
 
       <div className="mt-8 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
-        <VisitForm patient={patient} services={services ?? []} />
+        <VisitForm
+          patient={patient}
+          services={(services ?? []).map((s) => ({
+            id: s.id,
+            code: s.code,
+            name: s.name,
+            price_php: Number(s.price_php),
+            hmo_price_php: s.hmo_price_php != null ? Number(s.hmo_price_php) : null,
+            senior_discount_php:
+              s.senior_discount_php != null ? Number(s.senior_discount_php) : null,
+          }))}
+          hmoProviders={hmoProviders ?? []}
+        />
       </div>
     </div>
   );
