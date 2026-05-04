@@ -6,11 +6,13 @@ import { UploadResultForm } from "./upload-form";
 import { ViewResultButton } from "./view-result-button";
 import { StructuredResultForm } from "./structured-form";
 import {
+  calculateAgeMonths,
   normalisePatientSex,
   type ParamValue,
   type ResultLayout,
   type TemplateParam,
 } from "@/lib/results/types";
+import { loadTemplateParams } from "@/lib/results/loaders";
 
 export const metadata = {
   title: "Test — staff",
@@ -81,34 +83,7 @@ export default async function QueueTestDetailPage({ params }: Props) {
       .maybeSingle();
     if (tpl?.is_active) {
       templateLayout = tpl.layout as ResultLayout;
-
-      const { data: paramRows } = await supabase
-        .from("result_template_params")
-        .select(
-          "id, sort_order, section, is_section_header, parameter_name, input_type, unit_si, unit_conv, ref_low_si, ref_high_si, ref_low_conv, ref_high_conv, gender, si_to_conv_factor, allowed_values, abnormal_values, placeholder",
-        )
-        .eq("template_id", tpl.id)
-        .order("sort_order", { ascending: true });
-
-      templateParams = (paramRows ?? []).map((r) => ({
-        id: r.id,
-        sort_order: r.sort_order,
-        section: r.section,
-        is_section_header: r.is_section_header,
-        parameter_name: r.parameter_name,
-        input_type: r.input_type as TemplateParam["input_type"],
-        unit_si: r.unit_si,
-        unit_conv: r.unit_conv,
-        ref_low_si: r.ref_low_si,
-        ref_high_si: r.ref_high_si,
-        ref_low_conv: r.ref_low_conv,
-        ref_high_conv: r.ref_high_conv,
-        gender: (r.gender ?? null) as TemplateParam["gender"],
-        si_to_conv_factor: r.si_to_conv_factor,
-        allowed_values: r.allowed_values,
-        abnormal_values: r.abnormal_values,
-        placeholder: r.placeholder,
-      }));
+      templateParams = await loadTemplateParams(supabase, tpl.id);
 
       if (result?.id) {
         const { data: valRows } = await supabase
@@ -242,6 +217,7 @@ export default async function QueueTestDetailPage({ params }: Props) {
                 layout={templateLayout!}
                 params={templateParams}
                 patientSex={normalisePatientSex(patient.sex)}
+                patientAgeMonths={calculateAgeMonths(patient.birthdate)}
                 initial={initialValues}
                 alreadyFinalised={false}
               />

@@ -16,8 +16,11 @@ import {
 import { CONTACT, SITE } from "@/lib/marketing/site";
 import {
   calculateAge,
+  calculateAgeMonths,
   filterParamsForPatient,
   formatRefRange,
+  pickRangeForPatient,
+  type EffectiveRange,
   type ResultDocumentInput,
   type TemplateParam,
   type ParamValue,
@@ -455,13 +458,25 @@ function displayValueConv(v: ParamValue | undefined): string {
 // Layout: simple
 // ---------------------------------------------------------------------------
 
-function SimpleTable({
-  params,
-  values,
-}: {
+interface BodyContext {
   params: TemplateParam[];
   values: Record<string, ParamValue>;
-}) {
+  ranges: Map<string, EffectiveRange>;
+}
+
+function rangeFor(p: TemplateParam, ranges: Map<string, EffectiveRange>): EffectiveRange {
+  return (
+    ranges.get(p.id) ?? {
+      ref_low_si: p.ref_low_si,
+      ref_high_si: p.ref_high_si,
+      ref_low_conv: p.ref_low_conv,
+      ref_high_conv: p.ref_high_conv,
+      band_label: null,
+    }
+  );
+}
+
+function SimpleTable({ params, values, ranges }: BodyContext) {
   return (
     <View style={styles.table}>
       <View style={styles.trHead}>
@@ -502,6 +517,7 @@ function SimpleTable({
         const v = values[p.id];
         const flag = v?.flag ?? null;
         const isAbnormal = !!flag;
+        const eff = rangeFor(p, ranges);
         return (
           <View key={p.id} style={styles.tr}>
             <Text
@@ -548,7 +564,7 @@ function SimpleTable({
                 { width: `${COLS.simple.ref * 100}%` },
               ]}
             >
-              {formatRefRange(p.ref_low_si, p.ref_high_si)}
+              {formatRefRange(eff.ref_low_si, eff.ref_high_si)}
             </Text>
           </View>
         );
@@ -561,13 +577,7 @@ function SimpleTable({
 // Layout: dual_unit (SI + Conventional)
 // ---------------------------------------------------------------------------
 
-function DualUnitTable({
-  params,
-  values,
-}: {
-  params: TemplateParam[];
-  values: Record<string, ParamValue>;
-}) {
+function DualUnitTable({ params, values, ranges }: BodyContext) {
   return (
     <View style={styles.table}>
       <View style={styles.trHead}>
@@ -635,6 +645,7 @@ function DualUnitTable({
         }
         const v = values[p.id];
         const isAbnormal = !!v?.flag;
+        const eff = rangeFor(p, ranges);
         return (
           <View key={p.id} style={styles.tr}>
             <Text
@@ -671,7 +682,7 @@ function DualUnitTable({
                 { width: `${COLS.dualUnit.siRange * 100}%` },
               ]}
             >
-              {formatRefRange(p.ref_low_si, p.ref_high_si)}
+              {formatRefRange(eff.ref_low_si, eff.ref_high_si)}
             </Text>
             <Text
               style={[
@@ -702,7 +713,7 @@ function DualUnitTable({
                 { width: `${COLS.dualUnit.convRange * 100}%` },
               ]}
             >
-              {formatRefRange(p.ref_low_conv, p.ref_high_conv)}
+              {formatRefRange(eff.ref_low_conv, eff.ref_high_conv)}
             </Text>
           </View>
         );
@@ -715,13 +726,7 @@ function DualUnitTable({
 // Layout: multi_section
 // ---------------------------------------------------------------------------
 
-function MultiSectionBody({
-  params,
-  values,
-}: {
-  params: TemplateParam[];
-  values: Record<string, ParamValue>;
-}) {
+function MultiSectionBody({ params, values, ranges }: BodyContext) {
   // Group params by section. Section-header rows act as the heading; data rows
   // following them belong to that section. Rows with no section ride along at
   // the end (e.g. the "Remarks" row in the urinalysis seed).
@@ -752,6 +757,7 @@ function MultiSectionBody({
             {g.rows.map((p) => {
               const v = values[p.id];
               const isAbnormal = !!v?.flag;
+              const eff = rangeFor(p, ranges);
               return (
                 <View key={p.id} style={styles.tr}>
                   <Text
@@ -804,7 +810,7 @@ function MultiSectionBody({
                       { width: `${COLS.multi.ref * 100}%` },
                     ]}
                   >
-                    {formatRefRange(p.ref_low_si, p.ref_high_si)}
+                    {formatRefRange(eff.ref_low_si, eff.ref_high_si)}
                   </Text>
                 </View>
               );
@@ -820,13 +826,7 @@ function MultiSectionBody({
 // Layout: imaging_report (free-text Findings + Impression)
 // ---------------------------------------------------------------------------
 
-function ImagingBody({
-  params,
-  values,
-}: {
-  params: TemplateParam[];
-  values: Record<string, ParamValue>;
-}) {
+function ImagingBody({ params, values }: Omit<BodyContext, "ranges">) {
   // Imaging templates have ~2 free-text params: Findings and Impression. We
   // render whatever params the admin defined, in sort order, as labelled
   // monospace blocks. Blank values render as "—" so the sections never
@@ -854,6 +854,13 @@ function ImagingBody({
 
 export function ResultDocument(input: ResultDocumentInput) {
   const visibleParams = filterParamsForPatient(input.params, input.patient.sex);
+  const ageMonths = calculateAgeMonths(input.patient.birthdate);
+  const ranges = new Map<string, EffectiveRange>();
+  for (const p of visibleParams) {
+    if (!p.is_section_header) {
+      ranges.set(p.id, pickRangeForPatient(p, input.patient.sex, ageMonths));
+    }
+  }
 
   return (
     <Document
@@ -880,13 +887,13 @@ export function ResultDocument(input: ResultDocumentInput) {
         ) : null}
 
         {input.template.layout === "simple" ? (
-          <SimpleTable params={visibleParams} values={input.values} />
+          <SimpleTable params={visibleParams} values={input.values} ranges={ranges} />
         ) : null}
         {input.template.layout === "dual_unit" ? (
-          <DualUnitTable params={visibleParams} values={input.values} />
+          <DualUnitTable params={visibleParams} values={input.values} ranges={ranges} />
         ) : null}
         {input.template.layout === "multi_section" ? (
-          <MultiSectionBody params={visibleParams} values={input.values} />
+          <MultiSectionBody params={visibleParams} values={input.values} ranges={ranges} />
         ) : null}
         {input.template.layout === "imaging_report" ? (
           <ImagingBody params={visibleParams} values={input.values} />

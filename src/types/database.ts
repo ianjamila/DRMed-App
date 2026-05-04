@@ -304,6 +304,62 @@ export type Database = {
           },
         ]
       }
+      result_template_param_ranges: {
+        Row: {
+          age_max_months: number | null
+          age_min_months: number | null
+          band_label: string
+          created_at: string
+          gender: string | null
+          id: string
+          parameter_id: string
+          ref_high_conv: number | null
+          ref_high_si: number | null
+          ref_low_conv: number | null
+          ref_low_si: number | null
+          sort_order: number
+          updated_at: string
+        }
+        Insert: {
+          age_max_months?: number | null
+          age_min_months?: number | null
+          band_label: string
+          created_at?: string
+          gender?: string | null
+          id?: string
+          parameter_id: string
+          ref_high_conv?: number | null
+          ref_high_si?: number | null
+          ref_low_conv?: number | null
+          ref_low_si?: number | null
+          sort_order?: number
+          updated_at?: string
+        }
+        Update: {
+          age_max_months?: number | null
+          age_min_months?: number | null
+          band_label?: string
+          created_at?: string
+          gender?: string | null
+          id?: string
+          parameter_id?: string
+          ref_high_conv?: number | null
+          ref_high_si?: number | null
+          ref_low_conv?: number | null
+          ref_low_si?: number | null
+          sort_order?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "result_template_param_ranges_parameter_id_fkey"
+            columns: ["parameter_id"]
+            isOneToOne: false
+            referencedRelation: "result_template_params"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       result_template_params: {
         Row: {
           abnormal_values: string[] | null

@@ -36,6 +36,17 @@ const admin = createClient<Database>(SUPABASE_URL, SERVICE_KEY, {
 type Layout = "simple" | "dual_unit" | "multi_section" | "imaging_report";
 type InputType = "numeric" | "free_text" | "select";
 
+interface RangeSeed {
+  band_label: string;
+  age_min_months?: number;
+  age_max_months?: number;
+  gender?: "F" | "M";
+  ref_low_si?: number;
+  ref_high_si?: number;
+  ref_low_conv?: number;
+  ref_high_conv?: number;
+}
+
 interface ParamSeed {
   parameter_name: string;
   input_type: InputType;
@@ -52,6 +63,10 @@ interface ParamSeed {
   allowed_values?: string[];
   abnormal_values?: string[];
   placeholder?: string;
+  // Optional age-banded ranges that override the param defaults for matching
+  // patients. The picker prefers explicit-gender bands first, then null-gender
+  // bands; falls back to ref_*_si / ref_*_conv when no band matches.
+  ranges?: RangeSeed[];
 }
 
 interface TemplateSeed {
@@ -93,13 +108,48 @@ const cbc: TemplateSeed = {
       is_section_header: true,
       section: "RBC",
     },
-    // Gender-specific ranges → two rows with the same parameter_name; the form
-    // shows whichever row matches the patient's `sex`. Both rows are kept on
-    // the printed PDF so a reader can see the reference for either gender.
-    { parameter_name: "Hemoglobin",   input_type: "numeric", section: "RBC", unit_si: "g/dL",      gender: "F", ref_low_si: 12,  ref_high_si: 16 },
-    { parameter_name: "Hemoglobin",   input_type: "numeric", section: "RBC", unit_si: "g/dL",      gender: "M", ref_low_si: 14,  ref_high_si: 18 },
-    { parameter_name: "Hematocrit",   input_type: "numeric", section: "RBC", unit_si: "%",         gender: "F", ref_low_si: 37,  ref_high_si: 47 },
-    { parameter_name: "Hematocrit",   input_type: "numeric", section: "RBC", unit_si: "%",         gender: "M", ref_low_si: 42,  ref_high_si: 52 },
+    // Gender-specific ranges → two rows with the same parameter_name; the
+    // form shows whichever row matches the patient's `sex`. Each gendered row
+    // also carries age-banded ranges (Neonate / Infant / Pediatric) that
+    // override the adult default for younger patients — neonatal Hgb is
+    // dramatically higher (14–24) than adult, and adult thresholds would
+    // mis-flag normal newborns. Sources: WHO + Nelson Pediatric Reference.
+    {
+      parameter_name: "Hemoglobin", input_type: "numeric", section: "RBC", unit_si: "g/dL",
+      gender: "F", ref_low_si: 12, ref_high_si: 16,
+      ranges: [
+        { band_label: "Neonate (0–1 mo)",    age_min_months: 0,   age_max_months: 1,   ref_low_si: 14,  ref_high_si: 24 },
+        { band_label: "Infant (1–24 mo)",    age_min_months: 1,   age_max_months: 24,  ref_low_si: 9.5, ref_high_si: 13.5 },
+        { band_label: "Pediatric (2–13 y)",  age_min_months: 24,  age_max_months: 156, ref_low_si: 11,  ref_high_si: 14.5 },
+      ],
+    },
+    {
+      parameter_name: "Hemoglobin", input_type: "numeric", section: "RBC", unit_si: "g/dL",
+      gender: "M", ref_low_si: 14, ref_high_si: 18,
+      ranges: [
+        { band_label: "Neonate (0–1 mo)",    age_min_months: 0,   age_max_months: 1,   ref_low_si: 14,  ref_high_si: 24 },
+        { band_label: "Infant (1–24 mo)",    age_min_months: 1,   age_max_months: 24,  ref_low_si: 9.5, ref_high_si: 13.5 },
+        { band_label: "Pediatric (2–13 y)",  age_min_months: 24,  age_max_months: 156, ref_low_si: 11,  ref_high_si: 14.5 },
+      ],
+    },
+    {
+      parameter_name: "Hematocrit", input_type: "numeric", section: "RBC", unit_si: "%",
+      gender: "F", ref_low_si: 37, ref_high_si: 47,
+      ranges: [
+        { band_label: "Neonate (0–1 mo)",    age_min_months: 0,   age_max_months: 1,   ref_low_si: 42,  ref_high_si: 65 },
+        { band_label: "Infant (1–24 mo)",    age_min_months: 1,   age_max_months: 24,  ref_low_si: 28,  ref_high_si: 41 },
+        { band_label: "Pediatric (2–13 y)",  age_min_months: 24,  age_max_months: 156, ref_low_si: 33,  ref_high_si: 43 },
+      ],
+    },
+    {
+      parameter_name: "Hematocrit", input_type: "numeric", section: "RBC", unit_si: "%",
+      gender: "M", ref_low_si: 42, ref_high_si: 52,
+      ranges: [
+        { band_label: "Neonate (0–1 mo)",    age_min_months: 0,   age_max_months: 1,   ref_low_si: 42,  ref_high_si: 65 },
+        { band_label: "Infant (1–24 mo)",    age_min_months: 1,   age_max_months: 24,  ref_low_si: 28,  ref_high_si: 41 },
+        { band_label: "Pediatric (2–13 y)",  age_min_months: 24,  age_max_months: 156, ref_low_si: 33,  ref_high_si: 43 },
+      ],
+    },
     { parameter_name: "RBC Count",    input_type: "numeric", section: "RBC", unit_si: "x 10^12/L", ref_low_si: 4.0, ref_high_si: 5.3 },
     { parameter_name: "MCV",          input_type: "numeric", section: "RBC", unit_si: "fL",        ref_low_si: 80,  ref_high_si: 99 },
     { parameter_name: "MCH",          input_type: "numeric", section: "RBC", unit_si: "pg",        ref_low_si: 26,  ref_high_si: 32 },
@@ -327,12 +377,45 @@ async function upsertTemplate(t: TemplateSeed) {
     placeholder: p.placeholder ?? null,
   }));
 
-  const { error: pErr } = await admin
+  const { data: insertedParams, error: pErr } = await admin
     .from("result_template_params")
-    .insert(rows);
-  if (pErr) throw new Error(`insert params ${t.service_code}: ${pErr.message}`);
+    .insert(rows)
+    .select("id");
+  if (pErr || !insertedParams)
+    throw new Error(`insert params ${t.service_code}: ${pErr?.message}`);
 
-  console.log(`✓ ${t.service_code} (${t.layout}): ${rows.length} parameters`);
+  // Insert age-banded ranges for params that declared them. The .insert
+  // above returns rows in insertion order — match by index back to t.params.
+  const rangeRows: Array<Record<string, unknown>> = [];
+  insertedParams.forEach((row, idx) => {
+    const seed = t.params[idx];
+    if (!seed.ranges || seed.ranges.length === 0) return;
+    seed.ranges.forEach((r, j) => {
+      rangeRows.push({
+        parameter_id: row.id,
+        sort_order: j,
+        age_min_months: r.age_min_months ?? null,
+        age_max_months: r.age_max_months ?? null,
+        gender: r.gender ?? null,
+        band_label: r.band_label,
+        ref_low_si: r.ref_low_si ?? null,
+        ref_high_si: r.ref_high_si ?? null,
+        ref_low_conv: r.ref_low_conv ?? null,
+        ref_high_conv: r.ref_high_conv ?? null,
+      });
+    });
+  });
+
+  if (rangeRows.length > 0) {
+    const { error: rErr } = await admin
+      .from("result_template_param_ranges")
+      .insert(rangeRows);
+    if (rErr) throw new Error(`insert ranges ${t.service_code}: ${rErr.message}`);
+  }
+
+  console.log(
+    `✓ ${t.service_code} (${t.layout}): ${rows.length} parameters, ${rangeRows.length} age-banded ranges`,
+  );
 }
 
 async function main() {

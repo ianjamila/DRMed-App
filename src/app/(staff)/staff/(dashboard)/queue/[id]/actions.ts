@@ -8,13 +8,18 @@ import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { renderResultPdf } from "@/lib/results/render-pdf";
 import {
+  calculateAgeMonths,
+  computeFlag,
   filterParamsForPatient,
   normalisePatientSex,
+  pickRangeForPatient,
+  type PatientSex,
   type ResultDocumentInput,
   type ResultLayout,
-  type TemplateParam,
   type ParamValue,
+  type TemplateParam,
 } from "@/lib/results/types";
+import { loadTemplateParams } from "@/lib/results/loaders";
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
 
@@ -172,17 +177,31 @@ async function prepareStructured(
 async function upsertValues(
   resultId: string,
   payload: StructuredPayload,
+  params: TemplateParam[],
+  patientSex: PatientSex,
+  patientAgeMonths: number | null,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const admin = createAdminClient();
-  const rows = Object.entries(payload.values).map(([paramId, v]) => ({
-    result_id: resultId,
-    parameter_id: paramId,
-    numeric_value_si: v.numeric_value_si,
-    numeric_value_conv: v.numeric_value_conv,
-    text_value: v.text_value,
-    select_value: v.select_value,
-    is_blank: v.is_blank,
-  }));
+  const paramsById = new Map(params.map((p) => [p.id, p]));
+
+  const rows = Object.entries(payload.values).map(([paramId, v]) => {
+    const param = paramsById.get(paramId);
+    let flag: "H" | "L" | "A" | null = null;
+    if (param) {
+      const range = pickRangeForPatient(param, patientSex, patientAgeMonths);
+      flag = computeFlag(param, range, v);
+    }
+    return {
+      result_id: resultId,
+      parameter_id: paramId,
+      numeric_value_si: v.numeric_value_si,
+      numeric_value_conv: v.numeric_value_conv,
+      text_value: v.text_value,
+      select_value: v.select_value,
+      is_blank: v.is_blank,
+      flag,
+    };
+  });
 
   if (rows.length === 0) return { ok: true };
 
@@ -196,6 +215,25 @@ async function upsertValues(
   return { ok: true };
 }
 
+// Load template params + patient (sex, birthdate) for one prepared context.
+// Both saveDraft and finalise need this before computing flags.
+async function loadParamsAndPatient(ctx: PreparedContext): Promise<{
+  params: TemplateParam[];
+  patientSex: PatientSex;
+  patientAgeMonths: number | null;
+}> {
+  const admin = createAdminClient();
+  const params = await loadTemplateParams(admin, ctx.templateId);
+  const { data: pat } = await admin
+    .from("patients")
+    .select("sex, birthdate")
+    .eq("id", ctx.patientId)
+    .single();
+  const patientSex = normalisePatientSex(pat?.sex ?? null);
+  const patientAgeMonths = calculateAgeMonths(pat?.birthdate ?? null);
+  return { params, patientSex, patientAgeMonths };
+}
+
 export async function saveDraftAction(
   testRequestId: string,
   payload: StructuredPayload,
@@ -203,7 +241,16 @@ export async function saveDraftAction(
   const prep = await prepareStructured(testRequestId, payload);
   if (!prep.ok) return prep;
 
-  const ups = await upsertValues(prep.ctx.resultId, payload);
+  const { params, patientSex, patientAgeMonths } = await loadParamsAndPatient(
+    prep.ctx,
+  );
+  const ups = await upsertValues(
+    prep.ctx.resultId,
+    payload,
+    params,
+    patientSex,
+    patientAgeMonths,
+  );
   if (!ups.ok) return ups;
 
   const session = await requireActiveStaff();
@@ -234,54 +281,28 @@ export async function finaliseStructuredAction(
   const prep = await prepareStructured(testRequestId, payload);
   if (!prep.ok) return prep;
   const ctx = prep.ctx;
-
-  // 1) Persist the values first so the trigger computes flags before we read
-  //    them back for the PDF render.
-  const ups = await upsertValues(ctx.resultId, payload);
-  if (!ups.ok) return ups;
-
-  // 2) Validate that every non-header param has a value or is_blank=true.
   const admin = createAdminClient();
-  const { data: paramRows } = await admin
-    .from("result_template_params")
-    .select(
-      "id, sort_order, section, is_section_header, parameter_name, input_type, unit_si, unit_conv, ref_low_si, ref_high_si, ref_low_conv, ref_high_conv, gender, si_to_conv_factor, allowed_values, abnormal_values, placeholder",
-    )
-    .eq("template_id", ctx.templateId)
-    .order("sort_order", { ascending: true });
 
-  const params: TemplateParam[] = (paramRows ?? []).map((r) => ({
-    id: r.id,
-    sort_order: r.sort_order,
-    section: r.section,
-    is_section_header: r.is_section_header,
-    parameter_name: r.parameter_name,
-    input_type: r.input_type as TemplateParam["input_type"],
-    unit_si: r.unit_si,
-    unit_conv: r.unit_conv,
-    ref_low_si: r.ref_low_si,
-    ref_high_si: r.ref_high_si,
-    ref_low_conv: r.ref_low_conv,
-    ref_high_conv: r.ref_high_conv,
-    gender: (r.gender ?? null) as TemplateParam["gender"],
-    si_to_conv_factor: r.si_to_conv_factor,
-    allowed_values: r.allowed_values,
-    abnormal_values: r.abnormal_values,
-    placeholder: r.placeholder,
-  }));
+  // 1) Load params + patient up-front so we can compute flags during the
+  //    upsert (the DB trigger that used to do this was dropped in 0010).
+  const { params, patientSex, patientAgeMonths } = await loadParamsAndPatient(
+    ctx,
+  );
+
+  // 2) Persist the values + flags.
+  const ups = await upsertValues(
+    ctx.resultId,
+    payload,
+    params,
+    patientSex,
+    patientAgeMonths,
+  );
+  if (!ups.ok) return ups;
 
   // Validate against only the params relevant to this patient's sex —
   // gender-specific rows (e.g. Hemoglobin F + Hemoglobin M) are filtered to
   // the matching one so the form's view and the server's view agree.
-  const { data: patientSexRow } = await admin
-    .from("patients")
-    .select("sex")
-    .eq("id", ctx.patientId)
-    .single();
-  const visibleParams = filterParamsForPatient(
-    params,
-    normalisePatientSex(patientSexRow?.sex ?? null),
-  );
+  const visibleParams = filterParamsForPatient(params, patientSex);
 
   const missing = visibleParams
     .filter((p) => !p.is_section_header)

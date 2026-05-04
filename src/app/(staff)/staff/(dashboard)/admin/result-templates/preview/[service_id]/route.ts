@@ -9,10 +9,10 @@ import { createClient } from "@/lib/supabase/server";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { renderResultPdf } from "@/lib/results/render-pdf";
 import { buildPreviewValues } from "@/lib/results/preview-data";
+import { loadTemplateParams } from "@/lib/results/loaders";
 import type {
   ResultDocumentInput,
   ResultLayout,
-  TemplateParam,
 } from "@/lib/results/types";
 
 export const runtime = "nodejs";
@@ -51,34 +51,7 @@ export async function GET(_req: Request, { params }: Props) {
     );
   }
 
-  const { data: paramRows } = await supabase
-    .from("result_template_params")
-    .select(
-      "id, sort_order, section, is_section_header, parameter_name, input_type, unit_si, unit_conv, ref_low_si, ref_high_si, ref_low_conv, ref_high_conv, gender, si_to_conv_factor, allowed_values, abnormal_values, placeholder",
-    )
-    .eq("template_id", template.id)
-    .order("sort_order", { ascending: true });
-
-  const params2: TemplateParam[] = (paramRows ?? []).map((r) => ({
-    id: r.id,
-    sort_order: r.sort_order,
-    section: r.section,
-    is_section_header: r.is_section_header,
-    parameter_name: r.parameter_name,
-    input_type: r.input_type as TemplateParam["input_type"],
-    unit_si: r.unit_si,
-    unit_conv: r.unit_conv,
-    ref_low_si: r.ref_low_si,
-    ref_high_si: r.ref_high_si,
-    ref_low_conv: r.ref_low_conv,
-    ref_high_conv: r.ref_high_conv,
-    gender: (r.gender ?? null) as TemplateParam["gender"],
-    si_to_conv_factor: r.si_to_conv_factor,
-    allowed_values: r.allowed_values,
-    abnormal_values: r.abnormal_values,
-    placeholder: r.placeholder,
-  }));
-
+  const params2 = await loadTemplateParams(supabase, template.id);
   const values = buildPreviewValues(params2);
 
   const input: ResultDocumentInput = {

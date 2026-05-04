@@ -6,7 +6,10 @@ import { Button } from "@/components/ui/button";
 import {
   filterParamsForPatient,
   formatRefRange,
+  pickRangeForPatient,
+  type EffectiveRange,
   type ParamValue,
+  type PatientSex,
   type ResultLayout,
   type TemplateParam,
 } from "@/lib/results/types";
@@ -22,7 +25,10 @@ interface Props {
   testRequestId: string;
   layout: ResultLayout;
   params: TemplateParam[];
-  patientSex: "F" | "M" | null;
+  patientSex: PatientSex;
+  // Patient's age in months at the time the form is rendered. Used to
+  // pick the right age-banded reference range per parameter (Phase 13.3).
+  patientAgeMonths: number | null;
   // Initial values for re-opening a draft. Keyed by param.id.
   initial: Record<string, ParamValue>;
   // True when the result is already finalised — render the form read-only,
@@ -53,13 +59,17 @@ function fromInitial(v: ParamValue): LocalValue {
   };
 }
 
-function isOutOfRange(p: TemplateParam, v: LocalValue): boolean {
+function isOutOfRange(
+  p: TemplateParam,
+  v: LocalValue,
+  range: EffectiveRange,
+): boolean {
   if (v.is_blank) return false;
   if (p.input_type !== "numeric") return false;
   const x = v.numeric_value_si ?? v.numeric_value_conv;
   if (x == null) return false;
-  if (p.ref_low_si != null && x < p.ref_low_si) return true;
-  if (p.ref_high_si != null && x > p.ref_high_si) return true;
+  if (range.ref_low_si != null && x < range.ref_low_si) return true;
+  if (range.ref_high_si != null && x > range.ref_high_si) return true;
   return false;
 }
 
@@ -79,6 +89,22 @@ export function StructuredResultForm(props: Props) {
     () => filterParamsForPatient(props.params, props.patientSex),
     [props.params, props.patientSex],
   );
+
+  // Resolve the effective reference range per visible param given the
+  // patient's age + sex. Falls back to the param's defaults when no
+  // age-banded override matches.
+  const rangesByParam = useMemo(() => {
+    const out = new Map<string, EffectiveRange>();
+    for (const p of visibleParams) {
+      if (!p.is_section_header) {
+        out.set(
+          p.id,
+          pickRangeForPatient(p, props.patientSex, props.patientAgeMonths),
+        );
+      }
+    }
+    return out;
+  }, [visibleParams, props.patientSex, props.patientAgeMonths]);
 
   const [values, setValues] = useState<Record<string, LocalValue>>(() => {
     const init: Record<string, LocalValue> = {};
@@ -148,6 +174,7 @@ export function StructuredResultForm(props: Props) {
           layout={props.layout}
           params={visibleParams}
           values={values}
+          ranges={rangesByParam}
           disabled={disabled}
           onChangeNumeric={handleNumeric}
           onSetValue={update}
@@ -157,6 +184,7 @@ export function StructuredResultForm(props: Props) {
         <DualUnitBody
           params={visibleParams}
           values={values}
+          ranges={rangesByParam}
           disabled={disabled}
           onChangeNumeric={handleNumeric}
           onSetValue={update}
@@ -166,6 +194,7 @@ export function StructuredResultForm(props: Props) {
         <ImagingBody
           params={visibleParams}
           values={values}
+          ranges={rangesByParam}
           disabled={disabled}
           onSetValue={update}
         />
@@ -221,6 +250,7 @@ export function StructuredResultForm(props: Props) {
 interface BodyProps {
   params: TemplateParam[];
   values: Record<string, LocalValue>;
+  ranges: Map<string, EffectiveRange>;
   disabled: boolean;
   onChangeNumeric: (
     p: TemplateParam,
@@ -286,6 +316,7 @@ function SimpleOrMultiSectionBody({
 function SingleRow({
   p,
   values,
+  ranges,
   disabled,
   onChangeNumeric,
   onSetValue,
@@ -299,9 +330,16 @@ function SingleRow({
   }
 
   const v = values[p.id] ?? emptyValue();
-  const out = isOutOfRange(p, v);
+  const eff = ranges.get(p.id) ?? {
+    ref_low_si: p.ref_low_si,
+    ref_high_si: p.ref_high_si,
+    ref_low_conv: p.ref_low_conv,
+    ref_high_conv: p.ref_high_conv,
+    band_label: null,
+  };
+  const out = isOutOfRange(p, v, eff);
   const abn = isAbnormalSelect(p, v);
-  const range = formatRefRange(p.ref_low_si, p.ref_high_si);
+  const range = formatRefRange(eff.ref_low_si, eff.ref_high_si);
 
   return (
     <div className="grid grid-cols-12 items-center gap-3 border-b border-[color:var(--color-brand-bg-mid)] px-4 py-2 last:border-b-0">
@@ -314,6 +352,7 @@ function SingleRow({
             {p.unit_si ?? ""}
             {p.unit_si && range ? " · " : ""}
             {range ? `Ref ${range}` : ""}
+            {eff.band_label ? ` (${eff.band_label})` : ""}
           </p>
         ) : null}
       </div>
@@ -411,6 +450,7 @@ function SingleRow({
 function DualUnitBody({
   params,
   values,
+  ranges,
   disabled,
   onChangeNumeric,
   onSetValue,
@@ -435,7 +475,14 @@ function DualUnitBody({
           );
         }
         const v = values[p.id] ?? emptyValue();
-        const out = isOutOfRange(p, v);
+        const eff = ranges.get(p.id) ?? {
+          ref_low_si: p.ref_low_si,
+          ref_high_si: p.ref_high_si,
+          ref_low_conv: p.ref_low_conv,
+          ref_high_conv: p.ref_high_conv,
+          band_label: null,
+        };
+        const out = isOutOfRange(p, v, eff);
         return (
           <div
             key={p.id}
@@ -445,6 +492,11 @@ function DualUnitBody({
               <p className="text-sm font-semibold text-[color:var(--color-brand-navy)]">
                 {p.parameter_name}
               </p>
+              {eff.band_label ? (
+                <p className="text-[10px] text-[color:var(--color-brand-text-soft)]">
+                  {eff.band_label}
+                </p>
+              ) : null}
             </div>
             <div className="col-span-6 sm:col-span-3">
               <input
@@ -462,8 +514,8 @@ function DualUnitBody({
               />
               <p className="mt-0.5 text-[10px] text-[color:var(--color-brand-text-soft)]">
                 {p.unit_si ?? ""}
-                {formatRefRange(p.ref_low_si, p.ref_high_si)
-                  ? ` · ${formatRefRange(p.ref_low_si, p.ref_high_si)}`
+                {formatRefRange(eff.ref_low_si, eff.ref_high_si)
+                  ? ` · ${formatRefRange(eff.ref_low_si, eff.ref_high_si)}`
                   : ""}
               </p>
             </div>
@@ -483,8 +535,8 @@ function DualUnitBody({
               />
               <p className="mt-0.5 text-[10px] text-[color:var(--color-brand-text-soft)]">
                 {p.unit_conv ?? ""}
-                {formatRefRange(p.ref_low_conv, p.ref_high_conv)
-                  ? ` · ${formatRefRange(p.ref_low_conv, p.ref_high_conv)}`
+                {formatRefRange(eff.ref_low_conv, eff.ref_high_conv)
+                  ? ` · ${formatRefRange(eff.ref_low_conv, eff.ref_high_conv)}`
                   : ""}
               </p>
             </div>
