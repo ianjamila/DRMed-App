@@ -99,12 +99,22 @@ export default async function SchedulePage() {
 
           <div className="mt-8">
             <BookingForm
-              services={services.map((s) => ({
-                id: s.id,
-                code: s.code,
-                name: s.name,
-                kind: s.kind,
-              }))}
+              services={services
+                .filter(
+                  (s) =>
+                    s.kind === "lab_test" ||
+                    s.kind === "lab_package" ||
+                    s.kind === "doctor_consultation",
+                )
+                .map((s) => ({
+                  id: s.id,
+                  code: s.code,
+                  name: s.name,
+                  kind: s.kind as
+                    | "lab_test"
+                    | "lab_package"
+                    | "doctor_consultation",
+                }))}
               closures={closures}
               startDate={startDate}
             />

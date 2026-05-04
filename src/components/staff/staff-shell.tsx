@@ -3,6 +3,13 @@ import { Button } from "@/components/ui/button";
 import { signOutStaff } from "@/app/(staff)/staff/login/actions";
 import type { StaffSession } from "@/lib/auth/require-staff";
 import { StaffNav } from "./staff-nav";
+import { StaffQuoteShortcut } from "./staff-quote-shortcut";
+
+const QUOTE_ROLES: ReadonlyArray<StaffSession["role"]> = [
+  "reception",
+  "medtech",
+  "admin",
+];
 
 interface Props {
   session: StaffSession;
@@ -19,6 +26,9 @@ const ROLE_LABEL: Record<StaffSession["role"], string> = {
 export function StaffShell({ session, children }: Props) {
   return (
     <div className="flex min-h-screen bg-[color:var(--color-brand-bg)] print:bg-white">
+      <StaffQuoteShortcut
+        enabledForRole={QUOTE_ROLES.includes(session.role)}
+      />
       {/* Sidebar */}
       <aside className="hidden w-64 shrink-0 flex-col border-r border-[color:var(--color-brand-bg-mid)] bg-white md:flex print:hidden">
         <Link

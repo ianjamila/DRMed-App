@@ -8,7 +8,8 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   const staticEntries: MetadataRoute.Sitemap = [
     "/",
-    "/services",
+    "/all-services",
+    "/packages",
     "/schedule",
     "/about",
     "/contact",
@@ -23,7 +24,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   const services = await listActiveServices();
   const serviceEntries: MetadataRoute.Sitemap = services.map((s) => ({
-    url: `${base}/services/${s.code.toLowerCase()}`,
+    url: `${base}/all-services/${s.code.toLowerCase()}`,
     lastModified: now,
     changeFrequency: "monthly",
     priority: 0.6,

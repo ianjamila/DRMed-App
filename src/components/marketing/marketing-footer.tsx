@@ -47,8 +47,18 @@ export function MarketingFooter() {
           </p>
           <ul className="mt-3 space-y-2 text-sm">
             <li>
-              <Link href="/services" className="text-white/80 hover:text-white">
+              <Link href="/#services" className="text-white/80 hover:text-white">
                 Services
+              </Link>
+            </li>
+            <li>
+              <Link href="/all-services" className="text-white/80 hover:text-white">
+                Check All Services
+              </Link>
+            </li>
+            <li>
+              <Link href="/packages" className="text-white/80 hover:text-white">
+                Packages
               </Link>
             </li>
             <li>

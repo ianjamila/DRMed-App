@@ -348,17 +348,63 @@ export type Database = {
           },
         ]
       }
+      service_price_history: {
+        Row: {
+          change_reason: string | null
+          changed_by: string | null
+          effective_from: string
+          hmo_price_php: number | null
+          id: number
+          price_php: number | null
+          senior_discount_php: number | null
+          service_id: string
+        }
+        Insert: {
+          change_reason?: string | null
+          changed_by?: string | null
+          effective_from?: string
+          hmo_price_php?: number | null
+          id?: never
+          price_php?: number | null
+          senior_discount_php?: number | null
+          service_id: string
+        }
+        Update: {
+          change_reason?: string | null
+          changed_by?: string | null
+          effective_from?: string
+          hmo_price_php?: number | null
+          id?: never
+          price_php?: number | null
+          senior_discount_php?: number | null
+          service_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "service_price_history_service_id_fkey"
+            columns: ["service_id"]
+            isOneToOne: false
+            referencedRelation: "services"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       services: {
         Row: {
           code: string
           created_at: string
           description: string | null
+          hmo_price_php: number | null
           id: string
           is_active: boolean
+          is_send_out: boolean
           kind: string
           name: string
           price_php: number
           requires_signoff: boolean
+          section: string | null
+          send_out_lab: string | null
+          senior_discount_php: number | null
           turnaround_hours: number | null
           updated_at: string
         }
@@ -366,12 +412,17 @@ export type Database = {
           code: string
           created_at?: string
           description?: string | null
+          hmo_price_php?: number | null
           id?: string
           is_active?: boolean
+          is_send_out?: boolean
           kind?: string
           name: string
           price_php: number
           requires_signoff?: boolean
+          section?: string | null
+          send_out_lab?: string | null
+          senior_discount_php?: number | null
           turnaround_hours?: number | null
           updated_at?: string
         }
@@ -379,12 +430,17 @@ export type Database = {
           code?: string
           created_at?: string
           description?: string | null
+          hmo_price_php?: number | null
           id?: string
           is_active?: boolean
+          is_send_out?: boolean
           kind?: string
           name?: string
           price_php?: number
           requires_signoff?: boolean
+          section?: string | null
+          send_out_lab?: string | null
+          senior_discount_php?: number | null
           turnaround_hours?: number | null
           updated_at?: string
         }

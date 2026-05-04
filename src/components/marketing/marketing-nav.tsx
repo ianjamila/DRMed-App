@@ -35,6 +35,12 @@ export function MarketingNav() {
         </nav>
 
         <div className="flex items-center gap-2">
+          <Link
+            href="/all-services"
+            className="hidden rounded-md px-3 py-1.5 text-sm font-semibold text-[color:var(--color-brand-navy)] transition-colors hover:bg-[color:var(--color-brand-bg)] hover:text-[color:var(--color-brand-cyan)] md:inline-flex"
+          >
+            Check All Services
+          </Link>
           <PatientPortalLauncher />
           <Link
             href="/#packages"

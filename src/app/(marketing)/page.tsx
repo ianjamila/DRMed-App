@@ -292,6 +292,22 @@ export default function HomePage() {
             </article>
           ))}
         </div>
+
+        <div className="mt-10 flex flex-wrap items-center justify-center gap-3 rounded-2xl border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] px-6 py-5 text-center">
+          <p className="text-sm text-[color:var(--color-brand-text-mid)]">
+            Looking for something specific? We offer{" "}
+            <span className="font-bold text-[color:var(--color-brand-navy)]">
+              hundreds of individual tests
+            </span>{" "}
+            beyond what&apos;s shown here.
+          </p>
+          <Link
+            href="/all-services"
+            className="rounded-md bg-[color:var(--color-brand-navy)] px-5 py-2 text-sm font-bold text-white transition-colors hover:bg-[color:var(--color-brand-cyan)]"
+          >
+            Check All Services →
+          </Link>
+        </div>
       </section>
 
       {/* ── 4. Packages summary ───────────────────────────────────────────── */}

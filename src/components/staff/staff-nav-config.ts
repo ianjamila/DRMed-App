@@ -49,6 +49,11 @@ export const STAFF_NAV: StaffNavSection[] = [
         label: "New visit",
         roles: ["reception", "admin"],
       },
+      {
+        href: "/staff/quote",
+        label: "Quick quote",
+        roles: ["reception", "medtech", "admin"],
+      },
     ],
   },
   {
@@ -69,6 +74,7 @@ export const STAFF_NAV: StaffNavSection[] = [
   {
     heading: "Admin",
     items: [
+      { href: "/staff/admin/prices", label: "Prices", roles: ["admin"] },
       { href: "/staff/services", label: "Services", roles: ["admin"] },
       {
         href: "/staff/admin/closures",

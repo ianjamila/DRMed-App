@@ -16,7 +16,13 @@ function parseForm(formData: FormData) {
     name: formData.get("name"),
     description: formData.get("description") ?? "",
     price_php: formData.get("price_php"),
+    hmo_price_php: formData.get("hmo_price_php") ?? "",
+    senior_discount_php: formData.get("senior_discount_php") ?? "",
     turnaround_hours: formData.get("turnaround_hours") ?? "",
+    kind: formData.get("kind"),
+    section: formData.get("section") ?? "",
+    is_send_out: formData.get("is_send_out"),
+    send_out_lab: formData.get("send_out_lab") ?? "",
     is_active: formData.get("is_active"),
     requires_signoff: formData.get("requires_signoff"),
   });
@@ -77,6 +83,13 @@ export async function updateServiceAction(
   }
 
   const supabase = await createClient();
+  // Pre-read so audit metadata can record before/after for any price column.
+  const { data: prior } = await supabase
+    .from("services")
+    .select("price_php, hmo_price_php, senior_discount_php")
+    .eq("id", serviceId)
+    .maybeSingle();
+
   const { error } = await supabase
     .from("services")
     .update(parsed.data)
@@ -84,14 +97,30 @@ export async function updateServiceAction(
 
   if (error) return { ok: false, error: error.message };
 
+  const priceChanged =
+    !!prior &&
+    (Number(prior.price_php) !== parsed.data.price_php ||
+      (prior.hmo_price_php ?? null) !== parsed.data.hmo_price_php ||
+      (prior.senior_discount_php ?? null) !== parsed.data.senior_discount_php);
+
   const h = await headers();
   await audit({
     actor_id: session.user_id,
     actor_type: "staff",
-    action: "service.updated",
+    action: priceChanged ? "service.price_changed" : "service.updated",
     resource_type: "service",
     resource_id: serviceId,
-    metadata: { code: parsed.data.code },
+    metadata: priceChanged
+      ? {
+          code: parsed.data.code,
+          before: prior,
+          after: {
+            price_php: parsed.data.price_php,
+            hmo_price_php: parsed.data.hmo_price_php,
+            senior_discount_php: parsed.data.senior_discount_php,
+          },
+        }
+      : { code: parsed.data.code },
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),
   });

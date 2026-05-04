@@ -12,7 +12,9 @@ export default async function ServicesAdminPage() {
   const supabase = await createClient();
   const { data: services } = await supabase
     .from("services")
-    .select("id, code, name, price_php, turnaround_hours, is_active, requires_signoff")
+    .select(
+      "id, code, name, price_php, hmo_price_php, turnaround_hours, is_active, requires_signoff, is_send_out, section",
+    )
     .order("name", { ascending: true });
 
   return (
@@ -74,8 +76,27 @@ export default async function ServicesAdminPage() {
                         Signoff
                       </span>
                     ) : null}
+                    {s.hmo_price_php != null ? (
+                      <span className="ml-2 rounded-md bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-emerald-900">
+                        HMO
+                      </span>
+                    ) : null}
+                    {s.is_send_out ? (
+                      <span className="ml-2 rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-amber-900">
+                        Send-out
+                      </span>
+                    ) : null}
                   </td>
-                  <td className="px-4 py-3">{formatPhp(s.price_php)}</td>
+                  <td className="px-4 py-3">
+                    <div className="font-semibold">
+                      {formatPhp(s.price_php)}
+                    </div>
+                    {s.hmo_price_php != null ? (
+                      <div className="text-xs text-[color:var(--color-brand-text-soft)]">
+                        HMO {formatPhp(s.hmo_price_php)}
+                      </div>
+                    ) : null}
+                  </td>
                   <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
                     {s.turnaround_hours ? `${s.turnaround_hours}h` : "—"}
                   </td>
