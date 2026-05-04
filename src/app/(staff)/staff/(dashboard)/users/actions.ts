@@ -94,6 +94,8 @@ export async function updateStaffUserAction(
     full_name: formData.get("full_name"),
     role: formData.get("role"),
     is_active: formData.get("is_active"),
+    prc_license_kind: formData.get("prc_license_kind"),
+    prc_license_no: formData.get("prc_license_no"),
   });
   if (!parsed.success) {
     return {

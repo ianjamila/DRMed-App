@@ -20,7 +20,7 @@ export default async function EditStaffUserPage({ params }: Props) {
   const [{ data: profile }, { data: userResp }] = await Promise.all([
     admin
       .from("staff_profiles")
-      .select("id, full_name, role, is_active")
+      .select("id, full_name, role, is_active, prc_license_kind, prc_license_no")
       .eq("id", id)
       .maybeSingle(),
     admin.auth.admin.getUserById(id),
@@ -33,6 +33,12 @@ export default async function EditStaffUserPage({ params }: Props) {
     | "medtech"
     | "pathologist"
     | "admin";
+  const prcKind = profile.prc_license_kind as
+    | "RMT"
+    | "MD"
+    | "RT"
+    | "pathologist"
+    | null;
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6 lg:px-8">
@@ -56,6 +62,8 @@ export default async function EditStaffUserPage({ params }: Props) {
             full_name: profile.full_name,
             role,
             is_active: profile.is_active,
+            prc_license_kind: prcKind,
+            prc_license_no: profile.prc_license_no,
           }}
         />
       </div>

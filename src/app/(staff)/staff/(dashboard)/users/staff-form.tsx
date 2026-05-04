@@ -17,6 +17,10 @@ interface StaffDefaults {
   full_name: string;
   role: "reception" | "medtech" | "pathologist" | "admin";
   is_active?: boolean;
+  // PRC license info — drives the medtech signature line on auto-generated
+  // result PDFs. Optional; only meaningful for medtech / pathologist roles.
+  prc_license_kind?: "RMT" | "MD" | "RT" | "pathologist" | null;
+  prc_license_no?: string | null;
 }
 
 interface Props {
@@ -109,14 +113,55 @@ export function StaffForm({ initial }: Props) {
           </p>
         </div>
       ) : (
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            name="is_active"
-            defaultChecked={initial?.is_active ?? true}
-          />
-          <span>Active (can sign into the staff portal)</span>
-        </label>
+        <>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              name="is_active"
+              defaultChecked={initial?.is_active ?? true}
+            />
+            <span>Active (can sign into the staff portal)</span>
+          </label>
+
+          <fieldset className="grid gap-3 rounded-lg border border-[color:var(--color-brand-bg-mid)] p-4">
+            <legend className="px-1 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+              PRC license
+            </legend>
+            <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+              Printed on the signature line of every result PDF this user
+              finalises. Required for medtechs and pathologists; optional for
+              other roles.
+            </p>
+
+            <div className="grid gap-1.5">
+              <Label htmlFor="prc_license_kind">License kind</Label>
+              <select
+                id="prc_license_kind"
+                name="prc_license_kind"
+                defaultValue={initial?.prc_license_kind ?? ""}
+                className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+              >
+                <option value="">— None —</option>
+                <option value="RMT">RMT (Medical Tech)</option>
+                <option value="MD">MD (Physician)</option>
+                <option value="RT">RT (Rad Tech)</option>
+                <option value="pathologist">Pathologist</option>
+              </select>
+            </div>
+
+            <div className="grid gap-1.5">
+              <Label htmlFor="prc_license_no">License number</Label>
+              <Input
+                id="prc_license_no"
+                name="prc_license_no"
+                defaultValue={initial?.prc_license_no ?? ""}
+                maxLength={40}
+                placeholder="e.g. 0063443"
+                autoComplete="off"
+              />
+            </div>
+          </fieldset>
+        </>
       )}
 
       {state && !state.ok ? (

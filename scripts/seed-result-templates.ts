@@ -17,7 +17,7 @@
  *   1UZrH4EYAkXiu5gMMQUJoAddpSqqwTmfrk1k8ykaqikQ
  */
 import { createClient } from "@supabase/supabase-js";
-import type { Database } from "../src/types/database";
+import type { Database, TablesInsert } from "../src/types/database";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -386,7 +386,7 @@ async function upsertTemplate(t: TemplateSeed) {
 
   // Insert age-banded ranges for params that declared them. The .insert
   // above returns rows in insertion order — match by index back to t.params.
-  const rangeRows: Array<Record<string, unknown>> = [];
+  const rangeRows: TablesInsert<"result_template_param_ranges">[] = [];
   insertedParams.forEach((row, idx) => {
     const seed = t.params[idx];
     if (!seed.ranges || seed.ranges.length === 0) return;
