@@ -41,9 +41,9 @@ export default async function ResultTemplatesIndex() {
   }
 
   const rows: ServiceRow[] = (services ?? [])
-    .filter((s) =>
-      ["lab_test", "lab_package", "imaging"].includes(s.kind ?? ""),
-    )
+    // Imaging services live under kind='lab_test' (with section='imaging_*'),
+    // so this filter covers X-Ray and Ultrasound as well.
+    .filter((s) => ["lab_test", "lab_package"].includes(s.kind ?? ""))
     .map((s) => ({
       id: s.id,
       code: s.code,

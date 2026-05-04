@@ -1402,12 +1402,12 @@ The audit story for "did this medtech enter a result that reception didn't reque
 
 Send-out keeps the existing upload path because the source-of-truth for those is the partner-lab's PDF — the lab cannot regenerate it.
 
-### Decisions deferred (revisit before starting Phase 13)
+### Decisions resolved during Phase 13 (was: "deferred")
 
-- **Edit window after finalise.** Currently the policy permits write while `status in ('in_progress','result_uploaded')`. Tighten to a 30-minute window? Or allow only by pathologist? Decide before shipping.
-- **Reference-range overrides per patient.** Pediatric / pregnant ranges differ from the adult defaults stored in the template. For Phase 13, ranges are template-level; per-visit overrides are out of scope and noted as a follow-up.
-- **Free-text abnormal detection.** Free-text fields (Color = "RED", REMARKS = "hemolysed") don't auto-flag in this phase. Could add a per-parameter regex flagger later.
-- **Historical data.** Existing PDF-only `results` rows from Phases 4–8 stay on disk and continue to render via signed URLs. They will not be backfilled into structured form.
+- **Edit window after finalise.** ✅ Kept the original `status in ('in_progress', 'result_uploaded')` policy. Non-signoff tests transition to `'ready_for_release'` on finalise, which is NOT in the allowed-edit list, so they're effectively locked once finalised. Signoff-required tests stay editable in `'result_uploaded'` until the pathologist signs off — that's the intended correction window. No 30-minute timer needed.
+- **Reference-range overrides per patient.** ✅ Shipped as Slice 4c via the new `result_template_param_ranges` table — admins manage Neonate / Infant / Pediatric / Adolescent / Adult bands per parameter through the editor, with optional gender on each band.
+- **Free-text abnormal detection.** Out of scope. Free-text fields stay unflagged. Revisit if it becomes a recurring source of missed abnormalities.
+- **Historical data.** Out of scope. Pre-Phase-13 PDF-only `results` rows stay as `generation_kind='uploaded'` and continue to render via signed URLs. No backfill.
 
 ### Verification
 
