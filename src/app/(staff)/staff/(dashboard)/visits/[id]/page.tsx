@@ -77,9 +77,11 @@ export default async function VisitDetailPage({ params }: Props) {
       .from("test_requests")
       .select(
         `
-          id, status, requested_at, completed_at, released_at,
+          id, status, requested_at, completed_at, released_at, release_medium,
           base_price_php, discount_kind, discount_amount_php, final_price_php,
-          services!inner ( id, code, name, price_php )
+          clinic_fee_php, doctor_pf_php,
+          procedure_description, hmo_approved_amount_php,
+          services!inner ( id, code, name, kind, price_php )
         `,
       )
       .eq("visit_id", id)
@@ -224,6 +226,8 @@ export default async function VisitDetailPage({ params }: Props) {
                 const discountLabel = t.discount_kind
                   ? DISCOUNT_KIND_LABEL[t.discount_kind] ?? t.discount_kind
                   : null;
+                const isConsult = svc.kind === "doctor_consultation";
+                const isProcedure = svc.kind === "doctor_procedure";
                 return (
                   <tr
                     key={t.id}
@@ -235,7 +239,38 @@ export default async function VisitDetailPage({ params }: Props) {
                       </p>
                       <p className="font-mono text-[10px] text-[color:var(--color-brand-text-soft)]">
                         {svc.code}
+                        {isConsult ? (
+                          <span className="ml-1 rounded bg-[color:var(--color-brand-bg-mid)] px-1 py-0.5 uppercase tracking-wider text-[color:var(--color-brand-navy)]">
+                            Doctor
+                          </span>
+                        ) : null}
+                        {isProcedure ? (
+                          <span className="ml-1 rounded bg-[color:var(--color-brand-bg-mid)] px-1 py-0.5 uppercase tracking-wider text-[color:var(--color-brand-navy)]">
+                            Procedure
+                          </span>
+                        ) : null}
                       </p>
+                      {isConsult && (t.clinic_fee_php != null || t.doctor_pf_php != null) ? (
+                        <p className="mt-1 text-[10px] text-[color:var(--color-brand-text-soft)]">
+                          Clinic fee {formatPhp(Number(t.clinic_fee_php ?? 0))} ·
+                          PF {formatPhp(Number(t.doctor_pf_php ?? 0))}
+                        </p>
+                      ) : null}
+                      {isProcedure && t.procedure_description ? (
+                        <p className="mt-1 text-[10px] text-[color:var(--color-brand-text-mid)]">
+                          {t.procedure_description}
+                        </p>
+                      ) : null}
+                      {isProcedure && t.hmo_approved_amount_php != null ? (
+                        <p className="mt-0.5 text-[10px] text-[color:var(--color-brand-text-soft)]">
+                          HMO approved: {formatPhp(Number(t.hmo_approved_amount_php))}
+                        </p>
+                      ) : null}
+                      {t.release_medium && t.released_at ? (
+                        <p className="mt-1 text-[10px] text-emerald-700">
+                          Released via {t.release_medium}
+                        </p>
+                      ) : null}
                     </td>
                     <td className="px-4 py-3 text-right font-mono text-xs">
                       {formatPhp(base)}

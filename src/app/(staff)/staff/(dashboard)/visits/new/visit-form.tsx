@@ -12,6 +12,7 @@ export interface ServiceLite {
   id: string;
   code: string;
   name: string;
+  kind: string;
   price_php: number;
   hmo_price_php: number | null;
   senior_discount_php: number | null;
@@ -47,6 +48,12 @@ type DiscountKind =
 interface LineState {
   discountKind: DiscountKind;
   customDiscount: string; // raw input; parsed at submit time
+  // Doctor consultation lines:
+  clinicFee: string;          // default "100" when kind is doctor_consultation
+  doctorPf: string;           // default = base − clinic fee
+  // Doctor procedure lines:
+  procedureDescription: string;
+  hmoApprovedAmount: string;
 }
 
 const DISCOUNT_OPTIONS: { value: DiscountKind; label: string }[] = [
@@ -114,7 +121,16 @@ export function VisitForm({ services, patient, hmoProviders }: Props) {
   }
 
   function getLine(id: string): LineState {
-    return lineState[id] ?? { discountKind: "", customDiscount: "" };
+    return (
+      lineState[id] ?? {
+        discountKind: "",
+        customDiscount: "",
+        clinicFee: "",
+        doctorPf: "",
+        procedureDescription: "",
+        hmoApprovedAmount: "",
+      }
+    );
   }
 
   function updateLine(id: string, patch: Partial<LineState>) {
@@ -265,62 +281,178 @@ export function VisitForm({ services, patient, hmoProviders }: Props) {
               <div className="col-span-6 sm:col-span-1 text-right">Discount</div>
               <div className="col-span-6 sm:col-span-2 text-right">Final</div>
             </div>
-            {lines.map(({ service: s, base, discount, final, ls }) => (
-              <div
-                key={s.id}
-                className="grid grid-cols-12 items-center gap-2 border-t border-[color:var(--color-brand-bg-mid)] px-3 py-2 text-sm"
-              >
-                <div className="col-span-12 sm:col-span-4">
-                  <p className="font-semibold text-[color:var(--color-brand-navy)]">
-                    {s.name}
-                  </p>
-                  <p className="font-mono text-[10px] text-[color:var(--color-brand-text-soft)]">
-                    {s.code}
-                  </p>
-                </div>
-                <div className="col-span-6 sm:col-span-3">
-                  <select
-                    name={`discount_kind__${s.id}`}
-                    value={ls.discountKind}
-                    onChange={(e) =>
-                      updateLine(s.id, {
-                        discountKind: e.target.value as DiscountKind,
-                      })
-                    }
-                    className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1.5 text-xs focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
-                  >
-                    {DISCOUNT_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
-                  {ls.discountKind === "custom" ? (
-                    <input
-                      name={`custom_discount__${s.id}`}
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={ls.customDiscount}
-                      onChange={(e) =>
-                        updateLine(s.id, { customDiscount: e.target.value })
-                      }
-                      placeholder="₱"
-                      className="mt-1 w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 font-mono text-xs focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
-                    />
+            {lines.map(({ service: s, base, discount, final, ls }) => {
+              const isConsult = s.kind === "doctor_consultation";
+              const isProcedure = s.kind === "doctor_procedure";
+              // Default clinic_fee = 100 / doctor_pf = base − 100 the first time
+              // a consultation row is opened; reception can edit either.
+              const clinicFeeDefault = isConsult ? "100" : "";
+              const doctorPfDefault = isConsult
+                ? String(Math.max(0, final - 100))
+                : "";
+              return (
+                <div
+                  key={s.id}
+                  className="border-t border-[color:var(--color-brand-bg-mid)] px-3 py-2 text-sm"
+                >
+                  <div className="grid grid-cols-12 items-center gap-2">
+                    <div className="col-span-12 sm:col-span-4">
+                      <p className="font-semibold text-[color:var(--color-brand-navy)]">
+                        {s.name}
+                      </p>
+                      <p className="font-mono text-[10px] text-[color:var(--color-brand-text-soft)]">
+                        {s.code}
+                        {isConsult || isProcedure ? (
+                          <span className="ml-1 rounded bg-[color:var(--color-brand-bg-mid)] px-1 py-0.5 uppercase tracking-wider text-[color:var(--color-brand-navy)]">
+                            {isConsult ? "Doctor" : "Procedure"}
+                          </span>
+                        ) : null}
+                      </p>
+                    </div>
+                    <div className="col-span-6 sm:col-span-3">
+                      <select
+                        name={`discount_kind__${s.id}`}
+                        value={ls.discountKind}
+                        onChange={(e) =>
+                          updateLine(s.id, {
+                            discountKind: e.target.value as DiscountKind,
+                          })
+                        }
+                        className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1.5 text-xs focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+                      >
+                        {DISCOUNT_OPTIONS.map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                      {ls.discountKind === "custom" ? (
+                        <input
+                          name={`custom_discount__${s.id}`}
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={ls.customDiscount}
+                          onChange={(e) =>
+                            updateLine(s.id, { customDiscount: e.target.value })
+                          }
+                          placeholder="₱"
+                          className="mt-1 w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 font-mono text-xs focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+                        />
+                      ) : null}
+                    </div>
+                    <div className="col-span-6 sm:col-span-2 text-right font-mono text-xs text-[color:var(--color-brand-text-soft)]">
+                      {formatPhp(base)}
+                    </div>
+                    <div className="col-span-6 sm:col-span-1 text-right font-mono text-xs text-[color:var(--color-brand-text-soft)]">
+                      {discount > 0 ? `−${formatPhp(discount)}` : "—"}
+                    </div>
+                    <div className="col-span-6 sm:col-span-2 text-right font-mono text-sm font-semibold text-[color:var(--color-brand-navy)]">
+                      {formatPhp(final)}
+                    </div>
+                  </div>
+
+                  {isConsult ? (
+                    <div className="mt-2 grid grid-cols-12 gap-2 rounded-md bg-[color:var(--color-brand-bg)] px-2 py-2">
+                      <div className="col-span-6 sm:col-span-3">
+                        <Label
+                          htmlFor={`clinic_fee__${s.id}`}
+                          className="text-[10px]"
+                        >
+                          Clinic fee
+                        </Label>
+                        <input
+                          id={`clinic_fee__${s.id}`}
+                          name={`clinic_fee__${s.id}`}
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={ls.clinicFee || clinicFeeDefault}
+                          onChange={(e) =>
+                            updateLine(s.id, { clinicFee: e.target.value })
+                          }
+                          className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 font-mono text-xs focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+                        />
+                      </div>
+                      <div className="col-span-6 sm:col-span-3">
+                        <Label
+                          htmlFor={`doctor_pf__${s.id}`}
+                          className="text-[10px]"
+                        >
+                          Doctor PF
+                        </Label>
+                        <input
+                          id={`doctor_pf__${s.id}`}
+                          name={`doctor_pf__${s.id}`}
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={ls.doctorPf || doctorPfDefault}
+                          onChange={(e) =>
+                            updateLine(s.id, { doctorPf: e.target.value })
+                          }
+                          className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 font-mono text-xs focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+                        />
+                      </div>
+                      <p className="col-span-12 sm:col-span-6 self-end text-[10px] text-[color:var(--color-brand-text-soft)]">
+                        Defaults: clinic fee ₱100, doctor PF = final − clinic
+                        fee. Both editable.
+                      </p>
+                    </div>
+                  ) : null}
+
+                  {isProcedure ? (
+                    <div className="mt-2 grid grid-cols-12 gap-2 rounded-md bg-[color:var(--color-brand-bg)] px-2 py-2">
+                      <div className="col-span-12 sm:col-span-8">
+                        <Label
+                          htmlFor={`procedure_description__${s.id}`}
+                          className="text-[10px]"
+                        >
+                          Procedure description
+                        </Label>
+                        <input
+                          id={`procedure_description__${s.id}`}
+                          name={`procedure_description__${s.id}`}
+                          type="text"
+                          maxLength={300}
+                          value={ls.procedureDescription}
+                          onChange={(e) =>
+                            updateLine(s.id, {
+                              procedureDescription: e.target.value,
+                            })
+                          }
+                          placeholder="e.g. NASAL ENDOSCOPY, NASAL DECONGESTION"
+                          className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 text-xs focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+                        />
+                      </div>
+                      <div className="col-span-12 sm:col-span-4">
+                        <Label
+                          htmlFor={`hmo_approved_amount__${s.id}`}
+                          className="text-[10px]"
+                        >
+                          HMO approved (₱)
+                        </Label>
+                        <input
+                          id={`hmo_approved_amount__${s.id}`}
+                          name={`hmo_approved_amount__${s.id}`}
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={ls.hmoApprovedAmount}
+                          onChange={(e) =>
+                            updateLine(s.id, {
+                              hmoApprovedAmount: e.target.value,
+                            })
+                          }
+                          placeholder="post-approval grant"
+                          className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 font-mono text-xs focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+                        />
+                      </div>
+                    </div>
                   ) : null}
                 </div>
-                <div className="col-span-6 sm:col-span-2 text-right font-mono text-xs text-[color:var(--color-brand-text-soft)]">
-                  {formatPhp(base)}
-                </div>
-                <div className="col-span-6 sm:col-span-1 text-right font-mono text-xs text-[color:var(--color-brand-text-soft)]">
-                  {discount > 0 ? `−${formatPhp(discount)}` : "—"}
-                </div>
-                <div className="col-span-6 sm:col-span-2 text-right font-mono text-sm font-semibold text-[color:var(--color-brand-navy)]">
-                  {formatPhp(final)}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </fieldset>
       ) : null}

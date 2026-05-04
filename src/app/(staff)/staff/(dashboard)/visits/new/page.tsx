@@ -29,7 +29,7 @@ export default async function NewVisitPage({ searchParams }: Props) {
       supabase
         .from("services")
         .select(
-          "id, code, name, price_php, hmo_price_php, senior_discount_php",
+          "id, code, name, kind, price_php, hmo_price_php, senior_discount_php",
         )
         .eq("is_active", true)
         .order("name", { ascending: true }),
@@ -67,6 +67,7 @@ export default async function NewVisitPage({ searchParams }: Props) {
             id: s.id,
             code: s.code,
             name: s.name,
+            kind: s.kind,
             price_php: Number(s.price_php),
             hmo_price_php: s.hmo_price_php != null ? Number(s.hmo_price_php) : null,
             senior_discount_php:

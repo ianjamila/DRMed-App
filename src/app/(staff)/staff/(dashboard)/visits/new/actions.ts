@@ -86,7 +86,7 @@ export async function createVisitAction(
 
   const { data: services, error: svcErr } = await supabase
     .from("services")
-    .select("id, price_php, hmo_price_php, senior_discount_php")
+    .select("id, kind, price_php, hmo_price_php, senior_discount_php")
     .in("id", parsed.data.service_ids);
 
   if (svcErr || !services || services.length !== parsed.data.service_ids.length) {
@@ -130,12 +130,44 @@ export async function createVisitAction(
     }
 
     const final_price_php = Math.max(0, base - discount_amount_php);
+
+    // Doctor consultation: capture clinic_fee + doctor_pf split. Default to
+    // clinic_fee=100 and doctor_pf=final-100 when reception leaves the
+    // inputs empty.
+    let clinic_fee_php: number | null = null;
+    let doctor_pf_php: number | null = null;
+    if (s.kind === "doctor_consultation") {
+      const cfRaw = formData.get(`clinic_fee__${service_id}`)?.toString() ?? "";
+      const cfNum = cfRaw === "" ? 100 : Number(cfRaw);
+      clinic_fee_php = Number.isFinite(cfNum) && cfNum >= 0 ? cfNum : 100;
+      const pfRaw = formData.get(`doctor_pf__${service_id}`)?.toString() ?? "";
+      const pfDefault = Math.max(0, final_price_php - clinic_fee_php);
+      const pfNum = pfRaw === "" ? pfDefault : Number(pfRaw);
+      doctor_pf_php = Number.isFinite(pfNum) && pfNum >= 0 ? pfNum : pfDefault;
+    }
+
+    // Doctor procedure: capture description + post-approval HMO grant.
+    let procedure_description: string | null = null;
+    let hmo_approved_amount_php: number | null = null;
+    if (s.kind === "doctor_procedure") {
+      const desc = formData.get(`procedure_description__${service_id}`)?.toString().trim() ?? "";
+      procedure_description = desc.length > 0 ? desc : null;
+      const apRaw = formData.get(`hmo_approved_amount__${service_id}`)?.toString() ?? "";
+      const apNum = Number(apRaw);
+      hmo_approved_amount_php =
+        apRaw !== "" && Number.isFinite(apNum) && apNum >= 0 ? apNum : null;
+    }
+
     return {
       service_id,
       base_price_php: base,
       discount_kind,
       discount_amount_php,
       final_price_php,
+      clinic_fee_php,
+      doctor_pf_php,
+      procedure_description,
+      hmo_approved_amount_php,
     };
   });
 
@@ -175,6 +207,10 @@ export async function createVisitAction(
     hmo_approval_date: parsed.data.hmo_approval_date,
     hmo_authorization_no: parsed.data.hmo_authorization_no,
     receptionist_remarks: parsed.data.receptionist_remarks,
+    clinic_fee_php: l.clinic_fee_php,
+    doctor_pf_php: l.doctor_pf_php,
+    procedure_description: l.procedure_description,
+    hmo_approved_amount_php: l.hmo_approved_amount_php,
   }));
   const { error: trErr } = await supabase
     .from("test_requests")
