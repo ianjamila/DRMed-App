@@ -304,10 +304,185 @@ export type Database = {
           },
         ]
       }
-      results: {
+      result_template_params: {
+        Row: {
+          abnormal_values: string[] | null
+          allowed_values: string[] | null
+          created_at: string
+          gender: string | null
+          id: string
+          input_type: string
+          is_section_header: boolean
+          parameter_name: string
+          placeholder: string | null
+          ref_high_conv: number | null
+          ref_high_si: number | null
+          ref_low_conv: number | null
+          ref_low_si: number | null
+          section: string | null
+          si_to_conv_factor: number | null
+          sort_order: number
+          template_id: string
+          unit_conv: string | null
+          unit_si: string | null
+        }
+        Insert: {
+          abnormal_values?: string[] | null
+          allowed_values?: string[] | null
+          created_at?: string
+          gender?: string | null
+          id?: string
+          input_type: string
+          is_section_header?: boolean
+          parameter_name: string
+          placeholder?: string | null
+          ref_high_conv?: number | null
+          ref_high_si?: number | null
+          ref_low_conv?: number | null
+          ref_low_si?: number | null
+          section?: string | null
+          si_to_conv_factor?: number | null
+          sort_order: number
+          template_id: string
+          unit_conv?: string | null
+          unit_si?: string | null
+        }
+        Update: {
+          abnormal_values?: string[] | null
+          allowed_values?: string[] | null
+          created_at?: string
+          gender?: string | null
+          id?: string
+          input_type?: string
+          is_section_header?: boolean
+          parameter_name?: string
+          placeholder?: string | null
+          ref_high_conv?: number | null
+          ref_high_si?: number | null
+          ref_low_conv?: number | null
+          ref_low_si?: number | null
+          section?: string | null
+          si_to_conv_factor?: number | null
+          sort_order?: number
+          template_id?: string
+          unit_conv?: string | null
+          unit_si?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "result_template_params_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "result_templates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      result_templates: {
         Row: {
           created_at: string
+          footer_notes: string | null
+          header_notes: string | null
+          id: string
+          is_active: boolean
+          layout: string
+          service_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          footer_notes?: string | null
+          header_notes?: string | null
+          id?: string
+          is_active?: boolean
+          layout: string
+          service_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          footer_notes?: string | null
+          header_notes?: string | null
+          id?: string
+          is_active?: boolean
+          layout?: string
+          service_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "result_templates_service_id_fkey"
+            columns: ["service_id"]
+            isOneToOne: true
+            referencedRelation: "services"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      result_values: {
+        Row: {
+          created_at: string
+          flag: string | null
+          id: string
+          is_blank: boolean
+          numeric_value_conv: number | null
+          numeric_value_si: number | null
+          parameter_id: string
+          result_id: string
+          select_value: string | null
+          text_value: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          flag?: string | null
+          id?: string
+          is_blank?: boolean
+          numeric_value_conv?: number | null
+          numeric_value_si?: number | null
+          parameter_id: string
+          result_id: string
+          select_value?: string | null
+          text_value?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          flag?: string | null
+          id?: string
+          is_blank?: boolean
+          numeric_value_conv?: number | null
+          numeric_value_si?: number | null
+          parameter_id?: string
+          result_id?: string
+          select_value?: string | null
+          text_value?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "result_values_parameter_id_fkey"
+            columns: ["parameter_id"]
+            isOneToOne: false
+            referencedRelation: "result_template_params"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "result_values_result_id_fkey"
+            columns: ["result_id"]
+            isOneToOne: false
+            referencedRelation: "results"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      results: {
+        Row: {
+          control_no: number | null
+          created_at: string
           file_size_bytes: number | null
+          finalised_at: string | null
+          generation_kind: string
           id: string
           notes: string | null
           storage_path: string
@@ -317,8 +492,11 @@ export type Database = {
           uploaded_by: string
         }
         Insert: {
+          control_no?: number | null
           created_at?: string
           file_size_bytes?: number | null
+          finalised_at?: string | null
+          generation_kind?: string
           id?: string
           notes?: string | null
           storage_path: string
@@ -328,8 +506,11 @@ export type Database = {
           uploaded_by: string
         }
         Update: {
+          control_no?: number | null
           created_at?: string
           file_size_bytes?: number | null
+          finalised_at?: string | null
+          generation_kind?: string
           id?: string
           notes?: string | null
           storage_path?: string
@@ -452,6 +633,8 @@ export type Database = {
           full_name: string
           id: string
           is_active: boolean
+          prc_license_kind: string | null
+          prc_license_no: string | null
           role: string
           updated_at: string
         }
@@ -460,6 +643,8 @@ export type Database = {
           full_name: string
           id: string
           is_active?: boolean
+          prc_license_kind?: string | null
+          prc_license_no?: string | null
           role: string
           updated_at?: string
         }
@@ -468,6 +653,8 @@ export type Database = {
           full_name?: string
           id?: string
           is_active?: boolean
+          prc_license_kind?: string | null
+          prc_license_no?: string | null
           role?: string
           updated_at?: string
         }

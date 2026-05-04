@@ -15,11 +15,13 @@
     "seed:services": "tsx --env-file=.env.local scripts/seed-services.ts",
     "seed:closures": "tsx --env-file=.env.local scripts/seed-closures.ts",
     "import:tests": "tsx --env-file=.env.local scripts/import-test-list.ts",
-    "import:descriptions": "tsx --env-file=.env.local scripts/populate-test-descriptions.ts"
+    "import:descriptions": "tsx --env-file=.env.local scripts/populate-test-descriptions.ts",
+    "seed:templates": "tsx --env-file=.env.local scripts/seed-result-templates.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
     "@hookform/resolvers": "^5.2.2",
+    "@react-pdf/renderer": "^4.5.1",
     "@supabase/ssr": "^0.10.2",
     "@supabase/supabase-js": "^2.105.1",
     "bcryptjs": "^3.0.3",
