@@ -77,6 +77,11 @@ export const STAFF_NAV: StaffNavSection[] = [
       { href: "/staff/admin/prices", label: "Prices", roles: ["admin"] },
       { href: "/staff/services", label: "Services", roles: ["admin"] },
       {
+        href: "/staff/admin/result-templates",
+        label: "Result templates",
+        roles: ["admin"],
+      },
+      {
         href: "/staff/admin/closures",
         label: "Closures",
         roles: ["admin"],
