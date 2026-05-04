@@ -58,7 +58,7 @@ export default async function VisitDetailPage({ params }: Props) {
         id, visit_number, visit_date, payment_status,
         total_php, paid_php, notes, created_at,
         hmo_provider_id, hmo_approval_date, hmo_authorization_no,
-        patients!inner ( id, drm_id, first_name, last_name ),
+        patients!inner ( id, drm_id, first_name, last_name, preferred_release_medium ),
         hmo_providers ( id, name )
       `,
     )
@@ -276,6 +276,15 @@ export default async function VisitDetailPage({ params }: Props) {
                         testRequestId={t.id}
                         visitId={visit.id}
                         paid={isPaid}
+                        preferredMedium={
+                          (patient.preferred_release_medium ?? null) as
+                            | "physical"
+                            | "email"
+                            | "viber"
+                            | "gcash"
+                            | "pickup"
+                            | null
+                        }
                       />
                     </td>
                   </tr>
@@ -400,18 +409,26 @@ interface TestActionProps {
   testRequestId: string;
   visitId: string;
   paid: boolean;
+  preferredMedium: "physical" | "email" | "viber" | "gcash" | "pickup" | null;
 }
 
 // Renders a context-appropriate cell for the Action column on the visit
 // detail tests table. Tells the receptionist what's blocking each test and
 // where to go next.
-function TestAction({ status, testRequestId, visitId, paid }: TestActionProps) {
+function TestAction({
+  status,
+  testRequestId,
+  visitId,
+  paid,
+  preferredMedium,
+}: TestActionProps) {
   if (status === "ready_for_release") {
     return (
       <ReleaseButton
         testRequestId={testRequestId}
         visitId={visitId}
         paid={paid}
+        preferredMedium={preferredMedium}
       />
     );
   }
