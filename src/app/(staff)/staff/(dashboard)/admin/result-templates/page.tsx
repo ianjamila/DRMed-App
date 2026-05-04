@@ -99,14 +99,22 @@ export default async function ResultTemplatesIndex() {
                 <span className="rounded-md bg-[color:var(--color-brand-bg-mid)] px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-[color:var(--color-brand-text-mid)]">
                   {r.templateLayout}
                 </span>
-                <Link
-                  href={`/staff/admin/result-templates/preview/${r.id}`}
-                  target="_blank"
-                  rel="noopener"
-                  className="shrink-0 rounded-md bg-[color:var(--color-brand-navy)] px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-white hover:bg-[color:var(--color-brand-cyan)]"
-                >
-                  Preview PDF
-                </Link>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Link
+                    href={`/staff/admin/result-templates/${r.id}/edit`}
+                    className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-bg)]"
+                  >
+                    Edit
+                  </Link>
+                  <Link
+                    href={`/staff/admin/result-templates/preview/${r.id}`}
+                    target="_blank"
+                    rel="noopener"
+                    className="rounded-md bg-[color:var(--color-brand-navy)] px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-white hover:bg-[color:var(--color-brand-cyan)]"
+                  >
+                    Preview PDF
+                  </Link>
+                </div>
               </li>
             ))}
           </ul>
@@ -124,14 +132,22 @@ export default async function ResultTemplatesIndex() {
             {eligibleNoTemplate.map((r) => (
               <li
                 key={r.id}
-                className="rounded-lg border border-dashed border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2"
+                className="flex items-center justify-between gap-3 rounded-lg border border-dashed border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2"
               >
-                <p className="font-mono text-[10px] text-[color:var(--color-brand-text-soft)]">
-                  {r.code}
-                </p>
-                <p className="text-sm text-[color:var(--color-brand-text-mid)]">
-                  {r.name}
-                </p>
+                <div className="min-w-0">
+                  <p className="font-mono text-[10px] text-[color:var(--color-brand-text-soft)]">
+                    {r.code}
+                  </p>
+                  <p className="truncate text-sm text-[color:var(--color-brand-text-mid)]">
+                    {r.name}
+                  </p>
+                </div>
+                <Link
+                  href={`/staff/admin/result-templates/${r.id}/edit`}
+                  className="shrink-0 rounded-md bg-[color:var(--color-brand-cyan)] px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-white hover:bg-[color:var(--color-brand-navy)]"
+                >
+                  + Create
+                </Link>
               </li>
             ))}
           </ul>
