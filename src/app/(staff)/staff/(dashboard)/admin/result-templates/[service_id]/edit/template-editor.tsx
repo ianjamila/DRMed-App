@@ -11,6 +11,7 @@ import {
   type SaveTemplateResult,
 } from "./actions";
 import type {
+  ParamRangePayload,
   TemplateEditorPayload,
   TemplateParamPayload,
 } from "@/lib/validations/result-template";
@@ -59,8 +60,33 @@ function emptyParam(): TemplateParamPayload {
     allowed_values: null,
     abnormal_values: null,
     placeholder: null,
+    ranges: [],
   };
 }
+
+function emptyRange(): ParamRangePayload {
+  return {
+    id: null,
+    band_label: "",
+    age_min_months: null,
+    age_max_months: null,
+    gender: null,
+    ref_low_si: null,
+    ref_high_si: null,
+    ref_low_conv: null,
+    ref_high_conv: null,
+  };
+}
+
+// Common preset bands the lab uses, surfaced as a quick-add menu so admins
+// don't have to memorise the month boundaries.
+const PRESET_RANGES: { key: string; label: string; min: number | null; max: number | null }[] = [
+  { key: "neonate", label: "Neonate (0–1 mo)", min: 0, max: 1 },
+  { key: "infant", label: "Infant (1–24 mo)", min: 1, max: 24 },
+  { key: "pediatric", label: "Pediatric (2–13 y)", min: 24, max: 156 },
+  { key: "adolescent", label: "Adolescent (13–18 y)", min: 156, max: 216 },
+  { key: "adult", label: "Adult (≥ 18 y)", min: 216, max: null },
+];
 
 export function TemplateEditor(props: Props) {
   const router = useRouter();
@@ -498,6 +524,226 @@ function ParamRow({ idx, total, p, onChange, onRemove, onMoveUp, onMoveDown }: P
             />
           </div>
         ) : null}
+
+        {isNumeric && !isHeader ? (
+          <div className="col-span-12">
+            <RangesSection
+              paramIdx={idx}
+              ranges={p.ranges}
+              onChange={(ranges) => onChange({ ranges })}
+            />
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+interface RangesSectionProps {
+  paramIdx: number;
+  ranges: ParamRangePayload[];
+  onChange: (ranges: ParamRangePayload[]) => void;
+}
+
+function RangesSection({ paramIdx, ranges, onChange }: RangesSectionProps) {
+  function addEmpty() {
+    onChange([...ranges, emptyRange()]);
+  }
+  function addPreset(preset: (typeof PRESET_RANGES)[number]) {
+    onChange([
+      ...ranges,
+      {
+        ...emptyRange(),
+        band_label: preset.label,
+        age_min_months: preset.min,
+        age_max_months: preset.max,
+      },
+    ]);
+  }
+  function update(rIdx: number, patch: Partial<ParamRangePayload>) {
+    onChange(ranges.map((r, i) => (i === rIdx ? { ...r, ...patch } : r)));
+  }
+  function remove(rIdx: number) {
+    onChange(ranges.filter((_, i) => i !== rIdx));
+  }
+
+  return (
+    <details
+      className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white p-3"
+      // Open by default when ranges already exist so admins immediately see
+      // what's there; collapsed for params that don't use age-banded ranges.
+      open={ranges.length > 0}
+    >
+      <summary className="cursor-pointer text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)]">
+        Age-banded ranges ({ranges.length})
+      </summary>
+
+      <p className="mt-2 text-[11px] text-[color:var(--color-brand-text-soft)]">
+        Override the param defaults for matching patients. Picker prefers an
+        explicit-gender match, then gender-null, then falls back to the param
+        defaults above. Half-open intervals: <code>min ≤ age &lt; max</code>;
+        leave a bound blank for open-ended.
+      </p>
+
+      <div className="mt-3 grid gap-3">
+        {ranges.map((r, rIdx) => (
+          <RangeRow
+            key={r.id ?? `new-${paramIdx}-${rIdx}`}
+            paramIdx={paramIdx}
+            rIdx={rIdx}
+            r={r}
+            onChange={(patch) => update(rIdx, patch)}
+            onRemove={() => remove(rIdx)}
+          />
+        ))}
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <span className="text-[10px] uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+          Quick add:
+        </span>
+        {PRESET_RANGES.map((preset) => (
+          <button
+            key={preset.key}
+            type="button"
+            onClick={() => addPreset(preset)}
+            className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 text-[11px] text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-bg)]"
+          >
+            + {preset.label}
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={addEmpty}
+          className="rounded-md border border-dashed border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 text-[11px] text-[color:var(--color-brand-text-soft)] hover:bg-[color:var(--color-brand-bg)]"
+        >
+          + Custom band
+        </button>
+      </div>
+    </details>
+  );
+}
+
+interface RangeRowProps {
+  paramIdx: number;
+  rIdx: number;
+  r: ParamRangePayload;
+  onChange: (patch: Partial<ParamRangePayload>) => void;
+  onRemove: () => void;
+}
+
+function RangeRow({ paramIdx, rIdx, r, onChange, onRemove }: RangeRowProps) {
+  const idBase = `r-${paramIdx}-${rIdx}`;
+  return (
+    <div className="rounded border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] p-3">
+      <div className="grid grid-cols-12 gap-2">
+        <div className="col-span-12 sm:col-span-5">
+          <Label htmlFor={`${idBase}-label`} className="text-[11px]">
+            Band label
+          </Label>
+          <Input
+            id={`${idBase}-label`}
+            value={r.band_label}
+            onChange={(e) => onChange({ band_label: e.target.value })}
+            placeholder="e.g. Neonate (0–1 mo)"
+          />
+        </div>
+        <div className="col-span-4 sm:col-span-2">
+          <Label className="text-[11px]">Age min (mo)</Label>
+          <Input
+            type="number"
+            min="0"
+            step="1"
+            value={r.age_min_months ?? ""}
+            onChange={(e) =>
+              onChange({
+                age_min_months: e.target.value === "" ? null : Number(e.target.value),
+              })
+            }
+          />
+        </div>
+        <div className="col-span-4 sm:col-span-2">
+          <Label className="text-[11px]">Age max (mo)</Label>
+          <Input
+            type="number"
+            min="0"
+            step="1"
+            value={r.age_max_months ?? ""}
+            onChange={(e) =>
+              onChange({
+                age_max_months: e.target.value === "" ? null : Number(e.target.value),
+              })
+            }
+          />
+        </div>
+        <div className="col-span-4 sm:col-span-2">
+          <Label className="text-[11px]">Gender</Label>
+          <select
+            value={r.gender ?? ""}
+            onChange={(e) =>
+              onChange({ gender: (e.target.value as "F" | "M") || null })
+            }
+            className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1.5 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+          >
+            <option value="">Either</option>
+            <option value="F">F only</option>
+            <option value="M">M only</option>
+          </select>
+        </div>
+        <div className="col-span-12 sm:col-span-1 sm:flex sm:items-end">
+          <Button
+            type="button"
+            onClick={onRemove}
+            className="h-9 w-full bg-red-50 text-red-700 ring-1 ring-inset ring-red-200 hover:bg-red-100"
+          >
+            ×
+          </Button>
+        </div>
+
+        <div className="col-span-6 sm:col-span-3">
+          <Label className="text-[11px]">Ref low (SI)</Label>
+          <Input
+            type="number"
+            step="any"
+            value={r.ref_low_si ?? ""}
+            onChange={(e) =>
+              onChange({ ref_low_si: e.target.value === "" ? null : Number(e.target.value) })
+            }
+          />
+        </div>
+        <div className="col-span-6 sm:col-span-3">
+          <Label className="text-[11px]">Ref high (SI)</Label>
+          <Input
+            type="number"
+            step="any"
+            value={r.ref_high_si ?? ""}
+            onChange={(e) =>
+              onChange({ ref_high_si: e.target.value === "" ? null : Number(e.target.value) })
+            }
+          />
+        </div>
+        <div className="col-span-6 sm:col-span-3">
+          <Label className="text-[11px]">Ref low (conv)</Label>
+          <Input
+            type="number"
+            step="any"
+            value={r.ref_low_conv ?? ""}
+            onChange={(e) =>
+              onChange({ ref_low_conv: e.target.value === "" ? null : Number(e.target.value) })
+            }
+          />
+        </div>
+        <div className="col-span-6 sm:col-span-3">
+          <Label className="text-[11px]">Ref high (conv)</Label>
+          <Input
+            type="number"
+            step="any"
+            value={r.ref_high_conv ?? ""}
+            onChange={(e) =>
+              onChange({ ref_high_conv: e.target.value === "" ? null : Number(e.target.value) })
+            }
+          />
+        </div>
       </div>
     </div>
   );

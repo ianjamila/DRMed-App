@@ -72,6 +72,17 @@ export default async function EditResultTemplatePage({ params }: Props) {
         allowed_values: p.allowed_values,
         abnormal_values: p.abnormal_values,
         placeholder: p.placeholder,
+        ranges: p.ranges.map((r) => ({
+          id: r.id,
+          band_label: r.band_label,
+          age_min_months: r.age_min_months,
+          age_max_months: r.age_max_months,
+          gender: r.gender,
+          ref_low_si: r.ref_low_si,
+          ref_high_si: r.ref_high_si,
+          ref_low_conv: r.ref_low_conv,
+          ref_high_conv: r.ref_high_conv,
+        })),
       }))
     : [];
 
@@ -99,16 +110,6 @@ export default async function EditResultTemplatePage({ params }: Props) {
         initialParams={initialParams}
       />
 
-      {tpl ? (
-        <p className="mt-6 text-xs text-[color:var(--color-brand-text-soft)]">
-          Note: per-parameter age-banded ranges (Neonate / Infant / Pediatric)
-          are not yet editable here — they live in
-          <code className="mx-1 rounded bg-[color:var(--color-brand-bg)] px-1">
-            scripts/seed-result-templates.ts
-          </code>
-          for now and will get their own editor in a follow-up slice.
-        </p>
-      ) : null}
     </div>
   );
 }

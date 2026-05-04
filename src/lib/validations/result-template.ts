@@ -31,6 +31,32 @@ const optionalGender = z
   .union([z.literal("F"), z.literal("M"), z.literal(""), z.null(), z.undefined()])
   .transform((v) => (v === "F" || v === "M" ? v : null));
 
+// Age-banded reference range row. age_max_months is exclusive, half-open
+// interval. Null on either side opens that bound.
+export const ParamRangeSchema = z.object({
+  id: z.string().uuid().nullable(),
+  band_label: z.string().trim().min(1, "Band label is required.").max(80),
+  age_min_months: optionalNumber.pipe(
+    z
+      .number()
+      .nullable()
+      .refine((n) => n == null || n >= 0, "Age must be ≥ 0 months."),
+  ),
+  age_max_months: optionalNumber.pipe(
+    z
+      .number()
+      .nullable()
+      .refine((n) => n == null || n >= 0, "Age must be ≥ 0 months."),
+  ),
+  gender: z
+    .union([z.literal("F"), z.literal("M"), z.literal(""), z.null(), z.undefined()])
+    .transform((v) => (v === "F" || v === "M" ? v : null)),
+  ref_low_si: optionalNumber,
+  ref_high_si: optionalNumber,
+  ref_low_conv: optionalNumber,
+  ref_high_conv: optionalNumber,
+});
+
 // Parameter row sent from the client. `id` is null for newly-added rows; the
 // server inserts those and reuses existing IDs for edits.
 export const TemplateParamSchema = z.object({
@@ -77,6 +103,9 @@ export const TemplateParamSchema = z.object({
     })
     .transform((arr) => (arr.length > 0 ? arr : null)),
   placeholder: optionalText(120),
+  // Age-banded ranges (Slice 4c). Empty array when the param uses only its
+  // default ref columns. Server sort_order = array index.
+  ranges: z.array(ParamRangeSchema),
 });
 
 export const TemplateEditorPayloadSchema = z.object({
@@ -92,3 +121,4 @@ export const TemplateEditorPayloadSchema = z.object({
 
 export type TemplateEditorPayload = z.infer<typeof TemplateEditorPayloadSchema>;
 export type TemplateParamPayload = z.infer<typeof TemplateParamSchema>;
+export type ParamRangePayload = z.infer<typeof ParamRangeSchema>;

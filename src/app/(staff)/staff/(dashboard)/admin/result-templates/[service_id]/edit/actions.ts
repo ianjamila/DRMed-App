@@ -119,7 +119,12 @@ export async function saveTemplateAndParamsAction(
     }
   }
 
-  // Walk the payload in order; sort_order = array index.
+  // Walk the payload in order; sort_order = array index. After the param's
+  // own row is upserted we reconcile its age-banded ranges (Slice 4c).
+  let totalRangesInserted = 0;
+  let totalRangesUpdated = 0;
+  let totalRangesDeleted = 0;
+
   for (let i = 0; i < data.params.length; i++) {
     const p = data.params[i];
     const row = {
@@ -141,6 +146,7 @@ export async function saveTemplateAndParamsAction(
       abnormal_values: p.abnormal_values,
       placeholder: p.placeholder,
     };
+    let paramId: string;
     if (p.id) {
       const { error } = await admin
         .from("result_template_params")
@@ -152,15 +158,85 @@ export async function saveTemplateAndParamsAction(
           error: `Could not update "${p.parameter_name}": ${error.message}`,
         };
       }
+      paramId = p.id;
     } else {
-      const { error } = await admin
+      const { data: inserted, error } = await admin
         .from("result_template_params")
-        .insert(row);
-      if (error) {
+        .insert(row)
+        .select("id")
+        .single();
+      if (error || !inserted) {
         return {
           ok: false,
-          error: `Could not insert "${p.parameter_name}": ${error.message}`,
+          error: `Could not insert "${p.parameter_name}": ${error?.message ?? "unknown"}`,
         };
+      }
+      paramId = inserted.id;
+    }
+
+    // Reconcile age-banded ranges for this param. Same diff strategy as
+    // params: update by id, insert new, delete obsolete. Ranges have no
+    // FK referrers (they're metadata only), so deletion is always safe.
+    const incoming = p.ranges ?? [];
+    const incomingIds = new Set(
+      incoming.map((r) => r.id).filter((id): id is string => !!id),
+    );
+    const { data: dbRanges } = await admin
+      .from("result_template_param_ranges")
+      .select("id")
+      .eq("parameter_id", paramId);
+    const dbRangeIds = new Set((dbRanges ?? []).map((r) => r.id));
+    const rangesToDelete = [...dbRangeIds].filter((id) => !incomingIds.has(id));
+    if (rangesToDelete.length > 0) {
+      const { error: rDelErr } = await admin
+        .from("result_template_param_ranges")
+        .delete()
+        .in("id", rangesToDelete);
+      if (rDelErr) {
+        return {
+          ok: false,
+          error: `Could not delete ranges for "${p.parameter_name}": ${rDelErr.message}`,
+        };
+      }
+      totalRangesDeleted += rangesToDelete.length;
+    }
+    for (let j = 0; j < incoming.length; j++) {
+      const r = incoming[j];
+      const rangeRow = {
+        parameter_id: paramId,
+        sort_order: j,
+        band_label: r.band_label,
+        age_min_months: r.age_min_months,
+        age_max_months: r.age_max_months,
+        gender: r.gender,
+        ref_low_si: r.ref_low_si,
+        ref_high_si: r.ref_high_si,
+        ref_low_conv: r.ref_low_conv,
+        ref_high_conv: r.ref_high_conv,
+      };
+      if (r.id) {
+        const { error: rUpdErr } = await admin
+          .from("result_template_param_ranges")
+          .update(rangeRow)
+          .eq("id", r.id);
+        if (rUpdErr) {
+          return {
+            ok: false,
+            error: `Could not update range "${r.band_label}" on "${p.parameter_name}": ${rUpdErr.message}`,
+          };
+        }
+        totalRangesUpdated += 1;
+      } else {
+        const { error: rInsErr } = await admin
+          .from("result_template_param_ranges")
+          .insert(rangeRow);
+        if (rInsErr) {
+          return {
+            ok: false,
+            error: `Could not insert range "${r.band_label}" on "${p.parameter_name}": ${rInsErr.message}`,
+          };
+        }
+        totalRangesInserted += 1;
       }
     }
   }
@@ -178,6 +254,9 @@ export async function saveTemplateAndParamsAction(
       layout: data.layout,
       param_count: data.params.length,
       params_deleted: toDelete.length,
+      ranges_inserted: totalRangesInserted,
+      ranges_updated: totalRangesUpdated,
+      ranges_deleted: totalRangesDeleted,
     },
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),
