@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { PatientForm } from "./patient-form";
+import { PatientForm } from "../patient-form";
 
 export const metadata = {
   title: "New patient — staff",

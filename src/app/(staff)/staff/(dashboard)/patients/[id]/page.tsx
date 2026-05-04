@@ -19,6 +19,25 @@ const PAYMENT_STATUS_STYLE: Record<string, string> = {
   waived: "bg-slate-200 text-slate-800",
 };
 
+const REFERRAL_LABEL: Record<string, string> = {
+  doctor_referral: "Doctor referral",
+  customer_referral: "Customer referral",
+  online_facebook: "Facebook",
+  online_website: "Website",
+  online_google: "Google",
+  walk_in: "Walk-in",
+  tenant_employee_northridge: "Northridge tenant/employee",
+  other: "Other",
+};
+
+const RELEASE_LABEL: Record<string, string> = {
+  physical: "Physical pickup",
+  email: "Email",
+  viber: "Viber",
+  gcash: "GCash",
+  pickup: "Pickup at counter",
+};
+
 export default async function PatientDetailPage({ params }: Props) {
   const { id } = await params;
   const supabase = await createClient();
@@ -26,7 +45,7 @@ export default async function PatientDetailPage({ params }: Props) {
   const { data: patient } = await supabase
     .from("patients")
     .select(
-      "id, drm_id, first_name, last_name, middle_name, birthdate, sex, phone, email, address, pre_registered, created_at",
+      "id, drm_id, first_name, last_name, middle_name, birthdate, sex, phone, email, address, pre_registered, created_at, referral_source, referred_by_doctor, preferred_release_medium, senior_pwd_id_kind, senior_pwd_id_number, consent_signed_at, is_repeat_patient",
     )
     .eq("id", id)
     .maybeSingle();
@@ -64,6 +83,12 @@ export default async function PatientDetailPage({ params }: Props) {
           ) : null}
         </div>
         <div className="flex flex-wrap gap-2">
+          <Link
+            href={`/staff/patients/${patient.id}/edit`}
+            className="rounded-md border border-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-bg)]"
+          >
+            Edit
+          </Link>
           <ReissuePinButton patientId={patient.id} />
           <Link
             href={`/staff/visits/new?patient_id=${patient.id}`}
@@ -83,6 +108,55 @@ export default async function PatientDetailPage({ params }: Props) {
         <Field
           label="Registered"
           value={new Date(patient.created_at).toLocaleDateString("en-PH")}
+        />
+      </section>
+
+      <section className="mt-6 grid gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5 sm:grid-cols-3">
+        <Field
+          label="Referral source"
+          value={
+            patient.referral_source
+              ? REFERRAL_LABEL[patient.referral_source] ?? patient.referral_source
+              : "—"
+          }
+        />
+        <Field
+          label="Referred by"
+          value={patient.referred_by_doctor ?? "—"}
+        />
+        <Field
+          label="Result release pref."
+          value={
+            patient.preferred_release_medium
+              ? RELEASE_LABEL[patient.preferred_release_medium] ??
+                patient.preferred_release_medium
+              : "—"
+          }
+        />
+        <Field
+          label="Senior / PWD"
+          value={
+            patient.senior_pwd_id_kind
+              ? `${patient.senior_pwd_id_kind === "senior" ? "Senior" : "PWD"}${
+                  patient.senior_pwd_id_number
+                    ? ` · ${patient.senior_pwd_id_number}`
+                    : ""
+                }`
+              : "—"
+          }
+        />
+        <Field
+          label="RA 10173 consent"
+          value={
+            patient.consent_signed_at
+              ? `Signed ${new Date(patient.consent_signed_at).toLocaleDateString("en-PH")}`
+              : "Not on file"
+          }
+          highlight={!patient.consent_signed_at}
+        />
+        <Field
+          label="Visit history"
+          value={patient.is_repeat_patient ? "Returning patient" : "First-timer"}
         />
       </section>
 
@@ -150,13 +224,27 @@ export default async function PatientDetailPage({ params }: Props) {
   );
 }
 
-function Field({ label, value }: { label: string; value: string }) {
+function Field({
+  label,
+  value,
+  highlight = false,
+}: {
+  label: string;
+  value: string;
+  highlight?: boolean;
+}) {
   return (
     <div>
       <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
         {label}
       </p>
-      <p className="mt-0.5 text-sm text-[color:var(--color-brand-text-mid)]">
+      <p
+        className={`mt-0.5 text-sm ${
+          highlight
+            ? "text-amber-700 font-semibold"
+            : "text-[color:var(--color-brand-text-mid)]"
+        }`}
+      >
         {value}
       </p>
     </div>

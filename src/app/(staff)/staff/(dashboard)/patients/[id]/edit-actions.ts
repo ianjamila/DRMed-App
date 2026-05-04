@@ -3,12 +3,12 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
-import { PatientCreateSchema } from "@/lib/validations/patient";
+import { PatientUpdateSchema } from "@/lib/validations/patient";
 
-export type PatientCreateResult =
+export type PatientUpdateResult =
   | { ok: true; patient_id: string }
   | { ok: false; error: string };
 
@@ -31,13 +31,14 @@ function readForm(formData: FormData) {
   };
 }
 
-export async function createPatientAction(
-  _prev: PatientCreateResult | null,
+export async function updatePatientAction(
+  patientId: string,
+  _prev: PatientUpdateResult | null,
   formData: FormData,
-): Promise<PatientCreateResult> {
+): Promise<PatientUpdateResult> {
   const session = await requireActiveStaff();
 
-  const parsed = PatientCreateSchema.safeParse(readForm(formData));
+  const parsed = PatientUpdateSchema.safeParse(readForm(formData));
   if (!parsed.success) {
     return {
       ok: false,
@@ -45,47 +46,50 @@ export async function createPatientAction(
     };
   }
 
-  // consent_given_today is a UI-only signal; translate to the actual column.
   const { consent_given_today, ...rest } = parsed.data;
-  const consent_signed_at =
-    consent_given_today === "yes" ? new Date().toISOString() : null;
 
-  const supabase = await createClient();
-  const { data, error } = await supabase
+  // Use the admin client so RLS doesn't block reception editing patients
+  // they didn't create. Authorisation lives at requireActiveStaff above.
+  const admin = createAdminClient();
+
+  // Look at the current consent_signed_at: only stamp it now if it isn't
+  // already set. Editing the form should never CLEAR an existing signed
+  // consent — that's a deliberate one-way ratchet for RA 10173 compliance.
+  const { data: existing } = await admin
     .from("patients")
-    .insert({
-      ...rest,
-      consent_signed_at,
-      created_by: session.user_id,
-      pre_registered: false,
-    })
-    .select("id, drm_id")
-    .single();
+    .select("consent_signed_at")
+    .eq("id", patientId)
+    .maybeSingle();
 
-  if (error || !data) {
-    return {
-      ok: false,
-      error: error?.message ?? "Could not create patient.",
-    };
-  }
+  const consent_signed_at = existing?.consent_signed_at
+    ? existing.consent_signed_at
+    : consent_given_today === "yes"
+      ? new Date().toISOString()
+      : null;
+
+  const { error } = await admin
+    .from("patients")
+    .update({ ...rest, consent_signed_at })
+    .eq("id", patientId);
+
+  if (error) return { ok: false, error: error.message };
 
   const h = await headers();
   await audit({
     actor_id: session.user_id,
     actor_type: "staff",
-    patient_id: data.id,
-    action: "patient.created",
+    patient_id: patientId,
+    action: "patient.updated",
     resource_type: "patient",
-    resource_id: data.id,
+    resource_id: patientId,
     metadata: {
-      drm_id: data.drm_id,
-      created_by_role: session.role,
-      consent_signed: !!consent_signed_at,
+      consent_signed_now: !existing?.consent_signed_at && !!consent_signed_at,
     },
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),
   });
 
-  revalidatePath("/staff/patients");
-  redirect(`/staff/patients/${data.id}`);
+  revalidatePath(`/staff/patients/${patientId}`);
+  revalidatePath(`/staff/patients/${patientId}/edit`);
+  redirect(`/staff/patients/${patientId}`);
 }
