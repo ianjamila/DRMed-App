@@ -209,52 +209,121 @@ export type Database = {
         }
         Relationships: []
       }
+      hmo_providers: {
+        Row: {
+          contact_person_address: string | null
+          contact_person_email: string | null
+          contact_person_name: string | null
+          contact_person_phone: string | null
+          contract_end_date: string | null
+          contract_start_date: string | null
+          created_at: string
+          due_days_for_invoice: number | null
+          id: string
+          is_active: boolean
+          name: string
+          notes: string | null
+          updated_at: string
+        }
+        Insert: {
+          contact_person_address?: string | null
+          contact_person_email?: string | null
+          contact_person_name?: string | null
+          contact_person_phone?: string | null
+          contract_end_date?: string | null
+          contract_start_date?: string | null
+          created_at?: string
+          due_days_for_invoice?: number | null
+          id?: string
+          is_active?: boolean
+          name: string
+          notes?: string | null
+          updated_at?: string
+        }
+        Update: {
+          contact_person_address?: string | null
+          contact_person_email?: string | null
+          contact_person_name?: string | null
+          contact_person_phone?: string | null
+          contract_end_date?: string | null
+          contract_start_date?: string | null
+          created_at?: string
+          due_days_for_invoice?: number | null
+          id?: string
+          is_active?: boolean
+          name?: string
+          notes?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       patients: {
         Row: {
           address: string | null
           birthdate: string
+          consent_signed_at: string | null
           created_at: string
           created_by: string | null
           drm_id: string
           email: string | null
           first_name: string
           id: string
+          is_repeat_patient: boolean
           last_name: string
           middle_name: string | null
           phone: string | null
           pre_registered: boolean
+          preferred_release_medium: string | null
+          referral_source: string | null
+          referred_by_doctor: string | null
+          senior_pwd_id_kind: string | null
+          senior_pwd_id_number: string | null
           sex: string | null
           updated_at: string
         }
         Insert: {
           address?: string | null
           birthdate: string
+          consent_signed_at?: string | null
           created_at?: string
           created_by?: string | null
           drm_id?: string
           email?: string | null
           first_name: string
           id?: string
+          is_repeat_patient?: boolean
           last_name: string
           middle_name?: string | null
           phone?: string | null
           pre_registered?: boolean
+          preferred_release_medium?: string | null
+          referral_source?: string | null
+          referred_by_doctor?: string | null
+          senior_pwd_id_kind?: string | null
+          senior_pwd_id_number?: string | null
           sex?: string | null
           updated_at?: string
         }
         Update: {
           address?: string | null
           birthdate?: string
+          consent_signed_at?: string | null
           created_at?: string
           created_by?: string | null
           drm_id?: string
           email?: string | null
           first_name?: string
           id?: string
+          is_repeat_patient?: boolean
           last_name?: string
           middle_name?: string | null
           phone?: string | null
           pre_registered?: boolean
+          preferred_release_medium?: string | null
+          referral_source?: string | null
+          referred_by_doctor?: string | null
+          senior_pwd_id_kind?: string | null
+          senior_pwd_id_number?: string | null
           sex?: string | null
           updated_at?: string
         }
@@ -716,13 +785,53 @@ export type Database = {
         }
         Relationships: []
       }
+      sync_state: {
+        Row: {
+          key: string
+          last_synced_at: string
+          last_visit_id: string | null
+          notes: string | null
+          updated_at: string
+        }
+        Insert: {
+          key: string
+          last_synced_at: string
+          last_visit_id?: string | null
+          notes?: string | null
+          updated_at?: string
+        }
+        Update: {
+          key?: string
+          last_synced_at?: string
+          last_visit_id?: string | null
+          notes?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       test_requests: {
         Row: {
+          assigned_medtech_id: string | null
           assigned_to: string | null
+          base_price_php: number | null
           cancelled_reason: string | null
+          clinic_fee_php: number | null
           completed_at: string | null
           created_at: string
+          discount_amount_php: number
+          discount_kind: string | null
+          doctor_pf_php: number | null
+          final_price_php: number | null
+          hmo_approval_date: string | null
+          hmo_approved_amount_php: number | null
+          hmo_authorization_no: string | null
+          hmo_provider_id: string | null
+          home_service_address: string | null
+          home_service_fee_php: number | null
           id: string
+          procedure_description: string | null
+          receptionist_remarks: string | null
+          release_medium: string | null
           released_at: string | null
           released_by: string | null
           requested_at: string
@@ -732,15 +841,32 @@ export type Database = {
           signed_off_by: string | null
           started_at: string | null
           status: string
+          test_number: number | null
           updated_at: string
           visit_id: string
         }
         Insert: {
+          assigned_medtech_id?: string | null
           assigned_to?: string | null
+          base_price_php?: number | null
           cancelled_reason?: string | null
+          clinic_fee_php?: number | null
           completed_at?: string | null
           created_at?: string
+          discount_amount_php?: number
+          discount_kind?: string | null
+          doctor_pf_php?: number | null
+          final_price_php?: number | null
+          hmo_approval_date?: string | null
+          hmo_approved_amount_php?: number | null
+          hmo_authorization_no?: string | null
+          hmo_provider_id?: string | null
+          home_service_address?: string | null
+          home_service_fee_php?: number | null
           id?: string
+          procedure_description?: string | null
+          receptionist_remarks?: string | null
+          release_medium?: string | null
           released_at?: string | null
           released_by?: string | null
           requested_at?: string
@@ -750,15 +876,32 @@ export type Database = {
           signed_off_by?: string | null
           started_at?: string | null
           status?: string
+          test_number?: number | null
           updated_at?: string
           visit_id: string
         }
         Update: {
+          assigned_medtech_id?: string | null
           assigned_to?: string | null
+          base_price_php?: number | null
           cancelled_reason?: string | null
+          clinic_fee_php?: number | null
           completed_at?: string | null
           created_at?: string
+          discount_amount_php?: number
+          discount_kind?: string | null
+          doctor_pf_php?: number | null
+          final_price_php?: number | null
+          hmo_approval_date?: string | null
+          hmo_approved_amount_php?: number | null
+          hmo_authorization_no?: string | null
+          hmo_provider_id?: string | null
+          home_service_address?: string | null
+          home_service_fee_php?: number | null
           id?: string
+          procedure_description?: string | null
+          receptionist_remarks?: string | null
+          release_medium?: string | null
           released_at?: string | null
           released_by?: string | null
           requested_at?: string
@@ -768,10 +911,25 @@ export type Database = {
           signed_off_by?: string | null
           started_at?: string | null
           status?: string
+          test_number?: number | null
           updated_at?: string
           visit_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "test_requests_assigned_medtech_id_fkey"
+            columns: ["assigned_medtech_id"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "test_requests_hmo_provider_id_fkey"
+            columns: ["hmo_provider_id"]
+            isOneToOne: false
+            referencedRelation: "hmo_providers"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "test_requests_service_id_fkey"
             columns: ["service_id"]
@@ -833,6 +991,9 @@ export type Database = {
         Row: {
           created_at: string
           created_by: string | null
+          hmo_approval_date: string | null
+          hmo_authorization_no: string | null
+          hmo_provider_id: string | null
           id: string
           notes: string | null
           paid_php: number
@@ -846,6 +1007,9 @@ export type Database = {
         Insert: {
           created_at?: string
           created_by?: string | null
+          hmo_approval_date?: string | null
+          hmo_authorization_no?: string | null
+          hmo_provider_id?: string | null
           id?: string
           notes?: string | null
           paid_php?: number
@@ -859,6 +1023,9 @@ export type Database = {
         Update: {
           created_at?: string
           created_by?: string | null
+          hmo_approval_date?: string | null
+          hmo_authorization_no?: string | null
+          hmo_provider_id?: string | null
           id?: string
           notes?: string | null
           paid_php?: number
@@ -870,6 +1037,13 @@ export type Database = {
           visit_number?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "visits_hmo_provider_id_fkey"
+            columns: ["hmo_provider_id"]
+            isOneToOne: false
+            referencedRelation: "hmo_providers"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "visits_patient_id_fkey"
             columns: ["patient_id"]
