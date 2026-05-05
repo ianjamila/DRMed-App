@@ -1,5 +1,5 @@
 /**
- * Seeds the six HMO providers reception is using as of mid-2026, lifted
+ * Seeds the eleven HMO providers reception is using as of mid-2026, lifted
  * from the live ops Sheet's "HMO contract management" tab. Idempotent:
  * upserts on `name`. Admin can extend / edit via /staff/admin/hmo-providers
  * after this runs.
@@ -27,6 +27,11 @@ const PROVIDERS: TablesInsert<"hmo_providers">[] = [
   { name: "Avega", is_active: true, due_days_for_invoice: 30 },
   { name: "Valucare", is_active: true, due_days_for_invoice: 30 },
   { name: "iCare", is_active: true, due_days_for_invoice: 30 },
+  { name: "Cocolife", is_active: true, due_days_for_invoice: 30 },
+  { name: "Med Asia", is_active: true, due_days_for_invoice: 30 },
+  { name: "Generali", is_active: true, due_days_for_invoice: 30 },
+  { name: "Amaphil", is_active: true, due_days_for_invoice: 30 },
+  { name: "Pacific Cross", is_active: true, due_days_for_invoice: 30 },
 ];
 
 async function main() {
