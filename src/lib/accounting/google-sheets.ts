@@ -101,6 +101,10 @@ export interface AppendRowsResult {
 // formatting renders the way the accountant expects (₱-prefixed, formulas
 // evaluated). INSERT_ROWS keeps the appended rows separate from any tracked
 // table on the tab.
+//
+// Range is the tab name only (no cell ref) so Google's table-detection
+// considers the whole sheet — using `Tab!A1` gets confused by multi-row or
+// merged-cell headers and can insert above them.
 export async function appendRowsToTab({
   serviceAccountJson,
   sheetId,
@@ -112,7 +116,7 @@ export async function appendRowsToTab({
   }
 
   const accessToken = await fetchAccessToken(serviceAccountJson);
-  const range = encodeURIComponent(`${tabName}!A1`);
+  const range = encodeURIComponent(tabName);
   const url =
     `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(sheetId)}` +
     `/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
