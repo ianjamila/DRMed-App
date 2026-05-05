@@ -6,6 +6,8 @@ import { CancelButton } from "./cancel-button";
 
 export const metadata = {
   title: "Cancel appointment — drmed.ph",
+  // Anyone holding the URL can render this page; keep it out of search.
+  robots: { index: false, follow: false },
 };
 
 interface Props {
@@ -14,6 +16,11 @@ interface Props {
 
 const CANCELLABLE = new Set(["confirmed"]);
 
+// The URL token is the appointment UUID (from the confirmation email/SMS).
+// We render only non-PII fields here — service, time, status — so a leaked
+// link cannot expose the patient's name or DRM-ID. The recipient already
+// knows their own appointment; identifying details aren't needed for them
+// to confirm the cancellation.
 export default async function CancelAppointmentPage({ params }: Props) {
   const { id } = await params;
   const admin = createAdminClient();
@@ -22,9 +29,8 @@ export default async function CancelAppointmentPage({ params }: Props) {
     .from("appointments")
     .select(
       `
-        id, scheduled_at, status, walk_in_name,
-        services ( name ),
-        patients ( first_name, last_name, drm_id )
+        id, scheduled_at, status,
+        services ( name )
       `,
     )
     .eq("id", id)
@@ -33,13 +39,6 @@ export default async function CancelAppointmentPage({ params }: Props) {
   if (!appt) notFound();
 
   const svc = Array.isArray(appt.services) ? appt.services[0] : appt.services;
-  const patient = Array.isArray(appt.patients)
-    ? appt.patients[0]
-    : appt.patients;
-
-  const displayName = patient
-    ? `${patient.last_name}, ${patient.first_name}`
-    : (appt.walk_in_name ?? "Guest");
 
   const when = new Date(appt.scheduled_at).toLocaleString("en-PH", {
     dateStyle: "long",
@@ -69,8 +68,6 @@ export default async function CancelAppointmentPage({ params }: Props) {
       <article className="mt-6 rounded-2xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6 text-sm">
         <Field label="Service" value={svc?.name ?? "—"} />
         <Field label="When" value={when} />
-        <Field label="For" value={displayName} />
-        {patient ? <Field label="DRM-ID" value={patient.drm_id} mono /> : null}
         <Field
           label="Status"
           value={appt.status.replace(/_/g, " ")}
