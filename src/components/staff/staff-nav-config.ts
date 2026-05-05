@@ -91,6 +91,11 @@ export const STAFF_NAV: StaffNavSection[] = [
         label: "Closures",
         roles: ["admin"],
       },
+      {
+        href: "/staff/admin/accounting",
+        label: "Accounting sync",
+        roles: ["admin"],
+      },
       { href: "/staff/users", label: "Staff users", roles: ["admin"] },
       { href: "/staff/audit", label: "Audit log", roles: ["admin"] },
       {
