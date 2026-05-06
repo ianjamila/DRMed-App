@@ -5,6 +5,7 @@ import { ClaimButton } from "../claim-button";
 import { UploadResultForm } from "./upload-form";
 import { ViewResultButton } from "./view-result-button";
 import { StructuredResultForm } from "./structured-form";
+import { AmendResultForm } from "./amend-form";
 import {
   calculateAgeMonths,
   normalisePatientSex,
@@ -48,7 +49,7 @@ export default async function QueueTestDetailPage({ params }: Props) {
           id, visit_number,
           patients!inner ( id, drm_id, first_name, last_name, phone, sex, birthdate )
         ),
-        results ( id, uploaded_at, file_size_bytes, notes, generation_kind, finalised_at, control_no )
+        results ( id, uploaded_at, file_size_bytes, notes, generation_kind, finalised_at, control_no, amended_at, amendment_count )
       `,
     )
     .eq("id", id)
@@ -68,6 +69,40 @@ export default async function QueueTestDetailPage({ params }: Props) {
   const editable =
     ["in_progress", "result_uploaded"].includes(test.status) &&
     (ownedByMe || !test.assigned_to);
+  // Amendments are allowed once a result exists, regardless of who
+  // claimed the test originally — corrections often happen after the
+  // patient has already received the PDF.
+  const amendable = Boolean(
+    result &&
+      ["result_uploaded", "ready_for_release", "released"].includes(
+        test.status,
+      ),
+  );
+
+  // Load amendment history for the panel below the result.
+  const amendments = result
+    ? (
+        await supabase
+          .from("result_amendments")
+          .select(
+            "id, reason, amended_at, amendment_seq, amended_by, prior_uploaded_at",
+          )
+          .eq("result_id", result.id)
+          .order("amendment_seq", { ascending: false })
+      ).data ?? []
+    : [];
+
+  // Fetch names for the amender ids so the panel can show who did each
+  // amendment.
+  const amenderIds = Array.from(new Set(amendments.map((a) => a.amended_by)));
+  const amenderMap = new Map<string, string>();
+  if (amenderIds.length > 0) {
+    const { data: profs } = await supabase
+      .from("staff_profiles")
+      .select("id, full_name")
+      .in("id", amenderIds);
+    for (const p of profs ?? []) amenderMap.set(p.id, p.full_name);
+  }
 
   // Phase 13: load template + (existing values, if any) so we can render
   // the structured form when applicable. Send-out tests skip this entirely.
@@ -248,6 +283,11 @@ export default async function QueueTestDetailPage({ params }: Props) {
           <div className={canStructured || canUpload || claimable ? "mt-6" : ""}>
             <h2 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
               Result on file
+              {result.amendment_count > 0 ? (
+                <span className="ml-2 rounded-md bg-amber-100 px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-amber-900">
+                  Amended ×{result.amendment_count}
+                </span>
+              ) : null}
             </h2>
             <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
               {result.generation_kind === "structured"
@@ -268,12 +308,42 @@ export default async function QueueTestDetailPage({ params }: Props) {
                 {result.notes}
               </p>
             ) : null}
-            <div className="mt-4">
+            <div className="mt-4 flex flex-wrap items-center gap-3">
               <ViewResultButton testRequestId={test.id} />
+              {amendable ? <AmendResultForm testRequestId={test.id} /> : null}
             </div>
             <p className="mt-2 text-xs text-[color:var(--color-brand-text-soft)]">
               Opens a 5-minute signed URL. Each view is audit-logged.
             </p>
+
+            {amendments.length > 0 ? (
+              <div className="mt-5 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] p-3">
+                <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+                  Amendment history
+                </p>
+                <ul className="mt-2 grid gap-2 text-xs">
+                  {amendments.map((a) => (
+                    <li
+                      key={a.id}
+                      className="rounded-md bg-white px-3 py-2"
+                    >
+                      <p className="font-semibold text-[color:var(--color-brand-navy)]">
+                        v{a.amendment_seq + 1} ·{" "}
+                        {new Date(a.amended_at).toLocaleString("en-PH")} ·{" "}
+                        {amenderMap.get(a.amended_by) ?? "—"}
+                      </p>
+                      <p className="mt-1 text-[color:var(--color-brand-text-mid)]">
+                        {a.reason}
+                      </p>
+                      <p className="mt-1 font-mono text-[10px] text-[color:var(--color-brand-text-soft)]">
+                        Replaced version uploaded{" "}
+                        {new Date(a.prior_uploaded_at).toLocaleString("en-PH")}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </div>
         ) : null}
 

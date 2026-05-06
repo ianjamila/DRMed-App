@@ -576,6 +576,157 @@ export async function uploadResultAction(
   return { ok: true };
 }
 
+export type AmendResult = { ok: true } | { ok: false; error: string };
+
+// Amend an already-released (or result_uploaded / ready_for_release)
+// result. Snapshots the prior version into result_amendments and
+// replaces results.storage_path with the new file. Original PDF is
+// retained at its old path — never overwritten — so the audit trail
+// can serve historical versions if needed later.
+export async function amendResultAction(
+  testRequestId: string,
+  formData: FormData,
+): Promise<AmendResult> {
+  const session = await requireActiveStaff();
+
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) {
+    return { ok: false, error: "Please attach the corrected PDF." };
+  }
+  if (file.type !== "application/pdf") {
+    return { ok: false, error: "File must be a PDF." };
+  }
+  if (file.size > MAX_BYTES) {
+    return { ok: false, error: "PDF must be 10 MB or less." };
+  }
+  const reason = (formData.get("reason") ?? "").toString().trim();
+  if (reason.length < 5) {
+    return {
+      ok: false,
+      error: "Please describe the reason for amendment (5+ characters).",
+    };
+  }
+  if (reason.length > 2000) {
+    return { ok: false, error: "Reason is too long (2000 char max)." };
+  }
+
+  const admin = createAdminClient();
+
+  // Load the current result + parent test_request + visit context.
+  const { data: result } = await admin
+    .from("results")
+    .select(
+      "id, storage_path, file_size_bytes, uploaded_by, uploaded_at, notes, amendment_count, test_request_id",
+    )
+    .eq("test_request_id", testRequestId)
+    .maybeSingle();
+  if (!result || !result.storage_path) {
+    return { ok: false, error: "No result on file to amend." };
+  }
+
+  const { data: testRow } = await admin
+    .from("test_requests")
+    .select("id, status, visit_id, visits!inner ( id, patient_id )")
+    .eq("id", testRequestId)
+    .maybeSingle();
+  if (!testRow) return { ok: false, error: "Test not found." };
+  const visit = Array.isArray(testRow.visits) ? testRow.visits[0] : testRow.visits;
+  if (!visit) return { ok: false, error: "Visit not found." };
+
+  // Allowed amendment statuses: anything past the medtech editing stage
+  // — including released. Tests still in progress should be edited via
+  // the normal workflow, not amended.
+  const allowed = new Set([
+    "result_uploaded",
+    "ready_for_release",
+    "released",
+  ]);
+  if (!allowed.has(testRow.status)) {
+    return {
+      ok: false,
+      error: `Test status is ${testRow.status} — amend only applies after a result has been recorded.`,
+    };
+  }
+
+  const nextSeq = (result.amendment_count ?? 0) + 1;
+  const newPath = `${visit.patient_id}/${visit.id}/${testRow.id}.v${nextSeq + 1}.pdf`;
+
+  // Upload new file BEFORE writing the snapshot, so a failed upload
+  // doesn't leave a half-amended row.
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const { error: uploadErr } = await admin.storage
+    .from("results")
+    .upload(newPath, buffer, {
+      contentType: "application/pdf",
+      upsert: false,
+    });
+  if (uploadErr) {
+    return { ok: false, error: `Upload failed: ${uploadErr.message}` };
+  }
+
+  // Snapshot the prior version into result_amendments.
+  const { error: snapErr } = await admin.from("result_amendments").insert({
+    result_id: result.id,
+    test_request_id: testRow.id,
+    prior_storage_path: result.storage_path,
+    prior_uploaded_by: result.uploaded_by,
+    prior_uploaded_at: result.uploaded_at,
+    prior_file_size_bytes: result.file_size_bytes,
+    prior_notes: result.notes,
+    reason,
+    amended_by: session.user_id,
+    amendment_seq: nextSeq,
+  });
+  if (snapErr) {
+    // Roll back the new upload so the storage doesn't orphan.
+    await admin.storage.from("results").remove([newPath]);
+    return { ok: false, error: snapErr.message };
+  }
+
+  // Swap the canonical row over to the new file.
+  const nowIso = new Date().toISOString();
+  const { error: updErr } = await admin
+    .from("results")
+    .update({
+      storage_path: newPath,
+      file_size_bytes: file.size,
+      uploaded_by: session.user_id,
+      uploaded_at: nowIso,
+      amended_at: nowIso,
+      amendment_count: nextSeq,
+    })
+    .eq("id", result.id);
+  if (updErr) {
+    // The snapshot row exists but pointer didn't move; surface the
+    // error so the operator knows the state is inconsistent and can
+    // retry.
+    return { ok: false, error: updErr.message };
+  }
+
+  const h = await headers();
+  await audit({
+    actor_id: session.user_id,
+    actor_type: "staff",
+    action: "result.amended",
+    resource_type: "result",
+    resource_id: result.id,
+    metadata: {
+      test_request_id: testRow.id,
+      visit_id: visit.id,
+      amendment_seq: nextSeq,
+      reason,
+      prior_storage_path: result.storage_path,
+      new_storage_path: newPath,
+    },
+    ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    user_agent: h.get("user-agent"),
+  });
+
+  revalidatePath(`/staff/queue/${testRow.id}`);
+  revalidatePath(`/staff/visits/${visit.id}`);
+  return { ok: true };
+}
+
 export async function getResultDownloadUrl(
   testRequestId: string,
 ): Promise<{ ok: true; url: string } | { ok: false; error: string }> {

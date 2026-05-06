@@ -940,6 +940,8 @@ export type Database = {
       }
       results: {
         Row: {
+          amended_at: string | null
+          amendment_count: number
           control_no: number | null
           created_at: string
           file_size_bytes: number | null
@@ -954,6 +956,8 @@ export type Database = {
           uploaded_by: string
         }
         Insert: {
+          amended_at?: string | null
+          amendment_count?: number
           control_no?: number | null
           created_at?: string
           file_size_bytes?: number | null
@@ -968,6 +972,8 @@ export type Database = {
           uploaded_by: string
         }
         Update: {
+          amended_at?: string | null
+          amendment_count?: number
           control_no?: number | null
           created_at?: string
           file_size_bytes?: number | null
@@ -990,6 +996,51 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      result_amendments: {
+        Row: {
+          amended_at: string
+          amended_by: string
+          amendment_seq: number
+          id: string
+          prior_file_size_bytes: number | null
+          prior_notes: string | null
+          prior_storage_path: string
+          prior_uploaded_at: string
+          prior_uploaded_by: string
+          reason: string
+          result_id: string
+          test_request_id: string
+        }
+        Insert: {
+          amended_at?: string
+          amended_by: string
+          amendment_seq: number
+          id?: string
+          prior_file_size_bytes?: number | null
+          prior_notes?: string | null
+          prior_storage_path: string
+          prior_uploaded_at: string
+          prior_uploaded_by: string
+          reason: string
+          result_id: string
+          test_request_id: string
+        }
+        Update: {
+          amended_at?: string
+          amended_by?: string
+          amendment_seq?: number
+          id?: string
+          prior_file_size_bytes?: number | null
+          prior_notes?: string | null
+          prior_storage_path?: string
+          prior_uploaded_at?: string
+          prior_uploaded_by?: string
+          reason?: string
+          result_id?: string
+          test_request_id?: string
+        }
+        Relationships: []
       }
       service_price_history: {
         Row: {
