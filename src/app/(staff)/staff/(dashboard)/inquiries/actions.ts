@@ -6,10 +6,34 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
+import { z } from "zod";
 import {
   InquiryCreateSchema,
   InquiryUpdateSchema,
 } from "@/lib/validations/inquiry";
+
+const BookFromInquirySchema = z.object({
+  scheduled_at: z
+    .string()
+    .trim()
+    .min(1, "Pick a date and time.")
+    .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/, "Invalid date/time.")
+    .transform((v) => `${v.length === 16 ? `${v}:00` : v}+08:00`),
+  service_id: z
+    .union([z.string(), z.null(), z.undefined()])
+    .transform((v) => {
+      const t = (v ?? "").toString().trim();
+      return t.length === 0 ? null : t;
+    })
+    .pipe(z.string().uuid("Invalid service.").nullable()),
+  notes: z
+    .union([z.string(), z.null(), z.undefined()])
+    .transform((v) => {
+      const t = (v ?? "").toString().trim();
+      return t.length === 0 ? null : t;
+    })
+    .pipe(z.string().max(2000).nullable()),
+});
 
 export type InquiryResult =
   | { ok: true }
@@ -164,4 +188,103 @@ export async function updateInquiryAction(
   revalidatePath("/staff/inquiries");
   revalidatePath(`/staff/inquiries/${inquiryId}/edit`);
   redirect("/staff/inquiries");
+}
+
+// Promote a pending inquiry to a confirmed booking. Creates a walk-in
+// appointment with the caller's name + contact (no patient record yet —
+// reception promotes to patient when the lead actually arrives), then
+// links the appointment back to the inquiry and flips status to confirmed.
+export async function bookFromInquiryAction(
+  inquiryId: string,
+  _prev: InquiryResult | null,
+  formData: FormData,
+): Promise<InquiryResult> {
+  const session = await requireActiveStaff();
+  if (!requireReception(session.role)) {
+    return { ok: false, error: "Reception or admin access required." };
+  }
+
+  const parsed = BookFromInquirySchema.safeParse({
+    scheduled_at: formData.get("scheduled_at"),
+    service_id: formData.get("service_id"),
+    notes: formData.get("notes"),
+  });
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Please check the form.",
+    };
+  }
+
+  const admin = createAdminClient();
+
+  const { data: inquiry, error: inquiryErr } = await admin
+    .from("inquiries")
+    .select("id, caller_name, contact, status")
+    .eq("id", inquiryId)
+    .maybeSingle();
+  if (inquiryErr || !inquiry) {
+    return { ok: false, error: "Inquiry not found." };
+  }
+  if (inquiry.status === "confirmed") {
+    return { ok: false, error: "This inquiry is already confirmed." };
+  }
+
+  const { data: appointment, error: apptErr } = await admin
+    .from("appointments")
+    .insert({
+      walk_in_name: inquiry.caller_name,
+      walk_in_phone: inquiry.contact,
+      service_id: parsed.data.service_id,
+      scheduled_at: parsed.data.scheduled_at,
+      notes: parsed.data.notes,
+      status: "confirmed",
+      created_by: session.user_id,
+    })
+    .select("id, scheduled_at")
+    .single();
+  if (apptErr || !appointment) {
+    return {
+      ok: false,
+      error: apptErr?.message ?? "Could not create the appointment.",
+    };
+  }
+
+  const { error: updErr } = await admin
+    .from("inquiries")
+    .update({
+      status: "confirmed",
+      linked_appointment_id: appointment.id,
+      // Clear any prior drop reason in case reception is re-opening a
+      // dropped inquiry that came back.
+      drop_reason: null,
+    })
+    .eq("id", inquiryId);
+  if (updErr) {
+    // Best-effort rollback: delete the orphan appointment so reception
+    // doesn't see a phantom booking. RLS allows admin client to delete.
+    await admin.from("appointments").delete().eq("id", appointment.id);
+    return { ok: false, error: updErr.message };
+  }
+
+  const { ip, ua } = await ipAndAgent();
+  await audit({
+    actor_id: session.user_id,
+    actor_type: "staff",
+    action: "inquiry.booked",
+    resource_type: "inquiry",
+    resource_id: inquiryId,
+    metadata: {
+      appointment_id: appointment.id,
+      scheduled_at: appointment.scheduled_at,
+      service_id: parsed.data.service_id,
+    },
+    ip_address: ip,
+    user_agent: ua,
+  });
+
+  revalidatePath("/staff/inquiries");
+  revalidatePath(`/staff/inquiries/${inquiryId}/edit`);
+  revalidatePath("/staff/appointments");
+  redirect("/staff/appointments");
 }

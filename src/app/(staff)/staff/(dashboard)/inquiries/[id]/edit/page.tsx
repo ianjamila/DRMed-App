@@ -45,21 +45,31 @@ export default async function EditInquiryPage({ params }: PageProps) {
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8">
-      <header className="mb-6">
-        <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
+      <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
+            <Link
+              href="/staff/inquiries"
+              className="hover:text-[color:var(--color-brand-navy)]"
+            >
+              ← Inquiries
+            </Link>
+          </p>
+          <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+            {inquiry.caller_name}
+          </h1>
+          <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
+            {inquiry.contact}
+          </p>
+        </div>
+        {inquiry.status !== "confirmed" ? (
           <Link
-            href="/staff/inquiries"
-            className="hover:text-[color:var(--color-brand-navy)]"
+            href={`/staff/inquiries/${inquiry.id}/book`}
+            className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700"
           >
-            ← Inquiries
+            Book from this inquiry
           </Link>
-        </p>
-        <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          {inquiry.caller_name}
-        </h1>
-        <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
-          {inquiry.contact}
-        </p>
+        ) : null}
       </header>
 
       <InquiryForm
