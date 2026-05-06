@@ -21,6 +21,7 @@ const STATUS_STYLE: Record<string, string> = {
 interface ApptRow {
   id: string;
   scheduled_at: string;
+  created_at: string;
   status: string;
   notes: string | null;
   walk_in_name: string | null;
@@ -39,7 +40,7 @@ async function loadRange(fromIso: string, toIso: string): Promise<ApptRow[]> {
     .from("appointments")
     .select(
       `
-        id, scheduled_at, status, notes, walk_in_name, walk_in_phone,
+        id, scheduled_at, created_at, status, notes, walk_in_name, walk_in_phone,
         patients ( id, drm_id, first_name, last_name, phone ),
         services ( name, code )
       `,
@@ -54,6 +55,7 @@ async function loadRange(fromIso: string, toIso: string): Promise<ApptRow[]> {
     return {
       id: a.id,
       scheduled_at: a.scheduled_at,
+      created_at: a.created_at,
       status: a.status,
       notes: a.notes,
       walk_in_name: a.walk_in_name,
@@ -105,11 +107,17 @@ export default async function AppointmentsPage() {
         </p>
       </header>
 
-      <Section title={`Today (${today.length})`} rows={today} empty="No appointments today." />
+      <Section
+        title={`Today (${today.length})`}
+        rows={today}
+        empty="No appointments today."
+        isAdmin={session.role === "admin"}
+      />
       <Section
         title={`Next 30 days (${upcoming.length})`}
         rows={upcoming}
         empty="No upcoming appointments."
+        isAdmin={session.role === "admin"}
       />
     </div>
   );
@@ -119,10 +127,12 @@ function Section({
   title,
   rows,
   empty,
+  isAdmin,
 }: {
   title: string;
   rows: ApptRow[];
   empty: string;
+  isAdmin: boolean;
 }) {
   return (
     <section className="mt-6">
@@ -133,6 +143,7 @@ function Section({
         <table className="w-full text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
+              <th className="px-4 py-3">Requested</th>
               <th className="px-4 py-3">When</th>
               <th className="px-4 py-3">Patient</th>
               <th className="px-4 py-3">Service</th>
@@ -144,7 +155,7 @@ function Section({
             {rows.length === 0 ? (
               <tr>
                 <td
-                  colSpan={5}
+                  colSpan={6}
                   className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]"
                 >
                   {empty}
@@ -156,6 +167,15 @@ function Section({
                   key={r.id}
                   className="hover:bg-[color:var(--color-brand-bg)]"
                 >
+                  <td className="px-4 py-3 whitespace-nowrap text-xs text-[color:var(--color-brand-text-soft)]">
+                    {new Date(r.created_at).toLocaleString("en-PH", {
+                      timeZone: "Asia/Manila",
+                      month: "short",
+                      day: "numeric",
+                      hour: "numeric",
+                      minute: "2-digit",
+                    })}
+                  </td>
                   <td className="px-4 py-3 whitespace-nowrap text-[color:var(--color-brand-text-mid)]">
                     {new Date(r.scheduled_at).toLocaleString("en-PH", {
                       dateStyle: "medium",
@@ -201,6 +221,7 @@ function Section({
                       appointmentId={r.id}
                       patientId={r.patient_id}
                       status={r.status}
+                      isAdmin={isAdmin}
                     />
                   </td>
                 </tr>
