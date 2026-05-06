@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { queueTitleForRole, sectionsForRole } from "@/lib/auth/role-sections";
+import { RealtimeRefresher } from "@/components/staff/realtime-refresher";
 import { ClaimButton } from "./claim-button";
 
 export const metadata = {
@@ -59,6 +60,13 @@ export default async function QueuePage({ searchParams }: SearchProps) {
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+      <RealtimeRefresher
+        channelName="queue-page"
+        subscriptions={[
+          { table: "test_requests", event: "INSERT" },
+          { table: "test_requests", event: "UPDATE" },
+        ]}
+      />
       <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
