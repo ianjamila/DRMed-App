@@ -18,4 +18,18 @@ export const SubscribeSchema = z.object({
   source: z.enum(SUBSCRIBER_SOURCES),
 });
 
+export const ComposeCampaignSchema = z.object({
+  subject: z
+    .string()
+    .trim()
+    .min(1, "Subject is required.")
+    .max(200, "Subject is too long."),
+  body_md: z
+    .string()
+    .trim()
+    .min(1, "Body is required.")
+    .max(50_000, "Body is too long."),
+});
+
 export type SubscribeInput = z.infer<typeof SubscribeSchema>;
+export type ComposeCampaignInput = z.infer<typeof ComposeCampaignSchema>;
