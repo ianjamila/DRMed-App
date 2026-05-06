@@ -390,6 +390,10 @@ function PatientBlock({
 function SignatureBlock({
   medtech,
 }: {
+  // The "medtech" field is used for backwards compatibility but represents
+  // the staff member who finalised the result — could be a medtech or an
+  // xray_technician. The PRC license kind printed below distinguishes
+  // them (RMT vs RT).
   medtech: ResultDocumentInput["medtech"];
 }) {
   if (!medtech) {
@@ -397,7 +401,7 @@ function SignatureBlock({
       <View style={styles.signatureBlock}>
         <View style={styles.signatureCol}>
           <Text style={styles.signatureName}>—</Text>
-          <Text style={styles.signatureMeta}>Medical Technologist</Text>
+          <Text style={styles.signatureMeta}>Technologist</Text>
         </View>
       </View>
     );

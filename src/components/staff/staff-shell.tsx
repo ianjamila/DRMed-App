@@ -19,6 +19,7 @@ interface Props {
 const ROLE_LABEL: Record<StaffSession["role"], string> = {
   reception: "Reception",
   medtech: "Medical Tech",
+  xray_technician: "X-ray Technician",
   pathologist: "Pathologist",
   admin: "Admin",
 };

@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { requireActiveStaff } from "@/lib/auth/require-staff";
+import { queueTitleForRole, sectionsForRole } from "@/lib/auth/role-sections";
 import { ClaimButton } from "./claim-button";
 
 export const metadata = {
@@ -19,15 +21,21 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   const params = await searchParams;
   const filter = params.filter ?? "all";
 
+  const session = await requireActiveStaff();
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
+
+  // Each role sees only the sections it operates on. medtech doesn't see
+  // imaging_xray (handled by xray_technician), and vice versa. admin /
+  // pathologist see everything.
+  const allowedSections = sectionsForRole(session.role);
 
   let query = supabase
     .from("test_requests")
     .select(
       `
         id, status, requested_at, assigned_to, started_at,
-        services!inner ( id, code, name, turnaround_hours ),
+        services!inner ( id, code, name, turnaround_hours, section ),
         visits!inner (
           id, visit_number,
           patients!inner ( id, drm_id, first_name, last_name )
@@ -38,18 +46,23 @@ export default async function QueuePage({ searchParams }: SearchProps) {
     .order("requested_at", { ascending: true })
     .limit(100);
 
+  if (allowedSections !== null && allowedSections.length > 0) {
+    query = query.in("services.section", allowedSections);
+  }
+
   if (filter === "mine" && user) {
     query = query.eq("assigned_to", user.id);
   }
 
   const { data: rows } = await query;
+  const queueTitle = queueTitleForRole(session.role);
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            Lab queue
+            {queueTitle}
           </h1>
           <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
             Tests requested or in progress, oldest first.

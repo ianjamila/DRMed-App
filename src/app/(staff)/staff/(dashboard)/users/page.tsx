@@ -9,6 +9,7 @@ export const metadata = {
 const ROLE_LABEL: Record<string, string> = {
   reception: "Reception",
   medtech: "Medical Tech",
+  xray_technician: "X-ray Technician",
   pathologist: "Pathologist",
   admin: "Admin",
 };

@@ -15,10 +15,16 @@ interface StaffDefaults {
   id?: string;
   email?: string;
   full_name: string;
-  role: "reception" | "medtech" | "pathologist" | "admin";
+  role:
+    | "reception"
+    | "medtech"
+    | "pathologist"
+    | "admin"
+    | "xray_technician";
   is_active?: boolean;
   // PRC license info — drives the medtech signature line on auto-generated
-  // result PDFs. Optional; only meaningful for medtech / pathologist roles.
+  // result PDFs. Optional; only meaningful for medtech / pathologist /
+  // xray_technician roles.
   prc_license_kind?: "RMT" | "MD" | "RT" | "pathologist" | null;
   prc_license_no?: string | null;
 }
@@ -30,6 +36,7 @@ interface Props {
 const ROLE_OPTIONS: { value: StaffDefaults["role"]; label: string }[] = [
   { value: "reception", label: "Reception" },
   { value: "medtech", label: "Medical Tech" },
+  { value: "xray_technician", label: "X-ray Technician" },
   { value: "pathologist", label: "Pathologist" },
   { value: "admin", label: "Admin" },
 ];

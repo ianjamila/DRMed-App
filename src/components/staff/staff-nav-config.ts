@@ -27,7 +27,7 @@ export const STAFF_NAV: StaffNavSection[] = [
         href: "/staff",
         label: "Dashboard",
         exact: true,
-        roles: ["reception", "medtech", "pathologist", "admin"],
+        roles: ["reception", "medtech", "pathologist", "admin", "xray_technician"],
       },
     ],
   },
@@ -72,7 +72,7 @@ export const STAFF_NAV: StaffNavSection[] = [
       {
         href: "/staff/queue",
         label: "Queue",
-        roles: ["medtech", "pathologist", "admin"],
+        roles: ["medtech", "pathologist", "admin", "xray_technician"],
       },
       {
         href: "/staff/signoff",

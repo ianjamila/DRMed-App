@@ -5,6 +5,7 @@ export const StaffRoleEnum = z.enum([
   "medtech",
   "pathologist",
   "admin",
+  "xray_technician",
 ]);
 
 // Constrained by migration 0007: staff_profiles.prc_license_kind check.

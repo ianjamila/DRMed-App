@@ -8,7 +8,12 @@ export interface StaffSession {
   user_id: string;
   email: string;
   full_name: string;
-  role: "reception" | "medtech" | "pathologist" | "admin";
+  role:
+    | "reception"
+    | "medtech"
+    | "pathologist"
+    | "admin"
+    | "xray_technician";
 }
 
 // Call at the top of any protected /staff/* server component.

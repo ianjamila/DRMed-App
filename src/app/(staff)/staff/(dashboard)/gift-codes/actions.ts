@@ -5,14 +5,12 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
-import { requireActiveStaff } from "@/lib/auth/require-staff";
+import { requireActiveStaff, type StaffSession } from "@/lib/auth/require-staff";
 import { SellGiftCodeSchema } from "@/lib/validations/gift-code";
 
 export type SellResult = { ok: true } | { ok: false; error: string };
 
-function requireReception(
-  role: "reception" | "medtech" | "pathologist" | "admin",
-): boolean {
+function requireReception(role: StaffSession["role"]): boolean {
   return role === "reception" || role === "admin";
 }
 
