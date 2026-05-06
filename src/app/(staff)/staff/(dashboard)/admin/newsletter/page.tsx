@@ -288,6 +288,8 @@ function sourceLabel(source: string): string {
       return "Homepage footer";
     case "newsletter_page":
       return "/newsletter";
+    case "schedule_form":
+      return "Booking form";
     case "admin_added":
       return "Admin-added";
     default:

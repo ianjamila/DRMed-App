@@ -34,11 +34,18 @@ export function isValidSlot(slot: ManilaSlot): boolean {
   if (slot.minute !== 0 && slot.minute !== 30) return false;
   if (slot.hour < 8) return false;
   if (slot.hour > 16) return false;
-  // 16:30 is the last slot; 16:00 is also fine.
   return true;
 }
 
-export const BookingSchema = z.object({
+export const BOOKING_BRANCHES = [
+  "diagnostic_package",
+  "lab_request",
+  "doctor_appointment",
+  "home_service",
+] as const;
+export type BookingBranch = (typeof BOOKING_BRANCHES)[number];
+
+const PatientFields = {
   first_name: z.string().trim().min(1, "First name is required.").max(80),
   last_name: z.string().trim().min(1, "Last name is required.").max(80),
   middle_name: optionalText(80),
@@ -60,53 +67,101 @@ export const BookingSchema = z.object({
     .email("Valid email required for confirmation.")
     .max(160),
   address: optionalText(200),
-  service_id: z.string().uuid("Pick a service."),
-  physician_id: z
-    .union([z.string(), z.null(), z.undefined()])
-    .transform((v) => {
-      const t = (v ?? "").toString().trim();
-      return t.length === 0 ? null : t;
-    })
-    .pipe(z.string().uuid("Invalid physician.").nullable()),
-  scheduled_at: z
-    .string()
-    .min(1, "Pick a date and time.")
-    .transform((v, ctx) => {
-      const d = new Date(v);
-      if (Number.isNaN(d.getTime())) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Invalid date/time.",
-        });
-        return z.NEVER;
-      }
-      const now = Date.now();
-      if (d.getTime() < now + 60 * 60 * 1000) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Pick a slot at least 1 hour from now.",
-        });
-        return z.NEVER;
-      }
-      if (d.getTime() > now + 60 * 24 * 60 * 60 * 1000) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Bookings up to 60 days in advance.",
-        });
-        return z.NEVER;
-      }
-      const slot = manilaSlotFor(d);
-      if (!isValidSlot(slot)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message:
-            "Pick a 30-minute slot Mon–Sat between 8:00 AM and 4:30 PM.",
-        });
-        return z.NEVER;
-      }
-      return d.toISOString();
-    }),
   notes: optionalText(2000),
+  marketing_consent: z
+    .union([z.literal("on"), z.literal("off"), z.literal(""), z.null(), z.undefined()])
+    .transform((v) => v === "on"),
+  service_agreement: z
+    .union([z.literal("on"), z.literal("off"), z.literal(""), z.null(), z.undefined()])
+    .transform((v) => v === "on")
+    .refine((v) => v, "Please accept the service agreement to continue."),
+};
+
+const serviceIds = z
+  .union([z.array(z.string()), z.string()])
+  .transform((v) => (Array.isArray(v) ? v : [v]))
+  .pipe(
+    z
+      .array(z.string().uuid("Invalid service id."))
+      .min(1, "Pick at least one service."),
+  );
+
+// scheduled_at — when present, must be ≥1 h from now, ≤60 d, and a valid
+// 30-min Mon–Sat slot. Empty allowed (the branch decides whether to
+// require it via .superRefine on the discriminated union).
+const optionalScheduledAt = z
+  .union([z.string(), z.null(), z.undefined()])
+  .transform((v, ctx) => {
+    const t = (v ?? "").toString().trim();
+    if (t.length === 0) return null;
+    const d = new Date(t);
+    if (Number.isNaN(d.getTime())) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Invalid date/time.",
+      });
+      return z.NEVER;
+    }
+    const now = Date.now();
+    if (d.getTime() < now + 60 * 60 * 1000) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Pick a slot at least 1 hour from now.",
+      });
+      return z.NEVER;
+    }
+    if (d.getTime() > now + 60 * 24 * 60 * 60 * 1000) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Bookings up to 60 days in advance.",
+      });
+      return z.NEVER;
+    }
+    const slot = manilaSlotFor(d);
+    if (!isValidSlot(slot)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "Pick a 30-minute slot Mon–Sat between 8:00 AM and 4:30 PM.",
+      });
+      return z.NEVER;
+    }
+    return d.toISOString();
+  });
+
+export const DiagnosticPackageBookingSchema = z.object({
+  ...PatientFields,
+  branch: z.literal("diagnostic_package"),
+  service_ids: serviceIds,
 });
+
+export const LabRequestBookingSchema = z
+  .object({
+    ...PatientFields,
+    branch: z.literal("lab_request"),
+    service_ids: serviceIds,
+    scheduled_at: optionalScheduledAt,
+  });
+
+export const DoctorAppointmentBookingSchema = z.object({
+  ...PatientFields,
+  branch: z.literal("doctor_appointment"),
+  service_id: z.string().uuid("Pick a consultation."),
+  physician_id: z.string().uuid("Pick a physician."),
+  scheduled_at: optionalScheduledAt,
+});
+
+export const HomeServiceBookingSchema = z.object({
+  ...PatientFields,
+  branch: z.literal("home_service"),
+  service_ids: serviceIds,
+});
+
+export const BookingSchema = z.discriminatedUnion("branch", [
+  DiagnosticPackageBookingSchema,
+  LabRequestBookingSchema,
+  DoctorAppointmentBookingSchema,
+  HomeServiceBookingSchema,
+]);
 
 export type BookingInput = z.infer<typeof BookingSchema>;

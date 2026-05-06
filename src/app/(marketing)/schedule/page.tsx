@@ -25,11 +25,15 @@ export default async function SchedulePage() {
 
   // Load active physicians + their schedules + upcoming overrides so the
   // booking form can render a picker and the slot grid can intersect days.
+  // Also load specialty_codes (drives the strict specialty picker on the
+  // doctor branch) and physician_specialties (per-physician code list).
   const supabase = await createClient();
   const [
     { data: physicianRows },
     { data: scheduleRows },
     { data: overrideRows },
+    { data: specialtyRows },
+    { data: physicianSpecialtyRows },
   ] = await Promise.all([
     supabase
       .from("physicians")
@@ -47,7 +51,26 @@ export default async function SchedulePage() {
       .select("physician_id, override_on, start_time, end_time")
       .gte("override_on", startDate)
       .lte("override_on", endDate),
+    supabase
+      .from("specialty_codes")
+      .select("code, label, display_order")
+      .order("display_order", { ascending: true }),
+    supabase
+      .from("physician_specialties")
+      .select("physician_id, code"),
   ]);
+
+  const specialties = (specialtyRows ?? []).map((s) => ({
+    code: s.code,
+    label: s.label,
+  }));
+
+  const codesByPhysician = new Map<string, string[]>();
+  for (const r of physicianSpecialtyRows ?? []) {
+    const list = codesByPhysician.get(r.physician_id) ?? [];
+    list.push(r.code);
+    codesByPhysician.set(r.physician_id, list);
+  }
 
   const blocksByPhysician = new Map<
     string,
@@ -91,6 +114,7 @@ export default async function SchedulePage() {
         slug: p.slug,
         photo_path: p.photo_path,
       }),
+      specialty_codes: codesByPhysician.get(p.id) ?? [],
       blocks: blocksByPhysician.get(p.id) ?? [],
       overrides: overridesByPhysician.get(p.id) ?? [],
     }));
@@ -106,6 +130,7 @@ export default async function SchedulePage() {
         slug: p.slug,
         photo_path: p.photo_path,
       }),
+      specialty_codes: codesByPhysician.get(p.id) ?? [],
     }));
 
   return (
@@ -157,9 +182,14 @@ export default async function SchedulePage() {
                     | "lab_test"
                     | "lab_package"
                     | "doctor_consultation",
+                  description: s.description,
+                  price_php: Number(s.price_php),
+                  fasting_required: s.fasting_required,
+                  requires_time_slot: s.requires_time_slot,
                 }))}
               closures={closures}
               startDate={startDate}
+              specialties={specialties}
               physicians={bookablePhysicians}
               byAppointmentPhysicians={byAppointmentPhysicians}
             />

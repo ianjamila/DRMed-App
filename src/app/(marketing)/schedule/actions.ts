@@ -1,6 +1,7 @@
 "use server";
 
 import { headers } from "next/headers";
+import { randomUUID } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import {
@@ -14,44 +15,144 @@ import {
   minutesOfDay,
 } from "@/lib/physicians/availability";
 
-const ALLOWED_KINDS = new Set([
-  "lab_test",
-  "lab_package",
-  "doctor_consultation",
-]);
-
 export type BookingResult =
   | {
       ok: true;
-      appointment_id: string;
       drm_id: string;
-      scheduled_at: string;
-      service_name: string;
+      service_summary: string;
+      scheduled_at: string | null;
+      pending_callback: boolean;
+      booking_group_id: string;
     }
   | { ok: false; error: string };
 
-// Public booking — accepts unauthenticated submissions. Anti-abuse:
-// - Honeypot field "website": silent drop on fill
-// - Server-side date sanity (must be future, within Mon-Sat 8-5)
-// - Per-IP rate limit (Phase 8)
+const HONEYPOT_OK: BookingResult = {
+  ok: true,
+  drm_id: "",
+  service_summary: "",
+  scheduled_at: null,
+  pending_callback: false,
+  booking_group_id: "",
+};
+
+// Allowed `services.kind` per branch. Mirror this on the form so the
+// catalog filter and the server agree.
+const KINDS_PER_BRANCH: Record<string, ReadonlyArray<string>> = {
+  diagnostic_package: ["lab_package"],
+  lab_request: ["lab_test"],
+  doctor_appointment: ["doctor_consultation"],
+  home_service: ["lab_test", "lab_package"],
+};
+
+interface AdminClient {
+  rpc: ReturnType<typeof createAdminClient>["rpc"];
+  from: ReturnType<typeof createAdminClient>["from"];
+}
+
+interface ServiceRow {
+  id: string;
+  name: string;
+  kind: string;
+  is_active: boolean;
+  fasting_required: boolean;
+  requires_time_slot: boolean;
+  allow_concurrent: boolean;
+}
+
+async function loadServices(
+  admin: AdminClient,
+  ids: ReadonlyArray<string>,
+): Promise<{ ok: true; rows: ServiceRow[] } | { ok: false; error: string }> {
+  if (ids.length === 0) return { ok: false, error: "Pick at least one service." };
+  const { data, error } = await admin
+    .from("services")
+    .select(
+      "id, name, kind, is_active, fasting_required, requires_time_slot, allow_concurrent",
+    )
+    .in("id", ids);
+  if (error) return { ok: false, error: error.message };
+  if (!data || data.length !== ids.length) {
+    return { ok: false, error: "One or more services are no longer available." };
+  }
+  for (const r of data) {
+    if (!r.is_active) {
+      return {
+        ok: false,
+        error: "One of the selected services is no longer active.",
+      };
+    }
+  }
+  return { ok: true, rows: data };
+}
+
+async function ensurePatient(
+  admin: AdminClient,
+  data: {
+    first_name: string;
+    last_name: string;
+    middle_name: string | null;
+    birthdate: string;
+    sex: "male" | "female" | null;
+    phone: string;
+    email: string;
+    address: string | null;
+  },
+): Promise<{ ok: true; id: string; drm_id: string } | { ok: false; error: string }> {
+  const { data: patient, error } = await admin
+    .from("patients")
+    .insert({ ...data, pre_registered: true })
+    .select("id, drm_id")
+    .single();
+  if (error || !patient) {
+    return { ok: false, error: error?.message ?? "Could not save your details." };
+  }
+  return { ok: true, id: patient.id, drm_id: patient.drm_id };
+}
+
+async function maybeSubscribe(
+  admin: AdminClient,
+  email: string,
+  ipAddress: string | null,
+): Promise<void> {
+  const lower = email.trim().toLowerCase();
+  if (!lower) return;
+  const { data: existing } = await admin
+    .from("subscribers")
+    .select("id, unsubscribed_at")
+    .eq("email", lower)
+    .maybeSingle();
+  if (existing) {
+    if (existing.unsubscribed_at !== null) {
+      await admin
+        .from("subscribers")
+        .update({
+          unsubscribed_at: null,
+          consent_at: new Date().toISOString(),
+          consent_ip: ipAddress,
+          source: "schedule_form",
+        })
+        .eq("id", existing.id);
+    }
+    return;
+  }
+  await admin
+    .from("subscribers")
+    .insert({ email: lower, source: "schedule_form", consent_ip: ipAddress });
+}
+
 export async function submitBookingAction(
   _prev: BookingResult | null,
   formData: FormData,
 ): Promise<BookingResult> {
   if ((formData.get("website") ?? "") !== "") {
-    // Silent honeypot drop — pretend success so bots stop trying.
-    return {
-      ok: true,
-      appointment_id: "",
-      drm_id: "",
-      scheduled_at: "",
-      service_name: "",
-    };
+    return HONEYPOT_OK;
   }
 
   const headerStore = await headers();
   const requestIp =
     headerStore.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+  const userAgent = headerStore.get("user-agent");
+
   if (requestIp) {
     const limit = await checkRateLimit({
       bucket: "public_booking",
@@ -66,7 +167,9 @@ export async function submitBookingAction(
     }
   }
 
+  const branch = formData.get("branch");
   const parsed = BookingSchema.safeParse({
+    branch,
     first_name: formData.get("first_name"),
     last_name: formData.get("last_name"),
     middle_name: formData.get("middle_name") ?? "",
@@ -75,174 +178,249 @@ export async function submitBookingAction(
     phone: formData.get("phone"),
     email: formData.get("email"),
     address: formData.get("address") ?? "",
-    service_id: formData.get("service_id"),
-    physician_id: formData.get("physician_id") ?? "",
-    scheduled_at: formData.get("scheduled_at"),
     notes: formData.get("notes") ?? "",
+    marketing_consent: formData.get("marketing_consent") ?? "off",
+    service_agreement: formData.get("service_agreement") ?? "off",
+    service_id: formData.get("service_id"),
+    service_ids: formData.getAll("service_ids"),
+    physician_id: formData.get("physician_id") ?? "",
+    scheduled_at: formData.get("scheduled_at") ?? "",
   });
-
   if (!parsed.success) {
     return {
       ok: false,
       error: parsed.error.issues[0]?.message ?? "Please check the form.",
     };
   }
-
+  const data = parsed.data;
   const admin = createAdminClient();
 
-  const { data: service, error: svcErr } = await admin
-    .from("services")
-    .select("id, name, is_active, kind")
-    .eq("id", parsed.data.service_id)
-    .maybeSingle();
-  if (svcErr || !service || !service.is_active) {
-    return { ok: false, error: "Selected service is no longer available." };
+  // Resolve services for the branch.
+  const allowedKinds = new Set(KINDS_PER_BRANCH[data.branch] ?? []);
+  let services: ServiceRow[];
+  if (data.branch === "doctor_appointment") {
+    const res = await loadServices(admin, [data.service_id]);
+    if (!res.ok) return res;
+    services = res.rows;
+  } else {
+    const res = await loadServices(admin, data.service_ids);
+    if (!res.ok) return res;
+    services = res.rows;
   }
-  if (!ALLOWED_KINDS.has(service.kind)) {
-    return { ok: false, error: "Selected service cannot be booked online." };
-  }
-
-  // Re-check closures + operating-hour bounds at submit time so closures added
-  // between page load and submit are caught. The Zod schema validated the
-  // weekday + 30-min slot already; here we only need to consult the DB.
-  const slot = manilaSlotFor(new Date(parsed.data.scheduled_at));
-  const { data: closure } = await admin
-    .from("clinic_closures")
-    .select("closed_on")
-    .eq("closed_on", slot.dateISO)
-    .maybeSingle();
-  if (closure) {
-    return { ok: false, error: "That day is closed. Please pick another." };
-  }
-
-  // Physician-specific guard: the slot picker filters client-side, but a
-  // determined caller could submit any time, so re-validate against the
-  // physician's recurring schedule + per-day overrides + concurrent
-  // bookings. Only runs when a physician was picked (lab branch leaves
-  // physician_id null and skips this).
-  if (parsed.data.physician_id) {
-    const [
-      { data: blocks },
-      { data: overrides },
-      { data: existingBookings },
-    ] = await Promise.all([
-      admin
-        .from("physician_schedules")
-        .select("day_of_week, start_time, end_time")
-        .eq("physician_id", parsed.data.physician_id),
-      admin
-        .from("physician_schedule_overrides")
-        .select("override_on, start_time, end_time")
-        .eq("physician_id", parsed.data.physician_id)
-        .eq("override_on", slot.dateISO),
-      admin
-        .from("appointments")
-        .select("id")
-        .eq("physician_id", parsed.data.physician_id)
-        .eq("scheduled_at", parsed.data.scheduled_at)
-        .not("status", "in", "(cancelled,no_show)"),
-    ]);
-
-    const window = dayWindowFor(slot.dateISO, slot.dayOfWeek, {
-      blocks: blocks ?? [],
-      overrides: overrides ?? [],
-    });
-    if (!window.available) {
+  for (const s of services) {
+    if (!allowedKinds.has(s.kind)) {
       return {
         ok: false,
         error:
-          window.reason === "full_day_override"
-            ? "The doctor is unavailable that day. Please pick another slot."
-            : "The doctor isn't scheduled that day. Please pick another slot.",
-      };
-    }
-    const slotMinutes = slot.hour * 60 + slot.minute;
-    const startMin = window.start_time
-      ? minutesOfDay(window.start_time)
-      : 8 * 60;
-    const endMin = window.end_time
-      ? minutesOfDay(window.end_time)
-      : 16 * 60 + 30;
-    if (slotMinutes < startMin || slotMinutes >= endMin) {
-      return {
-        ok: false,
-        error: "That time is outside the doctor's hours. Please pick another.",
-      };
-    }
-    if (existingBookings && existingBookings.length > 0) {
-      return {
-        ok: false,
-        error: "That slot was just taken. Please pick another time.",
+          "One of the selected services doesn't match this booking type. Reload and try again.",
       };
     }
   }
 
-  // Create the patient as pre-registered. Reception verifies on arrival.
-  const { data: patient, error: patientErr } = await admin
-    .from("patients")
-    .insert({
-      first_name: parsed.data.first_name,
-      last_name: parsed.data.last_name,
-      middle_name: parsed.data.middle_name,
-      birthdate: parsed.data.birthdate,
-      sex: parsed.data.sex,
-      phone: parsed.data.phone,
-      email: parsed.data.email,
-      address: parsed.data.address,
-      pre_registered: true,
-    })
-    .select("id, drm_id")
-    .single();
+  // Decide whether this booking has a real time or is pending callback.
+  // Rule per branch:
+  //   diagnostic_package — always pending_callback (no slot required)
+  //   home_service       — always pending_callback
+  //   lab_request        — pending_callback unless any picked service has
+  //                        requires_time_slot=true (then a slot is required)
+  //   doctor_appointment — depends on the picked physician (resolved below)
+  let pendingCallback: boolean;
+  let scheduledAtIso: string | null;
 
-  if (patientErr || !patient) {
-    return {
-      ok: false,
-      error: patientErr?.message ?? "Could not save your details.",
-    };
+  if (data.branch === "diagnostic_package" || data.branch === "home_service") {
+    pendingCallback = true;
+    scheduledAtIso = null;
+  } else if (data.branch === "lab_request") {
+    const slotRequired = services.some((s) => s.requires_time_slot);
+    if (slotRequired) {
+      if (!data.scheduled_at) {
+        return {
+          ok: false,
+          error:
+            "One of the selected tests needs a specific time slot. Please pick a date and time.",
+        };
+      }
+      scheduledAtIso = data.scheduled_at;
+      pendingCallback = false;
+    } else {
+      // Lab tests with no requires_time_slot service can either book a
+      // walk-in slot or just be pending_callback. We pick the latter to
+      // keep the form short — reception calls if the patient wants a
+      // specific time.
+      pendingCallback = data.scheduled_at === null;
+      scheduledAtIso = data.scheduled_at;
+    }
+  } else {
+    // doctor_appointment — physician availability decides.
+    const { data: physician } = await admin
+      .from("physicians")
+      .select("id, full_name, is_active")
+      .eq("id", data.physician_id)
+      .maybeSingle();
+    if (!physician || !physician.is_active) {
+      return { ok: false, error: "Selected physician is no longer available." };
+    }
+    const { data: blocks } = await admin
+      .from("physician_schedules")
+      .select("day_of_week, start_time, end_time")
+      .eq("physician_id", data.physician_id);
+    const isByAppointment = (blocks ?? []).length === 0;
+    if (isByAppointment) {
+      pendingCallback = true;
+      scheduledAtIso = null;
+    } else {
+      if (!data.scheduled_at) {
+        return { ok: false, error: "Please pick a date and time." };
+      }
+      // Server-side intersection with the doctor's schedule + overrides +
+      // closures + concurrent bookings (if the service doesn't allow it).
+      const slot = manilaSlotFor(new Date(data.scheduled_at));
+      const [
+        { data: closure },
+        { data: overrides },
+        { data: existingBookings },
+      ] = await Promise.all([
+        admin
+          .from("clinic_closures")
+          .select("closed_on")
+          .eq("closed_on", slot.dateISO)
+          .maybeSingle(),
+        admin
+          .from("physician_schedule_overrides")
+          .select("override_on, start_time, end_time")
+          .eq("physician_id", data.physician_id)
+          .eq("override_on", slot.dateISO),
+        admin
+          .from("appointments")
+          .select("id")
+          .eq("physician_id", data.physician_id)
+          .eq("scheduled_at", data.scheduled_at)
+          .not("status", "in", "(cancelled,no_show)"),
+      ]);
+      if (closure) {
+        return {
+          ok: false,
+          error: "That day is closed. Please pick another.",
+        };
+      }
+      const window = dayWindowFor(slot.dateISO, slot.dayOfWeek, {
+        blocks: blocks ?? [],
+        overrides: overrides ?? [],
+      });
+      if (!window.available) {
+        return {
+          ok: false,
+          error:
+            window.reason === "full_day_override"
+              ? "The doctor is unavailable that day. Please pick another slot."
+              : "The doctor isn't scheduled that day. Please pick another slot.",
+        };
+      }
+      const slotMinutes = slot.hour * 60 + slot.minute;
+      const startMin = window.start_time
+        ? minutesOfDay(window.start_time)
+        : 8 * 60;
+      const endMin = window.end_time
+        ? minutesOfDay(window.end_time)
+        : 16 * 60 + 30;
+      if (slotMinutes < startMin || slotMinutes >= endMin) {
+        return {
+          ok: false,
+          error:
+            "That time is outside the doctor's hours. Please pick another.",
+        };
+      }
+      const allowConcurrent = services[0]?.allow_concurrent ?? true;
+      if (
+        !allowConcurrent &&
+        existingBookings &&
+        existingBookings.length > 0
+      ) {
+        return {
+          ok: false,
+          error: "That slot was just taken. Please pick another time.",
+        };
+      }
+      pendingCallback = false;
+      scheduledAtIso = data.scheduled_at;
+    }
   }
 
-  const { data: appointment, error: apptErr } = await admin
+  // Create the patient row.
+  const patientRes = await ensurePatient(admin, {
+    first_name: data.first_name,
+    last_name: data.last_name,
+    middle_name: data.middle_name,
+    birthdate: data.birthdate,
+    sex: data.sex,
+    phone: data.phone,
+    email: data.email,
+    address: data.address,
+  });
+  if (!patientRes.ok) return patientRes;
+
+  // Insert one appointment per service, sharing a booking_group_id so
+  // reception sees the multi-service request as one logical booking.
+  const bookingGroupId = randomUUID();
+  const status = pendingCallback ? "pending_callback" : "confirmed";
+  const physicianId =
+    data.branch === "doctor_appointment" ? data.physician_id : null;
+  const homeServiceRequested = data.branch === "home_service";
+
+  const apptRows = services.map((s) => ({
+    patient_id: patientRes.id,
+    service_id: s.id,
+    physician_id: physicianId,
+    scheduled_at: scheduledAtIso,
+    notes: data.notes,
+    status,
+    booking_group_id: bookingGroupId,
+    home_service_requested: homeServiceRequested,
+  }));
+
+  const { data: created, error: apptErr } = await admin
     .from("appointments")
-    .insert({
-      patient_id: patient.id,
-      service_id: parsed.data.service_id,
-      physician_id: parsed.data.physician_id,
-      scheduled_at: parsed.data.scheduled_at,
-      notes: parsed.data.notes,
-      status: "confirmed",
-    })
-    .select("id")
-    .single();
-
-  if (apptErr || !appointment) {
+    .insert(apptRows)
+    .select("id");
+  if (apptErr || !created || created.length !== apptRows.length) {
     return {
       ok: false,
       error: apptErr?.message ?? "Could not save your appointment.",
     };
   }
 
+  // Audit-log once at the booking-group level so the trail isn't noisy.
   await audit({
     actor_id: null,
     actor_type: "anonymous",
-    patient_id: patient.id,
+    patient_id: patientRes.id,
     action: "appointment.booked",
-    resource_type: "appointment",
-    resource_id: appointment.id,
+    resource_type: "appointment_group",
+    resource_id: bookingGroupId,
     metadata: {
-      drm_id: patient.drm_id,
-      service_id: parsed.data.service_id,
-      service_name: service.name,
-      scheduled_at: parsed.data.scheduled_at,
+      drm_id: patientRes.drm_id,
+      branch: data.branch,
+      service_ids: services.map((s) => s.id),
+      service_names: services.map((s) => s.name),
+      pending_callback: pendingCallback,
+      scheduled_at: scheduledAtIso,
+      home_service_requested: homeServiceRequested,
+      physician_id: physicianId,
     },
     ip_address: requestIp,
-    user_agent: headerStore.get("user-agent"),
+    user_agent: userAgent,
   });
 
-  // Fire-and-forget. Failures are audit-logged inside.
+  if (data.marketing_consent) {
+    await maybeSubscribe(admin, data.email, requestIp);
+  }
+
+  // Fire-and-forget notification on the first appointment row only — one
+  // email per booking is enough for the patient.
   try {
     await notifyAppointmentBooked({
-      appointmentId: appointment.id,
-      patientId: patient.id,
+      appointmentId: created[0]!.id,
+      patientId: patientRes.id,
     });
   } catch (err) {
     console.error("notifyAppointmentBooked threw", err);
@@ -250,9 +428,10 @@ export async function submitBookingAction(
 
   return {
     ok: true,
-    appointment_id: appointment.id,
-    drm_id: patient.drm_id,
-    scheduled_at: parsed.data.scheduled_at,
-    service_name: service.name,
+    drm_id: patientRes.drm_id,
+    service_summary: services.map((s) => s.name).join(", "),
+    scheduled_at: scheduledAtIso,
+    pending_callback: pendingCallback,
+    booking_group_id: bookingGroupId,
   };
 }

@@ -3,6 +3,7 @@ import { z } from "zod";
 export const SUBSCRIBER_SOURCES = [
   "homepage_footer",
   "newsletter_page",
+  "schedule_form",
   "admin_added",
 ] as const;
 export type SubscriberSource = (typeof SUBSCRIBER_SOURCES)[number];
