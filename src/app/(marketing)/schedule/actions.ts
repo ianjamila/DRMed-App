@@ -243,12 +243,11 @@ export async function submitBookingAction(
       scheduledAtIso = data.scheduled_at;
       pendingCallback = false;
     } else {
-      // Lab tests with no requires_time_slot service can either book a
-      // walk-in slot or just be pending_callback. We pick the latter to
-      // keep the form short — reception calls if the patient wants a
-      // specific time.
-      pendingCallback = data.scheduled_at === null;
-      scheduledAtIso = data.scheduled_at;
+      // Walk-in lab — confirmed without a specific time. Patients show
+      // up during operating hours; reception sees the row in today's
+      // queue and handles intake on arrival.
+      pendingCallback = false;
+      scheduledAtIso = null;
     }
   } else {
     // doctor_appointment — physician availability decides.

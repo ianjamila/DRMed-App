@@ -177,12 +177,20 @@ function Section({
                     })}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-[color:var(--color-brand-text-mid)]">
-                    {r.scheduled_at
-                      ? new Date(r.scheduled_at).toLocaleString("en-PH", {
-                          dateStyle: "medium",
-                          timeStyle: "short",
-                        })
-                      : <span className="text-xs italic text-amber-700">Pending callback</span>}
+                    {r.scheduled_at ? (
+                      new Date(r.scheduled_at).toLocaleString("en-PH", {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      })
+                    ) : r.status === "pending_callback" ? (
+                      <span className="text-xs italic text-amber-700">
+                        Pending callback
+                      </span>
+                    ) : (
+                      <span className="text-xs italic text-sky-700">
+                        Walk-in
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <p className="font-semibold text-[color:var(--color-brand-navy)]">
