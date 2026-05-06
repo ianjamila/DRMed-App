@@ -129,32 +129,47 @@ const optionalScheduledAt = z
     return d.toISOString();
   });
 
-export const DiagnosticPackageBookingSchema = z.object({
-  ...PatientFields,
+// Per-branch shape (services + slot + physician) is reused by both the
+// new-patient and existing-patient booking schemas.
+const DiagnosticPackageBranchFields = {
   branch: z.literal("diagnostic_package"),
   service_ids: serviceIds,
+};
+const LabRequestBranchFields = {
+  branch: z.literal("lab_request"),
+  service_ids: serviceIds,
+  scheduled_at: optionalScheduledAt,
+};
+const DoctorAppointmentBranchFields = {
+  branch: z.literal("doctor_appointment"),
+  service_id: z.string().uuid("Pick a consultation."),
+  physician_id: z.string().uuid("Pick a physician."),
+  scheduled_at: optionalScheduledAt,
+};
+const HomeServiceBranchFields = {
+  branch: z.literal("home_service"),
+  service_ids: serviceIds,
+};
+
+export const DiagnosticPackageBookingSchema = z.object({
+  ...PatientFields,
+  ...DiagnosticPackageBranchFields,
 });
 
 export const LabRequestBookingSchema = z
   .object({
     ...PatientFields,
-    branch: z.literal("lab_request"),
-    service_ids: serviceIds,
-    scheduled_at: optionalScheduledAt,
+    ...LabRequestBranchFields,
   });
 
 export const DoctorAppointmentBookingSchema = z.object({
   ...PatientFields,
-  branch: z.literal("doctor_appointment"),
-  service_id: z.string().uuid("Pick a consultation."),
-  physician_id: z.string().uuid("Pick a physician."),
-  scheduled_at: optionalScheduledAt,
+  ...DoctorAppointmentBranchFields,
 });
 
 export const HomeServiceBookingSchema = z.object({
   ...PatientFields,
-  branch: z.literal("home_service"),
-  service_ids: serviceIds,
+  ...HomeServiceBranchFields,
 });
 
 export const BookingSchema = z.discriminatedUnion("branch", [
@@ -165,3 +180,40 @@ export const BookingSchema = z.discriminatedUnion("branch", [
 ]);
 
 export type BookingInput = z.infer<typeof BookingSchema>;
+
+// Existing-patient flow: caller has already proven (DRM-ID, last name)
+// via the lookup action. We trust the resulting patient_id and skip
+// re-collecting personal info; only the booking payload + consent is
+// needed.
+const ExistingPatientFields = {
+  patient_id: z.string().uuid("Look up your DRM-ID first."),
+  notes: optionalText(2000),
+  marketing_consent: z
+    .union([z.literal("on"), z.literal("off"), z.literal(""), z.null(), z.undefined()])
+    .transform((v) => v === "on"),
+  service_agreement: z
+    .union([z.literal("on"), z.literal("off"), z.literal(""), z.null(), z.undefined()])
+    .transform((v) => v === "on")
+    .refine((v) => v, "Please accept the service agreement to continue."),
+};
+
+export const ExistingPatientBookingSchema = z.discriminatedUnion("branch", [
+  z.object({ ...ExistingPatientFields, ...DiagnosticPackageBranchFields }),
+  z.object({ ...ExistingPatientFields, ...LabRequestBranchFields }),
+  z.object({ ...ExistingPatientFields, ...DoctorAppointmentBranchFields }),
+  z.object({ ...ExistingPatientFields, ...HomeServiceBranchFields }),
+]);
+
+export type ExistingPatientBookingInput = z.infer<
+  typeof ExistingPatientBookingSchema
+>;
+
+export const PatientLookupSchema = z.object({
+  drm_id: z
+    .string()
+    .trim()
+    .regex(/^DRM-\d{4,}$/i, "DRM-ID looks like DRM-0001."),
+  last_name: z.string().trim().min(1, "Last name is required.").max(80),
+});
+
+export type PatientLookupInput = z.infer<typeof PatientLookupSchema>;

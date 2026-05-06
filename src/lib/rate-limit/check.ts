@@ -5,7 +5,8 @@ export type RateLimitBucket =
   | "patient_pin"
   | "public_booking"
   | "contact_form"
-  | "newsletter_signup";
+  | "newsletter_signup"
+  | "patient_lookup";
 
 export interface RateLimitConfig {
   bucket: RateLimitBucket;
@@ -77,4 +78,8 @@ export const RATE_LIMITS: Record<
   public_booking: { windowSec: 60 * 60, max: 8 },
   contact_form: { windowSec: 60 * 60, max: 5 },
   newsletter_signup: { windowSec: 60 * 60, max: 5 },
+  // Existing-patient lookup on /schedule. Tighter than public_booking
+  // because a successful response confirms the (DRM-ID, last_name)
+  // pair — a brute-force enumeration risk we don't otherwise have.
+  patient_lookup: { windowSec: 15 * 60, max: 8 },
 };

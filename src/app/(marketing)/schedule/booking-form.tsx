@@ -14,7 +14,12 @@ import type {
   AvailabilityBlock,
   AvailabilityOverride,
 } from "@/lib/physicians/availability";
-import { submitBookingAction, type BookingResult } from "./actions";
+import {
+  lookupPatientAction,
+  submitBookingAction,
+  type BookingResult,
+  type LookupPatientResult,
+} from "./actions";
 
 export type ServiceKind =
   | "lab_test"
@@ -114,6 +119,23 @@ export function BookingForm({
   const [specialtyCode, setSpecialtyCode] = useState<string>("");
   const [physicianId, setPhysicianId] = useState<string>("");
   const [serviceQuery, setServiceQuery] = useState("");
+  const [patientMode, setPatientMode] = useState<"new" | "existing">("new");
+  const [resolvedPatient, setResolvedPatient] = useState<{
+    id: string;
+    drm_id: string;
+    first_name: string;
+    last_name: string;
+  } | null>(null);
+  const [lookupState, lookupAction, lookupPending] = useActionState<
+    LookupPatientResult | null,
+    FormData
+  >(async (_prev, formData) => {
+    const result = await lookupPatientAction(_prev, formData);
+    if (result.ok) {
+      setResolvedPatient(result.patient);
+    }
+    return result;
+  }, null);
   const [state, formAction, pending] = useActionState<
     BookingResult | null,
     FormData
@@ -241,9 +263,103 @@ export function BookingForm({
     );
   }
 
+  const showLookupForm = patientMode === "existing" && !resolvedPatient;
+  const isExistingMode = patientMode === "existing" && resolvedPatient !== null;
+
   return (
+    <div className="grid gap-6">
+      <fieldset className="grid gap-3">
+        <legend className="text-sm font-bold text-[color:var(--color-brand-navy)]">
+          Are you an existing patient?
+        </legend>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <PatientModeOption
+            checked={patientMode === "new"}
+            onChange={() => {
+              setPatientMode("new");
+              setResolvedPatient(null);
+            }}
+            title="No, I'm new"
+            blurb="First time at DRMed. We'll register you and assign a DRM-ID."
+          />
+          <PatientModeOption
+            checked={patientMode === "existing"}
+            onChange={() => setPatientMode("existing")}
+            title="Yes, I have a DRM-ID"
+            blurb="From a previous receipt. Skip retyping your details."
+          />
+        </div>
+      </fieldset>
+
+      {showLookupForm ? (
+        <form
+          action={lookupAction}
+          className="grid gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] p-4"
+        >
+          <p className="text-sm font-bold text-[color:var(--color-brand-navy)]">
+            Find your record
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field
+              label="DRM-ID"
+              name="drm_id"
+              required
+              placeholder="DRM-0001"
+              maxLength={20}
+            />
+            <Field
+              label="Last name on file"
+              name="last_name"
+              required
+              maxLength={80}
+            />
+          </div>
+          {lookupState && !lookupState.ok ? (
+            <p className="text-sm text-red-600" role="alert">
+              {lookupState.error}
+            </p>
+          ) : null}
+          <div className="flex justify-end">
+            <Button
+              type="submit"
+              disabled={lookupPending}
+              className="bg-[color:var(--color-brand-navy)] text-white hover:bg-[color:var(--color-brand-cyan)]"
+            >
+              {lookupPending ? "Looking up…" : "Look up"}
+            </Button>
+          </div>
+        </form>
+      ) : null}
+
+      {isExistingMode && resolvedPatient ? (
+        <div className="flex items-start justify-between gap-3 rounded-xl border border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-bg)] p-4">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+              Booking as
+            </p>
+            <p className="mt-1 font-semibold text-[color:var(--color-brand-navy)]">
+              {resolvedPatient.first_name} {resolvedPatient.last_name}
+            </p>
+            <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+              {resolvedPatient.drm_id}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setResolvedPatient(null)}
+            className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
+          >
+            Use a different patient
+          </button>
+        </div>
+      ) : null}
+
+      {showLookupForm ? null : (
     <form action={formAction} className="grid gap-6">
       <input type="hidden" name="branch" value={branch} />
+      {isExistingMode && resolvedPatient ? (
+        <input type="hidden" name="patient_id" value={resolvedPatient.id} />
+      ) : null}
 
       {/* Honeypot */}
       <div aria-hidden="true" style={{ position: "absolute", left: "-9999px" }}>
@@ -289,38 +405,52 @@ export function BookingForm({
         </Disclaimer>
       ) : null}
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="First name" name="first_name" required maxLength={80} />
-        <Field label="Last name" name="last_name" required maxLength={80} />
-      </div>
-      <div className="grid gap-4 sm:grid-cols-3">
-        <Field label="Middle name (optional)" name="middle_name" maxLength={80} />
-        <Field label="Birthdate" name="birthdate" type="date" required />
-        <div className="grid gap-1.5">
-          <Label htmlFor="sex">Sex</Label>
-          <select
-            id="sex"
-            name="sex"
-            className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
-          >
-            <option value="">—</option>
-            <option value="female">Female</option>
-            <option value="male">Male</option>
-          </select>
-        </div>
-      </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field
-          label="Phone"
-          name="phone"
-          type="tel"
-          required
-          placeholder="+639XXXXXXXXX or 09XX..."
-          maxLength={40}
-        />
-        <Field label="Email" name="email" type="email" required maxLength={160} />
-      </div>
-      <Field label="Address (optional)" name="address" maxLength={200} />
+      {isExistingMode ? null : (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="First name" name="first_name" required maxLength={80} />
+            <Field label="Last name" name="last_name" required maxLength={80} />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Field
+              label="Middle name (optional)"
+              name="middle_name"
+              maxLength={80}
+            />
+            <Field label="Birthdate" name="birthdate" type="date" required />
+            <div className="grid gap-1.5">
+              <Label htmlFor="sex">Sex</Label>
+              <select
+                id="sex"
+                name="sex"
+                className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+              >
+                <option value="">—</option>
+                <option value="female">Female</option>
+                <option value="male">Male</option>
+              </select>
+            </div>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field
+              label="Phone"
+              name="phone"
+              type="tel"
+              required
+              placeholder="+639XXXXXXXXX or 09XX..."
+              maxLength={40}
+            />
+            <Field
+              label="Email"
+              name="email"
+              type="email"
+              required
+              maxLength={160}
+            />
+          </div>
+          <Field label="Address (optional)" name="address" maxLength={200} />
+        </>
+      )}
 
       {branch === "doctor_appointment" ? (
         <div className="grid gap-4">
@@ -548,11 +678,53 @@ export function BookingForm({
       </Button>
 
       <p className="text-xs text-[color:var(--color-brand-text-soft)]">
-        By submitting, you&apos;ll receive SMS and email confirmation. New
-        patients are pre-registered — reception verifies your identity at
-        the counter.
+        {isExistingMode
+          ? "We'll send confirmation to the contact info already on file."
+          : "By submitting, you'll receive SMS and email confirmation. New patients are pre-registered — reception verifies your identity at the counter."}
       </p>
     </form>
+      )}
+    </div>
+  );
+}
+
+function PatientModeOption({
+  checked,
+  onChange,
+  title,
+  blurb,
+}: {
+  checked: boolean;
+  onChange: () => void;
+  title: string;
+  blurb: string;
+}) {
+  return (
+    <label
+      className={`cursor-pointer rounded-xl border p-4 transition-colors ${
+        checked
+          ? "border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-bg)]"
+          : "border-[color:var(--color-brand-bg-mid)] bg-white hover:border-[color:var(--color-brand-cyan)]"
+      }`}
+    >
+      <div className="flex items-start gap-3">
+        <input
+          type="radio"
+          name="patient_mode_choice"
+          checked={checked}
+          onChange={onChange}
+          className="mt-1"
+        />
+        <div>
+          <p className="font-semibold text-[color:var(--color-brand-navy)]">
+            {title}
+          </p>
+          <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
+            {blurb}
+          </p>
+        </div>
+      </div>
+    </label>
   );
 }
 

@@ -6,7 +6,11 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import {
   BookingSchema,
+  ExistingPatientBookingSchema,
+  PatientLookupSchema,
   manilaSlotFor,
+  type BookingInput,
+  type ExistingPatientBookingInput,
 } from "@/lib/validations/booking";
 import { notifyAppointmentBooked } from "@/lib/notifications/notify-appointment-booked";
 import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit/check";
@@ -85,7 +89,101 @@ async function loadServices(
   return { ok: true, rows: data };
 }
 
-async function ensurePatient(
+export type LookupPatientResult =
+  | {
+      ok: true;
+      patient: {
+        id: string;
+        drm_id: string;
+        first_name: string;
+        last_name: string;
+      };
+    }
+  | { ok: false; error: string };
+
+// Sanitised lookup used by the "Are you an existing patient?" flow on
+// /schedule. Returns enough to display "Booking as <First> <Last> ·
+// DRM-XXXX" but no contact info — the booking action looks up the rest
+// server-side from the patient_id, so a leaked patient_id from this
+// response can't be enriched into a PII payload.
+export async function lookupPatientAction(
+  _prev: LookupPatientResult | null,
+  formData: FormData,
+): Promise<LookupPatientResult> {
+  const headerStore = await headers();
+  const requestIp =
+    headerStore.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+  const userAgent = headerStore.get("user-agent");
+
+  if (requestIp) {
+    const limit = await checkRateLimit({
+      bucket: "patient_lookup",
+      identifier: requestIp,
+      ...RATE_LIMITS.patient_lookup,
+    });
+    if (!limit.allowed) {
+      return {
+        ok: false,
+        error: `Too many lookups. Try again in ${Math.ceil(limit.retryAfterSec / 60)} minutes, or call reception.`,
+      };
+    }
+  }
+
+  const parsed = PatientLookupSchema.safeParse({
+    drm_id: formData.get("drm_id"),
+    last_name: formData.get("last_name"),
+  });
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Please check the fields.",
+    };
+  }
+
+  const drmId = parsed.data.drm_id.toUpperCase();
+  const admin = createAdminClient();
+  const { data: row } = await admin
+    .from("patients")
+    .select("id, drm_id, first_name, last_name")
+    .eq("drm_id", drmId)
+    .ilike("last_name", parsed.data.last_name)
+    .maybeSingle();
+
+  // Audit every attempt — successful or not — so abuse can be reviewed.
+  await audit({
+    actor_id: null,
+    actor_type: "anonymous",
+    patient_id: row?.id ?? null,
+    action: row ? "patient.lookup.matched" : "patient.lookup.no_match",
+    resource_type: "patient",
+    resource_id: row?.id ?? null,
+    metadata: {
+      drm_id_attempted: drmId,
+      last_name_attempted: parsed.data.last_name,
+    },
+    ip_address: requestIp,
+    user_agent: userAgent,
+  });
+
+  if (!row) {
+    return {
+      ok: false,
+      error:
+        "We couldn't find a patient with that DRM-ID and last name. Double-check the receipt, or book as a new patient.",
+    };
+  }
+  return {
+    ok: true,
+    patient: {
+      id: row.id,
+      drm_id: row.drm_id,
+      first_name: row.first_name,
+      last_name: row.last_name,
+    },
+  };
+}
+
+async function resolvePatient(
   admin: AdminClient,
   data: {
     first_name: string;
@@ -97,7 +195,37 @@ async function ensurePatient(
     email: string;
     address: string | null;
   },
-): Promise<{ ok: true; id: string; drm_id: string } | { ok: false; error: string }> {
+): Promise<
+  | { ok: true; id: string; drm_id: string; reused: boolean }
+  | { ok: false; error: string }
+> {
+  // Silent dedup: if a patient already exists with the same
+  // (lower(email), last_name, birthdate), reuse them instead of
+  // creating another row. Match is intentionally strict — these three
+  // together rarely collide for unrelated people and a family member
+  // would differ on at least last_name or birthdate. We do NOT
+  // overwrite the existing row's contact fields; whatever reception
+  // verified in person stays authoritative.
+  // Trigger trg_patients_normalise_email keeps stored emails lowercase
+  // so equality lookup hits idx_patients_dedup_lookup directly.
+  const lowerEmail = data.email.trim().toLowerCase();
+  const { data: existing } = await admin
+    .from("patients")
+    .select("id, drm_id")
+    .eq("email", lowerEmail)
+    .eq("last_name", data.last_name)
+    .eq("birthdate", data.birthdate)
+    .limit(1)
+    .maybeSingle();
+  if (existing) {
+    return {
+      ok: true,
+      id: existing.id,
+      drm_id: existing.drm_id,
+      reused: true,
+    };
+  }
+
   const { data: patient, error } = await admin
     .from("patients")
     .insert({ ...data, pre_registered: true })
@@ -106,7 +234,7 @@ async function ensurePatient(
   if (error || !patient) {
     return { ok: false, error: error?.message ?? "Could not save your details." };
   }
-  return { ok: true, id: patient.id, drm_id: patient.drm_id };
+  return { ok: true, id: patient.id, drm_id: patient.drm_id, reused: false };
 }
 
 async function maybeSubscribe(
@@ -171,31 +299,62 @@ export async function submitBookingAction(
   }
 
   const branch = formData.get("branch");
-  const parsed = BookingSchema.safeParse({
-    branch,
-    first_name: formData.get("first_name"),
-    last_name: formData.get("last_name"),
-    middle_name: formData.get("middle_name") ?? "",
-    birthdate: formData.get("birthdate"),
-    sex: formData.get("sex") ?? "",
-    phone: formData.get("phone"),
-    email: formData.get("email"),
-    address: formData.get("address") ?? "",
-    notes: formData.get("notes") ?? "",
-    marketing_consent: formData.get("marketing_consent") ?? "off",
-    service_agreement: formData.get("service_agreement") ?? "off",
-    service_id: formData.get("service_id"),
-    service_ids: formData.getAll("service_ids"),
-    physician_id: formData.get("physician_id") ?? "",
-    scheduled_at: formData.get("scheduled_at") ?? "",
-  });
-  if (!parsed.success) {
-    return {
-      ok: false,
-      error: parsed.error.issues[0]?.message ?? "Please check the form.",
-    };
+  const patientIdInput = formData.get("patient_id");
+  const isExistingPatient =
+    typeof patientIdInput === "string" && patientIdInput.length > 0;
+
+  // Two parsing paths share most fields. New-patient parse pulls every
+  // personal-info field; existing-patient parse just needs patient_id +
+  // booking payload + consent — the patient row supplies the rest.
+  let data:
+    | (BookingInput & { mode: "new" })
+    | (ExistingPatientBookingInput & { mode: "existing" });
+  if (isExistingPatient) {
+    const parsed = ExistingPatientBookingSchema.safeParse({
+      branch,
+      patient_id: patientIdInput,
+      notes: formData.get("notes") ?? "",
+      marketing_consent: formData.get("marketing_consent") ?? "off",
+      service_agreement: formData.get("service_agreement") ?? "off",
+      service_id: formData.get("service_id"),
+      service_ids: formData.getAll("service_ids"),
+      physician_id: formData.get("physician_id") ?? "",
+      scheduled_at: formData.get("scheduled_at") ?? "",
+    });
+    if (!parsed.success) {
+      return {
+        ok: false,
+        error: parsed.error.issues[0]?.message ?? "Please check the form.",
+      };
+    }
+    data = { ...parsed.data, mode: "existing" };
+  } else {
+    const parsed = BookingSchema.safeParse({
+      branch,
+      first_name: formData.get("first_name"),
+      last_name: formData.get("last_name"),
+      middle_name: formData.get("middle_name") ?? "",
+      birthdate: formData.get("birthdate"),
+      sex: formData.get("sex") ?? "",
+      phone: formData.get("phone"),
+      email: formData.get("email"),
+      address: formData.get("address") ?? "",
+      notes: formData.get("notes") ?? "",
+      marketing_consent: formData.get("marketing_consent") ?? "off",
+      service_agreement: formData.get("service_agreement") ?? "off",
+      service_id: formData.get("service_id"),
+      service_ids: formData.getAll("service_ids"),
+      physician_id: formData.get("physician_id") ?? "",
+      scheduled_at: formData.get("scheduled_at") ?? "",
+    });
+    if (!parsed.success) {
+      return {
+        ok: false,
+        error: parsed.error.issues[0]?.message ?? "Please check the form.",
+      };
+    }
+    data = { ...parsed.data, mode: "new" };
   }
-  const data = parsed.data;
   const admin = createAdminClient();
 
   // Resolve services for the branch.
@@ -348,17 +507,56 @@ export async function submitBookingAction(
     }
   }
 
-  // Create the patient row.
-  const patientRes = await ensurePatient(admin, {
-    first_name: data.first_name,
-    last_name: data.last_name,
-    middle_name: data.middle_name,
-    birthdate: data.birthdate,
-    sex: data.sex,
-    phone: data.phone,
-    email: data.email,
-    address: data.address,
-  });
+  // Resolve the patient. New-patient flow does silent dedup or insert.
+  // Existing-patient flow trusts the patient_id (already proven via the
+  // lookup action) but re-fetches the row to confirm it still exists
+  // and to use the patient's authoritative email for notifications.
+  let patientRes:
+    | { ok: true; id: string; drm_id: string; email: string | null; resolution: "reused" | "created" | "existing" }
+    | { ok: false; error: string };
+  if (data.mode === "new") {
+    const res = await resolvePatient(admin, {
+      first_name: data.first_name,
+      last_name: data.last_name,
+      middle_name: data.middle_name,
+      birthdate: data.birthdate,
+      sex: data.sex,
+      phone: data.phone,
+      email: data.email,
+      address: data.address,
+    });
+    if (!res.ok) {
+      patientRes = res;
+    } else {
+      patientRes = {
+        ok: true,
+        id: res.id,
+        drm_id: res.drm_id,
+        email: data.email,
+        resolution: res.reused ? "reused" : "created",
+      };
+    }
+  } else {
+    const { data: row } = await admin
+      .from("patients")
+      .select("id, drm_id, email")
+      .eq("id", data.patient_id)
+      .maybeSingle();
+    if (!row) {
+      patientRes = {
+        ok: false,
+        error: "We couldn't find that patient. Please look up again.",
+      };
+    } else {
+      patientRes = {
+        ok: true,
+        id: row.id,
+        drm_id: row.drm_id,
+        email: row.email,
+        resolution: "existing",
+      };
+    }
+  }
   if (!patientRes.ok) return patientRes;
 
   // Insert one appointment per service, sharing a booking_group_id so
@@ -408,13 +606,14 @@ export async function submitBookingAction(
       scheduled_at: scheduledAtIso,
       home_service_requested: homeServiceRequested,
       physician_id: physicianId,
+      patient_resolution: patientRes.resolution,
     },
     ip_address: requestIp,
     user_agent: userAgent,
   });
 
-  if (data.marketing_consent) {
-    await maybeSubscribe(admin, data.email, requestIp);
+  if (data.marketing_consent && patientRes.email) {
+    await maybeSubscribe(admin, patientRes.email, requestIp);
   }
 
   // Fire-and-forget notification on the first appointment row only — one
