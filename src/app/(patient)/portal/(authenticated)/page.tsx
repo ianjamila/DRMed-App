@@ -212,6 +212,24 @@ export default async function PatientPortalPage() {
         </section>
       ) : null}
 
+      <section className="mt-8 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
+        <h2 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+          Download a copy of your data
+        </h2>
+        <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
+          Under the Philippine Data Privacy Act (RA 10173) you have the
+          right to a copy of the data we hold about you. The export
+          includes your contact info, visits, payments, appointments, and
+          all your released result PDFs in a single ZIP.
+        </p>
+        <a
+          href="/portal/data-export"
+          className="mt-3 inline-block rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
+        >
+          Download my data (ZIP)
+        </a>
+      </section>
+
       <p className="mt-8 text-xs text-[color:var(--color-brand-text-soft)]">
         🔒 Each download generates a 5-minute one-time link and is logged for
         compliance. Don&apos;t share your DRM-ID or PIN with anyone.
