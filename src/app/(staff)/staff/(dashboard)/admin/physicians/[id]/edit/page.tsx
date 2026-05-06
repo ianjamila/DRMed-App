@@ -5,6 +5,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { physicianPhotoUrl } from "@/lib/physicians/photo";
 import { PhysicianForm } from "../../physician-form";
 import { PhotoUpload } from "./photo-upload";
+import { DeletePhysicianButton } from "./delete-physician-button";
 
 export const metadata = { title: "Edit physician — staff" };
 
@@ -70,6 +71,16 @@ export default async function EditPhysicianPage({ params }: PageProps) {
       </section>
 
       <PhysicianForm initial={physician} />
+
+      <section className="mt-8 border-t border-[color:var(--color-brand-bg-mid)] pt-6">
+        <h2 className="mb-3 font-[family-name:var(--font-heading)] text-sm font-extrabold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+          Danger zone
+        </h2>
+        <DeletePhysicianButton
+          physicianId={physician.id}
+          physicianName={physician.full_name}
+        />
+      </section>
     </div>
   );
 }

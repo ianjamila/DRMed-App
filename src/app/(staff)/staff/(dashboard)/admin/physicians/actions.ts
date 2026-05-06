@@ -198,3 +198,61 @@ export async function uploadPhotoAction(
   revalidatePath(`/staff/admin/physicians/${physicianId}/edit`);
   return { ok: true };
 }
+
+export async function deletePhysicianAction(
+  physicianId: string,
+): Promise<PhysicianResult> {
+  const session = await requireAdminStaff();
+  const admin = createAdminClient();
+
+  const { data: physician } = await admin
+    .from("physicians")
+    .select("slug, full_name")
+    .eq("id", physicianId)
+    .maybeSingle();
+  if (!physician) {
+    return { ok: false, error: "Physician not found." };
+  }
+
+  // Block hard-delete if any non-cancelled appointment still references
+  // this physician. The appointments.physician_id FK has no ON DELETE
+  // action, so Postgres would reject the delete anyway — but a friendly
+  // pre-flight error beats a raw constraint violation. Admin should
+  // deactivate (uncheck Active) instead, or reassign the appointments
+  // first.
+  const { count } = await admin
+    .from("appointments")
+    .select("id", { count: "exact", head: true })
+    .eq("physician_id", physicianId)
+    .not("status", "in", "(cancelled,no_show,completed)");
+  if ((count ?? 0) > 0) {
+    return {
+      ok: false,
+      error: `This physician has ${count} active appointment${count === 1 ? "" : "s"}. Deactivate them (uncheck Active) instead, or cancel/reassign those appointments first.`,
+    };
+  }
+
+  // Schedules + overrides cascade automatically via the FK in 0016.
+  const { error } = await admin
+    .from("physicians")
+    .delete()
+    .eq("id", physicianId);
+  if (error) {
+    return { ok: false, error: error.message };
+  }
+
+  const { ip, ua } = await ipAndAgent();
+  await audit({
+    actor_id: session.user_id,
+    actor_type: "staff",
+    action: "physician.deleted",
+    resource_type: "physician",
+    resource_id: physicianId,
+    metadata: { slug: physician.slug, full_name: physician.full_name },
+    ip_address: ip,
+    user_agent: ua,
+  });
+
+  revalidatePath("/staff/admin/physicians");
+  redirect("/staff/admin/physicians");
+}
