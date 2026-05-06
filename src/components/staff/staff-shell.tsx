@@ -4,6 +4,7 @@ import { signOutStaff } from "@/app/(staff)/staff/login/actions";
 import type { StaffSession } from "@/lib/auth/require-staff";
 import { StaffNav } from "./staff-nav";
 import { StaffQuoteShortcut } from "./staff-quote-shortcut";
+import { NotificationBell } from "./notification-bell";
 
 const QUOTE_ROLES: ReadonlyArray<StaffSession["role"]> = [
   "reception",
@@ -32,12 +33,15 @@ export function StaffShell({ session, children }: Props) {
       />
       {/* Sidebar */}
       <aside className="hidden w-64 shrink-0 flex-col border-r border-[color:var(--color-brand-bg-mid)] bg-white md:flex print:hidden">
-        <Link
-          href="/staff"
-          className="flex items-center gap-2 px-5 py-5 font-[family-name:var(--font-heading)] text-lg font-extrabold tracking-tight text-[color:var(--color-brand-navy)]"
-        >
-          drmed<span className="text-[color:var(--color-brand-cyan)]">.staff</span>
-        </Link>
+        <div className="flex items-center justify-between gap-2 px-5 py-5">
+          <Link
+            href="/staff"
+            className="font-[family-name:var(--font-heading)] text-lg font-extrabold tracking-tight text-[color:var(--color-brand-navy)]"
+          >
+            drmed<span className="text-[color:var(--color-brand-cyan)]">.staff</span>
+          </Link>
+          <NotificationBell role={session.role} />
+        </div>
 
         <div className="flex-1 overflow-y-auto px-3 pb-6">
           <StaffNav role={session.role} />
@@ -72,9 +76,12 @@ export function StaffShell({ session, children }: Props) {
           >
             drmed<span className="text-[color:var(--color-brand-cyan)]">.staff</span>
           </Link>
-          <span className="rounded-md bg-[color:var(--color-brand-bg)] px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)]">
-            {ROLE_LABEL[session.role]}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="rounded-md bg-[color:var(--color-brand-bg)] px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)]">
+              {ROLE_LABEL[session.role]}
+            </span>
+            <NotificationBell role={session.role} />
+          </div>
         </header>
 
         <main className="flex-1 overflow-x-hidden">{children}</main>
