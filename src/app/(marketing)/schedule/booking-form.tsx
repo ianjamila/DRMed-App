@@ -33,6 +33,14 @@ export interface BookablePhysician {
   overrides: AvailabilityOverride[];
 }
 
+export interface ByAppointmentPhysician {
+  id: string;
+  full_name: string;
+  specialty: string;
+  group_label: string | null;
+  photo_url: string;
+}
+
 type Branch = "lab" | "doctor";
 
 interface Props {
@@ -40,6 +48,7 @@ interface Props {
   closures: ClosureLite[];
   startDate: string; // tomorrow Manila YYYY-MM-DD
   physicians: BookablePhysician[];
+  byAppointmentPhysicians: ByAppointmentPhysician[];
 }
 
 export function BookingForm({
@@ -47,6 +56,7 @@ export function BookingForm({
   closures,
   startDate,
   physicians,
+  byAppointmentPhysicians,
 }: Props) {
   const [state, formAction, pending] = useActionState<
     BookingResult | null,
@@ -247,8 +257,8 @@ export function BookingForm({
             ))}
           </select>
           <p className="text-xs text-[color:var(--color-brand-text-soft)]">
-            By-appointment-only physicians aren&apos;t in this list — call
-            reception to book them.
+            By-appointment-only physicians aren&apos;t in this list — see
+            below.
           </p>
           {selectedPhysician ? (
             <div className="mt-2 flex items-center gap-3 rounded-md bg-[color:var(--color-brand-bg)] px-3 py-2 text-xs text-[color:var(--color-brand-text-mid)]">
@@ -264,6 +274,46 @@ export function BookingForm({
                 </p>
                 <p>{selectedPhysician.specialty}</p>
               </div>
+            </div>
+          ) : null}
+
+          {byAppointmentPhysicians.length > 0 ? (
+            <div className="mt-3 rounded-lg border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] p-4">
+              <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+                By appointment only — call to book
+              </p>
+              <p className="mt-1 text-xs text-[color:var(--color-brand-text-mid)]">
+                These physicians don&apos;t hold regular clinic hours. Call
+                reception at{" "}
+                <a
+                  href="tel:+639166043208"
+                  className="font-bold text-[color:var(--color-brand-navy)] hover:text-[color:var(--color-brand-cyan)]"
+                >
+                  0916 604 3208
+                </a>{" "}
+                to confirm availability and book directly.
+              </p>
+              <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+                {byAppointmentPhysicians.map((p) => (
+                  <li
+                    key={p.id}
+                    className="flex items-center gap-3 rounded-md bg-white px-3 py-2 text-xs text-[color:var(--color-brand-text-mid)]"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={p.photo_url}
+                      alt=""
+                      className="h-9 w-9 rounded-full object-cover"
+                    />
+                    <div className="min-w-0">
+                      <p className="truncate font-semibold text-[color:var(--color-brand-navy)]">
+                        {p.full_name}
+                      </p>
+                      <p className="truncate">{p.specialty}</p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
             </div>
           ) : null}
         </div>

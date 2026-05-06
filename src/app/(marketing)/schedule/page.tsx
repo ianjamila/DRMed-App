@@ -78,7 +78,8 @@ export default async function SchedulePage() {
   }
 
   // Bookable = at least one recurring block. By-appointment-only physicians
-  // appear on /physicians but not in the booking picker.
+  // appear on /physicians and surface in a "call to book" card on the doctor
+  // branch — full pending_callback online flow is deferred to a later phase.
   const bookablePhysicians = (physicianRows ?? [])
     .filter((p) => (blocksByPhysician.get(p.id) ?? []).length > 0)
     .map((p) => ({
@@ -92,6 +93,19 @@ export default async function SchedulePage() {
       }),
       blocks: blocksByPhysician.get(p.id) ?? [],
       overrides: overridesByPhysician.get(p.id) ?? [],
+    }));
+
+  const byAppointmentPhysicians = (physicianRows ?? [])
+    .filter((p) => (blocksByPhysician.get(p.id) ?? []).length === 0)
+    .map((p) => ({
+      id: p.id,
+      full_name: p.full_name,
+      specialty: p.specialty,
+      group_label: p.group_label,
+      photo_url: physicianPhotoUrl({
+        slug: p.slug,
+        photo_path: p.photo_path,
+      }),
     }));
 
   return (
@@ -147,6 +161,7 @@ export default async function SchedulePage() {
               closures={closures}
               startDate={startDate}
               physicians={bookablePhysicians}
+              byAppointmentPhysicians={byAppointmentPhysicians}
             />
           </div>
         </section>
