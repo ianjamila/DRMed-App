@@ -39,10 +39,11 @@ export type PublicService = {
   send_out_lab: string | null;
   fasting_required: boolean;
   requires_time_slot: boolean;
+  specialty_code: string | null;
 };
 
 const PUBLIC_SELECT =
-  "id, code, name, description, price_php, hmo_price_php, senior_discount_php, turnaround_hours, kind, section, is_send_out, send_out_lab, fasting_required, requires_time_slot" as const;
+  "id, code, name, description, price_php, hmo_price_php, senior_discount_php, turnaround_hours, kind, section, is_send_out, send_out_lab, fasting_required, requires_time_slot, specialty_code" as const;
 
 function rowToPublic(s: {
   id: string;
@@ -59,6 +60,7 @@ function rowToPublic(s: {
   send_out_lab: string | null;
   fasting_required: boolean;
   requires_time_slot: boolean;
+  specialty_code: string | null;
 }): PublicService {
   return {
     ...s,

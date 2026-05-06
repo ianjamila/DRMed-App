@@ -21,7 +21,7 @@ export async function notifyAppointmentBooked({
     .from("appointments")
     .select(
       `
-        id, scheduled_at, walk_in_name, walk_in_phone,
+        id, scheduled_at, status, walk_in_name, walk_in_phone,
         services ( name ),
         patients ( first_name, phone, email )
       `,
@@ -38,39 +38,67 @@ export async function notifyAppointmentBooked({
   const greeting = patient?.first_name ?? appt.walk_in_name ?? "there";
   const phone = patient?.phone ?? appt.walk_in_phone ?? null;
   const email = patient?.email ?? null;
-
-  // pending_callback bookings (diagnostic packages, home service, by-appointment
-  // doctors) have no scheduled_at — show a friendly placeholder so the SMS
-  // and email don't render "Invalid Date".
-  const when = appt.scheduled_at
-    ? new Date(appt.scheduled_at).toLocaleString("en-PH", {
-        dateStyle: "long",
-        timeStyle: "short",
-      })
-    : "to be confirmed by reception";
   const serviceName = svc?.name ?? "your appointment";
   const cancelUrl = `${SITE.url.replace(/\/$/, "")}/appointments/cancel/${appt.id}`;
 
-  const smsBody =
-    `Hi ${greeting}, your DRMed booking for ${serviceName} on ${when} is confirmed. ` +
-    `Cancel: ${cancelUrl} — DRMED`;
+  // pending_callback bookings (diagnostic packages, home service, by-appointment
+  // doctors) have no scheduled_at and aren't confirmed yet. Reception calls
+  // the patient to confirm — the email/SMS should match that flow rather
+  // than claim the booking is confirmed.
+  const isPendingCallback = appt.status === "pending_callback";
 
-  const emailSubject = `Booking confirmed — ${serviceName} on ${when}`;
-  const emailText = [
-    `Hi ${greeting},`,
-    "",
-    `Your DRMed Clinic and Laboratory booking is confirmed.`,
-    "",
-    `Service: ${serviceName}`,
-    `Date / time: ${when}`,
-    "",
-    `Need to cancel or reschedule? Open this link:`,
-    `  ${cancelUrl}`,
-    "",
-    `Bring a valid ID. For HMO, please bring your card.`,
-    "",
-    "— DRMed Clinic and Laboratory",
-  ].join("\n");
+  let smsBody: string;
+  let emailSubject: string;
+  let emailText: string;
+
+  if (isPendingCallback) {
+    smsBody =
+      `Hi ${greeting}, we got your DRMed request for ${serviceName}. ` +
+      `Reception will call within one working day to confirm. ` +
+      `Cancel: ${cancelUrl} — DRMED`;
+    emailSubject = `Request received — ${serviceName}`;
+    emailText = [
+      `Hi ${greeting},`,
+      "",
+      `Thanks for your request with DRMed Clinic and Laboratory.`,
+      "",
+      `Service: ${serviceName}`,
+      `Status: Reception will call within one working day to confirm a date and time.`,
+      "",
+      `Need to cancel? Open this link:`,
+      `  ${cancelUrl}`,
+      "",
+      `Bring a valid ID on the day of your visit. For HMO, please bring your card.`,
+      "",
+      "— DRMed Clinic and Laboratory",
+    ].join("\n");
+  } else {
+    const when = appt.scheduled_at
+      ? new Date(appt.scheduled_at).toLocaleString("en-PH", {
+          dateStyle: "long",
+          timeStyle: "short",
+        })
+      : "your selected time";
+    smsBody =
+      `Hi ${greeting}, your DRMed booking for ${serviceName} on ${when} is confirmed. ` +
+      `Cancel: ${cancelUrl} — DRMED`;
+    emailSubject = `Booking confirmed — ${serviceName} on ${when}`;
+    emailText = [
+      `Hi ${greeting},`,
+      "",
+      `Your DRMed Clinic and Laboratory booking is confirmed.`,
+      "",
+      `Service: ${serviceName}`,
+      `Date / time: ${when}`,
+      "",
+      `Need to cancel or reschedule? Open this link:`,
+      `  ${cancelUrl}`,
+      "",
+      `Bring a valid ID. For HMO, please bring your card.`,
+      "",
+      "— DRMed Clinic and Laboratory",
+    ].join("\n");
+  }
 
   const [smsResult, emailResult] = await Promise.all([
     phone

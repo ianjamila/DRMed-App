@@ -123,13 +123,16 @@ async function maybeSubscribe(
     .maybeSingle();
   if (existing) {
     if (existing.unsubscribed_at !== null) {
+      // Re-subscribe: refresh consent but preserve the original `source`
+      // so first-touch attribution survives. Overwriting it would flip
+      // e.g. a homepage_footer subscriber to schedule_form on every
+      // re-subscribe, masking how they originally found us.
       await admin
         .from("subscribers")
         .update({
           unsubscribed_at: null,
           consent_at: new Date().toISOString(),
           consent_ip: ipAddress,
-          source: "schedule_form",
         })
         .eq("id", existing.id);
     }

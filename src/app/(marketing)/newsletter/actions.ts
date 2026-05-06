@@ -62,13 +62,15 @@ export async function subscribeAction(
 
   if (existing) {
     const wasActive = existing.unsubscribed_at === null;
+    // Refresh consent but preserve the original `source` so first-touch
+    // attribution survives. Overwriting on every re-submit would mask
+    // where the subscriber originally signed up.
     const { error } = await admin
       .from("subscribers")
       .update({
         unsubscribed_at: null,
         consent_at: new Date().toISOString(),
         consent_ip: ipAddress,
-        source: parsed.data.source,
       })
       .eq("id", existing.id);
     if (error) {

@@ -30,6 +30,7 @@ export interface ServiceLite {
   price_php: number;
   fasting_required: boolean;
   requires_time_slot: boolean;
+  specialty_code: string | null;
 }
 
 export interface SpecialtyOption {
@@ -128,10 +129,28 @@ export function BookingForm({
     });
   }, [services, branch, serviceQuery]);
 
-  const consultationServices = useMemo(
+  const allConsultations = useMemo(
     () => services.filter((s) => s.kind === "doctor_consultation"),
     [services],
   );
+
+  // Each specialty (except `general`) maps to exactly one consultation
+  // service via services.specialty_code. For non-general picks we hide the
+  // dropdown and auto-select the matching consultation; for `general` we
+  // show all consultations so the patient can pick.
+  const consultationServices = useMemo(() => {
+    if (!specialtyCode || specialtyCode === "general") return allConsultations;
+    return allConsultations.filter((s) => s.specialty_code === specialtyCode);
+  }, [allConsultations, specialtyCode]);
+
+  const isSpecialtyAutoConsult =
+    branch === "doctor_appointment" &&
+    specialtyCode !== "" &&
+    specialtyCode !== "general" &&
+    consultationServices.length === 1;
+  const autoConsultService = isSpecialtyAutoConsult
+    ? consultationServices[0]!
+    : null;
 
   const physiciansForSpecialty = useMemo(() => {
     if (!specialtyCode) return [];
@@ -155,8 +174,15 @@ export function BookingForm({
     : null;
   const isByAppointment = selectedByAppointment !== null;
 
+  // Fasting warning is only meaningful when a fasting-required service is
+  // actually picked. Showing it on every lab/package booking dilutes the
+  // signal and confuses patients picking, e.g., just CBC + UA.
   const showFastingDisclaimer =
-    branch === "diagnostic_package" || branch === "lab_request";
+    (branch === "diagnostic_package" || branch === "lab_request") &&
+    Array.from(selectedServiceIds).some((id) => {
+      const s = services.find((x) => x.id === id);
+      return s?.fasting_required;
+    });
 
   const labRequiresSlot =
     branch === "lab_request" &&
@@ -362,24 +388,49 @@ export function BookingForm({
 
           {physicianId ? (
             <>
-              <div className="grid gap-1.5">
-                <Label htmlFor="service_id">Consultation type</Label>
-                <select
-                  id="service_id"
-                  name="service_id"
-                  value={singleServiceId}
-                  onChange={(e) => setSingleServiceId(e.target.value)}
-                  required
-                  className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
-                >
-                  <option value="">— Pick a consultation —</option>
-                  {consultationServices.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name} ({formatPhp(s.price_php)})
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {autoConsultService ? (
+                <div className="grid gap-1.5">
+                  <Label>Consultation type</Label>
+                  <input
+                    type="hidden"
+                    name="service_id"
+                    value={autoConsultService.id}
+                  />
+                  <div className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] px-3 py-2 text-sm">
+                    <span className="font-semibold text-[color:var(--color-brand-navy)]">
+                      {autoConsultService.name}
+                    </span>{" "}
+                    <span className="text-[color:var(--color-brand-text-soft)]">
+                      ({formatPhp(autoConsultService.price_php)})
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid gap-1.5">
+                  <Label htmlFor="service_id">Consultation type</Label>
+                  <select
+                    id="service_id"
+                    name="service_id"
+                    value={singleServiceId}
+                    onChange={(e) => setSingleServiceId(e.target.value)}
+                    required
+                    className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+                  >
+                    <option value="">— Pick a consultation —</option>
+                    {consultationServices.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} ({formatPhp(s.price_php)})
+                      </option>
+                    ))}
+                  </select>
+                  {consultationServices.length === 0 ? (
+                    <p className="text-xs text-amber-700">
+                      No consultations are configured for this specialty
+                      yet. Please call reception.
+                    </p>
+                  ) : null}
+                </div>
+              )}
 
               {isByAppointment ? (
                 <Disclaimer tone="info">

@@ -186,6 +186,7 @@ export default async function SchedulePage() {
                   price_php: Number(s.price_php),
                   fasting_required: s.fasting_required,
                   requires_time_slot: s.requires_time_slot,
+                  specialty_code: s.specialty_code,
                 }))}
               closures={closures}
               startDate={startDate}
