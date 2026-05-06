@@ -257,6 +257,75 @@ export type Database = {
         }
         Relationships: []
       }
+      inquiries: {
+        Row: {
+          called_at: string
+          caller_name: string
+          channel: string
+          contact: string
+          created_at: string
+          created_by: string | null
+          drop_reason: string | null
+          id: string
+          linked_appointment_id: string | null
+          linked_visit_id: string | null
+          notes: string | null
+          received_by_id: string | null
+          service_interest: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          called_at?: string
+          caller_name: string
+          channel: string
+          contact: string
+          created_at?: string
+          created_by?: string | null
+          drop_reason?: string | null
+          id?: string
+          linked_appointment_id?: string | null
+          linked_visit_id?: string | null
+          notes?: string | null
+          received_by_id?: string | null
+          service_interest?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          called_at?: string
+          caller_name?: string
+          channel?: string
+          contact?: string
+          created_at?: string
+          created_by?: string | null
+          drop_reason?: string | null
+          id?: string
+          linked_appointment_id?: string | null
+          linked_visit_id?: string | null
+          notes?: string | null
+          received_by_id?: string | null
+          service_interest?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "inquiries_linked_appointment_id_fkey"
+            columns: ["linked_appointment_id"]
+            isOneToOne: false
+            referencedRelation: "appointments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "inquiries_linked_visit_id_fkey"
+            columns: ["linked_visit_id"]
+            isOneToOne: false
+            referencedRelation: "visits"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       patients: {
         Row: {
           address: string | null
