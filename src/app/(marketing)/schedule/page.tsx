@@ -6,6 +6,8 @@ import {
   listClosuresInRange,
   tomorrowManilaISO,
 } from "@/lib/marketing/closures";
+import { createClient } from "@/lib/supabase/server";
+import { physicianPhotoUrl } from "@/lib/physicians/photo";
 import { BookingForm } from "./booking-form";
 
 export const metadata = {
@@ -20,6 +22,77 @@ export default async function SchedulePage() {
   const startDate = tomorrowManilaISO();
   const endDate = addDaysISO(startDate, 60);
   const closures = await listClosuresInRange(startDate, endDate);
+
+  // Load active physicians + their schedules + upcoming overrides so the
+  // booking form can render a picker and the slot grid can intersect days.
+  const supabase = await createClient();
+  const [
+    { data: physicianRows },
+    { data: scheduleRows },
+    { data: overrideRows },
+  ] = await Promise.all([
+    supabase
+      .from("physicians")
+      .select(
+        "id, slug, full_name, specialty, group_label, photo_path, display_order",
+      )
+      .eq("is_active", true)
+      .order("display_order", { ascending: true })
+      .order("full_name", { ascending: true }),
+    supabase
+      .from("physician_schedules")
+      .select("physician_id, day_of_week, start_time, end_time"),
+    supabase
+      .from("physician_schedule_overrides")
+      .select("physician_id, override_on, start_time, end_time")
+      .gte("override_on", startDate)
+      .lte("override_on", endDate),
+  ]);
+
+  const blocksByPhysician = new Map<
+    string,
+    Array<{ day_of_week: number; start_time: string; end_time: string }>
+  >();
+  for (const r of scheduleRows ?? []) {
+    const list = blocksByPhysician.get(r.physician_id) ?? [];
+    list.push({
+      day_of_week: r.day_of_week,
+      start_time: r.start_time,
+      end_time: r.end_time,
+    });
+    blocksByPhysician.set(r.physician_id, list);
+  }
+
+  const overridesByPhysician = new Map<
+    string,
+    Array<{ override_on: string; start_time: string | null; end_time: string | null }>
+  >();
+  for (const r of overrideRows ?? []) {
+    const list = overridesByPhysician.get(r.physician_id) ?? [];
+    list.push({
+      override_on: r.override_on,
+      start_time: r.start_time,
+      end_time: r.end_time,
+    });
+    overridesByPhysician.set(r.physician_id, list);
+  }
+
+  // Bookable = at least one recurring block. By-appointment-only physicians
+  // appear on /physicians but not in the booking picker.
+  const bookablePhysicians = (physicianRows ?? [])
+    .filter((p) => (blocksByPhysician.get(p.id) ?? []).length > 0)
+    .map((p) => ({
+      id: p.id,
+      full_name: p.full_name,
+      specialty: p.specialty,
+      group_label: p.group_label,
+      photo_url: physicianPhotoUrl({
+        slug: p.slug,
+        photo_path: p.photo_path,
+      }),
+      blocks: blocksByPhysician.get(p.id) ?? [],
+      overrides: overridesByPhysician.get(p.id) ?? [],
+    }));
 
   return (
     <>
@@ -117,6 +190,7 @@ export default async function SchedulePage() {
                 }))}
               closures={closures}
               startDate={startDate}
+              physicians={bookablePhysicians}
             />
           </div>
         </section>

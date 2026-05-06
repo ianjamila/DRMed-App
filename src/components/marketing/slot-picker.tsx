@@ -1,6 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import {
+  dayWindowFor,
+  minutesOfDay,
+  type PhysicianAvailability,
+} from "@/lib/physicians/availability";
 
 export interface ClosureLite {
   closed_on: string; // YYYY-MM-DD, Asia/Manila
@@ -14,6 +19,9 @@ interface Props {
   // Same shape, 60 days after startDate inclusive.
   closures: ClosureLite[];
   required?: boolean;
+  // When provided, restrict bookable days/times to the given physician's
+  // recurring schedule and overrides.
+  availability?: PhysicianAvailability | null;
 }
 
 interface DayCell {
@@ -84,10 +92,26 @@ function buildTimes(): string[] {
 
 const TIMES = buildTimes();
 
-export function SlotPicker({ startDate, closures, required = true }: Props) {
+export function SlotPicker({
+  startDate,
+  closures,
+  required = true,
+  availability = null,
+}: Props) {
   const days = useMemo(() => buildDays(startDate, closures), [startDate, closures]);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [selectedTime, setSelectedTime] = useState<string | null>(null);
+
+  // Resolve per-day availability once per render. When availability is null,
+  // every day shows the default 8:00–16:30 grid.
+  const dayAvailability = useMemo(() => {
+    return new Map(
+      days.map((d) => [
+        d.date,
+        dayWindowFor(d.date, d.dayOfWeek, availability),
+      ]),
+    );
+  }, [days, availability]);
 
   const scheduledAt =
     selectedDate && selectedTime
@@ -133,7 +157,11 @@ export function SlotPicker({ startDate, closures, required = true }: Props) {
               </p>
               <div className="grid grid-cols-4 gap-2 sm:grid-cols-6 md:grid-cols-7">
                 {group.days.map((day) => {
-                  const disabled = day.isSunday || day.closure !== null;
+                  const window = dayAvailability.get(day.date);
+                  const physicianClosed =
+                    availability !== null && window?.available === false;
+                  const disabled =
+                    day.isSunday || day.closure !== null || physicianClosed;
                   const isSelected = day.date === selectedDate;
                   const baseClass =
                     "flex flex-col items-center rounded-md border px-2 py-2 text-xs transition";
@@ -152,7 +180,11 @@ export function SlotPicker({ startDate, closures, required = true }: Props) {
                     ? `Closed — ${day.closure.reason}`
                     : day.isSunday
                       ? "Closed on Sundays"
-                      : undefined;
+                      : physicianClosed
+                        ? window?.reason === "full_day_override"
+                          ? "Doctor unavailable this day"
+                          : "Doctor not scheduled this day"
+                        : undefined;
                   return (
                     <button
                       key={day.date}
@@ -195,26 +227,50 @@ export function SlotPicker({ startDate, closures, required = true }: Props) {
           PM.
         </p>
         {selectedDate ? (
-          <div className="mt-3 grid grid-cols-4 gap-2 sm:grid-cols-6 md:grid-cols-9">
-            {TIMES.map((t) => {
-              const isSelected = t === selectedTime;
+          (() => {
+            const window = dayAvailability.get(selectedDate);
+            const startMin = window?.start_time
+              ? minutesOfDay(window.start_time)
+              : 8 * 60;
+            const endMin = window?.end_time
+              ? minutesOfDay(window.end_time)
+              : 16 * 60 + 30;
+            const visibleTimes = TIMES.filter((t) => {
+              const m = minutesOfDay(t);
+              // Inclusive on start, exclusive on end so a 12:00 end window
+              // hides the 12:00 slot (last bookable is 11:30).
+              return m >= startMin && m < endMin;
+            });
+            if (visibleTimes.length === 0) {
               return (
-                <button
-                  key={t}
-                  type="button"
-                  aria-pressed={isSelected}
-                  onClick={() => setSelectedTime(t)}
-                  className={`rounded-md border px-2 py-1.5 text-xs font-semibold transition ${
-                    isSelected
-                      ? "border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-cyan)] text-white"
-                      : "border-[color:var(--color-brand-bg-mid)] bg-white text-[color:var(--color-brand-text-mid)] hover:border-[color:var(--color-brand-cyan)] hover:bg-[color:var(--color-brand-bg)]"
-                  }`}
-                >
-                  {t}
-                </button>
+                <p className="mt-3 rounded-md border border-dashed border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] px-3 py-4 text-xs text-[color:var(--color-brand-text-soft)]">
+                  No times available on this day.
+                </p>
               );
-            })}
-          </div>
+            }
+            return (
+              <div className="mt-3 grid grid-cols-4 gap-2 sm:grid-cols-6 md:grid-cols-9">
+                {visibleTimes.map((t) => {
+                  const isSelected = t === selectedTime;
+                  return (
+                    <button
+                      key={t}
+                      type="button"
+                      aria-pressed={isSelected}
+                      onClick={() => setSelectedTime(t)}
+                      className={`rounded-md border px-2 py-1.5 text-xs font-semibold transition ${
+                        isSelected
+                          ? "border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-cyan)] text-white"
+                          : "border-[color:var(--color-brand-bg-mid)] bg-white text-[color:var(--color-brand-text-mid)] hover:border-[color:var(--color-brand-cyan)] hover:bg-[color:var(--color-brand-bg)]"
+                      }`}
+                    >
+                      {t}
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })()
         ) : (
           <p className="mt-3 rounded-md border border-dashed border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] px-3 py-4 text-xs text-[color:var(--color-brand-text-soft)]">
             Pick a day first.

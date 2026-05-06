@@ -54,6 +54,7 @@ export async function submitBookingAction(
     email: formData.get("email"),
     address: formData.get("address") ?? "",
     service_id: formData.get("service_id"),
+    physician_id: formData.get("physician_id") ?? "",
     scheduled_at: formData.get("scheduled_at"),
     notes: formData.get("notes") ?? "",
   });
@@ -121,6 +122,7 @@ export async function submitBookingAction(
     .insert({
       patient_id: patient.id,
       service_id: parsed.data.service_id,
+      physician_id: parsed.data.physician_id,
       scheduled_at: parsed.data.scheduled_at,
       notes: parsed.data.notes,
       status: "confirmed",

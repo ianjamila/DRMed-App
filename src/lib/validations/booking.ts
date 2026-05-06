@@ -61,6 +61,13 @@ export const BookingSchema = z.object({
     .max(160),
   address: optionalText(200),
   service_id: z.string().uuid("Pick a service."),
+  physician_id: z
+    .union([z.string(), z.null(), z.undefined()])
+    .transform((v) => {
+      const t = (v ?? "").toString().trim();
+      return t.length === 0 ? null : t;
+    })
+    .pipe(z.string().uuid("Invalid physician.").nullable()),
   scheduled_at: z
     .string()
     .min(1, "Pick a date and time.")

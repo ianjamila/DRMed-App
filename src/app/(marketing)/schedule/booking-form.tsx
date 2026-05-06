@@ -8,6 +8,10 @@ import {
   SlotPicker,
   type ClosureLite,
 } from "@/components/marketing/slot-picker";
+import type {
+  AvailabilityBlock,
+  AvailabilityOverride,
+} from "@/lib/physicians/availability";
 import { submitBookingAction, type BookingResult } from "./actions";
 
 export type ServiceKind = "lab_test" | "lab_package" | "doctor_consultation";
@@ -19,20 +23,37 @@ interface ServiceLite {
   kind: ServiceKind;
 }
 
+export interface BookablePhysician {
+  id: string;
+  full_name: string;
+  specialty: string;
+  group_label: string | null;
+  photo_url: string;
+  blocks: AvailabilityBlock[];
+  overrides: AvailabilityOverride[];
+}
+
 type Branch = "lab" | "doctor";
 
 interface Props {
   services: ServiceLite[];
   closures: ClosureLite[];
   startDate: string; // tomorrow Manila YYYY-MM-DD
+  physicians: BookablePhysician[];
 }
 
-export function BookingForm({ services, closures, startDate }: Props) {
+export function BookingForm({
+  services,
+  closures,
+  startDate,
+  physicians,
+}: Props) {
   const [state, formAction, pending] = useActionState<
     BookingResult | null,
     FormData
   >(submitBookingAction, null);
   const [branch, setBranch] = useState<Branch>("lab");
+  const [physicianId, setPhysicianId] = useState<string>("");
 
   const filteredServices = useMemo(
     () =>
@@ -43,6 +64,36 @@ export function BookingForm({ services, closures, startDate }: Props) {
       ),
     [services, branch],
   );
+
+  const selectedPhysician = useMemo(() => {
+    if (branch !== "doctor" || !physicianId) return null;
+    return physicians.find((p) => p.id === physicianId) ?? null;
+  }, [branch, physicianId, physicians]);
+
+  const physicianAvailability = selectedPhysician
+    ? {
+        blocks: selectedPhysician.blocks,
+        overrides: selectedPhysician.overrides,
+      }
+    : null;
+
+  // Group physicians by their group_label so the picker mirrors /physicians.
+  const physiciansByGroup = useMemo(() => {
+    const groups = new Map<string, BookablePhysician[]>();
+    const order: string[] = [];
+    for (const p of physicians) {
+      const key = p.group_label ?? "Other";
+      if (!groups.has(key)) {
+        groups.set(key, []);
+        order.push(key);
+      }
+      groups.get(key)!.push(p);
+    }
+    return order.map((label) => ({
+      label,
+      list: groups.get(label) ?? [],
+    }));
+  }, [physicians]);
 
   if (state?.ok && state.appointment_id) {
     const when = state.scheduled_at
@@ -167,16 +218,63 @@ export function BookingForm({ services, closures, startDate }: Props) {
             </option>
           ))}
         </select>
-        {branch === "doctor" ? (
-          <p className="text-xs text-[color:var(--color-brand-text-soft)]">
-            Reception assigns the specific doctor based on availability —
-            we&apos;ll confirm by SMS/email after booking.
-          </p>
-        ) : null}
       </div>
 
+      {branch === "doctor" ? (
+        <div className="grid gap-2">
+          <Label htmlFor="physician_id">Physician</Label>
+          <input
+            type="hidden"
+            name="physician_id"
+            value={physicianId}
+          />
+          <select
+            id="physician_id"
+            required
+            value={physicianId}
+            onChange={(e) => setPhysicianId(e.target.value)}
+            className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+          >
+            <option value="">— Pick a physician —</option>
+            {physiciansByGroup.map((g) => (
+              <optgroup key={g.label} label={g.label}>
+                {g.list.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.full_name} · {p.specialty}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+          <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+            By-appointment-only physicians aren&apos;t in this list — call
+            reception to book them.
+          </p>
+          {selectedPhysician ? (
+            <div className="mt-2 flex items-center gap-3 rounded-md bg-[color:var(--color-brand-bg)] px-3 py-2 text-xs text-[color:var(--color-brand-text-mid)]">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={selectedPhysician.photo_url}
+                alt=""
+                className="h-10 w-10 rounded-full object-cover"
+              />
+              <div>
+                <p className="font-semibold text-[color:var(--color-brand-navy)]">
+                  {selectedPhysician.full_name}
+                </p>
+                <p>{selectedPhysician.specialty}</p>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] p-4">
-        <SlotPicker startDate={startDate} closures={closures} />
+        <SlotPicker
+          startDate={startDate}
+          closures={closures}
+          availability={physicianAvailability}
+        />
       </div>
 
       <div className="grid gap-1.5">
