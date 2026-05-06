@@ -12,6 +12,31 @@ export type Database = {
   __InternalSupabase: {
     PostgrestVersion: "14.5"
   }
+  graphql_public: {
+    Tables: {
+      [_ in never]: never
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      graphql: {
+        Args: {
+          extensions?: Json
+          operationName?: string
+          query?: string
+          variables?: Json
+        }
+        Returns: Json
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
+  }
   public: {
     Tables: {
       appointments: {
@@ -199,6 +224,83 @@ export type Database = {
           user_agent?: string | null
         }
         Relationships: []
+      }
+      critical_alerts: {
+        Row: {
+          acknowledged_at: string | null
+          acknowledged_by: string | null
+          created_at: string
+          direction: string
+          id: string
+          observed_value_si: number | null
+          parameter_id: string
+          parameter_name: string
+          patient_drm_id: string | null
+          patient_id: string | null
+          result_id: string
+          test_request_id: string
+          threshold_si: number | null
+        }
+        Insert: {
+          acknowledged_at?: string | null
+          acknowledged_by?: string | null
+          created_at?: string
+          direction: string
+          id?: string
+          observed_value_si?: number | null
+          parameter_id: string
+          parameter_name: string
+          patient_drm_id?: string | null
+          patient_id?: string | null
+          result_id: string
+          test_request_id: string
+          threshold_si?: number | null
+        }
+        Update: {
+          acknowledged_at?: string | null
+          acknowledged_by?: string | null
+          created_at?: string
+          direction?: string
+          id?: string
+          observed_value_si?: number | null
+          parameter_id?: string
+          parameter_name?: string
+          patient_drm_id?: string | null
+          patient_id?: string | null
+          result_id?: string
+          test_request_id?: string
+          threshold_si?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "critical_alerts_parameter_id_fkey"
+            columns: ["parameter_id"]
+            isOneToOne: false
+            referencedRelation: "result_template_params"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "critical_alerts_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "patients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "critical_alerts_result_id_fkey"
+            columns: ["result_id"]
+            isOneToOne: false
+            referencedRelation: "results"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "critical_alerts_test_request_id_fkey"
+            columns: ["test_request_id"]
+            isOneToOne: false
+            referencedRelation: "test_requests"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       gift_codes: {
         Row: {
@@ -519,7 +621,15 @@ export type Database = {
           sex?: string | null
           updated_at?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "patients_merged_into_id_fkey"
+            columns: ["merged_into_id"]
+            isOneToOne: false
+            referencedRelation: "patients"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       payments: {
         Row: {
@@ -647,6 +757,36 @@ export type Database = {
           },
         ]
       }
+      physician_specialties: {
+        Row: {
+          code: string
+          physician_id: string
+        }
+        Insert: {
+          code: string
+          physician_id: string
+        }
+        Update: {
+          code?: string
+          physician_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "physician_specialties_code_fkey"
+            columns: ["code"]
+            isOneToOne: false
+            referencedRelation: "specialty_codes"
+            referencedColumns: ["code"]
+          },
+          {
+            foreignKeyName: "physician_specialties_physician_id_fkey"
+            columns: ["physician_id"]
+            isOneToOne: false
+            referencedRelation: "physicians"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       physicians: {
         Row: {
           bio: string | null
@@ -709,6 +849,66 @@ export type Database = {
           identifier?: string
         }
         Relationships: []
+      }
+      result_amendments: {
+        Row: {
+          amended_at: string
+          amended_by: string
+          amendment_seq: number
+          id: string
+          prior_file_size_bytes: number | null
+          prior_notes: string | null
+          prior_storage_path: string
+          prior_uploaded_at: string
+          prior_uploaded_by: string
+          reason: string
+          result_id: string
+          test_request_id: string
+        }
+        Insert: {
+          amended_at?: string
+          amended_by: string
+          amendment_seq: number
+          id?: string
+          prior_file_size_bytes?: number | null
+          prior_notes?: string | null
+          prior_storage_path: string
+          prior_uploaded_at: string
+          prior_uploaded_by: string
+          reason: string
+          result_id: string
+          test_request_id: string
+        }
+        Update: {
+          amended_at?: string
+          amended_by?: string
+          amendment_seq?: number
+          id?: string
+          prior_file_size_bytes?: number | null
+          prior_notes?: string | null
+          prior_storage_path?: string
+          prior_uploaded_at?: string
+          prior_uploaded_by?: string
+          reason?: string
+          result_id?: string
+          test_request_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "result_amendments_result_id_fkey"
+            columns: ["result_id"]
+            isOneToOne: false
+            referencedRelation: "results"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "result_amendments_test_request_id_fkey"
+            columns: ["test_request_id"]
+            isOneToOne: false
+            referencedRelation: "test_requests"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       result_template_param_ranges: {
         Row: {
@@ -1009,99 +1209,6 @@ export type Database = {
           },
         ]
       }
-      critical_alerts: {
-        Row: {
-          acknowledged_at: string | null
-          acknowledged_by: string | null
-          created_at: string
-          direction: string
-          id: string
-          observed_value_si: number | null
-          parameter_id: string
-          parameter_name: string
-          patient_drm_id: string | null
-          patient_id: string | null
-          result_id: string
-          test_request_id: string
-          threshold_si: number | null
-        }
-        Insert: {
-          acknowledged_at?: string | null
-          acknowledged_by?: string | null
-          created_at?: string
-          direction: string
-          id?: string
-          observed_value_si?: number | null
-          parameter_id: string
-          parameter_name: string
-          patient_drm_id?: string | null
-          patient_id?: string | null
-          result_id: string
-          test_request_id: string
-          threshold_si?: number | null
-        }
-        Update: {
-          acknowledged_at?: string | null
-          acknowledged_by?: string | null
-          created_at?: string
-          direction?: string
-          id?: string
-          observed_value_si?: number | null
-          parameter_id?: string
-          parameter_name?: string
-          patient_drm_id?: string | null
-          patient_id?: string | null
-          result_id?: string
-          test_request_id?: string
-          threshold_si?: number | null
-        }
-        Relationships: []
-      }
-      result_amendments: {
-        Row: {
-          amended_at: string
-          amended_by: string
-          amendment_seq: number
-          id: string
-          prior_file_size_bytes: number | null
-          prior_notes: string | null
-          prior_storage_path: string
-          prior_uploaded_at: string
-          prior_uploaded_by: string
-          reason: string
-          result_id: string
-          test_request_id: string
-        }
-        Insert: {
-          amended_at?: string
-          amended_by: string
-          amendment_seq: number
-          id?: string
-          prior_file_size_bytes?: number | null
-          prior_notes?: string | null
-          prior_storage_path: string
-          prior_uploaded_at: string
-          prior_uploaded_by: string
-          reason: string
-          result_id: string
-          test_request_id: string
-        }
-        Update: {
-          amended_at?: string
-          amended_by?: string
-          amendment_seq?: number
-          id?: string
-          prior_file_size_bytes?: number | null
-          prior_notes?: string | null
-          prior_storage_path?: string
-          prior_uploaded_at?: string
-          prior_uploaded_by?: string
-          reason?: string
-          result_id?: string
-          test_request_id?: string
-        }
-        Relationships: []
-      }
       service_price_history: {
         Row: {
           change_reason: string | null
@@ -1241,36 +1348,6 @@ export type Database = {
         }
         Relationships: []
       }
-      physician_specialties: {
-        Row: {
-          code: string
-          physician_id: string
-        }
-        Insert: {
-          code: string
-          physician_id: string
-        }
-        Update: {
-          code?: string
-          physician_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "physician_specialties_code_fkey"
-            columns: ["code"]
-            isOneToOne: false
-            referencedRelation: "specialty_codes"
-            referencedColumns: ["code"]
-          },
-          {
-            foreignKeyName: "physician_specialties_physician_id_fkey"
-            columns: ["physician_id"]
-            isOneToOne: false
-            referencedRelation: "physicians"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       staff_profiles: {
         Row: {
           created_at: string
@@ -1307,7 +1384,7 @@ export type Database = {
       subscribers: {
         Row: {
           consent_at: string
-          consent_ip: unknown | null
+          consent_ip: unknown
           created_at: string
           email: string
           id: string
@@ -1317,7 +1394,7 @@ export type Database = {
         }
         Insert: {
           consent_at?: string
-          consent_ip?: unknown | null
+          consent_ip?: unknown
           created_at?: string
           email: string
           id?: string
@@ -1327,7 +1404,7 @@ export type Database = {
         }
         Update: {
           consent_at?: string
-          consent_ip?: unknown | null
+          consent_ip?: unknown
           created_at?: string
           email?: string
           id?: string
@@ -1748,6 +1825,9 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
+  graphql_public: {
+    Enums: {},
+  },
   public: {
     Enums: {},
   },
