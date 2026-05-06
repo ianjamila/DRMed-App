@@ -1,0 +1,32 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      next:
+        patterns:
+          - "next"
+          - "@next/*"
+      supabase:
+        patterns:
+          - "@supabase/*"
+      types:
+        patterns:
+          - "@types/*"
+      dev-deps:
+        dependency-type: development
+    ignore:
+      # Major-version bumps need manual review; let Dependabot handle minor
+      # and patch automatically.
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
