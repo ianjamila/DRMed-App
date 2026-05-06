@@ -46,6 +46,9 @@ interface Props {
   services: QuoteService[];
 }
 
+const PAGE_SIZE_OPTIONS = [25, 50, 100, 200] as const;
+type PageSize = (typeof PAGE_SIZE_OPTIONS)[number];
+
 export function QuoteWorkbench({ services }: Props) {
   const [mode, setMode] = useState<Mode>("search");
   const [query, setQuery] = useState("");
@@ -55,6 +58,8 @@ export function QuoteWorkbench({ services }: Props) {
   const [seniorMode, setSeniorMode] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [builderCopied, setBuilderCopied] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<PageSize>(50);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Auto-focus on mount; re-focus on Cmd/Ctrl+K from anywhere on this page.
@@ -71,13 +76,28 @@ export function QuoteWorkbench({ services }: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const filtered = useMemo(() => {
+  // Filter the full catalog by query; pagination wraps the filtered set
+  // so the page count reflects whatever the user is actually browsing.
+  const matched = useMemo(() => {
     const q = deferredQuery.trim().toLowerCase();
-    if (!q) return services.slice(0, 50);
+    if (!q) return services;
     return services.filter((s) =>
       `${s.name} ${s.code}`.toLowerCase().includes(q),
     );
   }, [services, deferredQuery]);
+
+  const totalPages = Math.max(1, Math.ceil(matched.length / pageSize));
+  // Clamp page to the available range during render — when the user
+  // narrows the query or shrinks the page size, the previously-selected
+  // page index might overshoot. Compute the effective page here instead
+  // of reactively resetting via useEffect.
+  const currentPage = Math.min(page, totalPages);
+
+  const filtered = useMemo(
+    () =>
+      matched.slice((currentPage - 1) * pageSize, currentPage * pageSize),
+    [matched, currentPage, pageSize],
+  );
 
   const pickedList = useMemo(
     () => services.filter((s) => picked.has(s.id)),
@@ -182,9 +202,32 @@ export function QuoteWorkbench({ services }: Props) {
           onChange={(e) => setQuery(e.target.value)}
           className="w-full rounded-lg border border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-3 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none focus:ring-2 focus:ring-[color:var(--color-brand-cyan)]/20"
         />
-        <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
-          {filtered.length} of {services.length} services
-        </p>
+        <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-xs text-[color:var(--color-brand-text-soft)]">
+          <span>
+            {matched.length === 0
+              ? "No matches"
+              : matched.length === services.length
+                ? `${services.length} services`
+                : `${matched.length} of ${services.length} services match`}
+            {matched.length > pageSize
+              ? ` · showing ${(currentPage - 1) * pageSize + 1}–${Math.min(currentPage * pageSize, matched.length)}`
+              : ""}
+          </span>
+          <label className="flex items-center gap-1">
+            <span>Rows</span>
+            <select
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value) as PageSize)}
+              className="rounded border border-[color:var(--color-brand-bg-mid)] bg-white px-1.5 py-0.5 text-xs"
+            >
+              {PAGE_SIZE_OPTIONS.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
       </div>
 
       <div className="overflow-hidden rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
@@ -291,6 +334,32 @@ export function QuoteWorkbench({ services }: Props) {
           </tbody>
         </table>
       </div>
+
+      {totalPages > 1 ? (
+        <div className="flex items-center justify-between text-xs text-[color:var(--color-brand-text-soft)]">
+          <span>
+            Page {currentPage} of {totalPages}
+          </span>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={currentPage === 1}
+              onClick={() => setPage(Math.max(1, currentPage - 1))}
+              className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-1 font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-bg)] disabled:opacity-40"
+            >
+              ← Prev
+            </button>
+            <button
+              type="button"
+              disabled={currentPage === totalPages}
+              onClick={() => setPage(Math.min(totalPages, currentPage + 1))}
+              className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-1 font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-bg)] disabled:opacity-40"
+            >
+              Next →
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {mode === "builder" ? (
         <aside className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">

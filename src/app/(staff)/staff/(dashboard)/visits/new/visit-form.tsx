@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useMemo, useState } from "react";
+import { useActionState, useDeferredValue, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -104,10 +104,46 @@ export function VisitForm({ services, patient, hmoProviders }: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [hmoProviderId, setHmoProviderId] = useState<string>("");
   const [lineState, setLineState] = useState<Record<string, LineState>>({});
+  const [serviceQuery, setServiceQuery] = useState("");
+  const deferredQuery = useDeferredValue(serviceQuery);
   const [state, formAction, pending] = useActionState<
     CreateVisitResult | null,
     FormData
   >(createVisitAction, null);
+
+  // Show selected services unconditionally + matches for the query.
+  // When the query is empty, show the first 60 of the catalog and let the
+  // search narrow further. Selected rows always appear at the top.
+  const visibleServices = useMemo(() => {
+    const q = deferredQuery.trim().toLowerCase();
+    const matchIds = new Set<string>();
+    if (q) {
+      for (const s of services) {
+        if (`${s.name} ${s.code}`.toLowerCase().includes(q)) matchIds.add(s.id);
+      }
+    } else {
+      for (let i = 0; i < Math.min(services.length, 60); i++) {
+        matchIds.add(services[i]!.id);
+      }
+    }
+    // Always include currently-selected so they don't disappear when the
+    // user types a query that doesn't match them.
+    const seen = new Set<string>();
+    const out: ServiceLite[] = [];
+    for (const s of services) {
+      if (selected.has(s.id) && !seen.has(s.id)) {
+        out.push(s);
+        seen.add(s.id);
+      }
+    }
+    for (const s of services) {
+      if (matchIds.has(s.id) && !seen.has(s.id)) {
+        out.push(s);
+        seen.add(s.id);
+      }
+    }
+    return out;
+  }, [services, deferredQuery, selected]);
 
   const hmoSelected = hmoProviderId !== "";
 
@@ -221,12 +257,33 @@ export function VisitForm({ services, patient, hmoProviders }: Props) {
       </fieldset>
 
       <div>
-        <Label className="text-sm">Select services</Label>
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <Label className="text-sm">Select services</Label>
+          <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+            {selected.size > 0
+              ? `${selected.size} selected · ${services.length} total`
+              : `${services.length} services available`}
+          </p>
+        </div>
         <p className="mt-0.5 text-xs text-[color:var(--color-brand-text-soft)]">
           Pick services first; per-line discounts appear once selected.
+          Selected services stay visible even when filtered.
         </p>
+        <Input
+          type="search"
+          value={serviceQuery}
+          onChange={(e) => setServiceQuery(e.target.value)}
+          placeholder="Search by name or code (CBC, lipid, ultrasound…)"
+          className="mt-2"
+          autoComplete="off"
+        />
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
-          {services.map((s) => {
+          {visibleServices.length === 0 ? (
+            <p className="col-span-full rounded-lg border border-dashed border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-6 text-center text-sm text-[color:var(--color-brand-text-soft)]">
+              No services match.
+            </p>
+          ) : null}
+          {visibleServices.map((s) => {
             const checked = selected.has(s.id);
             const display = basePriceFor(s, hmoSelected);
             return (
