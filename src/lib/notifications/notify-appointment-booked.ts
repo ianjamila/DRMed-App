@@ -39,10 +39,15 @@ export async function notifyAppointmentBooked({
   const phone = patient?.phone ?? appt.walk_in_phone ?? null;
   const email = patient?.email ?? null;
 
-  const when = new Date(appt.scheduled_at).toLocaleString("en-PH", {
-    dateStyle: "long",
-    timeStyle: "short",
-  });
+  // pending_callback bookings (diagnostic packages, home service, by-appointment
+  // doctors) have no scheduled_at — show a friendly placeholder so the SMS
+  // and email don't render "Invalid Date".
+  const when = appt.scheduled_at
+    ? new Date(appt.scheduled_at).toLocaleString("en-PH", {
+        dateStyle: "long",
+        timeStyle: "short",
+      })
+    : "to be confirmed by reception";
   const serviceName = svc?.name ?? "your appointment";
   const cancelUrl = `${SITE.url.replace(/\/$/, "")}/appointments/cancel/${appt.id}`;
 

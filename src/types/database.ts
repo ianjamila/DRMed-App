@@ -16,39 +16,45 @@ export type Database = {
     Tables: {
       appointments: {
         Row: {
+          booking_group_id: string | null
           created_at: string
           created_by: string | null
+          home_service_requested: boolean
           id: string
           notes: string | null
           patient_id: string | null
           physician_id: string | null
-          scheduled_at: string
+          scheduled_at: string | null
           service_id: string | null
           status: string
           walk_in_name: string | null
           walk_in_phone: string | null
         }
         Insert: {
+          booking_group_id?: string | null
           created_at?: string
           created_by?: string | null
+          home_service_requested?: boolean
           id?: string
           notes?: string | null
           patient_id?: string | null
           physician_id?: string | null
-          scheduled_at: string
+          scheduled_at?: string | null
           service_id?: string | null
           status?: string
           walk_in_name?: string | null
           walk_in_phone?: string | null
         }
         Update: {
+          booking_group_id?: string | null
           created_at?: string
           created_by?: string | null
+          home_service_requested?: boolean
           id?: string
           notes?: string | null
           patient_id?: string | null
           physician_id?: string | null
-          scheduled_at?: string
+          scheduled_at?: string | null
           service_id?: string | null
           status?: string
           walk_in_name?: string | null
@@ -1022,9 +1028,11 @@ export type Database = {
       }
       services: {
         Row: {
+          allow_concurrent: boolean
           code: string
           created_at: string
           description: string | null
+          fasting_required: boolean
           hmo_price_php: number | null
           id: string
           is_active: boolean
@@ -1033,16 +1041,20 @@ export type Database = {
           name: string
           price_php: number
           requires_signoff: boolean
+          requires_time_slot: boolean
           section: string | null
           send_out_lab: string | null
           senior_discount_php: number | null
+          specialty_code: string | null
           turnaround_hours: number | null
           updated_at: string
         }
         Insert: {
+          allow_concurrent?: boolean
           code: string
           created_at?: string
           description?: string | null
+          fasting_required?: boolean
           hmo_price_php?: number | null
           id?: string
           is_active?: boolean
@@ -1051,16 +1063,20 @@ export type Database = {
           name: string
           price_php: number
           requires_signoff?: boolean
+          requires_time_slot?: boolean
           section?: string | null
           send_out_lab?: string | null
           senior_discount_php?: number | null
+          specialty_code?: string | null
           turnaround_hours?: number | null
           updated_at?: string
         }
         Update: {
+          allow_concurrent?: boolean
           code?: string
           created_at?: string
           description?: string | null
+          fasting_required?: boolean
           hmo_price_php?: number | null
           id?: string
           is_active?: boolean
@@ -1069,13 +1085,74 @@ export type Database = {
           name?: string
           price_php?: number
           requires_signoff?: boolean
+          requires_time_slot?: boolean
           section?: string | null
           send_out_lab?: string | null
           senior_discount_php?: number | null
+          specialty_code?: string | null
           turnaround_hours?: number | null
           updated_at?: string
         }
+        Relationships: [
+          {
+            foreignKeyName: "services_specialty_code_fkey"
+            columns: ["specialty_code"]
+            isOneToOne: false
+            referencedRelation: "specialty_codes"
+            referencedColumns: ["code"]
+          },
+        ]
+      }
+      specialty_codes: {
+        Row: {
+          code: string
+          created_at: string
+          display_order: number
+          label: string
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          display_order?: number
+          label: string
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          display_order?: number
+          label?: string
+        }
         Relationships: []
+      }
+      physician_specialties: {
+        Row: {
+          code: string
+          physician_id: string
+        }
+        Insert: {
+          code: string
+          physician_id: string
+        }
+        Update: {
+          code?: string
+          physician_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "physician_specialties_code_fkey"
+            columns: ["code"]
+            isOneToOne: false
+            referencedRelation: "specialty_codes"
+            referencedColumns: ["code"]
+          },
+          {
+            foreignKeyName: "physician_specialties_physician_id_fkey"
+            columns: ["physician_id"]
+            isOneToOne: false
+            referencedRelation: "physicians"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       staff_profiles: {
         Row: {

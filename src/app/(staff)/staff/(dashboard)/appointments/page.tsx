@@ -20,7 +20,7 @@ const STATUS_STYLE: Record<string, string> = {
 
 interface ApptRow {
   id: string;
-  scheduled_at: string;
+  scheduled_at: string | null;
   created_at: string;
   status: string;
   notes: string | null;
@@ -177,10 +177,12 @@ function Section({
                     })}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-[color:var(--color-brand-text-mid)]">
-                    {new Date(r.scheduled_at).toLocaleString("en-PH", {
-                      dateStyle: "medium",
-                      timeStyle: "short",
-                    })}
+                    {r.scheduled_at
+                      ? new Date(r.scheduled_at).toLocaleString("en-PH", {
+                          dateStyle: "medium",
+                          timeStyle: "short",
+                        })
+                      : <span className="text-xs italic text-amber-700">Pending callback</span>}
                   </td>
                   <td className="px-4 py-3">
                     <p className="font-semibold text-[color:var(--color-brand-navy)]">

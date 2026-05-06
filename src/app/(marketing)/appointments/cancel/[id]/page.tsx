@@ -40,10 +40,12 @@ export default async function CancelAppointmentPage({ params }: Props) {
 
   const svc = Array.isArray(appt.services) ? appt.services[0] : appt.services;
 
-  const when = new Date(appt.scheduled_at).toLocaleString("en-PH", {
-    dateStyle: "long",
-    timeStyle: "short",
-  });
+  const when = appt.scheduled_at
+    ? new Date(appt.scheduled_at).toLocaleString("en-PH", {
+        dateStyle: "long",
+        timeStyle: "short",
+      })
+    : "to be confirmed by reception";
 
   const cancellable = CANCELLABLE.has(appt.status);
   const alreadyCancelled = appt.status === "cancelled";
