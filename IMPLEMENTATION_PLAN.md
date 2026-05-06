@@ -845,6 +845,7 @@ Idempotency: re-running the sync within the same window should produce zero new 
 | 11 | Gift codes / vouchers | 1 day |
 | 12 | HMO receivables dashboard (start of full accounting module) | 2–3 days |
 | 13 | Structured result entry + auto-generated result PDF (in-house tests) — security upgrade; can be brought forward right after Phase 8 | 4–5 days |
+| 14 | Newsletter & marketing emails (public opt-in + admin compose/send via Resend) | 1.5 days |
 
 Total: roughly 5.5–6 weeks of focused work for a single developer.
 
@@ -1429,3 +1430,98 @@ Send-out keeps the existing upload path because the source-of-truth for those is
 - Do **NOT** trust client-supplied `parameter_id` lists — always re-fetch the template server-side and ignore parameters that don't belong to it.
 - Do **NOT** generate the PDF on the client. The signature line and control number must come from the server; client-rendered PDFs would let a medtech swap their identity for someone else's.
 - Do **NOT** auto-flag free-text values in this phase. Bad pattern matches on REMARKS would create false abnormals and erode trust in the H/L/A indicators.
+
+---
+
+## Phase 14 — Newsletter & marketing emails
+
+**Goal:** capture marketing-site visitors who want occasional updates (new tests, promos, clinic announcements) and let admin compose + send campaigns to them. Reuses the existing Resend integration; adds list management + unsubscribe.
+
+### Scope
+
+In:
+- Public opt-in form on the marketing site (homepage footer + a dedicated `/newsletter` page).
+- `subscribers` table tracking email, opt-in source, consent timestamp, IP, and unsubscribe state.
+- Admin pages at `/staff/admin/newsletter` to (a) browse subscribers, (b) compose a campaign (subject + markdown body), (c) send.
+- One-click unsubscribe at `/unsubscribe?token=...` — no auth, just the token. RA 10173 requires this and the link must appear in every send.
+- Send-time fan-out: batched calls to `sendEmail` (existing `lib/notifications/email.ts`), respecting Resend rate limits (currently 10 req/sec on free tier — chunk to 100 per second worst-case via small delays).
+- Audit log: `newsletter.subscriber.created`, `newsletter.subscriber.unsubscribed`, `newsletter.campaign.sent` (with recipient count + campaign id).
+
+Out:
+- Segmentation, A/B tests, click/open tracking pixels, double opt-in confirmation emails. Single opt-in is sufficient under RA 10173 as long as consent + source are recorded and unsubscribe is one-click.
+- Drag-and-drop email builder. Markdown → simple HTML with the existing brand header is enough.
+- Patient transactional emails (result-ready, appointment reminders) — those stay in Phase 5's notify pipeline.
+
+### Schema (next available migration number)
+
+```sql
+create table public.subscribers (
+  id uuid primary key default gen_random_uuid(),
+  email text not null unique,
+  source text not null,                   -- 'homepage_footer' | 'newsletter_page' | 'admin_added'
+  consent_at timestamptz not null default now(),
+  consent_ip inet,
+  unsubscribed_at timestamptz,
+  unsubscribe_token text not null unique default encode(gen_random_bytes(24), 'base64url'),
+  created_at timestamptz not null default now()
+);
+
+create index on public.subscribers (unsubscribed_at) where unsubscribed_at is null;
+
+create table public.newsletter_campaigns (
+  id uuid primary key default gen_random_uuid(),
+  subject text not null,
+  body_md text not null,
+  body_html text not null,                -- rendered at send time, stored for audit
+  sent_at timestamptz,
+  sent_by uuid references public.staff_profiles(user_id),
+  recipient_count int,
+  created_at timestamptz not null default now()
+);
+```
+
+RLS:
+- `subscribers`: insert allowed via the public anon key (the opt-in form posts directly), but only the columns above — the policy checks the row has no `unsubscribed_at` and a valid email shape. Select/delete: admin-only via service-role client. The unsubscribe page reads/writes through a Server Action that hits the service-role client by token only (never exposes the row to the browser).
+- `newsletter_campaigns`: admin-only, both directions.
+
+### Workflow
+
+1. Visitor enters email on `/` footer → Server Action validates the email, inserts into `subscribers` (idempotent on email — re-subscribing flips `unsubscribed_at` back to null), audit-logs, returns success.
+2. Admin opens `/staff/admin/newsletter`, sees a subscriber count + the most recent 50.
+3. Admin clicks "New campaign", writes subject + markdown, hits "Send" — confirmation modal shows recipient count.
+4. Server Action renders the markdown to HTML once, stores the campaign with `sent_at = now()` and `recipient_count`, then iterates over active subscribers in chunks calling `sendEmail` with the per-recipient unsubscribe link appended.
+5. Recipient clicks unsubscribe → token-bearing GET hits `/unsubscribe?token=...`, sets `unsubscribed_at`, audit-logs, shows a "you're unsubscribed" page with a one-click "I changed my mind" button.
+
+### UI
+
+- Homepage footer: small inline form, single email input + button. Uses the same Server Action as `/newsletter`.
+- `/newsletter` (marketing): full landing page with the form, a sample of past campaigns, and the consent statement (RA 10173 wording).
+- `/staff/admin/newsletter`: list view + "New campaign" button.
+- `/staff/admin/newsletter/new`: subject + markdown editor + live preview pane + recipient count.
+- `/unsubscribe?token=...`: minimal public page (no app shell), confirms unsubscribe and offers re-subscribe.
+
+### Security model
+
+- The opt-in path is one of the very few places anon-key writes are allowed. The RLS insert policy must restrict to `email`, `source`, `consent_at` (= now()), `consent_ip` — and reject any other column. Unsubscribe and campaign sends never go through the anon key.
+- Unsubscribe tokens are 24 random bytes (base64url). Tokens are per-subscriber, not per-campaign — one click unsubscribes from all future sends.
+- Rate-limit the public opt-in route by IP (reuse the rate limiter from Phase 8 once it lands; until then, a simple `INSERT ... ON CONFLICT DO NOTHING` plus per-IP-per-hour audit-log check is enough to deter casual abuse).
+
+### Verification
+
+- [ ] Migration applies cleanly; types regenerated
+- [ ] Anon submit on the marketing form creates a subscriber row with consent_at + consent_ip set
+- [ ] Re-submitting the same email when previously unsubscribed flips `unsubscribed_at` back to null and refreshes consent_at
+- [ ] Unsubscribe link works without authentication; clicking it twice is idempotent (no error on second click)
+- [ ] Admin can compose a campaign in markdown and the preview matches the sent HTML exactly (same renderer)
+- [ ] Send respects unsubscribed_at — unsubscribed rows get zero emails
+- [ ] Every send writes one `newsletter.campaign.sent` audit-log row with the correct recipient_count
+- [ ] Resend dashboard shows the campaign batch with the right `From` and `Reply-To`
+- [ ] Sending to 0 active subscribers shows a clear "nothing to send" state and does not create a campaign row
+
+### What NOT to do
+
+- Do **NOT** include patients' transactional emails (result-ready) in the newsletter list. The two lists never merge — a patient who never opted into marketing must never receive a campaign.
+- Do **NOT** store rendered HTML on the client. Render server-side only; the campaign row is the audit artifact.
+- Do **NOT** bypass the unsubscribe link in any send, including admin "test sends". Every email must have it.
+- Do **NOT** add tracking pixels or click-tracking redirects in this phase. RA 10173 says additional tracking needs additional disclosed consent — keep the privacy story simple.
+- Do **NOT** allow admins to import a CSV of arbitrary emails without an explicit "I have consent for each of these" attestation captured in the audit log. Bulk-imported addresses without consent are the fastest way to get the sending domain blacklisted.
