@@ -2,14 +2,14 @@
 
 import Image from "next/image";
 import { useState } from "react";
-import { physicianInitials } from "@/lib/marketing/physicians";
+import { physicianInitials } from "@/lib/physicians/initials";
 
 interface Props {
-  slug: string;
+  photoUrl: string;
   name: string;
 }
 
-export function DoctorAvatar({ slug, name }: Props) {
+export function DoctorAvatar({ photoUrl, name }: Props) {
   const [errored, setErrored] = useState(false);
 
   if (errored) {
@@ -23,12 +23,13 @@ export function DoctorAvatar({ slug, name }: Props) {
   return (
     <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-full border-2 border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-bg)]">
       <Image
-        src={`/doctors/${slug}.jpg`}
+        src={photoUrl}
         alt={name}
         fill
         sizes="80px"
         className="object-cover"
         onError={() => setErrored(true)}
+        unoptimized={!photoUrl.startsWith("/")}
       />
     </div>
   );

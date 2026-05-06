@@ -9,7 +9,7 @@ import {
   SOCIAL,
   TRUST_BAR,
 } from "@/lib/marketing/site";
-import { PHYSICIANS } from "@/lib/marketing/physicians";
+import { createClient } from "@/lib/supabase/server";
 import { HmoTicker } from "@/components/marketing/hmo-ticker";
 import { ContactForm } from "./contact/contact-form";
 
@@ -128,7 +128,13 @@ const mapsHref = `https://www.google.com/maps/search/?api=1&query=${encodeURICom
   CONTACT.address.full,
 )}`;
 
-export default function HomePage() {
+export default async function HomePage() {
+  const supabase = await createClient();
+  const { count: physicianCount } = await supabase
+    .from("physicians")
+    .select("id", { count: "exact", head: true })
+    .eq("is_active", true);
+
   return (
     <>
       <script
@@ -394,7 +400,7 @@ export default function HomePage() {
             <span className="text-[color:var(--color-brand-cyan)]">Doctors</span>
           </h2>
           <p className="mt-3 max-w-2xl text-sm text-[color:var(--color-brand-text-mid)]">
-            DRMed has {PHYSICIANS.length}+ board-certified physicians across key
+            DRMed has {physicianCount ?? 20}+ board-certified physicians across key
             specialties. For complete schedules and doctor photos, open the
             detailed schedules page.
           </p>
