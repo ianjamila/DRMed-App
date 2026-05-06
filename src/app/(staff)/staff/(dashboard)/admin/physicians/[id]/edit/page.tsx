@@ -35,21 +35,29 @@ export default async function EditPhysicianPage({ params }: PageProps) {
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6 lg:px-8">
-      <header className="mb-6">
-        <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-          <Link
-            href="/staff/admin/physicians"
-            className="hover:text-[color:var(--color-brand-navy)]"
-          >
-            ← Physicians
-          </Link>
-        </p>
-        <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          {physician.full_name}
-        </h1>
-        <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
-          {physician.specialty}
-        </p>
+      <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
+            <Link
+              href="/staff/admin/physicians"
+              className="hover:text-[color:var(--color-brand-navy)]"
+            >
+              ← Physicians
+            </Link>
+          </p>
+          <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+            {physician.full_name}
+          </h1>
+          <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
+            {physician.specialty}
+          </p>
+        </div>
+        <Link
+          href={`/staff/admin/physicians/${physician.id}/schedule`}
+          className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-bg)]"
+        >
+          Schedule →
+        </Link>
       </header>
 
       <section className="mb-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">

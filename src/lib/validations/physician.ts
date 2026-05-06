@@ -39,3 +39,87 @@ export const PhysicianCreateSchema = z.object(PhysicianFields);
 export const PhysicianUpdateSchema = z.object(PhysicianFields);
 
 export type PhysicianInput = z.infer<typeof PhysicianCreateSchema>;
+
+const timeStr = z
+  .string()
+  .trim()
+  .regex(/^\d{2}:\d{2}(:\d{2})?$/, "Use HH:MM format.")
+  .transform((v) => (v.length === 5 ? `${v}:00` : v));
+
+const optionalTime = z
+  .union([z.string(), z.null(), z.undefined()])
+  .transform((v) => {
+    const t = (v ?? "").toString().trim();
+    return t.length === 0 ? null : t;
+  })
+  .pipe(
+    z
+      .string()
+      .regex(/^\d{2}:\d{2}(:\d{2})?$/, "Use HH:MM format.")
+      .transform((v) => (v.length === 5 ? `${v}:00` : v))
+      .nullable(),
+  );
+
+const optionalDate = z
+  .union([z.string(), z.null(), z.undefined()])
+  .transform((v) => {
+    const t = (v ?? "").toString().trim();
+    return t.length === 0 ? null : t;
+  })
+  .pipe(z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD.").nullable());
+
+export const ScheduleBlockSchema = z
+  .object({
+    day_of_week: z
+      .union([z.string(), z.number()])
+      .transform((v) => Number(v))
+      .pipe(z.number().int().min(0).max(6)),
+    start_time: timeStr,
+    end_time: timeStr,
+    valid_from: optionalDate,
+    valid_until: optionalDate,
+    notes: optionalText(500),
+  })
+  .superRefine((val, ctx) => {
+    if (val.end_time <= val.start_time) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["end_time"],
+        message: "End must be after start.",
+      });
+    }
+  });
+
+export const OverrideSchema = z
+  .object({
+    override_on: z
+      .string()
+      .trim()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "Pick a date."),
+    start_time: optionalTime,
+    end_time: optionalTime,
+    reason: optionalText(500),
+  })
+  .superRefine((val, ctx) => {
+    const bothNull = val.start_time === null && val.end_time === null;
+    const bothSet = val.start_time !== null && val.end_time !== null;
+    if (!bothNull && !bothSet) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["end_time"],
+        message: "Set both times for a partial-day window, or leave both empty for a full-day off.",
+      });
+    }
+    if (
+      bothSet &&
+      val.end_time !== null &&
+      val.start_time !== null &&
+      val.end_time <= val.start_time
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["end_time"],
+        message: "End must be after start.",
+      });
+    }
+  });
