@@ -54,6 +54,11 @@ export const STAFF_NAV: StaffNavSection[] = [
         label: "Quick quote",
         roles: ["reception", "medtech", "admin"],
       },
+      {
+        href: "/staff/inquiries",
+        label: "Inquiries",
+        roles: ["reception", "admin"],
+      },
     ],
   },
   {
