@@ -128,6 +128,11 @@ export const STAFF_NAV: StaffNavSection[] = [
         label: "Import patients",
         roles: ["admin"],
       },
+      {
+        href: "/staff/admin/patient-merge",
+        label: "Merge patients",
+        roles: ["admin"],
+      },
     ],
   },
 ];

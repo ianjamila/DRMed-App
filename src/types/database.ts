@@ -456,6 +456,8 @@ export type Database = {
           id: string
           is_repeat_patient: boolean
           last_name: string
+          merged_at: string | null
+          merged_into_id: string | null
           middle_name: string | null
           phone: string | null
           pre_registered: boolean
@@ -479,6 +481,8 @@ export type Database = {
           id?: string
           is_repeat_patient?: boolean
           last_name: string
+          merged_at?: string | null
+          merged_into_id?: string | null
           middle_name?: string | null
           phone?: string | null
           pre_registered?: boolean
@@ -502,6 +506,8 @@ export type Database = {
           id?: string
           is_repeat_patient?: boolean
           last_name?: string
+          merged_at?: string | null
+          merged_into_id?: string | null
           middle_name?: string | null
           phone?: string | null
           pre_registered?: boolean
