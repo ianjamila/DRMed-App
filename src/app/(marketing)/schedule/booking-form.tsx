@@ -127,6 +127,21 @@ export function BookingForm({
 }: Props) {
   const isPortalContext = prefilledPatient !== undefined;
   const [branch, setBranch] = useState<Branch>("lab_request");
+  // Personal-info fields are kept in controlled state because React 19
+  // form actions reset uncontrolled inputs when the action returns.
+  // Without this, a user who hits a validation error loses every field
+  // they had typed.
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [middleName, setMiddleName] = useState("");
+  const [birthdate, setBirthdate] = useState("");
+  const [sex, setSex] = useState("");
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
+  const [address, setAddress] = useState("");
+  const [notes, setNotes] = useState("");
+  const [serviceAgreement, setServiceAgreement] = useState(false);
+  const [marketingConsent, setMarketingConsent] = useState(false);
   const [selectedServiceIds, setSelectedServiceIds] = useState<Set<string>>(
     new Set(),
   );
@@ -143,6 +158,9 @@ export function BookingForm({
     first_name: string;
     last_name: string;
   } | null>(prefilledPatient ?? null);
+  // Same React 19 reset issue applies to the lookup form.
+  const [lookupDrmId, setLookupDrmId] = useState("");
+  const [lookupLastName, setLookupLastName] = useState("");
   const [lookupState, lookupAction, lookupPending] = useActionState<
     LookupPatientResult | null,
     FormData
@@ -337,12 +355,16 @@ export function BookingForm({
               required
               placeholder="DRM-0001"
               maxLength={20}
+              value={lookupDrmId}
+              onChange={setLookupDrmId}
             />
             <Field
               label="Last name on file"
               name="last_name"
               required
               maxLength={80}
+              value={lookupLastName}
+              onChange={setLookupLastName}
             />
           </div>
           {lookupState && !lookupState.ok ? (
@@ -442,21 +464,46 @@ export function BookingForm({
       {isExistingMode ? null : (
         <>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="First name" name="first_name" required maxLength={80} />
-            <Field label="Last name" name="last_name" required maxLength={80} />
+            <Field
+              label="First name"
+              name="first_name"
+              required
+              maxLength={80}
+              value={firstName}
+              onChange={setFirstName}
+            />
+            <Field
+              label="Last name"
+              name="last_name"
+              required
+              maxLength={80}
+              value={lastName}
+              onChange={setLastName}
+            />
           </div>
           <div className="grid gap-4 sm:grid-cols-3">
             <Field
               label="Middle name (optional)"
               name="middle_name"
               maxLength={80}
+              value={middleName}
+              onChange={setMiddleName}
             />
-            <Field label="Birthdate" name="birthdate" type="date" required />
+            <Field
+              label="Birthdate"
+              name="birthdate"
+              type="date"
+              required
+              value={birthdate}
+              onChange={setBirthdate}
+            />
             <div className="grid gap-1.5">
               <Label htmlFor="sex">Sex</Label>
               <select
                 id="sex"
                 name="sex"
+                value={sex}
+                onChange={(e) => setSex(e.target.value)}
                 className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
               >
                 <option value="">—</option>
@@ -473,6 +520,8 @@ export function BookingForm({
               required
               placeholder="+639XXXXXXXXX or 09XX..."
               maxLength={40}
+              value={phone}
+              onChange={setPhone}
             />
             <Field
               label="Email"
@@ -480,9 +529,17 @@ export function BookingForm({
               type="email"
               required
               maxLength={160}
+              value={email}
+              onChange={setEmail}
             />
           </div>
-          <Field label="Address (optional)" name="address" maxLength={200} />
+          <Field
+            label="Address (optional)"
+            name="address"
+            maxLength={200}
+            value={address}
+            onChange={setAddress}
+          />
         </>
       )}
 
@@ -641,6 +698,8 @@ export function BookingForm({
           rows={3}
           maxLength={2000}
           placeholder="HMO, fasting needed, mobility, etc."
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
           className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
         />
       </div>
@@ -653,6 +712,8 @@ export function BookingForm({
             name="service_agreement"
             value="on"
             required
+            checked={serviceAgreement}
+            onChange={(e) => setServiceAgreement(e.target.checked)}
             className="mt-1"
           />
           <span>
@@ -677,6 +738,8 @@ export function BookingForm({
             type="checkbox"
             name="marketing_consent"
             value="on"
+            checked={marketingConsent}
+            onChange={(e) => setMarketingConsent(e.target.checked)}
             className="mt-1"
           />
           <span>
@@ -827,6 +890,8 @@ function Field({
   required = false,
   placeholder,
   maxLength,
+  value,
+  onChange,
 }: {
   label: string;
   name: string;
@@ -834,6 +899,8 @@ function Field({
   required?: boolean;
   placeholder?: string;
   maxLength?: number;
+  value?: string;
+  onChange?: (next: string) => void;
 }) {
   return (
     <div className="grid gap-1.5">
@@ -845,6 +912,8 @@ function Field({
         required={required}
         placeholder={placeholder}
         maxLength={maxLength}
+        value={value}
+        onChange={onChange ? (e) => onChange(e.target.value) : undefined}
       />
     </div>
   );
