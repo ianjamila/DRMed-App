@@ -13,26 +13,32 @@ import {
 } from "./actions";
 
 interface Props {
-  appointmentId: string;
+  appointmentIds: ReadonlyArray<string>;
   patientId: string | null;
   status: string;
   isAdmin: boolean;
+  // When this card represents a multi-service booking, the buttons fire
+  // bulk transitions across all sibling rows. Used in confirmation copy.
+  groupSize: number;
 }
 
 export function TransitionButtons({
-  appointmentId,
+  appointmentIds,
   patientId,
   status,
   isAdmin,
+  groupSize,
 }: Props) {
   const router = useRouter();
   const [pending, start] = useTransition();
 
   function fire(
-    action: (id: string) => Promise<{ ok: boolean; error?: string }>,
+    action: (
+      ids: ReadonlyArray<string>,
+    ) => Promise<{ ok: boolean; error?: string }>,
   ) {
     start(async () => {
-      const result = await action(appointmentId);
+      const result = await action(appointmentIds);
       if (!result.ok && "error" in result) {
         alert(result.error ?? "Action failed.");
         return;
@@ -42,7 +48,13 @@ export function TransitionButtons({
   }
 
   const showRevert =
-    status === "arrived" || status === "no_show" || status === "cancelled";
+    status === "arrived" ||
+    status === "no_show" ||
+    status === "cancelled" ||
+    status === "pending_callback";
+
+  const groupSuffix =
+    groupSize > 1 ? ` (${groupSize} services)` : "";
 
   return (
     <div className="flex flex-wrap items-center justify-end gap-2">
@@ -55,7 +67,7 @@ export function TransitionButtons({
             className="bg-emerald-600 text-white hover:bg-emerald-700"
             onClick={() => fire(markArrivedAction)}
           >
-            {pending ? "…" : "Mark arrived"}
+            {pending ? "…" : `Mark arrived${groupSuffix}`}
           </Button>
           <Button
             type="button"
@@ -72,13 +84,42 @@ export function TransitionButtons({
             variant="outline"
             disabled={pending}
             onClick={() => {
-              if (!confirm("Cancel this appointment?")) return;
+              if (
+                !confirm(
+                  groupSize > 1
+                    ? `Cancel all ${groupSize} services on this booking?`
+                    : "Cancel this appointment?",
+                )
+              )
+                return;
               fire(cancelByStaffAction);
             }}
           >
             Cancel
           </Button>
         </>
+      ) : null}
+
+      {status === "pending_callback" ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={pending}
+          onClick={() => {
+            if (
+              !confirm(
+                groupSize > 1
+                  ? `Cancel all ${groupSize} services on this pending request?`
+                  : "Cancel this pending request?",
+              )
+            )
+              return;
+            fire(cancelByStaffAction);
+          }}
+        >
+          Cancel
+        </Button>
       ) : null}
 
       {status === "arrived" && patientId ? (
@@ -112,7 +153,9 @@ export function TransitionButtons({
           onClick={() => {
             if (
               !confirm(
-                "Permanently delete this appointment? Audit log keeps a record.",
+                groupSize > 1
+                  ? `Permanently delete all ${groupSize} services on this booking? Audit log keeps a record.`
+                  : "Permanently delete this appointment? Audit log keeps a record.",
               )
             )
               return;

@@ -11,22 +11,24 @@ type Transition = "arrived" | "no_show" | "cancelled" | "confirmed";
 const ALLOWED_FROM: Record<Transition, string[]> = {
   arrived: ["confirmed"],
   no_show: ["confirmed"],
-  cancelled: ["confirmed", "arrived"],
-  // Revert path: bounce any non-completed status back to confirmed for
-  // accidental presses. Completed visits stay locked — those are tied to
-  // a real visit + payment record, can't be reset on a click.
-  confirmed: ["arrived", "no_show", "cancelled"],
+  cancelled: ["confirmed", "arrived", "pending_callback"],
+  // Revert: bounce any non-completed status back to confirmed for
+  // accidental presses. Completed stays locked — tied to a real visit.
+  confirmed: ["arrived", "no_show", "cancelled", "pending_callback"],
 };
 
 export type ApptResult = { ok: true } | { ok: false; error: string };
 
-async function transitionAction(
-  appointmentId: string,
+async function transitionGroup(
+  appointmentIds: ReadonlyArray<string>,
   to: Transition,
 ): Promise<ApptResult> {
   const session = await requireActiveStaff();
   if (session.role !== "reception" && session.role !== "admin") {
     return { ok: false, error: "Reception or admin only." };
+  }
+  if (appointmentIds.length === 0) {
+    return { ok: false, error: "No appointments to update." };
   }
 
   const supabase = await createClient();
@@ -34,13 +36,12 @@ async function transitionAction(
   const { data, error } = await supabase
     .from("appointments")
     .update({ status: to })
-    .eq("id", appointmentId)
+    .in("id", [...appointmentIds])
     .in("status", allowed)
-    .select("id, patient_id")
-    .maybeSingle();
+    .select("id, patient_id");
 
   if (error) return { ok: false, error: error.message };
-  if (!data) {
+  if (!data || data.length === 0) {
     return {
       ok: false,
       error: `Appointment is not in a state we can mark "${to.replace(/_/g, " ")}".`,
@@ -48,79 +49,107 @@ async function transitionAction(
   }
 
   const h = await headers();
-  await audit({
-    actor_id: session.user_id,
-    actor_type: "staff",
-    patient_id: data.patient_id,
-    action: `appointment.${to}`,
-    resource_type: "appointment",
-    resource_id: appointmentId,
-    metadata: { actor_role: session.role },
-    ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
-    user_agent: h.get("user-agent"),
-  });
+  const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+  const ua = h.get("user-agent");
+
+  // One audit row per appointment so the trail per-row stays grep-able,
+  // but include the booking-group siblings in metadata so the group is
+  // reconstructable.
+  await Promise.all(
+    data.map((row) =>
+      audit({
+        actor_id: session.user_id,
+        actor_type: "staff",
+        patient_id: row.patient_id,
+        action: `appointment.${to}`,
+        resource_type: "appointment",
+        resource_id: row.id,
+        metadata: {
+          actor_role: session.role,
+          group_appointment_ids: data.map((r) => r.id),
+        },
+        ip_address: ip,
+        user_agent: ua,
+      }),
+    ),
+  );
 
   revalidatePath("/staff/appointments");
   return { ok: true };
 }
 
-export async function markArrivedAction(id: string): Promise<ApptResult> {
-  return transitionAction(id, "arrived");
+export async function markArrivedAction(
+  ids: ReadonlyArray<string>,
+): Promise<ApptResult> {
+  return transitionGroup(ids, "arrived");
 }
 
-export async function markNoShowAction(id: string): Promise<ApptResult> {
-  return transitionAction(id, "no_show");
+export async function markNoShowAction(
+  ids: ReadonlyArray<string>,
+): Promise<ApptResult> {
+  return transitionGroup(ids, "no_show");
 }
 
-export async function cancelByStaffAction(id: string): Promise<ApptResult> {
-  return transitionAction(id, "cancelled");
+export async function cancelByStaffAction(
+  ids: ReadonlyArray<string>,
+): Promise<ApptResult> {
+  return transitionGroup(ids, "cancelled");
 }
 
 export async function revertToConfirmedAction(
-  id: string,
+  ids: ReadonlyArray<string>,
 ): Promise<ApptResult> {
-  return transitionAction(id, "confirmed");
+  return transitionGroup(ids, "confirmed");
 }
 
 export async function deleteAppointmentAction(
-  appointmentId: string,
+  appointmentIds: ReadonlyArray<string>,
 ): Promise<ApptResult> {
   const session = await requireActiveStaff();
   if (session.role !== "admin") {
     return { ok: false, error: "Admin only." };
+  }
+  if (appointmentIds.length === 0) {
+    return { ok: false, error: "No appointments to delete." };
   }
 
   const supabase = await createClient();
   const { data: existing } = await supabase
     .from("appointments")
     .select("id, patient_id, status, scheduled_at")
-    .eq("id", appointmentId)
-    .maybeSingle();
-  if (!existing) {
-    return { ok: false, error: "Appointment not found." };
+    .in("id", [...appointmentIds]);
+  if (!existing || existing.length === 0) {
+    return { ok: false, error: "No matching appointments." };
   }
 
   const { error } = await supabase
     .from("appointments")
     .delete()
-    .eq("id", appointmentId);
+    .in("id", [...appointmentIds]);
   if (error) return { ok: false, error: error.message };
 
   const h = await headers();
-  await audit({
-    actor_id: session.user_id,
-    actor_type: "staff",
-    patient_id: existing.patient_id,
-    action: "appointment.deleted",
-    resource_type: "appointment",
-    resource_id: appointmentId,
-    metadata: {
-      previous_status: existing.status,
-      scheduled_at: existing.scheduled_at,
-    },
-    ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
-    user_agent: h.get("user-agent"),
-  });
+  const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+  const ua = h.get("user-agent");
+  await Promise.all(
+    existing.map((row) =>
+      audit({
+        actor_id: session.user_id,
+        actor_type: "staff",
+        patient_id: row.patient_id,
+        action: "appointment.deleted",
+        resource_type: "appointment",
+        resource_id: row.id,
+        metadata: {
+          previous_status: row.status,
+          scheduled_at: row.scheduled_at,
+          group_appointment_ids: existing.map((r) => r.id),
+        },
+        ip_address: ip,
+        user_agent: ua,
+      }),
+    ),
+  );
 
   revalidatePath("/staff/appointments");
   return { ok: true };
