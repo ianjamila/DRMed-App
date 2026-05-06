@@ -6,6 +6,7 @@ export const PaymentMethodEnum = z.enum([
   "maya",
   "card",
   "bank_transfer",
+  "gift_code",
 ]);
 
 export const PaymentRecordSchema = z.object({

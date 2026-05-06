@@ -47,6 +47,12 @@ export const CancelGiftCodeSchema = z.object({
     .max(500),
 });
 
+export const RedeemGiftCodePaymentSchema = z.object({
+  visit_id: z.string().uuid(),
+  code: giftCode,
+  notes: optionalText(2000),
+});
+
 export const SellGiftCodeSchema = z.object({
   code: giftCode,
   buyer_name: z.string().trim().min(1, "Buyer name is required.").max(120),

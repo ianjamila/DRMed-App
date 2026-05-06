@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,36 +18,22 @@ const METHODS = [
   { value: "maya", label: "Maya" },
   { value: "card", label: "Card" },
   { value: "bank_transfer", label: "Bank transfer" },
+  { value: "gift_code", label: "Gift code" },
 ];
 
 export function PaymentForm({ visitId, balance }: Props) {
   const router = useRouter();
+  const [method, setMethod] = useState("cash");
   const [state, formAction, pending] = useActionState<
     PaymentResult | null,
     FormData
   >(recordPaymentAction, null);
 
+  const isGiftCode = method === "gift_code";
+
   return (
     <form action={formAction} className="grid gap-4">
       <input type="hidden" name="visit_id" value={visitId} />
-
-      <div className="grid gap-1.5">
-        <Label htmlFor="amount_php">Amount (PHP)</Label>
-        <Input
-          id="amount_php"
-          name="amount_php"
-          type="number"
-          step="0.01"
-          min="0.01"
-          defaultValue={balance > 0 ? balance.toFixed(2) : ""}
-          required
-        />
-        {balance > 0 ? (
-          <p className="text-xs text-[color:var(--color-brand-text-soft)]">
-            Pre-filled with current balance.
-          </p>
-        ) : null}
-      </div>
 
       <div className="grid gap-1.5">
         <Label htmlFor="method">Method</Label>
@@ -55,7 +41,8 @@ export function PaymentForm({ visitId, balance }: Props) {
           id="method"
           name="method"
           required
-          defaultValue="cash"
+          value={method}
+          onChange={(e) => setMethod(e.target.value)}
           className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
         >
           {METHODS.map((m) => (
@@ -66,15 +53,57 @@ export function PaymentForm({ visitId, balance }: Props) {
         </select>
       </div>
 
-      <div className="grid gap-1.5">
-        <Label htmlFor="reference_number">Reference number (optional)</Label>
-        <Input
-          id="reference_number"
-          name="reference_number"
-          maxLength={80}
-          placeholder="GCash ref, OR number, etc."
-        />
-      </div>
+      {isGiftCode ? (
+        <>
+          <div className="grid gap-1.5">
+            <Label htmlFor="code">Gift code</Label>
+            <Input
+              id="code"
+              name="code"
+              required
+              autoComplete="off"
+              placeholder="GC-XXXX-YYYY-ZZZZ"
+              className="font-mono uppercase"
+            />
+            <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+              The face value is applied up to the visit balance — any extra
+              is forfeited (whole-use voucher).
+            </p>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="grid gap-1.5">
+            <Label htmlFor="amount_php">Amount (PHP)</Label>
+            <Input
+              id="amount_php"
+              name="amount_php"
+              type="number"
+              step="0.01"
+              min="0.01"
+              defaultValue={balance > 0 ? balance.toFixed(2) : ""}
+              required
+            />
+            {balance > 0 ? (
+              <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+                Pre-filled with current balance.
+              </p>
+            ) : null}
+          </div>
+
+          <div className="grid gap-1.5">
+            <Label htmlFor="reference_number">
+              Reference number (optional)
+            </Label>
+            <Input
+              id="reference_number"
+              name="reference_number"
+              maxLength={80}
+              placeholder="GCash ref, OR number, etc."
+            />
+          </div>
+        </>
+      )}
 
       <div className="grid gap-1.5">
         <Label htmlFor="notes">Notes (optional)</Label>
@@ -99,7 +128,7 @@ export function PaymentForm({ visitId, balance }: Props) {
           disabled={pending}
           className="bg-[color:var(--color-brand-navy)] text-white hover:bg-[color:var(--color-brand-cyan)]"
         >
-          {pending ? "Saving…" : "Record payment"}
+          {pending ? "Saving…" : isGiftCode ? "Redeem code" : "Record payment"}
         </Button>
         <Button
           type="button"
