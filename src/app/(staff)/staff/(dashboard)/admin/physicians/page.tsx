@@ -85,6 +85,8 @@ interface Row {
   display_order: number;
 }
 
+const UNGROUPED_LABEL = "Ungrouped";
+
 function Section({
   title,
   rows,
@@ -96,6 +98,16 @@ function Section({
   counts: Map<string, number>;
   muted?: boolean;
 }) {
+  // Group rows by group_label preserving the rows' arrival order so the
+  // "first group seen first" stays consistent across the page.
+  const groups: Array<{ label: string; rows: Row[] }> = [];
+  for (const r of rows) {
+    const label = r.group_label?.trim() || UNGROUPED_LABEL;
+    const existing = groups.find((g) => g.label === label);
+    if (existing) existing.rows.push(r);
+    else groups.push({ label, rows: [r] });
+  }
+
   return (
     <section className="mt-2">
       <h2 className="font-[family-name:var(--font-heading)] text-sm font-extrabold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
@@ -106,47 +118,53 @@ function Section({
           No physicians yet.
         </p>
       ) : (
-        <ul
-          className={`mt-2 divide-y divide-[color:var(--color-brand-bg-mid)] rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white ${
-            muted ? "opacity-60" : ""
-          }`}
+        <div
+          className={`mt-2 grid gap-4 ${muted ? "opacity-60" : ""}`}
         >
-          {rows.map((p) => {
-            const blocks = counts.get(p.id) ?? 0;
-            return (
-              <li
-                key={p.id}
-                className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
-              >
-                <div className="min-w-0">
-                  <p className="font-semibold text-[color:var(--color-brand-navy)]">
-                    {p.full_name}
-                  </p>
-                  <p className="text-xs text-[color:var(--color-brand-text-soft)]">
-                    {p.specialty}
-                    {p.group_label ? ` · ${p.group_label}` : ""}
-                    {" · "}
-                    {blocks > 0 ? (
-                      <span className="font-semibold text-emerald-700">
-                        {blocks} schedule{blocks === 1 ? "" : "s"}
-                      </span>
-                    ) : (
-                      <span className="font-semibold text-amber-700">
-                        by appointment only
-                      </span>
-                    )}
-                  </p>
-                </div>
-                <Link
-                  href={`/staff/admin/physicians/${p.id}/edit`}
-                  className="shrink-0 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-bg)]"
-                >
-                  Edit
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
+          {groups.map((g) => (
+            <div key={g.label}>
+              <p className="mb-2 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
+                {g.label} · {g.rows.length}
+              </p>
+              <ul className="divide-y divide-[color:var(--color-brand-bg-mid)] rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+                {g.rows.map((p) => {
+                  const blocks = counts.get(p.id) ?? 0;
+                  return (
+                    <li
+                      key={p.id}
+                      className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
+                    >
+                      <div className="min-w-0">
+                        <p className="font-semibold text-[color:var(--color-brand-navy)]">
+                          {p.full_name}
+                        </p>
+                        <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+                          {p.specialty}
+                          {" · "}
+                          {blocks > 0 ? (
+                            <span className="font-semibold text-emerald-700">
+                              {blocks} schedule{blocks === 1 ? "" : "s"}
+                            </span>
+                          ) : (
+                            <span className="font-semibold text-amber-700">
+                              by appointment only
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                      <Link
+                        href={`/staff/admin/physicians/${p.id}/edit`}
+                        className="shrink-0 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-bg)]"
+                      >
+                        Edit
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))}
+        </div>
       )}
     </section>
   );
