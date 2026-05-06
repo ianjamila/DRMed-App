@@ -2,7 +2,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
+import { physicianPhotoUrl } from "@/lib/physicians/photo";
 import { PhysicianForm } from "../../physician-form";
+import { PhotoUpload } from "./photo-upload";
 
 export const metadata = { title: "Edit physician — staff" };
 
@@ -20,11 +22,16 @@ export default async function EditPhysicianPage({ params }: PageProps) {
   const { data: physician } = await admin
     .from("physicians")
     .select(
-      "id, slug, full_name, specialty, group_label, bio, is_active, display_order",
+      "id, slug, full_name, specialty, group_label, bio, is_active, display_order, photo_path",
     )
     .eq("id", id)
     .maybeSingle();
   if (!physician) notFound();
+
+  const photoUrl = physicianPhotoUrl({
+    slug: physician.slug,
+    photo_path: physician.photo_path,
+  });
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6 lg:px-8">
@@ -44,6 +51,15 @@ export default async function EditPhysicianPage({ params }: PageProps) {
           {physician.specialty}
         </p>
       </header>
+
+      <section className="mb-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
+        <h2 className="font-[family-name:var(--font-heading)] text-sm font-extrabold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+          Photo
+        </h2>
+        <div className="mt-3">
+          <PhotoUpload physicianId={physician.id} currentUrl={photoUrl} />
+        </div>
+      </section>
 
       <PhysicianForm initial={physician} />
     </div>

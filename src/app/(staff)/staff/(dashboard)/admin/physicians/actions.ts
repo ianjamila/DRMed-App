@@ -114,3 +114,87 @@ export async function updatePhysicianAction(
   revalidatePath(`/staff/admin/physicians/${physicianId}/edit`);
   redirect("/staff/admin/physicians");
 }
+
+const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
+const ACCEPTED_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
+
+function extensionFor(mime: string): "jpg" | "png" | "webp" {
+  if (mime === "image/png") return "png";
+  if (mime === "image/webp") return "webp";
+  return "jpg";
+}
+
+export async function uploadPhotoAction(
+  physicianId: string,
+  _prev: PhysicianResult | null,
+  formData: FormData,
+): Promise<PhysicianResult> {
+  const session = await requireAdminStaff();
+
+  const photo = formData.get("photo");
+  if (!(photo instanceof File) || photo.size === 0) {
+    return { ok: false, error: "Pick a photo to upload." };
+  }
+  if (!ACCEPTED_MIME.has(photo.type)) {
+    return { ok: false, error: "Photo must be JPG, PNG, or WebP." };
+  }
+  if (photo.size > MAX_PHOTO_BYTES) {
+    return { ok: false, error: "Photo must be under 5 MB." };
+  }
+
+  const admin = createAdminClient();
+
+  const { data: physician } = await admin
+    .from("physicians")
+    .select("slug")
+    .eq("id", physicianId)
+    .maybeSingle();
+  if (!physician) {
+    return { ok: false, error: "Physician not found." };
+  }
+
+  const ext = extensionFor(photo.type);
+  // Cache-busting query string isn't enough since some clients ignore it
+  // for <img>; vary the path with a random suffix so a re-upload is a new URL.
+  const suffix = Math.random().toString(36).slice(2, 8);
+  const storagePath = `${physician.slug}-${suffix}.${ext}`;
+
+  const { error: upErr } = await admin.storage
+    .from("physician-photos")
+    .upload(storagePath, photo, {
+      contentType: photo.type,
+      upsert: true,
+    });
+  if (upErr) {
+    return { ok: false, error: upErr.message };
+  }
+
+  const { error: updateErr } = await admin
+    .from("physicians")
+    .update({ photo_path: storagePath })
+    .eq("id", physicianId);
+  if (updateErr) {
+    return { ok: false, error: updateErr.message };
+  }
+
+  const { ip, ua } = await ipAndAgent();
+  await audit({
+    actor_id: session.user_id,
+    actor_type: "staff",
+    action: "physician.photo_uploaded",
+    resource_type: "physician",
+    resource_id: physicianId,
+    metadata: {
+      slug: physician.slug,
+      storage_path: storagePath,
+      mime: photo.type,
+      bytes: photo.size,
+    },
+    ip_address: ip,
+    user_agent: ua,
+  });
+
+  revalidatePath("/staff/admin/physicians");
+  revalidatePath(`/staff/admin/physicians/${physicianId}/edit`);
+  return { ok: true };
+}
