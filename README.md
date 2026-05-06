@@ -171,14 +171,36 @@ The full phased build plan lives in [`IMPLEMENTATION_PLAN.md`](./IMPLEMENTATION_
 
 ---
 
-## Compliance notes (RA 10173)
+## Security & compliance
 
-- All access to patient data is logged in the `audit_log` table
-- Patient PINs are bcrypt-hashed and never logged in plain form
-- Lab result PDFs are stored in a private Supabase Storage bucket; downloads always go through 5-minute signed URLs created server-side
-- A Privacy Notice is published at `/privacy`
-- Data Protection Officer contact info is in the footer and on the Privacy Notice page
-- Breach notification runbook lives in `docs/runbooks/breach.md` (to be created in Phase 8)
+The full operational playbook — auth architecture, RA 10173 compliance
+summary, JWT secret rotation procedure, breach response runbook, retention
+policy — lives in [`SECURITY.md`](./SECURITY.md). Quick highlights:
+
+- All patient data access is logged in `audit_log`; admins review at `/staff/audit`.
+- Patient PINs are bcrypt-hashed; the plain value is shown exactly once on the receipt.
+- Lab result PDFs are in a private Supabase Storage bucket; downloads always go through 5-minute server-issued signed URLs.
+- Public endpoints (booking, contact, newsletter, patient PIN) are rate-limited per IP via the `rate_limit_attempts` ledger.
+- Security headers (CSP, HSTS, X-Frame-Options, Referrer-Policy, Permissions-Policy) are enforced in `next.config.ts`.
+- Dependabot opens weekly PRs for npm patch + minor updates.
+- Privacy Notice + DPO contact at `/privacy`; one-click newsletter unsubscribe at `/unsubscribe?token=…`.
+
+---
+
+## Incident response
+
+For credential leaks, suspected breaches, or unexpected production
+behaviour, follow the runbook in [`SECURITY.md`](./SECURITY.md#breach-response-runbook).
+TL;DR:
+
+1. **Contain.** Rotate the affected credential immediately (Supabase
+   service-role key, `PATIENT_SESSION_SECRET`, Resend, Sheets service
+   account).
+2. **Preserve.** Snapshot `audit_log` for the relevant window and save
+   off-platform.
+3. **Notify.** DPO + clinic management within 30 minutes; affected patients
+   + National Privacy Commission within 72 hours if PII was exposed.
+4. **Recover.** Patch the cause, post-mortem in `SECURITY.md`.
 
 ---
 
