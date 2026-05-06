@@ -92,12 +92,20 @@ export default async function GiftCodesAdminPage({ searchParams }: PageProps) {
             ₱500 code to a ₱300 visit forfeits the ₱200 balance.
           </p>
         </div>
-        <Link
-          href="/staff/admin/gift-codes/generate"
-          className="rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
-        >
-          + Generate batch
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          <Link
+            href="/staff/admin/gift-codes/sales"
+            className="rounded-md border border-[color:var(--color-brand-navy)] bg-white px-4 py-2 text-sm font-bold text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-bg)]"
+          >
+            Sales report
+          </Link>
+          <Link
+            href="/staff/admin/gift-codes/generate"
+            className="rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
+          >
+            + Generate batch
+          </Link>
+        </div>
       </header>
 
       <nav className="mb-4 flex flex-wrap gap-2">
