@@ -12,31 +12,6 @@ export type Database = {
   __InternalSupabase: {
     PostgrestVersion: "14.5"
   }
-  graphql_public: {
-    Tables: {
-      [_ in never]: never
-    }
-    Views: {
-      [_ in never]: never
-    }
-    Functions: {
-      graphql: {
-        Args: {
-          extensions?: Json
-          operationName?: string
-          query?: string
-          variables?: Json
-        }
-        Returns: Json
-      }
-    }
-    Enums: {
-      [_ in never]: never
-    }
-    CompositeTypes: {
-      [_ in never]: never
-    }
-  }
   public: {
     Tables: {
       appointments: {
@@ -46,6 +21,7 @@ export type Database = {
           id: string
           notes: string | null
           patient_id: string | null
+          physician_id: string | null
           scheduled_at: string
           service_id: string | null
           status: string
@@ -58,6 +34,7 @@ export type Database = {
           id?: string
           notes?: string | null
           patient_id?: string | null
+          physician_id?: string | null
           scheduled_at: string
           service_id?: string | null
           status?: string
@@ -70,6 +47,7 @@ export type Database = {
           id?: string
           notes?: string | null
           patient_id?: string | null
+          physician_id?: string | null
           scheduled_at?: string
           service_id?: string | null
           status?: string
@@ -82,6 +60,13 @@ export type Database = {
             columns: ["patient_id"]
             isOneToOne: false
             referencedRelation: "patients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "appointments_physician_id_fkey"
+            columns: ["physician_id"]
+            isOneToOne: false
+            referencedRelation: "physicians"
             referencedColumns: ["id"]
           },
           {
@@ -567,6 +552,130 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      physician_schedule_overrides: {
+        Row: {
+          created_at: string
+          end_time: string | null
+          id: string
+          override_on: string
+          physician_id: string
+          reason: string | null
+          start_time: string | null
+        }
+        Insert: {
+          created_at?: string
+          end_time?: string | null
+          id?: string
+          override_on: string
+          physician_id: string
+          reason?: string | null
+          start_time?: string | null
+        }
+        Update: {
+          created_at?: string
+          end_time?: string | null
+          id?: string
+          override_on?: string
+          physician_id?: string
+          reason?: string | null
+          start_time?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "physician_schedule_overrides_physician_id_fkey"
+            columns: ["physician_id"]
+            isOneToOne: false
+            referencedRelation: "physicians"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      physician_schedules: {
+        Row: {
+          created_at: string
+          day_of_week: number
+          end_time: string
+          id: string
+          notes: string | null
+          physician_id: string
+          start_time: string
+          valid_from: string
+          valid_until: string | null
+        }
+        Insert: {
+          created_at?: string
+          day_of_week: number
+          end_time: string
+          id?: string
+          notes?: string | null
+          physician_id: string
+          start_time: string
+          valid_from?: string
+          valid_until?: string | null
+        }
+        Update: {
+          created_at?: string
+          day_of_week?: number
+          end_time?: string
+          id?: string
+          notes?: string | null
+          physician_id?: string
+          start_time?: string
+          valid_from?: string
+          valid_until?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "physician_schedules_physician_id_fkey"
+            columns: ["physician_id"]
+            isOneToOne: false
+            referencedRelation: "physicians"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      physicians: {
+        Row: {
+          bio: string | null
+          created_at: string
+          display_order: number
+          full_name: string
+          group_label: string | null
+          id: string
+          is_active: boolean
+          photo_path: string | null
+          slug: string
+          specialty: string
+          updated_at: string
+        }
+        Insert: {
+          bio?: string | null
+          created_at?: string
+          display_order?: number
+          full_name: string
+          group_label?: string | null
+          id?: string
+          is_active?: boolean
+          photo_path?: string | null
+          slug: string
+          specialty: string
+          updated_at?: string
+        }
+        Update: {
+          bio?: string | null
+          created_at?: string
+          display_order?: number
+          full_name?: string
+          group_label?: string | null
+          id?: string
+          is_active?: boolean
+          photo_path?: string | null
+          slug?: string
+          specialty?: string
+          updated_at?: string
+        }
+        Relationships: []
       }
       result_template_param_ranges: {
         Row: {
@@ -1424,9 +1533,6 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
-  graphql_public: {
-    Enums: {},
-  },
   public: {
     Enums: {},
   },
