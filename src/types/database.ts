@@ -419,6 +419,39 @@ export type Database = {
           },
         ]
       }
+      newsletter_campaigns: {
+        Row: {
+          body_html: string
+          body_md: string
+          created_at: string
+          id: string
+          recipient_count: number | null
+          sent_at: string | null
+          sent_by: string | null
+          subject: string
+        }
+        Insert: {
+          body_html: string
+          body_md: string
+          created_at?: string
+          id?: string
+          recipient_count?: number | null
+          sent_at?: string | null
+          sent_by?: string | null
+          subject: string
+        }
+        Update: {
+          body_html?: string
+          body_md?: string
+          created_at?: string
+          id?: string
+          recipient_count?: number | null
+          sent_at?: string | null
+          sent_by?: string | null
+          subject?: string
+        }
+        Relationships: []
+      }
       patients: {
         Row: {
           address: string | null
@@ -944,6 +977,39 @@ export type Database = {
           prc_license_no?: string | null
           role?: string
           updated_at?: string
+        }
+        Relationships: []
+      }
+      subscribers: {
+        Row: {
+          consent_at: string
+          consent_ip: unknown | null
+          created_at: string
+          email: string
+          id: string
+          source: string
+          unsubscribe_token: string
+          unsubscribed_at: string | null
+        }
+        Insert: {
+          consent_at?: string
+          consent_ip?: unknown | null
+          created_at?: string
+          email: string
+          id?: string
+          source: string
+          unsubscribe_token?: string
+          unsubscribed_at?: string | null
+        }
+        Update: {
+          consent_at?: string
+          consent_ip?: unknown | null
+          created_at?: string
+          email?: string
+          id?: string
+          source?: string
+          unsubscribe_token?: string
+          unsubscribed_at?: string | null
         }
         Relationships: []
       }
