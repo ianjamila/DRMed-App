@@ -69,6 +69,13 @@ type Branch =
   | "doctor_appointment"
   | "home_service";
 
+export interface PrefilledPatient {
+  id: string;
+  drm_id: string;
+  first_name: string;
+  last_name: string;
+}
+
 interface Props {
   services: ServiceLite[];
   closures: ClosureLite[];
@@ -76,6 +83,12 @@ interface Props {
   specialties: SpecialtyOption[];
   physicians: BookablePhysician[];
   byAppointmentPhysicians: ByAppointmentPhysician[];
+  // When set, the form skips the patient-mode toggle + lookup and
+  // submits the booking against this patient. Used by /portal/book —
+  // the patient is already authenticated via session, so the server
+  // re-derives patient_id from the session cookie regardless of what
+  // the form posts.
+  prefilledPatient?: PrefilledPatient;
 }
 
 const KINDS_PER_BRANCH: Record<Branch, ReadonlyArray<ServiceKind>> = {
@@ -110,7 +123,9 @@ export function BookingForm({
   specialties,
   physicians,
   byAppointmentPhysicians,
+  prefilledPatient,
 }: Props) {
+  const isPortalContext = prefilledPatient !== undefined;
   const [branch, setBranch] = useState<Branch>("lab_request");
   const [selectedServiceIds, setSelectedServiceIds] = useState<Set<string>>(
     new Set(),
@@ -119,13 +134,15 @@ export function BookingForm({
   const [specialtyCode, setSpecialtyCode] = useState<string>("");
   const [physicianId, setPhysicianId] = useState<string>("");
   const [serviceQuery, setServiceQuery] = useState("");
-  const [patientMode, setPatientMode] = useState<"new" | "existing">("new");
+  const [patientMode, setPatientMode] = useState<"new" | "existing">(
+    isPortalContext ? "existing" : "new",
+  );
   const [resolvedPatient, setResolvedPatient] = useState<{
     id: string;
     drm_id: string;
     first_name: string;
     last_name: string;
-  } | null>(null);
+  } | null>(prefilledPatient ?? null);
   const [lookupState, lookupAction, lookupPending] = useActionState<
     LookupPatientResult | null,
     FormData
@@ -247,18 +264,30 @@ export function BookingForm({
             and any other details.
           </p>
         ) : null}
-        <div className="mt-5 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white p-4 text-sm">
-          <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-            Your DRM-ID
+        {isPortalContext ? (
+          <p className="mt-5 text-sm text-[color:var(--color-brand-text-mid)]">
+            A confirmation has been sent to the contact info on your file.
+            <Link
+              href="/portal"
+              className="ml-2 font-bold text-[color:var(--color-brand-cyan)] hover:underline"
+            >
+              Back to portal →
+            </Link>
           </p>
-          <p className="mt-1 font-mono text-lg font-extrabold text-[color:var(--color-brand-navy)]">
-            {state.drm_id}
-          </p>
-          <p className="mt-2 text-xs text-[color:var(--color-brand-text-soft)]">
-            Save this. After your visit, your Secure PIN is printed on the
-            receipt — both are required to access results online.
-          </p>
-        </div>
+        ) : (
+          <div className="mt-5 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white p-4 text-sm">
+            <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+              Your DRM-ID
+            </p>
+            <p className="mt-1 font-mono text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+              {state.drm_id}
+            </p>
+            <p className="mt-2 text-xs text-[color:var(--color-brand-text-soft)]">
+              Save this. After your visit, your Secure PIN is printed on the
+              receipt — both are required to access results online.
+            </p>
+          </div>
+        )}
       </div>
     );
   }
@@ -268,28 +297,30 @@ export function BookingForm({
 
   return (
     <div className="grid gap-6">
-      <fieldset className="grid gap-3">
-        <legend className="text-sm font-bold text-[color:var(--color-brand-navy)]">
-          Are you an existing patient?
-        </legend>
-        <div className="grid gap-2 sm:grid-cols-2">
-          <PatientModeOption
-            checked={patientMode === "new"}
-            onChange={() => {
-              setPatientMode("new");
-              setResolvedPatient(null);
-            }}
-            title="No, I'm new"
-            blurb="First time at DRMed. We'll register you and assign a DRM-ID."
-          />
-          <PatientModeOption
-            checked={patientMode === "existing"}
-            onChange={() => setPatientMode("existing")}
-            title="Yes, I have a DRM-ID"
-            blurb="From a previous receipt. Skip retyping your details."
-          />
-        </div>
-      </fieldset>
+      {isPortalContext ? null : (
+        <fieldset className="grid gap-3">
+          <legend className="text-sm font-bold text-[color:var(--color-brand-navy)]">
+            Are you an existing patient?
+          </legend>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <PatientModeOption
+              checked={patientMode === "new"}
+              onChange={() => {
+                setPatientMode("new");
+                setResolvedPatient(null);
+              }}
+              title="No, I'm new"
+              blurb="First time at DRMed. We'll register you and assign a DRM-ID."
+            />
+            <PatientModeOption
+              checked={patientMode === "existing"}
+              onChange={() => setPatientMode("existing")}
+              title="Yes, I have a DRM-ID"
+              blurb="From a previous receipt. Skip retyping your details."
+            />
+          </div>
+        </fieldset>
+      )}
 
       {showLookupForm ? (
         <form
@@ -344,19 +375,22 @@ export function BookingForm({
               {resolvedPatient.drm_id}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => setResolvedPatient(null)}
-            className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
-          >
-            Use a different patient
-          </button>
+          {isPortalContext ? null : (
+            <button
+              type="button"
+              onClick={() => setResolvedPatient(null)}
+              className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
+            >
+              Use a different patient
+            </button>
+          )}
         </div>
       ) : null}
 
       {showLookupForm ? null : (
     <form action={formAction} className="grid gap-6">
       <input type="hidden" name="branch" value={branch} />
+      {isPortalContext ? <input type="hidden" name="source" value="portal" /> : null}
       {isExistingMode && resolvedPatient ? (
         <input type="hidden" name="patient_id" value={resolvedPatient.id} />
       ) : null}
@@ -612,6 +646,7 @@ export function BookingForm({
       </div>
 
       <div className="grid gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4 text-sm">
+        {isPortalContext ? null : (
         <label className="flex items-start gap-2">
           <input
             type="checkbox"
@@ -636,6 +671,7 @@ export function BookingForm({
             for details.
           </span>
         </label>
+        )}
         <label className="flex items-start gap-2">
           <input
             type="checkbox"

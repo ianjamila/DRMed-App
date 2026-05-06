@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import { randomUUID } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
+import { getPatientSession } from "@/lib/auth/patient-session-cookies";
 import {
   BookingSchema,
   ExistingPatientBookingSchema,
@@ -299,7 +300,28 @@ export async function submitBookingAction(
   }
 
   const branch = formData.get("branch");
-  const patientIdInput = formData.get("patient_id");
+  const sourceInput = formData.get("source");
+  const isPortalSource = sourceInput === "portal";
+
+  // Portal-sourced submissions ignore any client-supplied patient_id and
+  // re-derive it from the patient session cookie. A logged-in patient
+  // can't book against another patient by tampering with the form, even
+  // if they bypass the UI.
+  let resolvedPatientIdFromSession: string | null = null;
+  if (isPortalSource) {
+    const session = await getPatientSession();
+    if (!session) {
+      return {
+        ok: false,
+        error: "Your session expired. Please sign in again.",
+      };
+    }
+    resolvedPatientIdFromSession = session.patient_id;
+  }
+
+  const patientIdInput = isPortalSource
+    ? resolvedPatientIdFromSession
+    : (formData.get("patient_id") as string | null);
   const isExistingPatient =
     typeof patientIdInput === "string" && patientIdInput.length > 0;
 
@@ -313,9 +335,15 @@ export async function submitBookingAction(
     const parsed = ExistingPatientBookingSchema.safeParse({
       branch,
       patient_id: patientIdInput,
+      // Portal patients have already accepted the service agreement at
+      // intake; the form omits the checkbox so we synthesise consent
+      // for validation. Marketing consent is still optional and read
+      // from the form when present.
       notes: formData.get("notes") ?? "",
       marketing_consent: formData.get("marketing_consent") ?? "off",
-      service_agreement: formData.get("service_agreement") ?? "off",
+      service_agreement: isPortalSource
+        ? "on"
+        : (formData.get("service_agreement") ?? "off"),
       service_id: formData.get("service_id"),
       service_ids: formData.getAll("service_ids"),
       physician_id: formData.get("physician_id") ?? "",
@@ -592,7 +620,7 @@ export async function submitBookingAction(
   // Audit-log once at the booking-group level so the trail isn't noisy.
   await audit({
     actor_id: null,
-    actor_type: "anonymous",
+    actor_type: isPortalSource ? "patient" : "anonymous",
     patient_id: patientRes.id,
     action: "appointment.booked",
     resource_type: "appointment_group",
@@ -607,6 +635,7 @@ export async function submitBookingAction(
       home_service_requested: homeServiceRequested,
       physician_id: physicianId,
       patient_resolution: patientRes.resolution,
+      via: isPortalSource ? "portal" : "schedule",
     },
     ip_address: requestIp,
     user_agent: userAgent,

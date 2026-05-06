@@ -21,6 +21,12 @@ export function PatientShell({ patient, children }: Props) {
           </Link>
           <nav className="flex items-center gap-4 text-sm">
             <Link
+              href="/portal/book"
+              className="font-semibold text-[color:var(--color-brand-text-mid)] hover:text-[color:var(--color-brand-cyan)]"
+            >
+              Book
+            </Link>
+            <Link
               href="/portal/help"
               className="font-semibold text-[color:var(--color-brand-text-mid)] hover:text-[color:var(--color-brand-cyan)]"
             >
