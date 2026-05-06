@@ -166,6 +166,12 @@ export default async function HomePage() {
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <Link
+                href="/schedule"
+                className="rounded-md bg-[color:var(--color-brand-cyan)] px-6 py-3 text-sm font-bold text-white shadow-md transition-colors hover:bg-[color:var(--color-brand-navy)]"
+              >
+                Book Appointment
+              </Link>
+              <Link
                 href="/#packages"
                 className="rounded-md bg-[color:var(--color-brand-navy)] px-6 py-3 text-sm font-bold text-white shadow-md transition-colors hover:bg-[color:var(--color-brand-cyan)]"
               >
@@ -442,7 +448,7 @@ export default async function HomePage() {
               View Detailed Schedules →
             </Link>
             <Link
-              href="/#contact"
+              href="/schedule"
               className="rounded-md border border-[color:var(--color-brand-navy)] px-4 py-2 text-xs font-bold text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-navy)] hover:text-white"
             >
               Book an Appointment

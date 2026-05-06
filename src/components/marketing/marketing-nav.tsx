@@ -43,7 +43,7 @@ export function MarketingNav() {
           </Link>
           <PatientPortalLauncher />
           <Link
-            href="/#packages"
+            href="/schedule"
             className="rounded-md bg-[color:var(--color-brand-cyan)] px-4 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[color:var(--color-brand-cyan-mid)]"
           >
             Book Now
