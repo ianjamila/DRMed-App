@@ -5,8 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  bulkRescheduleForClosureAction,
   createClosureAction,
   deleteClosureAction,
+  type BulkRescheduleResult,
   type ClosureResult,
 } from "./actions";
 
@@ -15,6 +17,7 @@ export interface ClosureRow {
   reason: string;
   created_at: string;
   created_by_name: string | null;
+  affected_count: number;
 }
 
 interface Props {
@@ -98,6 +101,7 @@ function ClosuresTable({ closures }: { closures: ClosureRow[] }) {
             <tr>
               <th className="px-4 py-3">Date</th>
               <th className="px-4 py-3">Reason</th>
+              <th className="px-4 py-3">Affected</th>
               <th className="px-4 py-3">Added by</th>
               <th className="px-4 py-3 text-right">Action</th>
             </tr>
@@ -106,7 +110,7 @@ function ClosuresTable({ closures }: { closures: ClosureRow[] }) {
             {closures.length === 0 ? (
               <tr>
                 <td
-                  colSpan={4}
+                  colSpan={5}
                   className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]"
                 >
                   No upcoming closures.
@@ -123,16 +127,26 @@ function ClosuresTable({ closures }: { closures: ClosureRow[] }) {
 }
 
 function ClosureRow({ row }: { row: ClosureRow }) {
-  const [state, formAction, pending] = useActionState<
+  const [deleteState, deleteAction, deletePending] = useActionState<
     ClosureResult | null,
     FormData
   >(deleteClosureAction, null);
+  const [bulkState, bulkAction, bulkPending] = useActionState<
+    BulkRescheduleResult | null,
+    FormData
+  >(bulkRescheduleForClosureAction, null);
 
   // sv-SE on a YYYY-MM-DD literal renders without timezone drift.
   const dateLabel = new Date(`${row.closed_on}T00:00:00+08:00`).toLocaleString(
     "en-PH",
     { dateStyle: "full", timeZone: "Asia/Manila" },
   );
+
+  // After a successful bulk reschedule, the page revalidates and
+  // affected_count drops to 0 — but until that round-trip completes
+  // we want to suppress the button. Track via the action state.
+  const justRescheduled = bulkState?.ok === true;
+  const showBulkButton = row.affected_count > 0 && !justRescheduled;
 
   return (
     <tr className="hover:bg-[color:var(--color-brand-bg)]">
@@ -145,15 +159,54 @@ function ClosureRow({ row }: { row: ClosureRow }) {
       <td className="px-4 py-3 font-semibold text-[color:var(--color-brand-navy)]">
         {row.reason}
       </td>
+      <td className="px-4 py-3">
+        {row.affected_count === 0 && !justRescheduled ? (
+          <span className="text-xs text-[color:var(--color-brand-text-soft)]">
+            None
+          </span>
+        ) : showBulkButton ? (
+          <form action={bulkAction} className="inline-flex items-center gap-2">
+            <input type="hidden" name="closed_on" value={row.closed_on} />
+            <span className="text-xs font-semibold text-amber-800">
+              {row.affected_count} confirmed
+            </span>
+            <button
+              type="submit"
+              disabled={bulkPending}
+              onClick={(e) => {
+                if (
+                  !window.confirm(
+                    `Move ${row.affected_count} confirmed appointment(s) on ${row.closed_on} to pending callback? Reception will need to phone each patient to propose a new slot.`,
+                  )
+                ) {
+                  e.preventDefault();
+                }
+              }}
+              className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs font-bold text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+            >
+              {bulkPending ? "Moving…" : "Move to callback"}
+            </button>
+          </form>
+        ) : (
+          <span className="text-xs text-emerald-700">
+            Moved · reception to call
+          </span>
+        )}
+        {bulkState && !bulkState.ok ? (
+          <p className="mt-1 text-xs text-red-600" role="alert">
+            {bulkState.error}
+          </p>
+        ) : null}
+      </td>
       <td className="px-4 py-3 text-xs text-[color:var(--color-brand-text-soft)]">
         {row.created_by_name ?? "system"}
       </td>
       <td className="px-4 py-3 text-right">
-        <form action={formAction} className="inline-block">
+        <form action={deleteAction} className="inline-block">
           <input type="hidden" name="closed_on" value={row.closed_on} />
           <button
             type="submit"
-            disabled={pending}
+            disabled={deletePending}
             onClick={(e) => {
               if (
                 !window.confirm(
@@ -165,12 +218,12 @@ function ClosureRow({ row }: { row: ClosureRow }) {
             }}
             className="text-xs font-bold text-red-600 hover:underline disabled:text-[color:var(--color-brand-text-soft)]"
           >
-            {pending ? "Removing…" : "Remove"}
+            {deletePending ? "Removing…" : "Remove"}
           </button>
         </form>
-        {state && !state.ok ? (
+        {deleteState && !deleteState.ok ? (
           <p className="mt-1 text-xs text-red-600" role="alert">
-            {state.error}
+            {deleteState.error}
           </p>
         ) : null}
       </td>

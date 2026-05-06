@@ -39,6 +39,24 @@ export default async function ClosuresAdminPage() {
     for (const p of profiles ?? []) creatorMap.set(p.id, p.full_name);
   }
 
+  // For each closure date, count appointments that would be affected by
+  // a bulk reschedule (status confirmed/arrived with a real scheduled_at
+  // landing on that Manila day). Patients with pending_callback are
+  // already awaiting a reception call, so they're excluded.
+  const affectedByDate = new Map<string, number>();
+  for (const c of closures ?? []) {
+    const startIso = `${c.closed_on}T00:00:00+08:00`;
+    const next = new Date(startIso);
+    next.setUTCDate(next.getUTCDate() + 1);
+    const { count } = await supabase
+      .from("appointments")
+      .select("id", { count: "exact", head: true })
+      .gte("scheduled_at", startIso)
+      .lt("scheduled_at", next.toISOString())
+      .in("status", ["confirmed", "arrived"]);
+    affectedByDate.set(c.closed_on, count ?? 0);
+  }
+
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6">
@@ -60,6 +78,7 @@ export default async function ClosuresAdminPage() {
           created_by_name: c.created_by
             ? creatorMap.get(c.created_by) ?? null
             : null,
+          affected_count: affectedByDate.get(c.closed_on) ?? 0,
         }))}
       />
     </div>
