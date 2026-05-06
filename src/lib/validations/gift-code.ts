@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { GIFT_CODE_PATTERN, normaliseGiftCode } from "@/lib/gift-codes/labels";
+import { PaymentMethodEnum } from "./payment";
 
 const optionalText = (max: number) =>
   z
@@ -8,6 +10,13 @@ const optionalText = (max: number) =>
       return t.length === 0 ? null : t;
     })
     .pipe(z.string().max(max).nullable());
+
+const giftCode = z
+  .string()
+  .trim()
+  .min(1, "Gift code is required.")
+  .transform(normaliseGiftCode)
+  .pipe(z.string().regex(GIFT_CODE_PATTERN, "Invalid code format."));
 
 const positiveAmount = z
   .union([z.string(), z.number()])
@@ -36,6 +45,19 @@ export const CancelGiftCodeSchema = z.object({
     .trim()
     .min(1, "Reason is required.")
     .max(500),
+});
+
+export const SellGiftCodeSchema = z.object({
+  code: giftCode,
+  buyer_name: z.string().trim().min(1, "Buyer name is required.").max(120),
+  buyer_contact: z
+    .string()
+    .trim()
+    .min(1, "Buyer contact is required.")
+    .max(120),
+  purchase_method: PaymentMethodEnum,
+  purchase_reference_number: optionalText(80),
+  notes: optionalText(2000),
 });
 
 export type GenerateBatchInput = z.infer<typeof GenerateBatchSchema>;

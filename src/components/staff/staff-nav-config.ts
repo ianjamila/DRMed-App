@@ -59,6 +59,11 @@ export const STAFF_NAV: StaffNavSection[] = [
         label: "Inquiries",
         roles: ["reception", "admin"],
       },
+      {
+        href: "/staff/gift-codes/sell",
+        label: "Sell gift code",
+        roles: ["reception", "admin"],
+      },
     ],
   },
   {

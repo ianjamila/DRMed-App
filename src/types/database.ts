@@ -222,7 +222,8 @@ export type Database = {
           generated_by: string | null
           id: string
           notes: string | null
-          purchase_payment_id: string | null
+          purchase_method: string | null
+          purchase_reference_number: string | null
           purchased_at: string | null
           purchased_by_contact: string | null
           purchased_by_name: string | null
@@ -246,7 +247,8 @@ export type Database = {
           generated_by?: string | null
           id?: string
           notes?: string | null
-          purchase_payment_id?: string | null
+          purchase_method?: string | null
+          purchase_reference_number?: string | null
           purchased_at?: string | null
           purchased_by_contact?: string | null
           purchased_by_name?: string | null
@@ -270,7 +272,8 @@ export type Database = {
           generated_by?: string | null
           id?: string
           notes?: string | null
-          purchase_payment_id?: string | null
+          purchase_method?: string | null
+          purchase_reference_number?: string | null
           purchased_at?: string | null
           purchased_by_contact?: string | null
           purchased_by_name?: string | null
@@ -283,13 +286,6 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
-          {
-            foreignKeyName: "gift_codes_purchase_payment_id_fkey"
-            columns: ["purchase_payment_id"]
-            isOneToOne: false
-            referencedRelation: "payments"
-            referencedColumns: ["id"]
-          },
           {
             foreignKeyName: "gift_codes_redeemed_payment_id_fkey"
             columns: ["redeemed_payment_id"]
