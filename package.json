@@ -18,6 +18,7 @@
     "import:descriptions": "tsx --env-file=.env.local scripts/populate-test-descriptions.ts",
     "seed:templates": "tsx --env-file=.env.local scripts/seed-result-templates.ts",
     "seed:hmo": "tsx --env-file=.env.local scripts/seed-hmo-providers.ts",
+    "seed:physicians": "tsx --env-file=.env.local scripts/seed-physicians.ts",
     "smoke:results": "tsx --env-file=.env.local scripts/smoke-render-results.ts"
   },
   "dependencies": {
