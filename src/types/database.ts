@@ -209,6 +209,103 @@ export type Database = {
         }
         Relationships: []
       }
+      gift_codes: {
+        Row: {
+          batch_label: string | null
+          cancellation_reason: string | null
+          cancelled_at: string | null
+          cancelled_by: string | null
+          code: string
+          created_at: string
+          face_value_php: number
+          generated_at: string
+          generated_by: string | null
+          id: string
+          notes: string | null
+          purchase_payment_id: string | null
+          purchased_at: string | null
+          purchased_by_contact: string | null
+          purchased_by_name: string | null
+          redeemed_at: string | null
+          redeemed_by: string | null
+          redeemed_payment_id: string | null
+          redeemed_visit_id: string | null
+          sold_by: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          batch_label?: string | null
+          cancellation_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          code: string
+          created_at?: string
+          face_value_php: number
+          generated_at?: string
+          generated_by?: string | null
+          id?: string
+          notes?: string | null
+          purchase_payment_id?: string | null
+          purchased_at?: string | null
+          purchased_by_contact?: string | null
+          purchased_by_name?: string | null
+          redeemed_at?: string | null
+          redeemed_by?: string | null
+          redeemed_payment_id?: string | null
+          redeemed_visit_id?: string | null
+          sold_by?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          batch_label?: string | null
+          cancellation_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          code?: string
+          created_at?: string
+          face_value_php?: number
+          generated_at?: string
+          generated_by?: string | null
+          id?: string
+          notes?: string | null
+          purchase_payment_id?: string | null
+          purchased_at?: string | null
+          purchased_by_contact?: string | null
+          purchased_by_name?: string | null
+          redeemed_at?: string | null
+          redeemed_by?: string | null
+          redeemed_payment_id?: string | null
+          redeemed_visit_id?: string | null
+          sold_by?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gift_codes_purchase_payment_id_fkey"
+            columns: ["purchase_payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "gift_codes_redeemed_payment_id_fkey"
+            columns: ["redeemed_payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "gift_codes_redeemed_visit_id_fkey"
+            columns: ["redeemed_visit_id"]
+            isOneToOne: false
+            referencedRelation: "visits"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       hmo_providers: {
         Row: {
           contact_person_address: string | null
