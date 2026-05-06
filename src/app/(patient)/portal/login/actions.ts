@@ -11,6 +11,7 @@ import {
 } from "@/lib/auth/patient-session-cookies";
 import { audit } from "@/lib/audit/log";
 import { PatientSignInSchema } from "@/lib/validations/auth";
+import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit/check";
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_MINUTES = 15;
@@ -24,6 +25,35 @@ export async function signInPatient(
   _prevState: SignInResult | null,
   formData: FormData,
 ): Promise<SignInResult> {
+  const h = await headers();
+  const ipAddress = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+  const userAgent = h.get("user-agent");
+
+  // IP-level rate limit before any DB work. visit_pins.failed_attempts
+  // already locks individual PINs after 5 failures; this catches an
+  // attacker sweeping DRM-IDs from a single IP.
+  if (ipAddress) {
+    const limit = await checkRateLimit({
+      bucket: "patient_pin",
+      identifier: ipAddress,
+      ...RATE_LIMITS.patient_pin,
+    });
+    if (!limit.allowed) {
+      await audit({
+        actor_id: null,
+        actor_type: "anonymous",
+        action: "patient.signin.rate_limited",
+        metadata: { retry_after_sec: limit.retryAfterSec },
+        ip_address: ipAddress,
+        user_agent: userAgent,
+      });
+      return {
+        ok: false,
+        error: `Too many sign-in attempts. Try again in ${Math.ceil(limit.retryAfterSec / 60)} minutes.`,
+      };
+    }
+  }
+
   const parsed = PatientSignInSchema.safeParse({
     drm_id: formData.get("drm_id"),
     pin: formData.get("pin"),
@@ -38,9 +68,6 @@ export async function signInPatient(
 
   const { drm_id, pin } = parsed.data;
   const admin = createAdminClient();
-  const h = await headers();
-  const ipAddress = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
-  const userAgent = h.get("user-agent");
   const nowIso = new Date().toISOString();
 
   // 1) Patient lookup.

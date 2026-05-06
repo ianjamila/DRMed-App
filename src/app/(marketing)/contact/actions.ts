@@ -3,6 +3,7 @@
 import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ContactSchema } from "@/lib/validations/contact";
+import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit/check";
 
 export type ContactResult = { ok: true } | { ok: false; error: string };
 
@@ -13,6 +14,24 @@ export async function submitContactMessage(
   // Honeypot — silent drop if filled.
   if ((formData.get("website") ?? "") !== "") {
     return { ok: true };
+  }
+
+  const h = await headers();
+  const ipAddress = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+  const userAgent = h.get("user-agent");
+
+  if (ipAddress) {
+    const limit = await checkRateLimit({
+      bucket: "contact_form",
+      identifier: ipAddress,
+      ...RATE_LIMITS.contact_form,
+    });
+    if (!limit.allowed) {
+      return {
+        ok: false,
+        error: `Too many messages from your network. Try again in ${Math.ceil(limit.retryAfterSec / 60)} minutes, or call us directly.`,
+      };
+    }
   }
 
   const parsed = ContactSchema.safeParse({
@@ -29,10 +48,6 @@ export async function submitContactMessage(
       error: parsed.error.issues[0]?.message ?? "Please check the form.",
     };
   }
-
-  const h = await headers();
-  const ipAddress = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
-  const userAgent = h.get("user-agent");
 
   const admin = createAdminClient();
   const { error } = await admin.from("contact_messages").insert({

@@ -677,6 +677,27 @@ export type Database = {
         }
         Relationships: []
       }
+      rate_limit_attempts: {
+        Row: {
+          attempted_at: string
+          bucket: string
+          id: number
+          identifier: string
+        }
+        Insert: {
+          attempted_at?: string
+          bucket: string
+          id?: number
+          identifier: string
+        }
+        Update: {
+          attempted_at?: string
+          bucket?: string
+          id?: number
+          identifier?: string
+        }
+        Relationships: []
+      }
       result_template_param_ranges: {
         Row: {
           age_max_months: number | null

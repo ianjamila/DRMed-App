@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { SubscribeSchema } from "@/lib/validations/newsletter";
+import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit/check";
 
 export type SubscribeResult =
   | { ok: true; alreadyActive: boolean }
@@ -18,6 +19,24 @@ export async function subscribeAction(
     return { ok: true, alreadyActive: false };
   }
 
+  const h = await headers();
+  const ipAddress = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+  const userAgent = h.get("user-agent");
+
+  if (ipAddress) {
+    const limit = await checkRateLimit({
+      bucket: "newsletter_signup",
+      identifier: ipAddress,
+      ...RATE_LIMITS.newsletter_signup,
+    });
+    if (!limit.allowed) {
+      return {
+        ok: false,
+        error: `Too many signups from your network. Try again in ${Math.ceil(limit.retryAfterSec / 60)} minutes.`,
+      };
+    }
+  }
+
   const parsed = SubscribeSchema.safeParse({
     email: formData.get("email"),
     source: formData.get("source"),
@@ -28,10 +47,6 @@ export async function subscribeAction(
       error: parsed.error.issues[0]?.message ?? "Please check the form.",
     };
   }
-
-  const h = await headers();
-  const ipAddress = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
-  const userAgent = h.get("user-agent");
 
   const admin = createAdminClient();
 

@@ -8,6 +8,7 @@ import {
   manilaSlotFor,
 } from "@/lib/validations/booking";
 import { notifyAppointmentBooked } from "@/lib/notifications/notify-appointment-booked";
+import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit/check";
 
 const ALLOWED_KINDS = new Set([
   "lab_test",
@@ -28,7 +29,7 @@ export type BookingResult =
 // Public booking — accepts unauthenticated submissions. Anti-abuse:
 // - Honeypot field "website": silent drop on fill
 // - Server-side date sanity (must be future, within Mon-Sat 8-5)
-// - Rate limit by IP comes in Phase 8 hardening
+// - Per-IP rate limit (Phase 8)
 export async function submitBookingAction(
   _prev: BookingResult | null,
   formData: FormData,
@@ -42,6 +43,23 @@ export async function submitBookingAction(
       scheduled_at: "",
       service_name: "",
     };
+  }
+
+  const headerStore = await headers();
+  const requestIp =
+    headerStore.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+  if (requestIp) {
+    const limit = await checkRateLimit({
+      bucket: "public_booking",
+      identifier: requestIp,
+      ...RATE_LIMITS.public_booking,
+    });
+    if (!limit.allowed) {
+      return {
+        ok: false,
+        error: `Too many booking attempts. Try again in ${Math.ceil(limit.retryAfterSec / 60)} minutes, or call reception.`,
+      };
+    }
   }
 
   const parsed = BookingSchema.safeParse({
@@ -137,7 +155,6 @@ export async function submitBookingAction(
     };
   }
 
-  const h = await headers();
   await audit({
     actor_id: null,
     actor_type: "anonymous",
@@ -151,8 +168,8 @@ export async function submitBookingAction(
       service_name: service.name,
       scheduled_at: parsed.data.scheduled_at,
     },
-    ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
-    user_agent: h.get("user-agent"),
+    ip_address: requestIp,
+    user_agent: headerStore.get("user-agent"),
   });
 
   // Fire-and-forget. Failures are audit-logged inside.
