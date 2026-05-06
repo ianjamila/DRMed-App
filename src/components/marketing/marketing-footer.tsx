@@ -1,9 +1,32 @@
 import Link from "next/link";
 import { CONTACT, SITE, SOCIAL } from "@/lib/marketing/site";
+import { NewsletterForm } from "./newsletter-form";
 
 export function MarketingFooter() {
   return (
     <footer className="mt-24 border-t border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-navy)] text-white">
+      <div className="border-b border-white/10">
+        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-8 sm:px-6 md:flex-row md:items-center md:justify-between lg:px-8">
+          <div className="max-w-md">
+            <p className="font-[family-name:var(--font-heading)] text-lg font-extrabold">
+              Stay in the loop
+            </p>
+            <p className="mt-1 text-sm text-white/70">
+              Occasional updates on new tests, promos, and schedule changes.{" "}
+              <Link
+                href="/newsletter"
+                className="text-[color:var(--color-brand-cyan)] hover:underline"
+              >
+                More about the newsletter →
+              </Link>
+            </p>
+          </div>
+          <div className="md:w-96">
+            <NewsletterForm source="homepage_footer" variant="footer" />
+          </div>
+        </div>
+      </div>
+
       <div className="mx-auto grid max-w-7xl gap-10 px-4 py-12 sm:px-6 md:grid-cols-4 lg:px-8">
         <div className="md:col-span-2">
           <p className="font-[family-name:var(--font-heading)] text-2xl font-extrabold tracking-tight">
