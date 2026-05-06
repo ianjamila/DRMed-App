@@ -9,6 +9,10 @@ import {
 } from "@/lib/validations/booking";
 import { notifyAppointmentBooked } from "@/lib/notifications/notify-appointment-booked";
 import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit/check";
+import {
+  dayWindowFor,
+  minutesOfDay,
+} from "@/lib/physicians/availability";
 
 const ALLOWED_KINDS = new Set([
   "lab_test",
@@ -109,6 +113,68 @@ export async function submitBookingAction(
     .maybeSingle();
   if (closure) {
     return { ok: false, error: "That day is closed. Please pick another." };
+  }
+
+  // Physician-specific guard: the slot picker filters client-side, but a
+  // determined caller could submit any time, so re-validate against the
+  // physician's recurring schedule + per-day overrides + concurrent
+  // bookings. Only runs when a physician was picked (lab branch leaves
+  // physician_id null and skips this).
+  if (parsed.data.physician_id) {
+    const [
+      { data: blocks },
+      { data: overrides },
+      { data: existingBookings },
+    ] = await Promise.all([
+      admin
+        .from("physician_schedules")
+        .select("day_of_week, start_time, end_time")
+        .eq("physician_id", parsed.data.physician_id),
+      admin
+        .from("physician_schedule_overrides")
+        .select("override_on, start_time, end_time")
+        .eq("physician_id", parsed.data.physician_id)
+        .eq("override_on", slot.dateISO),
+      admin
+        .from("appointments")
+        .select("id")
+        .eq("physician_id", parsed.data.physician_id)
+        .eq("scheduled_at", parsed.data.scheduled_at)
+        .not("status", "in", "(cancelled,no_show)"),
+    ]);
+
+    const window = dayWindowFor(slot.dateISO, slot.dayOfWeek, {
+      blocks: blocks ?? [],
+      overrides: overrides ?? [],
+    });
+    if (!window.available) {
+      return {
+        ok: false,
+        error:
+          window.reason === "full_day_override"
+            ? "The doctor is unavailable that day. Please pick another slot."
+            : "The doctor isn't scheduled that day. Please pick another slot.",
+      };
+    }
+    const slotMinutes = slot.hour * 60 + slot.minute;
+    const startMin = window.start_time
+      ? minutesOfDay(window.start_time)
+      : 8 * 60;
+    const endMin = window.end_time
+      ? minutesOfDay(window.end_time)
+      : 16 * 60 + 30;
+    if (slotMinutes < startMin || slotMinutes >= endMin) {
+      return {
+        ok: false,
+        error: "That time is outside the doctor's hours. Please pick another.",
+      };
+    }
+    if (existingBookings && existingBookings.length > 0) {
+      return {
+        ok: false,
+        error: "That slot was just taken. Please pick another time.",
+      };
+    }
   }
 
   // Create the patient as pre-registered. Reception verifies on arrival.
