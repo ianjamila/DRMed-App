@@ -1,7 +1,67 @@
 import type { NextConfig } from "next";
 
+const isProd = process.env.NODE_ENV === "production";
+
+// Content-Security-Policy. Tightened for production; loosened in dev so Next's
+// HMR + React Refresh client work. The 'unsafe-inline' allowance for scripts
+// is a known compromise — Next.js 16 inlines small bootstrap scripts that
+// resist nonce-based replacement. Phase 8 ships strict everywhere else
+// (frame-ancestors, form-action, base-uri, object-src) so the residual XSS
+// blast radius stays small.
+const cspDirectives: string[] = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline'" + (isProd ? "" : " 'unsafe-eval'"),
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob: https://*.supabase.co",
+  "font-src 'self' data:",
+  "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.resend.com",
+  "frame-ancestors 'none'",
+  "form-action 'self'",
+  "base-uri 'self'",
+  "object-src 'none'",
+  ...(isProd ? ["upgrade-insecure-requests"] : []),
+];
+
+const securityHeaders = [
+  {
+    key: "Content-Security-Policy",
+    value: cspDirectives.join("; "),
+  },
+  // X-Frame-Options is redundant with CSP frame-ancestors but kept for
+  // legacy browsers that don't honour the CSP directive.
+  { key: "X-Frame-Options", value: "DENY" },
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+  // Lock down browser features we don't use.
+  {
+    key: "Permissions-Policy",
+    value:
+      "camera=(), microphone=(), geolocation=(), payment=(), usb=(), magnetometer=(), accelerometer=(), gyroscope=()",
+  },
+  // HSTS — only meaningful over HTTPS, which Vercel enforces in prod.
+  // Six months + includeSubDomains; preload requires manual submission once
+  // the domain has been live for a while.
+  ...(isProd
+    ? [
+        {
+          key: "Strict-Transport-Security",
+          value: "max-age=15552000; includeSubDomains",
+        },
+      ]
+    : []),
+  { key: "X-DNS-Prefetch-Control", value: "off" },
+];
+
 const nextConfig: NextConfig = {
-  /* config options here */
+  async headers() {
+    return [
+      {
+        // Apply security headers to every route.
+        source: "/:path*",
+        headers: securityHeaders,
+      },
+    ];
+  },
 };
 
 export default nextConfig;
