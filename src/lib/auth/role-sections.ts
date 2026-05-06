@@ -24,10 +24,9 @@ export type ServiceSection = (typeof ALL_SECTIONS)[number];
 // `null` means no section restriction (admin/pathologist see everything).
 //
 // medtech owns the lab bench: chemistry, hematology, immunology,
-// urinalysis, microbiology, plus send-outs and ultrasounds (kept on the
-// medtech side until/unless a sonographer role is split off).
+// urinalysis, microbiology, plus send-outs.
 //
-// xray_technician owns x-ray imaging only.
+// xray_technician owns all imaging: x-ray AND ultrasound.
 //
 // reception is intentionally excluded — they never see the lab queue.
 const SECTIONS_BY_ROLE: Record<StaffSession["role"], ServiceSection[] | null> = {
@@ -38,10 +37,9 @@ const SECTIONS_BY_ROLE: Record<StaffSession["role"], ServiceSection[] | null> = 
     "immunology",
     "urinalysis",
     "microbiology",
-    "imaging_ultrasound",
     "send_out",
   ],
-  xray_technician: ["imaging_xray"],
+  xray_technician: ["imaging_xray", "imaging_ultrasound"],
   pathologist: null,
   admin: null,
 };
