@@ -11,11 +11,13 @@ import type { StaffSession } from "@/lib/auth/require-staff";
 
 interface NotificationItem {
   id: string;
-  kind: "appointment" | "test_request";
+  kind: "appointment" | "test_request" | "critical_alert";
   title: string;
   subtitle: string;
   href: string;
   ts: number;
+  // Critical alerts get a louder visual treatment (red badge + icon).
+  severity?: "info" | "critical";
 }
 
 interface Props {
@@ -30,6 +32,12 @@ const APPT_ROLES: ReadonlyArray<StaffSession["role"]> = ["reception", "admin"];
 const QUEUE_ROLES: ReadonlyArray<StaffSession["role"]> = [
   "medtech",
   "xray_technician",
+  "admin",
+];
+// Roles that listen on critical_alerts. Pathologist owns clinical
+// follow-up; admin observes for compliance.
+const CRITICAL_ROLES: ReadonlyArray<StaffSession["role"]> = [
+  "pathologist",
   "admin",
 ];
 
@@ -53,6 +61,7 @@ export function NotificationBell({ role }: Props) {
 
   const subscribesToAppointments = APPT_ROLES.includes(role);
   const subscribesToQueue = QUEUE_ROLES.includes(role);
+  const subscribesToCritical = CRITICAL_ROLES.includes(role);
 
   const pushItem = useCallback((item: NotificationItem) => {
     setItems((prev) => [item, ...prev].slice(0, MAX_ITEMS));
@@ -81,7 +90,12 @@ export function NotificationBell({ role }: Props) {
 
   // Subscriptions.
   useEffect(() => {
-    if (!subscribesToAppointments && !subscribesToQueue) return;
+    if (
+      !subscribesToAppointments &&
+      !subscribesToQueue &&
+      !subscribesToCritical
+    )
+      return;
 
     const channel = supabase.channel("staff-notifications");
 
@@ -183,6 +197,34 @@ export function NotificationBell({ role }: Props) {
       );
     }
 
+    if (subscribesToCritical) {
+      channel.on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "critical_alerts" },
+        (payload) => {
+          const row = payload.new as {
+            id: string;
+            test_request_id: string;
+            parameter_name: string;
+            direction: "low" | "high";
+            observed_value_si: number | null;
+            threshold_si: number | null;
+            patient_drm_id: string | null;
+          };
+          const dir = row.direction === "high" ? "↑ HIGH" : "↓ LOW";
+          pushItem({
+            id: row.id,
+            kind: "critical_alert",
+            title: `${dir} · ${row.parameter_name}`,
+            subtitle: `${row.patient_drm_id ?? "—"} · observed ${row.observed_value_si ?? "?"} (threshold ${row.threshold_si ?? "?"})`,
+            href: `/staff/queue/${row.test_request_id}`,
+            ts: Date.now(),
+            severity: "critical",
+          });
+        },
+      );
+    }
+
     channel.subscribe();
     return () => {
       supabase.removeChannel(channel);
@@ -191,13 +233,19 @@ export function NotificationBell({ role }: Props) {
     supabase,
     subscribesToAppointments,
     subscribesToQueue,
+    subscribesToCritical,
     allowedSections,
     pushItem,
   ]);
 
-  // Hide the bell entirely for roles that don't subscribe to anything
-  // (e.g. pathologist for now). Keeps the header tidy.
-  if (!subscribesToAppointments && !subscribesToQueue) return null;
+  // Hide the bell for roles that don't subscribe to anything. Keeps
+  // the header tidy for staff who only act on the dashboard.
+  if (
+    !subscribesToAppointments &&
+    !subscribesToQueue &&
+    !subscribesToCritical
+  )
+    return null;
 
   const handleToggle = () => {
     setOpen((prev) => {
@@ -248,22 +296,42 @@ export function NotificationBell({ role }: Props) {
             </p>
           ) : (
             <ul className="grid gap-1 text-sm">
-              {items.map((item) => (
-                <li key={`${item.kind}-${item.id}-${item.ts}`}>
-                  <Link
-                    href={item.href}
-                    onClick={() => setOpen(false)}
-                    className="block rounded-md px-2 py-2 transition-colors hover:bg-[color:var(--color-brand-bg)]"
-                  >
-                    <p className="font-semibold text-[color:var(--color-brand-navy)]">
-                      {item.title}
-                    </p>
-                    <p className="text-xs text-[color:var(--color-brand-text-soft)]">
-                      {item.subtitle}
-                    </p>
-                  </Link>
-                </li>
-              ))}
+              {items.map((item) => {
+                const isCritical = item.severity === "critical";
+                return (
+                  <li key={`${item.kind}-${item.id}-${item.ts}`}>
+                    <Link
+                      href={item.href}
+                      onClick={() => setOpen(false)}
+                      className={`block rounded-md px-2 py-2 transition-colors ${
+                        isCritical
+                          ? "bg-red-50 hover:bg-red-100"
+                          : "hover:bg-[color:var(--color-brand-bg)]"
+                      }`}
+                    >
+                      <p
+                        className={`font-semibold ${
+                          isCritical
+                            ? "text-red-900"
+                            : "text-[color:var(--color-brand-navy)]"
+                        }`}
+                      >
+                        {isCritical ? "🚨 " : ""}
+                        {item.title}
+                      </p>
+                      <p
+                        className={`text-xs ${
+                          isCritical
+                            ? "text-red-800"
+                            : "text-[color:var(--color-brand-text-soft)]"
+                        }`}
+                      >
+                        {item.subtitle}
+                      </p>
+                    </Link>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>

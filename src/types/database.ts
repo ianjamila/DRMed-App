@@ -716,6 +716,10 @@ export type Database = {
           age_min_months: number | null
           band_label: string
           created_at: string
+          critical_high_conv: number | null
+          critical_high_si: number | null
+          critical_low_conv: number | null
+          critical_low_si: number | null
           gender: string | null
           id: string
           parameter_id: string
@@ -731,6 +735,10 @@ export type Database = {
           age_min_months?: number | null
           band_label: string
           created_at?: string
+          critical_high_conv?: number | null
+          critical_high_si?: number | null
+          critical_low_conv?: number | null
+          critical_low_si?: number | null
           gender?: string | null
           id?: string
           parameter_id: string
@@ -746,6 +754,10 @@ export type Database = {
           age_min_months?: number | null
           band_label?: string
           created_at?: string
+          critical_high_conv?: number | null
+          critical_high_si?: number | null
+          critical_low_conv?: number | null
+          critical_low_si?: number | null
           gender?: string | null
           id?: string
           parameter_id?: string
@@ -996,6 +1008,54 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      critical_alerts: {
+        Row: {
+          acknowledged_at: string | null
+          acknowledged_by: string | null
+          created_at: string
+          direction: string
+          id: string
+          observed_value_si: number | null
+          parameter_id: string
+          parameter_name: string
+          patient_drm_id: string | null
+          patient_id: string | null
+          result_id: string
+          test_request_id: string
+          threshold_si: number | null
+        }
+        Insert: {
+          acknowledged_at?: string | null
+          acknowledged_by?: string | null
+          created_at?: string
+          direction: string
+          id?: string
+          observed_value_si?: number | null
+          parameter_id: string
+          parameter_name: string
+          patient_drm_id?: string | null
+          patient_id?: string | null
+          result_id: string
+          test_request_id: string
+          threshold_si?: number | null
+        }
+        Update: {
+          acknowledged_at?: string | null
+          acknowledged_by?: string | null
+          created_at?: string
+          direction?: string
+          id?: string
+          observed_value_si?: number | null
+          parameter_id?: string
+          parameter_name?: string
+          patient_drm_id?: string | null
+          patient_id?: string | null
+          result_id?: string
+          test_request_id?: string
+          threshold_si?: number | null
+        }
+        Relationships: []
       }
       result_amendments: {
         Row: {

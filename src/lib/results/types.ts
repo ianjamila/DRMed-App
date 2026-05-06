@@ -24,6 +24,14 @@ export interface ParamRange {
   ref_high_si: number | null;
   ref_low_conv: number | null;
   ref_high_conv: number | null;
+  // Critical thresholds (added in 0027). Optional — most bands won't
+  // configure them. When a value crosses one of these bounds at finalise
+  // time the structured-result flow inserts a critical_alerts row that
+  // pages pathologist + admin via the notification bell.
+  critical_low_si: number | null;
+  critical_high_si: number | null;
+  critical_low_conv: number | null;
+  critical_high_conv: number | null;
   sort_order: number;
 }
 
@@ -59,6 +67,8 @@ export interface EffectiveRange {
   ref_high_si: number | null;
   ref_low_conv: number | null;
   ref_high_conv: number | null;
+  critical_low_si: number | null;
+  critical_high_si: number | null;
   band_label: string | null;
 }
 
@@ -163,6 +173,8 @@ export function pickRangeForPatient(
     ref_high_si: param.ref_high_si,
     ref_low_conv: param.ref_low_conv,
     ref_high_conv: param.ref_high_conv,
+    critical_low_si: null,
+    critical_high_si: null,
     band_label: null,
   };
 
@@ -228,8 +240,36 @@ function toEffective(r: ParamRange): EffectiveRange {
     ref_high_si: r.ref_high_si,
     ref_low_conv: r.ref_low_conv,
     ref_high_conv: r.ref_high_conv,
+    critical_low_si: r.critical_low_si,
+    critical_high_si: r.critical_high_si,
     band_label: r.band_label,
   };
+}
+
+// Critical-value detection: returns a directional hit when the value is
+// at or beyond a critical threshold. Direction is the side that fired
+// (low or high). Critical thresholds are intentionally inclusive — a
+// value exactly at threshold is critical.
+export function detectCritical(
+  param: TemplateParam,
+  range: EffectiveRange,
+  v: {
+    numeric_value_si: number | null;
+    numeric_value_conv: number | null;
+    is_blank: boolean;
+  },
+): { direction: "low" | "high"; threshold_si: number; observed_si: number } | null {
+  if (param.input_type !== "numeric") return null;
+  if (v.is_blank) return null;
+  const x = v.numeric_value_si ?? v.numeric_value_conv;
+  if (x == null) return null;
+  if (range.critical_low_si != null && x <= range.critical_low_si) {
+    return { direction: "low", threshold_si: range.critical_low_si, observed_si: x };
+  }
+  if (range.critical_high_si != null && x >= range.critical_high_si) {
+    return { direction: "high", threshold_si: range.critical_high_si, observed_si: x };
+  }
+  return null;
 }
 
 export function formatRefRange(

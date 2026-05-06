@@ -18,7 +18,7 @@ const PARAM_COLS =
   "id, sort_order, section, is_section_header, parameter_name, input_type, unit_si, unit_conv, ref_low_si, ref_high_si, ref_low_conv, ref_high_conv, gender, si_to_conv_factor, allowed_values, abnormal_values, placeholder";
 
 const RANGE_COLS =
-  "id, parameter_id, age_min_months, age_max_months, gender, band_label, ref_low_si, ref_high_si, ref_low_conv, ref_high_conv, sort_order";
+  "id, parameter_id, age_min_months, age_max_months, gender, band_label, ref_low_si, ref_high_si, ref_low_conv, ref_high_conv, critical_low_si, critical_high_si, critical_low_conv, critical_high_conv, sort_order";
 
 export async function loadTemplateParams(
   client: AnyClient,
@@ -55,6 +55,10 @@ export async function loadTemplateParams(
       ref_high_si: r.ref_high_si,
       ref_low_conv: r.ref_low_conv,
       ref_high_conv: r.ref_high_conv,
+      critical_low_si: r.critical_low_si,
+      critical_high_si: r.critical_high_si,
+      critical_low_conv: r.critical_low_conv,
+      critical_high_conv: r.critical_high_conv,
       sort_order: r.sort_order,
     });
     rangesByParam.set(r.parameter_id, arr);

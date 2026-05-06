@@ -335,6 +335,8 @@ function SingleRow({
     ref_high_si: p.ref_high_si,
     ref_low_conv: p.ref_low_conv,
     ref_high_conv: p.ref_high_conv,
+    critical_low_si: null,
+    critical_high_si: null,
     band_label: null,
   };
   const out = isOutOfRange(p, v, eff);
@@ -480,6 +482,8 @@ function DualUnitBody({
           ref_high_si: p.ref_high_si,
           ref_low_conv: p.ref_low_conv,
           ref_high_conv: p.ref_high_conv,
+          critical_low_si: null,
+          critical_high_si: null,
           band_label: null,
         };
         const out = isOutOfRange(p, v, eff);

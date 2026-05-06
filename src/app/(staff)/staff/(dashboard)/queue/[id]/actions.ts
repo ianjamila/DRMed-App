@@ -10,6 +10,7 @@ import { renderResultPdf } from "@/lib/results/render-pdf";
 import {
   calculateAgeMonths,
   computeFlag,
+  detectCritical,
   filterParamsForPatient,
   normalisePatientSex,
   pickRangeForPatient,
@@ -466,6 +467,73 @@ export async function finaliseStructuredAction(
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),
   });
+
+  // 9) Critical-value detection. For each param with a numeric value
+  //    that crosses a configured critical threshold (per-band
+  //    critical_low_si / critical_high_si), insert a critical_alerts
+  //    row. The notification bell subscribes to inserts on this table
+  //    so pathologists + admins are paged in real time.
+  const alerts: Array<{
+    result_id: string;
+    test_request_id: string;
+    parameter_id: string;
+    parameter_name: string;
+    direction: "low" | "high";
+    observed_value_si: number;
+    threshold_si: number;
+    patient_id: string;
+    patient_drm_id: string;
+  }> = [];
+  for (const param of visibleParams) {
+    if (param.is_section_header) continue;
+    const v = values[param.id];
+    if (!v) continue;
+    const range = pickRangeForPatient(param, patientSex, patientAgeMonths);
+    const hit = detectCritical(param, range, v);
+    if (hit) {
+      alerts.push({
+        result_id: ctx.resultId,
+        test_request_id: testRequestId,
+        parameter_id: param.id,
+        parameter_name: param.parameter_name,
+        direction: hit.direction,
+        observed_value_si: hit.observed_si,
+        threshold_si: hit.threshold_si,
+        patient_id: ctx.patientId,
+        patient_drm_id: patient.drm_id,
+      });
+    }
+  }
+  if (alerts.length > 0) {
+    const { error: alertErr } = await admin
+      .from("critical_alerts")
+      .insert(alerts);
+    if (alertErr) {
+      // Don't fail the finalise — the PDF + result row are already
+      // committed. Surface in the audit log so the gap is investigatable.
+      console.error("critical_alerts insert failed", alertErr);
+    } else {
+      await audit({
+        actor_id: session.user_id,
+        actor_type: "staff",
+        patient_id: ctx.patientId,
+        action: "result.critical_value_detected",
+        resource_type: "result",
+        resource_id: ctx.resultId,
+        metadata: {
+          test_request_id: testRequestId,
+          alerts: alerts.map((a) => ({
+            parameter: a.parameter_name,
+            direction: a.direction,
+            observed: a.observed_value_si,
+            threshold: a.threshold_si,
+          })),
+        },
+        ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+        user_agent: h.get("user-agent"),
+      });
+    }
+  }
 
   revalidatePath(`/staff/queue`);
   revalidatePath(`/staff/queue/${testRequestId}`);
