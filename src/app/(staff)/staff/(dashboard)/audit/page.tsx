@@ -1,4 +1,6 @@
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 
 export const metadata = {
@@ -16,6 +18,9 @@ interface Props {
   searchParams: Promise<{
     action?: string;
     actor?: string;
+    drm?: string;
+    since?: string;
+    until?: string;
     page?: string;
   }>;
 }
@@ -28,10 +33,36 @@ export default async function AuditLogPage({ searchParams }: Props) {
   const page = Math.max(1, Number(params.page ?? "1") || 1);
   const offset = (page - 1) * PAGE_SIZE;
 
+  // Resolve a DRM-ID to its patient_id once, then filter audit rows by
+  // that patient_id. We use the admin client because the staff_profiles
+  // RLS policy restricts patient lookups for admins via the same path.
+  let patientFilter: { id: string; label: string } | null = null;
+  let patientLookupError: string | null = null;
+  if (params.drm && params.drm.trim().length > 0) {
+    const drm = params.drm.trim().toUpperCase();
+    const admin = createAdminClient();
+    const { data: row } = await admin
+      .from("patients")
+      .select("id, drm_id, first_name, last_name")
+      .eq("drm_id", drm)
+      .maybeSingle();
+    if (row) {
+      patientFilter = {
+        id: row.id,
+        label: `${row.last_name}, ${row.first_name} (${row.drm_id})`,
+      };
+    } else {
+      patientLookupError = `No patient with DRM-ID ${drm}.`;
+    }
+  }
+
   const supabase = await createClient();
   let query = supabase
     .from("audit_log")
-    .select("id, actor_id, actor_type, patient_id, action, resource_type, resource_id, ip_address, created_at, metadata", { count: "exact" })
+    .select(
+      "id, actor_id, actor_type, patient_id, action, resource_type, resource_id, ip_address, created_at, metadata",
+      { count: "exact" },
+    )
     .order("created_at", { ascending: false })
     .range(offset, offset + PAGE_SIZE - 1);
 
@@ -40,6 +71,24 @@ export default async function AuditLogPage({ searchParams }: Props) {
   }
   if (params.actor) {
     query = query.eq("actor_type", params.actor);
+  }
+  if (patientFilter) {
+    query = query.eq("patient_id", patientFilter.id);
+  }
+  // since: inclusive lower bound on created_at. Treat the date input as a
+  // Manila local date and shift to UTC midnight for the comparison.
+  if (params.since) {
+    const sinceIso = manilaDateStartUtc(params.since);
+    if (sinceIso) query = query.gte("created_at", sinceIso);
+  }
+  if (params.until) {
+    const untilIso = manilaDateEndUtc(params.until);
+    if (untilIso) query = query.lte("created_at", untilIso);
+  }
+  if (patientLookupError) {
+    // Force an empty result set so the user sees the error message
+    // without rows from a broader query confusing the picture.
+    query = query.eq("id", -1);
   }
 
   const { data: rows, count } = await query;
@@ -50,10 +99,17 @@ export default async function AuditLogPage({ searchParams }: Props) {
     const sp = new URLSearchParams();
     if (params.action) sp.set("action", params.action);
     if (params.actor) sp.set("actor", params.actor);
+    if (params.drm) sp.set("drm", params.drm);
+    if (params.since) sp.set("since", params.since);
+    if (params.until) sp.set("until", params.until);
     if (p > 1) sp.set("page", String(p));
     const qs = sp.toString();
     return `/staff/audit${qs ? `?${qs}` : ""}`;
   }
+
+  const hasAnyFilter = Boolean(
+    params.action || params.actor || params.drm || params.since || params.until,
+  );
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
@@ -67,13 +123,20 @@ export default async function AuditLogPage({ searchParams }: Props) {
         </p>
       </header>
 
-      <form className="mb-6 flex flex-wrap gap-2 text-sm">
+      <form className="mb-2 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-5">
         <input
           type="search"
           name="action"
           defaultValue={params.action ?? ""}
           placeholder="action prefix · e.g. patient. or result."
-          className="flex-1 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+          className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 focus:border-[color:var(--color-brand-cyan)] focus:outline-none lg:col-span-2"
+        />
+        <input
+          type="search"
+          name="drm"
+          defaultValue={params.drm ?? ""}
+          placeholder="DRM-ID · e.g. DRM-0042"
+          className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
         />
         <select
           name="actor"
@@ -86,13 +149,50 @@ export default async function AuditLogPage({ searchParams }: Props) {
           <option value="system">System</option>
           <option value="anonymous">Anonymous</option>
         </select>
-        <button
-          type="submit"
-          className="rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
-        >
-          Filter
-        </button>
+        <div className="grid grid-cols-2 gap-2 lg:col-span-1">
+          <input
+            type="date"
+            name="since"
+            defaultValue={params.since ?? ""}
+            aria-label="From date"
+            className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-2 focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+          />
+          <input
+            type="date"
+            name="until"
+            defaultValue={params.until ?? ""}
+            aria-label="To date"
+            className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-2 focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+          />
+        </div>
+        <div className="flex gap-2 lg:col-span-5">
+          <button
+            type="submit"
+            className="rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
+          >
+            Filter
+          </button>
+          {hasAnyFilter ? (
+            <Link
+              href="/staff/audit"
+              className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-2 text-sm font-semibold text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-bg)]"
+            >
+              Clear
+            </Link>
+          ) : null}
+        </div>
       </form>
+
+      {patientFilter ? (
+        <p className="mb-3 text-xs text-[color:var(--color-brand-text-soft)]">
+          Filtered to <strong>{patientFilter.label}</strong>.
+        </p>
+      ) : null}
+      {patientLookupError ? (
+        <p className="mb-3 text-xs text-amber-700" role="alert">
+          {patientLookupError}
+        </p>
+      ) : null}
 
       <div className="overflow-hidden rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
         <table className="w-full text-sm">
@@ -183,4 +283,17 @@ export default async function AuditLogPage({ searchParams }: Props) {
       </div>
     </div>
   );
+}
+
+// Manila is UTC+8 with no DST, so the start of a Manila date is
+// (date) 00:00 PHT = (date) -08:00 UTC. We accept the date input
+// (YYYY-MM-DD) as a Manila local date.
+function manilaDateStartUtc(yyyymmdd: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(yyyymmdd)) return null;
+  return `${yyyymmdd}T00:00:00+08:00`;
+}
+
+function manilaDateEndUtc(yyyymmdd: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(yyyymmdd)) return null;
+  return `${yyyymmdd}T23:59:59.999+08:00`;
 }
