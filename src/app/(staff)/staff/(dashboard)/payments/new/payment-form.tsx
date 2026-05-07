@@ -3,8 +3,11 @@
 import { useActionState, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  StableInput,
+  StableTextarea,
+} from "@/components/forms/stable-fields";
 import { recordPaymentAction, type PaymentResult } from "./actions";
 
 interface Props {
@@ -57,7 +60,7 @@ export function PaymentForm({ visitId, balance }: Props) {
         <>
           <div className="grid gap-1.5">
             <Label htmlFor="code">Gift code</Label>
-            <Input
+            <StableInput
               id="code"
               name="code"
               required
@@ -75,7 +78,7 @@ export function PaymentForm({ visitId, balance }: Props) {
         <>
           <div className="grid gap-1.5">
             <Label htmlFor="amount_php">Amount (PHP)</Label>
-            <Input
+            <StableInput
               id="amount_php"
               name="amount_php"
               type="number"
@@ -95,7 +98,7 @@ export function PaymentForm({ visitId, balance }: Props) {
             <Label htmlFor="reference_number">
               Reference number (optional)
             </Label>
-            <Input
+            <StableInput
               id="reference_number"
               name="reference_number"
               maxLength={80}
@@ -107,7 +110,7 @@ export function PaymentForm({ visitId, balance }: Props) {
 
       <div className="grid gap-1.5">
         <Label htmlFor="notes">Notes (optional)</Label>
-        <textarea
+        <StableTextarea
           id="notes"
           name="notes"
           rows={2}

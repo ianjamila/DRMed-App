@@ -2,8 +2,11 @@
 
 import { useActionState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  StableInput,
+  StableSelect,
+} from "@/components/forms/stable-fields";
 import { DAY_NUMBERS } from "@/lib/physicians/schedule";
 import { addBlockAction, type ScheduleResult } from "./actions";
 
@@ -27,7 +30,7 @@ export function AddBlockForm({ physicianId }: Props) {
       <div className="grid gap-3 sm:grid-cols-3">
         <div className="grid gap-1.5">
           <Label htmlFor="day_of_week">Day</Label>
-          <select
+          <StableSelect
             id="day_of_week"
             name="day_of_week"
             required
@@ -39,11 +42,11 @@ export function AddBlockForm({ physicianId }: Props) {
                 {d.label}
               </option>
             ))}
-          </select>
+          </StableSelect>
         </div>
         <div className="grid gap-1.5">
           <Label htmlFor="start_time">Start</Label>
-          <Input
+          <StableInput
             id="start_time"
             name="start_time"
             type="time"
@@ -52,7 +55,7 @@ export function AddBlockForm({ physicianId }: Props) {
         </div>
         <div className="grid gap-1.5">
           <Label htmlFor="end_time">End</Label>
-          <Input
+          <StableInput
             id="end_time"
             name="end_time"
             type="time"
@@ -64,20 +67,20 @@ export function AddBlockForm({ physicianId }: Props) {
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="grid gap-1.5">
           <Label htmlFor="valid_from">Valid from (optional)</Label>
-          <Input id="valid_from" name="valid_from" type="date" />
+          <StableInput id="valid_from" name="valid_from" type="date" />
           <p className="text-xs text-[color:var(--color-brand-text-soft)]">
             Defaults to today.
           </p>
         </div>
         <div className="grid gap-1.5">
           <Label htmlFor="valid_until">Valid until (optional)</Label>
-          <Input id="valid_until" name="valid_until" type="date" />
+          <StableInput id="valid_until" name="valid_until" type="date" />
         </div>
       </div>
 
       <div className="grid gap-1.5">
         <Label htmlFor="notes">Notes (optional)</Label>
-        <Input id="notes" name="notes" maxLength={500} />
+        <StableInput id="notes" name="notes" maxLength={500} />
       </div>
 
       {state && !state.ok ? (

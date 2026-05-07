@@ -69,8 +69,17 @@ export function PatientForm({ initial }: Props) {
     FormData
   >(action, null);
 
+  // Selects also need controlled state so React 19's form-action reset
+  // doesn't blank them out on validation error.
   const [referralSource, setReferralSource] = useState<string>(
     initial?.referral_source ?? "",
+  );
+  const [sex, setSex] = useState<string>(initial?.sex ?? "");
+  const [releaseMedium, setReleaseMedium] = useState<string>(
+    initial?.preferred_release_medium ?? "",
+  );
+  const [seniorPwdKind, setSeniorPwdKind] = useState<string>(
+    initial?.senior_pwd_id_kind ?? "",
   );
 
   const consentAlreadySigned = !!initial?.consent_signed_at;
@@ -118,7 +127,8 @@ export function PatientForm({ initial }: Props) {
             <select
               id="sex"
               name="sex"
-              defaultValue={initial?.sex ?? ""}
+              value={sex}
+              onChange={(e) => setSex(e.target.value)}
               className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
             >
               <option value="">—</option>
@@ -177,7 +187,8 @@ export function PatientForm({ initial }: Props) {
             <select
               id="preferred_release_medium"
               name="preferred_release_medium"
-              defaultValue={initial?.preferred_release_medium ?? ""}
+              value={releaseMedium}
+              onChange={(e) => setReleaseMedium(e.target.value)}
               className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
             >
               {RELEASE_OPTIONS.map((o) => (
@@ -219,7 +230,8 @@ export function PatientForm({ initial }: Props) {
             <select
               id="senior_pwd_id_kind"
               name="senior_pwd_id_kind"
-              defaultValue={initial?.senior_pwd_id_kind ?? ""}
+              value={seniorPwdKind}
+              onChange={(e) => setSeniorPwdKind(e.target.value)}
               className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
             >
               <option value="">— None —</option>
@@ -301,11 +313,26 @@ interface FieldProps {
   defaultValue?: string;
 }
 
-function Field({ label, name, type = "text", ...rest }: FieldProps) {
+function Field({
+  label,
+  name,
+  type = "text",
+  defaultValue = "",
+  ...rest
+}: FieldProps) {
+  // Self-controlled to survive React 19's form-action reset on error.
+  const [value, setValue] = useState(defaultValue);
   return (
     <div className="grid gap-1.5">
       <Label htmlFor={name}>{label}</Label>
-      <Input id={name} name={name} type={type} {...rest} />
+      <Input
+        id={name}
+        name={name}
+        type={type}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        {...rest}
+      />
     </div>
   );
 }

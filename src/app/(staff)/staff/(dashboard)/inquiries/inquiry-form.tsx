@@ -4,8 +4,12 @@ import { useActionState, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  StableInput,
+  StableSelect,
+  StableTextarea,
+} from "@/components/forms/stable-fields";
 import {
   CHANNEL_LABELS,
   INQUIRY_CHANNELS,
@@ -115,7 +119,7 @@ export function InquiryForm({
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="grid gap-1.5">
           <Label htmlFor="caller_name">Caller name</Label>
-          <Input
+          <StableInput
             id="caller_name"
             name="caller_name"
             required
@@ -126,7 +130,7 @@ export function InquiryForm({
         </div>
         <div className="grid gap-1.5">
           <Label htmlFor="contact">Contact</Label>
-          <Input
+          <StableInput
             id="contact"
             name="contact"
             required
@@ -140,7 +144,7 @@ export function InquiryForm({
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="grid gap-1.5">
           <Label htmlFor="channel">Channel</Label>
-          <select
+          <StableSelect
             id="channel"
             name="channel"
             defaultValue={initial?.channel ?? "phone"}
@@ -151,11 +155,11 @@ export function InquiryForm({
                 {CHANNEL_LABELS[c]}
               </option>
             ))}
-          </select>
+          </StableSelect>
         </div>
         <div className="grid gap-1.5">
           <Label htmlFor="called_at">Called at</Label>
-          <Input
+          <StableInput
             id="called_at"
             name="called_at"
             type="datetime-local"
@@ -167,7 +171,7 @@ export function InquiryForm({
 
       <div className="grid gap-1.5">
         <Label htmlFor="received_by_id">Received by</Label>
-        <select
+        <StableSelect
           id="received_by_id"
           name="received_by_id"
           defaultValue={
@@ -181,12 +185,12 @@ export function InquiryForm({
               {s.full_name}
             </option>
           ))}
-        </select>
+        </StableSelect>
       </div>
 
       <div className="grid gap-1.5">
         <Label htmlFor="service_interest">What did they ask about?</Label>
-        <Input
+        <StableInput
           id="service_interest"
           name="service_interest"
           maxLength={500}
@@ -197,7 +201,7 @@ export function InquiryForm({
 
       <div className="grid gap-1.5">
         <Label htmlFor="notes">Notes</Label>
-        <textarea
+        <StableTextarea
           id="notes"
           name="notes"
           rows={3}
@@ -259,7 +263,7 @@ export function InquiryForm({
           {status === "dropped" ? (
             <div className="grid gap-1.5">
               <Label htmlFor="drop_reason">Drop reason</Label>
-              <textarea
+              <StableTextarea
                 id="drop_reason"
                 name="drop_reason"
                 rows={2}

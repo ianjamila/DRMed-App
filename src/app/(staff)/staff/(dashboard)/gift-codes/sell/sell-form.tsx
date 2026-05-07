@@ -3,8 +3,12 @@
 import { useActionState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  StableInput,
+  StableSelect,
+  StableTextarea,
+} from "@/components/forms/stable-fields";
 import { sellGiftCodeAction, type SellResult } from "../actions";
 
 const METHODS = [
@@ -30,7 +34,7 @@ export function SellGiftCodeForm({ initialCode = "" }: Props) {
     <form action={formAction} className="grid gap-5">
       <div className="grid gap-1.5">
         <Label htmlFor="code">Gift code</Label>
-        <Input
+        <StableInput
           id="code"
           name="code"
           required
@@ -52,7 +56,7 @@ export function SellGiftCodeForm({ initialCode = "" }: Props) {
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="grid gap-1.5">
             <Label htmlFor="buyer_name">Name</Label>
-            <Input
+            <StableInput
               id="buyer_name"
               name="buyer_name"
               required
@@ -61,7 +65,7 @@ export function SellGiftCodeForm({ initialCode = "" }: Props) {
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="buyer_contact">Contact</Label>
-            <Input
+            <StableInput
               id="buyer_contact"
               name="buyer_contact"
               required
@@ -79,7 +83,7 @@ export function SellGiftCodeForm({ initialCode = "" }: Props) {
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="grid gap-1.5">
             <Label htmlFor="purchase_method">Method</Label>
-            <select
+            <StableSelect
               id="purchase_method"
               name="purchase_method"
               required
@@ -91,11 +95,11 @@ export function SellGiftCodeForm({ initialCode = "" }: Props) {
                   {m.label}
                 </option>
               ))}
-            </select>
+            </StableSelect>
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="purchase_reference_number">Reference (optional)</Label>
-            <Input
+            <StableInput
               id="purchase_reference_number"
               name="purchase_reference_number"
               maxLength={80}
@@ -107,7 +111,7 @@ export function SellGiftCodeForm({ initialCode = "" }: Props) {
 
       <div className="grid gap-1.5">
         <Label htmlFor="notes">Notes (optional)</Label>
-        <textarea
+        <StableTextarea
           id="notes"
           name="notes"
           rows={2}

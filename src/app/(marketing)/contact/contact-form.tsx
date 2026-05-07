@@ -2,8 +2,11 @@
 
 import { useActionState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  StableInput,
+  StableTextarea,
+} from "@/components/forms/stable-fields";
 import { submitContactMessage, type ContactResult } from "./actions";
 
 export function ContactForm() {
@@ -46,22 +49,22 @@ export function ContactForm() {
       <div className="grid gap-4 md:grid-cols-2">
         <div className="grid gap-2">
           <Label htmlFor="name">Name</Label>
-          <Input id="name" name="name" required maxLength={120} />
+          <StableInput id="name" name="name" required maxLength={120} />
         </div>
         <div className="grid gap-2">
           <Label htmlFor="email">Email (optional)</Label>
-          <Input id="email" name="email" type="email" maxLength={160} />
+          <StableInput id="email" name="email" type="email" maxLength={160} />
         </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
         <div className="grid gap-2">
           <Label htmlFor="phone">Phone (optional)</Label>
-          <Input id="phone" name="phone" maxLength={40} />
+          <StableInput id="phone" name="phone" maxLength={40} />
         </div>
         <div className="grid gap-2">
           <Label htmlFor="subject">Subject</Label>
-          <Input
+          <StableInput
             id="subject"
             name="subject"
             placeholder="e.g. Appointment, HMO, corporate package"
@@ -72,7 +75,7 @@ export function ContactForm() {
 
       <div className="grid gap-2">
         <Label htmlFor="message">Message</Label>
-        <textarea
+        <StableTextarea
           id="message"
           name="message"
           required

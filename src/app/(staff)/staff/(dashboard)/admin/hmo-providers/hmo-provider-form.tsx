@@ -3,8 +3,11 @@
 import { useActionState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  StableInput,
+  StableTextarea,
+} from "@/components/forms/stable-fields";
 import {
   createHmoProviderAction,
   updateHmoProviderAction,
@@ -45,7 +48,7 @@ export function HmoProviderForm({ initial }: Props) {
     <form action={formAction} className="grid gap-5">
       <div className="grid gap-1.5">
         <Label htmlFor="name">Provider name</Label>
-        <Input
+        <StableInput
           id="name"
           name="name"
           required
@@ -71,14 +74,18 @@ export function HmoProviderForm({ initial }: Props) {
 
         <div className="grid gap-1.5">
           <Label htmlFor="due_days_for_invoice">Days to pay invoice</Label>
-          <Input
+          <StableInput
             id="due_days_for_invoice"
             name="due_days_for_invoice"
             type="number"
             min="0"
             max="365"
             step="1"
-            defaultValue={initial?.due_days_for_invoice ?? ""}
+            defaultValue={
+              initial?.due_days_for_invoice != null
+                ? String(initial.due_days_for_invoice)
+                : ""
+            }
             placeholder="e.g. 30"
           />
           <p className="text-xs text-[color:var(--color-brand-text-soft)]">
@@ -89,7 +96,7 @@ export function HmoProviderForm({ initial }: Props) {
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="grid gap-1.5">
             <Label htmlFor="contract_start_date">Start date</Label>
-            <Input
+            <StableInput
               id="contract_start_date"
               name="contract_start_date"
               type="date"
@@ -98,7 +105,7 @@ export function HmoProviderForm({ initial }: Props) {
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="contract_end_date">End date</Label>
-            <Input
+            <StableInput
               id="contract_end_date"
               name="contract_end_date"
               type="date"
@@ -115,7 +122,7 @@ export function HmoProviderForm({ initial }: Props) {
 
         <div className="grid gap-1.5">
           <Label htmlFor="contact_person_name">Name</Label>
-          <Input
+          <StableInput
             id="contact_person_name"
             name="contact_person_name"
             defaultValue={initial?.contact_person_name ?? ""}
@@ -124,7 +131,7 @@ export function HmoProviderForm({ initial }: Props) {
 
         <div className="grid gap-1.5">
           <Label htmlFor="contact_person_address">Address</Label>
-          <Input
+          <StableInput
             id="contact_person_address"
             name="contact_person_address"
             defaultValue={initial?.contact_person_address ?? ""}
@@ -134,7 +141,7 @@ export function HmoProviderForm({ initial }: Props) {
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="grid gap-1.5">
             <Label htmlFor="contact_person_phone">Phone</Label>
-            <Input
+            <StableInput
               id="contact_person_phone"
               name="contact_person_phone"
               defaultValue={initial?.contact_person_phone ?? ""}
@@ -143,7 +150,7 @@ export function HmoProviderForm({ initial }: Props) {
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="contact_person_email">Email</Label>
-            <Input
+            <StableInput
               id="contact_person_email"
               name="contact_person_email"
               type="email"
@@ -155,7 +162,7 @@ export function HmoProviderForm({ initial }: Props) {
 
       <div className="grid gap-1.5">
         <Label htmlFor="notes">Notes</Label>
-        <textarea
+        <StableTextarea
           id="notes"
           name="notes"
           rows={3}

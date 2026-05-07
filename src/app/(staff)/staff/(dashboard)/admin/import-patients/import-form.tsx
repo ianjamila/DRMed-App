@@ -3,6 +3,7 @@
 import { useActionState } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { StableTextarea } from "@/components/forms/stable-fields";
 import { importPatientsAction, type ImportResult } from "./actions";
 
 const SAMPLE = `first_name,last_name,middle_name,birthdate,sex,phone,email,address
@@ -20,7 +21,7 @@ export function ImportPatientsForm() {
     <form action={formAction} className="grid gap-4">
       <div className="grid gap-1.5">
         <Label htmlFor="csv">CSV</Label>
-        <textarea
+        <StableTextarea
           id="csv"
           name="csv"
           rows={14}

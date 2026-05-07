@@ -2,7 +2,7 @@
 
 import { useActionState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { StableInput } from "@/components/forms/stable-fields";
 import {
   subscribeAction,
   type SubscribeResult,
@@ -56,7 +56,7 @@ export function NewsletterForm({ source, variant = "footer" }: Props) {
             : "grid gap-2 sm:grid-cols-[1fr_auto]"
         }
       >
-        <Input
+        <StableInput
           type="email"
           name="email"
           required

@@ -3,8 +3,12 @@
 import { useActionState, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  StableInput,
+  StableSelect,
+  StableTextarea,
+} from "@/components/forms/stable-fields";
 import { formatPhp } from "@/lib/marketing/format";
 import {
   createServiceAction,
@@ -123,7 +127,7 @@ export function ServiceForm({ initial }: Props) {
         <div className="grid gap-4 sm:grid-cols-3">
           <div className="grid gap-1.5">
             <Label htmlFor="code">Code</Label>
-            <Input
+            <StableInput
               id="code"
               name="code"
               required
@@ -135,7 +139,7 @@ export function ServiceForm({ initial }: Props) {
           </div>
           <div className="grid gap-1.5 sm:col-span-2">
             <Label htmlFor="name">Name</Label>
-            <Input
+            <StableInput
               id="name"
               name="name"
               required
@@ -147,7 +151,7 @@ export function ServiceForm({ initial }: Props) {
 
         <div className="grid gap-1.5">
           <Label htmlFor="description">Description (optional)</Label>
-          <textarea
+          <StableTextarea
             id="description"
             name="description"
             rows={3}
@@ -163,7 +167,7 @@ export function ServiceForm({ initial }: Props) {
           </legend>
           <div className="grid gap-1.5">
             <Label htmlFor="price_php">DRMed price (PHP)</Label>
-            <Input
+            <StableInput
               id="price_php"
               name="price_php"
               type="number"
@@ -175,7 +179,7 @@ export function ServiceForm({ initial }: Props) {
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="hmo_price_php">HMO price (PHP, optional)</Label>
-            <Input
+            <StableInput
               id="hmo_price_php"
               name="hmo_price_php"
               type="number"
@@ -191,7 +195,7 @@ export function ServiceForm({ initial }: Props) {
             <Label htmlFor="senior_discount_php">
               Senior discount (PHP, optional)
             </Label>
-            <Input
+            <StableInput
               id="senior_discount_php"
               name="senior_discount_php"
               type="number"
@@ -210,7 +214,7 @@ export function ServiceForm({ initial }: Props) {
             <Label htmlFor="turnaround_hours">
               Turnaround (hours, optional)
             </Label>
-            <Input
+            <StableInput
               id="turnaround_hours"
               name="turnaround_hours"
               type="number"
@@ -221,7 +225,7 @@ export function ServiceForm({ initial }: Props) {
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="kind">Kind</Label>
-            <select
+            <StableSelect
               id="kind"
               name="kind"
               defaultValue={initial?.kind ?? "lab_test"}
@@ -232,11 +236,11 @@ export function ServiceForm({ initial }: Props) {
                   {o.label}
                 </option>
               ))}
-            </select>
+            </StableSelect>
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="section">Section</Label>
-            <select
+            <StableSelect
               id="section"
               name="section"
               defaultValue={initial?.section ?? ""}
@@ -247,7 +251,7 @@ export function ServiceForm({ initial }: Props) {
                   {o.label}
                 </option>
               ))}
-            </select>
+            </StableSelect>
           </div>
         </div>
 
@@ -262,7 +266,7 @@ export function ServiceForm({ initial }: Props) {
           </label>
           <div className="grid gap-1.5">
             <Label htmlFor="send_out_lab">Send-out lab (optional)</Label>
-            <Input
+            <StableInput
               id="send_out_lab"
               name="send_out_lab"
               maxLength={160}

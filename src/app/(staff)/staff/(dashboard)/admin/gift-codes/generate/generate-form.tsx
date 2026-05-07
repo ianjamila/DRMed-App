@@ -3,8 +3,11 @@
 import { useActionState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  StableInput,
+  StableTextarea,
+} from "@/components/forms/stable-fields";
 import {
   generateBatchAction,
   type GiftCodeResult,
@@ -22,7 +25,7 @@ export function GenerateBatchForm() {
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="grid gap-1.5">
           <Label htmlFor="count">How many codes?</Label>
-          <Input
+          <StableInput
             id="count"
             name="count"
             type="number"
@@ -38,7 +41,7 @@ export function GenerateBatchForm() {
         </div>
         <div className="grid gap-1.5">
           <Label htmlFor="face_value_php">Face value (PHP)</Label>
-          <Input
+          <StableInput
             id="face_value_php"
             name="face_value_php"
             type="number"
@@ -52,7 +55,7 @@ export function GenerateBatchForm() {
 
       <div className="grid gap-1.5">
         <Label htmlFor="batch_label">Batch label (optional)</Label>
-        <Input
+        <StableInput
           id="batch_label"
           name="batch_label"
           maxLength={120}
@@ -65,7 +68,7 @@ export function GenerateBatchForm() {
 
       <div className="grid gap-1.5">
         <Label htmlFor="notes">Notes (optional)</Label>
-        <textarea
+        <StableTextarea
           id="notes"
           name="notes"
           rows={3}

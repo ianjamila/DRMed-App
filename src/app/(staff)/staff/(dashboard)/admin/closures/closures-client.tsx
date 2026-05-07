@@ -2,8 +2,8 @@
 
 import { useActionState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { StableInput } from "@/components/forms/stable-fields";
 import {
   bulkRescheduleForClosureAction,
   createClosureAction,
@@ -47,11 +47,11 @@ function NewClosureForm() {
       <form action={formAction} className="mt-4 grid gap-4 sm:grid-cols-3">
         <div className="grid gap-1.5">
           <Label htmlFor="closed_on">Date</Label>
-          <Input id="closed_on" name="closed_on" type="date" required />
+          <StableInput id="closed_on" name="closed_on" type="date" required />
         </div>
         <div className="grid gap-1.5 sm:col-span-2">
           <Label htmlFor="reason">Reason</Label>
-          <Input
+          <StableInput
             id="reason"
             name="reason"
             type="text"

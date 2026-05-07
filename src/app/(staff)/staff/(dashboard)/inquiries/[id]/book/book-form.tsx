@@ -3,8 +3,12 @@
 import { useActionState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  StableInput,
+  StableSelect,
+  StableTextarea,
+} from "@/components/forms/stable-fields";
 import {
   bookFromInquiryAction,
   type InquiryResult,
@@ -64,7 +68,7 @@ export function BookFromInquiryForm({ inquiryId, services }: Props) {
     <form action={formAction} className="grid gap-5">
       <div className="grid gap-1.5">
         <Label htmlFor="scheduled_at">Scheduled at</Label>
-        <Input
+        <StableInput
           id="scheduled_at"
           name="scheduled_at"
           type="datetime-local"
@@ -79,7 +83,7 @@ export function BookFromInquiryForm({ inquiryId, services }: Props) {
 
       <div className="grid gap-1.5">
         <Label htmlFor="service_id">Service (optional)</Label>
-        <select
+        <StableSelect
           id="service_id"
           name="service_id"
           defaultValue=""
@@ -95,12 +99,12 @@ export function BookFromInquiryForm({ inquiryId, services }: Props) {
               ))}
             </optgroup>
           ))}
-        </select>
+        </StableSelect>
       </div>
 
       <div className="grid gap-1.5">
         <Label htmlFor="notes">Notes</Label>
-        <textarea
+        <StableTextarea
           id="notes"
           name="notes"
           rows={3}

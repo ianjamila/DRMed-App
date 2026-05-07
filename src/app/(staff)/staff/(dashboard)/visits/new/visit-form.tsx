@@ -5,6 +5,10 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  StableInput,
+  StableTextarea,
+} from "@/components/forms/stable-fields";
 import { formatPhp } from "@/lib/marketing/format";
 import { createVisitAction, type CreateVisitResult } from "./actions";
 
@@ -236,7 +240,7 @@ export function VisitForm({ services, patient, hmoProviders }: Props) {
             <>
               <div className="grid gap-1">
                 <Label htmlFor="hmo_approval_date">Approval date</Label>
-                <Input
+                <StableInput
                   id="hmo_approval_date"
                   name="hmo_approval_date"
                   type="date"
@@ -244,7 +248,7 @@ export function VisitForm({ services, patient, hmoProviders }: Props) {
               </div>
               <div className="grid gap-1 sm:col-span-2">
                 <Label htmlFor="hmo_authorization_no">Authorization no.</Label>
-                <Input
+                <StableInput
                   id="hmo_authorization_no"
                   name="hmo_authorization_no"
                   maxLength={80}
@@ -517,7 +521,7 @@ export function VisitForm({ services, patient, hmoProviders }: Props) {
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="grid gap-1.5">
           <Label htmlFor="receptionist_remarks">Receptionist initials</Label>
-          <Input
+          <StableInput
             id="receptionist_remarks"
             name="receptionist_remarks"
             maxLength={40}
@@ -529,7 +533,7 @@ export function VisitForm({ services, patient, hmoProviders }: Props) {
         </div>
         <div className="grid gap-1.5">
           <Label htmlFor="notes">Visit notes (optional)</Label>
-          <textarea
+          <StableTextarea
             id="notes"
             name="notes"
             rows={3}

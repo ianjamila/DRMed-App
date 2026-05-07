@@ -3,8 +3,11 @@
 import { useActionState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  StableInput,
+  StableSelect,
+} from "@/components/forms/stable-fields";
 import {
   createStaffUserAction,
   updateStaffUserAction,
@@ -58,7 +61,7 @@ export function StaffForm({ initial }: Props) {
     <form action={formAction} className="grid gap-4">
       <div className="grid gap-1.5">
         <Label htmlFor="email">Email</Label>
-        <Input
+        <StableInput
           id="email"
           name="email"
           type="email"
@@ -76,7 +79,7 @@ export function StaffForm({ initial }: Props) {
 
       <div className="grid gap-1.5">
         <Label htmlFor="full_name">Full name</Label>
-        <Input
+        <StableInput
           id="full_name"
           name="full_name"
           required
@@ -87,7 +90,7 @@ export function StaffForm({ initial }: Props) {
 
       <div className="grid gap-1.5">
         <Label htmlFor="role">Role</Label>
-        <select
+        <StableSelect
           id="role"
           name="role"
           required
@@ -99,13 +102,13 @@ export function StaffForm({ initial }: Props) {
               {r.label}
             </option>
           ))}
-        </select>
+        </StableSelect>
       </div>
 
       {!isEdit ? (
         <div className="grid gap-1.5">
           <Label htmlFor="password">Initial password</Label>
-          <Input
+          <StableInput
             id="password"
             name="password"
             type="text"
@@ -142,7 +145,7 @@ export function StaffForm({ initial }: Props) {
 
             <div className="grid gap-1.5">
               <Label htmlFor="prc_license_kind">License kind</Label>
-              <select
+              <StableSelect
                 id="prc_license_kind"
                 name="prc_license_kind"
                 defaultValue={initial?.prc_license_kind ?? ""}
@@ -153,12 +156,12 @@ export function StaffForm({ initial }: Props) {
                 <option value="MD">MD (Physician)</option>
                 <option value="RT">RT (Rad Tech)</option>
                 <option value="pathologist">Pathologist</option>
-              </select>
+              </StableSelect>
             </div>
 
             <div className="grid gap-1.5">
               <Label htmlFor="prc_license_no">License number</Label>
-              <Input
+              <StableInput
                 id="prc_license_no"
                 name="prc_license_no"
                 defaultValue={initial?.prc_license_no ?? ""}

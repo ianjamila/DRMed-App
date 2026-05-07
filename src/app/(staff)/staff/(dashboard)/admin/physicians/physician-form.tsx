@@ -3,8 +3,11 @@
 import { useActionState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  StableInput,
+  StableTextarea,
+} from "@/components/forms/stable-fields";
 import {
   createPhysicianAction,
   updatePhysicianAction,
@@ -41,7 +44,7 @@ export function PhysicianForm({ initial }: Props) {
     <form action={formAction} className="grid gap-5">
       <div className="grid gap-1.5">
         <Label htmlFor="full_name">Full name</Label>
-        <Input
+        <StableInput
           id="full_name"
           name="full_name"
           required
@@ -54,7 +57,7 @@ export function PhysicianForm({ initial }: Props) {
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="grid gap-1.5">
           <Label htmlFor="slug">Slug</Label>
-          <Input
+          <StableInput
             id="slug"
             name="slug"
             required
@@ -69,14 +72,14 @@ export function PhysicianForm({ initial }: Props) {
         </div>
         <div className="grid gap-1.5">
           <Label htmlFor="display_order">Display order</Label>
-          <Input
+          <StableInput
             id="display_order"
             name="display_order"
             type="number"
             min="0"
             max="9999"
             step="1"
-            defaultValue={initial?.display_order ?? 0}
+            defaultValue={String(initial?.display_order ?? 0)}
           />
           <p className="text-xs text-[color:var(--color-brand-text-soft)]">
             Lower numbers show first on /physicians.
@@ -87,7 +90,7 @@ export function PhysicianForm({ initial }: Props) {
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="grid gap-1.5">
           <Label htmlFor="specialty">Specialty</Label>
-          <Input
+          <StableInput
             id="specialty"
             name="specialty"
             required
@@ -98,7 +101,7 @@ export function PhysicianForm({ initial }: Props) {
         </div>
         <div className="grid gap-1.5">
           <Label htmlFor="group_label">Group (optional)</Label>
-          <Input
+          <StableInput
             id="group_label"
             name="group_label"
             maxLength={160}
@@ -110,7 +113,7 @@ export function PhysicianForm({ initial }: Props) {
 
       <div className="grid gap-1.5">
         <Label htmlFor="bio">Bio (optional)</Label>
-        <textarea
+        <StableTextarea
           id="bio"
           name="bio"
           rows={4}
