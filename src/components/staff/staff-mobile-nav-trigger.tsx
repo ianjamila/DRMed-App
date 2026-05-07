@@ -52,7 +52,7 @@ export function StaffMobileNavTrigger({ role, email, fullName }: Props) {
         aria-label="Open menu"
         aria-expanded={open}
         onClick={() => setOpen(true)}
-        className="grid h-9 w-9 place-items-center rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white text-[color:var(--color-brand-navy)] transition-colors hover:border-[color:var(--color-brand-cyan)]"
+        className="grid h-11 w-11 place-items-center rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white text-[color:var(--color-brand-navy)] transition-colors hover:border-[color:var(--color-brand-cyan)]"
       >
         <HamburgerIcon />
       </button>
@@ -71,7 +71,7 @@ export function StaffMobileNavTrigger({ role, email, fullName }: Props) {
             type="button"
             aria-label="Close menu"
             onClick={close}
-            className="grid h-9 w-9 place-items-center rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white text-[color:var(--color-brand-navy)] transition-colors hover:border-[color:var(--color-brand-cyan)]"
+            className="grid h-11 w-11 place-items-center rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white text-[color:var(--color-brand-navy)] transition-colors hover:border-[color:var(--color-brand-cyan)]"
           >
             <CloseIcon />
           </button>

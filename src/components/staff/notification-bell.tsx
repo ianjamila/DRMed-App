@@ -265,7 +265,7 @@ export function NotificationBell({ role }: Props) {
       <button
         type="button"
         onClick={handleToggle}
-        className="relative grid h-9 w-9 place-items-center rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white text-[color:var(--color-brand-navy)] transition-colors hover:border-[color:var(--color-brand-cyan)]"
+        className="relative grid h-11 w-11 place-items-center rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white text-[color:var(--color-brand-navy)] transition-colors hover:border-[color:var(--color-brand-cyan)]"
         aria-label={`Notifications${unread > 0 ? ` (${unread} unread)` : ""}`}
       >
         <BellIcon />
