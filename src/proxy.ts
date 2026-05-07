@@ -63,7 +63,9 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Run on every path except Next.js internals and static asset extensions.
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|avif|ico)$).*)",
+    // Run on every path except Next.js internals, static asset extensions,
+    // and the Sentry tunnel route (high-volume POSTs that would otherwise
+    // pay the cost of a full Supabase session refresh).
+    "/((?!_next/static|_next/image|favicon.ico|monitoring|.*\\.(?:svg|png|jpg|jpeg|gif|webp|avif|ico)$).*)",
   ],
 };

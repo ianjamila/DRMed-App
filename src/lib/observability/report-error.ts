@@ -1,4 +1,5 @@
 import "server-only";
+import * as Sentry from "@sentry/nextjs";
 import { audit } from "@/lib/audit/log";
 
 interface ReportErrorInput {
@@ -7,11 +8,10 @@ interface ReportErrorInput {
   metadata?: Record<string, unknown>;
 }
 
-// Minimal error reporter. Logs to server stdout always; in production also
-// drops a low-severity row into audit_log so admins can grep for crashes
-// from /staff/audit. Designed to be swappable for Sentry without changing
-// call sites: when @sentry/nextjs is wired up, replace the body of this
-// function with `Sentry.captureException(args.error, ...)`.
+// Server-side error reporter. Always logs to stdout (visible in Vercel
+// runtime logs). In production, also forwards to Sentry (with PII scrubbing
+// applied via beforeSend) and writes a low-severity audit_log row so admins
+// can grep for crashes from /staff/audit without leaving the app.
 export async function reportError({
   scope,
   error,
@@ -22,6 +22,11 @@ export async function reportError({
   const stack = error instanceof Error ? error.stack : undefined;
 
   console.error(`[${scope}] ${message}`, { metadata, stack });
+
+  Sentry.captureException(error, {
+    tags: { scope },
+    extra: metadata,
+  });
 
   if (process.env.NODE_ENV !== "production") return;
 
@@ -37,7 +42,6 @@ export async function reportError({
       },
     });
   } catch (auditErr) {
-    // Don't let observability break the app.
     console.error("reportError audit failed", auditErr);
   }
 }
