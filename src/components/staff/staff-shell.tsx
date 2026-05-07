@@ -93,7 +93,7 @@ export function StaffShell({ session, children }: Props) {
           </div>
         </header>
 
-        <main className="flex-1 overflow-x-hidden">{children}</main>
+        <main className="min-w-0 flex-1 overflow-x-auto">{children}</main>
       </div>
     </div>
   );
