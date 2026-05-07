@@ -86,8 +86,8 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         </nav>
       </header>
 
-      <div className="overflow-hidden rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
-        <table className="w-full text-sm">
+      <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+        <table className="w-full min-w-[760px] text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
               <th className="px-4 py-3">Requested</th>

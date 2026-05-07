@@ -61,8 +61,8 @@ export function ServiceHistoryPanel({ serviceId }: Props) {
   }
 
   return (
-    <div className="overflow-hidden rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white">
-      <table className="w-full text-xs">
+    <div className="overflow-x-auto rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white">
+      <table className="w-full min-w-[560px] text-xs">
         <thead className="bg-[color:var(--color-brand-bg)] text-left font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
           <tr>
             <th className="px-3 py-2">When</th>

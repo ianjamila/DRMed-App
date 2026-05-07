@@ -39,10 +39,10 @@ export function PatientPortalLauncher({ triggerClassName }: Props) {
             type="button"
             className={
               triggerClassName ??
-              "rounded-md border border-[color:var(--color-brand-navy)] px-3 py-1.5 text-sm font-semibold text-[color:var(--color-brand-navy)] transition-colors hover:bg-[color:var(--color-brand-navy)] hover:text-white"
+              "whitespace-nowrap rounded-md border border-[color:var(--color-brand-navy)] px-3 py-1.5 text-xs font-semibold text-[color:var(--color-brand-navy)] transition-colors hover:bg-[color:var(--color-brand-navy)] hover:text-white sm:text-sm"
             }
           >
-            Patient Portal
+            <span className="hidden sm:inline">Patient </span>Portal
           </button>
         }
       />

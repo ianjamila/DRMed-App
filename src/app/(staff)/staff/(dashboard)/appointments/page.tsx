@@ -252,8 +252,8 @@ function Section({
       <h2 className="mb-3 font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
         {title}
       </h2>
-      <div className="overflow-hidden rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
-        <table className="w-full text-sm">
+      <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+        <table className="w-full min-w-[820px] text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
               <th className="px-4 py-3">Requested</th>

@@ -92,8 +92,8 @@ export default async function EditServicePage({ params }: Props) {
           Every price change is recorded automatically. Showing the most recent{" "}
           {HISTORY_LIMIT}.
         </p>
-        <div className="mt-3 overflow-hidden rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
-          <table className="w-full text-sm">
+        <div className="mt-3 overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+          <table className="w-full min-w-[560px] text-sm">
             <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
               <tr>
                 <th className="px-4 py-3">When</th>
