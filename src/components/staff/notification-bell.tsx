@@ -97,7 +97,12 @@ export function NotificationBell({ role }: Props) {
     )
       return;
 
-    const channel = supabase.channel("staff-notifications");
+    // Unique per-mount name. Reusing "staff-notifications" hits a Supabase
+    // singleton: a re-mount returns the already-subscribed channel and
+    // .on() throws, looping React commits until the tab crashes.
+    const channel = supabase.channel(
+      `staff-notifications-${Math.random().toString(36).slice(2)}`,
+    );
 
     if (subscribesToAppointments) {
       channel.on(

@@ -44,7 +44,12 @@ export function RealtimeRefresher({
       }, debounceMs);
     };
 
-    const channel = supabase.channel(channelName);
+    // Suffix the channel with a per-mount random id. Without it, a
+    // re-mount returns Supabase's existing subscribed singleton and
+    // .on() throws — same crash as notification-bell.
+    const channel = supabase.channel(
+      `${channelName}-${Math.random().toString(36).slice(2)}`,
+    );
     for (const sub of subscriptions) {
       channel.on(
         "postgres_changes",
