@@ -16,10 +16,12 @@ export interface StaffSession {
     | "xray_technician";
 }
 
-// Call at the top of any protected /staff/* server component.
-// Verifies (1) Supabase auth user exists, (2) an active staff_profile row exists.
-// On failure: signs the user out and redirects to /staff/login.
-export async function requireActiveStaff(): Promise<StaffSession> {
+// Verifies (1) Supabase auth user exists, (2) an active staff_profile row
+// exists. Does NOT enforce MFA. Use this from the /staff/mfa page itself
+// (else the MFA gate would redirect a user back to /staff/mfa forever)
+// and nowhere else — every other protected staff page should use
+// requireActiveStaff so the MFA gate fires.
+export async function requireSignedInStaff(): Promise<StaffSession> {
   const supabase = await createClient();
   const {
     data: { user },
@@ -55,4 +57,27 @@ export async function requireActiveStaff(): Promise<StaffSession> {
     full_name: profile.full_name,
     role: profile.role as StaffSession["role"],
   };
+}
+
+// Call at the top of any protected /staff/* server component.
+// Verifies basic auth (delegated to requireSignedInStaff) AND enforces
+// MFA: admin must reach aal2 (TOTP); other roles only need aal2 if they
+// have a verified factor enrolled (optional MFA).
+export async function requireActiveStaff(): Promise<StaffSession> {
+  const session = await requireSignedInStaff();
+  const supabase = await createClient();
+  const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+
+  if (!aal) return session;
+
+  const needsMfa =
+    session.role === "admin"
+      ? aal.currentLevel !== "aal2"
+      : aal.nextLevel === "aal2" && aal.currentLevel !== "aal2";
+
+  if (needsMfa) {
+    redirect("/staff/mfa");
+  }
+
+  return session;
 }
