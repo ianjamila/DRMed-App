@@ -5,6 +5,7 @@ import type { StaffSession } from "@/lib/auth/require-staff";
 import { StaffNav } from "./staff-nav";
 import { StaffQuoteShortcut } from "./staff-quote-shortcut";
 import { NotificationBell } from "./notification-bell";
+import { StaffMobileNavTrigger } from "./staff-mobile-nav-trigger";
 
 const QUOTE_ROLES: ReadonlyArray<StaffSession["role"]> = [
   "reception",
@@ -69,13 +70,21 @@ export function StaffShell({ session, children }: Props) {
       {/* Main */}
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Mobile topbar — sidebar is hidden on small screens */}
-        <header className="flex items-center justify-between border-b border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-3 md:hidden print:hidden">
-          <Link
-            href="/staff"
-            className="font-[family-name:var(--font-heading)] text-base font-extrabold text-[color:var(--color-brand-navy)]"
-          >
-            drmed<span className="text-[color:var(--color-brand-cyan)]">.staff</span>
-          </Link>
+        <header className="flex items-center justify-between gap-2 border-b border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-3 md:hidden print:hidden">
+          <div className="flex items-center gap-2">
+            <StaffMobileNavTrigger
+              role={session.role}
+              email={session.email}
+              fullName={session.full_name}
+            />
+            <Link
+              href="/staff"
+              className="font-[family-name:var(--font-heading)] text-base font-extrabold text-[color:var(--color-brand-navy)]"
+            >
+              drmed
+              <span className="text-[color:var(--color-brand-cyan)]">.staff</span>
+            </Link>
+          </div>
           <div className="flex items-center gap-2">
             <span className="rounded-md bg-[color:var(--color-brand-bg)] px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)]">
               {ROLE_LABEL[session.role]}
