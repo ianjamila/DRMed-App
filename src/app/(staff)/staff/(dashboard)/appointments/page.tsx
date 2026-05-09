@@ -34,6 +34,7 @@ interface ApptRow {
   patient_phone: string | null;
   service_name: string | null;
   service_code: string | null;
+  physician_name: string | null;
   booking_group_id: string | null;
   home_service_requested: boolean;
 }
@@ -51,7 +52,8 @@ const APPT_SELECT = `
   id, scheduled_at, created_at, status, notes,
   walk_in_name, walk_in_phone, booking_group_id, home_service_requested,
   patients ( id, drm_id, first_name, last_name, phone ),
-  services ( name, code )
+  services ( name, code ),
+  physicians ( full_name )
 `;
 
 function rowFrom(a: {
@@ -84,9 +86,14 @@ function rowFrom(a: {
     | { name: string; code: string }
     | Array<{ name: string; code: string }>
     | null;
+  physicians?:
+    | { full_name: string }
+    | Array<{ full_name: string }>
+    | null;
 }): ApptRow {
   const p = Array.isArray(a.patients) ? a.patients[0] : a.patients;
   const s = Array.isArray(a.services) ? a.services[0] : a.services;
+  const ph = Array.isArray(a.physicians) ? a.physicians[0] : a.physicians;
   return {
     id: a.id,
     scheduled_at: a.scheduled_at,
@@ -101,6 +108,7 @@ function rowFrom(a: {
     patient_phone: p?.phone ?? null,
     service_name: s?.name ?? null,
     service_code: s?.code ?? null,
+    physician_name: ph?.full_name ?? null,
     booking_group_id: a.booking_group_id,
     home_service_requested: a.home_service_requested,
   };
@@ -351,6 +359,11 @@ function GroupRow({
             <p className="font-mono text-xs text-[color:var(--color-brand-text-soft)]">
               {r.service_code ?? ""}
             </p>
+            {r.physician_name ? (
+              <p className="mt-1 text-xs text-[color:var(--color-brand-text-mid)]">
+                with <span className="font-semibold">{r.physician_name}</span>
+              </p>
+            ) : null}
           </>
         ) : (
           <ul className="space-y-1">
@@ -365,6 +378,11 @@ function GroupRow({
                 <span className="ml-2 font-mono text-xs text-[color:var(--color-brand-text-soft)]">
                   {row.service_code ?? ""}
                 </span>
+                {row.physician_name ? (
+                  <span className="ml-2 text-xs text-[color:var(--color-brand-text-mid)]">
+                    · {row.physician_name}
+                  </span>
+                ) : null}
               </li>
             ))}
           </ul>
