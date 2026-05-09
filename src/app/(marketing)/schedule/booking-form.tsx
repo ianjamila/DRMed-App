@@ -107,7 +107,7 @@ const BRANCH_LABELS: Record<Branch, string> = {
 
 const BRANCH_BLURBS: Record<Branch, string> = {
   diagnostic_package:
-    "Pre-built bundles like CBC + Lipid + FBS. Reception will call to confirm a date that works for you.",
+    "Pre-built bundles like CBC + Lipid + FBS. Just walk in during operating hours — no scheduling needed.",
   lab_request:
     "Individual lab tests, X-ray, ECG, and ultrasounds. Pick one or more — only ultrasound needs a specific time slot.",
   doctor_appointment:
@@ -191,12 +191,18 @@ export function BookingForm({
     [services],
   );
 
-  // Each specialty (except `general`) maps to exactly one consultation
-  // service via services.specialty_code. For non-general picks we hide the
-  // dropdown and auto-select the matching consultation; for `general` we
-  // show all consultations so the patient can pick.
+  // Each specialty (except `general` and `all`) maps to exactly one
+  // consultation service via services.specialty_code. For specific picks we
+  // hide the dropdown and auto-select the matching consultation; for
+  // `general` / `all` we show every consultation so the patient can pick.
   const consultationServices = useMemo(() => {
-    if (!specialtyCode || specialtyCode === "general") return allConsultations;
+    if (
+      !specialtyCode ||
+      specialtyCode === "general" ||
+      specialtyCode === "all"
+    ) {
+      return allConsultations;
+    }
     return allConsultations.filter((s) => s.specialty_code === specialtyCode);
   }, [allConsultations, specialtyCode]);
 
@@ -204,6 +210,7 @@ export function BookingForm({
     branch === "doctor_appointment" &&
     specialtyCode !== "" &&
     specialtyCode !== "general" &&
+    specialtyCode !== "all" &&
     consultationServices.length === 1;
   const autoConsultService = isSpecialtyAutoConsult
     ? consultationServices[0]!
@@ -211,6 +218,7 @@ export function BookingForm({
 
   const physiciansForSpecialty = useMemo(() => {
     if (!specialtyCode) return [];
+    if (specialtyCode === "all") return physicians;
     return physicians.filter((p) =>
       p.specialty_codes.includes(specialtyCode),
     );
@@ -218,6 +226,7 @@ export function BookingForm({
 
   const byAppointmentForSpecialty = useMemo(() => {
     if (!specialtyCode) return [];
+    if (specialtyCode === "all") return byAppointmentPhysicians;
     return byAppointmentPhysicians.filter((p) =>
       p.specialty_codes.includes(specialtyCode),
     );
@@ -559,6 +568,7 @@ export function BookingForm({
               className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
             >
               <option value="">— Pick a specialty —</option>
+              <option value="all">All specialties</option>
               {specialties.map((s) => (
                 <option key={s.code} value={s.code}>
                   {s.label}
@@ -620,9 +630,6 @@ export function BookingForm({
                   <div className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] px-3 py-2 text-sm">
                     <span className="font-semibold text-[color:var(--color-brand-navy)]">
                       {autoConsultService.name}
-                    </span>{" "}
-                    <span className="text-[color:var(--color-brand-text-soft)]">
-                      ({formatPhp(autoConsultService.price_php)})
                     </span>
                   </div>
                 </div>
@@ -640,7 +647,7 @@ export function BookingForm({
                     <option value="">— Pick a consultation —</option>
                     {consultationServices.map((s) => (
                       <option key={s.id} value={s.id}>
-                        {s.name} ({formatPhp(s.price_php)})
+                        {s.name}
                       </option>
                     ))}
                   </select>
@@ -976,27 +983,33 @@ function ServiceMultiPicker({
                   className="mt-1"
                 />
                 <div className="flex-1 min-w-0">
-                  <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <p className="font-semibold text-[color:var(--color-brand-navy)]">
-                      {s.name}
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold break-words text-[color:var(--color-brand-navy)]">
+                        {s.name}
+                      </p>
+                      <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+                        {s.code}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 flex-col items-end gap-1">
+                      {s.kind === "lab_package" ? (
+                        <span className="text-xs font-semibold text-[color:var(--color-brand-cyan)]">
+                          {formatPhp(s.price_php)}
+                        </span>
+                      ) : null}
                       {s.fasting_required ? (
-                        <span className="ml-2 rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-900">
+                        <span className="rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-900">
                           Fasting
                         </span>
                       ) : null}
                       {s.requires_time_slot ? (
-                        <span className="ml-1 rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-sky-900">
+                        <span className="rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-sky-900">
                           Time slot
                         </span>
                       ) : null}
-                    </p>
-                    <span className="text-xs font-semibold text-[color:var(--color-brand-cyan)]">
-                      {formatPhp(s.price_php)}
-                    </span>
+                    </div>
                   </div>
-                  <p className="text-xs text-[color:var(--color-brand-text-soft)]">
-                    {s.code}
-                  </p>
                   {s.description ? (
                     <button
                       type="button"

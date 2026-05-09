@@ -409,15 +409,19 @@ export async function submitBookingAction(
 
   // Decide whether this booking has a real time or is pending callback.
   // Rule per branch:
-  //   diagnostic_package — always pending_callback (no slot required)
-  //   home_service       — always pending_callback
+  //   diagnostic_package — confirmed walk-in (no slot, no callback) — patient
+  //                        shows up during operating hours, like the lab walk-in path
+  //   home_service       — always pending_callback (reception coordinates the visit)
   //   lab_request        — pending_callback unless any picked service has
   //                        requires_time_slot=true (then a slot is required)
   //   doctor_appointment — depends on the picked physician (resolved below)
   let pendingCallback: boolean;
   let scheduledAtIso: string | null;
 
-  if (data.branch === "diagnostic_package" || data.branch === "home_service") {
+  if (data.branch === "diagnostic_package") {
+    pendingCallback = false;
+    scheduledAtIso = null;
+  } else if (data.branch === "home_service") {
     pendingCallback = true;
     scheduledAtIso = null;
   } else if (data.branch === "lab_request") {
