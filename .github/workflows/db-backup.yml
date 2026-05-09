@@ -1,0 +1,66 @@
+name: Daily DB backup
+
+on:
+  schedule:
+    # 18:00 UTC = 02:00 Asia/Manila — quiet hours, after the retention cron at 17:30 UTC.
+    - cron: "0 18 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  backup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install age (encryption)
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends age
+
+      - name: Install npm deps
+        run: npm ci --no-audit --no-fund
+
+      - name: Compute filename
+        id: name
+        run: |
+          stamp=$(date -u +"%Y-%m-%dT%H-%M-%SZ")
+          echo "stamp=$stamp" >> "$GITHUB_OUTPUT"
+          echo "raw=/tmp/drmed-$stamp.dump" >> "$GITHUB_OUTPUT"
+          echo "enc=/tmp/drmed-$stamp.dump.age" >> "$GITHUB_OUTPUT"
+          echo "blob=db-backups/drmed-$stamp.dump.age" >> "$GITHUB_OUTPUT"
+
+      - name: pg_dump (custom format, compressed) via postgres:17 docker
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          docker run --rm \
+            -e PGCONNECT_TIMEOUT=20 \
+            -v /tmp:/tmp \
+            postgres:17 \
+            pg_dump "$SUPABASE_DB_URL" -Fc -Z 9 -f "${{ steps.name.outputs.raw }}"
+          ls -lh "${{ steps.name.outputs.raw }}"
+
+      - name: Encrypt with age (recipient = AGE public key)
+        env:
+          BACKUP_AGE_RECIPIENT: ${{ secrets.BACKUP_AGE_RECIPIENT }}
+        run: |
+          if [ -z "$BACKUP_AGE_RECIPIENT" ]; then
+            echo "BACKUP_AGE_RECIPIENT secret is not set — refusing to upload an unencrypted clinical-data dump." >&2
+            exit 1
+          fi
+          age -r "$BACKUP_AGE_RECIPIENT" -o "${{ steps.name.outputs.enc }}" "${{ steps.name.outputs.raw }}"
+          rm -f "${{ steps.name.outputs.raw }}"
+          ls -lh "${{ steps.name.outputs.enc }}"
+
+      - name: Upload to Vercel Blob + sweep old backups
+        env:
+          BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
+          BLOB_PATHNAME: ${{ steps.name.outputs.blob }}
+          BLOB_LOCAL_PATH: ${{ steps.name.outputs.enc }}
+          BLOB_RETENTION_DAYS: "30"
+          BLOB_PREFIX: "db-backups/"
+        run: node scripts/db-backup.mjs
