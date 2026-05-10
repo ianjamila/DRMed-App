@@ -6,7 +6,8 @@ export type RateLimitBucket =
   | "public_booking"
   | "contact_form"
   | "newsletter_signup"
-  | "patient_lookup";
+  | "patient_lookup"
+  | "staff_login";
 
 export interface RateLimitConfig {
   bucket: RateLimitBucket;
@@ -82,4 +83,10 @@ export const RATE_LIMITS: Record<
   // because a successful response confirms the (DRM-ID, last_name)
   // pair — a brute-force enumeration risk we don't otherwise have.
   patient_lookup: { windowSec: 15 * 60, max: 8 },
+  // Staff sign-in. Supabase Auth has its own per-IP throttle but doesn't
+  // expose limits we control or audit. We layer our own: callers check
+  // both per-IP (credential stuffing) and per-email (targeted brute
+  // force) buckets before hitting signInWithPassword. 10/15min is loose
+  // enough that legitimate typo-then-retry won't trigger it.
+  staff_login: { windowSec: 15 * 60, max: 10 },
 };
