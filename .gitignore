@@ -45,6 +45,9 @@ supabase/.branches/
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
 
+# brainstorming companion mockups
+.superpowers/
+
 # playwright MCP temp dir
 .playwright-mcp/
 
