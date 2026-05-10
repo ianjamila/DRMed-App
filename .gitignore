@@ -51,6 +51,7 @@ supabase/.branches/
 # ad-hoc screenshots
 audit-*.png
 verify-*.png
+smoke-*.png
 
 # firecrawl scrape cache
 .firecrawl/
