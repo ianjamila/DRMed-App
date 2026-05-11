@@ -26,7 +26,8 @@ Build a double-entry accounting system inside drmed.ph that becomes the single s
 | Go-live target | **ASAP** — prioritise 12.1 + 12.2 + 12.3 + 12.A so the AR audit lands ~4 weeks in. | Real AR balance is the user's most urgent pain. |
 | VAT / Withholding tax | **Deferred to Future Phase 1.** Compensation WT capture lands in 12.6 because PH law requires withholding; only the BIR-form filing is deferred. | Accountant has not yet classified per-service VAT treatment (lab tests vs doctor consults vs procedures vs send-out). Schema stays extensible so VAT/WT accounts can be added without migration pain. |
 | Payroll | **Included** as sub-project 12.6. ZKTeco DTR CSV upload → attendance → semi-monthly payroll → payslip PDF with email + print options. 5 employees. Cash payout default + bank transfer option. | User explicitly added during brainstorming. |
-| Doctor PF disbursement | Tracked separately in 12.5 (not part of employee payroll) | Doctors are not employees; they have their own PF lifecycle. |
+| Doctor compensation model | **Three types — `pf` / `rent` / `none`** — added on the physician profile. 12.5 covers all three: existing PF accumulation/disbursement for PF doctors, new rent billing tracker for rent-paying doctors, no doctor-side posting for "none" (visiting consultants, observers, owners). | Some doctors pay the clinic monthly rent for facility use instead of taking a PF split; the Sheet already records doctor rent payments per day. Both directions must be tracked. |
+| Doctor PF disbursement | Tracked in 12.5 alongside rent billing (not part of employee payroll) | Doctors are not employees; they have their own compensation lifecycle (PF or rent). |
 
 ## Sub-project map
 
@@ -36,7 +37,7 @@ Build a double-entry accounting system inside drmed.ph that becomes the single s
 12.3  HMO AR subledger + unbilled / stuck-claim detection
 12.A  HMO history import (2023 → present, single workbook)    ← AR audit lands here, ~4 weeks in
 12.4  Operating-expense / AP subledger
-12.5  COGS + Doctor-PF subledger
+12.5  COGS + Doctor compensation subledger (PF / rent / none + rent billing tracker)
 12.6  Employees + Attendance (ZKTeco DTR) + Payroll + Payslip PDF
 12.B  Operational/expense history import (incl. 2023+ payroll lines)
 12.7  Period close (quarterly) + accruals + manual JE
@@ -75,7 +76,7 @@ Build a double-entry accounting system inside drmed.ph that becomes the single s
 ## Sequencing notes
 
 - **12.A** (HMO history import) runs *after* 12.3 — needs the subledger schema in place to import into. It surfaces the unbilled / stuck-claim findings via 12.3's reports.
-- **12.B** runs *after* 12.4 + 12.5 + 12.6 — needs all operational-side subledgers (AP, COGS, doctor PF, payroll) to ingest into.
+- **12.B** runs *after* 12.4 + 12.5 + 12.6 — needs all operational-side subledgers (AP, COGS, doctor PF + rent, payroll) to ingest into. Historical doctor rent payments from the Sheet's per-day cells (e.g., "DR ALVAREZ ₱100") land here.
 - **12.7** runs *after* 12.B — has to operate over a complete-data GL.
 - **12.8** runs *after* 12.7 — period-over-period only meaningful with closed periods.
 
