@@ -1,9 +1,9 @@
 -- =============================================================================
 -- 0028_gl_foundation_smoke.sql
 -- =============================================================================
--- DB integrity smoke test for migration 0028. Runs inside BEGIN/ROLLBACK so it
--- leaves no state behind. Asserts each invariant with raise notice on success
--- and explicit raise exception on unexpected behavior.
+-- DB integrity smoke test for migrations 0028 + 0029. Runs inside
+-- BEGIN/ROLLBACK so it leaves no state behind. Asserts each invariant with
+-- raise notice on success and explicit raise exception on unexpected behavior.
 --
 -- Run with:
 --   psql "$SUPABASE_DB_URL" -f supabase/tests/0028_gl_foundation_smoke.sql
@@ -73,21 +73,32 @@ begin
   end;
 
   -- 5) Reversal JE in an open period referencing a closed-period JE succeeds.
-  --    First post the original in an open period (Apr 2026 still open).
+  --    Original is dated 2026-02-10 (Q1 2026). We reopen Q1 briefly to post it,
+  --    then re-close Q1 so it becomes a closed-period entry. The reversal is
+  --    then posted to 2026-05-01 (Q2, open), proving the exemption works.
+  --    Reopen Q1 temporarily to post the original.
+  update public.accounting_periods
+    set status = 'open', closed_at = null, closed_by = null
+    where fiscal_year = 2026 and fiscal_quarter = 1;
   insert into public.journal_entries (posting_date, description, status, source_kind)
-    values ('2026-04-15', 'smoke: original for reversal', 'posted', 'manual')
+    values ('2026-02-10', 'smoke: original for reversal (Q1 closed-period)', 'posted', 'manual')
     returning id into v_je_id;
   insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
     values (v_je_id, v_asset_id, 500.00, 0, 1),
            (v_je_id, v_liab_id, 0, 500.00, 2);
-  --    Now post a reversal in a still-open period.
+  --    Re-close Q1 so the original now lives in a closed period.
+  update public.accounting_periods
+    set status = 'closed', closed_at = now()
+    where fiscal_year = 2026 and fiscal_quarter = 1;
+  --    Now post a reversal to May 2026 (Q2, still open) referencing the
+  --    closed-period entry. This must succeed.
   insert into public.journal_entries (posting_date, description, status, source_kind, reverses)
-    values ('2026-05-01', 'smoke: reversal', 'posted', 'reversal', v_je_id)
+    values ('2026-05-01', 'smoke: reversal of closed-period entry', 'posted', 'reversal', v_je_id)
     returning id into v_je_rev_id;
   insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
     values (v_je_rev_id, v_asset_id, 0, 500.00, 1),
            (v_je_rev_id, v_liab_id, 500.00, 0, 2);
-  raise notice 'PASS: reversal in open period succeeded';
+  raise notice 'PASS: reversal in open period (May 2026) of a closed-period entry (Feb 2026) succeeded';
 
   -- 6) Draft entries with unbalanced lines are OK.
   insert into public.journal_entries (posting_date, description, status, source_kind)
@@ -106,14 +117,38 @@ begin
       raise notice 'PASS: draft→posted on unbalanced JE rejected with P0001';
   end;
 
-  -- 8) Entry numbers auto-assign with year reset.
-  insert into public.journal_entries (posting_date, description, status, source_kind)
-    values ('2026-07-01', 'smoke: auto-number 1', 'posted', 'manual')
-    returning id into v_je_id;
-  insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
-    values (v_je_id, v_asset_id, 1.00, 0, 1),
-           (v_je_id, v_liab_id, 0, 1.00, 2);
-  raise notice 'PASS: entry_number auto-assigned';
+  -- 8) Entry numbers auto-assign with correct format, and the counter resets
+  --    per year (a 2027 insert must produce JE-2027-0001).
+  declare
+    v_en text;
+    v_je_2027_id uuid;
+    v_en_2027 text;
+  begin
+    insert into public.journal_entries (posting_date, description, status, source_kind)
+      values ('2026-07-01', 'smoke: auto-number 2026', 'posted', 'manual')
+      returning id into v_je_id;
+    insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
+      values (v_je_id, v_asset_id, 1.00, 0, 1),
+             (v_je_id, v_liab_id, 0, 1.00, 2);
+    select entry_number into v_en from public.journal_entries where id = v_je_id;
+    if v_en not like 'JE-2026-%' then
+      raise exception 'FAIL: entry_number % does not match JE-2026-NNNN format', v_en;
+    end if;
+    raise notice 'PASS: 2026 entry_number auto-assigned with correct format: %', v_en;
+
+    -- Insert a JE dated 2027 and verify the counter resets to 0001.
+    insert into public.journal_entries (posting_date, description, status, source_kind)
+      values ('2027-01-01', 'smoke: auto-number 2027 reset', 'posted', 'manual')
+      returning id into v_je_2027_id;
+    insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
+      values (v_je_2027_id, v_asset_id, 2.00, 0, 1),
+             (v_je_2027_id, v_liab_id, 0, 2.00, 2);
+    select entry_number into v_en_2027 from public.journal_entries where id = v_je_2027_id;
+    if v_en_2027 <> 'JE-2027-0001' then
+      raise exception 'FAIL: first 2027 entry_number should be JE-2027-0001, got %', v_en_2027;
+    end if;
+    raise notice 'PASS: 2027 entry_number resets to JE-2027-0001';
+  end;
 
   -- 9) period_status_for() works for known + unknown.
   if public.period_status_for('2026-02-15') <> 'closed' then
@@ -129,8 +164,8 @@ begin
 
   -- 10) coa_account_has_open_period_postings() is true when the account has
   --     posted lines in an open period.
-  --     v_asset_id has lines from steps 1, 5, and 8 — all posted; some in
-  --     open periods (2026-06, 2026-04, 2026-05, 2026-07).
+  --     v_asset_id has lines from steps 1, 5-reversal, 8, and 9 — all posted;
+  --     some in open periods (2026-05, 2026-06, 2026-07, 2027-01).
   if not public.coa_account_has_open_period_postings(v_asset_id) then
     raise exception 'FAIL: v_asset_id should have open-period postings';
   end if;
@@ -150,6 +185,15 @@ begin
     update public.accounting_periods
       set status = 'open', closed_at = null, closed_by = null
       where fiscal_year = 2026 and fiscal_quarter = 1;
+    -- Assert the reopen was atomic: all three Q1 months must now be open.
+    select count(*) into v_count
+      from public.accounting_periods
+      where fiscal_year = 2026 and fiscal_quarter = 1 and status = 'open';
+    if v_count <> 3 then
+      raise exception 'FAIL: reopen should have flipped all 3 Q1 months to open, got %', v_count;
+    end if;
+    raise notice 'PASS: Q1 2026 reopen is atomic (3 months flipped to open)';
+
     insert into public.journal_entries (posting_date, description, status, source_kind)
       values ('2026-02-10', 'smoke: closed-period-only line', 'posted', 'manual')
       returning id into v_closed_je_id;
@@ -163,6 +207,46 @@ begin
       raise exception 'FAIL: account with only closed-period lines should return false';
     end if;
     raise notice 'PASS: coa_account_has_open_period_postings false for closed-period-only account';
+  end;
+
+  -- 12) Zero-line deletion guard (P0003): deleting all lines of a posted JE
+  --     must raise P0003, not silently pass (0=0 false-positive).
+  declare
+    v_p3_je_id uuid;
+  begin
+    -- Create a balanced posted JE in an open period.
+    insert into public.journal_entries (posting_date, description, status, source_kind)
+      values ('2026-06-25', 'smoke: zero-line guard setup', 'posted', 'manual')
+      returning id into v_p3_je_id;
+    insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
+      values (v_p3_je_id, v_asset_id, 100.00, 0, 1),
+             (v_p3_je_id, v_liab_id, 0, 100.00, 2);
+    -- Attempt to delete ALL lines in one statement; must raise P0003.
+    begin
+      delete from public.journal_lines where entry_id = v_p3_je_id;
+      raise exception 'FAIL: deleting all lines of a posted JE was accepted (should have raised P0003)';
+    exception
+      when sqlstate 'P0003' then
+        raise notice 'PASS: deleting all lines of a posted JE raised P0003';
+    end;
+  end;
+
+  -- 12b) Zero-line guard on status flip (P0003): flipping draft→posted with
+  --      zero lines must also raise P0003.
+  declare
+    v_empty_je_id uuid;
+  begin
+    insert into public.journal_entries (posting_date, description, status, source_kind)
+      values ('2026-06-26', 'smoke: zero-line status flip guard', 'draft', 'manual')
+      returning id into v_empty_je_id;
+    -- No lines inserted — attempt to post.
+    begin
+      update public.journal_entries set status = 'posted' where id = v_empty_je_id;
+      raise exception 'FAIL: posting a zero-line JE was accepted (should have raised P0003)';
+    exception
+      when sqlstate 'P0003' then
+        raise notice 'PASS: posting a zero-line JE raised P0003';
+    end;
   end;
 
   raise notice 'ALL SMOKE TESTS PASSED';
