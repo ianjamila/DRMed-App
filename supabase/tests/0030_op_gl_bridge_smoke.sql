@@ -333,6 +333,74 @@ begin
   end if;
   raise notice 'PASS 18: partial unique index correctly allows re-release';
 
+  -- ---- New assertions added after 0031 fix-forward -------------------------
+
+  -- 19. home_service release → revenue credits 4100 (not 9999 Suspense).
+  declare
+    v_service_home_id uuid;
+    v_test_req_home_id uuid;
+  begin
+    insert into public.services (code, name, kind, price_php)
+      values ('SMOKE_HOME', 'Smoke Home Service', 'home_service', 600)
+      returning id into v_service_home_id;
+
+    insert into public.test_requests (
+      visit_id, service_id, base_price_php, final_price_php, status, requested_by, requested_at
+    )
+    values (v_visit_id, v_service_home_id, 600, 600, 'ready_for_release', v_actor_id, now())
+    returning id into v_test_req_home_id;
+
+    update public.test_requests
+       set status = 'released', released_at = now()
+     where id = v_test_req_home_id;
+
+    perform 1
+      from public.journal_lines jl
+      join public.journal_entries je on je.id = jl.entry_id
+      join public.chart_of_accounts coa on coa.id = jl.account_id
+      where je.source_kind = 'test_request'
+        and je.source_id = v_test_req_home_id
+        and coa.code = '4100'
+        and jl.credit_php = 600;
+    if not found then
+      raise exception 'FAIL test 19: home_service release did not credit 4100 (check for 9999 Suspense routing)';
+    end if;
+    raise notice 'PASS 19: home_service release routed to 4100 revenue (not Suspense)';
+  end;
+
+  -- 20. vaccine release → revenue credits 4100 (not 9999 Suspense).
+  declare
+    v_service_vax_id uuid;
+    v_test_req_vax_id uuid;
+  begin
+    insert into public.services (code, name, kind, price_php)
+      values ('SMOKE_VAX', 'Smoke Vaccine', 'vaccine', 400)
+      returning id into v_service_vax_id;
+
+    insert into public.test_requests (
+      visit_id, service_id, base_price_php, final_price_php, status, requested_by, requested_at
+    )
+    values (v_visit_id, v_service_vax_id, 400, 400, 'ready_for_release', v_actor_id, now())
+    returning id into v_test_req_vax_id;
+
+    update public.test_requests
+       set status = 'released', released_at = now()
+     where id = v_test_req_vax_id;
+
+    perform 1
+      from public.journal_lines jl
+      join public.journal_entries je on je.id = jl.entry_id
+      join public.chart_of_accounts coa on coa.id = jl.account_id
+      where je.source_kind = 'test_request'
+        and je.source_id = v_test_req_vax_id
+        and coa.code = '4100'
+        and jl.credit_php = 400;
+    if not found then
+      raise exception 'FAIL test 20: vaccine release did not credit 4100 (check for 9999 Suspense routing)';
+    end if;
+    raise notice 'PASS 20: vaccine release routed to 4100 revenue (not Suspense)';
+  end;
+
   raise notice 'ALL SMOKE TESTS PASSED';
 end;
 $$;
@@ -359,6 +427,6 @@ rollback;
 -- );
 -- delete from public.patients where drm_id = 'SMOKE-001';
 -- delete from public.hmo_providers where name = 'SMOKE_HMO';
--- delete from public.services where code in ('SMOKE_LAB', 'SMOKE_DOC');
+-- delete from public.services where code in ('SMOKE_LAB', 'SMOKE_DOC', 'SMOKE_HOME', 'SMOKE_VAX');
 -- select 'patients' as t, count(*)::int n from public.patients where drm_id = 'SMOKE-001'
 -- union all select 'smoke_jes', count(*)::int from public.journal_entries where description like '%mok%';
