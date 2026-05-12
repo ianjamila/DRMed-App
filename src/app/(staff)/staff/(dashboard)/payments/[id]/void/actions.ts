@@ -37,6 +37,12 @@ export async function voidPaymentAction(
   if (payment.voided_at) return { ok: false, error: "Payment is already voided." };
 
   // 2. Reset any gift code that was redeemed against this payment.
+  // NOTE: This reset and the void below are two separate DB writes — not
+  // wrapped in a single transaction. If the void update fails after this
+  // succeeds, the gift code returns to 'purchased' state while the payment
+  // is still active. The window is short (one round-trip), and the P0007
+  // trigger prevents accidental un-void. Accepted trade-off for 12.2;
+  // a follow-up could wrap both calls in a Postgres RPC for full atomicity.
   const { data: redeemedCode } = await admin
     .from("gift_codes")
     .select("id, status")
@@ -64,7 +70,8 @@ export async function voidPaymentAction(
       voided_by: session.user_id,
       void_reason: parsed.data.reason,
     })
-    .eq("id", paymentId);
+    .eq("id", paymentId)
+    .is("voided_at", null);  // idempotency: second concurrent void is a no-op
   if (voidErr) return { ok: false, error: translatePgError(voidErr) };
 
   // 4. Audit log.
@@ -84,6 +91,8 @@ export async function voidPaymentAction(
     user_agent: h.get("user-agent"),
   });
 
-  revalidatePath(`/staff/visits/${payment.visit_id}`);
+  if (payment.visit_id) {
+    revalidatePath(`/staff/visits/${payment.visit_id}`);
+  }
   return { ok: true };
 }
