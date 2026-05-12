@@ -1,0 +1,2255 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DRMed · Accounting Roadmap · Phase 12+ Deliverable</title>
+    <style>
+      :root {
+        --navy: #284570;
+        --navy-soft: #34507e;
+        --steel: #4682b4;
+        --cyan: #06aef1;
+        --cyan-light: #7fbeff;
+        --cyan-mid: #3eafe3;
+        --bg: #f0f6fc;
+        --bg-mid: #e3eef9;
+        --ink: #1a2537;
+        --ink-mid: #374151;
+        --ink-soft: #6b7280;
+        --line: #d8e3f0;
+        --line-soft: #ebf1f8;
+        --white: #ffffff;
+        --shadow-sm: 0 1px 2px rgba(40, 69, 112, 0.06);
+        --shadow-md: 0 8px 24px -8px rgba(40, 69, 112, 0.18);
+        --shadow-lg: 0 24px 48px -16px rgba(40, 69, 112, 0.22);
+        --r-sm: 6px;
+        --r-md: 10px;
+        --r-lg: 16px;
+        --r-xl: 24px;
+
+        --ok: #10b981;
+        --ok-bg: #ecfdf5;
+        --ok-border: #a7f3d0;
+
+        --info: var(--cyan);
+        --info-bg: #ecf6fc;
+        --info-border: #b6e2f5;
+
+        --warn: #d97706;
+        --warn-bg: #fffbeb;
+        --warn-border: #fde68a;
+
+        --crit: #dc2626;
+        --crit-bg: #fef2f2;
+        --crit-border: #fecaca;
+
+        --neutral: var(--ink-soft);
+        --neutral-bg: #f3f4f6;
+        --neutral-border: #e5e7eb;
+      }
+
+      * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter",
+          "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        font-size: 15px;
+        line-height: 1.55;
+        color: var(--ink);
+        background: var(--bg);
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+
+      ::selection { background: var(--cyan-light); color: var(--navy); }
+
+      /* ----- Layout shell ----- */
+      .shell {
+        display: grid;
+        grid-template-columns: 260px 1fr;
+        max-width: 1400px;
+        margin: 0 auto;
+        min-height: 100vh;
+      }
+
+      /* ----- Sticky TOC ----- */
+      aside.toc {
+        position: sticky;
+        top: 0;
+        align-self: start;
+        height: 100vh;
+        overflow-y: auto;
+        padding: 32px 24px 32px 32px;
+        border-right: 1px solid var(--line);
+        background: linear-gradient(180deg, var(--white) 0%, var(--bg) 100%);
+      }
+      .toc-brand {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        margin-bottom: 6px;
+      }
+      .toc-brand-dot {
+        width: 8px; height: 8px; border-radius: 50%;
+        background: var(--cyan);
+        box-shadow: 0 0 0 4px rgba(6, 174, 241, 0.18);
+      }
+      .toc-brand-name {
+        font-weight: 800;
+        letter-spacing: -0.01em;
+        color: var(--navy);
+        font-size: 18px;
+      }
+      .toc-eyebrow {
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        color: var(--ink-soft);
+        margin-bottom: 24px;
+      }
+      .toc h3 {
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        color: var(--ink-soft);
+        margin: 24px 0 8px;
+      }
+      .toc ul { list-style: none; padding: 0; margin: 0; }
+      .toc li { margin: 0; }
+      .toc a {
+        display: block;
+        padding: 7px 10px;
+        margin-left: -10px;
+        font-size: 13.5px;
+        color: var(--ink-mid);
+        text-decoration: none;
+        border-radius: var(--r-sm);
+        border-left: 2px solid transparent;
+        transition: background 120ms, color 120ms, border-color 120ms;
+      }
+      .toc a:hover {
+        background: var(--bg-mid);
+        color: var(--navy);
+        border-left-color: var(--cyan);
+      }
+      .toc-meta {
+        margin-top: 32px;
+        padding: 16px;
+        background: var(--white);
+        border: 1px solid var(--line);
+        border-radius: var(--r-md);
+        font-size: 12px;
+        color: var(--ink-soft);
+      }
+      .toc-meta strong { color: var(--navy); display: block; margin-bottom: 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
+
+      /* ----- Main column ----- */
+      main {
+        padding: 56px 64px 96px 64px;
+        max-width: 960px;
+      }
+
+      /* ----- Hero / greeting ----- */
+      .hero {
+        margin-bottom: 56px;
+        padding-bottom: 40px;
+        border-bottom: 1px solid var(--line);
+      }
+      .hero-eyebrow {
+        display: inline-block;
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+        color: var(--cyan);
+        background: var(--info-bg);
+        padding: 5px 10px;
+        border-radius: 999px;
+        margin-bottom: 16px;
+      }
+      .hero h1 {
+        font-size: 44px;
+        line-height: 1.08;
+        font-weight: 800;
+        letter-spacing: -0.025em;
+        color: var(--navy);
+        margin: 0 0 16px 0;
+      }
+      .hero-sub {
+        font-size: 18px;
+        line-height: 1.55;
+        color: var(--ink-mid);
+        max-width: 640px;
+        margin: 0;
+      }
+      .hero-meta {
+        margin-top: 24px;
+        display: flex;
+        gap: 24px;
+        font-size: 13px;
+        color: var(--ink-soft);
+      }
+      .hero-meta strong { color: var(--ink); font-weight: 600; }
+
+      /* ----- Greeting card ----- */
+      .greeting {
+        background: linear-gradient(135deg, var(--navy) 0%, var(--navy-soft) 100%);
+        color: var(--white);
+        border-radius: var(--r-xl);
+        padding: 36px;
+        margin-bottom: 64px;
+        box-shadow: var(--shadow-md);
+        position: relative;
+        overflow: hidden;
+      }
+      .greeting::after {
+        content: "";
+        position: absolute;
+        top: -120px;
+        right: -120px;
+        width: 360px;
+        height: 360px;
+        background: radial-gradient(circle, rgba(6, 174, 241, 0.32) 0%, transparent 70%);
+        pointer-events: none;
+      }
+      .greeting-eyebrow {
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.18em;
+        color: var(--cyan-light);
+        margin-bottom: 12px;
+      }
+      .greeting h2 {
+        font-size: 28px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        margin: 0 0 16px 0;
+      }
+      .greeting p {
+        font-size: 16px;
+        line-height: 1.65;
+        color: rgba(255, 255, 255, 0.86);
+        max-width: 620px;
+        margin: 0 0 8px 0;
+        position: relative;
+      }
+      .greeting-sig {
+        margin-top: 24px;
+        font-size: 13px;
+        color: rgba(255, 255, 255, 0.7);
+      }
+      .greeting-sig strong { color: var(--white); font-weight: 600; }
+
+      /* ----- Section ----- */
+      section { margin-bottom: 72px; scroll-margin-top: 24px; }
+      .section-eyebrow {
+        display: inline-block;
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+        color: var(--cyan);
+        margin-bottom: 8px;
+      }
+      h2.section-title {
+        font-size: 30px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        color: var(--navy);
+        margin: 0 0 8px 0;
+      }
+      .section-lead {
+        font-size: 16px;
+        color: var(--ink-mid);
+        max-width: 640px;
+        margin: 0 0 32px 0;
+      }
+      .divider {
+        height: 1px;
+        background: var(--line);
+        margin: 48px 0;
+        border: none;
+      }
+
+      /* ----- Cards & callouts ----- */
+      .card {
+        background: var(--white);
+        border: 1px solid var(--line);
+        border-radius: var(--r-lg);
+        padding: 28px;
+        box-shadow: var(--shadow-sm);
+      }
+      .card-title {
+        font-size: 14px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--navy);
+        margin: 0 0 12px 0;
+      }
+
+      .callout {
+        border-left: 4px solid var(--cyan);
+        background: var(--info-bg);
+        border-radius: var(--r-md);
+        padding: 18px 22px;
+        margin: 24px 0;
+        font-size: 14.5px;
+        line-height: 1.55;
+        color: var(--ink-mid);
+      }
+      .callout-label {
+        display: inline-block;
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        color: var(--cyan);
+        margin-bottom: 6px;
+      }
+      .callout.ok {
+        border-left-color: var(--ok);
+        background: var(--ok-bg);
+      }
+      .callout.ok .callout-label { color: var(--ok); }
+      .callout.warn {
+        border-left-color: var(--warn);
+        background: var(--warn-bg);
+      }
+      .callout.warn .callout-label { color: var(--warn); }
+      .callout.crit {
+        border-left-color: var(--crit);
+        background: var(--crit-bg);
+      }
+      .callout.crit .callout-label { color: var(--crit); }
+      .callout.neutral {
+        border-left-color: var(--neutral);
+        background: var(--neutral-bg);
+      }
+      .callout.neutral .callout-label { color: var(--neutral); }
+      .callout strong { color: var(--navy); font-weight: 600; }
+
+      /* ----- Executive summary ----- */
+      .exec-card {
+        background: var(--white);
+        border: 1px solid var(--line);
+        border-radius: var(--r-xl);
+        padding: 0;
+        box-shadow: var(--shadow-md);
+        overflow: hidden;
+      }
+      .exec-head {
+        padding: 28px 32px 20px;
+        border-bottom: 1px solid var(--line);
+        background: linear-gradient(180deg, var(--white) 0%, var(--bg) 100%);
+      }
+      .exec-head h3 {
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: -0.015em;
+        color: var(--navy);
+        margin: 0 0 8px 0;
+      }
+      .exec-head p {
+        font-size: 15px;
+        color: var(--ink-mid);
+        margin: 0;
+      }
+      .exec-body {
+        padding: 24px 32px 28px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+      }
+      .exec-row {
+        display: flex;
+        align-items: baseline;
+        gap: 12px;
+        padding: 10px 0;
+        border-bottom: 1px dashed var(--line-soft);
+      }
+      .exec-row:last-child { border-bottom: none; }
+      .exec-label {
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--ink-soft);
+        min-width: 140px;
+      }
+      .exec-value {
+        font-size: 14px;
+        color: var(--ink);
+      }
+      .exec-value strong { color: var(--navy); }
+
+      /* ----- Metrics dashboard ----- */
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 16px;
+        margin-top: 16px;
+      }
+      .metric {
+        background: var(--white);
+        border: 1px solid var(--line);
+        border-radius: var(--r-md);
+        padding: 20px;
+        position: relative;
+        overflow: hidden;
+      }
+      .metric::before {
+        content: "";
+        position: absolute;
+        top: 0; left: 0; right: 0;
+        height: 3px;
+        background: var(--neutral-border);
+      }
+      .metric.ok::before { background: var(--ok); }
+      .metric.info::before { background: var(--cyan); }
+      .metric.warn::before { background: var(--warn); }
+      .metric.crit::before { background: var(--crit); }
+      .metric-label {
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--ink-soft);
+      }
+      .metric-value {
+        font-size: 32px;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+        color: var(--navy);
+        margin-top: 4px;
+        line-height: 1.1;
+      }
+      .metric-unit {
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--ink-soft);
+        margin-left: 4px;
+      }
+      .metric-foot {
+        font-size: 11.5px;
+        color: var(--ink-soft);
+        margin-top: 8px;
+      }
+
+      /* ----- Timeline ----- */
+      .timeline {
+        position: relative;
+        padding-left: 24px;
+        border-left: 2px solid var(--line);
+        margin-top: 8px;
+      }
+      .phase {
+        position: relative;
+        padding: 0 0 36px 24px;
+      }
+      .phase:last-child { padding-bottom: 0; }
+      .phase::before {
+        content: "";
+        position: absolute;
+        left: -33px;
+        top: 4px;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: var(--white);
+        border: 3px solid var(--neutral-border);
+      }
+      .phase.shipped::before { border-color: var(--ok); background: var(--ok); }
+      .phase.active::before { border-color: var(--cyan); background: var(--cyan); box-shadow: 0 0 0 4px rgba(6, 174, 241, 0.2); }
+      .phase.planned::before { border-color: var(--neutral-border); }
+      .phase.deferred::before { border-color: var(--neutral-border); background: var(--neutral-bg); }
+      .phase-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-bottom: 6px;
+      }
+      .phase-id {
+        font-family: "SF Mono", Menlo, Consolas, monospace;
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--cyan);
+        background: var(--info-bg);
+        padding: 3px 8px;
+        border-radius: var(--r-sm);
+        letter-spacing: 0.04em;
+      }
+      .phase-title {
+        font-size: 17px;
+        font-weight: 700;
+        color: var(--navy);
+        letter-spacing: -0.01em;
+      }
+      .phase-est {
+        font-size: 12px;
+        color: var(--ink-soft);
+        font-weight: 500;
+      }
+      .phase-body {
+        font-size: 14px;
+        line-height: 1.6;
+        color: var(--ink-mid);
+        max-width: 640px;
+      }
+      .phase-body p { margin: 6px 0; }
+      .phase-deliverables {
+        margin-top: 14px;
+        padding: 14px 18px;
+        background: var(--bg);
+        border: 1px solid var(--line-soft);
+        border-radius: var(--r-md);
+      }
+      .phase-deliverables ul {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        font-size: 13.5px;
+        color: var(--ink-mid);
+      }
+      .phase-deliverables li {
+        position: relative;
+        padding: 4px 0 4px 22px;
+      }
+      .phase-deliverables li::before {
+        content: "";
+        position: absolute;
+        left: 0; top: 9px;
+        width: 12px; height: 12px;
+        border: 1.5px solid var(--neutral-border);
+        border-radius: 3px;
+        background: var(--white);
+      }
+      .phase-deliverables li.done::before {
+        background: var(--ok);
+        border-color: var(--ok);
+      }
+      .phase-deliverables li.done::after {
+        content: "";
+        position: absolute;
+        left: 3px; top: 11px;
+        width: 6px; height: 3px;
+        border-left: 2px solid var(--white);
+        border-bottom: 2px solid var(--white);
+        transform: rotate(-45deg);
+      }
+      .phase-deliverables li.done { color: var(--ink-soft); }
+
+      /* ----- Shipped phase list (compact, for foundation) ----- */
+      .shipped-list {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      .shipped {
+        background: var(--white);
+        border: 1px solid var(--line);
+        border-left: 3px solid var(--ok);
+        border-radius: var(--r-md);
+        padding: 14px 16px 14px 16px;
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 12px;
+        align-items: start;
+      }
+      .shipped-id {
+        font-family: "SF Mono", Menlo, Consolas, monospace;
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--ok);
+        background: var(--ok-bg);
+        padding: 3px 8px;
+        border-radius: var(--r-sm);
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+        align-self: start;
+      }
+      .shipped-body { min-width: 0; }
+      .shipped-title {
+        font-size: 14px;
+        font-weight: 700;
+        color: var(--navy);
+        letter-spacing: -0.005em;
+        margin: 0 0 2px;
+      }
+      .shipped-desc {
+        font-size: 12.5px;
+        color: var(--ink-mid);
+        margin: 0;
+        line-height: 1.45;
+      }
+      .shipped-meta {
+        font-size: 11px;
+        color: var(--ink-soft);
+        margin-top: 4px;
+      }
+      .shipped-meta code {
+        font-size: 10.5px;
+        background: var(--bg);
+        padding: 1px 5px;
+        border-radius: 3px;
+      }
+      .shipped.superseded {
+        border-left-color: var(--neutral);
+        opacity: 0.85;
+      }
+      .shipped.superseded .shipped-id {
+        background: var(--neutral-bg);
+        color: var(--neutral);
+      }
+
+      /* ----- Pill / badge ----- */
+      .pill {
+        display: inline-block;
+        font-size: 10.5px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        padding: 3px 9px;
+        border-radius: 999px;
+        line-height: 1.4;
+      }
+      .pill.ok { background: var(--ok-bg); color: var(--ok); border: 1px solid var(--ok-border); }
+      .pill.info { background: var(--info-bg); color: var(--cyan); border: 1px solid var(--info-border); }
+      .pill.warn { background: var(--warn-bg); color: var(--warn); border: 1px solid var(--warn-border); }
+      .pill.crit { background: var(--crit-bg); color: var(--crit); border: 1px solid var(--crit-border); }
+      .pill.neutral { background: var(--neutral-bg); color: var(--neutral); border: 1px solid var(--neutral-border); }
+
+      /* ----- Comparison table ----- */
+      table.compare {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0;
+        background: var(--white);
+        border: 1px solid var(--line);
+        border-radius: var(--r-lg);
+        overflow: hidden;
+        box-shadow: var(--shadow-sm);
+        font-size: 13.5px;
+      }
+      table.compare th, table.compare td {
+        padding: 14px 18px;
+        text-align: left;
+        vertical-align: top;
+        border-bottom: 1px solid var(--line-soft);
+      }
+      table.compare thead th {
+        background: var(--bg);
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--navy);
+        border-bottom: 1px solid var(--line);
+      }
+      table.compare tbody tr:last-child td { border-bottom: none; }
+      table.compare td.label {
+        font-weight: 600;
+        color: var(--navy);
+        background: var(--bg);
+        width: 28%;
+      }
+      table.compare .yes { color: var(--ok); font-weight: 600; }
+      table.compare .no { color: var(--ink-soft); }
+      table.compare .partial { color: var(--warn); font-weight: 600; }
+
+      /* ----- Risk / dep grid ----- */
+      .risk-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+      }
+      .risk {
+        background: var(--white);
+        border: 1px solid var(--line);
+        border-left: 4px solid var(--neutral);
+        border-radius: var(--r-md);
+        padding: 18px 20px;
+      }
+      .risk.warn { border-left-color: var(--warn); }
+      .risk.crit { border-left-color: var(--crit); }
+      .risk.info { border-left-color: var(--cyan); }
+      .risk-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 8px;
+      }
+      .risk-title { font-size: 15px; font-weight: 700; color: var(--navy); }
+      .risk-body { font-size: 13.5px; color: var(--ink-mid); line-height: 1.55; margin: 0; }
+      .risk-mitigate {
+        margin-top: 10px;
+        font-size: 12.5px;
+        color: var(--ink-soft);
+        border-top: 1px dashed var(--line);
+        padding-top: 10px;
+      }
+      .risk-mitigate strong { color: var(--navy); font-weight: 600; }
+
+      /* ----- Action items ----- */
+      .action-list {
+        background: var(--white);
+        border: 1px solid var(--line);
+        border-radius: var(--r-lg);
+        overflow: hidden;
+        box-shadow: var(--shadow-sm);
+      }
+      .action {
+        display: grid;
+        grid-template-columns: 60px 1fr 110px;
+        align-items: center;
+        gap: 20px;
+        padding: 18px 24px;
+        border-bottom: 1px solid var(--line-soft);
+      }
+      .action:last-child { border-bottom: none; }
+      .action-num {
+        font-family: "SF Mono", Menlo, Consolas, monospace;
+        font-size: 14px;
+        font-weight: 700;
+        color: var(--cyan);
+      }
+      .action-body { font-size: 14px; color: var(--ink); line-height: 1.55; }
+      .action-body strong { color: var(--navy); font-weight: 600; }
+      .action-body p.small { font-size: 12.5px; color: var(--ink-soft); margin: 4px 0 0 0; }
+      .action-status { text-align: right; }
+
+      /* ----- Notes ----- */
+      .notes {
+        background: var(--white);
+        border: 1px solid var(--line);
+        border-radius: var(--r-lg);
+        padding: 24px 28px;
+        box-shadow: var(--shadow-sm);
+      }
+      .note {
+        padding: 12px 0;
+        border-bottom: 1px dashed var(--line-soft);
+      }
+      .note:last-child { border-bottom: none; }
+      .note-date {
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--cyan);
+        margin-bottom: 4px;
+      }
+      .note-body { font-size: 14px; color: var(--ink-mid); line-height: 1.6; }
+      .note-body strong { color: var(--navy); }
+
+      /* ----- Takeaway / recommendation lists ----- */
+      .takeaways {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+      }
+      .takeaway {
+        background: var(--white);
+        border: 1px solid var(--line);
+        border-radius: var(--r-md);
+        padding: 22px 22px 24px;
+        position: relative;
+      }
+      .takeaway-num {
+        font-family: "SF Mono", Menlo, Consolas, monospace;
+        font-size: 22px;
+        font-weight: 800;
+        color: var(--cyan-light);
+        letter-spacing: -0.02em;
+      }
+      .takeaway h4 {
+        font-size: 16px;
+        font-weight: 700;
+        color: var(--navy);
+        margin: 6px 0 8px;
+        letter-spacing: -0.01em;
+      }
+      .takeaway p {
+        font-size: 13.5px;
+        color: var(--ink-mid);
+        line-height: 1.55;
+        margin: 0;
+      }
+
+      .recommendations {
+        counter-reset: rec;
+      }
+      .rec {
+        display: grid;
+        grid-template-columns: 56px 1fr 110px;
+        gap: 20px;
+        padding: 22px 0;
+        border-bottom: 1px solid var(--line);
+        counter-increment: rec;
+        align-items: start;
+      }
+      .rec:last-child { border-bottom: none; }
+      .rec-num::before {
+        content: counter(rec, decimal-leading-zero);
+        font-family: "SF Mono", Menlo, Consolas, monospace;
+        font-size: 28px;
+        font-weight: 800;
+        color: var(--cyan-light);
+        letter-spacing: -0.04em;
+      }
+      .rec-body h4 {
+        font-size: 17px;
+        font-weight: 700;
+        color: var(--navy);
+        margin: 0 0 6px;
+        letter-spacing: -0.01em;
+      }
+      .rec-body p { font-size: 14px; color: var(--ink-mid); line-height: 1.6; margin: 0 0 8px; }
+      .rec-body p.detail { font-size: 13px; color: var(--ink-soft); }
+      .rec-priority { text-align: right; padding-top: 4px; }
+
+      /* ----- Footer ----- */
+      footer {
+        margin-top: 96px;
+        padding-top: 32px;
+        border-top: 1px solid var(--line);
+        font-size: 12px;
+        color: var(--ink-soft);
+        display: flex;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 16px;
+      }
+
+      /* ----- Print ----- */
+      @media print {
+        aside.toc { display: none; }
+        .shell { grid-template-columns: 1fr; max-width: none; }
+        main { padding: 24px; max-width: none; }
+        body { background: var(--white); }
+        .greeting { background: var(--navy) !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      }
+
+      /* ----- Mobile ----- */
+      @media (max-width: 900px) {
+        .shell { grid-template-columns: 1fr; }
+        aside.toc { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--line); }
+        main { padding: 32px 20px 64px; }
+        .hero h1 { font-size: 30px; }
+        .exec-body, .metrics, .risk-grid, .takeaways { grid-template-columns: 1fr; }
+        .action, .rec { grid-template-columns: 1fr; gap: 8px; }
+        .rec-priority { text-align: left; }
+        .action-status { text-align: left; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <!-- ============================ STICKY TOC ============================ -->
+      <aside class="toc">
+        <div class="toc-brand">
+          <span class="toc-brand-dot"></span>
+          <span class="toc-brand-name">DRMed</span>
+        </div>
+        <div class="toc-eyebrow">Accounting Roadmap · v1.2.0</div>
+
+        <h3>Overview</h3>
+        <ul>
+          <li><a href="#greeting">Greeting</a></li>
+          <li><a href="#executive">Executive Summary</a></li>
+          <li><a href="#metrics">Metrics Dashboard</a></li>
+        </ul>
+
+        <h3>Foundation</h3>
+        <ul>
+          <li><a href="#foundation">Shipped Phases (0 → 14)</a></li>
+          <li><a href="#foundation-ops">Operational &amp; Compliance</a></li>
+        </ul>
+
+        <h3>In Flight</h3>
+        <ul>
+          <li><a href="#comparison">Sheet vs In-App</a></li>
+          <li><a href="#timeline">Phase 12 Timeline</a></li>
+          <li><a href="#future">Future Phases</a></li>
+        </ul>
+
+        <h3>Operations</h3>
+        <ul>
+          <li><a href="#risks">Risks &amp; Dependencies</a></li>
+          <li><a href="#actions">Your Action Items</a></li>
+          <li><a href="#notes">Session Notes</a></li>
+        </ul>
+
+        <h3>Close-out</h3>
+        <ul>
+          <li><a href="#takeaways">Key Takeaways</a></li>
+          <li><a href="#recommendations">Recommendations</a></li>
+        </ul>
+
+        <div class="toc-meta">
+          <strong>Snapshot</strong>
+          Generated 2026-05-12 · Prepared for the DRMed admin team after 12.1 ship.
+        </div>
+      </aside>
+
+      <!-- ============================ MAIN ============================ -->
+      <main>
+        <!-- HERO -->
+        <header class="hero">
+          <span class="hero-eyebrow">Platform Roadmap · Phase 0 → 14 · v1.2.0</span>
+          <h1>DRMed, in full view.</h1>
+          <p class="hero-sub">
+            Two years of platform work landed across fifteen named phases — three
+            surfaces, five staff roles, RA 10173-compliant audit, mobile-first,
+            Sentry-instrumented. The current chapter is the accounting overhaul:
+            replacing a 13-tab spreadsheet with real double-entry books inside the app.
+          </p>
+          <div class="hero-meta">
+            <span><strong>Foundation</strong> · 15 phases shipped · Apr 2024 → May 2026</span>
+            <span><strong>In flight</strong> · Phase 12 accounting · 1 of 10 sub-projects done</span>
+            <span><strong>Tag</strong> · v1.2.0</span>
+          </div>
+        </header>
+
+        <!-- GREETING -->
+        <section id="greeting" class="greeting">
+          <div class="greeting-eyebrow">Hello, Ian</div>
+          <h2>The platform is in good shape. Now we close the accounting loop.</h2>
+          <p>
+            From Phase 0 (scaffolding) to Phase 14 (newsletter), the surface area you
+            run today is solid — patient portal, staff portal, marketing site, all under
+            RA 10173 compliance with audit, Sentry, MFA, off-site backups, and
+            mobile-first ergonomics. The deliverable below maps both worlds: the
+            foundation you've already shipped, and the accounting overhaul we're now
+            executing on top of it.
+          </p>
+          <p>
+            Re-read this any time you want to remember why we chose Option C, what
+            12.A actually delivers, or which earlier phase a current decision rests on.
+          </p>
+          <div class="greeting-sig">
+            Prepared with care, <strong>your engineering partner</strong>
+          </div>
+        </section>
+
+        <!-- EXECUTIVE SUMMARY -->
+        <section id="executive">
+          <span class="section-eyebrow">01 · Executive Summary</span>
+          <h2 class="section-title">DRMed in two cards.</h2>
+          <p class="section-lead">
+            Left: what's already running in production. Right: the accounting overhaul
+            we're now layering on top, with the timeline and trigger conditions for
+            everything queued behind it.
+          </p>
+
+          <div class="exec-card">
+            <div class="exec-head">
+              <h3>Foundation · Phases 0 → 14 · Live</h3>
+              <p>Two years of platform work — three surfaces, five roles, RA 10173 compliant, mobile-first, observability + backups in place.</p>
+            </div>
+            <div class="exec-body">
+              <div>
+                <div class="exec-row">
+                  <span class="exec-label">Surfaces live</span>
+                  <span class="exec-value">Marketing · Patient portal · Staff portal</span>
+                </div>
+                <div class="exec-row">
+                  <span class="exec-label">Staff roles</span>
+                  <span class="exec-value">Reception · Medtech · Pathologist · X-ray · Admin</span>
+                </div>
+                <div class="exec-row">
+                  <span class="exec-label">Auth model</span>
+                  <span class="exec-value">Staff Supabase Auth · Patient DRM-ID + PIN</span>
+                </div>
+                <div class="exec-row">
+                  <span class="exec-label">Compliance</span>
+                  <span class="exec-value">RA 10173 · audit log · 60-day PIN expiry · data export</span>
+                </div>
+              </div>
+              <div>
+                <div class="exec-row">
+                  <span class="exec-label">Hardening</span>
+                  <span class="exec-value">CSP · HSTS · MFA · rate limits · Sentry</span>
+                </div>
+                <div class="exec-row">
+                  <span class="exec-label">Backups</span>
+                  <span class="exec-value">Daily pg_dump · age-encrypted · Vercel Blob · 30d</span>
+                </div>
+                <div class="exec-row">
+                  <span class="exec-label">Booking</span>
+                  <span class="exec-value">Lab / doctor split · per-physician slots · closures</span>
+                </div>
+                <div class="exec-row">
+                  <span class="exec-label">Diagnostics</span>
+                  <span class="exec-value">Structured result entry · auto-PDF · critical alerts</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="exec-card" style="margin-top:24px">
+            <div class="exec-head">
+              <h3>Accounting Project · Phase 12 onwards · In flight</h3>
+              <p>Full double-entry, quarterly close, admin-only, full 2023→present backfill, payroll + financial statements included.</p>
+            </div>
+            <div class="exec-body">
+              <div>
+                <div class="exec-row">
+                  <span class="exec-label">Depth</span>
+                  <span class="exec-value">Option C · <strong>Full books</strong> + accruals + manual JE</span>
+                </div>
+                <div class="exec-row">
+                  <span class="exec-label">Close cadence</span>
+                  <span class="exec-value">Quarterly (monthly grain in schema)</span>
+                </div>
+                <div class="exec-row">
+                  <span class="exec-label">Users</span>
+                  <span class="exec-value">Admin only (you)</span>
+                </div>
+                <div class="exec-row">
+                  <span class="exec-label">Cutover</span>
+                  <span class="exec-value">Full 2023→present history backfill</span>
+                </div>
+                <div class="exec-row">
+                  <span class="exec-label">Payroll</span>
+                  <span class="exec-value">5 employees · ZKTeco DTR · semi-monthly</span>
+                </div>
+              </div>
+              <div>
+                <div class="exec-row">
+                  <span class="exec-label">Shipped</span>
+                  <span class="exec-value"><strong>12.1</strong> · GL foundation · tagged <code>v1.2.0</code></span>
+                </div>
+                <div class="exec-row">
+                  <span class="exec-label">In queue</span>
+                  <span class="exec-value">12.2 → 12.A delivers the AR audit ~4 weeks in</span>
+                </div>
+                <div class="exec-row">
+                  <span class="exec-label">Deferred</span>
+                  <span class="exec-value">VAT/WT capture, BIR forms, monthly close, bank rec, budgets</span>
+                </div>
+                <div class="exec-row">
+                  <span class="exec-label">Effort estimate</span>
+                  <span class="exec-value">~9 weeks total · 1 dev</span>
+                </div>
+                <div class="exec-row">
+                  <span class="exec-label">Source of truth</span>
+                  <span class="exec-value">DR MED MASTERSHEET · 13 tabs, 2023→2026</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="callout ok" style="margin-top:24px">
+            <div class="callout-label">Headline</div>
+            The platform is mature and in production. The accounting layer is the
+            current chapter — 12.1 is shipped, tagged <strong>v1.2.0</strong>, and the
+            first real AR audit answer lands around week four of execution. Reception's
+            flows are untouched; the GL spine is enforced at the database.
+          </div>
+        </section>
+
+        <hr class="divider" />
+
+        <!-- METRICS DASHBOARD -->
+        <section id="metrics">
+          <span class="section-eyebrow">02 · Metrics Dashboard</span>
+          <h2 class="section-title">The numbers that matter.</h2>
+          <p class="section-lead">
+            Color strip on the top of each card encodes status — green: shipped, cyan: in
+            motion, amber: needs attention, gray: planned.
+          </p>
+
+          <div class="metrics">
+            <div class="metric ok">
+              <div class="metric-label">Platform phases shipped</div>
+              <div class="metric-value">15</div>
+              <div class="metric-foot">Phases 0 → 14 · plus F-series, mobile, ops</div>
+            </div>
+            <div class="metric ok">
+              <div class="metric-label">Surfaces in production</div>
+              <div class="metric-value">3</div>
+              <div class="metric-foot">Marketing · patient · staff</div>
+            </div>
+            <div class="metric ok">
+              <div class="metric-label">Staff roles supported</div>
+              <div class="metric-value">5</div>
+              <div class="metric-foot">Reception, medtech, path, x-ray, admin</div>
+            </div>
+            <div class="metric ok">
+              <div class="metric-label">DB migrations applied</div>
+              <div class="metric-value">29</div>
+              <div class="metric-foot">Latest: <code>0029_gl_foundation_fixes</code></div>
+            </div>
+            <div class="metric ok">
+              <div class="metric-label">Accounting sub-projects done</div>
+              <div class="metric-value">1<span class="metric-unit">of 10</span></div>
+              <div class="metric-foot">12.1 GL foundation · live</div>
+            </div>
+            <div class="metric info">
+              <div class="metric-label">Implementation commits</div>
+              <div class="metric-value">12</div>
+              <div class="metric-foot">All on <code>main</code>, awaiting push</div>
+            </div>
+            <div class="metric ok">
+              <div class="metric-label">Code review pass rate</div>
+              <div class="metric-value">100<span class="metric-unit">%</span></div>
+              <div class="metric-foot">3 dispatches · 6 reviews · 0 blockers</div>
+            </div>
+            <div class="metric info">
+              <div class="metric-label">Periods seeded</div>
+              <div class="metric-value">108</div>
+              <div class="metric-foot">Jan 2020 → Dec 2028</div>
+            </div>
+            <div class="metric info">
+              <div class="metric-label">HMO providers tracked</div>
+              <div class="metric-value">11</div>
+              <div class="metric-foot">Maxicare, Intellicare, Etiqa, …</div>
+            </div>
+            <div class="metric ok">
+              <div class="metric-label">RA 10173 audit log</div>
+              <div class="metric-value">✓</div>
+              <div class="metric-foot">Every write, every PIN attempt</div>
+            </div>
+            <div class="metric warn">
+              <div class="metric-label">CoA accounts populated</div>
+              <div class="metric-value">1<span class="metric-unit">/ many</span></div>
+              <div class="metric-foot">Only <code>9999 Suspense</code></div>
+            </div>
+            <div class="metric info">
+              <div class="metric-label">Accounting effort remaining</div>
+              <div class="metric-value">~8<span class="metric-unit">wk</span></div>
+              <div class="metric-foot">12.2 → 12.8 + 12.A + 12.B</div>
+            </div>
+          </div>
+        </section>
+
+        <hr class="divider" />
+
+        <!-- FOUNDATION · SHIPPED PHASES -->
+        <section id="foundation">
+          <span class="section-eyebrow">03 · Foundation</span>
+          <h2 class="section-title">Phases already shipped.</h2>
+          <p class="section-lead">
+            Fifteen named phases plus operational work delivered between April 2024 and
+            May 2026. Phase 7 (Sheets export) is intentionally <em>superseded</em> by
+            Phase 12 — its schema deltas carry forward; the export pipeline retires when
+            the in-app books replace it.
+          </p>
+
+          <div class="shipped-list">
+            <div class="shipped">
+              <div class="shipped-id">Phase 0</div>
+              <div class="shipped-body">
+                <p class="shipped-title">Project Setup</p>
+                <p class="shipped-desc">Next.js 15 + Supabase scaffolding · TS strict · brand tokens · domain.</p>
+              </div>
+            </div>
+            <div class="shipped">
+              <div class="shipped-id">Phase 1</div>
+              <div class="shipped-body">
+                <p class="shipped-title">Database Schema + RLS</p>
+                <p class="shipped-desc">Core tables · patients, visits, test_requests, payments, results · payment-gating trigger · audit_log.</p>
+              </div>
+            </div>
+            <div class="shipped">
+              <div class="shipped-id">Phase 2</div>
+              <div class="shipped-body">
+                <p class="shipped-title">Authentication (dual model)</p>
+                <p class="shipped-desc">Staff via Supabase Auth · patient via DRM-ID + bcrypt PIN · short-lived signed JWT in HttpOnly cookie.</p>
+              </div>
+            </div>
+            <div class="shipped">
+              <div class="shipped-id">Phase 3</div>
+              <div class="shipped-body">
+                <p class="shipped-title">Marketing Site</p>
+                <p class="shipped-desc">Public landing · services catalog · SEO meta · en-PH locale.</p>
+              </div>
+            </div>
+            <div class="shipped">
+              <div class="shipped-id">Phase 4</div>
+              <div class="shipped-body">
+                <p class="shipped-title">Staff Portal</p>
+                <p class="shipped-desc">Reception · medtech · pathologist · admin flows · 4-5 day delivery.</p>
+              </div>
+            </div>
+            <div class="shipped">
+              <div class="shipped-id">Phase 5</div>
+              <div class="shipped-body">
+                <p class="shipped-title">Patient Portal + Notifications</p>
+                <p class="shipped-desc">Result view · signed-URL PDF download (5-min) · email notify on release.</p>
+              </div>
+            </div>
+            <div class="shipped">
+              <div class="shipped-id">Phase 6</div>
+              <div class="shipped-body">
+                <p class="shipped-title">Online Booking</p>
+                <p class="shipped-desc">Public appointment intake · rate-limited · email confirmation.</p>
+              </div>
+            </div>
+            <div class="shipped">
+              <div class="shipped-id">Phase 6.5</div>
+              <div class="shipped-body">
+                <p class="shipped-title">Booking Refinements</p>
+                <p class="shipped-desc">Lab/doctor split · slot picker · clinic_closures · holiday-aware. <span class="shipped-meta">Shipped 2026-05-04</span></p>
+              </div>
+            </div>
+            <div class="shipped">
+              <div class="shipped-id">Phase 6.6</div>
+              <div class="shipped-body">
+                <p class="shipped-title">Test Catalog &amp; Quick-Quote</p>
+                <p class="shipped-desc">/services upgrade · staff /quote tool · admin price editor with history.</p>
+              </div>
+            </div>
+            <div class="shipped superseded">
+              <div class="shipped-id">Phase 7</div>
+              <div class="shipped-body">
+                <p class="shipped-title">Accounting Sync · superseded by 12</p>
+                <p class="shipped-desc">7A schema deltas + 7B reception encoding UI + 7C three Sheets exports. <span class="shipped-meta">Schema carries forward; export retires when 12.8 lands.</span></p>
+              </div>
+            </div>
+            <div class="shipped">
+              <div class="shipped-id">Phase 8</div>
+              <div class="shipped-body">
+                <p class="shipped-title">Hardening &amp; Compliance</p>
+                <p class="shipped-desc">CSP · HSTS · X-Frame · Permissions-Policy · login rate limit · admin MFA · breach runbook.</p>
+              </div>
+            </div>
+            <div class="shipped">
+              <div class="shipped-id">Phase 9</div>
+              <div class="shipped-body">
+                <p class="shipped-title">Physician Schedules</p>
+                <p class="shipped-desc">Full per-physician availability-driven booking · schedule blocks · DB-backed roster. <span class="shipped-meta">Shipped 2026-05-08</span></p>
+              </div>
+            </div>
+            <div class="shipped">
+              <div class="shipped-id">Phase 10</div>
+              <div class="shipped-body">
+                <p class="shipped-title">Inquiries CRM</p>
+                <p class="shipped-desc">Inbound phone lead capture · status pipeline · optional booking conversion.</p>
+              </div>
+            </div>
+            <div class="shipped">
+              <div class="shipped-id">Phase 11</div>
+              <div class="shipped-body">
+                <p class="shipped-title">Gift Codes</p>
+                <p class="shipped-desc">GC-XXXX-XXXX-XXXX format · admin generation · sell + redeem · audit trail.</p>
+              </div>
+            </div>
+            <div class="shipped">
+              <div class="shipped-id">Phase 13</div>
+              <div class="shipped-body">
+                <p class="shipped-title">Structured Result Entry</p>
+                <p class="shipped-desc">Medtech form + finalise · age-banded ranges · PRC editor · auto-generated PDF. <span class="shipped-meta">Shipped 2026-05-04</span></p>
+              </div>
+            </div>
+            <div class="shipped">
+              <div class="shipped-id">Phase 14</div>
+              <div class="shipped-body">
+                <p class="shipped-title">Newsletter &amp; Marketing Email</p>
+                <p class="shipped-desc">Public opt-in · admin compose/send via Resend · audit.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <hr class="divider" />
+
+        <!-- FOUNDATION · OPERATIONAL & COMPLIANCE -->
+        <section id="foundation-ops">
+          <span class="section-eyebrow">04 · Foundation · Operational &amp; Compliance</span>
+          <h2 class="section-title">Cross-cutting work that lives outside the phase numbers.</h2>
+          <p class="section-lead">
+            Mobile, observability, audit, MFA, backups, rate limits — the connective
+            tissue that keeps the platform safe to run in production.
+          </p>
+
+          <div class="shipped-list">
+            <div class="shipped">
+              <div class="shipped-id">F1–F9</div>
+              <div class="shipped-body">
+                <p class="shipped-title">F-series · Operations &amp; Compliance</p>
+                <p class="shipped-desc">Critical value alerts (F7) · patient data export per RA 10173 access right (F8) · data retention cron (F9) · plus F1–F6 ops glue. <span class="shipped-meta">Browser-driven smoke completed 2026-05-08</span></p>
+              </div>
+            </div>
+            <div class="shipped">
+              <div class="shipped-id">Mobile</div>
+              <div class="shipped-body">
+                <p class="shipped-title">Mobile Optimization</p>
+                <p class="shipped-desc">MobileDrawer · table overflow-x · 44×44 tap targets (WCAG 2.5.5) · scroll fixes. Smoke at 390×844. <span class="shipped-meta">Shipped 2026-05-07</span></p>
+              </div>
+            </div>
+            <div class="shipped">
+              <div class="shipped-id">Sentry</div>
+              <div class="shipped-body">
+                <p class="shipped-title">Observability</p>
+                <p class="shipped-desc">@sentry/nextjs server/edge/client · sendDefaultPii=false · PII scrubber for DRM-IDs, emails, PH-phones. <span class="shipped-meta">Shipped 2026-05-07</span></p>
+              </div>
+            </div>
+            <div class="shipped">
+              <div class="shipped-id">Admin MFA</div>
+              <div class="shipped-body">
+                <p class="shipped-title">TOTP Two-Factor</p>
+                <p class="shipped-desc">Supabase TOTP · required for <code>role=admin</code> · single /staff/mfa gate · audit on enroll + challenge. <span class="shipped-meta">Shipped 2026-05-07</span></p>
+              </div>
+            </div>
+            <div class="shipped">
+              <div class="shipped-id">Backups</div>
+              <div class="shipped-body">
+                <p class="shipped-title">Off-site DB Backups</p>
+                <p class="shipped-desc">Daily pg_dump · age-encrypted · pushed to Vercel Blob · 30-day retention · GH Actions cron. <span class="shipped-meta">Shipped 2026-05-08</span></p>
+              </div>
+            </div>
+            <div class="shipped">
+              <div class="shipped-id">Rate limit</div>
+              <div class="shipped-body">
+                <p class="shipped-title">Auth Rate Limiting</p>
+                <p class="shipped-desc">Per-IP + per-email login throttle (10 / 15min) · auditable layer over Supabase's built-in. Closes the last Phase 8 gap. <span class="shipped-meta">Shipped 2026-05-11</span></p>
+              </div>
+            </div>
+          </div>
+
+          <div class="callout neutral" style="margin-top:24px">
+            <div class="callout-label">Why the timeline thickens at the end</div>
+            April through May 2026 was an unusually intense build window — much of the
+            mobile, observability, MFA, and backup work landed in clusters around two
+            weekends. Phase 12 launched the day after the last Phase 8 gap closed, with
+            a clean platform to build on.
+          </div>
+        </section>
+
+        <hr class="divider" />
+
+        <!-- COMPARISON -->
+        <section id="comparison">
+          <span class="section-eyebrow">05 · Where We Came From, Where We're Going</span>
+          <h2 class="section-title">Live Sheet vs in-app books.</h2>
+          <p class="section-lead">
+            The clinic ran for three years on a 13-tab spreadsheet. What follows is the
+            objective delta — what each surface gives you, side by side.
+          </p>
+
+          <table class="compare">
+            <thead>
+              <tr>
+                <th></th>
+                <th>Live Sheet today</th>
+                <th>Phase 12 in-app books</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="label">Income statement</td>
+                <td class="yes">Complete · 2024–2026</td>
+                <td class="yes">Generated from GL · period-over-period</td>
+              </tr>
+              <tr>
+                <td class="label">Balance sheet</td>
+                <td class="no">Empty template tab</td>
+                <td class="yes">Live · ties to GL</td>
+              </tr>
+              <tr>
+                <td class="label">Cash flow statement</td>
+                <td class="no">Empty template tab</td>
+                <td class="yes">Direct method · live</td>
+              </tr>
+              <tr>
+                <td class="label">HMO AR per provider</td>
+                <td class="partial">Tracked but data quality issues (<code>#REF!</code>, blanks)</td>
+                <td class="yes">Reconciled subledger + aging + stuck-claim detector</td>
+              </tr>
+              <tr>
+                <td class="label">Unbilled HMO detection</td>
+                <td class="no">Manual / by memory</td>
+                <td class="yes">Automated report (12.3)</td>
+              </tr>
+              <tr>
+                <td class="label">Doctor compensation</td>
+                <td class="partial">Per-day PF noted; rent payments inline</td>
+                <td class="yes"><code>pf</code> / <code>rent</code> / <code>none</code> classification · rent billing tracker</td>
+              </tr>
+              <tr>
+                <td class="label">Payroll</td>
+                <td class="no">Out of scope · external</td>
+                <td class="yes">ZKTeco DTR · semi-monthly · payslip PDF</td>
+              </tr>
+              <tr>
+                <td class="label">Period close</td>
+                <td class="no">Implicit · no lock</td>
+                <td class="yes">Quarterly · DB-enforced lock · reopen with reason</td>
+              </tr>
+              <tr>
+                <td class="label">Audit trail</td>
+                <td class="partial">Sheet revision history only</td>
+                <td class="yes"><code>audit_log</code> on every write · queryable</td>
+              </tr>
+              <tr>
+                <td class="label">VAT capture</td>
+                <td class="no">Lumped in “Legal &amp; Regulatory”</td>
+                <td class="partial">Deferred to Future Phase 1 (pending classification)</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="callout warn">
+            <div class="callout-label">Key takeaway</div>
+            The income statement is the only complete artifact in the Sheet. Everything
+            else is incomplete or aspirational. The in-app build inherits the P&amp;L
+            shape verbatim, then fills the gaps the Sheet never closed — starting with
+            HMO AR.
+          </div>
+        </section>
+
+        <hr class="divider" />
+
+        <!-- TIMELINE -->
+        <section id="timeline">
+          <span class="section-eyebrow">06 · Phase 12 Timeline (In Flight)</span>
+          <h2 class="section-title">Accounting sub-projects, in dependency order.</h2>
+          <p class="section-lead">
+            Ten sub-projects shipped in dependency order. Each has its own design spec and
+            implementation plan; the AR-audit answer lands at 12.A, roughly week four.
+          </p>
+
+          <div class="timeline">
+            <!-- 12.1 -->
+            <div class="phase shipped">
+              <div class="phase-head">
+                <span class="phase-id">12.1</span>
+                <span class="phase-title">GL Foundation</span>
+                <span class="pill ok">Shipped · v1.2.0</span>
+                <span class="phase-est">· ~1 week</span>
+              </div>
+              <div class="phase-body">
+                <p>
+                  Five tables, five enums, four triggers (balance, period lock,
+                  auto-number, zero-line guard), three helper functions, RLS, seed of 108
+                  monthly periods. Admin UI for chart of accounts and quarterly close.
+                  Nothing posts yet — this is the spine.
+                </p>
+                <div class="phase-deliverables">
+                  <ul>
+                    <li class="done">Migrations 0028 + 0029 applied to production</li>
+                    <li class="done">SQL smoke test · 12 assertions passing</li>
+                    <li class="done">Server Actions · strict open-period deactivation guard</li>
+                    <li class="done">Admin pages · CoA list/new/edit · Periods grid</li>
+                    <li class="done">Manila-aware quarter-close timezone logic</li>
+                    <li class="done">Mobile smoke at 390×844 (4 pages)</li>
+                    <li class="done">Tagged <code>v1.2.0</code></li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <!-- 12.2 -->
+            <div class="phase active">
+              <div class="phase-head">
+                <span class="phase-id">12.2</span>
+                <span class="phase-title">Operational → GL bridge</span>
+                <span class="pill info">Next</span>
+                <span class="phase-est">· ~1.5 weeks</span>
+              </div>
+              <div class="phase-body">
+                <p>
+                  Wire every existing write event (payment insert, test-request release,
+                  HMO claim status transition, expense post) to emit exactly one JE.
+                  Includes a replay-from-Sheet harness so 12.A can ingest historical
+                  data without bespoke import code.
+                </p>
+                <div class="phase-deliverables">
+                  <ul>
+                    <li>Postgres triggers on <code>payments</code>, <code>test_requests</code>, <code>expenses</code></li>
+                    <li>Server Action mods routing through the bridge</li>
+                    <li>Dry-run harness with diff preview</li>
+                    <li>Opening-balance JE entry path</li>
+                    <li>Audit logging on every JE post</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <!-- 12.3 -->
+            <div class="phase planned">
+              <div class="phase-head">
+                <span class="phase-id">12.3</span>
+                <span class="phase-title">HMO AR subledger + audit reports</span>
+                <span class="pill neutral">Planned</span>
+                <span class="phase-est">· ~1 week</span>
+              </div>
+              <div class="phase-body">
+                <p>
+                  Claim lifecycle status, <code>date_submitted</code>,
+                  <code>date_invoice_sent</code>, <code>date_payment_received</code>,
+                  <code>or_number</code>, deadline math. Per-provider aging dashboard. The
+                  unbilled / stuck detection report — the headline audit deliverable.
+                </p>
+                <div class="phase-deliverables">
+                  <ul>
+                    <li>HMO claim status enum + lifecycle</li>
+                    <li>Aging buckets per provider</li>
+                    <li>Unbilled detector (HMO=YES but never submitted)</li>
+                    <li>Stuck-claim detector (>180 days waiting)</li>
+                    <li>Reconciliation export per provider</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <!-- 12.A -->
+            <div class="phase planned">
+              <div class="phase-head">
+                <span class="phase-id">12.A</span>
+                <span class="phase-title">HMO history import (2023→present)</span>
+                <span class="pill neutral">Planned</span>
+                <span class="phase-est">· ~0.5 week · AR answer lands here</span>
+              </div>
+              <div class="phase-body">
+                <p>
+                  Ingest 2023→present HMO rows from the masthersheet, normalize across the
+                  three schema generations (older lab, mid-era doctor procedures, newer
+                  lab+VeritasPay). Staged with dry-run / commit gate. Audit findings
+                  surface to admin <em>before</em> commit.
+                </p>
+                <div class="phase-deliverables">
+                  <ul>
+                    <li>CSV/Sheet parser tolerant of 3 column generations</li>
+                    <li>Staging table with dry-run / commit gate</li>
+                    <li>Data-quality findings report (#REF!, blank dates, etc.)</li>
+                    <li>Real AR balance reconciles to provider totals</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <!-- 12.4 -->
+            <div class="phase planned">
+              <div class="phase-head">
+                <span class="phase-id">12.4</span>
+                <span class="phase-title">Operating-expense / AP subledger</span>
+                <span class="pill neutral">Planned</span>
+                <span class="phase-est">· ~1 week</span>
+              </div>
+              <div class="phase-body">
+                <p>
+                  Vendor master, expense rows with supplier TIN and OR#, receipt upload,
+                  category breakdown. Split today's overloaded “Legal &amp; Regulatory”
+                  bucket into BIR remittances, government permits, legal fees, DST, tax
+                  penalties. (BIR remittances will likely become an audit finding —
+                  they're settlements of payables, not P&amp;L expenses.)
+                </p>
+                <div class="phase-deliverables">
+                  <ul>
+                    <li><code>vendors</code> + <code>expenses</code> tables</li>
+                    <li>Receipt upload via Supabase Storage</li>
+                    <li>AP control account reconciliation view</li>
+                    <li>Expense encoding UI under <code>/staff/admin/accounting</code></li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <!-- 12.5 -->
+            <div class="phase planned">
+              <div class="phase-head">
+                <span class="phase-id">12.5</span>
+                <span class="phase-title">COGS + Doctor compensation (PF / rent / none)</span>
+                <span class="pill neutral">Planned</span>
+                <span class="phase-est">· ~1 week</span>
+              </div>
+              <div class="phase-body">
+                <p>
+                  <code>services.cogs_php</code>; doctor classification with
+                  <code>compensation_type ∈ {pf, rent, none}</code>; doctor-rent billing
+                  tracker with monthly invoice generation; PF accumulation + disbursement
+                  JE flow for PF doctors.
+                </p>
+                <div class="phase-deliverables">
+                  <ul>
+                    <li>COGS per service line</li>
+                    <li><code>physicians.compensation_type</code> enum</li>
+                    <li><code>doctor_rent_invoices</code> + aging</li>
+                    <li>Doctor PF payout subledger</li>
+                    <li>Rent billing admin page</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <!-- 12.6 -->
+            <div class="phase planned">
+              <div class="phase-head">
+                <span class="phase-id">12.6</span>
+                <span class="phase-title">Employees + Attendance + Payroll + Payslip</span>
+                <span class="pill neutral">Planned</span>
+                <span class="phase-est">· ~1.5 weeks</span>
+              </div>
+              <div class="phase-body">
+                <p>
+                  Employee profile (TIN, SSS, PhilHealth, Pag-IBIG), ZKTeco DTR CSV
+                  upload, semi-monthly payroll runs with mandatory contributions and
+                  withholding-tax-on-compensation capture, payslip PDF emailed and
+                  printable. Manual JE form for accountant.
+                </p>
+                <div class="phase-deliverables">
+                  <ul>
+                    <li>Employee profile + government IDs</li>
+                    <li>ZKTeco DTR parser</li>
+                    <li>Attendance + overtime / night diff / holiday</li>
+                    <li>Payroll engine with SSS/PhilHealth/Pag-IBIG/WT</li>
+                    <li>13th-month pay computation</li>
+                    <li>Payslip PDF · email + print</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <!-- 12.B -->
+            <div class="phase planned">
+              <div class="phase-head">
+                <span class="phase-id">12.B</span>
+                <span class="phase-title">Operational + expense history import</span>
+                <span class="pill neutral">Planned</span>
+                <span class="phase-est">· ~1 week</span>
+              </div>
+              <div class="phase-body">
+                <p>
+                  Ingest non-HMO 2023→present rows: cash payments, expense entries,
+                  doctor rent payments (the per-day cells like “DR ALVAREZ ₱100”),
+                  historical payroll. Same dry-run / commit gate as 12.A.
+                </p>
+                <div class="phase-deliverables">
+                  <ul>
+                    <li>Cash transaction backfill</li>
+                    <li>Expense backfill with category re-mapping</li>
+                    <li>Doctor rent history</li>
+                    <li>Payroll history (where DTR exists)</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <!-- 12.7 -->
+            <div class="phase planned">
+              <div class="phase-head">
+                <span class="phase-id">12.7</span>
+                <span class="phase-title">Period close + accruals + manual JE</span>
+                <span class="pill neutral">Planned</span>
+                <span class="phase-est">· ~1 week</span>
+              </div>
+              <div class="phase-body">
+                <p>
+                  Close calendar UI mirroring the close-management methodology;
+                  accountant-only JE entry form for accruals, depreciation, prepaid
+                  amortization, and retroactive corrections (the audit-finding fix path);
+                  reversing entries; lock enforcement at the DB.
+                </p>
+                <div class="phase-deliverables">
+                  <ul>
+                    <li>Close runbook UI (per-quarter checklist)</li>
+                    <li>Manual JE entry · draft + post + reverse</li>
+                    <li>Depreciation schedule manager</li>
+                    <li>Prepaid amortization manager</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <!-- 12.8 -->
+            <div class="phase planned">
+              <div class="phase-head">
+                <span class="phase-id">12.8</span>
+                <span class="phase-title">Financial statements</span>
+                <span class="pill neutral">Planned</span>
+                <span class="phase-est">· ~1 week · end of MVP</span>
+              </div>
+              <div class="phase-body">
+                <p>
+                  Income statement, balance sheet, cash flow — all generated from GL with
+                  monthly / quarterly / annual / YTD views and period-over-period
+                  comparison. Variance commentary uses the variance-analysis methodology
+                  (price × volume decomposition).
+                </p>
+                <div class="phase-deliverables">
+                  <ul>
+                    <li>P&amp;L view · monthly / quarterly / annual / YTD</li>
+                    <li>Balance sheet at period end</li>
+                    <li>Cash flow statement (direct method)</li>
+                    <li>Period-over-period + variance commentary</li>
+                    <li>Export to CSV/PDF for external CPA</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <hr class="divider" />
+
+        <!-- FUTURE PHASES -->
+        <section id="future">
+          <span class="section-eyebrow">07 · Future Phases</span>
+          <h2 class="section-title">Deliberately deferred.</h2>
+          <p class="section-lead">
+            Items the schema is designed to extend toward without painful migrations.
+            Each starts when its trigger lands.
+          </p>
+
+          <div class="timeline">
+            <div class="phase deferred">
+              <div class="phase-head">
+                <span class="phase-id">FP1</span>
+                <span class="phase-title">VAT &amp; Withholding capture</span>
+                <span class="pill neutral">Deferred</span>
+              </div>
+              <div class="phase-body">
+                <p>
+                  Per-service VAT treatment (vatable / exempt / zero-rated), output VAT
+                  on revenue, input VAT on expenses, monthly 2550M / quarterly 2550Q
+                  summary views, doctor 2307 generation.
+                </p>
+                <div class="phase-deliverables">
+                  <ul>
+                    <li><strong>Trigger:</strong> accountant confirms per-service VAT classification</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <div class="phase deferred">
+              <div class="phase-head">
+                <span class="phase-id">FP2</span>
+                <span class="phase-title">BIR forms filing surfaces</span>
+                <span class="pill neutral">Deferred</span>
+              </div>
+              <div class="phase-body">
+                <p>
+                  2550M/Q · 1601-C · 2316 · 1701 · alphalists of payees. Optional eFPS
+                  hand-off.
+                </p>
+                <div class="phase-deliverables">
+                  <ul>
+                    <li><strong>Trigger:</strong> you want to bring filing in-house</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <div class="phase deferred">
+              <div class="phase-head">
+                <span class="phase-id">FP3</span>
+                <span class="phase-title">Monthly close workflow</span>
+                <span class="pill neutral">Deferred</span>
+              </div>
+              <div class="phase-body">
+                <p>
+                  Per-month lock + close calendar at monthly cadence. Schema-compatible
+                  with today's quarterly close.
+                </p>
+                <div class="phase-deliverables">
+                  <ul>
+                    <li><strong>Trigger:</strong> reporting needs sharper than quarterly</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <div class="phase deferred">
+              <div class="phase-head">
+                <span class="phase-id">FP4</span>
+                <span class="phase-title">Bank statement reconciliation</span>
+                <span class="pill neutral">Deferred</span>
+              </div>
+              <div class="phase-body">
+                <p>
+                  OFX/CSV import of bank statements, auto-match against cash receipts
+                  and disbursements, reconciliation report.
+                </p>
+                <div class="phase-deliverables">
+                  <ul>
+                    <li><strong>Trigger:</strong> audit demands tighter cash controls</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <div class="phase deferred">
+              <div class="phase-head">
+                <span class="phase-id">FP5</span>
+                <span class="phase-title">Budget vs Actual</span>
+                <span class="pill neutral">Deferred</span>
+              </div>
+              <div class="phase-body">
+                <p>
+                  Budget table + variance reports using the variance-analysis methodology
+                  (price × volume decomposition with waterfall narrative).
+                </p>
+                <div class="phase-deliverables">
+                  <ul>
+                    <li><strong>Trigger:</strong> historical actuals stabilise enough to budget against</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <div class="phase deferred">
+              <div class="phase-head">
+                <span class="phase-id">FP6</span>
+                <span class="phase-title">Multi-currency</span>
+                <span class="pill neutral">Deferred</span>
+              </div>
+              <div class="phase-body">
+                <p>
+                  Multi-currency JE lines + FX gain/loss accounts.
+                </p>
+                <div class="phase-deliverables">
+                  <ul>
+                    <li><strong>Trigger:</strong> USD/SGD HMO contracts or foreign-vendor payments materialise</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <div class="phase deferred">
+              <div class="phase-head">
+                <span class="phase-id">FP7</span>
+                <span class="phase-title">Accountant role</span>
+                <span class="pill neutral">Deferred</span>
+              </div>
+              <div class="phase-body">
+                <p>
+                  Read-only accountant user with restricted access to admin accounting
+                  surfaces. Schema already supports it; we just don't grant the role
+                  today.
+                </p>
+                <div class="phase-deliverables">
+                  <ul>
+                    <li><strong>Trigger:</strong> you delegate monthly close to an external CPA</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <hr class="divider" />
+
+        <!-- RISKS -->
+        <section id="risks">
+          <span class="section-eyebrow">08 · Risks &amp; Dependencies</span>
+          <h2 class="section-title">What could go sideways, and how we handle it.</h2>
+          <p class="section-lead">
+            None of these are critical right now. All have a mitigation plan and a
+            named owner.
+          </p>
+
+          <div class="risk-grid">
+            <div class="risk warn">
+              <div class="risk-head">
+                <span class="risk-title">MCP doesn't honor BEGIN/ROLLBACK</span>
+                <span class="pill warn">Live · mitigated</span>
+              </div>
+              <p class="risk-body">
+                Supabase MCP <code>execute_sql</code> auto-commits statements, so the
+                12.1 smoke leaked 6 JE headers into production despite the
+                <code>BEGIN; … ROLLBACK;</code> envelope. Cleaned up post-smoke.
+              </p>
+              <div class="risk-mitigate">
+                <strong>Mitigation</strong> · for 12.2+, run smoke against local Docker
+                Supabase, OR have the smoke explicitly clean up its own rows after each
+                assertion.
+              </div>
+            </div>
+
+            <div class="risk info">
+              <div class="risk-head">
+                <span class="risk-title">No local Supabase available</span>
+                <span class="pill info">Accepted</span>
+              </div>
+              <p class="risk-body">
+                Docker not installed on the dev machine; migrations apply directly to
+                the production project. Additive-only changes are safe; the user already
+                works this way for past phases.
+              </p>
+              <div class="risk-mitigate">
+                <strong>Mitigation</strong> · accept current pattern; add a documented
+                option to install Docker before high-risk migrations (e.g., destructive
+                12.A backfill commits).
+              </div>
+            </div>
+
+            <div class="risk warn">
+              <div class="risk-head">
+                <span class="risk-title">Sheet schema drift across 3 generations</span>
+                <span class="pill warn">12.A / 12.B</span>
+              </div>
+              <p class="risk-body">
+                The mastersheet has at least three column generations of the same
+                transaction (older “HMO INVOICE/*” → mid “HMO/STATUS” → newer
+                “VERITAS PAY/*”). The import parser must normalize all three.
+              </p>
+              <div class="risk-mitigate">
+                <strong>Mitigation</strong> · staged import with dry-run gate; data-quality
+                report surfaces drift before commit; manual reclassification UI from 12.7.
+              </div>
+            </div>
+
+            <div class="risk warn">
+              <div class="risk-head">
+                <span class="risk-title">Historical data quality</span>
+                <span class="pill warn">12.A</span>
+              </div>
+              <p class="risk-body">
+                <code>#REF!</code> errors in BASE PRICE on some 2023 rows, HMO=YES with
+                STATUS=N/A, blank submission dates against “SUBMITTED” status. Every
+                such row needs a human decision.
+              </p>
+              <div class="risk-mitigate">
+                <strong>Mitigation</strong> · 12.A's import is staged; admin reviews and
+                resolves each finding before the commit.
+              </div>
+            </div>
+
+            <div class="risk info">
+              <div class="risk-head">
+                <span class="risk-title">VAT classification deferral</span>
+                <span class="pill info">Tracked</span>
+              </div>
+              <p class="risk-body">
+                Schema stays extensible. <code>Output VAT Payable</code>,
+                <code>Input VAT</code>, etc. can be added later without migration pain.
+                Risk: a long deferral lets the audit gap (BIR remittances mis-classified
+                as expenses) compound.
+              </p>
+              <div class="risk-mitigate">
+                <strong>Mitigation</strong> · accountant classifies revenue lines as
+                part of any quarter close after 12.7 ships.
+              </div>
+            </div>
+
+            <div class="risk info">
+              <div class="risk-head">
+                <span class="risk-title">Payroll compliance teeth</span>
+                <span class="pill info">12.6</span>
+              </div>
+              <p class="risk-body">
+                Withholding tax on compensation is legally mandatory; SSS, PhilHealth,
+                Pag-IBIG split + employer contributions must be captured per run. Filing
+                surfaces deferred but capture cannot be.
+              </p>
+              <div class="risk-mitigate">
+                <strong>Mitigation</strong> · 12.6 includes capture; FP2 adds the filing
+                hand-off (2316, alphalists).
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <hr class="divider" />
+
+        <!-- ACTION ITEMS -->
+        <section id="actions">
+          <span class="section-eyebrow">09 · Your Action Items</span>
+          <h2 class="section-title">What you own between sessions.</h2>
+          <p class="section-lead">
+            Five small items that unblock or sharpen upcoming sub-projects. None require
+            engineering effort; all live in your court.
+          </p>
+
+          <div class="action-list">
+            <div class="action">
+              <div class="action-num">01</div>
+              <div class="action-body">
+                <strong>Populate the real chart of accounts.</strong>
+                <p class="small">
+                  Use <code>/staff/admin/accounting/chart-of-accounts/new</code> to add
+                  the income-statement accounts you already maintain in the Sheet. 22-ish
+                  line items. The Suspense account is your only seed today.
+                </p>
+              </div>
+              <div class="action-status"><span class="pill warn">Blocks 12.2</span></div>
+            </div>
+
+            <div class="action">
+              <div class="action-num">02</div>
+              <div class="action-body">
+                <strong>Decide which 2023 row generation is canonical.</strong>
+                <p class="small">
+                  The mastersheet has three generations of the HMO transaction tab.
+                  Tell me which is current so the 12.A parser knows which to treat as
+                  authoritative when columns drift.
+                </p>
+              </div>
+              <div class="action-status"><span class="pill info">12.A prep</span></div>
+            </div>
+
+            <div class="action">
+              <div class="action-num">03</div>
+              <div class="action-body">
+                <strong>Provide a ZKTeco DTR sample export.</strong>
+                <p class="small">
+                  One real week of attendance data (any week, all 5 employees) so the
+                  12.6 parser is built against the device's actual CSV shape rather than
+                  the format we'd otherwise have to guess at.
+                </p>
+              </div>
+              <div class="action-status"><span class="pill info">12.6 prep</span></div>
+            </div>
+
+            <div class="action">
+              <div class="action-num">04</div>
+              <div class="action-body">
+                <strong>Ask your accountant: per-service VAT treatment.</strong>
+                <p class="small">
+                  Which revenue lines are VATable 12%, exempt, or zero-rated. Lab tests,
+                  doctor consults, doctor procedures, rent from doctors, send-out
+                  passthrough, gift certificates, mobile APE — each gets a classification.
+                  Unblocks Future Phase 1.
+                </p>
+              </div>
+              <div class="action-status"><span class="pill neutral">FP1 unblocker</span></div>
+            </div>
+
+            <div class="action">
+              <div class="action-num">05</div>
+              <div class="action-body">
+                <strong>Authorize <code>git push</code> when ready.</strong>
+                <p class="small">
+                  12 local commits + tag <code>v1.2.0</code> are waiting to push to
+                  origin. Doing it any time after you've populated the CoA gives the
+                  remote a clean ship.
+                </p>
+              </div>
+              <div class="action-status"><span class="pill ok">Anytime</span></div>
+            </div>
+          </div>
+        </section>
+
+        <hr class="divider" />
+
+        <!-- BETWEEN-SESSION NOTES -->
+        <section id="notes">
+          <span class="section-eyebrow">10 · Between-Sessions Notes</span>
+          <h2 class="section-title">Captured for next time.</h2>
+          <p class="section-lead">
+            Small running log so neither of us has to re-discover context tomorrow.
+          </p>
+
+          <div class="notes">
+            <div class="note">
+              <div class="note-date">2026-05-12 · End of session</div>
+              <div class="note-body">
+                <strong>12.1 shipped + tagged <code>v1.2.0</code>.</strong> Six implementation
+                commits across three dispatches. Full mobile smoke at 390×844 — CoA list,
+                new, edit, periods grid all clean. Cleaned up 6 leaked smoke-test JE
+                headers post-Playwright. Year counter reset. Production state is one
+                Suspense CoA row, zero JEs, zero lines.
+              </div>
+            </div>
+            <div class="note">
+              <div class="note-date">2026-05-12 · Mid-day</div>
+              <div class="note-body">
+                Doctor compensation pivots into three types — <code>pf</code>,
+                <code>rent</code>, <code>none</code>. 12.5 now owns the rent billing
+                tracker. Historical doctor-rent rows from per-day cells feed 12.B.
+              </div>
+            </div>
+            <div class="note">
+              <div class="note-date">2026-05-11 · Brainstorm</div>
+              <div class="note-body">
+                Veritas reclassified — it's a card processor, not an HMO. The Sheet's
+                <code>VERITAS PAY PAYMENT/*</code> columns map to payment metadata, not
+                to a parallel AR subledger. 12.3 simplifies as a result.
+              </div>
+            </div>
+            <div class="note">
+              <div class="note-date">2026-05-11 · Brainstorm</div>
+              <div class="note-body">
+                VAT capture deferred to Future Phase 1 pending classification. WT on
+                compensation cannot be deferred (legally required); it lands in 12.6.
+              </div>
+            </div>
+            <div class="note">
+              <div class="note-date">2026-05-11 · Brainstorm</div>
+              <div class="note-body">
+                Depth locked: <strong>Option C</strong>, full books, quarterly close,
+                admin only, full 2023→present backfill. You own the CoA personally; we
+                won't seed it beyond the safety-net Suspense account.
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <hr class="divider" />
+
+        <!-- KEY TAKEAWAYS -->
+        <section id="takeaways">
+          <span class="section-eyebrow">11 · Key Takeaways</span>
+          <h2 class="section-title">Three things to keep in mind.</h2>
+          <p class="section-lead">
+            If you remember nothing else from this document, remember these.
+          </p>
+
+          <div class="takeaways">
+            <div class="takeaway">
+              <div class="takeaway-num">01</div>
+              <h4>The GL is the contract.</h4>
+              <p>
+                Every operational event from 12.2 onward posts exactly one JE.
+                Debits = credits is enforced at the database, period locks are
+                DB-enforced. The app can never disagree with itself again.
+              </p>
+            </div>
+            <div class="takeaway">
+              <div class="takeaway-num">02</div>
+              <h4>The AR answer arrives early.</h4>
+              <p>
+                12.1 + 12.2 + 12.3 + 12.A delivers the unbilled-claim audit and the
+                reconciled per-provider AR balance by roughly week four. That's the
+                single most valuable artifact of the project.
+              </p>
+            </div>
+            <div class="takeaway">
+              <div class="takeaway-num">03</div>
+              <h4>Reception's life doesn't change.</h4>
+              <p>
+                The whole project sits behind the same admin gate. The forms reception
+                fills out today are unchanged. The GL posts behind them silently. You're
+                rebuilding the books, not the clinic's daily workflow.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <hr class="divider" />
+
+        <!-- RECOMMENDATIONS -->
+        <section id="recommendations">
+          <span class="section-eyebrow">12 · Prioritized Recommendations</span>
+          <h2 class="section-title">What I'd do next, in order.</h2>
+          <p class="section-lead">
+            Ranked by leverage. Each item links back to a phase or an action.
+          </p>
+
+          <div class="recommendations">
+            <div class="rec">
+              <div class="rec-num"></div>
+              <div class="rec-body">
+                <h4>Populate the real chart of accounts this week.</h4>
+                <p>
+                  Twenty-two line items, fifteen minutes. Doing it before 12.2 lands
+                  means the operational → GL bridge writes against real revenue and
+                  expense accounts from its first commit, not the Suspense fallback.
+                </p>
+                <p class="detail">
+                  Where · <code>/staff/admin/accounting/chart-of-accounts</code>
+                </p>
+              </div>
+              <div class="rec-priority"><span class="pill crit">P0 · this week</span></div>
+            </div>
+
+            <div class="rec">
+              <div class="rec-num"></div>
+              <div class="rec-body">
+                <h4>Start the 12.2 brainstorm.</h4>
+                <p>
+                  Op → GL bridge is the highest-leverage next sub-project. Once it
+                  ships, 12.3 (AR subledger) and 12.A (HMO history import) follow
+                  quickly, and the AR audit answer lands.
+                </p>
+                <p class="detail">
+                  Trigger · say “brainstorm 12.2” in our next session.
+                </p>
+              </div>
+              <div class="rec-priority"><span class="pill crit">P0 · next session</span></div>
+            </div>
+
+            <div class="rec">
+              <div class="rec-num"></div>
+              <div class="rec-body">
+                <h4>Push the local commits + tag to origin.</h4>
+                <p>
+                  Twelve commits and <code>v1.2.0</code> live only on the dev machine
+                  today. Pushing puts them in the safety net of GitHub and unblocks
+                  Vercel preview deploys for downstream phases.
+                </p>
+                <p class="detail">
+                  Command · <code>git push &amp;&amp; git push --tags</code>
+                </p>
+              </div>
+              <div class="rec-priority"><span class="pill warn">P1</span></div>
+            </div>
+
+            <div class="rec">
+              <div class="rec-num"></div>
+              <div class="rec-body">
+                <h4>Email the accountant about VAT classification.</h4>
+                <p>
+                  Future Phase 1 is the only future phase with a fast trigger.
+                  Getting the per-service VAT classification on paper now means we
+                  can fold VAT capture into 12.7 if you want, rather than treating it
+                  as a fully separate later project.
+                </p>
+                <p class="detail">
+                  Where · Ask CPA · lab tests / doctor consults / procedures / rent /
+                  send-out / GC redemption / mobile APE.
+                </p>
+              </div>
+              <div class="rec-priority"><span class="pill warn">P1</span></div>
+            </div>
+
+            <div class="rec">
+              <div class="rec-num"></div>
+              <div class="rec-body">
+                <h4>Install Docker before 12.A history-import work.</h4>
+                <p>
+                  12.A's import will involve test inserts at meaningful volume.
+                  Doing those against a local Supabase via Docker avoids the
+                  smoke-leak class of risk we hit in 12.1.
+                </p>
+                <p class="detail">
+                  Command · <code>brew install --cask docker</code> and start Docker
+                  Desktop.
+                </p>
+              </div>
+              <div class="rec-priority"><span class="pill info">P2</span></div>
+            </div>
+
+            <div class="rec">
+              <div class="rec-num"></div>
+              <div class="rec-body">
+                <h4>Plan a one-hour CoA review with your accountant.</h4>
+                <p>
+                  Once the CoA is populated, a quick external review catches
+                  account-code conventions and any missing categories before they
+                  metastasize through downstream historical data. A small upfront
+                  investment that pays back through 12.A onward.
+                </p>
+                <p class="detail">
+                  Trigger · after action item #01 above is complete.
+                </p>
+              </div>
+              <div class="rec-priority"><span class="pill info">P2</span></div>
+            </div>
+          </div>
+        </section>
+
+        <footer>
+          <div>
+            <strong style="color:var(--navy)">DRMed · Accounting Roadmap</strong>
+            <br />Generated 2026-05-12 · Working draft, supersedes any earlier roadmap.
+          </div>
+          <div>
+            <strong style="color:var(--navy)">v1.2.0</strong>
+            <br />Tagged on commit <code>72a5913</code> · <code>main</code> branch.
+          </div>
+        </footer>
+      </main>
+    </div>
+  </body>
+</html>
