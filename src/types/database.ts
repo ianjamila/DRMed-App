@@ -871,6 +871,41 @@ export type Database = {
           },
         ]
       }
+      payment_method_account_map: {
+        Row: {
+          account_id: string
+          created_at: string
+          id: string
+          notes: string | null
+          payment_method: string
+          updated_at: string
+        }
+        Insert: {
+          account_id: string
+          created_at?: string
+          id?: string
+          notes?: string | null
+          payment_method: string
+          updated_at?: string
+        }
+        Update: {
+          account_id?: string
+          created_at?: string
+          id?: string
+          notes?: string | null
+          payment_method?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_method_account_map_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "chart_of_accounts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       payments: {
         Row: {
           amount_php: number
@@ -882,6 +917,9 @@ export type Database = {
           received_by: string
           reference_number: string | null
           visit_id: string
+          void_reason: string | null
+          voided_at: string | null
+          voided_by: string | null
         }
         Insert: {
           amount_php: number
@@ -893,6 +931,9 @@ export type Database = {
           received_by: string
           reference_number?: string | null
           visit_id: string
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
         }
         Update: {
           amount_php?: number
@@ -904,6 +945,9 @@ export type Database = {
           received_by?: string
           reference_number?: string | null
           visit_id?: string
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
         }
         Relationships: [
           {
@@ -911,6 +955,13 @@ export type Database = {
             columns: ["visit_id"]
             isOneToOne: false
             referencedRelation: "visits"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payments_voided_by_fkey"
+            columns: ["voided_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -1927,10 +1978,15 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      bridge_replay_summary: {
+        Args: { p_end: string; p_start: string }
+        Returns: Json
+      }
       coa_account_has_open_period_postings: {
         Args: { p_account_id: string }
         Returns: boolean
       }
+      coa_uuid_for_code: { Args: { p_code: string }; Returns: string }
       current_patient_id: { Args: never; Returns: string }
       generate_drm_id: { Args: never; Returns: string }
       generate_visit_number: { Args: never; Returns: string }
@@ -1938,6 +1994,16 @@ export type Database = {
       is_staff: { Args: never; Returns: boolean }
       je_next_number: { Args: { p_fiscal_year: number }; Returns: string }
       period_status_for: { Args: { p_date: string }; Returns: string }
+      resolve_ar_account: { Args: { p_is_hmo: boolean }; Returns: string }
+      resolve_cash_account: { Args: { p_method: string }; Returns: string }
+      resolve_discount_account: {
+        Args: { p_service_kind: string }
+        Returns: string
+      }
+      resolve_revenue_account: {
+        Args: { p_service_kind: string }
+        Returns: string
+      }
       set_patient_context: {
         Args: { p_patient_id: string }
         Returns: undefined
