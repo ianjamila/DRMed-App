@@ -410,18 +410,81 @@ rollback;
 -- =============================================================================
 -- Post-smoke cleanup (run if executed via MCP, which doesn't honor ROLLBACK)
 -- =============================================================================
+-- Strategy: match by patient (cleaner than description) for forward-compatibility
+-- with future bridge description changes. Bridge-generated descriptions follow
+-- patterns like 'Test request released: home_service' or 'Payment received via
+-- cash' — none contain "smoke" or "mok". Joining through the smoke patient via
+-- drm_id='SMOKE-001' is the reliable anchor. The legacy description filter
+-- (LIKE '%mok%') is kept as a defensive fallback only.
+--
+-- delete from public.audit_log
+--   where action = 'coa.suspense_post'
+--     and metadata->>'source_kind' in ('payment', 'test_request')
+--     and (metadata->>'source_id')::uuid in (
+--       select id from public.payments where visit_id in (
+--         select id from public.visits where patient_id in (
+--           select id from public.patients where drm_id = 'SMOKE-001'
+--         )
+--       )
+--       union all
+--       select id from public.test_requests where visit_id in (
+--         select id from public.visits where patient_id in (
+--           select id from public.patients where drm_id = 'SMOKE-001'
+--         )
+--       )
+--     );
 -- delete from public.journal_lines
 --   where entry_id in (
 --     select id from public.journal_entries
---     where created_at > now() - interval '1 hour'
---       and description like '%mok%'
+--     where source_kind in ('payment', 'test_request', 'reversal')
+--       and (
+--         source_id in (select id from public.payments where visit_id in (
+--           select id from public.visits where patient_id in (
+--             select id from public.patients where drm_id = 'SMOKE-001'
+--           )
+--         ))
+--         or source_id in (select id from public.test_requests where visit_id in (
+--           select id from public.visits where patient_id in (
+--             select id from public.patients where drm_id = 'SMOKE-001'
+--           )
+--         ))
+--         or reverses in (
+--           -- Reversal JEs whose target was a smoke JE (already covered above, but defensive)
+--           select id from public.journal_entries
+--           where description like '%mok%'  -- keep the legacy filter as backup
+--         )
+--       )
 --   );
 -- delete from public.journal_entries
---   where created_at > now() - interval '1 hour'
---     and description like '%mok%';
+--   where source_kind in ('payment', 'test_request', 'reversal')
+--     and (
+--       source_id in (
+--         select id from public.payments where visit_id in (
+--           select id from public.visits where patient_id in (
+--             select id from public.patients where drm_id = 'SMOKE-001'
+--           )
+--         )
+--       )
+--       or source_id in (
+--         select id from public.test_requests where visit_id in (
+--           select id from public.visits where patient_id in (
+--             select id from public.patients where drm_id = 'SMOKE-001'
+--           )
+--         )
+--       )
+--       or description like '%mok%'
+--     );
 -- select fiscal_year, next_n from public.je_year_counters where fiscal_year = 2026;
--- delete from public.payments where amount_php in (25, 33, 50, 75, 500, 1000) and notes is null;
--- delete from public.test_requests where base_price_php in (500, 700, 1000) and status in ('released', 'cancelled', 'ready_for_release');
+-- delete from public.payments where amount_php in (25, 33, 50, 75, 500, 1000) and visit_id in (
+--   select id from public.visits where patient_id in (
+--     select id from public.patients where drm_id = 'SMOKE-001'
+--   )
+-- );
+-- delete from public.test_requests where base_price_php in (500, 700, 1000, 400, 600) and visit_id in (
+--   select id from public.visits where patient_id in (
+--     select id from public.patients where drm_id = 'SMOKE-001'
+--   )
+-- );
 -- delete from public.visits where total_php in (500, 1000) and patient_id in (
 --   select id from public.patients where drm_id = 'SMOKE-001'
 -- );
@@ -429,4 +492,17 @@ rollback;
 -- delete from public.hmo_providers where name = 'SMOKE_HMO';
 -- delete from public.services where code in ('SMOKE_LAB', 'SMOKE_DOC', 'SMOKE_HOME', 'SMOKE_VAX');
 -- select 'patients' as t, count(*)::int n from public.patients where drm_id = 'SMOKE-001'
--- union all select 'smoke_jes', count(*)::int from public.journal_entries where description like '%mok%';
+-- union all select 'smoke_jes', count(*)::int from public.journal_entries
+--   where source_id in (
+--     select id from public.payments where visit_id in (
+--       select id from public.visits where patient_id in (
+--         select id from public.patients where drm_id = 'SMOKE-001'
+--       )
+--     )
+--     union all
+--     select id from public.test_requests where visit_id in (
+--       select id from public.visits where patient_id in (
+--         select id from public.patients where drm_id = 'SMOKE-001'
+--       )
+--     )
+--   );
