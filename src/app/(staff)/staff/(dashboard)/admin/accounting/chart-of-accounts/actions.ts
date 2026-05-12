@@ -11,28 +11,9 @@ import {
   AccountUpdateSchema,
 } from "@/lib/validations/accounting";
 import { translatePgError } from "@/lib/accounting/pg-errors";
+import { deriveNormalBalance } from "@/lib/accounting/derive-normal-balance";
 
 export type CoaResult = { ok: true } | { ok: false; error: string };
-
-// Normal balance is derived from type; we enforce it server-side so a
-// client tampering with the form can't post a debit-normal liability.
-function deriveNormalBalance(type: string): "debit" | "credit" {
-  switch (type) {
-    case "asset":
-    case "expense":
-    case "contra_revenue":
-      return "debit";
-    case "liability":
-    case "equity":
-    case "revenue":
-    case "contra_expense":
-      return "credit";
-    case "memo":
-      return "debit"; // memo allows either; default to debit
-    default:
-      return "debit";
-  }
-}
 
 function readForm(formData: FormData) {
   return {
@@ -120,11 +101,14 @@ export async function updateAccountAction(
   }
 
   const admin = createAdminClient();
-  const { data: before } = await admin
+  const { data: before, error: fetchError } = await admin
     .from("chart_of_accounts")
     .select("name, type, parent_id, description, normal_balance, is_active")
     .eq("id", accountId)
     .maybeSingle();
+  if (fetchError || !before) {
+    return { ok: false, error: "Account not found." };
+  }
 
   const { error } = await admin
     .from("chart_of_accounts")

@@ -10,13 +10,18 @@ import {
   ReopenQuarterSchema,
 } from "@/lib/validations/accounting";
 import { translatePgError } from "@/lib/accounting/pg-errors";
+import { todayManilaISO } from "@/lib/marketing/closures";
 
 export type PeriodResult = { ok: true } | { ok: false; error: string };
 
-function lastDayOfQuarter(year: number, quarter: 1 | 2 | 3 | 4): Date {
+// Returns the last calendar day of the quarter as a YYYY-MM-DD string.
+// Uses Date.UTC(year, endMonth, 0) — "day 0 of the month after the quarter
+// ends" equals the last day of the final quarter month — avoiding any
+// server-local timezone drift.
+function lastIsoDayOfQuarter(year: number, quarter: 1 | 2 | 3 | 4): string {
   const endMonth = quarter * 3; // 3, 6, 9, 12
-  // Last day of the quarter's final month.
-  return new Date(year, endMonth, 0);
+  const d = new Date(Date.UTC(year, endMonth, 0));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
 }
 
 export async function closeQuarterAction(
@@ -37,9 +42,10 @@ export async function closeQuarterAction(
     };
   }
 
-  // Reject future quarters (quarter's last day must be in the past).
-  const lastDay = lastDayOfQuarter(parsed.data.fiscal_year, parsed.data.fiscal_quarter as 1 | 2 | 3 | 4);
-  if (lastDay >= new Date()) {
+  // Reject future quarters (quarter's last day must be in the past, Manila time).
+  // ISO date string comparison is lexicographically equivalent to chronological
+  // for YYYY-MM-DD, so no Date parsing is needed.
+  if (todayManilaISO() <= lastIsoDayOfQuarter(parsed.data.fiscal_year, parsed.data.fiscal_quarter as 1 | 2 | 3 | 4)) {
     return {
       ok: false,
       error: `Cannot close Q${parsed.data.fiscal_quarter} ${parsed.data.fiscal_year} — the quarter hasn't ended yet.`,
@@ -86,6 +92,7 @@ export async function closeQuarterAction(
       fiscal_quarter: parsed.data.fiscal_quarter,
       period_ids: (updated ?? []).map((r) => r.id),
       notes: parsed.data.notes ?? null,
+      closed_by: session.user_id,
     },
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),
@@ -150,6 +157,7 @@ export async function reopenQuarterAction(
       fiscal_quarter: parsed.data.fiscal_quarter,
       reason: parsed.data.reason,
       period_ids: (updated ?? []).map((r) => r.id),
+      reopened_by: session.user_id,
     },
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),
