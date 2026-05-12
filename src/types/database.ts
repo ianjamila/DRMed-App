@@ -12,33 +12,61 @@ export type Database = {
   __InternalSupabase: {
     PostgrestVersion: "14.5"
   }
-  graphql_public: {
-    Tables: {
-      [_ in never]: never
-    }
-    Views: {
-      [_ in never]: never
-    }
-    Functions: {
-      graphql: {
-        Args: {
-          extensions?: Json
-          operationName?: string
-          query?: string
-          variables?: Json
-        }
-        Returns: Json
-      }
-    }
-    Enums: {
-      [_ in never]: never
-    }
-    CompositeTypes: {
-      [_ in never]: never
-    }
-  }
   public: {
     Tables: {
+      accounting_periods: {
+        Row: {
+          closed_at: string | null
+          closed_by: string | null
+          created_at: string
+          fiscal_month: number
+          fiscal_quarter: number
+          fiscal_year: number
+          id: string
+          notes: string | null
+          period_end: string
+          period_start: string
+          status: Database["public"]["Enums"]["period_status"]
+          updated_at: string
+        }
+        Insert: {
+          closed_at?: string | null
+          closed_by?: string | null
+          created_at?: string
+          fiscal_month: number
+          fiscal_quarter: number
+          fiscal_year: number
+          id?: string
+          notes?: string | null
+          period_end: string
+          period_start: string
+          status?: Database["public"]["Enums"]["period_status"]
+          updated_at?: string
+        }
+        Update: {
+          closed_at?: string | null
+          closed_by?: string | null
+          created_at?: string
+          fiscal_month?: number
+          fiscal_quarter?: number
+          fiscal_year?: number
+          id?: string
+          notes?: string | null
+          period_end?: string
+          period_start?: string
+          status?: Database["public"]["Enums"]["period_status"]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "accounting_periods_closed_by_fkey"
+            columns: ["closed_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       appointments: {
         Row: {
           booking_group_id: string | null
@@ -155,6 +183,53 @@ export type Database = {
             columns: ["patient_id"]
             isOneToOne: false
             referencedRelation: "patients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      chart_of_accounts: {
+        Row: {
+          code: string
+          created_at: string
+          description: string | null
+          id: string
+          is_active: boolean
+          name: string
+          normal_balance: Database["public"]["Enums"]["account_normal_balance"]
+          parent_id: string | null
+          type: Database["public"]["Enums"]["account_type"]
+          updated_at: string
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          name: string
+          normal_balance: Database["public"]["Enums"]["account_normal_balance"]
+          parent_id?: string | null
+          type: Database["public"]["Enums"]["account_type"]
+          updated_at?: string
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          name?: string
+          normal_balance?: Database["public"]["Enums"]["account_normal_balance"]
+          parent_id?: string | null
+          type?: Database["public"]["Enums"]["account_type"]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chart_of_accounts_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "chart_of_accounts"
             referencedColumns: ["id"]
           },
         ]
@@ -508,6 +583,146 @@ export type Database = {
             columns: ["linked_visit_id"]
             isOneToOne: false
             referencedRelation: "visits"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      je_year_counters: {
+        Row: {
+          fiscal_year: number
+          next_n: number
+        }
+        Insert: {
+          fiscal_year: number
+          next_n?: number
+        }
+        Update: {
+          fiscal_year?: number
+          next_n?: number
+        }
+        Relationships: []
+      }
+      journal_entries: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          description: string
+          entry_number: string
+          id: string
+          notes: string | null
+          posted_at: string | null
+          posted_by: string | null
+          posting_date: string
+          reversed_by: string | null
+          reverses: string | null
+          source_id: string | null
+          source_kind: Database["public"]["Enums"]["je_source_kind"]
+          status: Database["public"]["Enums"]["je_status"]
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          description: string
+          entry_number: string
+          id?: string
+          notes?: string | null
+          posted_at?: string | null
+          posted_by?: string | null
+          posting_date: string
+          reversed_by?: string | null
+          reverses?: string | null
+          source_id?: string | null
+          source_kind: Database["public"]["Enums"]["je_source_kind"]
+          status?: Database["public"]["Enums"]["je_status"]
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          description?: string
+          entry_number?: string
+          id?: string
+          notes?: string | null
+          posted_at?: string | null
+          posted_by?: string | null
+          posting_date?: string
+          reversed_by?: string | null
+          reverses?: string | null
+          source_id?: string | null
+          source_kind?: Database["public"]["Enums"]["je_source_kind"]
+          status?: Database["public"]["Enums"]["je_status"]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "journal_entries_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "journal_entries_posted_by_fkey"
+            columns: ["posted_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "journal_entries_reversed_by_fkey"
+            columns: ["reversed_by"]
+            isOneToOne: false
+            referencedRelation: "journal_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "journal_entries_reverses_fkey"
+            columns: ["reverses"]
+            isOneToOne: false
+            referencedRelation: "journal_entries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      journal_lines: {
+        Row: {
+          account_id: string
+          credit_php: number
+          debit_php: number
+          description: string | null
+          entry_id: string
+          id: string
+          line_order: number
+        }
+        Insert: {
+          account_id: string
+          credit_php?: number
+          debit_php?: number
+          description?: string | null
+          entry_id: string
+          id?: string
+          line_order: number
+        }
+        Update: {
+          account_id?: string
+          credit_php?: number
+          debit_php?: number
+          description?: string | null
+          entry_id?: string
+          id?: string
+          line_order?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "journal_lines_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "chart_of_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "journal_lines_entry_id_fkey"
+            columns: ["entry_id"]
+            isOneToOne: false
+            referencedRelation: "journal_entries"
             referencedColumns: ["id"]
           },
         ]
@@ -1687,11 +1902,17 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      coa_account_has_open_period_postings: {
+        Args: { p_account_id: string }
+        Returns: boolean
+      }
       current_patient_id: { Args: never; Returns: string }
       generate_drm_id: { Args: never; Returns: string }
       generate_visit_number: { Args: never; Returns: string }
       has_role: { Args: { roles: string[] }; Returns: boolean }
       is_staff: { Args: never; Returns: boolean }
+      je_next_number: { Args: { p_fiscal_year: number }; Returns: string }
+      period_status_for: { Args: { p_date: string }; Returns: string }
       set_patient_context: {
         Args: { p_patient_id: string }
         Returns: undefined
@@ -1699,7 +1920,28 @@ export type Database = {
       staff_role: { Args: never; Returns: string }
     }
     Enums: {
-      [_ in never]: never
+      account_normal_balance: "debit" | "credit"
+      account_type:
+        | "asset"
+        | "liability"
+        | "equity"
+        | "revenue"
+        | "expense"
+        | "contra_revenue"
+        | "contra_expense"
+        | "memo"
+      je_source_kind:
+        | "manual"
+        | "payment"
+        | "test_request"
+        | "hmo_claim"
+        | "doctor_payout"
+        | "expense"
+        | "payroll_run"
+        | "opening_balance"
+        | "reversal"
+      je_status: "draft" | "posted" | "reversed"
+      period_status: "open" | "closed"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1825,10 +2067,32 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
-  graphql_public: {
-    Enums: {},
-  },
   public: {
-    Enums: {},
+    Enums: {
+      account_normal_balance: ["debit", "credit"],
+      account_type: [
+        "asset",
+        "liability",
+        "equity",
+        "revenue",
+        "expense",
+        "contra_revenue",
+        "contra_expense",
+        "memo",
+      ],
+      je_source_kind: [
+        "manual",
+        "payment",
+        "test_request",
+        "hmo_claim",
+        "doctor_payout",
+        "expense",
+        "payroll_run",
+        "opening_balance",
+        "reversal",
+      ],
+      je_status: ["draft", "posted", "reversed"],
+      period_status: ["open", "closed"],
+    },
   },
 } as const
