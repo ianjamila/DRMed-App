@@ -26,6 +26,14 @@ export function translatePgError(err: PgError): string {
     case "P0003":
       // Zero-line guard: journal entry has no lines.
       return err.message ?? "Journal entry must have at least one line.";
+    case "P0004":
+      return err.message ?? "Cannot edit payment after JE has posted. Void and re-create instead.";
+    case "P0005":
+      return err.message ?? "Cannot post to inactive account.";
+    case "P0006":
+      return err.message ?? "Accounts are append-only; deactivate via is_active = false instead.";
+    case "P0007":
+      return err.message ?? "Cannot un-void a payment. Create a new payment instead.";
     default:
       return err.message ?? "Database error. Please try again.";
   }

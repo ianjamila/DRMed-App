@@ -46,7 +46,18 @@ export const ReopenQuarterSchema = QuarterIdentifierSchema.extend({
   reason: z.string().trim().min(1, "Reason is required to reopen a closed quarter.").max(1000),
 });
 
+export const VoidPaymentSchema = z.object({
+  reason: z.string().trim().min(1, "Reason is required to void a payment.").max(500),
+});
+
+export const UpdatePaymentMethodMapSchema = z.object({
+  account_id: z.string().uuid(),
+  notes: z.string().trim().max(500).nullable().optional(),
+});
+
 export type AccountCreateInput = z.infer<typeof AccountCreateSchema>;
 export type AccountUpdateInput = z.infer<typeof AccountUpdateSchema>;
 export type CloseQuarterInput = z.infer<typeof CloseQuarterSchema>;
 export type ReopenQuarterInput = z.infer<typeof ReopenQuarterSchema>;
+export type VoidPaymentInput = z.infer<typeof VoidPaymentSchema>;
+export type UpdatePaymentMethodMapInput = z.infer<typeof UpdatePaymentMethodMapSchema>;

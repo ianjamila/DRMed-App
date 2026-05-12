@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { formatPhp } from "@/lib/marketing/format";
 import { ReleaseButton } from "./release-button";
+import { VoidPaymentDialog } from "../../payments/[id]/void/void-payment-dialog";
 
 export const metadata = {
   title: "Visit — staff",
@@ -88,13 +89,15 @@ export default async function VisitDetailPage({ params }: Props) {
       .order("requested_at", { ascending: true }),
     supabase
       .from("payments")
-      .select("id, amount_php, method, reference_number, received_at, notes")
+      .select("id, amount_php, method, reference_number, received_at, notes, voided_at, voided_by, void_reason")
       .eq("visit_id", id)
       .order("received_at", { ascending: false }),
   ]);
 
   const isPaid = visit.payment_status === "paid" || visit.payment_status === "waived";
   const balance = Number(visit.total_php) - Number(visit.paid_php);
+  const activePayments = (payments ?? []).filter((p) => !p.voided_at);
+  const voidedPayments = (payments ?? []).filter((p) => p.voided_at);
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
@@ -352,17 +355,18 @@ export default async function VisitDetailPage({ params }: Props) {
           Payments
         </h2>
         <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
-          <table className="w-full min-w-[560px] text-sm">
+          <table className="w-full min-w-[640px] text-sm">
             <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
               <tr>
                 <th className="px-4 py-3">Date</th>
                 <th className="px-4 py-3">Amount</th>
                 <th className="px-4 py-3">Method</th>
                 <th className="px-4 py-3">Reference</th>
+                <th className="px-4 py-3"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
-              {(payments ?? []).map((p) => (
+              {activePayments.map((p) => (
                 <tr key={p.id}>
                   <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
                     {new Date(p.received_at).toLocaleString("en-PH")}
@@ -376,21 +380,52 @@ export default async function VisitDetailPage({ params }: Props) {
                   <td className="px-4 py-3 font-mono text-xs">
                     {p.reference_number ?? "—"}
                   </td>
+                  <td className="px-4 py-3">
+                    <VoidPaymentDialog
+                      paymentId={p.id}
+                      amountLabel={formatPhp(p.amount_php)}
+                    />
+                  </td>
                 </tr>
               ))}
-              {(payments ?? []).length === 0 ? (
+              {activePayments.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={4}
+                    colSpan={5}
                     className="px-4 py-6 text-center text-sm text-[color:var(--color-brand-text-soft)]"
                   >
-                    No payments yet.
+                    No active payments.
                   </td>
                 </tr>
               ) : null}
             </tbody>
           </table>
         </div>
+
+        {voidedPayments.length > 0 ? (
+          <details className="mt-4 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] px-4 py-3">
+            <summary className="cursor-pointer text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+              Voided payments ({voidedPayments.length})
+            </summary>
+            <ul className="mt-2 space-y-2 text-xs">
+              {voidedPayments.map((p) => (
+                <li key={p.id} className="rounded-md bg-white px-3 py-2">
+                  <div className="font-semibold text-[color:var(--color-brand-text-mid)]">
+                    {formatPhp(p.amount_php)} · {p.method ? PAYMENT_METHOD_LABEL[p.method] ?? p.method : "—"}
+                    <span className="ml-2 text-[color:var(--color-brand-text-soft)]">
+                      voided {p.voided_at ? new Date(p.voided_at).toLocaleString("en-PH") : ""}
+                    </span>
+                  </div>
+                  {p.void_reason ? (
+                    <div className="mt-1 text-[color:var(--color-brand-text-soft)]">
+                      Reason: {p.void_reason}
+                    </div>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </details>
+        ) : null}
       </section>
 
       {visit.notes ? (
