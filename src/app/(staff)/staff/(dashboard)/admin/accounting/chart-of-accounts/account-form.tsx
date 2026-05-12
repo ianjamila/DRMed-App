@@ -47,7 +47,6 @@ export function AccountForm({
   const [state, formAction, pending] = useActionState(action, null);
   const router = useRouter();
 
-  // Controlled state for type so we can re-filter parent options + show derived normal balance.
   return (
     <form action={formAction} className="space-y-4 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
       {state && !state.ok ? (
@@ -118,10 +117,10 @@ export function AccountForm({
 
       {mode === "edit" ? (
         <Field label="Active">
-          <label className="inline-flex min-h-[44px] items-center gap-2">
+          <div className="inline-flex min-h-[44px] items-center gap-2">
             <input type="checkbox" name="is_active" defaultChecked={defaults.is_active} value="true" />
             <span className="text-sm">Account is active and accepts new postings</span>
-          </label>
+          </div>
         </Field>
       ) : null}
 

@@ -119,6 +119,7 @@ export const STAFF_NAV: StaffNavSection[] = [
       {
         href: "/staff/admin/accounting",
         label: "Accounting sync",
+        exact: true,
         roles: ["admin"],
       },
       {

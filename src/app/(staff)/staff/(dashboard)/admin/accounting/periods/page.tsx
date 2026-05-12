@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
+import { todayManilaISO } from "@/lib/marketing/closures";
 import { PeriodActionsClient } from "./period-actions-client";
 
 export const metadata = { title: "Accounting periods — staff" };
@@ -24,8 +25,8 @@ export default async function PeriodsPage({
 }) {
   await requireAdminStaff();
   const sp = await searchParams;
-  const today = new Date();
-  const year = Number(sp.year) || today.getFullYear();
+  const todayISO = todayManilaISO();
+  const year = Number(sp.year) || Number(todayISO.slice(0, 4));
 
   const admin = createAdminClient();
 
@@ -58,7 +59,7 @@ export default async function PeriodsPage({
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
-      <header className="mb-6 flex items-start justify-between gap-4">
+      <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
             Phase 12.1 · Admin
@@ -73,10 +74,11 @@ export default async function PeriodsPage({
           </p>
         </div>
         <form className="flex items-center gap-2">
-          <label className="text-xs font-semibold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+          <label htmlFor="year-picker" className="text-xs font-semibold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             Year
           </label>
           <select
+            id="year-picker"
             name="year"
             defaultValue={year}
             className="min-h-[44px] rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 text-sm"
@@ -101,8 +103,11 @@ export default async function PeriodsPage({
           const months = byQuarter[q as 1 | 2 | 3 | 4];
           const allClosed = months.length > 0 && months.every((m) => m.status === "closed");
           const allOpen = months.length > 0 && months.every((m) => m.status === "open");
-          const lastDay = new Date(year, q * 3, 0);
-          const inFuture = lastDay >= today;
+          const lastQuarterDayISO = (() => {
+            const d = new Date(Date.UTC(year, q * 3, 0));
+            return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+          })();
+          const inFuture = todayISO <= lastQuarterDayISO;
           return (
             <section
               key={q}
