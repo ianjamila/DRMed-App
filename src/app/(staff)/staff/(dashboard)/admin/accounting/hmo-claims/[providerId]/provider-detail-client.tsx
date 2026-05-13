@@ -384,6 +384,14 @@ function UnbilledTab({
   );
 }
 
+const BUCKET_COLORS: Record<(typeof BUCKET_ORDER)[number], string> = {
+  "0-30": "bg-emerald-500",
+  "31-60": "bg-yellow-500",
+  "61-90": "bg-amber-500",
+  "91-180": "bg-orange-500",
+  "180+": "bg-red-600",
+};
+
 function AgingTab({ rows }: { rows: AgingRow[] }) {
   if (rows.length === 0) {
     return <EmptyState message="No aging data." />;
@@ -392,38 +400,83 @@ function AgingTab({ rows }: { rows: AgingRow[] }) {
   for (const r of rows) {
     if (r.bucket) byBucket.set(r.bucket, r);
   }
+  const bucketTotals = BUCKET_ORDER.map((b) => ({
+    bucket: b,
+    total: byBucket.get(b)?.total_php ?? 0,
+  }));
+  const grandTotal = bucketTotals.reduce((sum, x) => sum + x.total, 0);
   return (
-    <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
-      <table className="w-full min-w-[480px] text-sm">
-        <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-          <tr>
-            <th className="px-4 py-3">Bucket</th>
-            <th className="px-4 py-3 text-right">Items</th>
-            <th className="px-4 py-3 text-right">Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          {BUCKET_ORDER.map((b) => {
-            const r = byBucket.get(b);
-            const count = r?.item_count ?? 0;
-            const total = r?.total_php ?? 0;
-            return (
-              <tr
-                key={b}
-                className="border-t border-[color:var(--color-brand-bg-mid)]"
-              >
-                <td className="px-4 py-3 font-mono text-xs">{b}</td>
-                <td className="px-4 py-3 text-right font-mono text-xs">
-                  {count}
-                </td>
-                <td className="px-4 py-3 text-right font-semibold">
+    <div className="space-y-4">
+      {grandTotal > 0 ? (
+        <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4">
+          <div
+            role="img"
+            aria-label="Aging breakdown stacked bar chart"
+            className="flex h-3 w-full overflow-hidden rounded-full bg-[color:var(--color-brand-bg)]"
+          >
+            {bucketTotals.map(({ bucket, total }) =>
+              total > 0 ? (
+                <div
+                  key={bucket}
+                  className={BUCKET_COLORS[bucket]}
+                  style={{ width: `${(total / grandTotal) * 100}%` }}
+                />
+              ) : null,
+            )}
+          </div>
+          <ul className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+            {bucketTotals.map(({ bucket, total }) => (
+              <li key={bucket} className="flex items-center gap-1.5">
+                <span
+                  aria-hidden="true"
+                  className={
+                    "inline-block h-2.5 w-2.5 rounded-sm " +
+                    BUCKET_COLORS[bucket]
+                  }
+                />
+                <span className="font-mono text-[color:var(--color-brand-text-soft)]">
+                  {bucket}
+                </span>
+                <span className="font-semibold text-[color:var(--color-brand-navy)]">
                   {total > 0 ? PHP.format(total) : "—"}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+        <table className="w-full min-w-[480px] text-sm">
+          <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+            <tr>
+              <th className="px-4 py-3">Bucket</th>
+              <th className="px-4 py-3 text-right">Items</th>
+              <th className="px-4 py-3 text-right">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {BUCKET_ORDER.map((b) => {
+              const r = byBucket.get(b);
+              const count = r?.item_count ?? 0;
+              const total = r?.total_php ?? 0;
+              return (
+                <tr
+                  key={b}
+                  className="border-t border-[color:var(--color-brand-bg-mid)]"
+                >
+                  <td className="px-4 py-3 font-mono text-xs">{b}</td>
+                  <td className="px-4 py-3 text-right font-mono text-xs">
+                    {count}
+                  </td>
+                  <td className="px-4 py-3 text-right font-semibold">
+                    {total > 0 ? PHP.format(total) : "—"}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

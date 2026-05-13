@@ -42,7 +42,9 @@ export function HmoClaimsClient({
   return (
     <div className="space-y-4">
       <ViewToggle view={view} onChange={setView} />
-      {view === "by_provider" && <ByProvider rows={summary} />}
+      {view === "by_provider" && (
+        <ByProvider rows={summary} unbilled={unbilled} stuck={stuck} />
+      )}
       {view === "all_unbilled" && <AllUnbilled rows={unbilled} />}
       {view === "all_stuck" && <AllStuck rows={stuck} />}
       {view === "aging_matrix" && <AgingMatrix rows={aging} />}
@@ -85,7 +87,33 @@ function ViewToggle({
   );
 }
 
-function ByProvider({ rows }: { rows: SummaryRow[] }) {
+function ByProvider({
+  rows,
+  unbilled,
+  stuck,
+}: {
+  rows: SummaryRow[];
+  unbilled: UnbilledRow[];
+  stuck: StuckRow[];
+}) {
+  const unbilledCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of unbilled) {
+      if (!r.provider_id) continue;
+      m.set(r.provider_id, (m.get(r.provider_id) ?? 0) + 1);
+    }
+    return m;
+  }, [unbilled]);
+
+  const stuckCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of stuck) {
+      if (!r.provider_id) continue;
+      m.set(r.provider_id, (m.get(r.provider_id) ?? 0) + 1);
+    }
+    return m;
+  }, [stuck]);
+
   if (rows.length === 0) {
     return (
       <EmptyState message="No active HMO providers." />
@@ -94,13 +122,30 @@ function ByProvider({ rows }: { rows: SummaryRow[] }) {
   return (
     <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
       {rows.map((r) => (
-        <ProviderCard key={r.provider_id ?? r.provider_name ?? "row"} row={r} />
+        <ProviderCard
+          key={r.provider_id ?? r.provider_name ?? "row"}
+          row={r}
+          unbilledCount={
+            r.provider_id ? (unbilledCounts.get(r.provider_id) ?? 0) : 0
+          }
+          stuckCount={
+            r.provider_id ? (stuckCounts.get(r.provider_id) ?? 0) : 0
+          }
+        />
       ))}
     </div>
   );
 }
 
-function ProviderCard({ row }: { row: SummaryRow }) {
+function ProviderCard({
+  row,
+  unbilledCount,
+  stuckCount,
+}: {
+  row: SummaryRow;
+  unbilledCount: number;
+  stuckCount: number;
+}) {
   const href = row.provider_id
     ? `/staff/admin/accounting/hmo-claims/${row.provider_id}`
     : "#";
@@ -110,6 +155,15 @@ function ProviderCard({ row }: { row: SummaryRow }) {
   const oldest = row.oldest_open_released_at
     ? new Date(row.oldest_open_released_at).toLocaleDateString("en-PH")
     : "—";
+
+  const unbilledLabel =
+    unbilledCount > 0
+      ? `${unbilledCount} item${unbilledCount === 1 ? "" : "s"} · ${PHP.format(unbilled)}`
+      : "—";
+  const stuckLabel =
+    stuckCount > 0
+      ? `${stuckCount} item${stuckCount === 1 ? "" : "s"} · ${PHP.format(stuck)}`
+      : "—";
 
   return (
     <Link
@@ -127,15 +181,19 @@ function ProviderCard({ row }: { row: SummaryRow }) {
           {PHP.format(unresolved)}
         </dd>
         <dt className="text-[color:var(--color-brand-text-soft)]">Unbilled</dt>
-        <dd className="text-right font-semibold">{PHP.format(unbilled)}</dd>
+        <dd className="text-right font-semibold text-[color:var(--color-brand-navy)]">
+          {unbilledLabel}
+        </dd>
         <dt className="text-[color:var(--color-brand-text-soft)]">Stuck</dt>
         <dd
           className={
             "text-right font-semibold " +
-            (stuck > 0 ? "text-red-600" : "text-[color:var(--color-brand-navy)]")
+            (stuckCount > 0
+              ? "text-red-600"
+              : "text-[color:var(--color-brand-navy)]")
           }
         >
-          {PHP.format(stuck)}
+          {stuckLabel}
         </dd>
         <dt className="text-[color:var(--color-brand-text-soft)]">
           Oldest open
@@ -275,53 +333,96 @@ function AgingMatrix({ rows }: { rows: AgingRow[] }) {
   }
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
-      <table className="w-full min-w-[720px] text-sm">
-        <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-          <tr>
-            <th className="px-4 py-3">Provider</th>
-            {BUCKETS.map((b) => (
-              <th key={b} className="px-4 py-3 text-right">
-                {b}
-              </th>
-            ))}
-            <th className="px-4 py-3 text-right">Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          {matrix.map(([name, buckets]) => {
-            const total = BUCKETS.reduce(
-              (sum, b) => sum + (buckets[b] ?? 0),
-              0,
-            );
-            return (
-              <tr
-                key={name}
-                className="border-t border-[color:var(--color-brand-bg-mid)]"
-              >
-                <td className="px-4 py-3 font-semibold text-[color:var(--color-brand-navy)]">
+    <>
+      {/* Desktop: matrix table */}
+      <div className="hidden overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white md:block">
+        <table className="w-full min-w-[720px] text-sm">
+          <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+            <tr>
+              <th className="px-4 py-3">Provider</th>
+              {BUCKETS.map((b) => (
+                <th key={b} className="px-4 py-3 text-right">
+                  {b}
+                </th>
+              ))}
+              <th className="px-4 py-3 text-right">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {matrix.map(([name, buckets]) => {
+              const total = BUCKETS.reduce(
+                (sum, b) => sum + (buckets[b] ?? 0),
+                0,
+              );
+              return (
+                <tr
+                  key={name}
+                  className="border-t border-[color:var(--color-brand-bg-mid)]"
+                >
+                  <td className="px-4 py-3 font-semibold text-[color:var(--color-brand-navy)]">
+                    {name}
+                  </td>
+                  {BUCKETS.map((b) => {
+                    const v = buckets[b];
+                    return (
+                      <td
+                        key={b}
+                        className="px-4 py-3 text-right font-mono text-xs"
+                      >
+                        {v && v > 0 ? PHP.format(v) : "—"}
+                      </td>
+                    );
+                  })}
+                  <td className="px-4 py-3 text-right font-semibold text-[color:var(--color-brand-navy)]">
+                    {total > 0 ? PHP.format(total) : "—"}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Mobile: per-provider accordions */}
+      <div className="space-y-2 md:hidden">
+        {matrix.map(([name, buckets]) => {
+          const total = BUCKETS.reduce(
+            (sum, b) => sum + (buckets[b] ?? 0),
+            0,
+          );
+          return (
+            <details
+              key={name}
+              className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white"
+            >
+              <summary className="flex min-h-[44px] cursor-pointer items-center justify-between gap-3 rounded-md px-4 py-3 text-sm">
+                <span className="font-semibold text-[color:var(--color-brand-navy)]">
                   {name}
-                </td>
+                </span>
+                <span className="font-semibold text-[color:var(--color-brand-navy)]">
+                  {total > 0 ? PHP.format(total) : "—"}
+                </span>
+              </summary>
+              <dl className="grid grid-cols-2 gap-x-3 gap-y-2 border-t border-[color:var(--color-brand-bg-mid)] px-4 py-3 text-xs">
                 {BUCKETS.map((b) => {
-                  const v = buckets[b];
+                  const v = buckets[b] ?? 0;
                   return (
-                    <td
-                      key={b}
-                      className="px-4 py-3 text-right font-mono text-xs"
-                    >
-                      {v && v > 0 ? PHP.format(v) : "—"}
-                    </td>
+                    <div key={b} className="contents">
+                      <dt className="font-mono text-[color:var(--color-brand-text-soft)]">
+                        {b}
+                      </dt>
+                      <dd className="text-right font-mono text-[color:var(--color-brand-navy)]">
+                        {v > 0 ? PHP.format(v) : "—"}
+                      </dd>
+                    </div>
                   );
                 })}
-                <td className="px-4 py-3 text-right font-semibold text-[color:var(--color-brand-navy)]">
-                  {total > 0 ? PHP.format(total) : "—"}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+              </dl>
+            </details>
+          );
+        })}
+      </div>
+    </>
   );
 }
 
