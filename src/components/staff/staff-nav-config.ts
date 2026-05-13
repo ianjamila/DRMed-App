@@ -132,6 +132,11 @@ export const STAFF_NAV: StaffNavSection[] = [
         label: "Accounting periods",
         roles: ["admin"],
       },
+      {
+        href: "/staff/admin/accounting/payment-routing",
+        label: "Payment routing",
+        roles: ["admin"],
+      },
       { href: "/staff/users", label: "Staff users", roles: ["admin"] },
       { href: "/staff/audit", label: "Audit log", roles: ["admin"] },
       {
