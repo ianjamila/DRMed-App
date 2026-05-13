@@ -34,6 +34,16 @@ export function translatePgError(err: PgError): string {
       return err.message ?? "Accounts are append-only; deactivate via is_active = false instead.";
     case "P0007":
       return err.message ?? "Cannot un-void a payment. Create a new payment instead.";
+    case "P0008":
+      return err.message ?? "Cannot change billed amount: this claim item already has payments or resolutions.";
+    case "P0009":
+      return err.message ?? "Cannot delete resolution: void it instead so the journal entry can be reversed.";
+    case "P0010":
+      return err.message ?? "Cannot void this batch: it has allocated payments or resolutions on its items. Reverse those first.";
+    case "P0011":
+      return err.message ?? "Resolution amount exceeds the item's unresolved balance.";
+    case "P0012":
+      return err.message ?? "Allocation amount would exceed the item's billed amount.";
     default:
       return err.message ?? "Database error. Please try again.";
   }
