@@ -9,14 +9,10 @@ type SummaryRow =
 type UnbilledRow = Database["public"]["Views"]["v_hmo_unbilled"]["Row"];
 type AgingRow = Database["public"]["Views"]["v_hmo_ar_aging"]["Row"];
 
-interface BatchRow {
-  id: string;
-  status: string;
-  reference_no: string | null;
-  submitted_at: string | null;
-  voided_at: string | null;
-  created_at: string;
-}
+type BatchRow = Pick<
+  Database["public"]["Tables"]["hmo_claim_batches"]["Row"],
+  "id" | "status" | "reference_no" | "submitted_at" | "voided_at" | "created_at"
+>;
 
 const PHP = new Intl.NumberFormat("en-PH", {
   style: "currency",
@@ -220,6 +216,7 @@ function BatchesTab({ batches }: { batches: BatchRow[] }) {
                     <td className="px-4 py-3 text-right">
                       <Link
                         href={`/staff/admin/accounting/hmo-claims/batches/${b.id}`}
+                        aria-label={`Open batch ${b.reference_no ?? b.id.slice(0, 8)}`}
                         className="text-xs font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
                       >
                         Open
@@ -405,13 +402,20 @@ function AgingTab({ rows }: { rows: AgingRow[] }) {
     total: byBucket.get(b)?.total_php ?? 0,
   }));
   const grandTotal = bucketTotals.reduce((sum, x) => sum + x.total, 0);
+  const ariaSummary = bucketTotals
+    .filter(({ total }) => total > 0)
+    .map(
+      ({ bucket, total }) =>
+        `${Math.round((total / grandTotal) * 100)}% in ${bucket} days`,
+    )
+    .join(", ");
   return (
     <div className="space-y-4">
       {grandTotal > 0 ? (
         <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4">
           <div
             role="img"
-            aria-label="Aging breakdown stacked bar chart"
+            aria-label={`Aging breakdown: ${ariaSummary}`}
             className="flex h-3 w-full overflow-hidden rounded-full bg-[color:var(--color-brand-bg)]"
           >
             {bucketTotals.map(({ bucket, total }) =>

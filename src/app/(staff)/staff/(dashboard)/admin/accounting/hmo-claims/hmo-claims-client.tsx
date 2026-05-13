@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import Link from "next/link";
 import type { Database } from "@/types/database";
 
@@ -339,13 +339,17 @@ function AgingMatrix({ rows }: { rows: AgingRow[] }) {
         <table className="w-full min-w-[720px] text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
-              <th className="px-4 py-3">Provider</th>
+              <th scope="col" className="px-4 py-3">
+                Provider
+              </th>
               {BUCKETS.map((b) => (
-                <th key={b} className="px-4 py-3 text-right">
+                <th key={b} scope="col" className="px-4 py-3 text-right">
                   {b}
                 </th>
               ))}
-              <th className="px-4 py-3 text-right">Total</th>
+              <th scope="col" className="px-4 py-3 text-right">
+                Total
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -359,9 +363,12 @@ function AgingMatrix({ rows }: { rows: AgingRow[] }) {
                   key={name}
                   className="border-t border-[color:var(--color-brand-bg-mid)]"
                 >
-                  <td className="px-4 py-3 font-semibold text-[color:var(--color-brand-navy)]">
+                  <th
+                    scope="row"
+                    className="px-4 py-3 text-left font-semibold text-[color:var(--color-brand-navy)]"
+                  >
                     {name}
-                  </td>
+                  </th>
                   {BUCKETS.map((b) => {
                     const v = buckets[b];
                     return (
@@ -407,14 +414,14 @@ function AgingMatrix({ rows }: { rows: AgingRow[] }) {
                 {BUCKETS.map((b) => {
                   const v = buckets[b] ?? 0;
                   return (
-                    <div key={b} className="contents">
+                    <Fragment key={b}>
                       <dt className="font-mono text-[color:var(--color-brand-text-soft)]">
                         {b}
                       </dt>
                       <dd className="text-right font-mono text-[color:var(--color-brand-navy)]">
                         {v > 0 ? PHP.format(v) : "—"}
                       </dd>
-                    </div>
+                    </Fragment>
                   );
                 })}
               </dl>
