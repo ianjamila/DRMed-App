@@ -400,6 +400,13 @@ export type Database = {
             referencedRelation: "test_requests"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "critical_alerts_test_request_id_fkey"
+            columns: ["test_request_id"]
+            isOneToOne: false
+            referencedRelation: "v_hmo_unbilled"
+            referencedColumns: ["test_request_id"]
+          },
         ]
       }
       gift_codes: {
@@ -495,6 +502,286 @@ export type Database = {
           },
         ]
       }
+      hmo_claim_batches: {
+        Row: {
+          created_at: string
+          hmo_ack_ref: string | null
+          id: string
+          medium: string | null
+          notes: string | null
+          provider_id: string
+          reference_no: string | null
+          status: string
+          submitted_at: string | null
+          submitted_by: string | null
+          updated_at: string
+          void_reason: string | null
+          voided_at: string | null
+          voided_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          hmo_ack_ref?: string | null
+          id?: string
+          medium?: string | null
+          notes?: string | null
+          provider_id: string
+          reference_no?: string | null
+          status?: string
+          submitted_at?: string | null
+          submitted_by?: string | null
+          updated_at?: string
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          hmo_ack_ref?: string | null
+          id?: string
+          medium?: string | null
+          notes?: string | null
+          provider_id?: string
+          reference_no?: string | null
+          status?: string
+          submitted_at?: string | null
+          submitted_by?: string | null
+          updated_at?: string
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "hmo_claim_batches_provider_id_fkey"
+            columns: ["provider_id"]
+            isOneToOne: false
+            referencedRelation: "hmo_providers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "hmo_claim_batches_provider_id_fkey"
+            columns: ["provider_id"]
+            isOneToOne: false
+            referencedRelation: "v_hmo_provider_summary"
+            referencedColumns: ["provider_id"]
+          },
+          {
+            foreignKeyName: "hmo_claim_batches_submitted_by_fkey"
+            columns: ["submitted_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "hmo_claim_batches_voided_by_fkey"
+            columns: ["voided_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      hmo_claim_items: {
+        Row: {
+          batch_id: string
+          batch_voided: boolean
+          billed_amount_php: number
+          created_at: string
+          hmo_response: string
+          hmo_response_date: string | null
+          hmo_response_notes: string | null
+          id: string
+          paid_amount_php: number
+          patient_billed_amount_php: number
+          test_request_id: string
+          updated_at: string
+          written_off_amount_php: number
+        }
+        Insert: {
+          batch_id: string
+          batch_voided?: boolean
+          billed_amount_php: number
+          created_at?: string
+          hmo_response?: string
+          hmo_response_date?: string | null
+          hmo_response_notes?: string | null
+          id?: string
+          paid_amount_php?: number
+          patient_billed_amount_php?: number
+          test_request_id: string
+          updated_at?: string
+          written_off_amount_php?: number
+        }
+        Update: {
+          batch_id?: string
+          batch_voided?: boolean
+          billed_amount_php?: number
+          created_at?: string
+          hmo_response?: string
+          hmo_response_date?: string | null
+          hmo_response_notes?: string | null
+          id?: string
+          paid_amount_php?: number
+          patient_billed_amount_php?: number
+          test_request_id?: string
+          updated_at?: string
+          written_off_amount_php?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "hmo_claim_items_batch_id_fkey"
+            columns: ["batch_id"]
+            isOneToOne: false
+            referencedRelation: "hmo_claim_batches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "hmo_claim_items_test_request_id_fkey"
+            columns: ["test_request_id"]
+            isOneToOne: false
+            referencedRelation: "test_requests"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "hmo_claim_items_test_request_id_fkey"
+            columns: ["test_request_id"]
+            isOneToOne: false
+            referencedRelation: "v_hmo_unbilled"
+            referencedColumns: ["test_request_id"]
+          },
+        ]
+      }
+      hmo_claim_resolutions: {
+        Row: {
+          amount_php: number
+          destination: string
+          id: string
+          item_id: string
+          notes: string | null
+          resolved_at: string
+          resolved_by: string | null
+          void_reason: string | null
+          voided_at: string | null
+          voided_by: string | null
+        }
+        Insert: {
+          amount_php: number
+          destination: string
+          id?: string
+          item_id: string
+          notes?: string | null
+          resolved_at?: string
+          resolved_by?: string | null
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
+        }
+        Update: {
+          amount_php?: number
+          destination?: string
+          id?: string
+          item_id?: string
+          notes?: string | null
+          resolved_at?: string
+          resolved_by?: string | null
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "hmo_claim_resolutions_item_id_fkey"
+            columns: ["item_id"]
+            isOneToOne: false
+            referencedRelation: "hmo_claim_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "hmo_claim_resolutions_item_id_fkey"
+            columns: ["item_id"]
+            isOneToOne: false
+            referencedRelation: "v_hmo_stuck"
+            referencedColumns: ["item_id"]
+          },
+          {
+            foreignKeyName: "hmo_claim_resolutions_resolved_by_fkey"
+            columns: ["resolved_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "hmo_claim_resolutions_voided_by_fkey"
+            columns: ["voided_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      hmo_payment_allocations: {
+        Row: {
+          amount_php: number
+          created_at: string
+          id: string
+          item_id: string
+          payment_id: string
+          void_reason: string | null
+          voided_at: string | null
+          voided_by: string | null
+        }
+        Insert: {
+          amount_php: number
+          created_at?: string
+          id?: string
+          item_id: string
+          payment_id: string
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
+        }
+        Update: {
+          amount_php?: number
+          created_at?: string
+          id?: string
+          item_id?: string
+          payment_id?: string
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "hmo_payment_allocations_item_id_fkey"
+            columns: ["item_id"]
+            isOneToOne: false
+            referencedRelation: "hmo_claim_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "hmo_payment_allocations_item_id_fkey"
+            columns: ["item_id"]
+            isOneToOne: false
+            referencedRelation: "v_hmo_stuck"
+            referencedColumns: ["item_id"]
+          },
+          {
+            foreignKeyName: "hmo_payment_allocations_payment_id_fkey"
+            columns: ["payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "hmo_payment_allocations_voided_by_fkey"
+            columns: ["voided_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       hmo_providers: {
         Row: {
           contact_person_address: string | null
@@ -509,6 +796,7 @@ export type Database = {
           is_active: boolean
           name: string
           notes: string | null
+          unbilled_threshold_days: number
           updated_at: string
         }
         Insert: {
@@ -524,6 +812,7 @@ export type Database = {
           is_active?: boolean
           name: string
           notes?: string | null
+          unbilled_threshold_days?: number
           updated_at?: string
         }
         Update: {
@@ -539,6 +828,7 @@ export type Database = {
           is_active?: boolean
           name?: string
           notes?: string | null
+          unbilled_threshold_days?: number
           updated_at?: string
         }
         Relationships: []
@@ -1199,6 +1489,13 @@ export type Database = {
             referencedRelation: "test_requests"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "result_amendments_test_request_id_fkey"
+            columns: ["test_request_id"]
+            isOneToOne: false
+            referencedRelation: "v_hmo_unbilled"
+            referencedColumns: ["test_request_id"]
+          },
         ]
       }
       result_template_param_ranges: {
@@ -1497,6 +1794,13 @@ export type Database = {
             isOneToOne: true
             referencedRelation: "test_requests"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "results_test_request_id_fkey"
+            columns: ["test_request_id"]
+            isOneToOne: true
+            referencedRelation: "v_hmo_unbilled"
+            referencedColumns: ["test_request_id"]
           },
         ]
       }
@@ -1851,6 +2155,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "test_requests_hmo_provider_id_fkey"
+            columns: ["hmo_provider_id"]
+            isOneToOne: false
+            referencedRelation: "v_hmo_provider_summary"
+            referencedColumns: ["provider_id"]
+          },
+          {
             foreignKeyName: "test_requests_service_id_fkey"
             columns: ["service_id"]
             isOneToOne: false
@@ -1965,6 +2276,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "visits_hmo_provider_id_fkey"
+            columns: ["hmo_provider_id"]
+            isOneToOne: false
+            referencedRelation: "v_hmo_provider_summary"
+            referencedColumns: ["provider_id"]
+          },
+          {
             foreignKeyName: "visits_patient_id_fkey"
             columns: ["patient_id"]
             isOneToOne: false
@@ -1975,7 +2293,127 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      v_hmo_ar_aging: {
+        Row: {
+          bucket: string | null
+          item_count: number | null
+          provider_id: string | null
+          provider_name: string | null
+          total_php: number | null
+        }
+        Relationships: []
+      }
+      v_hmo_provider_summary: {
+        Row: {
+          due_days_for_invoice: number | null
+          oldest_open_released_at: string | null
+          paid_ytd_php: number | null
+          patient_billed_ytd_php: number | null
+          provider_id: string | null
+          provider_name: string | null
+          total_stuck_php: number | null
+          total_unbilled_php: number | null
+          total_unresolved_ar_php: number | null
+          unbilled_threshold_days: number | null
+          written_off_ytd_php: number | null
+        }
+        Insert: {
+          due_days_for_invoice?: number | null
+          oldest_open_released_at?: never
+          paid_ytd_php?: never
+          patient_billed_ytd_php?: never
+          provider_id?: string | null
+          provider_name?: string | null
+          total_stuck_php?: never
+          total_unbilled_php?: never
+          total_unresolved_ar_php?: never
+          unbilled_threshold_days?: number | null
+          written_off_ytd_php?: never
+        }
+        Update: {
+          due_days_for_invoice?: number | null
+          oldest_open_released_at?: never
+          paid_ytd_php?: never
+          patient_billed_ytd_php?: never
+          provider_id?: string | null
+          provider_name?: string | null
+          total_stuck_php?: never
+          total_unbilled_php?: never
+          total_unresolved_ar_php?: never
+          unbilled_threshold_days?: number | null
+          written_off_ytd_php?: never
+        }
+        Relationships: []
+      }
+      v_hmo_stuck: {
+        Row: {
+          batch_id: string | null
+          days_since_submission: number | null
+          item_id: string | null
+          provider_id: string | null
+          provider_name: string | null
+          submitted_at: string | null
+          unresolved_balance_php: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "hmo_claim_batches_provider_id_fkey"
+            columns: ["provider_id"]
+            isOneToOne: false
+            referencedRelation: "hmo_providers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "hmo_claim_batches_provider_id_fkey"
+            columns: ["provider_id"]
+            isOneToOne: false
+            referencedRelation: "v_hmo_provider_summary"
+            referencedColumns: ["provider_id"]
+          },
+          {
+            foreignKeyName: "hmo_claim_items_batch_id_fkey"
+            columns: ["batch_id"]
+            isOneToOne: false
+            referencedRelation: "hmo_claim_batches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      v_hmo_unbilled: {
+        Row: {
+          billed_amount_php: number | null
+          days_since_release: number | null
+          past_threshold: boolean | null
+          provider_id: string | null
+          provider_name: string | null
+          released_at: string | null
+          test_request_id: string | null
+          visit_id: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "test_requests_visit_id_fkey"
+            columns: ["visit_id"]
+            isOneToOne: false
+            referencedRelation: "visits"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "visits_hmo_provider_id_fkey"
+            columns: ["provider_id"]
+            isOneToOne: false
+            referencedRelation: "hmo_providers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "visits_hmo_provider_id_fkey"
+            columns: ["provider_id"]
+            isOneToOne: false
+            referencedRelation: "v_hmo_provider_summary"
+            referencedColumns: ["provider_id"]
+          },
+        ]
+      }
     }
     Functions: {
       bridge_replay_summary: {
@@ -1994,6 +2432,18 @@ export type Database = {
       is_staff: { Args: never; Returns: boolean }
       je_next_number: { Args: { p_fiscal_year: number }; Returns: string }
       period_status_for: { Args: { p_date: string }; Returns: string }
+      recompute_hmo_batch_status: {
+        Args: { p_batch_id: string }
+        Returns: undefined
+      }
+      recompute_hmo_item_paid_amount: {
+        Args: { p_item_id: string }
+        Returns: undefined
+      }
+      recompute_hmo_item_resolution_amounts: {
+        Args: { p_item_id: string }
+        Returns: undefined
+      }
       resolve_ar_account: { Args: { p_is_hmo: boolean }; Returns: string }
       resolve_cash_account: { Args: { p_method: string }; Returns: string }
       resolve_discount_account: {
@@ -2031,6 +2481,7 @@ export type Database = {
         | "payroll_run"
         | "opening_balance"
         | "reversal"
+        | "hmo_claim_resolution"
       je_status: "draft" | "posted" | "reversed"
       period_status: "open" | "closed"
     }
@@ -2184,6 +2635,7 @@ export const Constants = {
         "payroll_run",
         "opening_balance",
         "reversal",
+        "hmo_claim_resolution",
       ],
       je_status: ["draft", "posted", "reversed"],
       period_status: ["open", "closed"],
