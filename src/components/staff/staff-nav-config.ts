@@ -137,6 +137,11 @@ export const STAFF_NAV: StaffNavSection[] = [
         label: "Payment routing",
         roles: ["admin"],
       },
+      {
+        href: "/staff/admin/accounting/hmo-claims",
+        label: "HMO claims",
+        roles: ["admin"],
+      },
       { href: "/staff/users", label: "Staff users", roles: ["admin"] },
       { href: "/staff/audit", label: "Audit log", roles: ["admin"] },
       {
