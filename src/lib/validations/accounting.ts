@@ -1,5 +1,23 @@
 import { z } from "zod";
 
+const MANILA_TZ = "Asia/Manila";
+
+function todayManila(): string {
+  // Returns YYYY-MM-DD as it is right now in Manila.
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: MANILA_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
+function isOnOrBeforeTodayManila(dateStr: string): boolean {
+  // dateStr is expected as YYYY-MM-DD; lexical compare works for ISO-like dates.
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false;
+  return dateStr <= todayManila();
+}
+
 const accountCodeSchema = z
   .string()
   .trim()
@@ -90,10 +108,9 @@ export type RemoveItemFromBatchInput = z.infer<typeof RemoveItemFromBatchSchema>
 
 export const SubmitBatchSchema = z.object({
   batch_id: z.string().uuid(),
-  submitted_at: z.string().refine(
-    (s) => !Number.isNaN(Date.parse(s)) && new Date(s) <= new Date(),
-    "submitted_at must be a date on or before today",
-  ),
+  submitted_at: z
+    .string()
+    .refine(isOnOrBeforeTodayManila, "submitted_at must be a date on or before today"),
   medium: HmoBatchMediumEnum,
   reference_no: z.string().min(1).max(64).optional().nullable(),
 });
@@ -146,10 +163,9 @@ export const RecordHmoSettlementSchema = z
   .object({
     batch_id: z.string().uuid(),
     total_amount_php: z.number().positive(),
-    payment_date: z.string().refine(
-      (s) => !Number.isNaN(Date.parse(s)) && new Date(s) <= new Date(),
-      "payment_date must be on or before today",
-    ),
+    payment_date: z
+      .string()
+      .refine(isOnOrBeforeTodayManila, "payment_date must be on or before today"),
     bank_reference: z.string().max(128).optional().nullable(),
     items: z
       .array(

@@ -4,7 +4,6 @@ import { Fragment, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import type { Database } from "@/types/database";
 import {
-  acknowledgeBatchAction,
   voidBatchAction,
   removeItemFromBatchAction,
   voidResolutionAction,
@@ -20,9 +19,15 @@ import {
   type SettlementItem,
 } from "./modals/record-settlement-modal";
 import { SubmitBatchModal } from "./modals/submit-batch-modal";
+import { AcknowledgeBatchModal } from "./modals/acknowledge-batch-modal";
 
 type BatchRow = Database["public"]["Tables"]["hmo_claim_batches"]["Row"] & {
   hmo_providers: { name: string } | null;
+};
+type PatientLite = {
+  drm_id: string | null;
+  first_name: string | null;
+  last_name: string | null;
 };
 type ItemRow = Database["public"]["Tables"]["hmo_claim_items"]["Row"] & {
   test_requests: {
@@ -30,6 +35,7 @@ type ItemRow = Database["public"]["Tables"]["hmo_claim_items"]["Row"] & {
     service_id: string;
     visit_id: string;
     services: { name: string; kind: string } | null;
+    visits: { patients: PatientLite | null } | null;
   } | null;
 };
 type ResolutionRow =
@@ -89,6 +95,21 @@ function serviceKind(it: ItemRow): string | null {
   return it.test_requests?.services?.kind ?? null;
 }
 
+function anonPatient(
+  p: PatientLite | null | undefined,
+): string {
+  if (!p) return "—";
+  const fi = (p.first_name?.[0] ?? "").toUpperCase();
+  const li = (p.last_name?.[0] ?? "").toUpperCase();
+  const initials = fi || li ? `${fi}.${li}.` : "";
+  const id = p.drm_id ?? "";
+  if (initials && id) return `${initials} · ${id}`;
+  return initials || id || "—";
+}
+function patientOf(it: ItemRow): PatientLite | null {
+  return it.test_requests?.visits?.patients ?? null;
+}
+
 export function BatchDetailClient({
   batch,
   items,
@@ -106,6 +127,7 @@ export function BatchDetailClient({
   const [bulkOpen, setBulkOpen] = useState(false);
   const [settlementOpen, setSettlementOpen] = useState(false);
   const [submitOpen, setSubmitOpen] = useState(false);
+  const [ackOpen, setAckOpen] = useState(false);
   const [resolveTarget, setResolveTarget] = useState<ResolveItemTarget | null>(
     null,
   );
@@ -162,6 +184,7 @@ export function BatchDetailClient({
           onOpenBulk={() => setBulkOpen(true)}
           onOpenSettlement={() => setSettlementOpen(true)}
           onOpenSubmit={() => setSubmitOpen(true)}
+          onOpenAck={() => setAckOpen(true)}
           onOpenVoid={() => setVoidBatchOpen(true)}
         />
       )}
@@ -211,6 +234,12 @@ export function BatchDetailClient({
         onClose={() => setSubmitOpen(false)}
         batchId={batch.id}
         defaultReferenceNo={batch.reference_no}
+      />
+      <AcknowledgeBatchModal
+        open={ackOpen}
+        onClose={() => setAckOpen(false)}
+        batchId={batch.id}
+        defaultAckRef={batch.hmo_ack_ref}
       />
       <VoidConfirmModal
         open={voidBatchOpen}
@@ -385,6 +414,7 @@ function ActionsBar({
   onOpenBulk,
   onOpenSettlement,
   onOpenSubmit,
+  onOpenAck,
   onOpenVoid,
 }: {
   batch: BatchRow;
@@ -394,22 +424,10 @@ function ActionsBar({
   onOpenBulk: () => void;
   onOpenSettlement: () => void;
   onOpenSubmit: () => void;
+  onOpenAck: () => void;
   onOpenVoid: () => void;
 }) {
   const status = batch.status;
-  const [pending, startTransition] = useTransition();
-  const [err, setErr] = useState<string | null>(null);
-
-  function onAcknowledge() {
-    startTransition(async () => {
-      setErr(null);
-      const res = await acknowledgeBatchAction({
-        batch_id: batch.id,
-        hmo_ack_ref: null,
-      });
-      if (!res.ok) setErr(res.error);
-    });
-  }
 
   const addItemsHref = `/staff/admin/accounting/hmo-claims/batches/new?providerId=${batch.provider_id}&addToBatch=${batch.id}`;
 
@@ -445,12 +463,8 @@ function ActionsBar({
   } else if (status === "submitted") {
     buttons = (
       <>
-        <ActionButton
-          onClick={onAcknowledge}
-          disabled={pending}
-          variant="primary"
-        >
-          {pending ? "Acknowledging…" : "Acknowledge"}
+        <ActionButton onClick={onOpenAck} variant="primary">
+          Acknowledge
         </ActionButton>
         <ActionButton onClick={onOpenBulk} variant="ghost">
           Bulk-set HMO response
@@ -494,11 +508,6 @@ function ActionsBar({
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap gap-2">{buttons}</div>
-      {err ? (
-        <p role="alert" className="text-sm text-red-700">
-          {err}
-        </p>
-      ) : null}
     </div>
   );
 }
@@ -558,13 +567,16 @@ function ItemsList({
     <section className="space-y-3" aria-label="Items in batch">
       {/* Desktop: table */}
       <div className="hidden overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white md:block">
-        <table className="w-full min-w-[820px] text-sm">
+        <table className="w-full min-w-[940px] text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
               <th className="px-4 py-3">Service</th>
+              <th className="px-4 py-3" style={{ maxWidth: 120 }}>
+                Patient
+              </th>
               <th className="px-4 py-3 text-right">Billed</th>
               <th className="px-4 py-3 text-right">Paid</th>
-              <th className="px-4 py-3 text-right">Patient</th>
+              <th className="px-4 py-3 text-right">Patient billed</th>
               <th className="px-4 py-3 text-right">Written off</th>
               <th className="px-4 py-3 text-right">Unresolved</th>
               <th className="px-4 py-3">HMO response</th>
@@ -625,6 +637,12 @@ function ItemRowDesktop({
             {kind}
           </div>
         ) : null}
+      </td>
+      <td
+        className="px-4 py-3 text-xs text-[color:var(--color-brand-navy)]"
+        style={{ maxWidth: 120 }}
+      >
+        {anonPatient(patientOf(item))}
       </td>
       <td className="px-4 py-3 text-right font-mono text-xs">
         {PHP.format(Number(item.billed_amount_php))}
@@ -692,6 +710,9 @@ function ItemCardMobile({
           {HMO_RESPONSE_LABEL[item.hmo_response] ?? item.hmo_response}
         </span>
       </div>
+      <p className="mt-2 text-xs text-[color:var(--color-brand-text-soft)]">
+        {anonPatient(patientOf(item))}
+      </p>
       <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
         <Fragment>
           <dt className="text-[color:var(--color-brand-text-soft)]">Billed</dt>

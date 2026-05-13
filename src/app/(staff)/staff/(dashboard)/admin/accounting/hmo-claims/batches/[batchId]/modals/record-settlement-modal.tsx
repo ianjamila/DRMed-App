@@ -2,11 +2,21 @@
 
 import { useState, useTransition } from "react";
 import { recordHmoSettlementAction } from "../../../actions";
+import { ActionModal } from "./action-modal";
 
 const PHP = new Intl.NumberFormat("en-PH", {
   style: "currency",
   currency: "PHP",
 });
+
+function todayManilaISODate(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
 
 export type SettlementItem = {
   id: string;
@@ -37,13 +47,22 @@ export function RecordSettlementModal({
   batchId: string;
   items: SettlementItem[];
 }) {
-  if (!open) return null;
   return (
-    <RecordSettlementModalInner
+    <ActionModal
+      open={open}
       onClose={onClose}
-      batchId={batchId}
-      items={items}
-    />
+      title="Record HMO settlement"
+      description="Records a payment per visit and allocates against the selected items."
+      size="lg"
+    >
+      {open ? (
+        <RecordSettlementModalInner
+          onClose={onClose}
+          batchId={batchId}
+          items={items}
+        />
+      ) : null}
+    </ActionModal>
   );
 }
 
@@ -56,7 +75,7 @@ function RecordSettlementModalInner({
   batchId: string;
   items: SettlementItem[];
 }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayManilaISODate();
   const [totalAmount, setTotalAmount] = useState("");
   const [paymentDate, setPaymentDate] = useState(today);
   const [bankRef, setBankRef] = useState("");
@@ -117,153 +136,135 @@ function RecordSettlementModalInner({
   }
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="record-settlement-title"
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 md:items-center"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-t-2xl bg-white p-6 md:rounded-2xl">
-        <h2
-          id="record-settlement-title"
-          className="font-[family-name:var(--font-heading)] text-xl font-extrabold text-[color:var(--color-brand-navy)]"
-        >
-          Record HMO settlement
-        </h2>
-        <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
-          Records a payment per visit and allocates against the selected items.
+    <div>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        <label className="block text-sm">
+          <span className="font-semibold text-[color:var(--color-brand-navy)]">
+            Total (₱)
+          </span>
+          <input
+            type="number"
+            inputMode="decimal"
+            step="0.01"
+            value={totalAmount}
+            onChange={(e) => setTotalAmount(e.target.value)}
+            className="mt-1 min-h-[44px] w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2"
+          />
+        </label>
+        <label className="block text-sm">
+          <span className="font-semibold text-[color:var(--color-brand-navy)]">
+            Date
+          </span>
+          <input
+            type="date"
+            value={paymentDate}
+            max={today}
+            onChange={(e) => setPaymentDate(e.target.value)}
+            className="mt-1 min-h-[44px] w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2"
+          />
+        </label>
+        <label className="block text-sm">
+          <span className="font-semibold text-[color:var(--color-brand-navy)]">
+            Bank reference
+          </span>
+          <input
+            type="text"
+            value={bankRef}
+            onChange={(e) => setBankRef(e.target.value)}
+            className="mt-1 min-h-[44px] w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2"
+          />
+        </label>
+      </div>
+      <div className="mt-4 overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)]">
+        <table className="w-full min-w-[420px] text-sm">
+          <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+            <tr>
+              <th className="px-4 py-2">Service</th>
+              <th className="px-4 py-2 text-right">Billed</th>
+              <th className="px-4 py-2 text-right">Unresolved</th>
+              <th className="px-4 py-2 text-right">Allocate</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((it) => {
+              const u = unresolvedOf(it);
+              return (
+                <tr
+                  key={it.id}
+                  className="border-t border-[color:var(--color-brand-bg-mid)]"
+                >
+                  <td className="px-4 py-2 text-xs">{it.service_name}</td>
+                  <td className="px-4 py-2 text-right font-mono text-xs">
+                    {PHP.format(Number(it.billed_amount_php))}
+                  </td>
+                  <td className="px-4 py-2 text-right font-mono text-xs">
+                    {PHP.format(u)}
+                  </td>
+                  <td className="px-4 py-2">
+                    <label className="sr-only" htmlFor={`alloc-${it.id}`}>
+                      Allocate for {it.service_name}
+                    </label>
+                    <input
+                      id={`alloc-${it.id}`}
+                      type="number"
+                      inputMode="decimal"
+                      step="0.01"
+                      min="0"
+                      value={perItem[it.id] ?? ""}
+                      onChange={(e) =>
+                        setPerItem((p) => ({ ...p, [it.id]: e.target.value }))
+                      }
+                      className="min-h-[44px] w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 text-right font-mono text-xs"
+                    />
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            <tr className="border-t border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)]">
+              <td
+                colSpan={3}
+                className="px-4 py-2 text-right text-xs font-bold text-[color:var(--color-brand-navy)]"
+              >
+                Sum of allocations
+              </td>
+              <td
+                className={
+                  "px-4 py-2 text-right font-mono text-xs font-bold " +
+                  (sumMatches
+                    ? "text-[color:var(--color-brand-navy)]"
+                    : "text-red-700")
+                }
+              >
+                {PHP.format(sum)}
+                {sumMatches ? "" : " ≠"}
+              </td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      {err ? (
+        <p role="alert" className="mt-3 text-sm text-red-700">
+          {err}
         </p>
-        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
-          <label className="block text-sm">
-            <span className="font-semibold text-[color:var(--color-brand-navy)]">
-              Total (₱)
-            </span>
-            <input
-              type="number"
-              inputMode="decimal"
-              step="0.01"
-              value={totalAmount}
-              onChange={(e) => setTotalAmount(e.target.value)}
-              className="mt-1 min-h-[44px] w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2"
-            />
-          </label>
-          <label className="block text-sm">
-            <span className="font-semibold text-[color:var(--color-brand-navy)]">
-              Date
-            </span>
-            <input
-              type="date"
-              value={paymentDate}
-              onChange={(e) => setPaymentDate(e.target.value)}
-              className="mt-1 min-h-[44px] w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2"
-            />
-          </label>
-          <label className="block text-sm">
-            <span className="font-semibold text-[color:var(--color-brand-navy)]">
-              Bank reference
-            </span>
-            <input
-              type="text"
-              value={bankRef}
-              onChange={(e) => setBankRef(e.target.value)}
-              className="mt-1 min-h-[44px] w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2"
-            />
-          </label>
-        </div>
-        <div className="mt-4 overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)]">
-          <table className="w-full min-w-[420px] text-sm">
-            <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-              <tr>
-                <th className="px-4 py-2">Service</th>
-                <th className="px-4 py-2 text-right">Billed</th>
-                <th className="px-4 py-2 text-right">Unresolved</th>
-                <th className="px-4 py-2 text-right">Allocate</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((it) => {
-                const u = unresolvedOf(it);
-                return (
-                  <tr
-                    key={it.id}
-                    className="border-t border-[color:var(--color-brand-bg-mid)]"
-                  >
-                    <td className="px-4 py-2 text-xs">{it.service_name}</td>
-                    <td className="px-4 py-2 text-right font-mono text-xs">
-                      {PHP.format(Number(it.billed_amount_php))}
-                    </td>
-                    <td className="px-4 py-2 text-right font-mono text-xs">
-                      {PHP.format(u)}
-                    </td>
-                    <td className="px-4 py-2">
-                      <label className="sr-only" htmlFor={`alloc-${it.id}`}>
-                        Allocate for {it.service_name}
-                      </label>
-                      <input
-                        id={`alloc-${it.id}`}
-                        type="number"
-                        inputMode="decimal"
-                        step="0.01"
-                        min="0"
-                        value={perItem[it.id] ?? ""}
-                        onChange={(e) =>
-                          setPerItem((p) => ({ ...p, [it.id]: e.target.value }))
-                        }
-                        className="min-h-[44px] w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 text-right font-mono text-xs"
-                      />
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-            <tfoot>
-              <tr className="border-t border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)]">
-                <td
-                  colSpan={3}
-                  className="px-4 py-2 text-right text-xs font-bold text-[color:var(--color-brand-navy)]"
-                >
-                  Sum of allocations
-                </td>
-                <td
-                  className={
-                    "px-4 py-2 text-right font-mono text-xs font-bold " +
-                    (sumMatches
-                      ? "text-[color:var(--color-brand-navy)]"
-                      : "text-red-700")
-                  }
-                >
-                  {PHP.format(sum)}
-                  {sumMatches ? "" : " ≠"}
-                </td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-        {err ? (
-          <p role="alert" className="mt-3 text-sm text-red-700">
-            {err}
-          </p>
-        ) : null}
-        <div className="mt-4 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="min-h-[44px] rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 text-xs font-semibold"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={onSave}
-            disabled={pending || !sumMatches}
-            className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-3 text-xs font-bold uppercase tracking-wider text-white disabled:opacity-50"
-          >
-            {pending ? "Saving…" : "Record settlement"}
-          </button>
-        </div>
+      ) : null}
+      <div className="mt-4 flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={onClose}
+          className="min-h-[44px] rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 text-xs font-semibold"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={onSave}
+          disabled={pending || !sumMatches}
+          className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-3 text-xs font-bold uppercase tracking-wider text-white disabled:opacity-50"
+        >
+          {pending ? "Saving…" : "Record settlement"}
+        </button>
       </div>
     </div>
   );

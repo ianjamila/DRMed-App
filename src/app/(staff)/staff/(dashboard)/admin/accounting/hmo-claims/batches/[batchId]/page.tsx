@@ -26,7 +26,7 @@ export default async function BatchDetailPage({
     admin
       .from("hmo_claim_items")
       .select(
-        "*, test_requests(id, service_id, visit_id, services(name, kind))",
+        "*, test_requests(id, service_id, visit_id, services(name, kind), visits(patients(drm_id, first_name, last_name)))",
       )
       .eq("batch_id", batchId)
       .order("created_at"),
