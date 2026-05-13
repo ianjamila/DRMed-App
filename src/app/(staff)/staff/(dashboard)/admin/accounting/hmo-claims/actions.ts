@@ -236,7 +236,7 @@ export async function submitBatchAction(input: unknown): Promise<ActionResult> {
     .eq("batch_id", parsed.data.batch_id);
   if (!count || count < 1) return { ok: false, error: "Batch has no items." };
 
-  const { error } = await admin
+  const { data: updated, error } = await admin
     .from("hmo_claim_batches")
     .update({
       status: "submitted",
@@ -245,8 +245,14 @@ export async function submitBatchAction(input: unknown): Promise<ActionResult> {
       medium: parsed.data.medium,
       reference_no: parsed.data.reference_no ?? null,
     })
-    .eq("id", parsed.data.batch_id);
+    .eq("id", parsed.data.batch_id)
+    .eq("status", "draft") // concurrency guard — second submitter sees no row
+    .select("id")
+    .maybeSingle();
   if (error) return { ok: false, error: translatePgError(error) };
+  if (!updated) {
+    return { ok: false, error: "Batch is no longer in draft (likely already submitted)." };
+  }
 
   const meta = await auditMeta();
   await audit({
@@ -284,11 +290,20 @@ export async function acknowledgeBatchAction(input: unknown): Promise<ActionResu
     return { ok: false, error: "Only submitted batches can be acknowledged." };
   }
 
-  const { error } = await admin
+  const { data: updated, error } = await admin
     .from("hmo_claim_batches")
     .update({ status: "acknowledged", hmo_ack_ref: parsed.data.hmo_ack_ref ?? null })
-    .eq("id", parsed.data.batch_id);
+    .eq("id", parsed.data.batch_id)
+    .eq("status", "submitted") // concurrency guard
+    .select("id")
+    .maybeSingle();
   if (error) return { ok: false, error: translatePgError(error) };
+  if (!updated) {
+    return {
+      ok: false,
+      error: "Batch is no longer in submitted state (likely already acknowledged).",
+    };
+  }
 
   const meta = await auditMeta();
   await audit({
@@ -541,6 +556,13 @@ export async function voidResolutionAction(input: unknown): Promise<ActionResult
 // Settlement + allocation
 // ============================================================
 
+// NOTE: Settlement is N+1 INSERTs (one payment per visit + N allocations) without a
+// true transaction. Best-effort rollback below deletes any payments inserted before a
+// later failure (the bridge's bridge_payment_delete trigger reverses their JEs). If
+// rollback itself fails (network partition mid-cleanup), orphan payments may persist
+// — they'd remain visible in the audit log and on the visit. For full atomicity,
+// future work can move this into a Postgres function (see 12.3 spec §17 "Estimated
+// effort" notes and the plan's Task 18 NOTE).
 export async function recordHmoSettlementAction(
   input: unknown,
 ): Promise<ActionResult<{ payment_ids: string[]; allocation_count: number }>> {

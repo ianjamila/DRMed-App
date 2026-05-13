@@ -86,6 +86,7 @@ export type AddItemsToBatchInput = z.infer<typeof AddItemsToBatchSchema>;
 export const RemoveItemFromBatchSchema = z.object({
   item_id: z.string().uuid(),
 });
+export type RemoveItemFromBatchInput = z.infer<typeof RemoveItemFromBatchSchema>;
 
 export const SubmitBatchSchema = z.object({
   batch_id: z.string().uuid(),
@@ -96,16 +97,19 @@ export const SubmitBatchSchema = z.object({
   medium: HmoBatchMediumEnum,
   reference_no: z.string().min(1).max(64).optional().nullable(),
 });
+export type SubmitBatchInput = z.infer<typeof SubmitBatchSchema>;
 
 export const AcknowledgeBatchSchema = z.object({
   batch_id: z.string().uuid(),
   hmo_ack_ref: z.string().min(1).max(128).optional().nullable(),
 });
+export type AcknowledgeBatchInput = z.infer<typeof AcknowledgeBatchSchema>;
 
 export const VoidBatchSchema = z.object({
   batch_id: z.string().uuid(),
   void_reason: z.string().min(5, "Reason must be at least 5 characters"),
 });
+export type VoidBatchInput = z.infer<typeof VoidBatchSchema>;
 
 export const UpdateItemHmoResponseSchema = z.object({
   item_id: z.string().uuid(),
@@ -113,6 +117,7 @@ export const UpdateItemHmoResponseSchema = z.object({
   hmo_response_date: z.string().refine((s) => !Number.isNaN(Date.parse(s)), "invalid date"),
   hmo_response_notes: z.string().max(2000).optional().nullable(),
 });
+export type UpdateItemHmoResponseInput = z.infer<typeof UpdateItemHmoResponseSchema>;
 
 export const BulkSetHmoResponseSchema = z.object({
   batch_id: z.string().uuid(),
@@ -121,6 +126,7 @@ export const BulkSetHmoResponseSchema = z.object({
   scope: HmoBulkScopeEnum,
   notes: z.string().max(2000).optional().nullable(),
 });
+export type BulkSetHmoResponseInput = z.infer<typeof BulkSetHmoResponseSchema>;
 
 export const CreateResolutionSchema = z.object({
   item_id: z.string().uuid(),
@@ -128,11 +134,13 @@ export const CreateResolutionSchema = z.object({
   amount_php: z.number().positive("Amount must be > 0"),
   notes: z.string().max(2000).optional().nullable(),
 });
+export type CreateResolutionInput = z.infer<typeof CreateResolutionSchema>;
 
 export const VoidResolutionSchema = z.object({
   resolution_id: z.string().uuid(),
   void_reason: z.string().min(5),
 });
+export type VoidResolutionInput = z.infer<typeof VoidResolutionSchema>;
 
 export const RecordHmoSettlementSchema = z
   .object({
@@ -172,5 +180,6 @@ export const AllocateExistingPaymentSchema = z.object({
     )
     .min(1),
 });
+export type AllocateExistingPaymentInput = z.infer<typeof AllocateExistingPaymentSchema>;
 // NOTE: sum-equals-payment refinement is enforced inside the Server Action,
 // because the payment.amount_php is fetched server-side.
