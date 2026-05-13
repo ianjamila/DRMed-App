@@ -407,3 +407,80 @@ values (
   'debit',
   'System safety-net account. 12.2 posts here when an operational event lacks a CoA mapping; admin must reclassify.'
 );
+
+-- ===========================================================================
+-- Baseline CoA seed (added retroactively 2026-05-14 — fix fresh-clone db reset)
+-- ===========================================================================
+-- 12.1 originally added these codes via the admin chart-of-accounts UI, so they
+-- live in prod but never went into a migration. Without this seed a fresh
+-- `supabase db reset` fails inside 0030 because that migration's
+-- payment_method_account_map seed calls coa_uuid_for_code('1010') etc. on what
+-- would otherwise be an effectively empty table (only 9999 above is present).
+--
+-- ON CONFLICT (code) DO NOTHING makes this a no-op on prod (rows already exist)
+-- while letting a fresh local DB succeed end-to-end.
+--
+-- Intentionally omitted:
+--   * 1090 Cash — HMO Settlements Pending — seeded later in 0030.
+--   * 6920 Bad Debt — HMO Write-offs       — seeded later in 0034.
+--   * 9999 Suspense                        — seeded immediately above.
+-- 0030 also runs `UPDATE chart_of_accounts SET description = '…on consultations
+-- and procedures' WHERE code = '4920'` to broaden 4920. The seed below uses the
+-- narrower pre-broadening wording so that UPDATE remains semantically meaningful
+-- on a fresh DB (it's a no-op on prod, which already has the broadened text).
+
+insert into public.chart_of_accounts (code, name, type, normal_balance, description) values
+  -- Assets
+  ('1010', 'Cash on Hand',                       'asset',          'debit',  'Petty cash and daily till'),
+  ('1020', 'Cash in Bank — BPI',                 'asset',          'debit',  'BPI operating account'),
+  ('1021', 'Cash in Bank — BDO',                 'asset',          'debit',  'BDO operating account'),
+  ('1030', 'GCash Wallet',                       'asset',          'debit',  'GCash merchant wallet (patient payments)'),
+  ('1100', 'Accounts Receivable — Patients',     'asset',          'debit',  'Cash patients with unpaid balance'),
+  ('1110', 'Accounts Receivable — HMO',          'asset',          'debit',  'Control account; per-provider detail in HMO subledger (12.3)'),
+  ('1120', 'Accounts Receivable — Doctor Rent',  'asset',          'debit',  'Rent-paying doctors with outstanding rent (12.5)'),
+  ('1300', 'Prepaid Expenses',                   'asset',          'debit',  'Insurance, rent, software paid in advance; amortised in 12.7'),
+  ('1500', 'Equipment',                          'asset',          'debit',  'Lab and clinic equipment at cost'),
+  -- Liabilities
+  ('2100', 'Accounts Payable — Trade',           'liability',      'credit', 'Vendor invoices outstanding (12.4 AP subledger)'),
+  ('2110', 'Accounts Payable — Doctors',         'liability',      'credit', 'Doctor PF accrued but not yet disbursed (12.5)'),
+  ('2200', 'Loans Payable',                      'liability',      'credit', 'Outstanding loan principal'),
+  ('2300', 'SSS Payable',                        'liability',      'credit', 'SSS contributions withheld + employer share, pending remittance (12.6)'),
+  ('2310', 'PhilHealth Payable',                 'liability',      'credit', 'PhilHealth contributions, pending remittance (12.6)'),
+  ('2320', 'Pag-IBIG Payable',                   'liability',      'credit', 'Pag-IBIG contributions, pending remittance (12.6)'),
+  ('2330', 'Withholding Tax Payable — Compensation', 'liability',  'credit', 'BIR 1601-C; WT on employee compensation (12.6)'),
+  ('2340', 'Withholding Tax Payable — Expanded', 'liability',      'credit', 'BIR 1601-EQ; WT on doctor PFs and supplier payments'),
+  ('2400', 'Accrued Expenses',                   'liability',      'credit', 'Month-end accruals (utilities, rent, etc.) booked in 12.7'),
+  -- Equity
+  ('3100', 'Owner''s Capital',                   'equity',         'credit', 'Capital contributions from owner(s)'),
+  ('3200', 'Retained Earnings',                  'equity',         'credit', 'Cumulative net income less drawings; closed annually'),
+  -- Revenue
+  ('4100', 'Lab Tests Sales Revenue',            'revenue',        'credit', 'Patient-paid and HMO-billed lab services'),
+  ('4200', 'Doctor Consultation Sales Revenue',  'revenue',        'credit', 'Clinic-billed doctor consultations (clinic fee + PF)'),
+  ('4300', 'Rent Received from Doctors',         'revenue',        'credit', 'Monthly rent from rent-paying physicians (see 12.5)'),
+  ('4400', 'Mobile APE',                         'revenue',        'credit', 'On-site Annual Physical Exam packages'),
+  ('4500', 'Procedures',                         'revenue',        'credit', 'Doctor procedures (HMO and cash); see 12.5'),
+  -- Contra-revenue (discounts)
+  ('4910', 'Lab Tests Discounts',                'contra_revenue', 'debit',  'Senior/PWD and promotional discounts on lab services'),
+  ('4920', 'Doctor Consultation Discounts',      'contra_revenue', 'debit',  'Senior/PWD and promotional discounts on consultations'),
+  -- Expenses
+  ('5100', 'Cost of Goods Sold',                 'expense',        'debit',  'COGS aggregate; per-service breakdown lands in 12.5'),
+  ('6100', 'Salaries & Wages',                   'expense',        'debit',  'Employee compensation (5 employees as of 2026-05)'),
+  ('6110', 'Doctors Payroll',                    'expense',        'debit',  'Doctor PF disbursements (see 12.5)'),
+  ('6120', 'Benefits',                           'expense',        'debit',  'SSS/PhilHealth/Pag-IBIG employer share + others'),
+  ('6200', 'Rent',                               'expense',        'debit',  'Clinic facility rent'),
+  ('6210', 'Utilities',                          'expense',        'debit',  'Electricity, water'),
+  ('6220', 'Telecommunication / Internet',       'expense',        'debit',  'Phone and internet'),
+  ('6300', 'Depreciation & Amortization',        'expense',        'debit',  'Schedule managed in 12.7'),
+  ('6310', 'Maintenance & Repair',               'expense',        'debit',  'Facility and equipment maintenance'),
+  ('6400', 'Office Supplies',                    'expense',        'debit',  'Stationery, printing, admin consumables'),
+  ('6410', 'Lab Supplies',                       'expense',        'debit',  'Reagents, consumables for in-house lab'),
+  ('6420', 'Send Out',                           'expense',        'debit',  'Send-out lab costs (Hi Precision, MICROMEDIC, etc.)'),
+  ('6500', 'Marketing: Ads & Promotion',         'expense',        'debit',  'Advertising and promotional spend'),
+  ('6600', 'Permits',                            'expense',        'debit',  'Mayor''s permit, DOH license, regulatory permits'),
+  ('6610', 'Legal & Regulatory',                 'expense',        'debit',  'Legal fees; BIR-related items today (split in 12.4)'),
+  ('6620', 'Insurance',                          'expense',        'debit',  'Business insurance'),
+  ('6700', 'Travel',                             'expense',        'debit',  'Business travel'),
+  ('6710', 'APE',                                'expense',        'debit',  'On-site APE event costs (vendor side of 4400)'),
+  ('7100', 'Interest Expense',                   'expense',        'debit',  'Interest on loans / financing'),
+  ('7200', 'Income Taxes',                       'expense',        'debit',  'BIR income tax (1701/1702)')
+on conflict (code) do nothing;

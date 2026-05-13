@@ -203,3 +203,20 @@ create policy "sync_state: admin read"
   on public.sync_state
   for select to authenticated
   using (public.has_role(array['admin']));
+
+
+-- ===========================================================================
+-- Baseline HMO providers seed (added retroactively 2026-05-14 — fix fresh-clone
+-- db reset). Originally seeded via the reception admin UI; never put into a
+-- migration. Idempotent so it's a no-op on prod (rows already exist).
+-- 0034 adds the remaining 5 providers (Cocolife, Med Asia, Generali, Amaphil,
+-- Pacific Cross) via the same INSERT ... ON CONFLICT pattern.
+-- ===========================================================================
+insert into public.hmo_providers (name, is_active, due_days_for_invoice) values
+  ('Avega',       true, 30),
+  ('Etiqa',       true, 30),
+  ('iCare',       true, 30),
+  ('Intellicare', true, 30),
+  ('Maxicare',    true, 30),
+  ('Valucare',    true, 30)
+on conflict (name) do nothing;
