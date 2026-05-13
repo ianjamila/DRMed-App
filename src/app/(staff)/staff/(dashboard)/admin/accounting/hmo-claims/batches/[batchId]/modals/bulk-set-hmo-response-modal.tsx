@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { todayManilaISODate } from "@/lib/dates/manila";
 import { bulkSetHmoResponseAction } from "../../../actions";
 import { ActionModal } from "./action-modal";
 
@@ -49,7 +50,7 @@ function BulkSetHmoResponseModalInner({
   onClose: () => void;
   batchId: string;
 }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayManilaISODate();
   const [response, setResponse] = useState<HmoResponse>("paid");
   const [responseDate, setResponseDate] = useState<string>(today);
   const [scope, setScope] = useState<BulkScope>("pending_only");
@@ -106,6 +107,7 @@ function BulkSetHmoResponseModalInner({
         <input
           type="date"
           value={responseDate}
+          max={today}
           onChange={(e) => setResponseDate(e.target.value)}
           className="mt-1 min-h-[44px] w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2"
         />

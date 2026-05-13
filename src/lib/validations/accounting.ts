@@ -1,22 +1,5 @@
 import { z } from "zod";
-
-const MANILA_TZ = "Asia/Manila";
-
-function todayManila(): string {
-  // Returns YYYY-MM-DD as it is right now in Manila.
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: MANILA_TZ,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
-}
-
-function isOnOrBeforeTodayManila(dateStr: string): boolean {
-  // dateStr is expected as YYYY-MM-DD; lexical compare works for ISO-like dates.
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false;
-  return dateStr <= todayManila();
-}
+import { isOnOrBeforeTodayManila } from "@/lib/dates/manila";
 
 const accountCodeSchema = z
   .string()

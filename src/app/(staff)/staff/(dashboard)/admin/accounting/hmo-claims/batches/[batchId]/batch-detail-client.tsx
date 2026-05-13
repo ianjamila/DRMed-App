@@ -727,7 +727,9 @@ function ItemCardMobile({
           </dd>
         </Fragment>
         <Fragment>
-          <dt className="text-[color:var(--color-brand-text-soft)]">Patient</dt>
+          <dt className="text-[color:var(--color-brand-text-soft)]">
+            Patient billed
+          </dt>
           <dd className="text-right font-mono text-[color:var(--color-brand-navy)]">
             {PHP.format(Number(item.patient_billed_amount_php))}
           </dd>

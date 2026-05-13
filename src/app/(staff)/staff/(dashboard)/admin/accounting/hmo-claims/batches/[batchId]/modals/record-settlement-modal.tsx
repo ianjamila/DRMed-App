@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { todayManilaISODate } from "@/lib/dates/manila";
 import { recordHmoSettlementAction } from "../../../actions";
 import { ActionModal } from "./action-modal";
 
@@ -8,15 +9,6 @@ const PHP = new Intl.NumberFormat("en-PH", {
   style: "currency",
   currency: "PHP",
 });
-
-function todayManilaISODate(): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Manila",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
-}
 
 export type SettlementItem = {
   id: string;

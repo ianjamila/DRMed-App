@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { todayManilaISODate } from "@/lib/dates/manila";
 import { submitBatchAction } from "../../../actions";
 import { ActionModal } from "./action-modal";
 
@@ -14,16 +15,6 @@ const MEDIUM_OPTIONS: { value: Medium; label: string }[] = [
   { value: "fax", label: "Fax" },
   { value: "in_person", label: "In person" },
 ];
-
-function todayManilaISODate(): string {
-  // YYYY-MM-DD as it is right now in Manila.
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Manila",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
-}
 
 export function SubmitBatchModal({
   open,
