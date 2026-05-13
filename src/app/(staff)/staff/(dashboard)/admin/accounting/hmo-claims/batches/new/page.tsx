@@ -9,11 +9,32 @@ export const dynamic = "force-dynamic";
 export default async function NewBatchPage({
   searchParams,
 }: {
-  searchParams: Promise<{ providerId?: string; trIds?: string }>;
+  searchParams: Promise<{
+    providerId?: string;
+    trIds?: string;
+    addToBatch?: string;
+  }>;
 }) {
   const params = await searchParams;
   await requireAdminStaff();
   const admin = createAdminClient();
+
+  // If addToBatch is set, verify the batch is a usable draft and use ITS provider.
+  // Otherwise fall back to the providerId param or the first active provider.
+  let addToBatchId: string | null = null;
+  let lockedProviderId: string | null = null;
+  if (params.addToBatch) {
+    const { data: batch } = await admin
+      .from("hmo_claim_batches")
+      .select("id, provider_id, status, voided_at")
+      .eq("id", params.addToBatch)
+      .maybeSingle();
+    if (!batch || batch.voided_at || batch.status !== "draft") {
+      redirect("/staff/admin/accounting/hmo-claims");
+    }
+    addToBatchId = batch.id;
+    lockedProviderId = batch.provider_id;
+  }
 
   const { data: providers } = await admin
     .from("hmo_providers")
@@ -21,7 +42,8 @@ export default async function NewBatchPage({
     .eq("is_active", true)
     .order("name");
 
-  const initialProviderId = params.providerId ?? providers?.[0]?.id ?? null;
+  const initialProviderId =
+    lockedProviderId ?? params.providerId ?? providers?.[0]?.id ?? null;
   if (!initialProviderId) redirect("/staff/admin/accounting/hmo-claims");
 
   const { data: unbilled } = await admin
@@ -49,18 +71,27 @@ export default async function NewBatchPage({
       past_threshold: Boolean(r.past_threshold),
     }));
 
+  const eyebrow = addToBatchId
+    ? "Phase 12.3 · Add items to draft"
+    : "Phase 12.3 · New batch";
+  const heading = addToBatchId
+    ? "Add items to draft batch"
+    : "New HMO claim batch";
+  const subhead = addToBatchId
+    ? "Pick additional unbilled items for this draft. Items already in the batch are hidden."
+    : "Pick a provider and the unbilled items to include. Saving creates a draft batch you can submit afterwards.";
+
   return (
     <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6">
         <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-          Phase 12.3 · New batch
+          {eyebrow}
         </p>
         <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          New HMO claim batch
+          {heading}
         </h1>
         <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
-          Pick a provider and the unbilled items to include. Saving creates a
-          draft batch you can submit afterwards.
+          {subhead}
         </p>
       </header>
       <NewBatchClient
@@ -68,6 +99,7 @@ export default async function NewBatchPage({
         initialProviderId={initialProviderId}
         unbilled={rows}
         preselectedIds={preselectedIds}
+        addToBatch={addToBatchId}
       />
     </div>
   );

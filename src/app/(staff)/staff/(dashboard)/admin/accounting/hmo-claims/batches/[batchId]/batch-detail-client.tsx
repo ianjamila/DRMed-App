@@ -4,7 +4,6 @@ import { Fragment, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import type { Database } from "@/types/database";
 import {
-  submitBatchAction,
   acknowledgeBatchAction,
   voidBatchAction,
   removeItemFromBatchAction,
@@ -20,6 +19,7 @@ import {
   RecordSettlementModal,
   type SettlementItem,
 } from "./modals/record-settlement-modal";
+import { SubmitBatchModal } from "./modals/submit-batch-modal";
 
 type BatchRow = Database["public"]["Tables"]["hmo_claim_batches"]["Row"] & {
   hmo_providers: { name: string } | null;
@@ -105,6 +105,7 @@ export function BatchDetailClient({
 
   const [bulkOpen, setBulkOpen] = useState(false);
   const [settlementOpen, setSettlementOpen] = useState(false);
+  const [submitOpen, setSubmitOpen] = useState(false);
   const [resolveTarget, setResolveTarget] = useState<ResolveItemTarget | null>(
     null,
   );
@@ -160,6 +161,7 @@ export function BatchDetailClient({
           onToggleRemoveMode={() => setRemoveMode((v) => !v)}
           onOpenBulk={() => setBulkOpen(true)}
           onOpenSettlement={() => setSettlementOpen(true)}
+          onOpenSubmit={() => setSubmitOpen(true)}
           onOpenVoid={() => setVoidBatchOpen(true)}
         />
       )}
@@ -203,6 +205,12 @@ export function BatchDetailClient({
         onClose={() => setSettlementOpen(false)}
         batchId={batch.id}
         items={settlementItems}
+      />
+      <SubmitBatchModal
+        open={submitOpen}
+        onClose={() => setSubmitOpen(false)}
+        batchId={batch.id}
+        defaultReferenceNo={batch.reference_no}
       />
       <VoidConfirmModal
         open={voidBatchOpen}
@@ -376,6 +384,7 @@ function ActionsBar({
   onToggleRemoveMode,
   onOpenBulk,
   onOpenSettlement,
+  onOpenSubmit,
   onOpenVoid,
 }: {
   batch: BatchRow;
@@ -384,24 +393,12 @@ function ActionsBar({
   onToggleRemoveMode: () => void;
   onOpenBulk: () => void;
   onOpenSettlement: () => void;
+  onOpenSubmit: () => void;
   onOpenVoid: () => void;
 }) {
   const status = batch.status;
   const [pending, startTransition] = useTransition();
   const [err, setErr] = useState<string | null>(null);
-
-  function onSubmit() {
-    startTransition(async () => {
-      setErr(null);
-      const res = await submitBatchAction({
-        batch_id: batch.id,
-        submitted_at: new Date().toISOString(),
-        medium: "in_person",
-        reference_no: batch.reference_no ?? null,
-      });
-      if (!res.ok) setErr(res.error);
-    });
-  }
 
   function onAcknowledge() {
     startTransition(async () => {
@@ -414,18 +411,18 @@ function ActionsBar({
     });
   }
 
-  const addItemsHref = `/staff/admin/accounting/hmo-claims/batches/new?providerId=${batch.provider_id}`;
+  const addItemsHref = `/staff/admin/accounting/hmo-claims/batches/new?providerId=${batch.provider_id}&addToBatch=${batch.id}`;
 
   let buttons: React.ReactNode = null;
   if (status === "draft") {
     buttons = (
       <>
         <ActionButton
-          onClick={onSubmit}
-          disabled={pending || itemsCount < 1}
+          onClick={onOpenSubmit}
+          disabled={itemsCount < 1}
           variant="primary"
         >
-          {pending ? "Submitting…" : "Submit"}
+          Submit
         </ActionButton>
         <Link
           href={addItemsHref}

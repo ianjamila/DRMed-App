@@ -3,7 +3,10 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { createClaimBatchAction } from "../../actions";
+import {
+  createClaimBatchAction,
+  addItemsToBatchAction,
+} from "../../actions";
 
 const PHP = new Intl.NumberFormat("en-PH", {
   style: "currency",
@@ -23,11 +26,13 @@ export function NewBatchClient({
   initialProviderId,
   unbilled,
   preselectedIds,
+  addToBatch = null,
 }: {
   providers: { id: string; name: string }[];
   initialProviderId: string;
   unbilled: UnbilledRow[];
   preselectedIds: string[];
+  addToBatch?: string | null;
 }) {
   const router = useRouter();
   const [providerId, setProviderId] = useState(initialProviderId);
@@ -36,6 +41,8 @@ export function NewBatchClient({
   );
   const [err, setErr] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+
+  const isAddMode = Boolean(addToBatch);
 
   function toggle(id: string) {
     setSelected((prev) => {
@@ -47,6 +54,8 @@ export function NewBatchClient({
   }
 
   function onProviderChange(newId: string) {
+    // Provider switching is locked while adding to an existing batch.
+    if (isAddMode) return;
     setProviderId(newId);
     setSelected(new Set());
     router.push(
@@ -61,6 +70,20 @@ export function NewBatchClient({
     }
     startTransition(async () => {
       setErr(null);
+      if (isAddMode && addToBatch) {
+        const res = await addItemsToBatchAction({
+          batch_id: addToBatch,
+          test_request_ids: Array.from(selected),
+        });
+        if (!res.ok) {
+          setErr(res.error);
+          return;
+        }
+        router.push(
+          `/staff/admin/accounting/hmo-claims/batches/${addToBatch}`,
+        );
+        return;
+      }
       const res = await createClaimBatchAction({
         provider_id: providerId,
         test_request_ids: Array.from(selected),
@@ -85,20 +108,30 @@ export function NewBatchClient({
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Link
-          href="/staff/admin/accounting/hmo-claims"
+          href={
+            isAddMode && addToBatch
+              ? `/staff/admin/accounting/hmo-claims/batches/${addToBatch}`
+              : "/staff/admin/accounting/hmo-claims"
+          }
           className="text-xs font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
         >
-          ← Back to HMO claims
+          {isAddMode ? "← Back to batch" : "← Back to HMO claims"}
         </Link>
       </div>
       <label className="block text-sm">
         <span className="font-semibold text-[color:var(--color-brand-navy)]">
           Provider
+          {isAddMode ? (
+            <span className="ml-2 text-xs font-normal text-[color:var(--color-brand-text-soft)]">
+              (locked — must match the existing batch)
+            </span>
+          ) : null}
         </span>
         <select
           value={providerId}
           onChange={(e) => onProviderChange(e.target.value)}
-          className="mt-1 min-h-[44px] w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 text-sm"
+          disabled={isAddMode}
+          className="mt-1 min-h-[44px] w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 text-sm disabled:opacity-60"
         >
           {providers.map((p) => (
             <option key={p.id} value={p.id}>
@@ -179,7 +212,11 @@ export function NewBatchClient({
           disabled={pending || selected.size < 1}
           className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-4 text-xs font-bold uppercase tracking-wider text-white disabled:opacity-50"
         >
-          {pending ? "Saving…" : "Create draft batch"}
+          {pending
+            ? "Saving…"
+            : isAddMode
+              ? `Add ${selected.size} item${selected.size === 1 ? "" : "s"} to batch`
+              : "Create draft batch"}
         </button>
       </div>
       {err ? (
