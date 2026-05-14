@@ -489,6 +489,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "gift_codes_redeemed_payment_id_fkey"
+            columns: ["redeemed_payment_id"]
+            isOneToOne: false
+            referencedRelation: "v_historical_payments"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "gift_codes_redeemed_visit_id_fkey"
             columns: ["redeemed_visit_id"]
             isOneToOne: false
@@ -957,6 +964,13 @@ export type Database = {
             columns: ["payment_id"]
             isOneToOne: false
             referencedRelation: "payments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "hmo_payment_allocations_payment_id_fkey"
+            columns: ["payment_id"]
+            isOneToOne: false
+            referencedRelation: "v_historical_payments"
             referencedColumns: ["id"]
           },
           {
@@ -2567,6 +2581,66 @@ export type Database = {
       }
     }
     Views: {
+      v_historical_payments: {
+        Row: {
+          amount_php: number | null
+          created_at: string | null
+          id: string | null
+          method: string | null
+          notes: string | null
+          received_at: string | null
+          received_by: string | null
+          reference_number: string | null
+          visit_id: string | null
+          void_reason: string | null
+          voided_at: string | null
+          voided_by: string | null
+        }
+        Insert: {
+          amount_php?: number | null
+          created_at?: string | null
+          id?: string | null
+          method?: string | null
+          notes?: string | null
+          received_at?: string | null
+          received_by?: string | null
+          reference_number?: string | null
+          visit_id?: string | null
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
+        }
+        Update: {
+          amount_php?: number | null
+          created_at?: string | null
+          id?: string | null
+          method?: string | null
+          notes?: string | null
+          received_at?: string | null
+          received_by?: string | null
+          reference_number?: string | null
+          visit_id?: string | null
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payments_visit_id_fkey"
+            columns: ["visit_id"]
+            isOneToOne: false
+            referencedRelation: "visits"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payments_voided_by_fkey"
+            columns: ["voided_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       v_hmo_ar_aging: {
         Row: {
           bucket: string | null

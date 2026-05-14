@@ -30,6 +30,17 @@ begin
    order by created_at desc
    limit 1;
 
+  -- Schema-presence assertion: even when no fixture visit exists, the
+  -- migration should have created the staging tables and bypass guards.
+  perform 1 from public.hmo_import_runs limit 0;       -- raises if table missing
+  perform 1 from public.hmo_history_staging limit 0;   -- raises if table missing
+  if not exists (
+    select 1 from pg_proc where proname = 'bridge_payment_insert'
+      and prosrc like '%skip_bridge_historical%'
+  ) then
+    raise exception 'schema check FAIL: bridge_payment_insert lacks the bypass guard';
+  end if;
+
   if v_visit_id is null then
     raise notice 'no operational HMO visit found; smoke needs fixture seed (skipping for fresh-clone path)';
     return;
@@ -42,7 +53,7 @@ begin
   insert into public.payments (visit_id, amount_php, method, reference_number,
                                 received_by, received_at, notes)
   values (v_visit_id, 1.00, 'hmo', 'SMOKE-12A-D1',
-          (select id from public.staff_profiles limit 1),
+          (select id from public.staff_profiles where role = 'admin' order by created_at limit 1),
           now(), '[historical-import:smoke-d1] bypass test')
   returning id into v_payment_id;
 
@@ -65,7 +76,7 @@ begin
   insert into public.payments (visit_id, amount_php, method, reference_number,
                                 received_by, received_at, notes)
   values (v_visit_id, 1.00, 'hmo', 'SMOKE-12A-D1-control',
-          (select id from public.staff_profiles limit 1),
+          (select id from public.staff_profiles where role = 'admin' order by created_at limit 1),
           now(), 'control: bypass off')
   returning id into v_payment_id;
 

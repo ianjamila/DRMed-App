@@ -89,7 +89,7 @@ create table public.hmo_history_staging (
   service_id_resolved      uuid references public.services(id),
   senior_pwd_flag          boolean not null default false,
   hmo_approval_date        date,
-  billed_amount            numeric(12,2) not null,
+  billed_amount            numeric(12,2) not null check (billed_amount > 0),
   paid_amount              numeric(12,2) not null default 0,
   submission_date          date,
   reference_no             text,
@@ -115,7 +115,7 @@ create unique index idx_hmo_history_staging_one_commit_per_content
 -- Persistent provider name → provider_id mapping. Survives across runs.
 create table public.hmo_provider_aliases (
   alias       text primary key,
-  provider_id uuid not null references public.hmo_providers(id) on delete cascade,
+  provider_id uuid not null references public.hmo_providers(id),
   created_by  uuid not null references public.staff_profiles(id),
   created_at  timestamptz not null default now()
 );
@@ -124,7 +124,7 @@ create table public.hmo_provider_aliases (
 -- and doctor last names.
 create table public.hmo_service_aliases (
   alias       text primary key,
-  service_id  uuid not null references public.services(id) on delete cascade,
+  service_id  uuid not null references public.services(id),
   created_by  uuid not null references public.staff_profiles(id),
   created_at  timestamptz not null default now()
 );
@@ -382,3 +382,17 @@ create policy "hmo_service_aliases: admin read"
   on public.hmo_service_aliases
   for select to authenticated
   using (public.has_role(array['admin']));
+
+-- =============================================================================
+-- Section 7 — Reporting view
+-- =============================================================================
+-- v_historical_payments surfaces synthetic historical payments by the notes
+-- prefix convention from §5B of the design spec. Admin-only via RLS on the
+-- underlying payments table.
+
+create view public.v_historical_payments as
+  select * from public.payments
+   where notes like '[historical-import:%]%';
+
+comment on view public.v_historical_payments is
+  '12.A: synthetic HMO payments inserted by commit_hmo_history_run().';
