@@ -745,3 +745,18 @@ export async function discardRunAction(input: {
 
   return { ok: true, data: { run_id: parsed.data.run_id } };
 }
+
+// =============================================================================
+// commitRunAction — TEMPORARY STUB (Dispatch 4 / Task 28 replaces this).
+// The real implementation calls the `commit_hmo_history_run` SQL function.
+// Kept here so the D3 commit-footer client component can import it cleanly.
+// =============================================================================
+
+export async function commitRunAction(input: {
+  run_id: string;
+  variance_override_reason?: string;
+  pii_ack: boolean;
+}): Promise<ActionResult<never>> {
+  void input;
+  return { ok: false, error: "commit not implemented yet (Dispatch 4)" };
+}
