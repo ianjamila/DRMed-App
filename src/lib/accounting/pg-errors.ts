@@ -44,6 +44,11 @@ export function translatePgError(err: PgError): string {
       return err.message ?? "Resolution amount exceeds the item's unresolved balance.";
     case "P0012":
       return err.message ?? "Allocation amount would exceed the item's billed amount.";
+    // 12.A — HMO history import
+    case "P0013":
+      return err.message ?? "That import run no longer exists.";
+    case "P0014":
+      return err.message ?? "Can't commit — there are still rows with errors. Fix the workbook or resolve in the preview.";
     default:
       return err.message ?? "Database error. Please try again.";
   }

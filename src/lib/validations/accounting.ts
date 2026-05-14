@@ -182,3 +182,44 @@ export const AllocateExistingPaymentSchema = z.object({
 export type AllocateExistingPaymentInput = z.infer<typeof AllocateExistingPaymentSchema>;
 // NOTE: sum-equals-payment refinement is enforced inside the Server Action,
 // because the payment.amount_php is fetched server-side.
+
+// =============================================================================
+// 12.A — HMO history import
+// =============================================================================
+
+export const cutoverISO = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "cutover must be YYYY-MM-DD");
+
+export const uploadRunInput = z.object({
+  // formData-driven; the action peels the File off separately.
+  cutover_date: cutoverISO,
+});
+
+export const validateRunInput = z.object({
+  run_id: z.string().uuid(),
+});
+
+export const mapProviderAliasInput = z.object({
+  run_id: z.string().uuid(),
+  alias: z.string().min(1).max(200),
+  // EITHER an existing provider id OR the sentinel "create" string.
+  provider_id: z.union([z.string().uuid(), z.literal("create")]),
+});
+
+export const mapServiceAliasInput = z.object({
+  run_id: z.string().uuid(),
+  alias: z.string().min(1).max(200),
+  service_kind: z.enum(["lab_test", "doctor_consultation"]),
+  service_id: z.union([z.string().uuid(), z.literal("create")]),
+});
+
+export const commitRunInput = z.object({
+  run_id: z.string().uuid(),
+  variance_override_reason: z.string().max(2000).optional(),
+  pii_ack: z.literal(true),   // checkbox must be checked
+});
+
+export const discardRunInput = z.object({
+  run_id: z.string().uuid(),
+});
