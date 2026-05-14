@@ -1,0 +1,893 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DRMed · 12.A · HMO History Import · Design Deliverable</title>
+    <style>
+      :root {
+        --navy: #284570;
+        --navy-soft: #34507e;
+        --steel: #4682b4;
+        --cyan: #06aef1;
+        --cyan-light: #7fbeff;
+        --cyan-mid: #3eafe3;
+        --bg: #f0f6fc;
+        --bg-mid: #e3eef9;
+        --ink: #1a2537;
+        --ink-mid: #374151;
+        --ink-soft: #6b7280;
+        --line: #d8e3f0;
+        --line-soft: #ebf1f8;
+        --white: #ffffff;
+        --shadow-sm: 0 1px 2px rgba(40, 69, 112, 0.06);
+        --shadow-md: 0 8px 24px -8px rgba(40, 69, 112, 0.18);
+        --shadow-lg: 0 24px 48px -16px rgba(40, 69, 112, 0.22);
+        --r-sm: 6px;
+        --r-md: 10px;
+        --r-lg: 16px;
+        --r-xl: 24px;
+
+        --ok: #10b981;
+        --ok-bg: #ecfdf5;
+        --ok-border: #a7f3d0;
+
+        --info: var(--cyan);
+        --info-bg: #ecf6fc;
+        --info-border: #b6e2f5;
+
+        --warn: #d97706;
+        --warn-bg: #fffbeb;
+        --warn-border: #fde68a;
+
+        --crit: #dc2626;
+        --crit-bg: #fef2f2;
+        --crit-border: #fecaca;
+
+        --neutral: var(--ink-soft);
+        --neutral-bg: #f3f4f6;
+        --neutral-border: #e5e7eb;
+      }
+
+      * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter",
+          "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        font-size: 15px;
+        line-height: 1.55;
+        color: var(--ink);
+        background: var(--bg);
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+      ::selection { background: var(--cyan-light); color: var(--navy); }
+
+      .shell {
+        display: grid;
+        grid-template-columns: 260px minmax(0, 1fr);
+        max-width: 1400px;
+        margin: 0 auto;
+        min-height: 100vh;
+      }
+
+      aside.toc {
+        position: sticky;
+        top: 0;
+        align-self: start;
+        height: 100vh;
+        overflow-y: auto;
+        padding: 32px 24px 32px 32px;
+        border-right: 1px solid var(--line);
+        background: linear-gradient(180deg, var(--white) 0%, var(--bg) 100%);
+      }
+      .toc-brand { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+      .toc-brand-dot {
+        width: 8px; height: 8px; border-radius: 50%;
+        background: var(--cyan);
+        box-shadow: 0 0 0 4px rgba(6, 174, 241, 0.18);
+      }
+      .toc-brand-name { font-weight: 800; letter-spacing: -0.01em; color: var(--navy); font-size: 18px; }
+      .toc-eyebrow { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; color: var(--ink-soft); margin-bottom: 24px; }
+      .toc h3 { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; color: var(--ink-soft); margin: 24px 0 8px; }
+      .toc ul { list-style: none; padding: 0; margin: 0; }
+      .toc li { margin: 0; }
+      .toc a {
+        display: block;
+        padding: 7px 10px;
+        margin-left: -10px;
+        font-size: 13.5px;
+        color: var(--ink-mid);
+        text-decoration: none;
+        border-radius: var(--r-sm);
+        border-left: 2px solid transparent;
+        transition: background 120ms, color 120ms, border-color 120ms;
+      }
+      .toc a:hover { background: var(--bg-mid); color: var(--navy); border-left-color: var(--cyan); }
+      .toc-meta {
+        margin-top: 32px;
+        padding: 16px;
+        background: var(--white);
+        border: 1px solid var(--line);
+        border-radius: var(--r-md);
+        font-size: 12px;
+        color: var(--ink-soft);
+      }
+      .toc-meta strong { color: var(--navy); display: block; margin-bottom: 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
+
+      main { padding: 56px 64px 96px 64px; max-width: 960px; }
+
+      .hero { margin-bottom: 56px; padding-bottom: 40px; border-bottom: 1px solid var(--line); }
+      .hero-eyebrow { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.14em; color: var(--cyan); margin-bottom: 10px; }
+      .hero h1 { font-size: 40px; line-height: 1.1; letter-spacing: -0.02em; color: var(--navy); margin: 0 0 14px; font-weight: 800; }
+      .hero-lead { font-size: 17px; color: var(--ink-mid); max-width: 760px; margin: 0 0 24px; }
+      .hero-meta { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+      .pill {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 6px 12px; border-radius: 999px;
+        background: var(--white); border: 1px solid var(--line);
+        font-size: 12px; color: var(--ink-mid); font-weight: 500;
+      }
+      .pill.status-draft { background: var(--info-bg); border-color: var(--info-border); color: var(--navy); }
+      .pill-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--cyan); }
+
+      section.section { margin-bottom: 64px; scroll-margin-top: 24px; }
+      .section-eyebrow {
+        font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.14em;
+        color: var(--cyan-mid); margin-bottom: 10px;
+      }
+      h2.section-title {
+        font-size: 28px; line-height: 1.15; letter-spacing: -0.015em;
+        color: var(--navy); margin: 0 0 14px; font-weight: 700;
+      }
+      .section-lead { font-size: 16px; color: var(--ink-mid); margin: 0 0 28px; max-width: 760px; }
+
+      h3.sub { font-size: 18px; color: var(--navy); margin: 32px 0 12px; font-weight: 700; letter-spacing: -0.01em; }
+      h4.sub-sub { font-size: 14px; color: var(--navy); margin: 24px 0 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+      p { margin: 10px 0; }
+
+      code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; background: var(--bg-mid); padding: 1px 6px; border-radius: 4px; color: var(--navy); }
+      pre {
+        font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px;
+        background: #0f1729; color: #d6e4f5; padding: 16px 20px;
+        border-radius: var(--r-md); overflow-x: auto; line-height: 1.55;
+        border: 1px solid #1a2945;
+      }
+      pre .kw { color: #7fbeff; }
+      pre .com { color: #6b7280; font-style: italic; }
+
+      table.basic { width: 100%; border-collapse: separate; border-spacing: 0; background: var(--white); border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden; }
+      table.basic th, table.basic td { padding: 12px 14px; text-align: left; font-size: 13.5px; vertical-align: top; }
+      table.basic th { background: var(--bg-mid); color: var(--navy); font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; border-bottom: 1px solid var(--line); }
+      table.basic td { border-bottom: 1px solid var(--line-soft); color: var(--ink-mid); }
+      table.basic tr:last-child td { border-bottom: none; }
+      table.basic td strong { color: var(--navy); font-weight: 600; }
+
+      .callout {
+        border: 1px solid var(--info-border);
+        background: var(--info-bg);
+        border-radius: var(--r-md);
+        padding: 14px 18px;
+        margin: 18px 0;
+      }
+      .callout-label {
+        font-size: 10px; font-weight: 800; text-transform: uppercase;
+        letter-spacing: 0.12em; color: var(--cyan); margin-bottom: 6px;
+        display: block;
+      }
+      .callout.ok { background: var(--ok-bg); border-color: var(--ok-border); }
+      .callout.ok .callout-label { color: var(--ok); }
+      .callout.warn { background: var(--warn-bg); border-color: var(--warn-border); }
+      .callout.warn .callout-label { color: var(--warn); }
+      .callout.crit { background: var(--crit-bg); border-color: var(--crit-border); }
+      .callout.crit .callout-label { color: var(--crit); }
+      .callout.neutral { background: var(--neutral-bg); border-color: var(--neutral-border); }
+      .callout.neutral .callout-label { color: var(--neutral); }
+      .callout strong { color: var(--navy); font-weight: 600; }
+      .callout p:first-child { margin-top: 0; }
+      .callout p:last-child { margin-bottom: 0; }
+
+      .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 20px 0 8px; }
+      .metric {
+        background: var(--white); border: 1px solid var(--line); border-radius: var(--r-md);
+        padding: 16px 18px; position: relative;
+      }
+      .metric::before {
+        content: ""; position: absolute; left: 0; top: 14px; bottom: 14px;
+        width: 3px; border-radius: 2px; background: var(--cyan);
+      }
+      .metric.ok::before { background: var(--ok); }
+      .metric.info::before { background: var(--cyan); }
+      .metric.warn::before { background: var(--warn); }
+      .metric.crit::before { background: var(--crit); }
+      .metric-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-soft); margin-bottom: 6px; }
+      .metric-value { font-size: 22px; font-weight: 700; color: var(--navy); letter-spacing: -0.01em; }
+      .metric-unit { font-size: 13px; color: var(--ink-soft); font-weight: 500; margin-left: 4px; }
+      .metric-foot { font-size: 12px; color: var(--ink-soft); margin-top: 6px; }
+
+      .phase { position: relative; padding: 0 0 32px 32px; border-left: 2px solid var(--line); }
+      .phase:last-child { padding-bottom: 0; border-left-color: transparent; }
+      .phase::before {
+        content: ""; position: absolute; left: -8px; top: 4px;
+        width: 14px; height: 14px; border-radius: 50%;
+        background: var(--white); border: 2px solid var(--cyan-mid);
+      }
+      .phase.planned::before { border-color: var(--neutral-border); }
+      .phase-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; margin-bottom: 8px; }
+      .phase-id {
+        font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.1em;
+        color: var(--cyan-mid); background: var(--info-bg); padding: 3px 8px; border-radius: 4px;
+        border: 1px solid var(--info-border);
+      }
+      .phase-title { font-size: 17px; color: var(--navy); font-weight: 700; letter-spacing: -0.01em; }
+      .phase-est { font-size: 12px; color: var(--ink-soft); margin-left: auto; }
+      .phase-body { color: var(--ink-mid); }
+      .phase-body p { margin: 6px 0; }
+      .phase-deliverables {
+        margin: 10px 0 0;
+        padding: 12px 16px;
+        background: var(--white); border: 1px solid var(--line); border-radius: var(--r-sm);
+      }
+      .phase-deliverables strong { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-soft); margin-bottom: 6px; }
+      .phase-deliverables ul { list-style: none; padding: 0; margin: 0; font-size: 13.5px; }
+      .phase-deliverables li {
+        padding: 5px 0 5px 22px; position: relative; color: var(--ink-mid);
+      }
+      .phase-deliverables li::before {
+        content: "";
+        position: absolute; left: 0; top: 9px;
+        width: 12px; height: 12px; border-radius: 3px;
+        background: var(--white); border: 1.5px solid var(--neutral-border);
+      }
+      .phase-deliverables li.done::before {
+        background: var(--ok); border-color: var(--ok);
+      }
+      .phase-deliverables li.done::after {
+        content: ""; position: absolute; left: 3px; top: 11px;
+        width: 6px; height: 3px; border-left: 2px solid white; border-bottom: 2px solid white;
+        transform: rotate(-45deg);
+      }
+
+      .risks { display: grid; grid-template-columns: 1fr; gap: 10px; }
+      .risk {
+        background: var(--white); border: 1px solid var(--line);
+        border-left: 4px solid var(--warn);
+        border-radius: var(--r-sm);
+        padding: 14px 18px;
+      }
+      .risk.crit { border-left-color: var(--crit); }
+      .risk.info { border-left-color: var(--cyan); }
+      .risk.ok { border-left-color: var(--ok); }
+      .risk-head { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+      .risk-title { font-size: 14px; color: var(--navy); font-weight: 700; }
+      .risk-tag {
+        font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
+        padding: 2px 8px; border-radius: 999px;
+      }
+      .risk.crit .risk-tag { background: var(--crit-bg); color: var(--crit); }
+      .risk .risk-tag { background: var(--warn-bg); color: var(--warn); }
+      .risk.info .risk-tag { background: var(--info-bg); color: var(--cyan); }
+      .risk.ok .risk-tag { background: var(--ok-bg); color: var(--ok); }
+      .risk-body { font-size: 13.5px; color: var(--ink-mid); margin-top: 8px; }
+      .risk-body strong { color: var(--navy); font-weight: 600; }
+
+      .arch-diagram {
+        background: var(--white); border: 1px solid var(--line);
+        border-radius: var(--r-md); padding: 24px; margin: 20px 0;
+      }
+      .arch-row {
+        display: flex; align-items: stretch; gap: 12px;
+        margin-bottom: 12px;
+      }
+      .arch-row:last-child { margin-bottom: 0; }
+      .arch-box {
+        flex: 1;
+        background: var(--bg-mid); border: 1px solid var(--line);
+        border-radius: var(--r-sm); padding: 14px 16px;
+        font-size: 13px; color: var(--navy); line-height: 1.45;
+      }
+      .arch-box strong { display: block; color: var(--navy); font-weight: 700; margin-bottom: 4px; font-size: 13px; }
+      .arch-box .arch-detail { color: var(--ink-soft); font-size: 12px; line-height: 1.5; }
+      .arch-box.input { background: var(--info-bg); border-color: var(--info-border); }
+      .arch-box.action { background: var(--white); }
+      .arch-box.gate { background: var(--warn-bg); border-color: var(--warn-border); }
+      .arch-box.output { background: var(--ok-bg); border-color: var(--ok-border); }
+      .arch-arrow { text-align: center; color: var(--ink-soft); font-size: 18px; line-height: 1; margin: 4px 0; }
+
+      footer.foot { margin-top: 96px; padding-top: 32px; border-top: 1px solid var(--line); font-size: 12px; color: var(--ink-soft); }
+      footer.foot a { color: var(--steel); }
+
+      @media (max-width: 900px) {
+        .shell { grid-template-columns: 1fr; }
+        aside.toc { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--line); }
+        main { padding: 32px 24px 64px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="toc">
+        <div class="toc-brand">
+          <span class="toc-brand-dot"></span>
+          <span class="toc-brand-name">DRMed</span>
+        </div>
+        <div class="toc-eyebrow">12.A · Design Deliverable</div>
+
+        <h3>On this page</h3>
+        <ul>
+          <li><a href="#summary">Executive summary</a></li>
+          <li><a href="#decisions">Decisions locked in</a></li>
+          <li><a href="#workbook">Workbook reconnaissance</a></li>
+          <li><a href="#architecture">Architecture</a></li>
+          <li><a href="#schema">Schema deltas</a></li>
+          <li><a href="#flow">Import flow</a></li>
+          <li><a href="#validation">Validation rules</a></li>
+          <li><a href="#reconciliation">Reconciliation gate</a></li>
+          <li><a href="#timeline">Phase timeline</a></li>
+          <li><a href="#risks">Risks &amp; dependencies</a></li>
+          <li><a href="#deferred">Deferred decisions</a></li>
+        </ul>
+
+        <div class="toc-meta">
+          <strong>Status</strong>Draft · pending user review
+          <br /><br />
+          <strong>Source spec</strong><code style="font-size:11px;">docs/superpowers/specs/2026-05-14-12.A-hmo-history-import-design.md</code>
+          <br /><br />
+          <strong>Prerequisites</strong>12.1 · v1.2.0<br />12.2 · v1.3.0<br />12.3 · v1.4.0
+          <br /><br />
+          <strong>Target tag</strong>v1.5.0
+        </div>
+      </aside>
+
+      <main>
+        <div class="hero">
+          <div class="hero-eyebrow">Phase 12 · Sub-project 12.A</div>
+          <h1>HMO History Import</h1>
+          <p class="hero-lead">
+            Backfill three years of HMO claims captured manually in the DR MED MASTERSHEET workbook
+            (Dec 2023 → 2025-12-31) into the 12.3 subledger so per-provider AR is correct in the GL,
+            every claim is queryable in the aging views, and the &ldquo;claims we forgot to bill&rdquo; audit answer
+            finally lands.
+          </p>
+          <div class="hero-meta">
+            <span class="pill status-draft"><span class="pill-dot"></span> Draft · pending review</span>
+            <span class="pill">2026-05-14</span>
+            <span class="pill">5 dispatches</span>
+            <span class="pill">migration 0035</span>
+            <span class="pill">~27K source rows</span>
+          </div>
+        </div>
+
+        <section class="section" id="summary">
+          <div class="section-eyebrow">01 · Executive summary</div>
+          <h2 class="section-title">Three concrete deliverables</h2>
+          <p class="section-lead">
+            12.3 shipped the subledger schema and the operational UI. 12.A loads the three-year backlog
+            of claims into that schema, posts one opening-balance JE per provider at 2025-12-31, and
+            surfaces the historical stuck-claim backlog through the existing 12.3 detection views.
+          </p>
+
+          <div class="metrics">
+            <div class="metric info">
+              <div class="metric-label">Source rows</div>
+              <div class="metric-value">~27K<span class="metric-unit">across 2 tabs</span></div>
+              <div class="metric-foot">LAB SERVICE 18.9K · DOCTOR CONSULTATION 8.2K</div>
+            </div>
+            <div class="metric info">
+              <div class="metric-label">HMO providers</div>
+              <div class="metric-value">10<span class="metric-unit">/ 6 seeded</span></div>
+              <div class="metric-foot">4 new: Cocolife, Med Asia, Generali, Amaphil</div>
+            </div>
+            <div class="metric ok">
+              <div class="metric-label">Opening JEs</div>
+              <div class="metric-value">≤ 10<span class="metric-unit">@ 2025-12-31</span></div>
+              <div class="metric-foot">DR 1110 / CR 3200 per non-zero provider</div>
+            </div>
+            <div class="metric warn">
+              <div class="metric-label">Reconciliation gate</div>
+              <div class="metric-value">5%<span class="metric-unit">variance cap</span></div>
+              <div class="metric-foot">Blocks commit; override requires written reason</div>
+            </div>
+          </div>
+
+          <div class="callout ok">
+            <span class="callout-label">In scope</span>
+            <p>
+              <strong>Per-claim subledger backfill</strong> · synthetic op-rows (patients, visits, test_requests,
+              payments) gated by <code>is_historical</code> flags · one balanced opening JE per provider at
+              cutover · preview + commit UI at <code>/staff/admin/accounting/hmo-history</code> with
+              header-asserting XLSX parser, alias-mapping flow, and HMO REFERENCE variance gate.
+            </p>
+          </div>
+          <div class="callout warn">
+            <span class="callout-label">Out of scope · deferred</span>
+            <p>
+              Historical P&amp;L data &amp; cash receipts (12.B) · VAT / withholding tax (Future Phase 1) ·
+              patient-bill / write-off resolution of historical stuck claims (admin uses existing 12.3 UI
+              after import) · physician table linkage for historical consults (future phase).
+            </p>
+          </div>
+        </section>
+
+        <section class="section" id="decisions">
+          <div class="section-eyebrow">02 · Decisions</div>
+          <h2 class="section-title">Locked in from the brainstorm</h2>
+          <p class="section-lead">
+            Each major architectural choice came from a numbered question in the brainstorm. The "why"
+            column is the load-bearing rationale captured against the day's reasoning.
+          </p>
+
+          <table class="basic">
+            <thead><tr><th style="width:24%">Decision</th><th style="width:38%">Choice</th><th>Why</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Detail level</strong></td><td>Per-claim detail — every HMO row becomes one <code>hmo_claim_item</code></td><td>Aggregate-only loses the audit answer for stuck and unbilled claims.</td></tr>
+              <tr><td><strong>FK strategy</strong></td><td>Full synthetic op-rows with <code>is_historical</code> flags</td><td>Subledger consistency; per-patient drill-down works; reception UI filters them out.</td></tr>
+              <tr><td><strong>JE strategy</strong></td><td>Bypass bridge · one opening-balance JE per provider at cutover</td><td>Avoids reopening 12 closed quarters; P&amp;L 2023–2025 already in the Income Statement tabs.</td></tr>
+              <tr><td><strong>Cutover date</strong></td><td>2025-12-31</td><td>Clean year boundary; aligns with the CoA-populating Income Statement tabs.</td></tr>
+              <tr><td><strong>Cutover semantics</strong></td><td>Net unpaid AR only in the opening JE</td><td>Balance Sheet at cutover is correct; cash history stays out of 12.A.</td></tr>
+              <tr><td><strong>Opening JE granularity</strong></td><td>One JE per provider with non-zero opening AR</td><td>Easy to void or correct a single provider's balance surgically.</td></tr>
+              <tr><td><strong>Import UX</strong></td><td>Upload XLSX or CSV → preview → commit</td><td>Single admin page, dry-run friendly, supports re-runs.</td></tr>
+              <tr><td><strong>Unknown providers</strong></td><td>Block commit; persist mappings in <code>hmo_provider_aliases</code></td><td>Prevents accidental duplicate provider rows from typos.</td></tr>
+              <tr><td><strong>Unknown services</strong></td><td>Block commit; persist in <code>hmo_service_aliases</code></td><td>LAB SERVICE is free text; DOCTOR CONSULTATION SERVICE is doctor last names.</td></tr>
+              <tr><td><strong>Patient dedup</strong></td><td>Normalized name (case-insensitive, trimmed)</td><td>False merges affect drill-down only; workbook has no DOB / PHIC IDs.</td></tr>
+              <tr><td><strong>Unbilled rows</strong></td><td>Synthetic <code>draft</code> batch per (provider, year-month)</td><td>Surface them in <code>v_hmo_stuck</code> immediately so admin can resolve via 12.3 UI.</td></tr>
+              <tr><td><strong>Payment rollup</strong></td><td>One synthetic <code>payments</code> row per unique (provider, OR#)</td><td>Mirrors reality: one HMO check covers multiple claims.</td></tr>
+              <tr><td><strong>Visit grouping</strong></td><td>Group rows by (date, normalized patient, provider)</td><td>Realistic drill-down; smaller op-row count.</td></tr>
+              <tr><td><strong>Doctor consultation services</strong></td><td>Treat each doctor name as a separate <code>services</code> row of <code>kind='doctor_consultation'</code></td><td>Per-doctor reporting works out of the box.</td></tr>
+              <tr><td><strong>Reconciliation gate</strong></td><td>Compare to HMO REFERENCE; block commit on variance &gt; 5%</td><td>Single biggest quality control before the GL hit.</td></tr>
+              <tr><td><strong>Hidden tabs</strong></td><td>Skip HMO AUDIT, LAB HMO (DEC 1-19), CONSULT HMO (DEC 1-19)</td><td>Stale working artifacts (HMO AUDIT formulas evaluate to #REF!).</td></tr>
+              <tr><td><strong>Idempotency</strong></td><td>Content-hash natural key</td><td>Re-uploading the same workbook is a no-op; small edits get picked up.</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section class="section" id="workbook">
+          <div class="section-eyebrow">03 · Source</div>
+          <h2 class="section-title">DR MED MASTERSHEET reconnaissance</h2>
+          <p class="section-lead">
+            28 tabs, 7.6&nbsp;MB XLSX, owned by <code>jamilaian21@gmail.com</code>. Last modified 2026-05-12.
+            12.A pulls from three of them.
+          </p>
+
+          <table class="basic">
+            <thead><tr><th>Tab</th><th>Visibility</th><th>Rows</th><th>Role in 12.A</th></tr></thead>
+            <tbody>
+              <tr><td><strong>LAB SERVICE</strong></td><td>visible</td><td>18,902</td><td>Primary — per-test transactions Dec 2023 → present</td></tr>
+              <tr><td><strong>DOCTOR CONSULTATION</strong></td><td>visible</td><td>8,202</td><td>Primary — per-consult transactions, same date range</td></tr>
+              <tr><td><strong>HMO REFERENCE</strong></td><td>visible</td><td>10 providers + aging block</td><td>Provider master + monthly ending-balance reconciliation source</td></tr>
+              <tr><td>HMO AUDIT</td><td>hidden</td><td>~1,000</td><td>Skipped — admin doesn't recognize; formula columns broken (#REF!)</td></tr>
+              <tr><td>LAB HMO (DEC 1-19)</td><td>hidden</td><td>~1,000</td><td>Skipped — partial-month export</td></tr>
+              <tr><td>CONSULT HMO (DEC 1-19)</td><td>hidden</td><td>~1,500</td><td>Skipped — partial-month export</td></tr>
+            </tbody>
+          </table>
+
+          <h3 class="sub">LAB SERVICE column map</h3>
+          <p>Decoded from <code>sharedStrings.xml</code> via XLSX archive inspection — header text drives the canonical field map at parse time, not column position.</p>
+          <pre><span class="com">-- 31 columns. 12.A reads:</span>
+A  DATE              <span class="com">→ source_date (Excel serial)</span>
+D  PATIENT NAME      <span class="com">→ split "Last, First" into last_name_raw / first_name_raw</span>
+E  HMO (YES/NO)      <span class="com">→ filter (only YES imports)</span>
+F  PROVIDER          <span class="com">→ resolve via hmo_provider_aliases / exact match</span>
+G  APPROVAL DATE     <span class="com">→ hmo_approval_date (unbilled-but-approved signal)</span>
+H  SERVICE           <span class="com">→ resolve via hmo_service_aliases / exact match</span>
+N  FINAL PRICE       <span class="com">→ billed_amount (post-discount)</span>
+V  REFERENCE/TRACKING <span class="com">→ reference_no (batches by this + W)</span>
+W  DATE SENT         <span class="com">→ submission_date</span>
+Y  OR #              <span class="com">→ or_number (groups rows into synthetic payments)</span>
+Z  DATE PAID         <span class="com">→ payment_received_date</span></pre>
+
+          <p>DOCTOR CONSULTATION is a 25-column subset; <code>SERVICE</code> contains the consulting doctor's last name. Header detection at row 1 drives the mapping for both tabs.</p>
+        </section>
+
+        <section class="section" id="architecture">
+          <div class="section-eyebrow">04 · Architecture</div>
+          <h2 class="section-title">End-to-end flow</h2>
+          <p class="section-lead">
+            One admin page, four Server Actions, one SQL function that does the heavy lifting in a single
+            transaction with an advisory lock and a session-scoped bridge bypass.
+          </p>
+
+          <div class="arch-diagram">
+            <div class="arch-row">
+              <div class="arch-box input">
+                <strong>1 · Upload</strong>
+                <div class="arch-detail">Admin drops the workbook at <code>/staff/admin/accounting/hmo-history</code>. SHA-256 of bytes → <code>file_hash</code> on the run.</div>
+              </div>
+            </div>
+            <div class="arch-arrow">↓</div>
+            <div class="arch-row">
+              <div class="arch-box action">
+                <strong>2 · parseWorkbookAction</strong>
+                <div class="arch-detail">Read row 1; assert canonical headers per tab. Stream rows; filter <code>E='YES'</code> and <code>DATE&nbsp;≤&nbsp;cutover</code>. Insert into <code>hmo_history_staging</code>.</div>
+              </div>
+              <div class="arch-box action">
+                <strong>3 · validateRunAction</strong>
+                <div class="arch-detail">Normalize names / dates / amounts. Resolve provider + service via aliases. Compute <code>visit_group_key</code> + <code>content_hash</code>. Cross-row scans. Parse HMO REFERENCE aging.</div>
+              </div>
+            </div>
+            <div class="arch-arrow">↓</div>
+            <div class="arch-row">
+              <div class="arch-box gate">
+                <strong>4 · Preview &amp; gates</strong>
+                <div class="arch-detail">7 sections: counts · unmapped providers · unmapped services · reconciliation · errors · warnings · commit footer. Commit disabled while any blocker exists.</div>
+              </div>
+            </div>
+            <div class="arch-arrow">↓</div>
+            <div class="arch-row">
+              <div class="arch-box action">
+                <strong>5 · commit_hmo_history_run</strong>
+                <div class="arch-detail">Single SQL function · single transaction · <code>pg_advisory_xact_lock</code> · <code>SET LOCAL app.skip_bridge_historical = 'true'</code> · upsert patients/visits/test_requests/batches/items/payments/allocations · unset bypass · post per-provider opening JEs · stamp summary + audit.</div>
+              </div>
+            </div>
+            <div class="arch-arrow">↓</div>
+            <div class="arch-row">
+              <div class="arch-box output">
+                <strong>6 · 12.3 surfaces light up</strong>
+                <div class="arch-detail"><code>/staff/admin/accounting/hmo-claims</code>, <code>v_hmo_ar_aging</code>, <code>v_hmo_stuck</code> now answer the full historical question. Stuck claims surface as synthetic <code>draft</code> batches.</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="schema">
+          <div class="section-eyebrow">05 · Schema</div>
+          <h2 class="section-title">Migration 0035 deltas</h2>
+          <p class="section-lead">
+            Three op-tables get an <code>is_historical</code> flag with partial indexes for fast operational
+            queries. Four new tables hold the staging and alias state. Two bridge functions get a
+            skip-flag check. No new payment method, no new <code>services.kind</code>, no new CoA codes.
+          </p>
+
+          <h3 class="sub">Op-table flags &amp; CHECK relaxation</h3>
+          <pre><span class="kw">ALTER TABLE</span> public.patients
+  <span class="kw">ADD COLUMN</span> is_historical boolean <span class="kw">NOT NULL DEFAULT</span> false;
+<span class="kw">ALTER TABLE</span> public.visits         <span class="kw">ADD COLUMN</span> is_historical boolean <span class="kw">NOT NULL DEFAULT</span> false;
+<span class="kw">ALTER TABLE</span> public.test_requests  <span class="kw">ADD COLUMN</span> is_historical boolean <span class="kw">NOT NULL DEFAULT</span> false;
+
+<span class="com">-- Birthdate is required for operational patients; allowed NULL for historical
+-- (the workbook has no DOB). Existing rows are unaffected.</span>
+<span class="kw">ALTER TABLE</span> public.patients <span class="kw">ALTER COLUMN</span> birthdate <span class="kw">DROP NOT NULL</span>;
+<span class="kw">ALTER TABLE</span> public.patients
+  <span class="kw">ADD CONSTRAINT</span> patients_birthdate_required_when_not_historical
+  <span class="kw">CHECK</span> (is_historical = true <span class="kw">OR</span> birthdate <span class="kw">IS NOT NULL</span>);
+
+<span class="kw">CREATE UNIQUE INDEX</span> idx_patients_historical_one_per_name
+  <span class="kw">ON</span> public.patients (last_name, first_name) <span class="kw">WHERE</span> is_historical = true;</pre>
+
+          <h3 class="sub">New tables</h3>
+          <table class="basic">
+            <thead><tr><th>Table</th><th>Purpose</th><th>Lifetime</th></tr></thead>
+            <tbody>
+              <tr><td><code>hmo_import_runs</code></td><td>One row per dry-run or commit. Carries <code>file_hash</code>, <code>summary</code> jsonb, <code>committed_at</code>, override reason.</td><td>Append-only · audit-grade</td></tr>
+              <tr><td><code>hmo_history_staging</code></td><td>One row per parsed workbook row. Holds raw + normalized + resolved + validation_errors jsonb. Status flips parsed → validated → committed.</td><td>Permanent (no auto-cleanup)</td></tr>
+              <tr><td><code>hmo_provider_aliases</code></td><td>Persistent string → provider_id mapping. Survives across runs so re-imports skip the alias dance.</td><td>Permanent</td></tr>
+              <tr><td><code>hmo_service_aliases</code></td><td>Persistent string → service_id mapping. Covers both lab service strings and doctor last names.</td><td>Permanent</td></tr>
+            </tbody>
+          </table>
+
+          <h3 class="sub">Subledger extension</h3>
+          <pre><span class="kw">ALTER TABLE</span> public.hmo_claim_items
+  <span class="kw">ADD COLUMN</span> hmo_approval_date date;  <span class="com">-- workbook col G; "approved but unbilled" signal</span>
+
+<span class="kw">ALTER TABLE</span> public.hmo_claim_batches
+  <span class="kw">ADD COLUMN</span> import_run_id     uuid <span class="kw">REFERENCES</span> public.hmo_import_runs(id),
+  <span class="kw">ADD COLUMN</span> historical_source text;  <span class="com">-- 'mastersheet:LAB SERVICE' etc.</span>
+
+<span class="kw">ALTER TYPE</span> public.je_source_kind <span class="kw">ADD VALUE IF NOT EXISTS</span> 'hmo_history_opening';</pre>
+
+          <h3 class="sub">Bridge bypass</h3>
+          <p>Both INSERT-fired JE bridge functions get a session-flag guard at the top. The UPDATE-fired test-request release bridge doesn't need a bypass — historical test_requests are INSERTed directly with <code>status='released'</code>, so the UPDATE path never fires.</p>
+
+          <div class="callout neutral">
+            <span class="callout-label">Bypass targets</span>
+            <p><code>bridge_payment_insert()</code> — AFTER INSERT on <code>payments</code><br />
+            <code>bridge_hmo_claim_resolution_insert()</code> — AFTER INSERT on <code>hmo_claim_resolutions</code> (defensive; no resolutions inserted by 12.A)</p>
+          </div>
+          <div class="callout ok">
+            <span class="callout-label">No bypass needed</span>
+            <p><code>trg_bridge_test_request_released</code> — AFTER UPDATE only<br />
+            <code>trg_bridge_test_request_cancelled</code> — AFTER UPDATE only<br />
+            <code>trg_test_requests_payment_gate</code> — BEFORE UPDATE only</p>
+          </div>
+        </section>
+
+        <section class="section" id="flow">
+          <div class="section-eyebrow">06 · Preview UX</div>
+          <h2 class="section-title">Seven preview sections</h2>
+          <p class="section-lead">
+            The preview page is the heart of the import — it's where the admin sees what's about to
+            change and where every blocker is exposed before the GL is touched.
+          </p>
+
+          <table class="basic">
+            <thead><tr><th>#</th><th>Section</th><th>Blocks commit when…</th></tr></thead>
+            <tbody>
+              <tr><td>1</td><td>Header bar</td><td>(informational)</td></tr>
+              <tr><td>2</td><td>Counts panel</td><td>(informational; pills link to relevant sections)</td></tr>
+              <tr><td>3</td><td>Unmapped providers</td><td>any row remains unmapped</td></tr>
+              <tr><td>4</td><td>Unmapped services / doctors</td><td>any row remains unmapped</td></tr>
+              <tr><td>5</td><td>Reconciliation panel</td><td>any provider has variance &gt; 5% without override reason</td></tr>
+              <tr><td>6</td><td>Errors &amp; warnings table</td><td>any error-severity row remains</td></tr>
+              <tr><td>7</td><td>Commit / Discard footer</td><td>+ PII acknowledgment checkbox required</td></tr>
+            </tbody>
+          </table>
+
+          <div class="callout">
+            <span class="callout-label">Mobile (390 × 844)</span>
+            <p>Per project memory (<code>feedback_mobile_first_for_new_pages</code>): sections collapse to accordions; counts pills wrap 3×2; tables get <code>overflow-x-auto</code> with minimum widths; tap targets ≥&nbsp;44×44.</p>
+          </div>
+        </section>
+
+        <section class="section" id="validation">
+          <div class="section-eyebrow">07 · Validation</div>
+          <h2 class="section-title">Per-row rules &amp; severities</h2>
+          <p class="section-lead">
+            Validation runs entirely in <code>validateRunAction</code>. Severities accumulate in
+            <code>staging.validation_errors</code> jsonb. Commit refuses while any <code>error</code>
+            severity remains.
+          </p>
+
+          <table class="basic">
+            <thead><tr><th>#</th><th>Rule</th><th>Severity</th></tr></thead>
+            <tbody>
+              <tr><td>1</td><td><code>source_date</code> parses as a valid date</td><td><strong style="color:var(--crit)">error</strong></td></tr>
+              <tr><td>2</td><td><code>source_date</code> &gt; cutover</td><td>special — row marked <code>skipped_post_cutover</code></td></tr>
+              <tr><td>3</td><td>Provider resolves via alias or exact match</td><td><strong style="color:var(--crit)">error</strong></td></tr>
+              <tr><td>4</td><td>Service resolves via alias or exact match</td><td><strong style="color:var(--crit)">error</strong></td></tr>
+              <tr><td>5</td><td><code>billed_amount</code> &gt; 0</td><td><strong style="color:var(--crit)">error</strong> (CHECK constraint would reject)</td></tr>
+              <tr><td>6</td><td><code>paid_amount</code> ≤ <code>billed_amount</code> if paid</td><td><strong style="color:var(--crit)">error</strong> (amounts_within_billed CHECK)</td></tr>
+              <tr><td>7</td><td>Cash payment on an HMO=YES row</td><td><strong style="color:var(--warn)">warning</strong></td></tr>
+              <tr><td>8</td><td><code>reference_no</code> &amp; <code>submission_date</code> both null</td><td><em>info</em> — becomes a synthetic <code>draft</code> batch</td></tr>
+              <tr><td>9</td><td>Patient name contains a comma (Last, First format)</td><td><strong style="color:var(--crit)">error</strong></td></tr>
+              <tr><td>A</td><td>Cross-provider duplicate OR#</td><td><strong style="color:var(--warn)">warning</strong></td></tr>
+              <tr><td>C</td><td>Identical <code>content_hash</code> within a run</td><td><strong style="color:var(--crit)">error</strong></td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section class="section" id="reconciliation">
+          <div class="section-eyebrow">08 · Reconciliation</div>
+          <h2 class="section-title">The 5% variance gate</h2>
+          <p class="section-lead">
+            The single biggest quality control. Before any GL change, the importer reads the HMO REFERENCE
+            tab's per-month aging block, computes ending balance per provider at cutover, and compares
+            it to the per-row staging total. A divergent provider blocks commit.
+          </p>
+
+          <pre><span class="com">-- per provider</span>
+wb_ending     = HMO REFERENCE 'ENDING BALANCE' @ cutover month
+staged_ar     = SUM(billed - paid - patient_billed - written_off)
+                  WHERE provider_id_resolved = p
+variance_pct  = (staged_ar - wb_ending) / NULLIF(wb_ending, 0)</pre>
+
+          <div class="metrics">
+            <div class="metric ok">
+              <div class="metric-label">Green band</div>
+              <div class="metric-value">≤ 1%<span class="metric-unit">variance</span></div>
+              <div class="metric-foot">No action needed</div>
+            </div>
+            <div class="metric warn">
+              <div class="metric-label">Yellow band</div>
+              <div class="metric-value">1–5%<span class="metric-unit">variance</span></div>
+              <div class="metric-foot">Investigate but commit allowed</div>
+            </div>
+            <div class="metric crit">
+              <div class="metric-label">Red band</div>
+              <div class="metric-value">&gt; 5%<span class="metric-unit">variance</span></div>
+              <div class="metric-foot">Blocks commit · override reason required</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="timeline">
+          <div class="section-eyebrow">09 · Plan</div>
+          <h2 class="section-title">Phase timeline · 5 dispatches</h2>
+          <p class="section-lead">
+            Implementation plan will expand each dispatch into discrete commit checkpoints with
+            verification steps. Deliverables checklist shown per phase.
+          </p>
+
+          <div class="phase planned">
+            <div class="phase-head">
+              <span class="phase-id">D1</span>
+              <span class="phase-title">Schema + bridge bypass</span>
+              <span class="phase-est">migration 0035 only · no UI</span>
+            </div>
+            <div class="phase-body">
+              <p>Lay all the schema in place: <code>is_historical</code> flags, birthdate CHECK, four new tables, subledger extension, bridge function bypass, RLS policies. Smoke the bypass mechanism in isolation.</p>
+              <div class="phase-deliverables">
+                <strong>Deliverables</strong>
+                <ul>
+                  <li>0035_hmo_history_import.sql migration</li>
+                  <li>scripts/smoke-12.A-d1.sql — bypass mechanism test</li>
+                  <li>db:types regenerated</li>
+                  <li>typecheck + lint clean</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <div class="phase planned">
+            <div class="phase-head">
+              <span class="phase-id">D2</span>
+              <span class="phase-title">Server Actions + parser</span>
+              <span class="phase-est">no UI yet</span>
+            </div>
+            <div class="phase-body">
+              <p>XLSX/CSV streaming parser with header-asserting tab map, decimal/date helpers, four Server Actions (parseWorkbookAction, validateRunAction, mapProviderAliasAction, mapServiceAliasAction), Zod schemas, pg-error translation table.</p>
+              <div class="phase-deliverables">
+                <strong>Deliverables</strong>
+                <ul>
+                  <li><code>src/lib/import/parse-mastersheet.ts</code> + <code>excelSerialToISODate</code></li>
+                  <li>4 Server Actions with <code>{ ok, data | error }</code> shape</li>
+                  <li>Zod schemas mirroring the staging row</li>
+                  <li>P0013 / P0014 error code wiring</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <div class="phase planned">
+            <div class="phase-head">
+              <span class="phase-id">D3</span>
+              <span class="phase-title">Preview UI</span>
+              <span class="phase-est">7 sections + alias flow</span>
+            </div>
+            <div class="phase-body">
+              <p>Empty state with runs table + drop-zone upload. Preview page with 6 content sections + sticky commit footer. Alias-mapping inline forms wired to D2 Server Actions. Reconciliation panel comparing to HMO REFERENCE.</p>
+              <div class="phase-deliverables">
+                <strong>Deliverables</strong>
+                <ul>
+                  <li><code>/staff/admin/accounting/hmo-history/page.tsx</code></li>
+                  <li><code>/staff/admin/accounting/hmo-history/[runId]/page.tsx</code></li>
+                  <li>Provider + service alias dialogs (shared ActionModal pattern)</li>
+                  <li>Reconciliation panel with color bands</li>
+                  <li>Mobile-first verified at 390×844</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <div class="phase planned">
+            <div class="phase-head">
+              <span class="phase-id">D4</span>
+              <span class="phase-title">Commit function + post-commit UI</span>
+              <span class="phase-est">the GL hit</span>
+            </div>
+            <div class="phase-body">
+              <p>The <code>commit_hmo_history_run</code> SQL function with advisory lock, single-transaction inserts, per-provider opening JE construction, audit-log emission. Commit Server Action, PII acknowledgment, override-reason capture. Post-commit summary page with JE drill-down links.</p>
+              <div class="phase-deliverables">
+                <strong>Deliverables</strong>
+                <ul>
+                  <li>SQL function commit_hmo_history_run (single tx)</li>
+                  <li>commitRunAction + discardRunAction</li>
+                  <li>Post-commit summary card + JE links</li>
+                  <li>Nav entry under "Accounting"</li>
+                  <li>Audit log events wired (7 actions per §11)</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <div class="phase planned">
+            <div class="phase-head">
+              <span class="phase-id">D5</span>
+              <span class="phase-title">Smoke + tag</span>
+              <span class="phase-est">v1.5.0</span>
+            </div>
+            <div class="phase-body">
+              <p>Ship the 50-row fixture XLSX with all edge cases. SQL smoke verifying counts, JE balances, idempotency, audit completeness. Playwright smoke at 390×844 and 1280×800 walking the full happy path. Tag <code>v1.5.0</code>.</p>
+              <div class="phase-deliverables">
+                <strong>Deliverables</strong>
+                <ul>
+                  <li><code>tests/fixtures/hmo-history-mini.xlsx</code> with 12 edge cases</li>
+                  <li><code>scripts/smoke-12.A.sql</code> with idempotency re-run</li>
+                  <li>Playwright happy path + alias resolution + reconciliation</li>
+                  <li>Smoke teardown cleans up by content_hash</li>
+                  <li><code>v1.5.0</code> tag placed on the smoke commit</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="risks">
+          <div class="section-eyebrow">10 · Risks &amp; dependencies</div>
+          <h2 class="section-title">What could go wrong</h2>
+          <p class="section-lead">
+            Each risk is mitigated by a specific design choice in the spec. Severity reflects "what
+            happens if this fails" — critical means the GL or reception experience is harmed.
+          </p>
+
+          <div class="risks">
+            <div class="risk crit">
+              <div class="risk-head"><span class="risk-title">Reconciliation variance &gt; 5% with no obvious cause</span><span class="risk-tag">critical</span></div>
+              <div class="risk-body"><strong>Mitigation:</strong> Block commit; require override reason stored on the run for audit. The single hardest-to-detect failure mode if absent.</div>
+            </div>
+            <div class="risk crit">
+              <div class="risk-head"><span class="risk-title">Bridge bypass leaks past the commit transaction</span><span class="risk-tag">critical</span></div>
+              <div class="risk-body"><strong>Mitigation:</strong> <code>SET LOCAL</code> is transaction-scoped; the commit function explicitly unsets the flag before posting opening JEs as belt-and-braces; operational requests in other connections never see the flag.</div>
+            </div>
+            <div class="risk crit">
+              <div class="risk-head"><span class="risk-title">Service-role client used from a place that ships to the browser</span><span class="risk-tag">critical</span></div>
+              <div class="risk-body"><strong>Mitigation:</strong> All six Server Actions are <code>'use server'</code>; the admin client is imported only from server modules. CLAUDE.md hard rule enforced.</div>
+            </div>
+            <div class="risk">
+              <div class="risk-head"><span class="risk-title">Workbook header drift breaks parsing silently</span><span class="risk-tag">warn</span></div>
+              <div class="risk-body"><strong>Mitigation:</strong> Parser asserts the canonical header set at row 1; fails fast with a precise message ("Expected 'PATIENT NAME' at column D, found 'PATIENT NAMEE'").</div>
+            </div>
+            <div class="risk">
+              <div class="risk-head"><span class="risk-title">Patient false-merge (two real people sharing a name)</span><span class="risk-tag">warn</span></div>
+              <div class="risk-body"><strong>Mitigation:</strong> Affects per-patient drill-down only; AR balance is unaffected. Documented in the preview's PII acknowledgment.</div>
+            </div>
+            <div class="risk">
+              <div class="risk-head"><span class="risk-title">Concurrent imports collide</span><span class="risk-tag">warn</span></div>
+              <div class="risk-body"><strong>Mitigation:</strong> <code>pg_advisory_xact_lock(hashtext('hmo_history_import'))</code> at the start of <code>commit_hmo_history_run</code>. Second concurrent commit waits or aborts cleanly.</div>
+            </div>
+            <div class="risk info">
+              <div class="risk-head"><span class="risk-title">Reception sees thousands of historical patients</span><span class="risk-tag">manageable</span></div>
+              <div class="risk-body"><strong>Mitigation:</strong> <code>is_historical=false</code> filter on the four list pages enumerated in §5A; partial indexes back the filter. Admin pages intentionally show both.</div>
+            </div>
+            <div class="risk info">
+              <div class="risk-head"><span class="risk-title">Workbook keeps changing under us</span><span class="risk-tag">manageable</span></div>
+              <div class="risk-body"><strong>Mitigation:</strong> Admin uploads a frozen snapshot; <code>file_hash</code> records which version was imported. Content-hash idempotency makes re-uploads safe.</div>
+            </div>
+            <div class="risk info">
+              <div class="risk-head"><span class="risk-title">Re-running the importer changes existing patients</span><span class="risk-tag">manageable</span></div>
+              <div class="risk-body"><strong>Mitigation:</strong> Patient upsert uses <code>ON CONFLICT (last_name, first_name) WHERE is_historical = true DO NOTHING</code> — never touches operational patients.</div>
+            </div>
+          </div>
+
+          <h3 class="sub">Dependencies</h3>
+          <ul style="margin:0 0 0 18px;font-size:14px;color:var(--ink-mid);">
+            <li>12.1 GL foundation (v1.2.0) — CoA + period model</li>
+            <li>12.2 Op→GL bridge (v1.3.0) — payment_method_account_map, AR account resolver, bridge functions to modify</li>
+            <li>12.3 HMO AR subledger (v1.4.0) — schema target (batches / items / allocations / resolutions), aging views</li>
+            <li>Manila timezone helpers in <code>src/lib/dates/manila.ts</code> — extended with <code>excelSerialToISODate</code></li>
+            <li>Admin MFA already required for <code>/staff/admin/*</code> (from <code>project_admin_mfa.md</code>)</li>
+          </ul>
+        </section>
+
+        <section class="section" id="deferred">
+          <div class="section-eyebrow">11 · Future</div>
+          <h2 class="section-title">Deferred decisions</h2>
+          <p class="section-lead">
+            Things consciously left out of 12.A. Each has a "revisit when…" trigger so they don't get lost.
+          </p>
+
+          <div class="callout neutral">
+            <span class="callout-label">services.is_historical</span>
+            <p>Not added in 12.A. <strong>Revisit if</strong> reception accidentally picks "Doctor Consultation — Dr. Gayo" as a service for a fresh visit. Adding the column then is a small migration plus a service-picker filter.</p>
+          </div>
+          <div class="callout neutral">
+            <span class="callout-label">Voiding an entire import</span>
+            <p>Out of scope for the UI. Manual procedure documented at the post-commit page: (a) void each opening JE via the 12.1 JE UI, (b) set <code>committed_at = NULL</code> + <code>status='discarded'</code>, (c) DELETE synthetic op-rows by <code>is_historical = true</code> scoped to the run's content_hashes, (d) audit-log the rollback.</p>
+          </div>
+          <div class="callout neutral">
+            <span class="callout-label">HMO REFERENCE aging tab parsing</span>
+            <p>Exact row/column layout of the per-month aging block is finalized during D2 against a fresh read of the workbook. If layout drifts (header text changed), parser fails fast like the transaction tabs.</p>
+          </div>
+          <div class="callout neutral">
+            <span class="callout-label">Doctor consultation → physicians linkage</span>
+            <p>For 12.A doctors stay as service rows with <code>kind='doctor_consultation'</code>. A later phase can backfill <code>test_requests.physician_id</code> once a <code>physicians</code> table has a clean mapping.</p>
+          </div>
+        </section>
+
+        <footer class="foot">
+          <p>
+            <strong style="color:var(--navy);">Source spec:</strong>
+            <code>docs/superpowers/specs/2026-05-14-12.A-hmo-history-import-design.md</code>
+            ·
+            <strong style="color:var(--navy);">Repo:</strong> DRMed
+            ·
+            <strong style="color:var(--navy);">Author:</strong> ianjamila
+            ·
+            <strong style="color:var(--navy);">Date:</strong> 2026-05-14
+          </p>
+          <p>Next step on user approval: invoke <code>writing-plans</code> to expand each phase into a commit-by-commit implementation plan.</p>
+        </footer>
+      </main>
+    </div>
+  </body>
+</html>
