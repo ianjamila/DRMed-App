@@ -2773,6 +2773,7 @@ export type Database = {
         Returns: boolean
       }
       coa_uuid_for_code: { Args: { p_code: string }; Returns: string }
+      commit_hmo_history_run: { Args: { p_run_id: string }; Returns: Json }
       current_patient_id: { Args: never; Returns: string }
       generate_drm_id: { Args: never; Returns: string }
       generate_visit_number: { Args: never; Returns: string }

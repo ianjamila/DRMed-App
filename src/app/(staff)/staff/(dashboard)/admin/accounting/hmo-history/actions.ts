@@ -5,11 +5,13 @@ import { createHash } from "node:crypto";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
+import { translatePgError } from "@/lib/accounting/pg-errors";
 import {
   uploadRunInput,
   validateRunInput,
   mapProviderAliasInput,
   mapServiceAliasInput,
+  commitRunInput,
   discardRunInput,
 } from "@/lib/validations/accounting";
 import {
@@ -747,16 +749,71 @@ export async function discardRunAction(input: {
 }
 
 // =============================================================================
-// commitRunAction — TEMPORARY STUB (Dispatch 4 / Task 28 replaces this).
-// The real implementation calls the `commit_hmo_history_run` SQL function.
-// Kept here so the D3 commit-footer client component can import it cleanly.
+// commitRunAction — calls the commit_hmo_history_run SQL function (D4).
 // =============================================================================
 
 export async function commitRunAction(input: {
   run_id: string;
   variance_override_reason?: string;
   pii_ack: boolean;
-}): Promise<ActionResult<never>> {
-  void input;
-  return { ok: false, error: "commit not implemented yet (Dispatch 4)" };
+}): Promise<
+  ActionResult<{
+    run_id: string;
+    summary: Record<string, number>;
+  }>
+> {
+  const staff = await requireAdminStaff();
+
+  const parsed = commitRunInput.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.message };
+
+  const supabase = createAdminClient();
+
+  // Persist the variance override reason (if the admin filled one in) before
+  // we kick off the SQL function. Audit logging captures the override too.
+  if (parsed.data.variance_override_reason) {
+    const { error: ovrErr } = await supabase
+      .from("hmo_import_runs")
+      .update({ variance_override_reason: parsed.data.variance_override_reason })
+      .eq("id", parsed.data.run_id);
+    if (ovrErr) return { ok: false, error: ovrErr.message };
+  }
+
+  // Flip the run from 'dry_run' to 'commit' so the audit trail makes sense
+  // even if the SQL function later raises.
+  const { error: kindErr } = await supabase
+    .from("hmo_import_runs")
+    .update({ run_kind: "commit" })
+    .eq("id", parsed.data.run_id);
+  if (kindErr) return { ok: false, error: kindErr.message };
+
+  const { data, error } = await supabase.rpc("commit_hmo_history_run", {
+    p_run_id: parsed.data.run_id,
+  });
+  if (error) {
+    return { ok: false, error: translatePgError(error) };
+  }
+
+  // Best-effort audit at the Server Action level (the SQL function also writes
+  // one inside the same transaction; this one captures the override reason and
+  // the actor's session context that the function doesn't have access to).
+  await audit({
+    actor_id: staff.user_id,
+    actor_type: "staff",
+    action: "hmo_history_import.commit_requested",
+    resource_type: "hmo_import_runs",
+    resource_id: parsed.data.run_id,
+    metadata: {
+      variance_override_reason: parsed.data.variance_override_reason ?? null,
+      summary: data as Json,
+    } as Json,
+  });
+
+  return {
+    ok: true,
+    data: {
+      run_id: parsed.data.run_id,
+      summary: (data ?? {}) as Record<string, number>,
+    },
+  };
 }
