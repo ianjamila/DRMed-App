@@ -327,6 +327,7 @@
           <li><a href="#timeline">Phase timeline</a></li>
           <li><a href="#risks">Risks &amp; dependencies</a></li>
           <li><a href="#deferred">Deferred decisions</a></li>
+          <li><a href="#adjacent">Adjacent scope</a></li>
         </ul>
 
         <div class="toc-meta">
@@ -345,17 +346,19 @@
           <div class="hero-eyebrow">Phase 12 · Sub-project 12.A</div>
           <h1>HMO History Import</h1>
           <p class="hero-lead">
-            Backfill three years of HMO claims captured manually in the DR MED MASTERSHEET workbook
-            (Dec 2023 → 2025-12-31) into the 12.3 subledger so per-provider AR is correct in the GL,
-            every claim is queryable in the aging views, and the &ldquo;claims we forgot to bill&rdquo; audit answer
-            finally lands.
+            Backfill the DR MED MASTERSHEET workbook (Dec 2023 → admin-picked cutover, default today)
+            into the 12.3 subledger so per-provider AR is correct in the GL, every claim is queryable
+            in the aging views, and the &ldquo;claims we forgot to bill&rdquo; audit answer finally lands.
+            After commit, the workbook is retired and new claims flow exclusively through the
+            operational UI.
           </p>
           <div class="hero-meta">
             <span class="pill status-draft"><span class="pill-dot"></span> Draft · pending review</span>
             <span class="pill">2026-05-14</span>
             <span class="pill">5 dispatches</span>
             <span class="pill">migration 0035</span>
-            <span class="pill">~27K source rows</span>
+            <span class="pill">~27K+ source rows</span>
+            <span class="pill">cutover: admin-picked</span>
           </div>
         </div>
 
@@ -381,8 +384,8 @@
             </div>
             <div class="metric ok">
               <div class="metric-label">Opening JEs</div>
-              <div class="metric-value">≤ 10<span class="metric-unit">@ 2025-12-31</span></div>
-              <div class="metric-foot">DR 1110 / CR 3200 per non-zero provider</div>
+              <div class="metric-value">≤ 10<span class="metric-unit">@ cutover date</span></div>
+              <div class="metric-foot">DR 1110 / CR 3200 per non-zero provider · JE-YYYY-NNNN</div>
             </div>
             <div class="metric warn">
               <div class="metric-label">Reconciliation gate</div>
@@ -424,7 +427,7 @@
               <tr><td><strong>Detail level</strong></td><td>Per-claim detail — every HMO row becomes one <code>hmo_claim_item</code></td><td>Aggregate-only loses the audit answer for stuck and unbilled claims.</td></tr>
               <tr><td><strong>FK strategy</strong></td><td>Full synthetic op-rows with <code>is_historical</code> flags</td><td>Subledger consistency; per-patient drill-down works; reception UI filters them out.</td></tr>
               <tr><td><strong>JE strategy</strong></td><td>Bypass bridge · one opening-balance JE per provider at cutover</td><td>Avoids reopening 12 closed quarters; P&amp;L 2023–2025 already in the Income Statement tabs.</td></tr>
-              <tr><td><strong>Cutover date</strong></td><td>2025-12-31</td><td>Clean year boundary; aligns with the CoA-populating Income Statement tabs.</td></tr>
+              <tr><td><strong>Cutover date</strong></td><td>Admin-selectable at upload (default = today, Asia/Manila)</td><td>The workbook is the system-of-record until the admin says "from here on, operational." Today as default freezes the workbook on import day.</td></tr>
               <tr><td><strong>Cutover semantics</strong></td><td>Net unpaid AR only in the opening JE</td><td>Balance Sheet at cutover is correct; cash history stays out of 12.A.</td></tr>
               <tr><td><strong>Opening JE granularity</strong></td><td>One JE per provider with non-zero opening AR</td><td>Easy to void or correct a single provider's balance surgically.</td></tr>
               <tr><td><strong>Import UX</strong></td><td>Upload XLSX or CSV → preview → commit</td><td>Single admin page, dry-run friendly, supports re-runs.</td></tr>
@@ -655,10 +658,11 @@ Z  DATE PAID         <span class="com">→ payment_received_date</span></pre>
             it to the per-row staging total. A divergent provider blocks commit.
           </p>
 
-          <pre><span class="com">-- per provider</span>
-wb_ending     = HMO REFERENCE 'ENDING BALANCE' @ cutover month
+          <pre><span class="com">-- per provider, evaluated at run.cutover_date (admin-picked at upload)</span>
+wb_ending     = HMO REFERENCE 'ENDING BALANCE' @ month-of(run.cutover_date)
 staged_ar     = SUM(billed - paid - patient_billed - written_off)
                   WHERE provider_id_resolved = p
+                    AND source_date &lt;= run.cutover_date
 variance_pct  = (staged_ar - wb_ending) / NULLIF(wb_ending, 0)</pre>
 
           <div class="metrics">
@@ -837,6 +841,14 @@ variance_pct  = (staged_ar - wb_ending) / NULLIF(wb_ending, 0)</pre>
               <div class="risk-head"><span class="risk-title">Re-running the importer changes existing patients</span><span class="risk-tag">manageable</span></div>
               <div class="risk-body"><strong>Mitigation:</strong> Patient upsert uses <code>ON CONFLICT (last_name, first_name) WHERE is_historical = true DO NOTHING</code> — never touches operational patients.</div>
             </div>
+            <div class="risk">
+              <div class="risk-head"><span class="risk-title">Double-counting between workbook and operational system after 12.3 go-live</span><span class="risk-tag">warn</span></div>
+              <div class="risk-body"><strong>Mitigation:</strong> Cutover defaults to today; rows with <code>source_date &gt; cutover</code> are filtered out and counted as <em>skipped: post-cutover</em>. Admin verifies any pre-existing operational HMO claims via <code>/staff/admin/accounting/hmo-claims</code> before picking the cutover. Reconciliation panel surfaces variance vs the workbook's aging.</div>
+            </div>
+            <div class="risk">
+              <div class="risk-head"><span class="risk-title">Admin picks a cutover that lands in a closed period</span><span class="risk-tag">warn</span></div>
+              <div class="risk-body"><strong>Mitigation:</strong> DB period-guard trigger refuses the opening JE; the commit rolls back with a clear error. Admin reopens the period via <code>/staff/admin/accounting/periods</code> and re-commits.</div>
+            </div>
           </div>
 
           <h3 class="sub">Dependencies</h3>
@@ -871,6 +883,40 @@ variance_pct  = (staged_ar - wb_ending) / NULLIF(wb_ending, 0)</pre>
           <div class="callout neutral">
             <span class="callout-label">Doctor consultation → physicians linkage</span>
             <p>For 12.A doctors stay as service rows with <code>kind='doctor_consultation'</code>. A later phase can backfill <code>test_requests.physician_id</code> once a <code>physicians</code> table has a clean mapping.</p>
+          </div>
+        </section>
+
+        <section class="section" id="adjacent">
+          <div class="section-eyebrow">12 · Adjacent</div>
+          <h2 class="section-title">Other MASTERSHEET tabs · captured for later</h2>
+          <p class="section-lead">
+            Two visible tabs in the workbook are intentionally out of 12.A. Naming them explicitly so they don't get lost in the roadmap.
+          </p>
+
+          <div class="callout neutral">
+            <span class="callout-label">EXPENSES tab → sub-project 12.4</span>
+            <p>
+              ~2,087 rows of operational expenses (rent, FB Ads, supplies, etc.) with columns
+              <code>Date / Category / Cost / Description / MOP / Status / Payment Method / Receipt / Remarks</code>.
+              Becomes <strong>12.4 — Operating-expense / AP subledger</strong>: new <code>vendors</code> and
+              <code>bills</code>/<code>expenses</code> tables, an admin entry UI under
+              <code>/staff/admin/accounting/expenses</code>, and a bridge that posts each expense as
+              <code>DR &lt;expense&gt; · CR &lt;cash or AP&gt;</code>. Historical EXPENSES rows from this workbook
+              land later as <strong>12.B</strong>.
+            </p>
+          </div>
+
+          <div class="callout">
+            <span class="callout-label">DAILY MONITORING tab → new sub-project 12.C</span>
+            <p>
+              Daily-tally pivot the reception uses every day before closing the drawer to verify
+              physical cash matches the day's recorded transactions. Becomes
+              <strong>12.C — Daily cash reconciliation (end-of-day close)</strong>: reception-facing
+              page that for each business date shows totals broken down by payment method, expected
+              vs counted cash, the variance, and a "close day" action that locks the day's tally
+              (audited). Sequenced <strong>after 12.A and before 12.4</strong> because reception uses
+              this daily — high operational value.
+            </p>
           </div>
         </section>
 
