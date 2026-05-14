@@ -20,7 +20,7 @@ export interface PatientPreview {
   first_name: string;
   last_name: string;
   middle_name: string | null;
-  birthdate: string;
+  birthdate: string | null;
   sex: string | null;
   phone: string | null;
   email: string | null;

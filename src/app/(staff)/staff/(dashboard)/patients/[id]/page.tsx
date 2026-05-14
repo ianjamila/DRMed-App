@@ -100,7 +100,7 @@ export default async function PatientDetailPage({ params }: Props) {
       </header>
 
       <section className="mt-6 grid gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5 sm:grid-cols-3">
-        <Field label="Birthdate" value={patient.birthdate} />
+        <Field label="Birthdate" value={patient.birthdate ?? "—"} />
         <Field label="Sex" value={patient.sex ?? "—"} />
         <Field label="Phone" value={patient.phone ?? "—"} />
         <Field label="Email" value={patient.email ?? "—"} />

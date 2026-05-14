@@ -7,11 +7,6 @@ export type Json =
   | Json[]
 
 export type Database = {
-  // Allows to automatically instantiate createClient with right options
-  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
-  __InternalSupabase: {
-    PostgrestVersion: "14.5"
-  }
   graphql_public: {
     Tables: {
       [_ in never]: never
@@ -505,8 +500,10 @@ export type Database = {
       hmo_claim_batches: {
         Row: {
           created_at: string
+          historical_source: string | null
           hmo_ack_ref: string | null
           id: string
+          import_run_id: string | null
           medium: string | null
           notes: string | null
           provider_id: string
@@ -521,8 +518,10 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          historical_source?: string | null
           hmo_ack_ref?: string | null
           id?: string
+          import_run_id?: string | null
           medium?: string | null
           notes?: string | null
           provider_id: string
@@ -537,8 +536,10 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          historical_source?: string | null
           hmo_ack_ref?: string | null
           id?: string
+          import_run_id?: string | null
           medium?: string | null
           notes?: string | null
           provider_id?: string
@@ -552,6 +553,13 @@ export type Database = {
           voided_by?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "hmo_claim_batches_import_run_id_fkey"
+            columns: ["import_run_id"]
+            isOneToOne: false
+            referencedRelation: "hmo_import_runs"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "hmo_claim_batches_provider_id_fkey"
             columns: ["provider_id"]
@@ -588,6 +596,7 @@ export type Database = {
           batch_voided: boolean
           billed_amount_php: number
           created_at: string
+          hmo_approval_date: string | null
           hmo_response: string
           hmo_response_date: string | null
           hmo_response_notes: string | null
@@ -603,6 +612,7 @@ export type Database = {
           batch_voided?: boolean
           billed_amount_php: number
           created_at?: string
+          hmo_approval_date?: string | null
           hmo_response?: string
           hmo_response_date?: string | null
           hmo_response_notes?: string | null
@@ -618,6 +628,7 @@ export type Database = {
           batch_voided?: boolean
           billed_amount_php?: number
           created_at?: string
+          hmo_approval_date?: string | null
           hmo_response?: string
           hmo_response_date?: string | null
           hmo_response_notes?: string | null
@@ -720,6 +731,181 @@ export type Database = {
           },
         ]
       }
+      hmo_history_staging: {
+        Row: {
+          billed_amount: number
+          content_hash: string | null
+          created_at: string
+          first_name_raw: string
+          hmo_approval_date: string | null
+          id: string
+          last_name_raw: string
+          normalized_patient_name: string
+          or_number: string | null
+          paid_amount: number
+          patient_name_raw: string
+          payment_received_date: string | null
+          provider_id_resolved: string | null
+          provider_name_raw: string
+          reference_no: string | null
+          run_id: string
+          senior_pwd_flag: boolean
+          service_id_resolved: string | null
+          service_name_raw: string
+          source_date: string
+          source_row_no: number
+          source_tab: string
+          status: string
+          submission_date: string | null
+          validation_errors: Json
+          visit_group_key: string | null
+        }
+        Insert: {
+          billed_amount: number
+          content_hash?: string | null
+          created_at?: string
+          first_name_raw: string
+          hmo_approval_date?: string | null
+          id?: string
+          last_name_raw: string
+          normalized_patient_name: string
+          or_number?: string | null
+          paid_amount?: number
+          patient_name_raw: string
+          payment_received_date?: string | null
+          provider_id_resolved?: string | null
+          provider_name_raw: string
+          reference_no?: string | null
+          run_id: string
+          senior_pwd_flag?: boolean
+          service_id_resolved?: string | null
+          service_name_raw: string
+          source_date: string
+          source_row_no: number
+          source_tab: string
+          status?: string
+          submission_date?: string | null
+          validation_errors?: Json
+          visit_group_key?: string | null
+        }
+        Update: {
+          billed_amount?: number
+          content_hash?: string | null
+          created_at?: string
+          first_name_raw?: string
+          hmo_approval_date?: string | null
+          id?: string
+          last_name_raw?: string
+          normalized_patient_name?: string
+          or_number?: string | null
+          paid_amount?: number
+          patient_name_raw?: string
+          payment_received_date?: string | null
+          provider_id_resolved?: string | null
+          provider_name_raw?: string
+          reference_no?: string | null
+          run_id?: string
+          senior_pwd_flag?: boolean
+          service_id_resolved?: string | null
+          service_name_raw?: string
+          source_date?: string
+          source_row_no?: number
+          source_tab?: string
+          status?: string
+          submission_date?: string | null
+          validation_errors?: Json
+          visit_group_key?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "hmo_history_staging_provider_id_resolved_fkey"
+            columns: ["provider_id_resolved"]
+            isOneToOne: false
+            referencedRelation: "hmo_providers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "hmo_history_staging_provider_id_resolved_fkey"
+            columns: ["provider_id_resolved"]
+            isOneToOne: false
+            referencedRelation: "v_hmo_provider_summary"
+            referencedColumns: ["provider_id"]
+          },
+          {
+            foreignKeyName: "hmo_history_staging_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "hmo_import_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "hmo_history_staging_service_id_resolved_fkey"
+            columns: ["service_id_resolved"]
+            isOneToOne: false
+            referencedRelation: "services"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      hmo_import_runs: {
+        Row: {
+          committed_at: string | null
+          cutover_date: string
+          error_count: number
+          file_hash: string
+          file_name: string
+          finished_at: string | null
+          id: string
+          run_kind: string
+          staging_count: number
+          started_at: string
+          summary: Json
+          uploaded_by: string
+          variance_override_reason: string | null
+          warning_count: number
+        }
+        Insert: {
+          committed_at?: string | null
+          cutover_date: string
+          error_count?: number
+          file_hash: string
+          file_name: string
+          finished_at?: string | null
+          id?: string
+          run_kind: string
+          staging_count?: number
+          started_at?: string
+          summary?: Json
+          uploaded_by: string
+          variance_override_reason?: string | null
+          warning_count?: number
+        }
+        Update: {
+          committed_at?: string | null
+          cutover_date?: string
+          error_count?: number
+          file_hash?: string
+          file_name?: string
+          finished_at?: string | null
+          id?: string
+          run_kind?: string
+          staging_count?: number
+          started_at?: string
+          summary?: Json
+          uploaded_by?: string
+          variance_override_reason?: string | null
+          warning_count?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "hmo_import_runs_uploaded_by_fkey"
+            columns: ["uploaded_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       hmo_payment_allocations: {
         Row: {
           amount_php: number
@@ -782,6 +968,49 @@ export type Database = {
           },
         ]
       }
+      hmo_provider_aliases: {
+        Row: {
+          alias: string
+          created_at: string
+          created_by: string
+          provider_id: string
+        }
+        Insert: {
+          alias: string
+          created_at?: string
+          created_by: string
+          provider_id: string
+        }
+        Update: {
+          alias?: string
+          created_at?: string
+          created_by?: string
+          provider_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "hmo_provider_aliases_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "hmo_provider_aliases_provider_id_fkey"
+            columns: ["provider_id"]
+            isOneToOne: false
+            referencedRelation: "hmo_providers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "hmo_provider_aliases_provider_id_fkey"
+            columns: ["provider_id"]
+            isOneToOne: false
+            referencedRelation: "v_hmo_provider_summary"
+            referencedColumns: ["provider_id"]
+          },
+        ]
+      }
       hmo_providers: {
         Row: {
           contact_person_address: string | null
@@ -832,6 +1061,42 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      hmo_service_aliases: {
+        Row: {
+          alias: string
+          created_at: string
+          created_by: string
+          service_id: string
+        }
+        Insert: {
+          alias: string
+          created_at?: string
+          created_by: string
+          service_id: string
+        }
+        Update: {
+          alias?: string
+          created_at?: string
+          created_by?: string
+          service_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "hmo_service_aliases_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "hmo_service_aliases_service_id_fkey"
+            columns: ["service_id"]
+            isOneToOne: false
+            referencedRelation: "services"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       inquiries: {
         Row: {
@@ -1078,7 +1343,7 @@ export type Database = {
       patients: {
         Row: {
           address: string | null
-          birthdate: string
+          birthdate: string | null
           consent_signed_at: string | null
           created_at: string
           created_by: string | null
@@ -1086,6 +1351,7 @@ export type Database = {
           email: string | null
           first_name: string
           id: string
+          is_historical: boolean
           is_repeat_patient: boolean
           last_name: string
           merged_at: string | null
@@ -1103,7 +1369,7 @@ export type Database = {
         }
         Insert: {
           address?: string | null
-          birthdate: string
+          birthdate?: string | null
           consent_signed_at?: string | null
           created_at?: string
           created_by?: string | null
@@ -1111,6 +1377,7 @@ export type Database = {
           email?: string | null
           first_name: string
           id?: string
+          is_historical?: boolean
           is_repeat_patient?: boolean
           last_name: string
           merged_at?: string | null
@@ -1128,7 +1395,7 @@ export type Database = {
         }
         Update: {
           address?: string | null
-          birthdate?: string
+          birthdate?: string | null
           consent_signed_at?: string | null
           created_at?: string
           created_by?: string | null
@@ -1136,6 +1403,7 @@ export type Database = {
           email?: string | null
           first_name?: string
           id?: string
+          is_historical?: boolean
           is_repeat_patient?: boolean
           last_name?: string
           merged_at?: string | null
@@ -2053,6 +2321,7 @@ export type Database = {
           home_service_address: string | null
           home_service_fee_php: number | null
           id: string
+          is_historical: boolean
           procedure_description: string | null
           receptionist_remarks: string | null
           release_medium: string | null
@@ -2088,6 +2357,7 @@ export type Database = {
           home_service_address?: string | null
           home_service_fee_php?: number | null
           id?: string
+          is_historical?: boolean
           procedure_description?: string | null
           receptionist_remarks?: string | null
           release_medium?: string | null
@@ -2123,6 +2393,7 @@ export type Database = {
           home_service_address?: string | null
           home_service_fee_php?: number | null
           id?: string
+          is_historical?: boolean
           procedure_description?: string | null
           receptionist_remarks?: string | null
           release_medium?: string | null
@@ -2226,6 +2497,7 @@ export type Database = {
           hmo_authorization_no: string | null
           hmo_provider_id: string | null
           id: string
+          is_historical: boolean
           notes: string | null
           paid_php: number
           patient_id: string
@@ -2242,6 +2514,7 @@ export type Database = {
           hmo_authorization_no?: string | null
           hmo_provider_id?: string | null
           id?: string
+          is_historical?: boolean
           notes?: string | null
           paid_php?: number
           patient_id: string
@@ -2258,6 +2531,7 @@ export type Database = {
           hmo_authorization_no?: string | null
           hmo_provider_id?: string | null
           id?: string
+          is_historical?: boolean
           notes?: string | null
           paid_php?: number
           patient_id?: string
@@ -2482,6 +2756,7 @@ export type Database = {
         | "opening_balance"
         | "reversal"
         | "hmo_claim_resolution"
+        | "hmo_history_opening"
       je_status: "draft" | "posted" | "reversed"
       period_status: "open" | "closed"
     }
@@ -2636,9 +2911,11 @@ export const Constants = {
         "opening_balance",
         "reversal",
         "hmo_claim_resolution",
+        "hmo_history_opening",
       ],
       je_status: ["draft", "posted", "reversed"],
       period_status: ["open", "closed"],
     },
   },
 } as const
+
