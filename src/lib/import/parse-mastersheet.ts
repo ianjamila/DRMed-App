@@ -4,25 +4,15 @@ import { parse as parseCsv } from "csv-parse/sync";
 import { excelSerialToISODate } from "./excel-date";
 import { parseDecimal, splitLastFirstName, normalizeName } from "./normalize";
 
-// Expected column-header-text → canonical-field-name mapping per tab.
+// Expected column-header-text → canonical-field-name mapping.
 // The parser asserts these texts appear in their expected positions at row 1 and
 // row 2 (some tabs have a 2-row header). On mismatch, fail loudly.
-const LAB_SERVICE_HEADERS = {
-  DATE: "source_date",
-  "PATIENT NAME": "patient_name_raw",
-  HMO: "hmo_flag",
-  PROVIDER: "provider_name_raw",
-  "APPROVAL DATE": "hmo_approval_date",
-  SERVICE: "service_name_raw",
-  "SENIOR/PWD": "senior_pwd_flag",
-  "FINAL PRICE (LESS DISCOUNTS)": "billed_amount",
-  "REFERENCE / TRACKING": "reference_no",
-  "DATE SENT": "submission_date",
-  "OR #": "or_number",
-  "DATE ACTUAL PAYMENT RECEIVED": "payment_received_date",
-} as const;
-
-const DOCTOR_CONSULTATION_HEADERS = {
+//
+// NOTE: LAB SERVICE and DOCTOR CONSULTATION tabs currently share an identical
+// header layout, so we use a single shared constant. If/when the two tabs ever
+// drift, fork this back into two per-tab constants and update the call sites
+// in `parseXlsxBuffer`.
+const SHARED_HEADERS = {
   DATE: "source_date",
   "PATIENT NAME": "patient_name_raw",
   HMO: "hmo_flag",
@@ -76,7 +66,7 @@ export interface ParseOptions {
 export async function parseXlsxBuffer(
   buf: Buffer,
   opts: ParseOptions,
-): Promise<ParseSummary> {
+): Promise<{ summary: ParseSummary; workbook: ExcelJS.Workbook }> {
   const workbook = new ExcelJS.Workbook();
   // exceljs's load() type predates Node's Buffer<ArrayBufferLike> generic;
   // the runtime accepts any Buffer-shaped value, so cast through unknown.
@@ -99,8 +89,7 @@ export async function parseXlsxBuffer(
       continue;
     }
 
-    const expected = tabName === "LAB SERVICE" ? LAB_SERVICE_HEADERS : DOCTOR_CONSULTATION_HEADERS;
-    const colMap = assertHeaders(sheet, expected, tabName, summary);
+    const colMap = assertHeaders(sheet, SHARED_HEADERS, tabName, summary);
     if (!colMap) continue;  // header mismatch already recorded
 
     // Data starts at row 3 (row 1 = headers, row 2 = sub-headers).
@@ -124,7 +113,7 @@ export async function parseXlsxBuffer(
     });
   }
 
-  return summary;
+  return { summary, workbook };
 }
 
 // ============================================================================

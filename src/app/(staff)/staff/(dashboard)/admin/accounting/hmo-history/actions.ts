@@ -1,7 +1,6 @@
 "use server";
 
 import { createHash } from "node:crypto";
-import ExcelJS from "exceljs";
 
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -38,6 +37,7 @@ export async function parseWorkbookAction(
     cutover_date: string;
     parsed_count: number;
     skipped_post_cutover_count: number;
+    csv_reconciliation_skipped: boolean;
   }>
 > {
   const staff = await requireAdminStaff();
@@ -57,6 +57,7 @@ export async function parseWorkbookAction(
 
   // Parse depending on extension.
   let summary;
+  let workbook: import("exceljs").Workbook | null = null;
   const isCsv = file.name.toLowerCase().endsWith(".csv");
   try {
     if (isCsv) {
@@ -67,7 +68,9 @@ export async function parseWorkbookAction(
         : "LAB SERVICE";
       summary = parseCsvBuffer(tab, buf, { cutoverISO });
     } else {
-      summary = await parseXlsxBuffer(buf, { cutoverISO });
+      const result = await parseXlsxBuffer(buf, { cutoverISO });
+      summary = result.summary;
+      workbook = result.workbook;
     }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "parse failed" };
@@ -146,17 +149,22 @@ export async function parseWorkbookAction(
     .eq("id", runId);
 
   // Parse HMO REFERENCE aging block and stash on the run for validate to consume.
-  if (!isCsv) {
-    const wb = new ExcelJS.Workbook();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await wb.xlsx.load(buf as any);
-    const aging = parseHmoReferenceAging(wb, cutoverISO).map((a) => ({
+  if (!isCsv && workbook) {
+    const aging = parseHmoReferenceAging(workbook, cutoverISO).map((a) => ({
       provider_name: a.providerNameRaw,
       ending_php: a.endingBalancePhp,
     }));
     await supabase
       .from("hmo_import_runs")
       .update({ summary: { reconciliation: aging } as Json })
+      .eq("id", runId);
+  } else if (isCsv) {
+    // CSV uploads skip the HMO REFERENCE aging block (it only exists in the
+    // full workbook). Mark this on the run so the UI can explain the empty
+    // reconciliation panel.
+    await supabase
+      .from("hmo_import_runs")
+      .update({ summary: { csv_reconciliation_skipped: true } as unknown as Json })
       .eq("id", runId);
   }
 
@@ -172,6 +180,7 @@ export async function parseWorkbookAction(
       cutover_date: cutoverISO,
       parsed_count: inserted,
       skipped_post_cutover_count: skipped,
+      csv_reconciliation_skipped: isCsv,
       parse_errors: summary.parseErrors.slice(0, 100),
     } as Json,
   });
@@ -183,6 +192,7 @@ export async function parseWorkbookAction(
       cutover_date: cutoverISO,
       parsed_count: inserted,
       skipped_post_cutover_count: skipped,
+      csv_reconciliation_skipped: isCsv,
     },
   };
 }
@@ -364,7 +374,6 @@ export async function validateRunAction(input: { run_id: string }): Promise<
 
     const has_error = errors.some((e) => e.severity === "error");
     if (has_error) errorCount++;
-    warningCount += errors.filter((e) => e.severity === "warning").length;
 
     // visit_group_key (only when provider resolved).
     const visit_group_key = provId
@@ -409,27 +418,40 @@ export async function validateRunAction(input: { run_id: string }): Promise<
             message: `OR# ${or} appears under ${provs.size} providers`,
             severity: "warning",
           });
-          warningCount++;
         }
       }
     }
   }
 
-  // Apply updates in chunks.
+  // Recompute warningCount at row-level granularity (mirrors errorCount),
+  // counting each affected row once regardless of how many warnings it has.
+  warningCount = updates.filter(
+    (u) => u.validation_errors.some((e) => e.severity === "warning"),
+  ).length;
+
+  // Apply updates in chunks via bulk upsert (one round-trip per chunk
+  // instead of one UPDATE per row). The supabase-js typed `upsert` requires
+  // full Insert shape, so we merge each existing staging row with the new
+  // resolved fields rather than sending a partial payload.
+  const stagingById = new Map(stagingRows.map((r) => [r.id, r]));
   for (let i = 0; i < updates.length; i += 500) {
-    const chunk = updates.slice(i, i + 500);
-    for (const u of chunk) {
-      await supabase
-        .from("hmo_history_staging")
-        .update({
-          provider_id_resolved: u.provider_id_resolved,
-          service_id_resolved: u.service_id_resolved,
-          visit_group_key: u.visit_group_key,
-          content_hash: u.content_hash,
-          validation_errors: u.validation_errors as unknown as Json,
-          status: u.status,
-        })
-        .eq("id", u.id);
+    const chunk = updates.slice(i, i + 500).map((u) => {
+      const sr = stagingById.get(u.id)!;
+      return {
+        ...sr,
+        provider_id_resolved: u.provider_id_resolved,
+        service_id_resolved: u.service_id_resolved,
+        visit_group_key: u.visit_group_key,
+        content_hash: u.content_hash,
+        validation_errors: u.validation_errors as unknown as Json,
+        status: u.status,
+      };
+    });
+    const { error: upsertErr } = await supabase
+      .from("hmo_history_staging")
+      .upsert(chunk, { onConflict: "id" });
+    if (upsertErr) {
+      return { ok: false, error: `staging upsert failed at chunk ${i}: ${upsertErr.message}` };
     }
   }
 
@@ -579,6 +601,17 @@ export async function mapProviderAliasAction(input: {
     .eq("run_id", parsed.data.run_id)
     .eq("provider_name_raw", parsed.data.alias);
 
+  // Re-run validation so visit_group_key and content_hash are recomputed for
+  // rows that now have BOTH provider + service resolved. Don't fail the
+  // mapping if revalidation hiccups — the alias was already saved.
+  const reval = await validateRunAction({ run_id: parsed.data.run_id });
+  if (!reval.ok) {
+    await supabase
+      .from("hmo_import_runs")
+      .update({ summary: { revalidation_warning: reval.error } as unknown as Json })
+      .eq("id", parsed.data.run_id);
+  }
+
   // Remaining unmapped count.
   const { count } = await supabase
     .from("hmo_history_staging")
@@ -654,6 +687,17 @@ export async function mapServiceAliasAction(input: {
     .update({ service_id_resolved: serviceId })
     .eq("run_id", parsed.data.run_id)
     .eq("service_name_raw", parsed.data.alias);
+
+  // Re-run validation so visit_group_key and content_hash are recomputed for
+  // rows that now have BOTH provider + service resolved. Don't fail the
+  // mapping if revalidation hiccups — the alias was already saved.
+  const reval = await validateRunAction({ run_id: parsed.data.run_id });
+  if (!reval.ok) {
+    await supabase
+      .from("hmo_import_runs")
+      .update({ summary: { revalidation_warning: reval.error } as unknown as Json })
+      .eq("id", parsed.data.run_id);
+  }
 
   const { count } = await supabase
     .from("hmo_history_staging")
