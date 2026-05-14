@@ -2,8 +2,9 @@
 -- 0036_hmo_history_commit_function.sql
 -- =============================================================================
 -- 12.A.4: commit_hmo_history_run() runs the entire historical import in a single
--- transaction with an advisory lock and a session-scoped bridge bypass. Called
--- by commitRunAction Server Action via supabase.rpc().
+-- transaction with an advisory lock and a transaction-scoped bridge bypass
+-- (set_config with is_local=true, equivalent to SET LOCAL). Called by
+-- commitRunAction Server Action via supabase.rpc().
 --
 -- Flow:
 --   0. pg_advisory_xact_lock to serialize concurrent commits.
@@ -320,6 +321,14 @@ begin
   -- For each staging row with paid_amount > 0 and an OR#, link the row's item
   -- to the payment for that (provider, OR#). The recompute trigger on
   -- hmo_payment_allocations will fold paid_amount into hmo_claim_items.paid_amount_php.
+  --
+  -- Safety: the content-hash partial unique index
+  -- (idx_hmo_history_staging_one_commit_per_content) guarantees no two
+  -- committed runs share the same (source_tab, patient, source_date, provider,
+  -- service, billed_amount, reference_no). Without that invariant the join
+  -- below (which matches on patient/date/provider/service/amount) would be
+  -- ambiguous across runs. Do not remove the unique index without revising
+  -- this query.
   with alloc_rows as (
     select s.id as staging_id,
            hci.id as item_id,
@@ -405,6 +414,19 @@ begin
     update public.journal_entries set status = 'posted' where id = v_je_id;
 
     v_n_jes := v_n_jes + 1;
+
+    -- §11: one audit row per opening JE posted.
+    insert into public.audit_log (
+      actor_id, actor_type, action, resource_type, resource_id, metadata
+    ) values (
+      v_uploaded_by_id, 'staff', 'hmo_history_opening_je.posted',
+      'journal_entries', v_je_id,
+      jsonb_build_object(
+        'je_id', v_je_id,
+        'provider_id', r_provider.provider_id,
+        'amount_php', v_opening_amount
+      )
+    );
   end loop;
 
   -- ---- 10. Stamp run + flip staging + audit -------------------------------

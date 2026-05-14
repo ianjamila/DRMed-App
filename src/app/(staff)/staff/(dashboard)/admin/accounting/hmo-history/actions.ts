@@ -791,6 +791,11 @@ export async function commitRunAction(input: {
     p_run_id: parsed.data.run_id,
   });
   if (error) {
+    // Best-effort rollback so the runs list doesn't show a 'commit' kind for a run that never committed.
+    await supabase
+      .from("hmo_import_runs")
+      .update({ run_kind: "dry_run" })
+      .eq("id", parsed.data.run_id);
     return { ok: false, error: translatePgError(error) };
   }
 

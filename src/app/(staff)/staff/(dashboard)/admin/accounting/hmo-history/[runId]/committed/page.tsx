@@ -48,7 +48,20 @@ export default async function CommittedPage({
     .eq("source_id", runId)
     .order("entry_number", { ascending: true });
 
-  const summary = (run.summary ?? {}) as Record<string, number>;
+  // Numeric keys we read by name; other JSONB keys (e.g. reconciliation_computed)
+  // stay typed as unknown to avoid false-promising their shape.
+  const summary = (run.summary ?? {}) as {
+    patients?: number;
+    visits?: number;
+    test_requests?: number;
+    batches?: number;
+    items?: number;
+    payments?: number;
+    allocations?: number;
+    opening_jes?: number;
+    [key: string]: unknown;
+  };
+  // supabase-js returns a structural type for nested joins; cast to local type for readability.
   const typedOpeningJEs = (openingJEs ?? []) as unknown as OpeningJE[];
 
   return (
