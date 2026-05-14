@@ -1,0 +1,508 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DRMed · 12.A · Implementation Plan · Deliverable</title>
+    <style>
+      :root {
+        --navy: #284570; --navy-soft: #34507e; --steel: #4682b4;
+        --cyan: #06aef1; --cyan-light: #7fbeff; --cyan-mid: #3eafe3;
+        --bg: #f0f6fc; --bg-mid: #e3eef9;
+        --ink: #1a2537; --ink-mid: #374151; --ink-soft: #6b7280;
+        --line: #d8e3f0; --line-soft: #ebf1f8; --white: #ffffff;
+        --r-sm: 6px; --r-md: 10px; --r-lg: 16px;
+        --ok: #10b981; --ok-bg: #ecfdf5; --ok-border: #a7f3d0;
+        --info: var(--cyan); --info-bg: #ecf6fc; --info-border: #b6e2f5;
+        --warn: #d97706; --warn-bg: #fffbeb; --warn-border: #fde68a;
+        --crit: #dc2626; --crit-bg: #fef2f2; --crit-border: #fecaca;
+        --neutral: var(--ink-soft); --neutral-bg: #f3f4f6; --neutral-border: #e5e7eb;
+      }
+      * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
+      body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", Roboto, sans-serif;
+             font-size: 15px; line-height: 1.55; color: var(--ink); background: var(--bg);
+             -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+      ::selection { background: var(--cyan-light); color: var(--navy); }
+      .shell { display: grid; grid-template-columns: 260px minmax(0, 1fr); max-width: 1400px; margin: 0 auto; min-height: 100vh; }
+      aside.toc { position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto;
+                  padding: 32px 24px 32px 32px; border-right: 1px solid var(--line);
+                  background: linear-gradient(180deg, var(--white) 0%, var(--bg) 100%); }
+      .toc-brand { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+      .toc-brand-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 0 4px rgba(6, 174, 241, 0.18); }
+      .toc-brand-name { font-weight: 800; letter-spacing: -0.01em; color: var(--navy); font-size: 18px; }
+      .toc-eyebrow { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; color: var(--ink-soft); margin-bottom: 24px; }
+      .toc h3 { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; color: var(--ink-soft); margin: 24px 0 8px; }
+      .toc ul { list-style: none; padding: 0; margin: 0; }
+      .toc a { display: block; padding: 7px 10px; margin-left: -10px; font-size: 13.5px; color: var(--ink-mid); text-decoration: none;
+               border-radius: var(--r-sm); border-left: 2px solid transparent; transition: background 120ms, color 120ms, border-color 120ms; }
+      .toc a:hover { background: var(--bg-mid); color: var(--navy); border-left-color: var(--cyan); }
+      .toc-meta { margin-top: 32px; padding: 16px; background: var(--white); border: 1px solid var(--line);
+                  border-radius: var(--r-md); font-size: 12px; color: var(--ink-soft); }
+      .toc-meta strong { color: var(--navy); display: block; margin-bottom: 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
+      main { padding: 56px 64px 96px 64px; max-width: 960px; }
+      .hero { margin-bottom: 56px; padding-bottom: 40px; border-bottom: 1px solid var(--line); }
+      .hero-eyebrow { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.14em; color: var(--cyan); margin-bottom: 10px; }
+      .hero h1 { font-size: 40px; line-height: 1.1; letter-spacing: -0.02em; color: var(--navy); margin: 0 0 14px; font-weight: 800; }
+      .hero-lead { font-size: 17px; color: var(--ink-mid); max-width: 760px; margin: 0 0 24px; }
+      .hero-meta { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+      .pill { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px;
+              background: var(--white); border: 1px solid var(--line); font-size: 12px; color: var(--ink-mid); font-weight: 500; }
+      .pill.status-draft { background: var(--info-bg); border-color: var(--info-border); color: var(--navy); }
+      .pill-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--cyan); }
+      section.section { margin-bottom: 64px; scroll-margin-top: 24px; }
+      .section-eyebrow { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.14em; color: var(--cyan-mid); margin-bottom: 10px; }
+      h2.section-title { font-size: 28px; line-height: 1.15; letter-spacing: -0.015em; color: var(--navy); margin: 0 0 14px; font-weight: 700; }
+      .section-lead { font-size: 16px; color: var(--ink-mid); margin: 0 0 28px; max-width: 760px; }
+      h3.sub { font-size: 18px; color: var(--navy); margin: 32px 0 12px; font-weight: 700; letter-spacing: -0.01em; }
+      code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; background: var(--bg-mid); padding: 1px 6px; border-radius: 4px; color: var(--navy); }
+      table.basic { width: 100%; border-collapse: separate; border-spacing: 0; background: var(--white); border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden; }
+      table.basic th, table.basic td { padding: 12px 14px; text-align: left; font-size: 13.5px; vertical-align: top; }
+      table.basic th { background: var(--bg-mid); color: var(--navy); font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; border-bottom: 1px solid var(--line); }
+      table.basic td { border-bottom: 1px solid var(--line-soft); color: var(--ink-mid); }
+      table.basic tr:last-child td { border-bottom: none; }
+      table.basic td strong { color: var(--navy); font-weight: 600; }
+      .callout { border: 1px solid var(--info-border); background: var(--info-bg); border-radius: var(--r-md); padding: 14px 18px; margin: 18px 0; }
+      .callout-label { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.12em; color: var(--cyan); margin-bottom: 6px; display: block; }
+      .callout.ok { background: var(--ok-bg); border-color: var(--ok-border); }
+      .callout.ok .callout-label { color: var(--ok); }
+      .callout.warn { background: var(--warn-bg); border-color: var(--warn-border); }
+      .callout.warn .callout-label { color: var(--warn); }
+      .callout.crit { background: var(--crit-bg); border-color: var(--crit-border); }
+      .callout.crit .callout-label { color: var(--crit); }
+      .callout.neutral { background: var(--neutral-bg); border-color: var(--neutral-border); }
+      .callout.neutral .callout-label { color: var(--neutral); }
+      .callout strong { color: var(--navy); font-weight: 600; }
+      .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 20px 0 8px; }
+      .metric { background: var(--white); border: 1px solid var(--line); border-radius: var(--r-md); padding: 16px 18px; position: relative; }
+      .metric::before { content: ""; position: absolute; left: 0; top: 14px; bottom: 14px; width: 3px; border-radius: 2px; background: var(--cyan); }
+      .metric.ok::before { background: var(--ok); } .metric.info::before { background: var(--cyan); }
+      .metric.warn::before { background: var(--warn); } .metric.crit::before { background: var(--crit); }
+      .metric-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-soft); margin-bottom: 6px; }
+      .metric-value { font-size: 22px; font-weight: 700; color: var(--navy); letter-spacing: -0.01em; }
+      .metric-unit { font-size: 13px; color: var(--ink-soft); font-weight: 500; margin-left: 4px; }
+      .metric-foot { font-size: 12px; color: var(--ink-soft); margin-top: 6px; }
+      .phase { position: relative; padding: 0 0 32px 32px; border-left: 2px solid var(--line); }
+      .phase:last-child { padding-bottom: 0; border-left-color: transparent; }
+      .phase::before { content: ""; position: absolute; left: -8px; top: 4px; width: 14px; height: 14px; border-radius: 50%;
+                       background: var(--white); border: 2px solid var(--cyan-mid); }
+      .phase.planned::before { border-color: var(--neutral-border); }
+      .phase-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; margin-bottom: 8px; }
+      .phase-id { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.1em; color: var(--cyan-mid);
+                  background: var(--info-bg); padding: 3px 8px; border-radius: 4px; border: 1px solid var(--info-border); }
+      .phase-title { font-size: 17px; color: var(--navy); font-weight: 700; letter-spacing: -0.01em; }
+      .phase-est { font-size: 12px; color: var(--ink-soft); margin-left: auto; }
+      .phase-body { color: var(--ink-mid); }
+      .phase-body p { margin: 6px 0; }
+      .phase-tasks { margin: 10px 0 0; padding: 12px 16px; background: var(--white); border: 1px solid var(--line); border-radius: var(--r-sm); }
+      .phase-tasks strong { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-soft); margin-bottom: 6px; }
+      .phase-tasks ul { list-style: none; padding: 0; margin: 0; font-size: 13.5px; }
+      .phase-tasks li { padding: 5px 0 5px 22px; position: relative; color: var(--ink-mid); }
+      .phase-tasks li::before { content: ""; position: absolute; left: 0; top: 9px; width: 12px; height: 12px; border-radius: 3px;
+                                 background: var(--white); border: 1.5px solid var(--neutral-border); }
+      .phase-tasks .task-id { color: var(--cyan-mid); font-weight: 700; font-family: "SF Mono", monospace; font-size: 12px; margin-right: 6px; }
+      .phase-milestone {
+        margin: 14px 0 0; padding: 10px 14px;
+        background: var(--ok-bg); border: 1px solid var(--ok-border); border-radius: var(--r-sm);
+        font-size: 13px; color: var(--navy);
+      }
+      .phase-milestone strong { color: var(--ok); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; display: block; margin-bottom: 2px; }
+      .risks { display: grid; grid-template-columns: 1fr; gap: 10px; }
+      .risk { background: var(--white); border: 1px solid var(--line); border-left: 4px solid var(--warn);
+              border-radius: var(--r-sm); padding: 14px 18px; }
+      .risk.crit { border-left-color: var(--crit); } .risk.info { border-left-color: var(--cyan); } .risk.ok { border-left-color: var(--ok); }
+      .risk-head { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+      .risk-title { font-size: 14px; color: var(--navy); font-weight: 700; }
+      .risk-tag { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; padding: 2px 8px; border-radius: 999px; }
+      .risk.crit .risk-tag { background: var(--crit-bg); color: var(--crit); }
+      .risk .risk-tag { background: var(--warn-bg); color: var(--warn); }
+      .risk.info .risk-tag { background: var(--info-bg); color: var(--cyan); }
+      .risk.ok .risk-tag { background: var(--ok-bg); color: var(--ok); }
+      .risk-body { font-size: 13.5px; color: var(--ink-mid); margin-top: 8px; }
+      .risk-body strong { color: var(--navy); font-weight: 600; }
+      footer.foot { margin-top: 96px; padding-top: 32px; border-top: 1px solid var(--line); font-size: 12px; color: var(--ink-soft); }
+      @media (max-width: 900px) { .shell { grid-template-columns: 1fr; } aside.toc { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--line); } main { padding: 32px 24px 64px; } }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="toc">
+        <div class="toc-brand">
+          <span class="toc-brand-dot"></span>
+          <span class="toc-brand-name">DRMed</span>
+        </div>
+        <div class="toc-eyebrow">12.A · Implementation Plan</div>
+
+        <h3>On this page</h3>
+        <ul>
+          <li><a href="#summary">Executive summary</a></li>
+          <li><a href="#files">File structure</a></li>
+          <li><a href="#dispatches">Dispatch map</a></li>
+          <li><a href="#timeline">Phase timeline</a></li>
+          <li><a href="#risks">Risks &amp; dependencies</a></li>
+          <li><a href="#execution">Execution handoff</a></li>
+        </ul>
+
+        <div class="toc-meta">
+          <strong>Status</strong>Ready to execute
+          <br /><br />
+          <strong>Plan source</strong><code style="font-size:11px;">docs/superpowers/plans/2026-05-14-12.A-hmo-history-import.md</code>
+          <br /><br />
+          <strong>Spec</strong><code style="font-size:11px;">docs/superpowers/specs/2026-05-14-12.A-hmo-history-import-design.md</code>
+          <br /><br />
+          <strong>Target tag</strong>v1.5.0
+        </div>
+      </aside>
+
+      <main>
+        <div class="hero">
+          <div class="hero-eyebrow">Phase 12 · Sub-project 12.A · Implementation Plan</div>
+          <h1>HMO History Import — Build Plan</h1>
+          <p class="hero-lead">
+            Five dispatches, 38 commit-checkpointed tasks. Each task is bite-sized
+            (2–5 minutes), has its files-to-touch listed, runnable code, and
+            verification commands with expected output. End-state is a tagged
+            <code>v1.5.0</code> release with the importer live behind admin auth.
+          </p>
+          <div class="hero-meta">
+            <span class="pill status-draft"><span class="pill-dot"></span> Ready to execute</span>
+            <span class="pill">38 tasks</span>
+            <span class="pill">5 dispatches</span>
+            <span class="pill">2 migrations</span>
+            <span class="pill">6 Server Actions</span>
+            <span class="pill">v1.5.0</span>
+          </div>
+        </div>
+
+        <section class="section" id="summary">
+          <div class="section-eyebrow">01 · Executive summary</div>
+          <h2 class="section-title">Build sequence at a glance</h2>
+          <p class="section-lead">
+            Schema-first, UI-last. Each dispatch produces a committable, working
+            slice that doesn't regress earlier work. Dispatches 1–4 each end with
+            an explicit checkpoint commit; D5 ships fixtures, full smoke, and the
+            <code>v1.5.0</code> tag.
+          </p>
+
+          <div class="metrics">
+            <div class="metric info">
+              <div class="metric-label">Migrations</div>
+              <div class="metric-value">2<span class="metric-unit">files</span></div>
+              <div class="metric-foot">0035_hmo_history_import · 0036_hmo_history_commit_function</div>
+            </div>
+            <div class="metric info">
+              <div class="metric-label">New UI routes</div>
+              <div class="metric-value">3<span class="metric-unit">pages</span></div>
+              <div class="metric-foot">empty state · preview · post-commit</div>
+            </div>
+            <div class="metric ok">
+              <div class="metric-label">Server Actions</div>
+              <div class="metric-value">6<span class="metric-unit">in actions.ts</span></div>
+              <div class="metric-foot">parse · validate · 2× alias · commit · discard</div>
+            </div>
+            <div class="metric warn">
+              <div class="metric-label">Smoke assertions</div>
+              <div class="metric-value">10<span class="metric-unit">SQL</span> + 1<span class="metric-unit">browser</span></div>
+              <div class="metric-foot">Both required green before tag</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="files">
+          <div class="section-eyebrow">02 · Files</div>
+          <h2 class="section-title">File structure</h2>
+          <p class="section-lead">
+            New files cluster under three roots: the migrations, the new
+            <code>src/lib/import/</code> helpers, and the
+            <code>src/app/(staff)/staff/(dashboard)/admin/accounting/hmo-history/</code> route.
+          </p>
+
+          <table class="basic">
+            <thead><tr><th style="width: 40%">Path</th><th>Purpose</th></tr></thead>
+            <tbody>
+              <tr><td><code>supabase/migrations/0035_*.sql</code></td><td><strong>Migration.</strong> is_historical flags · staging tables · subledger extension · bridge bypass</td></tr>
+              <tr><td><code>supabase/migrations/0036_*.sql</code></td><td><strong>Migration.</strong> commit_hmo_history_run() SQL function</td></tr>
+              <tr><td><code>src/lib/import/parse-mastersheet.ts</code></td><td>XLSX (exceljs) + CSV (csv-parse) streaming parser; canonical header map</td></tr>
+              <tr><td><code>src/lib/import/normalize.ts</code></td><td>parseDecimal, normalizeName, splitLastFirstName</td></tr>
+              <tr><td><code>src/lib/import/excel-date.ts</code></td><td>excelSerialToISODate helper</td></tr>
+              <tr><td><code>src/lib/import/content-hash.ts</code></td><td>sha256 over the natural-key tuple</td></tr>
+              <tr><td><code>src/lib/import/reconciliation.ts</code></td><td>HMO REFERENCE aging-block reader</td></tr>
+              <tr><td><code>.../hmo-history/page.tsx</code></td><td>Empty state · server component</td></tr>
+              <tr><td><code>.../hmo-history/upload-form.tsx</code></td><td>Drop-zone + cutover picker · client</td></tr>
+              <tr><td><code>.../hmo-history/[runId]/page.tsx</code></td><td>Preview page · server load</td></tr>
+              <tr><td><code>.../[runId]/preview-client.tsx</code></td><td>Preview state machine · 7 sections</td></tr>
+              <tr><td><code>.../[runId]/sections/*.tsx</code></td><td>counts · unmapped-providers · unmapped-services · reconciliation · errors · commit-footer</td></tr>
+              <tr><td><code>.../[runId]/committed/page.tsx</code></td><td>Post-commit summary with opening JE drill</td></tr>
+              <tr><td><code>scripts/smoke-12.A-d1.sql</code></td><td>Bypass mechanism smoke (D1)</td></tr>
+              <tr><td><code>scripts/smoke-12.A.sql</code></td><td>Full commit-flow smoke (D5)</td></tr>
+              <tr><td><code>tests/fixtures/hmo-history-mini.xlsx</code></td><td>50-row test workbook (D5)</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section class="section" id="dispatches">
+          <div class="section-eyebrow">03 · Dispatches</div>
+          <h2 class="section-title">Dispatch map</h2>
+          <p class="section-lead">
+            Each dispatch ends with a Conventional Commit that summarizes its work
+            and a clean working tree. Subagent-Driven Development is the
+            recommended execution flow.
+          </p>
+
+          <table class="basic">
+            <thead><tr><th>Dispatch</th><th>Tasks</th><th>Commit checkpoint</th><th>Outcome</th></tr></thead>
+            <tbody>
+              <tr><td><strong>D1</strong> Schema + bypass smoke</td><td>T1–T11</td><td><code>12.A.1</code></td><td>Migration applied, bypass smoke green, types regen</td></tr>
+              <tr><td><strong>D2</strong> Parser + Server Actions</td><td>T12–T20</td><td><code>12.A.2</code></td><td>All Server Actions implemented; parser unit-tested</td></tr>
+              <tr><td><strong>D3</strong> Preview UI</td><td>T21–T27</td><td><code>12.A.3</code></td><td>Empty state + preview live; mobile verified at 390×844</td></tr>
+              <tr><td><strong>D4</strong> Commit function + post-commit UI</td><td>T28–T33</td><td><code>12.A.4</code></td><td>Full end-to-end happy path works in dev</td></tr>
+              <tr><td><strong>D5</strong> Fixture + full smoke + tag</td><td>T34–T38</td><td>(tag <code>v1.5.0</code>)</td><td>12.A closed</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section class="section" id="timeline">
+          <div class="section-eyebrow">04 · Timeline</div>
+          <h2 class="section-title">Phase-by-phase timeline</h2>
+          <p class="section-lead">
+            Each phase lists its task IDs, the most material deliverables, and a
+            milestone gate. Tasks are described in full in the plan document; the
+            list below is the orientation map.
+          </p>
+
+          <div class="phase planned">
+            <div class="phase-head">
+              <span class="phase-id">D1</span>
+              <span class="phase-title">Schema migration + bypass smoke</span>
+              <span class="phase-est">T1–T11 · ~2–3h</span>
+            </div>
+            <div class="phase-body">
+              <p>Lay the schema in one migration. Confirm the bridge bypass mechanism works in isolation before touching any UI.</p>
+              <div class="phase-tasks">
+                <strong>Tasks</strong>
+                <ul>
+                  <li><span class="task-id">T1</span> Migration header + is_historical flags + birthdate CHECK + partial indexes</li>
+                  <li><span class="task-id">T2</span> Four new tables (runs · staging · provider_aliases · service_aliases)</li>
+                  <li><span class="task-id">T3</span> Subledger extension + new je_source_kind value</li>
+                  <li><span class="task-id">T4</span> Bridge bypass: bridge_payment_insert</li>
+                  <li><span class="task-id">T5</span> Bridge bypass: bridge_hmo_claim_resolution_insert</li>
+                  <li><span class="task-id">T6</span> RLS policies on the four new tables</li>
+                  <li><span class="task-id">T7</span> Install exceljs + csv-parse</li>
+                  <li><span class="task-id">T8</span> Write the D1 smoke SQL (bypass mechanism only)</li>
+                  <li><span class="task-id">T9</span> Apply migration locally + run smoke</li>
+                  <li><span class="task-id">T10</span> Regenerate TypeScript types</li>
+                  <li><span class="task-id">T11</span> Commit <code>feat(accounting): 12.A.1</code></li>
+                </ul>
+              </div>
+              <div class="phase-milestone">
+                <strong>Milestone</strong>
+                Bypass smoke prints both NOTICEs ("correctly skipped under flag" + "correctly fires when flag off"). Types clean. Tree clean.
+              </div>
+            </div>
+          </div>
+
+          <div class="phase planned">
+            <div class="phase-head">
+              <span class="phase-id">D2</span>
+              <span class="phase-title">Parser + Server Actions + Zod + pg-errors</span>
+              <span class="phase-est">T12–T20 · ~4–5h</span>
+            </div>
+            <div class="phase-body">
+              <p>Build all server-side moving parts in isolation. No UI yet; everything must be exercisable by manual Server Action call.</p>
+              <div class="phase-tasks">
+                <strong>Tasks</strong>
+                <ul>
+                  <li><span class="task-id">T12</span> excelSerialToISODate · parseDecimal · splitLastFirstName · normalizeName</li>
+                  <li><span class="task-id">T13</span> content-hash helper</li>
+                  <li><span class="task-id">T14</span> XLSX/CSV streaming parser with canonical header map</li>
+                  <li><span class="task-id">T15</span> HMO REFERENCE aging-block parser</li>
+                  <li><span class="task-id">T16</span> 7 Zod schemas in <code>src/lib/validations/accounting.ts</code></li>
+                  <li><span class="task-id">T17</span> P0013 + P0014 in <code>src/lib/accounting/pg-errors.ts</code></li>
+                  <li><span class="task-id">T18</span> <code>parseWorkbookAction</code> — file hash, chunked staging insert, aging stash</li>
+                  <li><span class="task-id">T19</span> <code>validateRunAction</code> — per-row + cross-row severities, reconciliation compute</li>
+                  <li><span class="task-id">T20</span> <code>mapProviderAliasAction</code> · <code>mapServiceAliasAction</code> · <code>discardRunAction</code> · commit D2</li>
+                </ul>
+              </div>
+              <div class="phase-milestone">
+                <strong>Milestone</strong>
+                <code>npm run typecheck && npm run lint</code> clean. All six Server Actions importable and callable from a node REPL or test harness.
+              </div>
+            </div>
+          </div>
+
+          <div class="phase planned">
+            <div class="phase-head">
+              <span class="phase-id">D3</span>
+              <span class="phase-title">Empty state + preview page + alias flow</span>
+              <span class="phase-est">T21–T27 · ~5–6h</span>
+            </div>
+            <div class="phase-body">
+              <p>Wire the UI to the Server Actions. Commit footer references a temporary <code>commitRunAction</code> stub that D4 replaces.</p>
+              <div class="phase-tasks">
+                <strong>Tasks</strong>
+                <ul>
+                  <li><span class="task-id">T21</span> Empty-state page · runs table · upload form (drop-zone + cutover picker)</li>
+                  <li><span class="task-id">T22</span> Preview page server load + preview-client wrapper + CountsPanel</li>
+                  <li><span class="task-id">T23</span> UnmappedProvidersPanel + UnmappedServicesPanel (inline mapping)</li>
+                  <li><span class="task-id">T24</span> ReconciliationPanel + ErrorsTable</li>
+                  <li><span class="task-id">T25</span> CommitFooter (sticky · PII ack · override reason)</li>
+                  <li><span class="task-id">T26</span> Mobile smoke at 390×844 in dev</li>
+                  <li><span class="task-id">T27</span> Commit <code>feat(accounting): 12.A.3</code></li>
+                </ul>
+              </div>
+              <div class="phase-milestone">
+                <strong>Milestone</strong>
+                Upload a workbook → preview renders all 7 sections → alias resolution works → no horizontal overflow at 390×844.
+              </div>
+            </div>
+          </div>
+
+          <div class="phase planned">
+            <div class="phase-head">
+              <span class="phase-id">D4</span>
+              <span class="phase-title">Commit function + post-commit UI + nav</span>
+              <span class="phase-est">T28–T33 · ~4–5h</span>
+            </div>
+            <div class="phase-body">
+              <p>The heart of the project. After D4 the end-to-end happy path works in dev.</p>
+              <div class="phase-tasks">
+                <strong>Tasks</strong>
+                <ul>
+                  <li><span class="task-id">T28</span> Migration 0036 — <code>commit_hmo_history_run()</code> SQL function</li>
+                  <li><span class="task-id">T29</span> Replace <code>commitRunAction</code> stub with the real call via <code>supabase.rpc</code></li>
+                  <li><span class="task-id">T30</span> Post-commit summary page with JE drill</li>
+                  <li><span class="task-id">T31</span> Sidebar nav entry "History import"</li>
+                  <li><span class="task-id">T32</span> Lint · typecheck · regen types</li>
+                  <li><span class="task-id">T33</span> Commit <code>feat(accounting): 12.A.4</code></li>
+                </ul>
+              </div>
+              <div class="phase-milestone">
+                <strong>Milestone</strong>
+                Run an end-to-end commit in dev: upload → resolve aliases → commit → post-commit page shows opening JEs · drill into one JE · DR 1110 / CR 3200 balanced.
+              </div>
+            </div>
+          </div>
+
+          <div class="phase planned">
+            <div class="phase-head">
+              <span class="phase-id">D5</span>
+              <span class="phase-title">Fixture + full smoke + tag v1.5.0</span>
+              <span class="phase-est">T34–T38 · ~3h</span>
+            </div>
+            <div class="phase-body">
+              <p>Ship-ready hardening. Fixture XLSX exercises 12 edge cases; SQL smoke runs 10 assertions; Playwright smoke walks the happy path at two viewports.</p>
+              <div class="phase-tasks">
+                <strong>Tasks</strong>
+                <ul>
+                  <li><span class="task-id">T34</span> Build the 50-row test fixture XLSX</li>
+                  <li><span class="task-id">T35</span> Full SQL smoke with 10 assertions + idempotency check</li>
+                  <li><span class="task-id">T36</span> Browser smoke at 390×844 and 1280×800</li>
+                  <li><span class="task-id">T37</span> Final checks + tag <code>v1.5.0</code></li>
+                  <li><span class="task-id">T38</span> Update memory pointer (12.A shipped · 12.C is next)</li>
+                </ul>
+              </div>
+              <div class="phase-milestone">
+                <strong>Milestone</strong>
+                <code>git tag v1.5.0</code> on the D5 commit. SQL smoke ends with `all 10 smoke assertions PASS`. Working tree clean.
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="risks">
+          <div class="section-eyebrow">05 · Risks &amp; dependencies</div>
+          <h2 class="section-title">What could derail the plan</h2>
+          <p class="section-lead">
+            Each risk is paired with the mitigation already baked into the plan
+            (task ID where it's addressed).
+          </p>
+
+          <div class="risks">
+            <div class="risk crit">
+              <div class="risk-head"><span class="risk-title">Bridge bypass leaks past the commit transaction</span><span class="risk-tag">critical</span></div>
+              <div class="risk-body"><strong>Mitigation:</strong> <code>SET LOCAL</code> in T28 limits to the transaction; T28 also explicitly unsets the flag before posting opening JEs (belt-and-braces). D1 smoke (T8/T9) confirms the mechanism in isolation before any UI work touches it.</div>
+            </div>
+            <div class="risk crit">
+              <div class="risk-head"><span class="risk-title">Service-role client used from client code</span><span class="risk-tag">critical</span></div>
+              <div class="risk-body"><strong>Mitigation:</strong> Every Server Action in T18–T20 + T29 starts with <code>"use server"</code>. The admin client is imported only from <code>actions.ts</code>; client components call through Server Actions.</div>
+            </div>
+            <div class="risk">
+              <div class="risk-head"><span class="risk-title">HMO REFERENCE aging-block layout drift from spec §3</span><span class="risk-tag">warn</span></div>
+              <div class="risk-body"><strong>Mitigation:</strong> T15 ships a "scan for max numeric value" fallback so reconciliation degrades gracefully if the column layout shifts; the implementer refines against the live workbook during D2. Spec §17 documents this as an accepted deferred refinement.</div>
+            </div>
+            <div class="risk">
+              <div class="risk-head"><span class="risk-title">Workbook header drift breaks parsing silently</span><span class="risk-tag">warn</span></div>
+              <div class="risk-body"><strong>Mitigation:</strong> T14 asserts canonical headers at row 1 of each tab; mismatch returns a precise error message naming the missing columns.</div>
+            </div>
+            <div class="risk">
+              <div class="risk-head"><span class="risk-title">Concurrent imports collide</span><span class="risk-tag">warn</span></div>
+              <div class="risk-body"><strong>Mitigation:</strong> T28's commit function takes <code>pg_advisory_xact_lock(hashtext('hmo_history_import'))</code>. Second concurrent commit waits or aborts cleanly.</div>
+            </div>
+            <div class="risk info">
+              <div class="risk-head"><span class="risk-title">Reception sees thousands of historical patients</span><span class="risk-tag">manageable</span></div>
+              <div class="risk-body"><strong>Mitigation:</strong> T1 adds partial indexes <code>where is_historical = false</code> to back the reception filters. Operational pages must add <code>WHERE is_historical = false</code> in queries (spec §5A enumerates the affected routes).</div>
+            </div>
+            <div class="risk info">
+              <div class="risk-head"><span class="risk-title">Re-import accidentally changes existing patients</span><span class="risk-tag">manageable</span></div>
+              <div class="risk-body"><strong>Mitigation:</strong> T28 step 1 uses <code>ON CONFLICT (last_name, first_name) WHERE is_historical = true DO NOTHING</code> — never touches operational patients.</div>
+            </div>
+            <div class="risk info">
+              <div class="risk-head"><span class="risk-title">Cutover lands in a closed period</span><span class="risk-tag">manageable</span></div>
+              <div class="risk-body"><strong>Mitigation:</strong> DB period-guard P0001 trigger refuses the opening JE; T29 surfaces the error through translatePgError, commit rolls back. Admin reopens via <code>/staff/admin/accounting/periods</code> and re-commits.</div>
+            </div>
+          </div>
+
+          <h3 class="sub">Dependencies</h3>
+          <ul style="margin:0 0 0 18px;font-size:14px;color:var(--ink-mid);">
+            <li>12.1 GL foundation (v1.2.0) — CoA codes 1110 / 3200 must exist; period model</li>
+            <li>12.2 Op→GL bridge (v1.3.0) — bridge function we modify, payment_method_account_map seeded with <code>'hmo'</code></li>
+            <li>12.3 HMO AR subledger (v1.4.0) — schema target (batches / items / allocations); aging views</li>
+            <li>Helper modules: <code>src/lib/dates/manila.ts</code>, <code>src/lib/audit/log.ts</code>, <code>src/lib/auth/require-admin.ts</code>, <code>src/lib/supabase/admin.ts</code></li>
+            <li>Admin MFA already required for <code>/staff/admin/*</code> (project memory <code>project_admin_mfa.md</code>)</li>
+          </ul>
+        </section>
+
+        <section class="section" id="execution">
+          <div class="section-eyebrow">06 · Handoff</div>
+          <h2 class="section-title">Execution options</h2>
+          <p class="section-lead">
+            The plan document is the source of truth for execution. Two
+            execution modes are available; the recommended one for this size of
+            change is subagent-driven.
+          </p>
+
+          <div class="callout ok">
+            <span class="callout-label">Recommended · Subagent-driven</span>
+            <p>
+              <strong>One fresh subagent per task</strong>, reviewed between tasks.
+              Fast iteration, narrow context window per subagent, clear blast
+              radius. Requires the orchestrator to apply the
+              <code>superpowers:subagent-driven-development</code> sub-skill.
+            </p>
+          </div>
+
+          <div class="callout">
+            <span class="callout-label">Alternative · Inline execution</span>
+            <p>
+              Execute tasks in the current session with batch checkpoints for
+              review. Slower context-wise, but simpler tooling. Requires
+              <code>superpowers:executing-plans</code>.
+            </p>
+          </div>
+        </section>
+
+        <footer class="foot">
+          <p>
+            <strong style="color:var(--navy);">Plan:</strong>
+            <code>docs/superpowers/plans/2026-05-14-12.A-hmo-history-import.md</code>
+            ·
+            <strong style="color:var(--navy);">Spec:</strong>
+            <code>docs/superpowers/specs/2026-05-14-12.A-hmo-history-import-design.md</code>
+            ·
+            <strong style="color:var(--navy);">Author:</strong> ianjamila
+          </p>
+        </footer>
+      </main>
+    </div>
+  </body>
+</html>
