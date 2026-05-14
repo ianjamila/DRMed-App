@@ -76,12 +76,17 @@ export function PreviewClient({ run, staging, reconciliation, providers, service
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [validationData, setValidationData] = useState<ValidationData | null>(null);
+  const [discardError, setDiscardError] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     startTransition(async () => {
       const res = await validateRunAction({ run_id: run.id });
-      if (res.ok) setValidationData(res.data);
+      if (!cancelled && res.ok) setValidationData(res.data);
     });
+    return () => {
+      cancelled = true;
+    };
   }, [run.id]);
 
   const skipPostCutover = staging.filter((r) => r.status === "skipped_post_cutover").length;
@@ -138,6 +143,15 @@ export function PreviewClient({ run, staging, reconciliation, providers, service
 
       <ErrorsTable errors={errors} />
 
+      {discardError && (
+        <div
+          className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800 mb-4"
+          role="alert"
+        >
+          Discard failed: {discardError}
+        </div>
+      )}
+
       <CommitFooter
         run={run}
         blockers={{
@@ -149,7 +163,12 @@ export function PreviewClient({ run, staging, reconciliation, providers, service
           ).length,
         }}
         onDiscarded={async () => {
-          await discardRunAction({ run_id: run.id });
+          setDiscardError(null);
+          const res = await discardRunAction({ run_id: run.id });
+          if (!res.ok) {
+            setDiscardError(res.error);
+            return;
+          }
           router.push("/staff/admin/accounting/hmo-history");
         }}
         onCommitted={() =>

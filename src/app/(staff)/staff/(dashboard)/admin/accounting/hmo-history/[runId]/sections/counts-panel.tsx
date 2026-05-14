@@ -22,13 +22,13 @@ export function CountsPanel({
       label: "Parsed",
       value: parsed,
       color: "bg-blue-50 border-blue-200 text-blue-900",
-      href: "#errors",
+      href: "#",
     },
     {
       label: "Skipped post-cutover",
       value: skippedPostCutover,
       color: "bg-gray-50 border-gray-200 text-gray-700",
-      href: "#errors",
+      href: "#",
     },
     {
       label: "Errors",

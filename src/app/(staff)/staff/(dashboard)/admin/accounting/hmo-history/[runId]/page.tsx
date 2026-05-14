@@ -37,7 +37,7 @@ export default async function PreviewPage({
       "provider_name_raw, service_name_raw, source_tab, status, validation_errors, source_date, source_row_no, billed_amount",
     )
     .eq("run_id", runId)
-    .limit(20_000);
+    .limit(50_000);
 
   // Provider + service dropdown options for the alias-mapping panels.
   const [providersR, servicesR] = await Promise.all([
