@@ -6,6 +6,8 @@
 // Keep all styling self-contained here. @react-pdf/renderer uses StyleSheet,
 // not Tailwind, so the brand palette is duplicated as plain hex values.
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   Document,
   Page,
@@ -14,7 +16,7 @@ import {
   Image,
   StyleSheet,
 } from "@react-pdf/renderer";
-import { CONTACT, SITE } from "@/lib/marketing/site";
+import { SITE } from "@/lib/marketing/site";
 import {
   calculateAge,
   calculateAgeMonths,
@@ -27,9 +29,14 @@ import {
   type ParamValue,
 } from "./types";
 
+// Read the logo bytes once at module load. The file is small (~400KB) and
+// this runs on the Node server, so it's safe in Server Components / Server
+// Actions. If a deployment target ever blocks fs access we can switch to a
+// base64-encoded inline string, but for Vercel this is fine.
+const LOGO_BYTES = readFileSync(join(process.cwd(), "public", "logo.png"));
+
 const C = {
   navy: "#284570",
-  cyan: "#06aef1",
   ink: "#111827",
   inkSoft: "#374151",
   inkMuted: "#6b7280",
@@ -38,6 +45,7 @@ const C = {
   bgSoft: "#f0f6fc",
   flag: "#b91c1c",
   watermark: "#cbd5e1",
+  rule: "#9aa6b8",
 } as const;
 
 const styles = StyleSheet.create({
@@ -61,92 +69,94 @@ const styles = StyleSheet.create({
     letterSpacing: 8,
     fontFamily: "Helvetica-Bold",
   },
+
+  // ── Letterhead ─────────────────────────────────────────────────────────
   letterhead: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "flex-start",
-    paddingBottom: 8,
-    borderBottomWidth: 2,
-    borderBottomColor: C.navy,
+    paddingBottom: 4,
   },
-  clinicName: {
-    fontSize: 16,
-    fontFamily: "Helvetica-Bold",
-    color: C.navy,
-    letterSpacing: 0.5,
+  logo: {
+    width: 140,
+    height: 54,
+    objectFit: "contain",
   },
-  clinicMeta: {
-    marginTop: 2,
-    fontSize: 8,
-    color: C.inkMuted,
-    lineHeight: 1.4,
-  },
-  controlBlock: {
+  addressBlock: {
     alignItems: "flex-end",
+    maxWidth: 240,
   },
-  controlLabel: {
-    fontSize: 7,
+  addressLine: {
+    fontSize: 9,
     color: C.inkMuted,
-    textTransform: "uppercase",
-    letterSpacing: 1,
-  },
-  controlNo: {
-    fontSize: 13,
     fontFamily: "Helvetica-Bold",
-    color: C.navy,
-    marginTop: 1,
-  },
-  controlDate: {
-    fontSize: 8,
-    color: C.inkSoft,
-    marginTop: 2,
+    textAlign: "right",
+    lineHeight: 1.4,
+    letterSpacing: 0.3,
   },
 
-  patientBlock: {
-    marginTop: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    backgroundColor: C.bgSoft,
-    borderLeftWidth: 3,
-    borderLeftColor: C.cyan,
-    flexDirection: "row",
-    justifyContent: "space-between",
-  },
-  patientCol: {
+  // ── Patient info grid ─────────────────────────────────────────────────
+  patientGrid: {
+    marginTop: 10,
     flexDirection: "column",
   },
+  patientRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    paddingVertical: 3,
+  },
+  patientCell: {
+    flexDirection: "row",
+    alignItems: "baseline",
+  },
   patientLabel: {
-    fontSize: 7,
-    color: C.inkMuted,
+    fontFamily: "Helvetica-Bold",
+    fontSize: 9,
+    color: C.ink,
     textTransform: "uppercase",
-    letterSpacing: 1,
+    letterSpacing: 0.3,
+    marginRight: 4,
   },
   patientValue: {
-    fontSize: 10,
-    color: C.navy,
-    fontFamily: "Helvetica-Bold",
+    fontSize: 9.5,
+    color: C.ink,
+    fontFamily: "Helvetica",
+  },
+  patientSubline: {
+    fontSize: 8,
+    color: C.inkMuted,
     marginTop: 1,
   },
-  patientSub: {
-    fontSize: 8,
-    color: C.inkSoft,
-    marginTop: 1,
+  hr: {
+    marginTop: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: C.rule,
+  },
+  navyRule: {
+    borderBottomWidth: 1,
+    borderBottomColor: C.navy,
   },
 
+  // ── Section title band ────────────────────────────────────────────────
+  sectionTitleBand: {
+    paddingVertical: 6,
+    alignItems: "center",
+  },
   testTitle: {
-    marginTop: 16,
     textAlign: "center",
-    fontSize: 14,
+    fontSize: 15,
     fontFamily: "Helvetica-Bold",
     color: C.navy,
-    letterSpacing: 0.4,
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
   },
   testCode: {
-    marginTop: 1,
+    marginTop: 2,
     textAlign: "center",
     fontSize: 8,
     color: C.inkMuted,
     fontFamily: "Helvetica",
+    letterSpacing: 0.4,
   },
   headerNotes: {
     marginTop: 6,
@@ -156,24 +166,30 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
 
-  // Generic table row primitives.
+  // ── Tables ────────────────────────────────────────────────────────────
   table: {
-    marginTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: C.borderStrong,
+    marginTop: 10,
   },
   tr: {
     flexDirection: "row",
     borderBottomWidth: 1,
     borderBottomColor: C.border,
-    minHeight: 18,
+    minHeight: 20,
     alignItems: "center",
   },
   trHead: {
     flexDirection: "row",
     backgroundColor: C.navy,
-    minHeight: 20,
+    minHeight: 22,
     alignItems: "center",
+  },
+  trSubHead: {
+    flexDirection: "row",
+    backgroundColor: C.navy,
+    minHeight: 18,
+    alignItems: "center",
+    borderTopWidth: 1,
+    borderTopColor: "#ffffff",
   },
   thText: {
     color: "#ffffff",
@@ -185,7 +201,7 @@ const styles = StyleSheet.create({
   },
   td: {
     paddingHorizontal: 6,
-    paddingVertical: 4,
+    paddingVertical: 7,
     fontSize: 9,
   },
   tdMono: {
@@ -200,6 +216,15 @@ const styles = StyleSheet.create({
   tdAbnormal: {
     color: C.flag,
     fontFamily: "Helvetica-Bold",
+  },
+  flagBadge: {
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    fontSize: 8,
+    fontFamily: "Helvetica-Bold",
+    color: C.flag,
+    textAlign: "center",
+    textTransform: "uppercase",
   },
 
   sectionHeaderRow: {
@@ -270,36 +295,71 @@ const styles = StyleSheet.create({
     fontStyle: "italic",
   },
 
-  footerNotes: {
-    marginTop: 14,
-    fontSize: 8.5,
+  // ── Remarks block ─────────────────────────────────────────────────────
+  remarksBlock: {
+    marginTop: 16,
+  },
+  remarksLabel: {
+    fontFamily: "Helvetica-Bold",
+    fontSize: 9.5,
+    color: C.navy,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+  },
+  remarksBody: {
+    marginTop: 4,
+    fontSize: 9,
     color: C.inkSoft,
     fontStyle: "italic",
+    minHeight: 24,
   },
 
+  // ── Signature block ───────────────────────────────────────────────────
   signatureBlock: {
-    marginTop: 16,
+    marginTop: 36,
     flexDirection: "row",
-    justifyContent: "flex-end",
+    justifyContent: "space-between",
   },
   signatureCol: {
-    minWidth: 220,
+    flex: 1,
     alignItems: "center",
-    borderTopWidth: 1,
-    borderTopColor: C.borderStrong,
-    paddingTop: 4,
+    paddingHorizontal: 4,
+  },
+  signatureNameRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    justifyContent: "center",
+    width: "100%",
+    minHeight: 16,
   },
   signatureName: {
     fontFamily: "Helvetica-Bold",
-    fontSize: 10,
-    color: C.navy,
+    fontSize: 9.5,
+    color: C.ink,
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
+    textAlign: "center",
+  },
+  signatureUnderline: {
+    marginTop: 2,
+    width: "85%",
+    borderBottomWidth: 1,
+    borderBottomColor: C.borderStrong,
+  },
+  signatureRole: {
+    marginTop: 3,
+    fontFamily: "Helvetica-Bold",
+    fontSize: 9,
+    color: C.ink,
     textTransform: "uppercase",
     letterSpacing: 0.5,
+    textAlign: "center",
   },
-  signatureMeta: {
-    marginTop: 2,
+  signatureLicense: {
+    marginTop: 1,
     fontSize: 8,
     color: C.inkSoft,
+    textAlign: "center",
   },
 
   pageFooter: {
@@ -324,84 +384,181 @@ const COLS = {
   dualUnit: {
     test: 0.18,
     siResult: 0.12,
+    siFlag: 0.06,
     siUnit: 0.1,
-    siRange: 0.18,
+    siRange: 0.14,
     convResult: 0.12,
+    convFlag: 0.06,
     convUnit: 0.1,
-    convRange: 0.2,
+    convRange: 0.12,
   },
   multi: { test: 0.42, result: 0.18, flag: 0.08, unit: 0.12, ref: 0.2 },
 } as const;
 
 // ---------------------------------------------------------------------------
+// Date formatting helpers
+// ---------------------------------------------------------------------------
+
+const MONTHS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+] as const;
+
+// Format a JS Date as DD-MMM-YYYY in Asia/Manila — matches the reference's
+// "15-May-2026" / "21-Nov-1951" styling.
+function formatDateManila(d: Date | null): string {
+  if (!d) return "";
+  // Use Intl to derive Manila Y/M/D then assemble in our own format.
+  const fmt = new Intl.DateTimeFormat("en-PH", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const parts = fmt.formatToParts(d);
+  const y = parts.find((p) => p.type === "year")?.value ?? "";
+  const m = parts.find((p) => p.type === "month")?.value ?? "";
+  const day = parts.find((p) => p.type === "day")?.value ?? "";
+  const monthIdx = Math.max(0, Math.min(11, Number(m) - 1));
+  return `${day}-${MONTHS[monthIdx]}-${y}`;
+}
+
+// Format an ISO date string (e.g. patient.birthdate "1985-04-12") as
+// DD-MMM-YYYY without applying timezone shifts that could change the day.
+function formatIsoDate(iso: string | null): string {
+  if (!iso) return "";
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!m) return "";
+  const [, yy, mm, dd] = m;
+  const idx = Math.max(0, Math.min(11, Number(mm) - 1));
+  return `${dd}-${MONTHS[idx]}-${yy}`;
+}
+
+// ---------------------------------------------------------------------------
 // Header / footer building blocks (shared across layouts)
 // ---------------------------------------------------------------------------
 
-function Letterhead({
-  controlNo,
-  finalisedAt,
-}: {
-  controlNo: number | null;
-  finalisedAt: Date | null;
-}) {
+function Letterhead() {
   return (
     <View style={styles.letterhead}>
-      <View>
-        <Text style={styles.clinicName}>{SITE.name}</Text>
-        <Text style={styles.clinicMeta}>
-          {CONTACT.address.line1}
-          {"\n"}
-          {CONTACT.address.line2}, {CONTACT.address.city}
-          {"\n"}
-          Tel {CONTACT.phone.landline} · Mobile {CONTACT.phone.mobile} ·{" "}
-          {CONTACT.email}
-        </Text>
-      </View>
-      <View style={styles.controlBlock}>
-        <Text style={styles.controlLabel}>Control No.</Text>
-        <Text style={styles.controlNo}>
-          {controlNo == null ? "—" : controlNo.toString().padStart(6, "0")}
-        </Text>
-        {finalisedAt ? (
-          <Text style={styles.controlDate}>
-            {finalisedAt.toLocaleString("en-PH", {
-              year: "numeric",
-              month: "short",
-              day: "numeric",
-              hour: "numeric",
-              minute: "2-digit",
-            })}
-          </Text>
-        ) : null}
+      {/* eslint-disable-next-line jsx-a11y/alt-text */}
+      <Image src={LOGO_BYTES} style={styles.logo} />
+      <View style={styles.addressBlock}>
+        <Text style={styles.addressLine}>4/F NORTHRIDGE PLAZA,</Text>
+        <Text style={styles.addressLine}>CONGRESSIONAL AVE., QUEZON CITY</Text>
+        <Text style={styles.addressLine}>(02) 8355 3517 / (0916) 604 3208</Text>
       </View>
     </View>
   );
 }
 
-function PatientBlock({
+function PatientInfoGrid({
   patient,
   visit,
-}: Pick<ResultDocumentInput, "patient" | "visit">) {
+  controlNo,
+  finalisedAt,
+}: Pick<ResultDocumentInput, "patient" | "visit" | "controlNo" | "finalisedAt">) {
   const age = calculateAge(patient.birthdate);
   const sexLabel =
-    patient.sex === "F" ? "Female" : patient.sex === "M" ? "Male" : "—";
+    patient.sex === "F" ? "FEMALE" : patient.sex === "M" ? "MALE" : "—";
+  const fullName = `${patient.last_name}, ${patient.first_name}`.toUpperCase();
+  const controlDisplay =
+    controlNo == null ? "—" : controlNo.toString();
+  const dateDisplay = formatDateManila(finalisedAt);
+  const birthdayDisplay = formatIsoDate(patient.birthdate);
+
+  // Some fields (CONTACT #, PHYSICIAN, SENIOR/PWD ID) aren't wired up in the
+  // ResultDocumentInput type yet — we render the label with an empty value,
+  // matching the reference's "CONTACT #:" empty case.
   return (
-    <View style={styles.patientBlock}>
-      <View style={styles.patientCol}>
-        <Text style={styles.patientLabel}>Patient</Text>
-        <Text style={styles.patientValue}>
-          {patient.last_name}, {patient.first_name}
-        </Text>
-        <Text style={styles.patientSub}>
-          {sexLabel}
-          {age != null ? ` · ${age} y/o` : ""}
+    <View style={styles.patientGrid}>
+      <View style={styles.patientRow}>
+        <View style={[styles.patientCell, { width: "50%" }]}>
+          <Text style={styles.patientLabel}>CONTROL NO:</Text>
+          <Text style={styles.patientValue}>{controlDisplay}</Text>
+        </View>
+        <View style={[styles.patientCell, { width: "50%" }]}>
+          <Text style={styles.patientLabel}>DATE:</Text>
+          <Text style={styles.patientValue}>{dateDisplay}</Text>
+        </View>
+      </View>
+      <View style={styles.patientRow}>
+        <View style={[styles.patientCell, { width: "100%" }]}>
+          <Text style={styles.patientLabel}>PATIENT NAME:</Text>
+          <Text style={styles.patientValue}>{fullName}</Text>
+        </View>
+      </View>
+      <View style={{ flexDirection: "row" }}>
+        <Text style={styles.patientSubline}>
+          {patient.drm_id} · Visit #{visit.visit_number}
         </Text>
       </View>
-      <View style={styles.patientCol}>
-        <Text style={styles.patientLabel}>DRM-ID</Text>
-        <Text style={styles.patientValue}>{patient.drm_id}</Text>
-        <Text style={styles.patientSub}>Visit #{visit.visit_number}</Text>
+      <View style={styles.patientRow}>
+        <View style={[styles.patientCell, { width: "34%" }]}>
+          <Text style={styles.patientLabel}>BIRTHDAY:</Text>
+          <Text style={styles.patientValue}>{birthdayDisplay}</Text>
+        </View>
+        <View style={[styles.patientCell, { width: "33%" }]}>
+          <Text style={styles.patientLabel}>GENDER:</Text>
+          <Text style={styles.patientValue}>{sexLabel}</Text>
+        </View>
+        <View style={[styles.patientCell, { width: "33%" }]}>
+          <Text style={styles.patientLabel}>CONTACT #:</Text>
+          <Text style={styles.patientValue}></Text>
+        </View>
       </View>
+      <View style={styles.patientRow}>
+        <View style={[styles.patientCell, { width: "34%" }]}>
+          <Text style={styles.patientLabel}>PHYSICIAN:</Text>
+          <Text style={styles.patientValue}></Text>
+        </View>
+        <View style={[styles.patientCell, { width: "33%" }]}>
+          <Text style={styles.patientLabel}>AGE:</Text>
+          <Text style={styles.patientValue}>{age != null ? String(age) : ""}</Text>
+        </View>
+        <View style={[styles.patientCell, { width: "33%" }]}>
+          <Text style={styles.patientLabel}>SENIOR / PWD ID:</Text>
+          <Text style={styles.patientValue}></Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function SectionTitle({
+  service,
+}: {
+  service: ResultDocumentInput["service"];
+}) {
+  return (
+    <View>
+      <View style={[styles.hr, styles.navyRule]} />
+      <View style={styles.sectionTitleBand}>
+        <Text style={styles.testTitle}>{service.name.toUpperCase()}</Text>
+        <Text style={styles.testCode}>{service.code}</Text>
+      </View>
+      <View style={[styles.hr, styles.navyRule, { marginTop: 0 }]} />
+    </View>
+  );
+}
+
+function SignatureColumn({
+  name,
+  role,
+  license,
+}: {
+  name: string;
+  role: string;
+  license: string;
+}) {
+  return (
+    <View style={styles.signatureCol}>
+      <View style={styles.signatureNameRow}>
+        <Text style={styles.signatureName}>{name}</Text>
+      </View>
+      <View style={styles.signatureUnderline} />
+      <Text style={styles.signatureRole}>{role}</Text>
+      <Text style={styles.signatureLicense}>{license}</Text>
     </View>
   );
 }
@@ -415,26 +572,29 @@ function SignatureBlock({
   // them (RMT vs RT).
   medtech: ResultDocumentInput["medtech"];
 }) {
-  if (!medtech) {
-    return (
-      <View style={styles.signatureBlock}>
-        <View style={styles.signatureCol}>
-          <Text style={styles.signatureName}>—</Text>
-          <Text style={styles.signatureMeta}>Technologist</Text>
-        </View>
-      </View>
-    );
-  }
+  // Pathologist and QC are visual placeholders until those sign-off roles
+  // ship. The medtech column comes from real data.
+  const medtechName = medtech?.full_name ?? "—";
+  const medtechLicense = medtech
+    ? `PRC License No. ${medtech.prc_license_no ?? "—"}`
+    : "PRC License No. —";
   return (
     <View style={styles.signatureBlock}>
-      <View style={styles.signatureCol}>
-        <Text style={styles.signatureName}>{medtech.full_name}</Text>
-        <Text style={styles.signatureMeta}>
-          {medtech.prc_license_kind ?? "—"}
-          {" · PRC License No. "}
-          {medtech.prc_license_no ?? "—"}
-        </Text>
-      </View>
+      <SignatureColumn
+        name="—"
+        role="Pathologist"
+        license="PRC License No. —"
+      />
+      <SignatureColumn
+        name={medtechName}
+        role="Medical Technologist"
+        license={medtechLicense}
+      />
+      <SignatureColumn
+        name="—"
+        role="Quality Control"
+        license="PRC License No. —"
+      />
     </View>
   );
 }
@@ -442,7 +602,7 @@ function SignatureBlock({
 function PageFooter() {
   return (
     <View style={styles.pageFooter} fixed>
-      <Text>{SITE.name} · {CONTACT.address.full}</Text>
+      <Text>{SITE.name}</Text>
       <Text
         render={({ pageNumber, totalPages }) =>
           `Page ${pageNumber} of ${totalPages}`
@@ -563,16 +723,18 @@ function SimpleTable({ params, values, ranges }: BodyContext) {
             >
               {displayValue(p, v)}
             </Text>
-            <Text
-              style={[
-                styles.td,
-                styles.tdBold,
-                ...(isAbnormal ? [styles.tdAbnormal] : []),
-                { width: `${COLS.simple.flag * 100}%`, textAlign: "center" },
-              ]}
+            <View
+              style={{
+                width: `${COLS.simple.flag * 100}%`,
+                alignItems: "center",
+              }}
             >
-              {flag ?? ""}
-            </Text>
+              {flag ? (
+                <Text style={styles.flagBadge}>{flag}</Text>
+              ) : (
+                <Text> </Text>
+              )}
+            </View>
             <Text
               style={[
                 styles.td,
@@ -599,17 +761,64 @@ function SimpleTable({ params, values, ranges }: BodyContext) {
 }
 
 // ---------------------------------------------------------------------------
-// Layout: dual_unit (SI + Conventional)
+// Layout: dual_unit (SI + Conventional) with parent column header band
 // ---------------------------------------------------------------------------
 
 function DualUnitTable({ params, values, ranges }: BodyContext) {
+  const siGroupWidth =
+    COLS.dualUnit.siResult +
+    COLS.dualUnit.siFlag +
+    COLS.dualUnit.siUnit +
+    COLS.dualUnit.siRange;
+  const convGroupWidth =
+    COLS.dualUnit.convResult +
+    COLS.dualUnit.convFlag +
+    COLS.dualUnit.convUnit +
+    COLS.dualUnit.convRange;
   return (
     <View style={styles.table}>
+      {/* Parent column header band: TEST | SYSTEM INTERNATIONAL | CONVENTIONAL */}
       <View style={styles.trHead}>
+        <Text
+          style={[
+            styles.thText,
+            {
+              width: `${COLS.dualUnit.test * 100}%`,
+              textAlign: "center",
+            },
+          ]}
+        >
+          Test
+        </Text>
+        <Text
+          style={[
+            styles.thText,
+            {
+              width: `${siGroupWidth * 100}%`,
+              textAlign: "center",
+            },
+          ]}
+        >
+          System International
+        </Text>
+        <Text
+          style={[
+            styles.thText,
+            {
+              width: `${convGroupWidth * 100}%`,
+              textAlign: "center",
+            },
+          ]}
+        >
+          Conventional
+        </Text>
+      </View>
+      {/* Sub-column header row */}
+      <View style={styles.trSubHead}>
         <Text
           style={[styles.thText, { width: `${COLS.dualUnit.test * 100}%` }]}
         >
-          Test
+          {" "}
         </Text>
         <Text
           style={[
@@ -620,7 +829,15 @@ function DualUnitTable({ params, values, ranges }: BodyContext) {
             },
           ]}
         >
-          SI
+          Result
+        </Text>
+        <Text
+          style={[
+            styles.thText,
+            { width: `${COLS.dualUnit.siFlag * 100}%`, textAlign: "center" },
+          ]}
+        >
+          Flag
         </Text>
         <Text
           style={[styles.thText, { width: `${COLS.dualUnit.siUnit * 100}%` }]}
@@ -641,7 +858,15 @@ function DualUnitTable({ params, values, ranges }: BodyContext) {
             },
           ]}
         >
-          Conv.
+          Result
+        </Text>
+        <Text
+          style={[
+            styles.thText,
+            { width: `${COLS.dualUnit.convFlag * 100}%`, textAlign: "center" },
+          ]}
+        >
+          Flag
         </Text>
         <Text
           style={[
@@ -669,7 +894,8 @@ function DualUnitTable({ params, values, ranges }: BodyContext) {
           );
         }
         const v = values[p.id];
-        const isAbnormal = !!v?.flag;
+        const flag = v?.flag ?? null;
+        const isAbnormal = !!flag;
         const eff = rangeFor(p, ranges);
         return (
           <View key={p.id} style={styles.tr}>
@@ -691,6 +917,18 @@ function DualUnitTable({ params, values, ranges }: BodyContext) {
             >
               {displayValueSi(v)}
             </Text>
+            <View
+              style={{
+                width: `${COLS.dualUnit.siFlag * 100}%`,
+                alignItems: "center",
+              }}
+            >
+              {flag ? (
+                <Text style={styles.flagBadge}>{flag}</Text>
+              ) : (
+                <Text> </Text>
+              )}
+            </View>
             <Text
               style={[
                 styles.td,
@@ -722,6 +960,18 @@ function DualUnitTable({ params, values, ranges }: BodyContext) {
             >
               {displayValueConv(v)}
             </Text>
+            <View
+              style={{
+                width: `${COLS.dualUnit.convFlag * 100}%`,
+                alignItems: "center",
+              }}
+            >
+              {flag ? (
+                <Text style={styles.flagBadge}>{flag}</Text>
+              ) : (
+                <Text> </Text>
+              )}
+            </View>
             <Text
               style={[
                 styles.td,
@@ -781,7 +1031,8 @@ function MultiSectionBody({ params, values, ranges }: BodyContext) {
           <View style={styles.table}>
             {g.rows.map((p) => {
               const v = values[p.id];
-              const isAbnormal = !!v?.flag;
+              const flag = v?.flag ?? null;
+              const isAbnormal = !!flag;
               const eff = rangeFor(p, ranges);
               return (
                 <View key={p.id} style={styles.tr}>
@@ -806,19 +1057,18 @@ function MultiSectionBody({ params, values, ranges }: BodyContext) {
                   >
                     {displayValue(p, v)}
                   </Text>
-                  <Text
-                    style={[
-                      styles.td,
-                      styles.tdBold,
-                      ...(isAbnormal ? [styles.tdAbnormal] : []),
-                      {
-                        width: `${COLS.multi.flag * 100}%`,
-                        textAlign: "center",
-                      },
-                    ]}
+                  <View
+                    style={{
+                      width: `${COLS.multi.flag * 100}%`,
+                      alignItems: "center",
+                    }}
                   >
-                    {v?.flag ?? ""}
-                  </Text>
+                    {flag ? (
+                      <Text style={styles.flagBadge}>{flag}</Text>
+                    ) : (
+                      <Text> </Text>
+                    )}
+                  </View>
                   <Text
                     style={[
                       styles.td,
@@ -911,6 +1161,19 @@ function ImagingBody({
 }
 
 // ---------------------------------------------------------------------------
+// Remarks block (sits between body and signatures)
+// ---------------------------------------------------------------------------
+
+function RemarksBlock({ notes }: { notes: string | null }) {
+  return (
+    <View style={styles.remarksBlock} wrap={false}>
+      <Text style={styles.remarksLabel}>REMARKS</Text>
+      <Text style={styles.remarksBody}>{notes?.trim() ?? ""}</Text>
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Top-level document
 // ---------------------------------------------------------------------------
 
@@ -936,14 +1199,16 @@ export function ResultDocument(input: ResultDocumentInput) {
           </Text>
         ) : null}
 
-        <Letterhead
+        <Letterhead />
+        <PatientInfoGrid
+          patient={input.patient}
+          visit={input.visit}
           controlNo={input.controlNo}
           finalisedAt={input.finalisedAt}
         />
-        <PatientBlock patient={input.patient} visit={input.visit} />
 
-        <Text style={styles.testTitle}>{input.service.name}</Text>
-        <Text style={styles.testCode}>{input.service.code}</Text>
+        <SectionTitle service={input.service} />
+
         {input.template.header_notes ? (
           <Text style={styles.headerNotes}>{input.template.header_notes}</Text>
         ) : null}
@@ -965,9 +1230,7 @@ export function ResultDocument(input: ResultDocumentInput) {
           />
         ) : null}
 
-        {input.template.footer_notes ? (
-          <Text style={styles.footerNotes}>{input.template.footer_notes}</Text>
-        ) : null}
+        <RemarksBlock notes={input.template.footer_notes} />
 
         <SignatureBlock medtech={input.medtech} />
         <PageFooter />
