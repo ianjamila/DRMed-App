@@ -1,21 +1,28 @@
 /**
- * Seeds result templates for every in-house service currently in the
- * catalog, so the medtech queue page never falls back to the generic PDF
- * upload form. Real production templates are still refined / extended via
- * the admin CRUD UI; this script just gets us a working baseline.
+ * Seeds result templates for the long-code service catalog so the medtech
+ * queue page never falls back to the generic PDF upload form.
  *
  *   npm run seed:templates
  *
  * Idempotent: removes the existing template + params for the target service
  * codes before re-inserting, so seed edits are safe to re-run.
  *
- * Templates seeded (all 12 in-house tests):
+ * Targets long-code services that reception/HMOs actually use day-to-day
+ * (`CBC_PC`, `FBS_RBS`, `LIPID_PROFILE`, `XRAY_CHEST_PA`, etc.). The compact
+ * codes (`CBC`, `FBS`, …) the previous seed targeted are `is_active=false`
+ * on prod and not what staff orders against.
+ *
+ * Templates seeded:
  *   Chemistry / Hematology — `simple`
- *     CBC, CREA, FBS, SGPT, SGOT, LIPID, THYROID, HBSAG
+ *     CBC_PC, CREATININE, FBS_RBS, SGPT_ALT, SGOT_AST,
+ *     LIPID_PROFILE, THYROID_FUNCTION_TSH_FT4, HBSAG_SCREENING
  *   Urinalysis              — `multi_section` (Physical / Chemical / Microscopic)
+ *     URINALYSIS
  *   Imaging                 — `imaging_report` (Findings + Impression text +
  *                              image attached at finalise)
- *     ECG, XRAYCHEST, USABDOMEN
+ *     ECG  (single service)
+ *     XRAY_*       — replicated across every active long-code XRAY service
+ *     ULTRASOUND_* — replicated across every active long-code US service
  *
  * Reference: drmed.ph LAB RESULTS FORM Sheet
  *   1UZrH4EYAkXiu5gMMQUJoAddpSqqwTmfrk1k8ykaqikQ
@@ -85,10 +92,10 @@ interface TemplateSeed {
 }
 
 // ---------------------------------------------------------------------------
-// CBC + Differential + RBC Indices  →  'simple'
+// CBC + PC (CBC_PC) — Complete Blood Count + Platelet Count  →  'simple'
 // ---------------------------------------------------------------------------
 const cbc: TemplateSeed = {
-  service_code: "CBC",
+  service_code: "CBC_PC",
   layout: "simple",
   params: [
     {
@@ -168,10 +175,10 @@ const cbc: TemplateSeed = {
 };
 
 // ---------------------------------------------------------------------------
-// CREA — Creatinine  →  'simple', gender-banded
+// CREATININE — Creatinine  →  'simple', gender-banded
 // ---------------------------------------------------------------------------
 const crea: TemplateSeed = {
-  service_code: "CREA",
+  service_code: "CREATININE",
   layout: "simple",
   params: [
     {
@@ -188,14 +195,15 @@ const crea: TemplateSeed = {
 };
 
 // ---------------------------------------------------------------------------
-// FBS — Fasting Blood Sugar  →  'simple'
+// FBS_RBS — Fasting / Random Blood Sugar  →  'simple'
+// Same numeric range applies to both fasting and random screens.
 // ---------------------------------------------------------------------------
 const fbs: TemplateSeed = {
-  service_code: "FBS",
+  service_code: "FBS_RBS",
   layout: "simple",
   params: [
     {
-      parameter_name: "Fasting Blood Sugar", input_type: "numeric",
+      parameter_name: "Blood Sugar (FBS / RBS)", input_type: "numeric",
       unit_si: "mg/dL",
       ref_low_si: 70, ref_high_si: 110,
     },
@@ -203,10 +211,10 @@ const fbs: TemplateSeed = {
 };
 
 // ---------------------------------------------------------------------------
-// SGPT (ALT)  →  'simple', gender-banded upper limit
+// SGPT_ALT (ALT)  →  'simple', gender-banded upper limit
 // ---------------------------------------------------------------------------
 const sgpt: TemplateSeed = {
-  service_code: "SGPT",
+  service_code: "SGPT_ALT",
   layout: "simple",
   params: [
     {
@@ -223,10 +231,10 @@ const sgpt: TemplateSeed = {
 };
 
 // ---------------------------------------------------------------------------
-// SGOT (AST)  →  'simple', gender-banded upper limit
+// SGOT_AST (AST)  →  'simple', gender-banded upper limit
 // ---------------------------------------------------------------------------
 const sgot: TemplateSeed = {
-  service_code: "SGOT",
+  service_code: "SGOT_AST",
   layout: "simple",
   params: [
     {
@@ -243,10 +251,10 @@ const sgot: TemplateSeed = {
 };
 
 // ---------------------------------------------------------------------------
-// LIPID — Lipid Profile  →  'simple', 5 params
+// LIPID_PROFILE — Lipid Profile  →  'simple', 5 params
 // ---------------------------------------------------------------------------
 const lipid: TemplateSeed = {
-  service_code: "LIPID",
+  service_code: "LIPID_PROFILE",
   layout: "simple",
   params: [
     {
@@ -281,10 +289,10 @@ const lipid: TemplateSeed = {
 };
 
 // ---------------------------------------------------------------------------
-// THYROID — Thyroid Function (TSH + FT4)  →  'simple'
+// THYROID_FUNCTION_TSH_FT4 — Thyroid Function (TSH + FT4)  →  'simple'
 // ---------------------------------------------------------------------------
 const thyroid: TemplateSeed = {
-  service_code: "THYROID",
+  service_code: "THYROID_FUNCTION_TSH_FT4",
   layout: "simple",
   params: [
     {
@@ -301,10 +309,10 @@ const thyroid: TemplateSeed = {
 };
 
 // ---------------------------------------------------------------------------
-// HBSAG — Hepatitis B Surface Antigen  →  'simple', select
+// HBSAG_SCREENING — Hepatitis B Surface Antigen  →  'simple', select
 // ---------------------------------------------------------------------------
 const hbsag: TemplateSeed = {
-  service_code: "HBSAG",
+  service_code: "HBSAG_SCREENING",
   layout: "simple",
   params: [
     {
@@ -372,6 +380,13 @@ const urinalysis: TemplateSeed = {
 // Two free-text params (Findings + Impression) + image attached at finalise
 // time. The image is uploaded to the `result-images` bucket and embedded in
 // the rendered PDF — see queue/[id]/actions.ts:finaliseStructuredAction.
+//
+// ECG has its own single-service template. X-ray and ultrasound modalities
+// share template shape but must be attached to each individual long-code
+// service row (e.g. XRAY_CHEST_PA, ULTRASOUND_WHOLE_ABDOMEN, etc.) — the
+// schema enforces one template per service_id, so the seed fans out at
+// runtime by querying the catalog. Placeholders are kept modality-generic
+// so a single shape applies across every body part the lab supports.
 // ---------------------------------------------------------------------------
 const ecg: TemplateSeed = {
   service_code: "ECG",
@@ -388,38 +403,32 @@ const ecg: TemplateSeed = {
   ],
 };
 
-const xrayChest: TemplateSeed = {
-  service_code: "XRAYCHEST",
-  layout: "imaging_report",
-  params: [
-    {
-      parameter_name: "Findings", input_type: "free_text",
-      placeholder: "Describe lung fields, mediastinum, heart size, bony thorax, etc.",
-    },
-    {
-      parameter_name: "Impression", input_type: "free_text",
-      placeholder: "Overall radiologic impression",
-    },
-  ],
-};
+const XRAY_IMAGING_PARAMS: ParamSeed[] = [
+  {
+    parameter_name: "Findings", input_type: "free_text",
+    placeholder:
+      "Describe the lung fields, mediastinum, heart size, bony thorax, and other relevant structures.",
+  },
+  {
+    parameter_name: "Impression", input_type: "free_text",
+    placeholder: "Overall radiologic impression",
+  },
+];
 
-const usAbdomen: TemplateSeed = {
-  service_code: "USABDOMEN",
-  layout: "imaging_report",
-  params: [
-    {
-      parameter_name: "Findings", input_type: "free_text",
-      placeholder:
-        "Describe liver, gallbladder, biliary tree, pancreas, spleen, kidneys, urinary bladder.",
-    },
-    {
-      parameter_name: "Impression", input_type: "free_text",
-      placeholder: "Sonographic impression",
-    },
-  ],
-};
+const ULTRASOUND_IMAGING_PARAMS: ParamSeed[] = [
+  {
+    parameter_name: "Findings", input_type: "free_text",
+    placeholder:
+      "Describe the liver, gallbladder, kidneys, urinary bladder, and other relevant organs / structures.",
+  },
+  {
+    parameter_name: "Impression", input_type: "free_text",
+    placeholder: "Sonographic impression",
+  },
+];
 
-const TEMPLATES: TemplateSeed[] = [
+// Fixed-service templates (one row per `service_code`).
+const FIXED_TEMPLATES: TemplateSeed[] = [
   cbc,
   crea,
   fbs,
@@ -430,8 +439,6 @@ const TEMPLATES: TemplateSeed[] = [
   hbsag,
   urinalysis,
   ecg,
-  xrayChest,
-  usAbdomen,
 ];
 
 async function findServiceId(code: string): Promise<string | null> {
@@ -443,63 +450,71 @@ async function findServiceId(code: string): Promise<string | null> {
   return data?.id ?? null;
 }
 
-async function upsertTemplate(t: TemplateSeed) {
-  const serviceId = await findServiceId(t.service_code);
-  if (!serviceId) {
-    console.warn(`! ${t.service_code}: no matching service — skipping`);
-    return;
-  }
-
-  // Wipe existing template. result_template_params has ON DELETE CASCADE,
-  // but result_values.parameter_id does NOT — if any historic result rows
-  // reference this template's params we have to clear those first or the
-  // delete fails silently inside @supabase/postgrest-js. This is a dev seed,
-  // so dropping orphaned result_values is the right call; production data
-  // would be touched only via the admin CRUD UI which does soft updates.
+/** Wipe any existing template + dependent result_values for `serviceId`. */
+async function clearExistingTemplate(serviceId: string, label: string) {
+  // result_template_params has ON DELETE CASCADE, but result_values.parameter_id
+  // does NOT — if any historic result rows reference this template's params we
+  // have to clear those first or the delete fails silently inside
+  // @supabase/postgrest-js. This is a dev seed, so dropping orphaned
+  // result_values is the right call; production data is touched only via the
+  // admin CRUD UI which does soft updates.
   const { data: priorTemplate } = await admin
     .from("result_templates")
     .select("id")
     .eq("service_id", serviceId)
     .maybeSingle();
-  if (priorTemplate?.id) {
-    const { data: priorParams } = await admin
-      .from("result_template_params")
-      .select("id")
-      .eq("template_id", priorTemplate.id);
-    const paramIds = (priorParams ?? []).map((r) => r.id);
-    if (paramIds.length > 0) {
-      const { error: rvErr } = await admin
-        .from("result_values")
-        .delete()
-        .in("parameter_id", paramIds);
-      if (rvErr) {
-        throw new Error(
-          `clear result_values for ${t.service_code}: ${rvErr.message}`,
-        );
-      }
-    }
-    const { error: delErr } = await admin
-      .from("result_templates")
+  if (!priorTemplate?.id) return;
+
+  const { data: priorParams } = await admin
+    .from("result_template_params")
+    .select("id")
+    .eq("template_id", priorTemplate.id);
+  const paramIds = (priorParams ?? []).map((r) => r.id);
+  if (paramIds.length > 0) {
+    const { error: rvErr } = await admin
+      .from("result_values")
       .delete()
-      .eq("id", priorTemplate.id);
-    if (delErr) {
-      throw new Error(`delete template ${t.service_code}: ${delErr.message}`);
+      .in("parameter_id", paramIds);
+    if (rvErr) {
+      throw new Error(`clear result_values for ${label}: ${rvErr.message}`);
     }
   }
+  const { error: delErr } = await admin
+    .from("result_templates")
+    .delete()
+    .eq("id", priorTemplate.id);
+  if (delErr) {
+    throw new Error(`delete template ${label}: ${delErr.message}`);
+  }
+}
 
+/**
+ * Insert a template + its params + any age-banded ranges for the given
+ * service. Caller is responsible for calling `clearExistingTemplate` first
+ * if the template might already exist.
+ */
+async function insertTemplate(
+  serviceId: string,
+  layout: Layout,
+  params: ParamSeed[],
+  label: string,
+  headerNotes: string | null = null,
+  footerNotes: string | null = null,
+): Promise<{ paramCount: number; rangeCount: number }> {
   const { data: tmpl, error: tErr } = await admin
     .from("result_templates")
     .insert({
       service_id: serviceId,
-      layout: t.layout,
-      header_notes: t.header_notes ?? null,
-      footer_notes: t.footer_notes ?? null,
+      layout,
+      header_notes: headerNotes,
+      footer_notes: footerNotes,
     })
     .select("id")
     .single();
-  if (tErr || !tmpl) throw new Error(`insert template ${t.service_code}: ${tErr?.message}`);
+  if (tErr || !tmpl)
+    throw new Error(`insert template ${label}: ${tErr?.message}`);
 
-  const rows = t.params.map((p, i) => ({
+  const rows = params.map((p, i) => ({
     template_id: tmpl.id,
     sort_order: i,
     section: p.section ?? null,
@@ -524,13 +539,13 @@ async function upsertTemplate(t: TemplateSeed) {
     .insert(rows)
     .select("id");
   if (pErr || !insertedParams)
-    throw new Error(`insert params ${t.service_code}: ${pErr?.message}`);
+    throw new Error(`insert params ${label}: ${pErr?.message}`);
 
   // Insert age-banded ranges for params that declared them. The .insert
-  // above returns rows in insertion order — match by index back to t.params.
+  // above returns rows in insertion order — match by index back to params.
   const rangeRows: TablesInsert<"result_template_param_ranges">[] = [];
   insertedParams.forEach((row, idx) => {
-    const seed = t.params[idx];
+    const seed = params[idx];
     if (!seed.ranges || seed.ranges.length === 0) return;
     seed.ranges.forEach((r, j) => {
       rangeRows.push({
@@ -552,22 +567,109 @@ async function upsertTemplate(t: TemplateSeed) {
     const { error: rErr } = await admin
       .from("result_template_param_ranges")
       .insert(rangeRows);
-    if (rErr) throw new Error(`insert ranges ${t.service_code}: ${rErr.message}`);
+    if (rErr)
+      throw new Error(`insert ranges ${label}: ${rErr.message}`);
   }
 
+  return { paramCount: rows.length, rangeCount: rangeRows.length };
+}
+
+async function seedFixedTemplate(t: TemplateSeed): Promise<boolean> {
+  const serviceId = await findServiceId(t.service_code);
+  if (!serviceId) {
+    if (t.service_code === "THYROID_FUNCTION_TSH_FT4") {
+      console.error(
+        `\nService THYROID_FUNCTION_TSH_FT4 not found — run \`npm run seed:services\` first.\n`,
+      );
+      process.exit(1);
+    }
+    console.warn(`! ${t.service_code}: no matching service — skipping`);
+    return false;
+  }
+
+  await clearExistingTemplate(serviceId, t.service_code);
+  const { paramCount, rangeCount } = await insertTemplate(
+    serviceId,
+    t.layout,
+    t.params,
+    t.service_code,
+    t.header_notes ?? null,
+    t.footer_notes ?? null,
+  );
+
   console.log(
-    `✓ seeded ${t.service_code} (${t.layout}) with ${rows.length} params${
-      rangeRows.length ? ` + ${rangeRows.length} age-banded ranges` : ""
+    `✓ seeded ${t.service_code} (${t.layout}) with ${paramCount} params${
+      rangeCount ? ` + ${rangeCount} age-banded ranges` : ""
     }`,
   );
+  return true;
+}
+
+async function seedImagingFanout(
+  section: "imaging_xray" | "imaging_ultrasound",
+  prefix: "XRAY_" | "ULTRASOUND_",
+  params: ParamSeed[],
+): Promise<number> {
+  // Filter by `section` rather than `code LIKE 'XRAY_%'` — PostgREST's
+  // `.like()` treats `_` as a single-char wildcard with no escape mechanism,
+  // so `XRAY_%` would also match the compact-code `XRAYCHEST` row. The
+  // importer sets section=imaging_xray / imaging_ultrasound for every
+  // long-code imaging service, and the compact codes seeded by
+  // `seed-services.ts` have section=NULL, so this filter is clean.
+  const { data: matched, error } = await admin
+    .from("services")
+    .select("id, code")
+    .eq("section", section)
+    .eq("is_active", true)
+    .order("code");
+  if (error) {
+    throw new Error(`look up section=${section} services: ${error.message}`);
+  }
+  const services = matched ?? [];
+  if (services.length === 0) {
+    console.warn(
+      `! no active services with section='${section}' — skipping ${prefix.replace(/_$/, "")} fanout`,
+    );
+    return 0;
+  }
+
+  for (const svc of services) {
+    await clearExistingTemplate(svc.id, svc.code);
+    await insertTemplate(
+      svc.id,
+      "imaging_report",
+      params,
+      svc.code,
+    );
+  }
+  console.log(
+    `✓ seeded ${services.length} ${prefix}* services with imaging_report template`,
+  );
+  return services.length;
 }
 
 async function main() {
-  console.log(`Seeding ${TEMPLATES.length} result templates...`);
-  for (const t of TEMPLATES) {
-    await upsertTemplate(t);
+  console.log("Seeding result templates against long-code service catalog...");
+
+  let total = 0;
+  for (const t of FIXED_TEMPLATES) {
+    const ok = await seedFixedTemplate(t);
+    if (ok) total += 1;
   }
-  console.log("Done.");
+
+  const xrayCount = await seedImagingFanout(
+    "imaging_xray",
+    "XRAY_",
+    XRAY_IMAGING_PARAMS,
+  );
+  const usCount = await seedImagingFanout(
+    "imaging_ultrasound",
+    "ULTRASOUND_",
+    ULTRASOUND_IMAGING_PARAMS,
+  );
+  total += xrayCount + usCount;
+
+  console.log(`Total: ${total} templates seeded.`);
 }
 
 main().catch((err) => {

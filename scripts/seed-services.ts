@@ -84,6 +84,20 @@ const services: ServiceSeed[] = [
     kind: "lab_package",
   },
   {
+    // Long-code panel that matches what reception orders day-to-day. The CSV
+    // catalog only has separate TSH and FT4 services; this row gives us a
+    // combined "Thyroid Function (TSH, FT4)" line item under the standardised
+    // long-code namespace. Conservative ₱685 price matches the historical
+    // mastersheet TSH line items; admin can edit via CRUD.
+    code: "THYROID_FUNCTION_TSH_FT4",
+    name: "Thyroid Function (TSH, FT4)",
+    description:
+      "TSH and FT4 combined panel — evaluates thyroid function in one order.",
+    price_php: 685,
+    turnaround_hours: 24,
+    kind: "lab_package",
+  },
+  {
     code: "CREA",
     name: "Creatinine",
     description: "Kidney-function screening; commonly paired with BUN.",
