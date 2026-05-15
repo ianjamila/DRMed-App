@@ -175,9 +175,12 @@ export function StructuredResultForm(props: Props) {
         return;
       }
       // Finalise — wrap payload in FormData so we can carry the optional
-      // image File alongside the values JSON.
+      // image File alongside the values JSON. The "values" field carries
+      // the full `{ values: ... }` payload shape (matches what
+      // saveDraftAction takes) so finaliseStructuredAction's JSON parse
+      // can read `parsed.values` directly.
       const fd = new FormData();
-      fd.append("values", JSON.stringify(buildPayload().values));
+      fd.append("values", JSON.stringify(buildPayload()));
       if (props.layout === "imaging_report" && image) {
         fd.append("image", image);
       }
