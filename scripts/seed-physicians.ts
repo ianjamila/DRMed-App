@@ -15,6 +15,7 @@
  */
 import { createClient } from "@supabase/supabase-js";
 import type { Database, TablesInsert } from "../src/types/database";
+import { requireLocalOrExplicitProd } from "./lib/env-guard";
 
 // Bootstrap roster — mirrors the original drmed.ph physician-schedule page.
 // Once seeded into the DB, ongoing edits happen via /staff/admin/physicians.
@@ -200,6 +201,8 @@ if (!SUPABASE_URL || !SERVICE_KEY) {
   );
   process.exit(1);
 }
+
+requireLocalOrExplicitProd("seed:physicians");
 
 const admin = createClient<Database>(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },

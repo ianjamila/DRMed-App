@@ -8,6 +8,7 @@
  */
 import { createClient } from "@supabase/supabase-js";
 import type { Database, TablesInsert } from "../src/types/database";
+import { requireLocalOrExplicitProd } from "./lib/env-guard";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -15,6 +16,8 @@ if (!SUPABASE_URL || !SERVICE_KEY) {
   console.error("Set NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env.local");
   process.exit(1);
 }
+
+requireLocalOrExplicitProd("seed:hmo");
 
 const admin = createClient<Database>(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
