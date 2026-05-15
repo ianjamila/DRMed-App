@@ -5,15 +5,42 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { amendResultAction, type AmendResult } from "./actions";
+import { StructuredResultForm } from "./structured-form";
+import type {
+  ParamValue,
+  PatientSex,
+  ResultLayout,
+  TemplateParam,
+} from "@/lib/results/types";
 
 interface Props {
   testRequestId: string;
+  // 'uploaded' renders the PDF-replace form (unchanged behaviour).
+  // 'structured' renders the StructuredResultForm in amend mode so the
+  // medtech can edit per-parameter values and regenerate the PDF.
+  generationKind: "uploaded" | "structured";
+  // Only used when generationKind === 'structured'. Reuses the same data
+  // the finalise flow loads in page.tsx.
+  structured?: {
+    layout: ResultLayout;
+    params: TemplateParam[];
+    patientSex: PatientSex;
+    patientAgeMonths: number | null;
+    initialValues: Record<string, ParamValue>;
+    currentImageFilename: string | null;
+  };
 }
 
 // Amend-an-already-released-result form. Toggle hides behind a small
 // "Amend result" link so it doesn't add visual weight on the common
 // "look at the result" path. Reason is mandatory and audit-logged.
-export function AmendResultForm({ testRequestId }: Props) {
+// Branches on generationKind: uploaded → PDF replace, structured → re-open
+// the structured form pre-filled with current values.
+export function AmendResultForm({
+  testRequestId,
+  generationKind,
+  structured,
+}: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [pending, start] = useTransition();
@@ -28,6 +55,45 @@ export function AmendResultForm({ testRequestId }: Props) {
       >
         Amend result…
       </button>
+    );
+  }
+
+  if (generationKind === "structured" && structured) {
+    return (
+      <div className="grid gap-3 rounded-md border border-amber-300 bg-amber-50/60 p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wider text-amber-900">
+              Amend structured result
+            </p>
+            <p className="mt-1 text-xs text-amber-900">
+              Edit the values below and add a reason. The current PDF,
+              values{structured.layout === "imaging_report" ? ", and image" : ""}
+              {" "}are snapshotted to the amendment history; the regenerated
+              PDF replaces them as the canonical version. Patients with the
+              prior PDF already downloaded need to be notified manually.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setOpen(false)}
+          >
+            Cancel
+          </Button>
+        </div>
+        <StructuredResultForm
+          testRequestId={testRequestId}
+          layout={structured.layout}
+          params={structured.params}
+          patientSex={structured.patientSex}
+          patientAgeMonths={structured.patientAgeMonths}
+          initial={structured.initialValues}
+          alreadyFinalised={false}
+          mode="amend"
+          currentImageFilename={structured.currentImageFilename}
+        />
+      </div>
     );
   }
 

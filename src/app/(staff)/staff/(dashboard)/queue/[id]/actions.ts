@@ -945,6 +945,520 @@ export async function amendResultAction(
   return { ok: true };
 }
 
+// ---------------------------------------------------------------------------
+// Structured-result amendment
+// ---------------------------------------------------------------------------
+// When a finalised structured result needs correction, the medtech re-opens
+// the structured form pre-filled with the current values, edits, and
+// submits with a reason. The amendment snapshots the prior values + prior
+// PDF + prior image into result_amendments, regenerates the PDF from the
+// new values, and re-uploads as .v{N+1}.pdf. The prior PDF stays at the
+// original storage_path for historical access via prior_storage_path.
+//
+// Distinct from amendResultAction (PDF-replace) which is unchanged — that
+// path remains for generation_kind = 'uploaded' results (send-out PDFs).
+export async function amendStructuredResultAction(
+  testRequestId: string,
+  formData: FormData,
+): Promise<StructuredResult> {
+  // 1) Parse + validate the FormData fields. Same wording / thresholds as
+  //    amendResultAction so errors are consistent across the two paths.
+  const raw = formData.get("values");
+  if (typeof raw !== "string") {
+    return { ok: false, error: "Missing values payload." };
+  }
+  let payload: StructuredPayload;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      !("values" in parsed) ||
+      typeof (parsed as { values: unknown }).values !== "object"
+    ) {
+      return { ok: false, error: "Invalid values payload." };
+    }
+    payload = parsed as StructuredPayload;
+  } catch {
+    return { ok: false, error: "Could not parse values payload." };
+  }
+
+  const reason = (formData.get("reason") ?? "").toString().trim();
+  if (reason.length < 5) {
+    return {
+      ok: false,
+      error: "Please describe the reason for amendment (5+ characters).",
+    };
+  }
+  if (reason.length > 2000) {
+    return { ok: false, error: "Reason is too long (2000 char max)." };
+  }
+
+  const session = await requireActiveStaff();
+  const admin = createAdminClient();
+
+  // 2) Load the result + parent test_request + visit context. Status must
+  //    be past medtech editing AND generation_kind must be 'structured'
+  //    (PDF-only results use the legacy amendResultAction path).
+  const { data: result } = await admin
+    .from("results")
+    .select(
+      `id, storage_path, file_size_bytes, uploaded_by, uploaded_at, notes,
+       amendment_count, test_request_id, generation_kind, finalised_at,
+       image_storage_path, image_filename, image_mime_type, image_size_bytes`,
+    )
+    .eq("test_request_id", testRequestId)
+    .maybeSingle();
+  if (!result || !result.storage_path) {
+    return { ok: false, error: "No result on file to amend." };
+  }
+  if (result.generation_kind !== "structured") {
+    return {
+      ok: false,
+      error:
+        "This result was uploaded as a PDF — use the PDF amend flow instead.",
+    };
+  }
+  if (!result.finalised_at) {
+    return {
+      ok: false,
+      error: "Cannot amend a draft — finalise it first.",
+    };
+  }
+
+  const { data: testRow } = await admin
+    .from("test_requests")
+    .select(
+      `id, status, visit_id, service_id,
+       services!inner ( id, code, name ),
+       visits!inner ( id, patient_id, visit_number )`,
+    )
+    .eq("id", testRequestId)
+    .maybeSingle();
+  if (!testRow) return { ok: false, error: "Test not found." };
+  const visit = Array.isArray(testRow.visits)
+    ? testRow.visits[0]
+    : testRow.visits;
+  const svc = Array.isArray(testRow.services)
+    ? testRow.services[0]
+    : testRow.services;
+  if (!visit || !svc) {
+    return { ok: false, error: "Missing service or visit." };
+  }
+
+  const allowed = new Set([
+    "result_uploaded",
+    "ready_for_release",
+    "released",
+  ]);
+  if (!allowed.has(testRow.status)) {
+    return {
+      ok: false,
+      error: `Test status is ${testRow.status} — amend only applies after a result has been recorded.`,
+    };
+  }
+
+  // 3) Load template + restrict payload to template params (mirrors the
+  //    paramIds guard in prepareStructured).
+  const { data: tpl } = await admin
+    .from("result_templates")
+    .select("id, layout, header_notes, footer_notes")
+    .eq("service_id", testRow.service_id)
+    .maybeSingle();
+  if (!tpl) {
+    return { ok: false, error: "No template configured for this service." };
+  }
+
+  const { data: paramRows } = await admin
+    .from("result_template_params")
+    .select("id")
+    .eq("template_id", tpl.id);
+  const paramIds = new Set((paramRows ?? []).map((r) => r.id));
+  for (const k of Object.keys(payload.values)) {
+    if (!paramIds.has(k)) {
+      return { ok: false, error: "Unknown parameter in payload." };
+    }
+  }
+
+  // 4) Snapshot the prior values BEFORE we touch anything. Join in the
+  //    parameter_name so the JSON snapshot is self-describing — a future
+  //    diff renderer doesn't have to chase the template-params table.
+  const { data: priorValueRows } = await admin
+    .from("result_values")
+    .select(
+      `parameter_id, numeric_value_si, numeric_value_conv, text_value,
+       select_value, flag, is_blank,
+       result_template_params!inner ( parameter_name )`,
+    )
+    .eq("result_id", result.id);
+
+  const priorValuesSnapshot = (priorValueRows ?? []).map((r) => {
+    const p = Array.isArray(r.result_template_params)
+      ? r.result_template_params[0]
+      : r.result_template_params;
+    return {
+      parameter_id: r.parameter_id,
+      parameter_name: p?.parameter_name ?? null,
+      numeric_value_si: r.numeric_value_si,
+      numeric_value_conv: r.numeric_value_conv,
+      text_value: r.text_value,
+      select_value: r.select_value,
+      flag: r.flag,
+      is_blank: r.is_blank,
+    };
+  });
+
+  const nextSeq = (result.amendment_count ?? 0) + 1;
+
+  // 5) Load template params + patient sex/age so upsertValues can compute
+  //    flags. Same load loadParamsAndPatient does for finalise.
+  const params = await loadTemplateParams(admin, tpl.id);
+  const { data: pat } = await admin
+    .from("patients")
+    .select("drm_id, first_name, last_name, sex, birthdate")
+    .eq("id", visit.patient_id)
+    .single();
+  if (!pat) {
+    return { ok: false, error: "Patient record not found." };
+  }
+  const patientSex = normalisePatientSex(pat.sex);
+  const patientAgeMonths = calculateAgeMonths(pat.birthdate);
+
+  // Validate visible params have values — same shape as finalise. We do
+  // this BEFORE any storage / DB writes so the user sees the error early.
+  const visibleParams = filterParamsForPatient(params, patientSex);
+  const missing = visibleParams
+    .filter((p) => !p.is_section_header)
+    .filter((p) => {
+      const v = payload.values[p.id];
+      if (!v) return true;
+      if (v.is_blank) return false;
+      if (p.input_type === "numeric") {
+        return v.numeric_value_si == null && v.numeric_value_conv == null;
+      }
+      if (p.input_type === "select") {
+        return !v.select_value;
+      }
+      return !v.text_value || !v.text_value.trim();
+    });
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      error: `Missing values for: ${missing
+        .slice(0, 5)
+        .map((p) => p.parameter_name)
+        .join(", ")}${missing.length > 5 ? "…" : ""}. Mark blank if you didn't run the sub-test.`,
+    };
+  }
+
+  // 6) Imaging branch — optional new image. If absent, we re-use the
+  //    existing image (download bytes for the PDF embed; leave image_*
+  //    columns untouched). If present, validate and upload to the
+  //    versioned path BEFORE doing any DB writes.
+  const isImaging = tpl.layout === "imaging_report";
+  let newImageBuffer: Buffer | null = null;
+  let newImageMime: string | null = null;
+  let newImageFilename: string | null = null;
+  let newImageSize = 0;
+  let newImagePath: string | null = null;
+
+  if (isImaging) {
+    const rawImage = formData.get("image");
+    if (rawImage instanceof File && rawImage.size > 0) {
+      if (!IMAGING_ALLOWED_MIMES.has(rawImage.type)) {
+        return {
+          ok: false,
+          error:
+            "Unsupported image type — please upload JPEG, PNG, WebP, or PDF.",
+        };
+      }
+      if (rawImage.size > IMAGING_MAX_BYTES) {
+        return { ok: false, error: "Image must be 25 MB or less." };
+      }
+      newImageBuffer = Buffer.from(await rawImage.arrayBuffer());
+      newImageMime = rawImage.type;
+      newImageFilename =
+        rawImage.name || `attachment.${fileExtForMime(rawImage.type)}`;
+      newImageSize = rawImage.size;
+      newImagePath = `${visit.patient_id}/${visit.id}/${testRow.id}.v${nextSeq + 1}.${fileExtForMime(newImageMime)}`;
+    }
+  }
+
+  // Decide which image (if any) the regenerated PDF embeds. If a new
+  // image was supplied, use those bytes. Otherwise re-download the
+  // existing one so the regenerated PDF still includes it.
+  let pdfImageBytes: Uint8Array | null = null;
+  let pdfImageMime: string | null = null;
+  let pdfImageFilename: string | null = null;
+  if (isImaging) {
+    if (newImageBuffer && newImageMime && newImageFilename) {
+      pdfImageBytes = new Uint8Array(newImageBuffer);
+      pdfImageMime = newImageMime;
+      pdfImageFilename = newImageFilename;
+    } else if (result.image_storage_path && result.image_mime_type) {
+      const { data: dl, error: dlErr } = await admin.storage
+        .from("result-images")
+        .download(result.image_storage_path);
+      if (dlErr || !dl) {
+        return {
+          ok: false,
+          error: `Could not load existing image: ${dlErr?.message ?? "unknown"}`,
+        };
+      }
+      const buf = Buffer.from(await dl.arrayBuffer());
+      pdfImageBytes = new Uint8Array(buf);
+      pdfImageMime = result.image_mime_type;
+      pdfImageFilename = result.image_filename ?? "attachment";
+    }
+  }
+
+  // 7) Upload the new image FIRST (if any). Easier to roll back storage
+  //    than DB rows — if anything downstream fails, we remove the file.
+  if (isImaging && newImageBuffer && newImageMime && newImagePath) {
+    const { error: imgErr } = await admin.storage
+      .from("result-images")
+      .upload(newImagePath, newImageBuffer, {
+        contentType: newImageMime,
+        upsert: false,
+      });
+    if (imgErr) {
+      return { ok: false, error: `Image upload failed: ${imgErr.message}` };
+    }
+  }
+
+  // 8) Insert the result_amendments snapshot row. Captures both the
+  //    prior PDF metadata and prior values + prior image. Done before
+  //    we mutate result_values, so the snapshot is faithful.
+  const { error: snapErr } = await admin.from("result_amendments").insert({
+    result_id: result.id,
+    test_request_id: testRow.id,
+    prior_storage_path: result.storage_path,
+    prior_uploaded_by: result.uploaded_by,
+    prior_uploaded_at: result.uploaded_at,
+    prior_file_size_bytes: result.file_size_bytes,
+    prior_notes: result.notes,
+    prior_values_json: priorValuesSnapshot,
+    prior_image_storage_path: result.image_storage_path,
+    prior_image_filename: result.image_filename,
+    prior_image_mime_type: result.image_mime_type,
+    prior_image_size_bytes: result.image_size_bytes,
+    reason,
+    amended_by: session.user_id,
+    amendment_seq: nextSeq,
+  });
+  if (snapErr) {
+    if (newImagePath) {
+      await admin.storage.from("result-images").remove([newImagePath]);
+    }
+    return { ok: false, error: snapErr.message };
+  }
+
+  // 9) Wipe + reinsert result_values. Using DELETE + upsertValues (instead
+  //    of upsert-only) so amendments that DROP a previously-recorded
+  //    parameter actually remove it from the live row set; the prior
+  //    rows are preserved in prior_values_json on the amendment.
+  const { error: delErr } = await admin
+    .from("result_values")
+    .delete()
+    .eq("result_id", result.id);
+  if (delErr) {
+    if (newImagePath) {
+      await admin.storage.from("result-images").remove([newImagePath]);
+    }
+    return { ok: false, error: `Could not clear prior values: ${delErr.message}` };
+  }
+
+  const ups = await upsertValues(
+    result.id,
+    payload,
+    params,
+    patientSex,
+    patientAgeMonths,
+  );
+  if (!ups.ok) {
+    if (newImagePath) {
+      await admin.storage.from("result-images").remove([newImagePath]);
+    }
+    return ups;
+  }
+
+  // 10) Re-read the persisted values (with computed flags) for the PDF
+  //     render. Mirrors finaliseStructuredAction step 3.
+  const { data: valueRows } = await admin
+    .from("result_values")
+    .select(
+      "parameter_id, numeric_value_si, numeric_value_conv, text_value, select_value, flag, is_blank",
+    )
+    .eq("result_id", result.id);
+
+  const values: Record<string, ParamValue> = {};
+  for (const r of valueRows ?? []) {
+    values[r.parameter_id] = {
+      numeric_value_si: r.numeric_value_si,
+      numeric_value_conv: r.numeric_value_conv,
+      text_value: r.text_value,
+      select_value: r.select_value,
+      flag: r.flag as ParamValue["flag"],
+      is_blank: r.is_blank,
+    };
+  }
+
+  // 11) Load medtech profile for the PDF footer (same staff member who
+  //     amended; matches finaliseStructuredAction).
+  const { data: medtech } = await admin
+    .from("staff_profiles")
+    .select("full_name, prc_license_kind, prc_license_no")
+    .eq("id", session.user_id)
+    .single();
+
+  // 12) Render the new PDF.
+  const docInput: ResultDocumentInput = {
+    template: {
+      layout: tpl.layout as ResultLayout,
+      header_notes: tpl.header_notes,
+      footer_notes: tpl.footer_notes,
+    },
+    params,
+    values,
+    service: { code: svc.code, name: svc.name },
+    patient: {
+      drm_id: pat.drm_id,
+      last_name: pat.last_name,
+      first_name: pat.first_name,
+      sex: patientSex,
+      birthdate: pat.birthdate,
+    },
+    visit: { visit_number: visit.visit_number },
+    controlNo: null, // re-read below from existing row so we keep the same
+    finalisedAt: new Date(),
+    medtech: medtech
+      ? {
+          full_name: medtech.full_name,
+          prc_license_kind: medtech.prc_license_kind,
+          prc_license_no: medtech.prc_license_no,
+        }
+      : null,
+    imageAttachment:
+      pdfImageBytes && pdfImageMime && pdfImageFilename
+        ? {
+            data: pdfImageBytes,
+            mime: pdfImageMime,
+            filename: pdfImageFilename,
+          }
+        : undefined,
+  };
+  // Preserve the original control_no on the regenerated PDF.
+  const { data: ctrl } = await admin
+    .from("results")
+    .select("control_no")
+    .eq("id", result.id)
+    .single();
+  docInput.controlNo = ctrl?.control_no ?? null;
+
+  const pdf = await renderResultPdf(docInput);
+
+  // 13) Upload the new PDF to the versioned path. Matches the .v{N+1}.pdf
+  //     convention used by the PDF-only amendResultAction.
+  const newPdfPath = `${visit.patient_id}/${visit.id}/${testRow.id}.v${nextSeq + 1}.pdf`;
+  const { error: upErr } = await admin.storage
+    .from("results")
+    .upload(newPdfPath, pdf, {
+      contentType: "application/pdf",
+      upsert: false,
+    });
+  if (upErr) {
+    if (newImagePath) {
+      await admin.storage.from("result-images").remove([newImagePath]);
+    }
+    return { ok: false, error: `PDF upload failed: ${upErr.message}` };
+  }
+
+  // 14) Update the results row to point at the new PDF + (optionally)
+  //     swap in the new image fields. The all-or-nothing image CHECK
+  //     constraint forces us to write all six together when present.
+  const nowIso = new Date().toISOString();
+  const { error: updErr } = await admin
+    .from("results")
+    .update({
+      storage_path: newPdfPath,
+      file_size_bytes: pdf.byteLength,
+      uploaded_by: session.user_id,
+      uploaded_at: nowIso,
+      amended_at: nowIso,
+      amendment_count: nextSeq,
+      ...(isImaging && newImagePath && newImageMime && newImageFilename
+        ? {
+            image_storage_path: newImagePath,
+            image_filename: newImageFilename,
+            image_mime_type: newImageMime,
+            image_size_bytes: newImageSize,
+            image_uploaded_at: nowIso,
+            image_uploaded_by: session.user_id,
+          }
+        : {}),
+    })
+    .eq("id", result.id);
+  if (updErr) {
+    // Roll back both storage uploads — DB state is unchanged from before
+    // this update (the snapshot row + values change still stand; surface
+    // the error so the operator can retry).
+    await admin.storage.from("results").remove([newPdfPath]);
+    if (newImagePath) {
+      await admin.storage.from("result-images").remove([newImagePath]);
+    }
+    return { ok: false, error: `Amend failed: ${updErr.message}` };
+  }
+
+  // 15) Audit. Count rows that materially changed vs the prior snapshot
+  //     so the log gives a quick sense of scope.
+  const priorById = new Map(
+    priorValuesSnapshot.map((p) => [p.parameter_id, p]),
+  );
+  let valueChangeCount = 0;
+  for (const [paramId, v] of Object.entries(values)) {
+    const before = priorById.get(paramId);
+    if (
+      !before ||
+      before.numeric_value_si !== v.numeric_value_si ||
+      before.numeric_value_conv !== v.numeric_value_conv ||
+      before.text_value !== v.text_value ||
+      before.select_value !== v.select_value ||
+      before.is_blank !== v.is_blank
+    ) {
+      valueChangeCount += 1;
+    }
+  }
+  // Also count rows that were dropped (in prior but not in new).
+  for (const paramId of priorById.keys()) {
+    if (!(paramId in values)) valueChangeCount += 1;
+  }
+
+  const h = await headers();
+  await audit({
+    actor_id: session.user_id,
+    actor_type: "staff",
+    action: "result.amended",
+    resource_type: "result",
+    resource_id: result.id,
+    metadata: {
+      test_request_id: testRow.id,
+      visit_id: visit.id,
+      amendment_seq: nextSeq,
+      reason,
+      prior_storage_path: result.storage_path,
+      new_storage_path: newPdfPath,
+      value_change_count: valueChangeCount,
+    },
+    ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    user_agent: h.get("user-agent"),
+  });
+
+  revalidatePath(`/staff/queue`);
+  revalidatePath(`/staff/queue/${testRow.id}`);
+  revalidatePath(`/staff/visits/${visit.id}`);
+  return { ok: true, resultId: result.id, controlNo: ctrl?.control_no ?? null };
+}
+
 export async function getResultDownloadUrl(
   testRequestId: string,
 ): Promise<{ ok: true; url: string } | { ok: false; error: string }> {

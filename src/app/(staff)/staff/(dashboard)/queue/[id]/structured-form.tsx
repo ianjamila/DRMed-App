@@ -16,6 +16,7 @@ import {
 import {
   saveDraftAction,
   finaliseStructuredAction,
+  amendStructuredResultAction,
   type StructuredPayload,
   type StructuredResult,
   type StructuredValueInput,
@@ -34,6 +35,16 @@ interface Props {
   // True when the result is already finalised — render the form read-only,
   // letting pathologists / admin only resubmit through sign-off.
   alreadyFinalised: boolean;
+  // 'finalise' is the default: Save draft + Finalise & generate PDF, plus
+  // a mandatory image at finalise for imaging_report layouts.
+  // 'amend' is for re-editing an already-finalised result: a Reason
+  // textarea is rendered, image is optional (re-use existing if absent),
+  // and the submit button calls amendStructuredResultAction.
+  mode?: "finalise" | "amend";
+  // For imaging-report layouts in 'amend' mode: the filename of the
+  // currently-attached image, shown as a hint so the medtech knows what
+  // they're keeping if they don't pick a new file.
+  currentImageFilename?: string | null;
 }
 
 // Local form state per parameter.
@@ -82,11 +93,17 @@ function isAbnormalSelect(p: TemplateParam, v: LocalValue): boolean {
 
 export function StructuredResultForm(props: Props) {
   const router = useRouter();
+  const mode = props.mode ?? "finalise";
   const [pending, start] = useTransition();
   const [feedback, setFeedback] = useState<StructuredResult | null>(null);
   // Imaging-report layouts require an image attachment at finalise time.
   // Drafts skip it; the user picks the file just before clicking Finalise.
+  // In amend mode the image is optional — leaving it empty keeps whatever
+  // is currently on the result.
   const [image, setImage] = useState<File | null>(null);
+  // Amend mode adds a mandatory free-text reason. We mirror the same
+  // ≥5 character / ≤2000 character rule the server enforces.
+  const [reason, setReason] = useState("");
 
   const visibleParams = useMemo(
     () => filterParamsForPatient(props.params, props.patientSex),
@@ -155,12 +172,23 @@ export function StructuredResultForm(props: Props) {
     return { values };
   }
 
-  function submit(action: "draft" | "finalise") {
+  function submit(action: "draft" | "finalise" | "amend") {
     setFeedback(null);
-    if (action === "finalise" && props.layout === "imaging_report" && !image) {
+    if (
+      action === "finalise" &&
+      props.layout === "imaging_report" &&
+      !image
+    ) {
       setFeedback({
         ok: false,
         error: "Please attach an image before finalising.",
+      });
+      return;
+    }
+    if (action === "amend" && reason.trim().length < 5) {
+      setFeedback({
+        ok: false,
+        error: "Please describe the reason for amendment (5+ characters).",
       });
       return;
     }
@@ -174,15 +202,25 @@ export function StructuredResultForm(props: Props) {
         if (result.ok) router.refresh();
         return;
       }
-      // Finalise — wrap payload in FormData so we can carry the optional
-      // image File alongside the values JSON. The "values" field carries
-      // the full `{ values: ... }` payload shape (matches what
-      // saveDraftAction takes) so finaliseStructuredAction's JSON parse
-      // can read `parsed.values` directly.
+      // Finalise + amend both go through FormData so we can carry the
+      // optional image File alongside the values JSON. The "values" field
+      // carries the full `{ values: ... }` payload shape (matches what
+      // saveDraftAction takes) so the server's JSON parse can read
+      // `parsed.values` directly.
       const fd = new FormData();
       fd.append("values", JSON.stringify(buildPayload()));
       if (props.layout === "imaging_report" && image) {
         fd.append("image", image);
+      }
+      if (action === "amend") {
+        fd.append("reason", reason.trim());
+        const result = await amendStructuredResultAction(
+          props.testRequestId,
+          fd,
+        );
+        setFeedback(result);
+        if (result.ok) router.refresh();
+        return;
       }
       const result = await finaliseStructuredAction(props.testRequestId, fd);
       setFeedback(result);
@@ -191,8 +229,13 @@ export function StructuredResultForm(props: Props) {
   }
 
   const disabled = props.alreadyFinalised || pending;
+  // Finalise mode still hard-requires an image for imaging_report. Amend
+  // mode treats the image as optional (we re-use the existing one if the
+  // medtech leaves the input empty), so the button stays enabled.
   const finaliseDisabled =
-    disabled || (props.layout === "imaging_report" && !image);
+    disabled ||
+    (mode === "finalise" && props.layout === "imaging_report" && !image);
+  const amendDisabled = disabled || reason.trim().length < 5;
 
   return (
     <form
@@ -229,6 +272,8 @@ export function StructuredResultForm(props: Props) {
           onSetValue={update}
           image={image}
           onImageChange={setImage}
+          mode={mode}
+          currentImageFilename={props.currentImageFilename ?? null}
         />
       ) : null}
 
@@ -247,28 +292,69 @@ export function StructuredResultForm(props: Props) {
         >
           ✓ Saved.
           {feedback.controlNo != null
-            ? ` Control No. ${feedback.controlNo.toString().padStart(6, "0")} — finalised.`
+            ? mode === "amend"
+              ? ` Control No. ${feedback.controlNo.toString().padStart(6, "0")} — amended.`
+              : ` Control No. ${feedback.controlNo.toString().padStart(6, "0")} — finalised.`
             : ""}
         </p>
       ) : null}
 
+      {mode === "amend" ? (
+        <div className="grid gap-1.5 rounded-md border border-amber-300 bg-amber-50/60 p-3">
+          <label
+            htmlFor="amend-reason"
+            className="text-xs font-bold uppercase tracking-wider text-amber-900"
+          >
+            Reason for amendment <span className="text-red-600">*</span>
+          </label>
+          <textarea
+            id="amend-reason"
+            rows={3}
+            maxLength={2000}
+            minLength={5}
+            required
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Transcription corrected: glucose was 5.5 mmol/L not 55."
+            className="rounded-md border border-amber-300 bg-white px-3 py-2 text-sm focus:border-amber-500 focus:outline-none"
+          />
+          <p className="text-[11px] text-amber-900/80">
+            Required, audit-logged. The prior values + PDF{props.layout === "imaging_report" ? " + image" : ""} stay
+            accessible from the amendment history below.
+          </p>
+        </div>
+      ) : null}
+
       <div className="flex flex-wrap items-center justify-end gap-2">
-        <Button
-          type="button"
-          disabled={disabled}
-          onClick={() => submit("draft")}
-          className="bg-white text-[color:var(--color-brand-navy)] ring-1 ring-inset ring-[color:var(--color-brand-bg-mid)] hover:bg-[color:var(--color-brand-bg)]"
-        >
-          {pending ? "Saving…" : "Save draft"}
-        </Button>
-        <Button
-          type="button"
-          disabled={finaliseDisabled}
-          onClick={() => submit("finalise")}
-          className="bg-[color:var(--color-brand-navy)] text-white hover:bg-[color:var(--color-brand-cyan)]"
-        >
-          {pending ? "Finalising…" : "Finalise & generate PDF"}
-        </Button>
+        {mode === "finalise" ? (
+          <>
+            <Button
+              type="button"
+              disabled={disabled}
+              onClick={() => submit("draft")}
+              className="bg-white text-[color:var(--color-brand-navy)] ring-1 ring-inset ring-[color:var(--color-brand-bg-mid)] hover:bg-[color:var(--color-brand-bg)]"
+            >
+              {pending ? "Saving…" : "Save draft"}
+            </Button>
+            <Button
+              type="button"
+              disabled={finaliseDisabled}
+              onClick={() => submit("finalise")}
+              className="bg-[color:var(--color-brand-navy)] text-white hover:bg-[color:var(--color-brand-cyan)]"
+            >
+              {pending ? "Finalising…" : "Finalise & generate PDF"}
+            </Button>
+          </>
+        ) : (
+          <Button
+            type="button"
+            disabled={amendDisabled}
+            onClick={() => submit("amend")}
+            className="bg-amber-700 text-white hover:bg-amber-800"
+          >
+            {pending ? "Amending…" : "Save amendment"}
+          </Button>
+        )}
       </div>
     </form>
   );
@@ -616,10 +702,15 @@ function ImagingBody({
   onSetValue,
   image,
   onImageChange,
+  mode,
+  currentImageFilename,
 }: Omit<BodyProps, "onChangeNumeric"> & {
   image: File | null;
   onImageChange: (f: File | null) => void;
+  mode: "finalise" | "amend";
+  currentImageFilename: string | null;
 }) {
+  const isAmend = mode === "amend";
   return (
     <div className="grid gap-4">
       {params.map((p) => {
@@ -673,7 +764,7 @@ function ImagingBody({
             htmlFor="imaging-image"
             className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)]"
           >
-            Attached image <span className="text-red-600">*</span>
+            Attached image{isAmend ? null : <span className="text-red-600"> *</span>}
           </label>
         </div>
         <input
@@ -682,13 +773,18 @@ function ImagingBody({
           accept="image/jpeg,image/png,image/webp,application/pdf"
           onChange={(e) => onImageChange(e.target.files?.[0] ?? null)}
           disabled={disabled}
-          required
+          required={!isAmend}
           className="block w-full min-h-[44px] text-sm text-[color:var(--color-brand-ink)] file:mr-3 file:rounded-md file:border-0 file:bg-[color:var(--color-brand-navy)] file:px-3 file:py-2 file:text-xs file:font-semibold file:uppercase file:tracking-wider file:text-white hover:file:bg-[color:var(--color-brand-cyan)] disabled:opacity-50"
         />
         {image ? (
           <p className="mt-2 text-xs text-[color:var(--color-brand-text-soft)]">
             Selected: <span className="font-medium">{image.name}</span> (
             {(image.size / 1024 / 1024).toFixed(2)} MB)
+          </p>
+        ) : isAmend && currentImageFilename ? (
+          <p className="mt-2 text-xs text-amber-800">
+            Leave empty to keep the current image:{" "}
+            <span className="font-medium">{currentImageFilename}</span>
           </p>
         ) : null}
         <p className="mt-1 text-[11px] text-[color:var(--color-brand-text-soft)]">

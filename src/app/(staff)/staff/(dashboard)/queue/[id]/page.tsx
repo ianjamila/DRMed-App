@@ -49,7 +49,7 @@ export default async function QueueTestDetailPage({ params }: Props) {
           id, visit_number,
           patients!inner ( id, drm_id, first_name, last_name, phone, sex, birthdate )
         ),
-        results ( id, uploaded_at, file_size_bytes, notes, generation_kind, finalised_at, control_no, amended_at, amendment_count )
+        results ( id, uploaded_at, file_size_bytes, notes, generation_kind, finalised_at, control_no, amended_at, amendment_count, image_filename )
       `,
     )
     .eq("id", id)
@@ -310,7 +310,30 @@ export default async function QueueTestDetailPage({ params }: Props) {
             ) : null}
             <div className="mt-4 flex flex-wrap items-center gap-3">
               <ViewResultButton testRequestId={test.id} />
-              {amendable ? <AmendResultForm testRequestId={test.id} /> : null}
+              {amendable ? (
+                <AmendResultForm
+                  testRequestId={test.id}
+                  generationKind={
+                    result.generation_kind === "structured"
+                      ? "structured"
+                      : "uploaded"
+                  }
+                  structured={
+                    result.generation_kind === "structured" &&
+                    templateLayout != null &&
+                    templateParams.length > 0
+                      ? {
+                          layout: templateLayout,
+                          params: templateParams,
+                          patientSex: normalisePatientSex(patient.sex),
+                          patientAgeMonths: calculateAgeMonths(patient.birthdate),
+                          initialValues,
+                          currentImageFilename: result.image_filename ?? null,
+                        }
+                      : undefined
+                  }
+                />
+              ) : null}
             </div>
             <p className="mt-2 text-xs text-[color:var(--color-brand-text-soft)]">
               Opens a 5-minute signed URL. Each view is audit-logged.

@@ -1720,10 +1720,15 @@ export type Database = {
           amendment_seq: number
           id: string
           prior_file_size_bytes: number | null
+          prior_image_filename: string | null
+          prior_image_mime_type: string | null
+          prior_image_size_bytes: number | null
+          prior_image_storage_path: string | null
           prior_notes: string | null
           prior_storage_path: string
           prior_uploaded_at: string
           prior_uploaded_by: string
+          prior_values_json: Json | null
           reason: string
           result_id: string
           test_request_id: string
@@ -1734,10 +1739,15 @@ export type Database = {
           amendment_seq: number
           id?: string
           prior_file_size_bytes?: number | null
+          prior_image_filename?: string | null
+          prior_image_mime_type?: string | null
+          prior_image_size_bytes?: number | null
+          prior_image_storage_path?: string | null
           prior_notes?: string | null
           prior_storage_path: string
           prior_uploaded_at: string
           prior_uploaded_by: string
+          prior_values_json?: Json | null
           reason: string
           result_id: string
           test_request_id: string
@@ -1748,10 +1758,15 @@ export type Database = {
           amendment_seq?: number
           id?: string
           prior_file_size_bytes?: number | null
+          prior_image_filename?: string | null
+          prior_image_mime_type?: string | null
+          prior_image_size_bytes?: number | null
+          prior_image_storage_path?: string | null
           prior_notes?: string | null
           prior_storage_path?: string
           prior_uploaded_at?: string
           prior_uploaded_by?: string
+          prior_values_json?: Json | null
           reason?: string
           result_id?: string
           test_request_id?: string
