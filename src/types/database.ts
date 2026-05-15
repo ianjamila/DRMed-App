@@ -2030,6 +2030,12 @@ export type Database = {
           finalised_at: string | null
           generation_kind: string
           id: string
+          image_filename: string | null
+          image_mime_type: string | null
+          image_size_bytes: number | null
+          image_storage_path: string | null
+          image_uploaded_at: string | null
+          image_uploaded_by: string | null
           notes: string | null
           storage_path: string | null
           test_request_id: string
@@ -2046,6 +2052,12 @@ export type Database = {
           finalised_at?: string | null
           generation_kind?: string
           id?: string
+          image_filename?: string | null
+          image_mime_type?: string | null
+          image_size_bytes?: number | null
+          image_storage_path?: string | null
+          image_uploaded_at?: string | null
+          image_uploaded_by?: string | null
           notes?: string | null
           storage_path?: string | null
           test_request_id: string
@@ -2062,6 +2074,12 @@ export type Database = {
           finalised_at?: string | null
           generation_kind?: string
           id?: string
+          image_filename?: string | null
+          image_mime_type?: string | null
+          image_size_bytes?: number | null
+          image_storage_path?: string | null
+          image_uploaded_at?: string | null
+          image_uploaded_by?: string | null
           notes?: string | null
           storage_path?: string | null
           test_request_id?: string
@@ -2070,6 +2088,13 @@ export type Database = {
           uploaded_by?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "results_image_uploaded_by_fkey"
+            columns: ["image_uploaded_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "results_test_request_id_fkey"
             columns: ["test_request_id"]

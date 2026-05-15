@@ -24,6 +24,30 @@ import { loadTemplateParams } from "@/lib/results/loaders";
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
 
+// Imaging-report attachments (ECG / X-ray / Ultrasound). Kept in sync with
+// the bucket allowlist in migration 0038 and the UI's accept= attribute.
+// HEIC/HEIF intentionally omitted — @react-pdf/renderer can't embed them
+// natively, and avoiding a server-side conversion step keeps the surface
+// minimal.
+const IMAGING_ALLOWED_MIMES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "application/pdf",
+]);
+const IMAGING_MAX_BYTES = 25 * 1024 * 1024; // 25 MB
+
+function fileExtForMime(mime: string): string {
+  return (
+    {
+      "image/jpeg": "jpg",
+      "image/png": "png",
+      "image/webp": "webp",
+      "application/pdf": "pdf",
+    }[mime] ?? "bin"
+  );
+}
+
 export type UploadResult = { ok: true } | { ok: false; error: string };
 
 // ---------------------------------------------------------------------------
@@ -277,8 +301,32 @@ export async function saveDraftAction(
 
 export async function finaliseStructuredAction(
   testRequestId: string,
-  payload: StructuredPayload,
+  formData: FormData,
 ): Promise<StructuredResult> {
+  // Parse the structured-values JSON. We send it as a string field inside
+  // FormData so the same endpoint can carry the optional `image` File for
+  // imaging_report layouts. saveDraftAction is untouched — drafts of an
+  // imaging report skip the image; it's only required at finalise.
+  const raw = formData.get("values");
+  if (typeof raw !== "string") {
+    return { ok: false, error: "Missing values payload." };
+  }
+  let payload: StructuredPayload;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      !("values" in parsed) ||
+      typeof (parsed as { values: unknown }).values !== "object"
+    ) {
+      return { ok: false, error: "Invalid values payload." };
+    }
+    payload = parsed as StructuredPayload;
+  } catch {
+    return { ok: false, error: "Could not parse values payload." };
+  }
+
   const prep = await prepareStructured(testRequestId, payload);
   if (!prep.ok) return prep;
   const ctx = prep.ctx;
@@ -386,7 +434,45 @@ export async function finaliseStructuredAction(
     return { ok: false, error: "Failed to load record for PDF render." };
   }
 
-  // 5) Read control_no — set by the sequence default on insert, so always
+  // 5) Imaging-report layouts require an image attachment at finalise. We
+  //    deliberately don't accept the image at saveDraftAction time — drafts
+  //    skip it. Validate now, BEFORE rendering the PDF, so we can fail fast
+  //    if the file is missing / oversized / wrong mime.
+  const isImaging = tplRow.layout === "imaging_report";
+  let imageBuffer: Buffer | null = null;
+  let imageMime: string | null = null;
+  let imageFilename: string | null = null;
+  let imageSize = 0;
+  let imagePath: string | null = null;
+
+  if (isImaging) {
+    const rawImage = formData.get("image");
+    if (!(rawImage instanceof File) || rawImage.size === 0) {
+      return {
+        ok: false,
+        error: "Image upload is required for imaging reports.",
+      };
+    }
+    if (!IMAGING_ALLOWED_MIMES.has(rawImage.type)) {
+      return {
+        ok: false,
+        error:
+          "Unsupported image type — please upload JPEG, PNG, WebP, or PDF.",
+      };
+    }
+    if (rawImage.size > IMAGING_MAX_BYTES) {
+      return {
+        ok: false,
+        error: "Image must be 25 MB or less.",
+      };
+    }
+    imageBuffer = Buffer.from(await rawImage.arrayBuffer());
+    imageMime = rawImage.type;
+    imageFilename = rawImage.name || `attachment.${fileExtForMime(rawImage.type)}`;
+    imageSize = rawImage.size;
+  }
+
+  // 6) Read control_no — set by the sequence default on insert, so always
   //    present by the time we get here.
   const { data: pre } = await admin
     .from("results")
@@ -395,7 +481,7 @@ export async function finaliseStructuredAction(
     .single();
   const controlNo = pre?.control_no ?? null;
 
-  // 6) Render the PDF.
+  // 7) Render the PDF (embedding the image when present).
   const docInput: ResultDocumentInput = {
     template: {
       layout: tplRow.layout as ResultLayout,
@@ -422,30 +508,76 @@ export async function finaliseStructuredAction(
           prc_license_no: medtech.prc_license_no,
         }
       : null,
+    imageAttachment:
+      imageBuffer && imageMime && imageFilename
+        ? {
+            data: new Uint8Array(imageBuffer),
+            mime: imageMime,
+            filename: imageFilename,
+          }
+        : undefined,
   };
 
   const pdf = await renderResultPdf(docInput);
 
-  // 7) Upload to storage.
+  // 8) Upload the source image to the `result-images` bucket BEFORE the
+  //    PDF — easier to clean up if the PDF upload then fails (we just remove
+  //    the image). Done here for imaging-report layouts only.
+  if (isImaging && imageBuffer && imageMime) {
+    imagePath = `${ctx.patientId}/${ctx.visitId}/${ctx.testRequestId}.${fileExtForMime(imageMime)}`;
+    const { error: imgErr } = await admin.storage
+      .from("result-images")
+      .upload(imagePath, imageBuffer, {
+        contentType: imageMime,
+        upsert: true,
+      });
+    if (imgErr) {
+      return { ok: false, error: `Image upload failed: ${imgErr.message}` };
+    }
+  }
+
+  // 9) Upload the rendered PDF.
   const path = `${ctx.patientId}/${ctx.visitId}/${ctx.testRequestId}.pdf`;
   const { error: upErr } = await admin.storage
     .from("results")
     .upload(path, pdf, { contentType: "application/pdf", upsert: true });
-  if (upErr) return { ok: false, error: `PDF upload failed: ${upErr.message}` };
+  if (upErr) {
+    // Roll back the image upload so we don't orphan it.
+    if (imagePath) {
+      await admin.storage.from("result-images").remove([imagePath]);
+    }
+    return { ok: false, error: `PDF upload failed: ${upErr.message}` };
+  }
 
-  // 8) Mark the row finalised. The trigger advances test_requests.status when
-  //    finalised_at transitions NULL → not-NULL.
+  // 10) Mark the row finalised. The trigger advances test_requests.status when
+  //     finalised_at transitions NULL → not-NULL. For imaging reports, write
+  //     all image_* columns at once — the all-or-nothing CHECK constraint
+  //     enforces that they travel together.
+  const nowIso = new Date().toISOString();
   const { error: finErr } = await admin
     .from("results")
     .update({
       storage_path: path,
       file_size_bytes: pdf.byteLength,
-      finalised_at: new Date().toISOString(),
+      finalised_at: nowIso,
       uploaded_by: session.user_id,
+      ...(isImaging && imagePath && imageMime && imageFilename
+        ? {
+            image_storage_path: imagePath,
+            image_filename: imageFilename,
+            image_mime_type: imageMime,
+            image_size_bytes: imageSize,
+            image_uploaded_at: nowIso,
+            image_uploaded_by: session.user_id,
+          }
+        : {}),
     })
     .eq("id", ctx.resultId);
   if (finErr) {
     await admin.storage.from("results").remove([path]);
+    if (imagePath) {
+      await admin.storage.from("result-images").remove([imagePath]);
+    }
     return { ok: false, error: `Finalise failed: ${finErr.message}` };
   }
 
@@ -468,7 +600,25 @@ export async function finaliseStructuredAction(
     user_agent: h.get("user-agent"),
   });
 
-  // 9) Critical-value detection. For each param with a numeric value
+  if (isImaging && imagePath && imageMime) {
+    await audit({
+      actor_id: session.user_id,
+      actor_type: "staff",
+      action: "result.imaging_attached",
+      resource_type: "result",
+      resource_id: ctx.resultId,
+      metadata: {
+        test_request_id: testRequestId,
+        image_storage_path: imagePath,
+        image_mime_type: imageMime,
+        image_size_bytes: imageSize,
+      },
+      ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+      user_agent: h.get("user-agent"),
+    });
+  }
+
+  // 11) Critical-value detection. For each param with a numeric value
   //    that crosses a configured critical threshold (per-band
   //    critical_low_si / critical_high_si), insert a critical_alerts
   //    row. The notification bell subscribes to inserts on this table

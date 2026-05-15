@@ -1,17 +1,21 @@
 /**
- * Seeds the three archetype result templates so Phase 13 can be exercised
- * end-to-end without admin first creating templates by hand.
+ * Seeds result templates for every in-house service currently in the
+ * catalog, so the medtech queue page never falls back to the generic PDF
+ * upload form. Real production templates are still refined / extended via
+ * the admin CRUD UI; this script just gets us a working baseline.
  *
  *   npm run seed:templates
  *
  * Idempotent: removes the existing template + params for the target service
- * codes before re-inserting, so seed edits are safe to re-run. Real production
- * templates are built / refined via the admin CRUD UI in a later phase.
+ * codes before re-inserting, so seed edits are safe to re-run.
  *
- * Templates seeded:
- *   - CBC_PC          → 'simple'        (CBC + Differential + RBC indices)
- *   - ROUTINE_PACKAGE → 'dual_unit'     (12-test chemistry panel, SI + Conv)
- *   - URINALYSIS      → 'multi_section' (Physical + Chemical + Microscopic)
+ * Templates seeded (all 12 in-house tests):
+ *   Chemistry / Hematology — `simple`
+ *     CBC, CREA, FBS, SGPT, SGOT, LIPID, THYROID, HBSAG
+ *   Urinalysis              — `multi_section` (Physical / Chemical / Microscopic)
+ *   Imaging                 — `imaging_report` (Findings + Impression text +
+ *                              image attached at finalise)
+ *     ECG, XRAYCHEST, USABDOMEN
  *
  * Reference: drmed.ph LAB RESULTS FORM Sheet
  *   1UZrH4EYAkXiu5gMMQUJoAddpSqqwTmfrk1k8ykaqikQ
@@ -81,7 +85,7 @@ interface TemplateSeed {
 // CBC + Differential + RBC Indices  →  'simple'
 // ---------------------------------------------------------------------------
 const cbc: TemplateSeed = {
-  service_code: "CBC_PC",
+  service_code: "CBC",
   layout: "simple",
   params: [
     {
@@ -161,112 +165,149 @@ const cbc: TemplateSeed = {
 };
 
 // ---------------------------------------------------------------------------
-// Chemistry panel  →  'dual_unit'
-// Attached to ROUTINE_PACKAGE because that's what the reference Sheet's
-// chemistry tab matches. Standalone chemistry services (FBS_RBS, BUN, etc.)
-// can have their own one-row templates added via the admin UI later.
+// CREA — Creatinine  →  'simple', gender-banded
 // ---------------------------------------------------------------------------
-const chem: TemplateSeed = {
-  service_code: "ROUTINE_PACKAGE",
-  layout: "dual_unit",
+const crea: TemplateSeed = {
+  service_code: "CREA",
+  layout: "simple",
   params: [
     {
-      parameter_name: "FBS",
-      input_type: "numeric",
-      unit_si: "mmol/L", ref_low_si: 4.1, ref_high_si: 5.9,
-      unit_conv: "mg/dL", ref_low_conv: 73.87, ref_high_conv: 106.31,
-      si_to_conv_factor: 18.02,
+      parameter_name: "Creatinine", input_type: "numeric",
+      unit_si: "mg/dL", gender: "F",
+      ref_low_si: 0.6, ref_high_si: 1.1,
     },
     {
-      parameter_name: "BUN",
-      input_type: "numeric",
-      unit_si: "mmol/L", ref_low_si: 2.1, ref_high_si: 7.1,
-      unit_conv: "mg/dL", ref_low_conv: 5.88, ref_high_conv: 19.89,
-      si_to_conv_factor: 2.8,
+      parameter_name: "Creatinine", input_type: "numeric",
+      unit_si: "mg/dL", gender: "M",
+      ref_low_si: 0.7, ref_high_si: 1.3,
+    },
+  ],
+};
+
+// ---------------------------------------------------------------------------
+// FBS — Fasting Blood Sugar  →  'simple'
+// ---------------------------------------------------------------------------
+const fbs: TemplateSeed = {
+  service_code: "FBS",
+  layout: "simple",
+  params: [
+    {
+      parameter_name: "Fasting Blood Sugar", input_type: "numeric",
+      unit_si: "mg/dL",
+      ref_low_si: 70, ref_high_si: 110,
+    },
+  ],
+};
+
+// ---------------------------------------------------------------------------
+// SGPT (ALT)  →  'simple', gender-banded upper limit
+// ---------------------------------------------------------------------------
+const sgpt: TemplateSeed = {
+  service_code: "SGPT",
+  layout: "simple",
+  params: [
+    {
+      parameter_name: "SGPT (ALT)", input_type: "numeric",
+      unit_si: "U/L", gender: "F",
+      ref_low_si: 0, ref_high_si: 33,
     },
     {
-      parameter_name: "Creatinine",
-      input_type: "numeric", gender: "F",
-      unit_si: "umol/L", ref_low_si: 45, ref_high_si: 84,
-      unit_conv: "mg/dL", ref_low_conv: 0.51, ref_high_conv: 0.95,
-      si_to_conv_factor: 0.0113,
+      parameter_name: "SGPT (ALT)", input_type: "numeric",
+      unit_si: "U/L", gender: "M",
+      ref_low_si: 0, ref_high_si: 41,
+    },
+  ],
+};
+
+// ---------------------------------------------------------------------------
+// SGOT (AST)  →  'simple', gender-banded upper limit
+// ---------------------------------------------------------------------------
+const sgot: TemplateSeed = {
+  service_code: "SGOT",
+  layout: "simple",
+  params: [
+    {
+      parameter_name: "SGOT (AST)", input_type: "numeric",
+      unit_si: "U/L", gender: "F",
+      ref_low_si: 0, ref_high_si: 31,
     },
     {
-      parameter_name: "Creatinine",
-      input_type: "numeric", gender: "M",
-      unit_si: "umol/L", ref_low_si: 59, ref_high_si: 104,
-      unit_conv: "mg/dL", ref_low_conv: 0.67, ref_high_conv: 1.18,
-      si_to_conv_factor: 0.0113,
+      parameter_name: "SGOT (AST)", input_type: "numeric",
+      unit_si: "U/L", gender: "M",
+      ref_low_si: 0, ref_high_si: 37,
+    },
+  ],
+};
+
+// ---------------------------------------------------------------------------
+// LIPID — Lipid Profile  →  'simple', 5 params
+// ---------------------------------------------------------------------------
+const lipid: TemplateSeed = {
+  service_code: "LIPID",
+  layout: "simple",
+  params: [
+    {
+      parameter_name: "Triglycerides", input_type: "numeric",
+      unit_si: "mg/dL",
+      ref_low_si: 0, ref_high_si: 150,
     },
     {
-      parameter_name: "Uric Acid",
-      input_type: "numeric", gender: "F",
-      unit_si: "umol/L", ref_low_si: 142, ref_high_si: 339,
-      unit_conv: "mg/dL", ref_low_conv: 2.38, ref_high_conv: 5.7,
-      si_to_conv_factor: 0.0168,
+      parameter_name: "Total Cholesterol", input_type: "numeric",
+      unit_si: "mg/dL",
+      ref_low_si: 0, ref_high_si: 200,
     },
     {
-      parameter_name: "Uric Acid",
-      input_type: "numeric", gender: "M",
-      unit_si: "umol/L", ref_low_si: 202.3, ref_high_si: 416.5,
-      unit_conv: "mg/dL", ref_low_conv: 3.4, ref_high_conv: 6.99,
-      si_to_conv_factor: 0.0168,
+      // HDL — only a lower bound is clinically meaningful; values above 40
+      // (M) / 50 (F) are protective. We use 40 as a conservative cut-off;
+      // admin can refine via CRUD if needed.
+      parameter_name: "HDL", input_type: "numeric",
+      unit_si: "mg/dL",
+      ref_low_si: 40,
     },
     {
-      parameter_name: "Triglycerides",
-      input_type: "numeric",
-      unit_si: "mmol/L", ref_low_si: 0, ref_high_si: 1.7,
-      unit_conv: "mg/dL", ref_low_conv: 0, ref_high_conv: 150.44,
-      si_to_conv_factor: 88.5,
+      parameter_name: "LDL", input_type: "numeric",
+      unit_si: "mg/dL",
+      ref_low_si: 0, ref_high_si: 100,
     },
     {
-      parameter_name: "Cholesterol",
-      input_type: "numeric",
-      unit_si: "mmol/L", ref_low_si: 0, ref_high_si: 5.2,
-      unit_conv: "mg/dL", ref_low_conv: 0, ref_high_conv: 200,
-      si_to_conv_factor: 38.46,
+      parameter_name: "VLDL", input_type: "numeric",
+      unit_si: "mg/dL",
+      ref_low_si: 0, ref_high_si: 30,
+    },
+  ],
+};
+
+// ---------------------------------------------------------------------------
+// THYROID — Thyroid Function (TSH + FT4)  →  'simple'
+// ---------------------------------------------------------------------------
+const thyroid: TemplateSeed = {
+  service_code: "THYROID",
+  layout: "simple",
+  params: [
+    {
+      parameter_name: "TSH", input_type: "numeric",
+      unit_si: "mIU/L",
+      ref_low_si: 0.4, ref_high_si: 4.0,
     },
     {
-      parameter_name: "HDL",
-      input_type: "numeric",
-      unit_si: "mmol/L", ref_low_si: 0.78, ref_high_si: 2.2,
-      unit_conv: "mg/dL", ref_low_conv: 30, ref_high_conv: 85,
-      si_to_conv_factor: 38.46,
+      parameter_name: "FT4", input_type: "numeric",
+      unit_si: "pmol/L",
+      ref_low_si: 9.0, ref_high_si: 19.0,
     },
+  ],
+};
+
+// ---------------------------------------------------------------------------
+// HBSAG — Hepatitis B Surface Antigen  →  'simple', select
+// ---------------------------------------------------------------------------
+const hbsag: TemplateSeed = {
+  service_code: "HBSAG",
+  layout: "simple",
+  params: [
     {
-      parameter_name: "LDL",
-      input_type: "numeric",
-      unit_si: "mmol/L", ref_low_si: 0, ref_high_si: 3.3,
-      unit_conv: "mg/dL", ref_low_conv: 0, ref_high_conv: 127.41,
-      si_to_conv_factor: 38.61,
-    },
-    {
-      parameter_name: "VLDL",
-      input_type: "numeric",
-      unit_si: "mmol/L", ref_low_si: 0, ref_high_si: 0.78,
-      unit_conv: "mg/dL", ref_low_conv: 0, ref_high_conv: 30,
-      si_to_conv_factor: 38.46,
-    },
-    {
-      parameter_name: "SGPT (ALT)",
-      input_type: "numeric",
-      unit_si: "U/L",  ref_low_si: 0, ref_high_si: 41,
-      unit_conv: "U/L", ref_low_conv: 0, ref_high_conv: 41,
-      si_to_conv_factor: 1,
-    },
-    {
-      parameter_name: "SGOT (AST)",
-      input_type: "numeric",
-      unit_si: "U/L",  ref_low_si: 0, ref_high_si: 37,
-      unit_conv: "U/L", ref_low_conv: 0, ref_high_conv: 37,
-      si_to_conv_factor: 1,
-    },
-    {
-      parameter_name: "HbA1c",
-      input_type: "numeric",
-      unit_si: "%",  ref_low_si: 4.5, ref_high_si: 6.5,
-      unit_conv: "%", ref_low_conv: 4.5, ref_high_conv: 6.5,
-      si_to_conv_factor: 1,
+      parameter_name: "HBsAg", input_type: "select",
+      allowed_values: ["Non-Reactive", "Reactive"],
+      abnormal_values: ["Reactive"],
     },
   ],
 };
@@ -323,7 +364,72 @@ const urinalysis: TemplateSeed = {
   ],
 };
 
-const TEMPLATES: TemplateSeed[] = [cbc, chem, urinalysis];
+// ---------------------------------------------------------------------------
+// Imaging reports  →  'imaging_report'
+// Two free-text params (Findings + Impression) + image attached at finalise
+// time. The image is uploaded to the `result-images` bucket and embedded in
+// the rendered PDF — see queue/[id]/actions.ts:finaliseStructuredAction.
+// ---------------------------------------------------------------------------
+const ecg: TemplateSeed = {
+  service_code: "ECG",
+  layout: "imaging_report",
+  params: [
+    {
+      parameter_name: "Findings", input_type: "free_text",
+      placeholder: "Describe rhythm, rate, axis, intervals, ST/T-wave changes, etc.",
+    },
+    {
+      parameter_name: "Impression", input_type: "free_text",
+      placeholder: "Overall ECG interpretation",
+    },
+  ],
+};
+
+const xrayChest: TemplateSeed = {
+  service_code: "XRAYCHEST",
+  layout: "imaging_report",
+  params: [
+    {
+      parameter_name: "Findings", input_type: "free_text",
+      placeholder: "Describe lung fields, mediastinum, heart size, bony thorax, etc.",
+    },
+    {
+      parameter_name: "Impression", input_type: "free_text",
+      placeholder: "Overall radiologic impression",
+    },
+  ],
+};
+
+const usAbdomen: TemplateSeed = {
+  service_code: "USABDOMEN",
+  layout: "imaging_report",
+  params: [
+    {
+      parameter_name: "Findings", input_type: "free_text",
+      placeholder:
+        "Describe liver, gallbladder, biliary tree, pancreas, spleen, kidneys, urinary bladder.",
+    },
+    {
+      parameter_name: "Impression", input_type: "free_text",
+      placeholder: "Sonographic impression",
+    },
+  ],
+};
+
+const TEMPLATES: TemplateSeed[] = [
+  cbc,
+  crea,
+  fbs,
+  sgpt,
+  sgot,
+  lipid,
+  thyroid,
+  hbsag,
+  urinalysis,
+  ecg,
+  xrayChest,
+  usAbdomen,
+];
 
 async function findServiceId(code: string): Promise<string | null> {
   const { data } = await admin
@@ -341,9 +447,42 @@ async function upsertTemplate(t: TemplateSeed) {
     return;
   }
 
-  // Wipe existing template (cascade drops params and any unrelated values).
-  // Safe in seed because only admin can have templates so far.
-  await admin.from("result_templates").delete().eq("service_id", serviceId);
+  // Wipe existing template. result_template_params has ON DELETE CASCADE,
+  // but result_values.parameter_id does NOT — if any historic result rows
+  // reference this template's params we have to clear those first or the
+  // delete fails silently inside @supabase/postgrest-js. This is a dev seed,
+  // so dropping orphaned result_values is the right call; production data
+  // would be touched only via the admin CRUD UI which does soft updates.
+  const { data: priorTemplate } = await admin
+    .from("result_templates")
+    .select("id")
+    .eq("service_id", serviceId)
+    .maybeSingle();
+  if (priorTemplate?.id) {
+    const { data: priorParams } = await admin
+      .from("result_template_params")
+      .select("id")
+      .eq("template_id", priorTemplate.id);
+    const paramIds = (priorParams ?? []).map((r) => r.id);
+    if (paramIds.length > 0) {
+      const { error: rvErr } = await admin
+        .from("result_values")
+        .delete()
+        .in("parameter_id", paramIds);
+      if (rvErr) {
+        throw new Error(
+          `clear result_values for ${t.service_code}: ${rvErr.message}`,
+        );
+      }
+    }
+    const { error: delErr } = await admin
+      .from("result_templates")
+      .delete()
+      .eq("id", priorTemplate.id);
+    if (delErr) {
+      throw new Error(`delete template ${t.service_code}: ${delErr.message}`);
+    }
+  }
 
   const { data: tmpl, error: tErr } = await admin
     .from("result_templates")
@@ -414,12 +553,14 @@ async function upsertTemplate(t: TemplateSeed) {
   }
 
   console.log(
-    `✓ ${t.service_code} (${t.layout}): ${rows.length} parameters, ${rangeRows.length} age-banded ranges`,
+    `✓ seeded ${t.service_code} (${t.layout}) with ${rows.length} params${
+      rangeRows.length ? ` + ${rangeRows.length} age-banded ranges` : ""
+    }`,
   );
 }
 
 async function main() {
-  console.log("Seeding result templates...");
+  console.log(`Seeding ${TEMPLATES.length} result templates...`);
   for (const t of TEMPLATES) {
     await upsertTemplate(t);
   }

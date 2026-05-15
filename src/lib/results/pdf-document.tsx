@@ -11,6 +11,7 @@ import {
   Page,
   View,
   Text,
+  Image,
   StyleSheet,
 } from "@react-pdf/renderer";
 import { CONTACT, SITE } from "@/lib/marketing/site";
@@ -249,6 +250,24 @@ const styles = StyleSheet.create({
     fontSize: 9.5,
     lineHeight: 1.5,
     color: C.ink,
+  },
+  imagingAttachmentBlock: {
+    marginTop: 14,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: C.border,
+  },
+  imagingAttachmentImage: {
+    marginTop: 6,
+    maxWidth: 480,
+    maxHeight: 360,
+    objectFit: "contain",
+  },
+  imagingAttachmentNote: {
+    marginTop: 4,
+    fontSize: 9,
+    color: C.inkSoft,
+    fontStyle: "italic",
   },
 
   footerNotes: {
@@ -832,11 +851,29 @@ function MultiSectionBody({ params, values, ranges }: BodyContext) {
 // Layout: imaging_report (free-text Findings + Impression)
 // ---------------------------------------------------------------------------
 
-function ImagingBody({ params, values }: Omit<BodyContext, "ranges">) {
+function ImagingBody({
+  params,
+  values,
+  imageAttachment,
+}: Omit<BodyContext, "ranges"> & {
+  imageAttachment?: ResultDocumentInput["imageAttachment"];
+}) {
   // Imaging templates have ~2 free-text params: Findings and Impression. We
   // render whatever params the admin defined, in sort order, as labelled
   // monospace blocks. Blank values render as "—" so the sections never
   // collapse silently.
+  //
+  // When an image attachment is present, render it AFTER the text blocks.
+  // - image/jpeg | image/png | image/webp → embedded via <Image>. We hand
+  //   @react-pdf/renderer a Buffer so it can detect the format itself; both
+  //   PNG and JPEG are natively supported. WebP support varies by version
+  //   but works in 4.x with a Buffer src.
+  // - application/pdf → not embeddable (out of scope), so we render a short
+  //   note pointing at the separate file.
+  const attachmentMime = imageAttachment?.mime ?? null;
+  const isImage = attachmentMime != null && attachmentMime.startsWith("image/");
+  const isPdf = attachmentMime === "application/pdf";
+
   return (
     <View style={styles.imagingBody}>
       {params.map((p) => {
@@ -850,6 +887,25 @@ function ImagingBody({ params, values }: Omit<BodyContext, "ranges">) {
           </View>
         );
       })}
+      {imageAttachment ? (
+        <View style={styles.imagingAttachmentBlock} wrap={false}>
+          <Text style={styles.imagingHeading}>Attached Image</Text>
+          {isImage ? (
+            // @react-pdf/renderer's <Image> component is a PDF primitive,
+            // not an HTML <img>; no alt prop is supported.
+            // eslint-disable-next-line jsx-a11y/alt-text
+            <Image
+              src={Buffer.from(imageAttachment.data)}
+              style={styles.imagingAttachmentImage}
+            />
+          ) : null}
+          {isPdf ? (
+            <Text style={styles.imagingAttachmentNote}>
+              Attachment: {imageAttachment.filename} — see separate PDF.
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -902,7 +958,11 @@ export function ResultDocument(input: ResultDocumentInput) {
           <MultiSectionBody params={visibleParams} values={input.values} ranges={ranges} />
         ) : null}
         {input.template.layout === "imaging_report" ? (
-          <ImagingBody params={visibleParams} values={input.values} />
+          <ImagingBody
+            params={visibleParams}
+            values={input.values}
+            imageAttachment={input.imageAttachment}
+          />
         ) : null}
 
         {input.template.footer_notes ? (

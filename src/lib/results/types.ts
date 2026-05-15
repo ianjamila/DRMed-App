@@ -105,6 +105,14 @@ export interface ResultDocumentInput {
     prc_license_kind: string | null;
     prc_license_no: string | null;
   } | null;
+  // Optional image attachment for `imaging_report` layouts. Embedded at the
+  // bottom of the PDF after Findings + Impression. PDF mime types are listed
+  // as a separate-attachment note rather than embedded — see ImagingBody.
+  imageAttachment?: {
+    data: Uint8Array;
+    mime: string;
+    filename: string;
+  };
   isPreview?: boolean;
 }
 

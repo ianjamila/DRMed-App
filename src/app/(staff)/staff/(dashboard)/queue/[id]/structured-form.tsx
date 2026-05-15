@@ -84,6 +84,9 @@ export function StructuredResultForm(props: Props) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [feedback, setFeedback] = useState<StructuredResult | null>(null);
+  // Imaging-report layouts require an image attachment at finalise time.
+  // Drafts skip it; the user picks the file just before clicking Finalise.
+  const [image, setImage] = useState<File | null>(null);
 
   const visibleParams = useMemo(
     () => filterParamsForPatient(props.params, props.patientSex),
@@ -154,15 +157,39 @@ export function StructuredResultForm(props: Props) {
 
   function submit(action: "draft" | "finalise") {
     setFeedback(null);
+    if (action === "finalise" && props.layout === "imaging_report" && !image) {
+      setFeedback({
+        ok: false,
+        error: "Please attach an image before finalising.",
+      });
+      return;
+    }
     start(async () => {
-      const fn = action === "draft" ? saveDraftAction : finaliseStructuredAction;
-      const result = await fn(props.testRequestId, buildPayload());
+      if (action === "draft") {
+        const result = await saveDraftAction(
+          props.testRequestId,
+          buildPayload(),
+        );
+        setFeedback(result);
+        if (result.ok) router.refresh();
+        return;
+      }
+      // Finalise — wrap payload in FormData so we can carry the optional
+      // image File alongside the values JSON.
+      const fd = new FormData();
+      fd.append("values", JSON.stringify(buildPayload().values));
+      if (props.layout === "imaging_report" && image) {
+        fd.append("image", image);
+      }
+      const result = await finaliseStructuredAction(props.testRequestId, fd);
       setFeedback(result);
       if (result.ok) router.refresh();
     });
   }
 
   const disabled = props.alreadyFinalised || pending;
+  const finaliseDisabled =
+    disabled || (props.layout === "imaging_report" && !image);
 
   return (
     <form
@@ -197,6 +224,8 @@ export function StructuredResultForm(props: Props) {
           ranges={rangesByParam}
           disabled={disabled}
           onSetValue={update}
+          image={image}
+          onImageChange={setImage}
         />
       ) : null}
 
@@ -231,7 +260,7 @@ export function StructuredResultForm(props: Props) {
         </Button>
         <Button
           type="button"
-          disabled={disabled}
+          disabled={finaliseDisabled}
           onClick={() => submit("finalise")}
           className="bg-[color:var(--color-brand-navy)] text-white hover:bg-[color:var(--color-brand-cyan)]"
         >
@@ -582,7 +611,12 @@ function ImagingBody({
   values,
   disabled,
   onSetValue,
-}: Omit<BodyProps, "onChangeNumeric">) {
+  image,
+  onImageChange,
+}: Omit<BodyProps, "onChangeNumeric"> & {
+  image: File | null;
+  onImageChange: (f: File | null) => void;
+}) {
   return (
     <div className="grid gap-4">
       {params.map((p) => {
@@ -629,6 +663,36 @@ function ImagingBody({
           </div>
         );
       })}
+
+      <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4">
+        <div className="mb-2 flex items-center justify-between">
+          <label
+            htmlFor="imaging-image"
+            className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)]"
+          >
+            Attached image <span className="text-red-600">*</span>
+          </label>
+        </div>
+        <input
+          id="imaging-image"
+          type="file"
+          accept="image/jpeg,image/png,image/webp,application/pdf"
+          onChange={(e) => onImageChange(e.target.files?.[0] ?? null)}
+          disabled={disabled}
+          required
+          className="block w-full min-h-[44px] text-sm text-[color:var(--color-brand-ink)] file:mr-3 file:rounded-md file:border-0 file:bg-[color:var(--color-brand-navy)] file:px-3 file:py-2 file:text-xs file:font-semibold file:uppercase file:tracking-wider file:text-white hover:file:bg-[color:var(--color-brand-cyan)] disabled:opacity-50"
+        />
+        {image ? (
+          <p className="mt-2 text-xs text-[color:var(--color-brand-text-soft)]">
+            Selected: <span className="font-medium">{image.name}</span> (
+            {(image.size / 1024 / 1024).toFixed(2)} MB)
+          </p>
+        ) : null}
+        <p className="mt-1 text-[11px] text-[color:var(--color-brand-text-soft)]">
+          JPEG, PNG, WebP, or PDF — up to 25 MB. The image embeds in the
+          released PDF; PDFs are listed as separate attachments.
+        </p>
+      </div>
     </div>
   );
 }
