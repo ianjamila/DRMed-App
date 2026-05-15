@@ -605,6 +605,12 @@ function DualUnitBody({
           band_label: null,
         };
         const out = isOutOfRange(p, v, eff);
+        const abnormalSelect = isAbnormalSelect(p, v);
+        // Packages combine convertible numeric rows (FBS, BUN, …) with
+        // free-text "see CBC sub-test" summary rows and qualitative select
+        // rows. Branch on input_type so non-numeric params get a single
+        // textarea/select spanning the SI+Conv columns instead of two
+        // useless number boxes.
         return (
           <div
             key={p.id}
@@ -620,48 +626,95 @@ function DualUnitBody({
                 </p>
               ) : null}
             </div>
-            <div className="col-span-6 sm:col-span-3">
-              <input
-                type="number"
-                inputMode="decimal"
-                step="any"
-                disabled={disabled || v.is_blank}
-                value={v.numeric_value_si ?? ""}
-                onChange={(e) => onChangeNumeric(p, "si", e.target.value)}
-                className={`w-full rounded-md border bg-white px-3 py-1.5 font-mono text-sm focus:outline-none ${
-                  out
-                    ? "border-red-400 text-red-700 focus:border-red-500"
-                    : "border-[color:var(--color-brand-bg-mid)] focus:border-[color:var(--color-brand-cyan)]"
-                } ${disabled || v.is_blank ? "opacity-50" : ""}`}
-              />
-              <p className="mt-0.5 text-[10px] text-[color:var(--color-brand-text-soft)]">
-                {p.unit_si ?? ""}
-                {formatRefRange(eff.ref_low_si, eff.ref_high_si)
-                  ? ` · ${formatRefRange(eff.ref_low_si, eff.ref_high_si)}`
-                  : ""}
-              </p>
-            </div>
-            <div className="col-span-6 sm:col-span-3">
-              <input
-                type="number"
-                inputMode="decimal"
-                step="any"
-                disabled={disabled || v.is_blank}
-                value={v.numeric_value_conv ?? ""}
-                onChange={(e) => onChangeNumeric(p, "conv", e.target.value)}
-                className={`w-full rounded-md border bg-white px-3 py-1.5 font-mono text-sm focus:outline-none ${
-                  out
-                    ? "border-red-400 text-red-700 focus:border-red-500"
-                    : "border-[color:var(--color-brand-bg-mid)] focus:border-[color:var(--color-brand-cyan)]"
-                } ${disabled || v.is_blank ? "opacity-50" : ""}`}
-              />
-              <p className="mt-0.5 text-[10px] text-[color:var(--color-brand-text-soft)]">
-                {p.unit_conv ?? ""}
-                {formatRefRange(eff.ref_low_conv, eff.ref_high_conv)
-                  ? ` · ${formatRefRange(eff.ref_low_conv, eff.ref_high_conv)}`
-                  : ""}
-              </p>
-            </div>
+            {p.input_type === "numeric" ? (
+              <>
+                <div className="col-span-6 sm:col-span-3">
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="any"
+                    disabled={disabled || v.is_blank}
+                    value={v.numeric_value_si ?? ""}
+                    onChange={(e) => onChangeNumeric(p, "si", e.target.value)}
+                    className={`w-full rounded-md border bg-white px-3 py-1.5 font-mono text-sm focus:outline-none ${
+                      out
+                        ? "border-red-400 text-red-700 focus:border-red-500"
+                        : "border-[color:var(--color-brand-bg-mid)] focus:border-[color:var(--color-brand-cyan)]"
+                    } ${disabled || v.is_blank ? "opacity-50" : ""}`}
+                  />
+                  <p className="mt-0.5 text-[10px] text-[color:var(--color-brand-text-soft)]">
+                    {p.unit_si ?? ""}
+                    {formatRefRange(eff.ref_low_si, eff.ref_high_si)
+                      ? ` · ${formatRefRange(eff.ref_low_si, eff.ref_high_si)}`
+                      : ""}
+                  </p>
+                </div>
+                <div className="col-span-6 sm:col-span-3">
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="any"
+                    disabled={disabled || v.is_blank}
+                    value={v.numeric_value_conv ?? ""}
+                    onChange={(e) => onChangeNumeric(p, "conv", e.target.value)}
+                    className={`w-full rounded-md border bg-white px-3 py-1.5 font-mono text-sm focus:outline-none ${
+                      out
+                        ? "border-red-400 text-red-700 focus:border-red-500"
+                        : "border-[color:var(--color-brand-bg-mid)] focus:border-[color:var(--color-brand-cyan)]"
+                    } ${disabled || v.is_blank ? "opacity-50" : ""}`}
+                  />
+                  <p className="mt-0.5 text-[10px] text-[color:var(--color-brand-text-soft)]">
+                    {p.unit_conv ?? ""}
+                    {formatRefRange(eff.ref_low_conv, eff.ref_high_conv)
+                      ? ` · ${formatRefRange(eff.ref_low_conv, eff.ref_high_conv)}`
+                      : ""}
+                  </p>
+                </div>
+              </>
+            ) : p.input_type === "select" ? (
+              <div className="col-span-12 sm:col-span-6">
+                <select
+                  disabled={disabled || v.is_blank}
+                  value={v.select_value ?? ""}
+                  onChange={(e) =>
+                    onSetValue(p.id, {
+                      select_value: e.target.value || null,
+                      is_blank: false,
+                    })
+                  }
+                  className={`w-full rounded-md border bg-white px-3 py-1.5 text-sm focus:outline-none ${
+                    abnormalSelect
+                      ? "border-red-400 text-red-700 focus:border-red-500"
+                      : "border-[color:var(--color-brand-bg-mid)] focus:border-[color:var(--color-brand-cyan)]"
+                  } ${disabled || v.is_blank ? "opacity-50" : ""}`}
+                >
+                  <option value="">— Select —</option>
+                  {(p.allowed_values ?? []).map((opt) => (
+                    <option key={opt} value={opt}>
+                      {opt}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div className="col-span-12 sm:col-span-6">
+                <textarea
+                  rows={2}
+                  disabled={disabled || v.is_blank}
+                  placeholder={p.placeholder ?? ""}
+                  value={v.text_value ?? ""}
+                  onChange={(e) =>
+                    onSetValue(p.id, {
+                      text_value: e.target.value || null,
+                      is_blank: false,
+                    })
+                  }
+                  className={`w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-1.5 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none ${
+                    disabled || v.is_blank ? "opacity-50" : ""
+                  }`}
+                />
+              </div>
+            )}
             <div className="col-span-12 sm:col-span-2 sm:text-right">
               <label className="inline-flex items-center gap-1.5 text-xs text-[color:var(--color-brand-text-soft)]">
                 <input
@@ -675,6 +728,8 @@ function DualUnitBody({
                         ? {
                             numeric_value_si: null,
                             numeric_value_conv: null,
+                            text_value: null,
+                            select_value: null,
                           }
                         : {}),
                     })
