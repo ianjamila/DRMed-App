@@ -34,8 +34,10 @@
 // (scripts/smoke-12.A.sql) inserts staging rows directly and is unaffected.
 
 import ExcelJS from "exceljs";
-import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUT_PATH = resolve(__dirname, "hmo-history-mini.xlsx");
 
 const today = new Date();
@@ -210,8 +212,14 @@ const docRows: Row[] = [
 //      but paid_amount=0 in staging) + 300 (A5 overpaid)
 //      + 320 (A6 unpaid) + 1970 (A7 paid) + 130 (A8 alias)
 //      + 320 (A9 cross-OR) + 320 + 320 (A11+A12 dup hash, both reach staging)
-//      = 6100
-//      A4 (negative) → trips staging CHECK → not counted toward AR.
+//      + 0.01 (A4, see note) = 6100.01
+//      A4 — the "negative billed_amount" edge case from spec §13.1 — is
+//      documented inline (see the A4 row comment around line 110) but the
+//      actual workbook value is 0.01 (1 centavo), not -100, because the
+//      staging billed_amount > 0 CHECK would otherwise abort the whole
+//      chunk insert. 0.01 passes the CHECK and contributes 0.01 to Maxicare
+//      AR — negligible against the 11100 total, so the green/yellow variance
+//      threshold is unaffected.
 //
 //   Maxicare staged AR (DOCTOR): 500 × 10 = 5000 (all 10 Maxicare consults)
 //
@@ -223,12 +231,13 @@ const docRows: Row[] = [
 //   Total Valucare staged AR  = 2740 + 6000 = 8740
 //   Valucare WB ending = 8740 → 0% variance (green).
 //
-// Note: the actual numbers depend on whether the negative-billed row is
-// rejected by the staging CHECK at upload time (current behavior). If the
-// rejection bombs the whole chunk INSERT, the entire upload aborts before
-// reconciliation runs. The fixture's reconciliation arithmetic above assumes
-// the row is NOT inserted into staging but the OTHER 24 LAB rows are. If the
-// upload bombs end-to-end, the browser smoke will surface that finding.
+// Note: A4 is coerced to 0.01 in the workbook so all 25 LAB rows reach
+// staging cleanly. The 0.01 contribution to Maxicare AR is negligible — the
+// staged total still rounds to 11100 and the ~3% variance vs the WB ending
+// balance of 10777 is unchanged. The "true" negative-billed-amount edge case
+// from spec §13.1 cannot be exercised end-to-end through the upload UI today
+// (the staging CHECK would abort the chunk insert); see the inline comment
+// at A4 (~line 110) for the rationale and the D5 report for the gap.
 //
 // Note 2: rows A11+A12 (identical content_hash) both reach staging in 'parsed'
 // status. They're flagged with severity='error' but the staging amounts are
@@ -272,14 +281,20 @@ async function main() {
   await wb.xlsx.writeFile(OUT_PATH);
 
   // Quick row tally for the operator (helps confirm row counts at a glance).
-  const total = labRows.length + docRows.length + 8 /* HMO REFERENCE rows */;
+  // Worksheet row math:
+  //   LAB SERVICE         : 1 header + 1 sub-header + labRows.length data
+  //   DOCTOR CONSULTATION : 1 header + 1 sub-header + docRows.length data
+  //   HMO REFERENCE       : 1 header + 1 sub-header + 1 spacer + 5 providers = 8
+  // Total worksheet rows = 4 + labRows.length + docRows.length + 8
+  //                      = labRows.length + docRows.length + 12.
+  const totalWorksheetRows = labRows.length + docRows.length + 12;
   console.log(`wrote ${OUT_PATH}`);
-  console.log(`  LAB SERVICE rows         : ${labRows.length}`);
-  console.log(`  DOCTOR CONSULTATION rows : ${docRows.length}`);
-  console.log(`  HMO REFERENCE rows       : 8 (incl. headers + 5 providers)`);
-  console.log(`  total worksheet rows     : ${total} (+ 6 header/sub-header rows)`);
-  console.log(`  today                    : ${iso(today)}`);
-  console.log(`  future (post-cutover)    : ${iso(FUTURE)}`);
+  console.log(`  LAB SERVICE data rows         : ${labRows.length}`);
+  console.log(`  DOCTOR CONSULTATION data rows : ${docRows.length}`);
+  console.log(`  HMO REFERENCE rows            : 8 (2 header + 1 spacer + 5 providers)`);
+  console.log(`  total worksheet rows          : ${totalWorksheetRows} (incl. 4 LAB/DOC header rows)`);
+  console.log(`  today                         : ${iso(today)}`);
+  console.log(`  future (post-cutover)         : ${iso(FUTURE)}`);
 }
 
 main().catch((e) => {

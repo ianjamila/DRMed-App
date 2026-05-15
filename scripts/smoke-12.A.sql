@@ -33,7 +33,6 @@ do $$
 declare
   v_run_id            uuid := gen_random_uuid();
   v_admin_auth        uuid := gen_random_uuid();
-  v_admin_profile     uuid;
   v_maxicare          uuid;
   v_valucare          uuid;
   v_cbc_service       uuid;
@@ -60,7 +59,6 @@ begin
 
   insert into public.staff_profiles (id, full_name, role, is_active)
   values (v_admin_auth, 'Smoke 12.A Admin', 'admin', true);
-  v_admin_profile := v_admin_auth;
 
   -- ---- Resolve providers (seeded by migration 0011_accounting_capture) ---
   select id into v_maxicare from public.hmo_providers where name = 'Maxicare';
@@ -82,7 +80,7 @@ begin
   insert into public.hmo_import_runs (id, run_kind, file_hash, file_name,
                                        cutover_date, uploaded_by)
   values (v_run_id, 'commit', 'smoke-12a-hash', 'smoke-12.A.sql',
-          current_date, v_admin_profile);
+          current_date, v_admin_auth);
 
   -- ---- Insert 4 synthetic staging rows (status='validated') --------------
   --
@@ -203,15 +201,18 @@ begin
   end if;
   raise notice 'A8 PASS: 2/2 opening JEs balance (debits = credits)';
 
-  -- A9: posting_date matches run.cutover_date on every opening JE.
+  -- A9: every opening JE has posting_date = run.cutover_date.
   if exists (
-    select 1 from public.journal_entries
-     where source_kind = 'hmo_history_opening' and source_id = v_run_id
-       and posting_date <> current_date
+    select 1
+      from public.journal_entries je
+      join public.hmo_import_runs r on r.id = v_run_id
+     where je.source_kind = 'hmo_history_opening'
+       and je.source_id = v_run_id
+       and je.posting_date <> r.cutover_date
   ) then
-    raise exception 'A9 FAIL: at least one opening JE has wrong posting_date';
+    raise exception 'A9 FAIL: at least one opening JE has posting_date <> run.cutover_date';
   end if;
-  raise notice 'A9 PASS: every opening JE posting_date = cutover (today)';
+  raise notice 'A9 PASS: every opening JE posting_date = run.cutover_date';
 
   -- A10: audit_log row for the commit (action='hmo_history_import.committed',
   --      resource_id=run_id). Plan-text said entity_id; actual column is
