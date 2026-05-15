@@ -2,7 +2,8 @@
  * Seeds result templates for the long-code service catalog so the medtech
  * queue page never falls back to the generic PDF upload form.
  *
- *   npm run seed:templates
+ *   npm run seed:templates              # local Supabase
+ *   npm run seed:templates -- --prod    # linked remote project
  *
  * Idempotent: removes the existing template + params for the target service
  * codes before re-inserting, so seed edits are safe to re-run.
@@ -13,16 +14,28 @@
  * on prod and not what staff orders against.
  *
  * Templates seeded:
- *   Chemistry / Hematology — `simple`
+ *   Fixed (one row per service_code) — `simple` / `multi_section`
  *     CBC_PC, CREATININE, FBS_RBS, SGPT_ALT, SGOT_AST,
- *     LIPID_PROFILE, THYROID_FUNCTION_TSH_FT4, HBSAG_SCREENING
- *   Urinalysis              — `multi_section` (Physical / Chemical / Microscopic)
- *     URINALYSIS
- *   Imaging                 — `imaging_report` (Findings + Impression text +
- *                              image attached at finalise)
- *     ECG  (single service)
- *     XRAY_*       — replicated across every active long-code XRAY service
- *     ULTRASOUND_* — replicated across every active long-code US service
+ *     LIPID_PROFILE, THYROID_FUNCTION_TSH_FT4, HBSAG_SCREENING, URINALYSIS, ECG
+ *
+ *   Section fanout — every active service in the section gets a template;
+ *   per-section defaults map provides the params for the well-known codes,
+ *   and anything not in the map gets a single-param numeric placeholder so
+ *   the queue page can render *something* instead of falling back to PDF.
+ *     chemistry, immunology, urinalysis, hematology, microbiology
+ *
+ *   Package fanout — multi-row `simple` panel composed inline from the
+ *   chemistry param library so STANDARD_CHEMISTRY etc. render cleanly.
+ *
+ *   Imaging fanout — `imaging_report` (Findings + Impression + attached
+ *   image at finalise time).
+ *     XRAY_*       — section=imaging_xray
+ *     ULTRASOUND_* — section=imaging_ultrasound
+ *
+ * Local-dev caveat: the local catalog only contains the handful of codes
+ * seeded by `seed-services.ts` plus whatever you've imported via
+ * `import:tests`. The section fanout against local will therefore touch
+ * far fewer rows than against prod — that's expected.
  *
  * Reference: drmed.ph LAB RESULTS FORM Sheet
  *   1UZrH4EYAkXiu5gMMQUJoAddpSqqwTmfrk1k8ykaqikQ
@@ -605,6 +618,792 @@ async function seedFixedTemplate(t: TemplateSeed): Promise<boolean> {
   return true;
 }
 
+// ===========================================================================
+// SECTION FANOUT — long-tail chemistry / immunology / urinalysis / hematology
+// / microbiology / packages.
+//
+// Each section has a defaults map keyed by service `code`. The fanout walks
+// every active service in the section and inserts a template using either
+// the mapped params (well-known tests with curated units + refs) or a
+// single-param placeholder (input_type='numeric', no unit, no range — admin
+// fills via the /staff/admin/result-templates CRUD).
+//
+// Reference ranges are populated only where the standard PH-lab reference
+// is well established. For everything else: leave null. Better to render an
+// empty range than to publish wrong clinical values.
+// ===========================================================================
+
+interface SectionEntry {
+  /** Template layout. Defaults to 'simple' for single-test templates. */
+  layout?: Layout;
+  /** Params for this template. */
+  params: ParamSeed[];
+}
+
+/**
+ * Build a single-numeric placeholder param. Used both as the fallback when a
+ * service has no entry in its section's defaults map and as a shorthand for
+ * the many chem/immuno tests we know the name of but not a published ref.
+ */
+function placeholderNumeric(parameterName: string, unitSi?: string): ParamSeed {
+  return {
+    parameter_name: parameterName,
+    input_type: "numeric",
+    ...(unitSi ? { unit_si: unitSi } : {}),
+  };
+}
+
+/** Qualitative serology select (Non-Reactive / Reactive). */
+const REACTIVE_SELECT: Pick<
+  ParamSeed,
+  "input_type" | "allowed_values" | "abnormal_values"
+> = {
+  input_type: "select",
+  allowed_values: ["Non-Reactive", "Reactive"],
+  abnormal_values: ["Reactive"],
+};
+
+/** Qualitative positive/negative select. */
+const POS_NEG_SELECT: Pick<
+  ParamSeed,
+  "input_type" | "allowed_values" | "abnormal_values"
+> = {
+  input_type: "select",
+  allowed_values: ["Negative", "Positive"],
+  abnormal_values: ["Positive"],
+};
+
+// ---------------------------------------------------------------------------
+// chemistry defaults — single-param numeric tests with curated refs.
+// ---------------------------------------------------------------------------
+const CHEMISTRY_DEFAULTS: Record<string, SectionEntry> = {
+  ALBUMIN: {
+    params: [{ parameter_name: "Albumin", input_type: "numeric", unit_si: "g/L", ref_low_si: 35, ref_high_si: 55 }],
+  },
+  ALP: {
+    params: [{ parameter_name: "ALP", input_type: "numeric", unit_si: "U/L", ref_low_si: 30, ref_high_si: 120 }],
+  },
+  AMYLASE: {
+    params: [{ parameter_name: "Amylase", input_type: "numeric", unit_si: "U/L", ref_low_si: 25, ref_high_si: 125 }],
+  },
+  BILIRUBIN: {
+    params: [{ parameter_name: "Bilirubin (Total)", input_type: "numeric", unit_si: "µmol/L", ref_low_si: 0, ref_high_si: 21 }],
+  },
+  BUA_URIC_ACID: {
+    // Gender-banded — F 142–339, M 202–416 µmol/L
+    params: [
+      { parameter_name: "Uric Acid", input_type: "numeric", unit_si: "µmol/L", gender: "F", ref_low_si: 142, ref_high_si: 339 },
+      { parameter_name: "Uric Acid", input_type: "numeric", unit_si: "µmol/L", gender: "M", ref_low_si: 202, ref_high_si: 416 },
+    ],
+  },
+  BUN: {
+    params: [{
+      parameter_name: "BUN",
+      input_type: "numeric",
+      unit_si: "mmol/L", ref_low_si: 2.1, ref_high_si: 7.1,
+      unit_conv: "mg/dL", ref_low_conv: 5.88, ref_high_conv: 19.89,
+      si_to_conv_factor: 2.8,
+    }],
+  },
+  CA: {
+    params: [{ parameter_name: "Calcium", input_type: "numeric", unit_si: "mmol/L", ref_low_si: 2.15, ref_high_si: 2.50 }],
+  },
+  CHOLESTEROL: {
+    params: [{
+      parameter_name: "Total Cholesterol",
+      input_type: "numeric",
+      unit_si: "mmol/L", ref_low_si: 0, ref_high_si: 5.2,
+      unit_conv: "mg/dL", ref_low_conv: 0, ref_high_conv: 200,
+      si_to_conv_factor: 38.67,
+    }],
+  },
+  CK_MB: {
+    params: [{ parameter_name: "CK-MB", input_type: "numeric", unit_si: "U/L", ref_low_si: 0, ref_high_si: 25 }],
+  },
+  CK_MM: {
+    params: [placeholderNumeric("CK-MM", "U/L")],
+  },
+  CK_TOTAL_CREATINE_KINASE: {
+    params: [{ parameter_name: "CK Total (Creatine Kinase)", input_type: "numeric", unit_si: "U/L", ref_low_si: 0, ref_high_si: 200 }],
+  },
+  CL: {
+    params: [{ parameter_name: "Chloride", input_type: "numeric", unit_si: "mmol/L", ref_low_si: 98, ref_high_si: 107 }],
+  },
+  FERRITIN: {
+    // Gender-banded — leave actual numbers for admin since values vary widely
+    // by lab + assay. Admin fills via CRUD.
+    params: [placeholderNumeric("Ferritin", "ng/mL")],
+  },
+  FSH: {
+    params: [
+      { parameter_name: "FSH", input_type: "numeric", unit_si: "mIU/mL", gender: "F", ref_low_si: 2.5, ref_high_si: 10.2 },
+      { parameter_name: "FSH", input_type: "numeric", unit_si: "mIU/mL", gender: "M", ref_low_si: 1.5, ref_high_si: 12.4 },
+    ],
+  },
+  FT3: {
+    params: [{ parameter_name: "FT3", input_type: "numeric", unit_si: "pmol/L", ref_low_si: 3.1, ref_high_si: 6.8 }],
+  },
+  FT4: {
+    params: [{ parameter_name: "FT4", input_type: "numeric", unit_si: "pmol/L", ref_low_si: 9.0, ref_high_si: 19.0 }],
+  },
+  GGTP: {
+    params: [{ parameter_name: "GGTP", input_type: "numeric", unit_si: "U/L", ref_low_si: 0, ref_high_si: 55 }],
+  },
+  GLOBULIN: {
+    params: [placeholderNumeric("Globulin", "g/L")],
+  },
+  HBA1C: {
+    params: [{ parameter_name: "HbA1c", input_type: "numeric", unit_si: "%", ref_low_si: 4.5, ref_high_si: 6.5 }],
+  },
+  HDL_LDL_VLDL: {
+    params: [
+      { parameter_name: "HDL", input_type: "numeric", unit_si: "mg/dL", ref_low_si: 40 },
+      { parameter_name: "LDL", input_type: "numeric", unit_si: "mg/dL", ref_low_si: 0, ref_high_si: 100 },
+      { parameter_name: "VLDL", input_type: "numeric", unit_si: "mg/dL", ref_low_si: 0, ref_high_si: 30 },
+    ],
+  },
+  ICA: {
+    params: [placeholderNumeric("Ionized Calcium", "mmol/L")],
+  },
+  K: {
+    params: [{ parameter_name: "Potassium", input_type: "numeric", unit_si: "mmol/L", ref_low_si: 3.5, ref_high_si: 5.0 }],
+  },
+  LDH: {
+    params: [{ parameter_name: "LDH", input_type: "numeric", unit_si: "U/L", ref_low_si: 0, ref_high_si: 250 }],
+  },
+  LH: {
+    params: [
+      { parameter_name: "LH", input_type: "numeric", unit_si: "mIU/mL", gender: "F", ref_low_si: 1.9, ref_high_si: 12.5 },
+      { parameter_name: "LH", input_type: "numeric", unit_si: "mIU/mL", gender: "M", ref_low_si: 1.7, ref_high_si: 8.6 },
+    ],
+  },
+  LIPASE: {
+    params: [placeholderNumeric("Lipase", "U/L")],
+  },
+  MG: {
+    params: [{ parameter_name: "Magnesium", input_type: "numeric", unit_si: "mmol/L", ref_low_si: 0.66, ref_high_si: 1.07 }],
+  },
+  NA: {
+    params: [{ parameter_name: "Sodium", input_type: "numeric", unit_si: "mmol/L", ref_low_si: 135, ref_high_si: 145 }],
+  },
+  OGTT_100G: {
+    // 100g OGTT — 4-hour curve. Pregnancy screen.
+    params: [
+      { parameter_name: "Fasting", input_type: "numeric", unit_si: "mg/dL", ref_low_si: 0, ref_high_si: 95 },
+      { parameter_name: "1 Hour",  input_type: "numeric", unit_si: "mg/dL", ref_low_si: 0, ref_high_si: 180 },
+      { parameter_name: "2 Hour",  input_type: "numeric", unit_si: "mg/dL", ref_low_si: 0, ref_high_si: 155 },
+      { parameter_name: "3 Hour",  input_type: "numeric", unit_si: "mg/dL", ref_low_si: 0, ref_high_si: 140 },
+    ],
+  },
+  OGTT_75G: {
+    // 75g OGTT — fasting + 2h.
+    params: [
+      { parameter_name: "Fasting", input_type: "numeric", unit_si: "mg/dL", ref_low_si: 0, ref_high_si: 92 },
+      { parameter_name: "1 Hour",  input_type: "numeric", unit_si: "mg/dL", ref_low_si: 0, ref_high_si: 180 },
+      { parameter_name: "2 Hour",  input_type: "numeric", unit_si: "mg/dL", ref_low_si: 0, ref_high_si: 153 },
+    ],
+  },
+  PHOSPHORUS: {
+    params: [{ parameter_name: "Phosphorus", input_type: "numeric", unit_si: "mmol/L", ref_low_si: 0.81, ref_high_si: 1.45 }],
+  },
+  PROLACTIN: {
+    params: [
+      { parameter_name: "Prolactin", input_type: "numeric", unit_si: "ng/mL", gender: "F", ref_low_si: 4.79, ref_high_si: 23.3 },
+      { parameter_name: "Prolactin", input_type: "numeric", unit_si: "ng/mL", gender: "M", ref_low_si: 4.04, ref_high_si: 15.2 },
+    ],
+  },
+  T3: {
+    params: [placeholderNumeric("T3", "nmol/L")],
+  },
+  T4: {
+    params: [placeholderNumeric("T4", "nmol/L")],
+  },
+  TIBC: {
+    params: [placeholderNumeric("TIBC", "µmol/L")],
+  },
+  TOTAL_ACID_PHOSPHATASE: {
+    params: [placeholderNumeric("Total Acid Phosphatase", "U/L")],
+  },
+  TOTAL_PROTEIN: {
+    params: [{ parameter_name: "Total Protein", input_type: "numeric", unit_si: "g/L", ref_low_si: 60, ref_high_si: 80 }],
+  },
+  TPAG: {
+    // Total Protein, Albumin, Globulin + A/G ratio
+    params: [
+      { parameter_name: "Total Protein", input_type: "numeric", unit_si: "g/L", ref_low_si: 60, ref_high_si: 80 },
+      { parameter_name: "Albumin",       input_type: "numeric", unit_si: "g/L", ref_low_si: 35, ref_high_si: 55 },
+      placeholderNumeric("Globulin", "g/L"),
+      placeholderNumeric("A/G Ratio"),
+    ],
+  },
+  TRIGLYCERIDES: {
+    params: [{
+      parameter_name: "Triglycerides",
+      input_type: "numeric",
+      unit_si: "mmol/L", ref_low_si: 0, ref_high_si: 1.7,
+      unit_conv: "mg/dL", ref_low_conv: 0, ref_high_conv: 150,
+      si_to_conv_factor: 88.5,
+    }],
+  },
+  TSH: {
+    params: [{ parameter_name: "TSH", input_type: "numeric", unit_si: "mIU/L", ref_low_si: 0.4, ref_high_si: 4.0 }],
+  },
+};
+
+// ---------------------------------------------------------------------------
+// immunology defaults — mostly qualitative select; some quantitative numeric.
+// ---------------------------------------------------------------------------
+const IMMUNOLOGY_DEFAULTS: Record<string, SectionEntry> = {
+  AFP: {
+    params: [{ parameter_name: "AFP", input_type: "numeric", unit_si: "ng/mL", ref_low_si: 0, ref_high_si: 8.5 }],
+  },
+  ANA: {
+    // Antinuclear antibody — qualitative + titer commonly reported. Keep
+    // simple: Non-Reactive/Reactive, admin can add titer params later.
+    params: [{ parameter_name: "ANA", ...REACTIVE_SELECT }],
+  },
+  ANTI_HAV_IGG: { params: [{ parameter_name: "Anti-HAV IgG", ...REACTIVE_SELECT }] },
+  ANTI_HAV_IGM: { params: [{ parameter_name: "Anti-HAV IgM", ...REACTIVE_SELECT }] },
+  ANTI_HBC_IGG: { params: [{ parameter_name: "Anti-HBc IgG", ...REACTIVE_SELECT }] },
+  ANTI_HBC_IGM: { params: [{ parameter_name: "Anti-HBc IgM", ...REACTIVE_SELECT }] },
+  ANTI_HBE:     { params: [{ parameter_name: "Anti-HBe",     ...REACTIVE_SELECT }] },
+  ANTI_HBS:     { params: [{ parameter_name: "Anti-HBs",     ...REACTIVE_SELECT }] },
+  ANTI_HCV:     { params: [{ parameter_name: "Anti-HCV",     ...REACTIVE_SELECT }] },
+  ASO: {
+    params: [{ parameter_name: "ASO", input_type: "numeric", unit_si: "U/mL", ref_low_si: 0, ref_high_si: 200 }],
+  },
+  B_HCG: {
+    // Pregnancy quantitative — leave numeric placeholder (range varies by
+    // gestation week).
+    params: [placeholderNumeric("Beta-HCG", "mIU/mL")],
+  },
+  CA_125:  { params: [{ parameter_name: "CA 125",  input_type: "numeric", unit_si: "U/mL",  ref_low_si: 0, ref_high_si: 35 }] },
+  CA_15_3: { params: [{ parameter_name: "CA 15-3", input_type: "numeric", unit_si: "U/mL",  ref_low_si: 0, ref_high_si: 25 }] },
+  CA_19_9: { params: [{ parameter_name: "CA 19-9", input_type: "numeric", unit_si: "U/mL",  ref_low_si: 0, ref_high_si: 37 }] },
+  CEA: {
+    params: [{ parameter_name: "CEA", input_type: "numeric", unit_si: "ng/mL", ref_low_si: 0, ref_high_si: 5.0 }],
+  },
+  CRP: {
+    params: [{ parameter_name: "CRP", input_type: "numeric", unit_si: "mg/L", ref_low_si: 0, ref_high_si: 10 }],
+  },
+  DENGUE_BLOT_IGG_IGM: {
+    params: [
+      { parameter_name: "Dengue IgG", ...REACTIVE_SELECT },
+      { parameter_name: "Dengue IgM", ...REACTIVE_SELECT },
+    ],
+  },
+  DENGUE_DUO: {
+    params: [
+      { parameter_name: "Dengue IgG", ...REACTIVE_SELECT },
+      { parameter_name: "Dengue IgM", ...REACTIVE_SELECT },
+    ],
+  },
+  DENGUE_NS1: {
+    params: [{ parameter_name: "Dengue NS1", ...REACTIVE_SELECT }],
+  },
+  H_PYLORI_AB: {
+    params: [{ parameter_name: "H. pylori Ab", ...REACTIVE_SELECT }],
+  },
+  HBEAG: {
+    params: [{ parameter_name: "HBeAg", ...REACTIVE_SELECT }],
+  },
+  // HBSAG_SCREENING already covered by the fixed `hbsag` template above; the
+  // section fanout will skip it via the `clearExistingTemplate` re-seed.
+  HBSAG_TITER: {
+    // Titer is quantitative
+    params: [placeholderNumeric("HBsAg Titer", "IU/mL")],
+  },
+  HEPA_A_SCREENING: {
+    params: [{ parameter_name: "Hepatitis A Screening", ...REACTIVE_SELECT }],
+  },
+  HEPATITIS_A_PROFILE: {
+    params: [
+      { parameter_name: "Anti-HAV IgG", ...REACTIVE_SELECT },
+      { parameter_name: "Anti-HAV IgM", ...REACTIVE_SELECT },
+    ],
+  },
+  HEPATITIS_B_PROFILE: {
+    params: [
+      { parameter_name: "HBsAg",        ...REACTIVE_SELECT },
+      { parameter_name: "Anti-HBs",     ...REACTIVE_SELECT },
+      { parameter_name: "Anti-HBc",     ...REACTIVE_SELECT },
+      { parameter_name: "HBeAg",        ...REACTIVE_SELECT },
+      { parameter_name: "Anti-HBe",     ...REACTIVE_SELECT },
+    ],
+  },
+  HEPATITIS_A_B_C_PROFILE: {
+    params: [
+      { parameter_name: "Anti-HAV IgM", ...REACTIVE_SELECT },
+      { parameter_name: "HBsAg",        ...REACTIVE_SELECT },
+      { parameter_name: "Anti-HCV",     ...REACTIVE_SELECT },
+    ],
+  },
+  HIV_1_2_SCREENING_QUALITATIVE: {
+    params: [{ parameter_name: "HIV 1 & 2 Screening", ...REACTIVE_SELECT }],
+  },
+  HS_CRP: {
+    params: [{ parameter_name: "hs-CRP", input_type: "numeric", unit_si: "mg/L", ref_low_si: 0, ref_high_si: 3.0 }],
+  },
+  PREGNANCY_TEST: {
+    params: [{ parameter_name: "Pregnancy Test", ...POS_NEG_SELECT }],
+  },
+  PSA: {
+    params: [{ parameter_name: "PSA", input_type: "numeric", unit_si: "ng/mL", ref_low_si: 0, ref_high_si: 4.0 }],
+  },
+  RA_RF_RHEUMATOID_FACTOR: {
+    params: [{ parameter_name: "Rheumatoid Factor (RA/RF)", input_type: "numeric", unit_si: "IU/mL", ref_low_si: 0, ref_high_si: 14 }],
+  },
+  SYPHILIS_TPHA_SCREENING_TREPONEMA_PALLID: {
+    params: [{ parameter_name: "TPHA Screening", ...REACTIVE_SELECT }],
+  },
+  SYPHILIS_TPHA_WITH_TITER: {
+    params: [
+      { parameter_name: "TPHA",  ...REACTIVE_SELECT },
+      placeholderNumeric("Titer"),
+    ],
+  },
+  TYPHIDOT_TYPHOID_SCREENING: {
+    params: [
+      { parameter_name: "Typhidot IgG", ...REACTIVE_SELECT },
+      { parameter_name: "Typhidot IgM", ...REACTIVE_SELECT },
+    ],
+  },
+  VDRL_RPR: {
+    params: [{ parameter_name: "VDRL/RPR", ...REACTIVE_SELECT }],
+  },
+};
+
+// ---------------------------------------------------------------------------
+// urinalysis defaults (URINALYSIS itself is in FIXED_TEMPLATES).
+// ---------------------------------------------------------------------------
+const URINALYSIS_DEFAULTS: Record<string, SectionEntry> = {
+  URINE_ALBUMIN: {
+    // Microalbumin threshold is ~30 mg/L; admin can tighten.
+    params: [{ parameter_name: "Urine Albumin", input_type: "numeric", unit_si: "mg/L", ref_low_si: 0, ref_high_si: 30 }],
+  },
+  URINE_CREATININE: {
+    params: [placeholderNumeric("Urine Creatinine", "mmol/L")],
+  },
+  URINE_CREA_CLEARANCE: {
+    params: [placeholderNumeric("Creatinine Clearance", "mL/min")],
+  },
+  URINE_PROTEIN: {
+    params: [placeholderNumeric("Urine Protein", "g/L")],
+  },
+  URINE_RBC_MORPHOLOGY: {
+    params: [
+      { parameter_name: "RBC Morphology", input_type: "free_text", placeholder: "Describe RBC morphology (isomorphic / dysmorphic, etc.)" },
+    ],
+  },
+  URINE_CULTURE_SENSITIVITY: {
+    params: [
+      { parameter_name: "Culture Result", input_type: "free_text", placeholder: "Describe isolated organism(s) and colony count" },
+      { parameter_name: "Sensitivity",    input_type: "free_text", placeholder: "Antimicrobial susceptibility / resistance pattern" },
+    ],
+  },
+  MICRAL_MICROALBUMIN: {
+    params: [{ parameter_name: "Microalbumin", input_type: "numeric", unit_si: "mg/L", ref_low_si: 0, ref_high_si: 30 }],
+  },
+  PROTEIN_CREA_RATIO_URINE: {
+    params: [placeholderNumeric("Protein/Creatinine Ratio", "mg/g")],
+  },
+  ALB_CREA_RATIO_URINE_UACR: {
+    params: [{ parameter_name: "Albumin/Creatinine Ratio (UACR)", input_type: "numeric", unit_si: "mg/g", ref_low_si: 0, ref_high_si: 30 }],
+  },
+};
+
+// ---------------------------------------------------------------------------
+// hematology defaults (CBC_PC itself is in FIXED_TEMPLATES).
+// ---------------------------------------------------------------------------
+const HEMATOLOGY_DEFAULTS: Record<string, SectionEntry> = {
+  BLEEDING_TIME: {
+    params: [{ parameter_name: "Bleeding Time", input_type: "numeric", unit_si: "min", ref_low_si: 1, ref_high_si: 9 }],
+  },
+  CLOTTING_TIME: {
+    params: [{ parameter_name: "Clotting Time", input_type: "numeric", unit_si: "min", ref_low_si: 5, ref_high_si: 15 }],
+  },
+  CT_BT: {
+    params: [
+      { parameter_name: "Clotting Time", input_type: "numeric", unit_si: "min", ref_low_si: 5, ref_high_si: 15 },
+      { parameter_name: "Bleeding Time", input_type: "numeric", unit_si: "min", ref_low_si: 1, ref_high_si: 9 },
+    ],
+  },
+  ESR: {
+    params: [
+      { parameter_name: "ESR", input_type: "numeric", unit_si: "mm/hr", gender: "F", ref_low_si: 0, ref_high_si: 20 },
+      { parameter_name: "ESR", input_type: "numeric", unit_si: "mm/hr", gender: "M", ref_low_si: 0, ref_high_si: 15 },
+    ],
+  },
+  PROTHROMBIN_TIME_PT_PROTIME: {
+    params: [
+      { parameter_name: "Prothrombin Time (PT)", input_type: "numeric", unit_si: "sec", ref_low_si: 11, ref_high_si: 13.5 },
+      placeholderNumeric("INR"),
+      placeholderNumeric("% Activity", "%"),
+    ],
+  },
+  PARTIAL_THROMBOPLASTIN_TIME_PTT_APTT: {
+    params: [{ parameter_name: "PTT (aPTT)", input_type: "numeric", unit_si: "sec", ref_low_si: 25, ref_high_si: 35 }],
+  },
+  BLOOD_TYPING_W_RH_FACTOR: {
+    params: [
+      {
+        parameter_name: "Blood Type", input_type: "select",
+        allowed_values: ["A", "B", "AB", "O"],
+      },
+      {
+        parameter_name: "Rh Factor", input_type: "select",
+        allowed_values: ["Positive", "Negative"],
+      },
+    ],
+  },
+};
+
+// ---------------------------------------------------------------------------
+// microbiology defaults — mostly descriptive free-text.
+// ---------------------------------------------------------------------------
+const MICROBIOLOGY_DEFAULTS: Record<string, SectionEntry> = {
+  FECALYSIS: {
+    params: [
+      { parameter_name: "Color",         input_type: "free_text" },
+      { parameter_name: "Consistency",   input_type: "free_text" },
+      { parameter_name: "WBC",           input_type: "free_text", placeholder: "e.g. 0-2/HPF" },
+      { parameter_name: "RBC",           input_type: "free_text", placeholder: "e.g. 0-2/HPF" },
+      { parameter_name: "Parasites",     input_type: "free_text", placeholder: "e.g. NONE SEEN" },
+      { parameter_name: "Others",        input_type: "free_text", placeholder: "(optional)" },
+    ],
+  },
+  GRAM_STAIN: {
+    params: [
+      { parameter_name: "Result",  input_type: "free_text", placeholder: "Describe the organisms observed (e.g. Gram-positive cocci in clusters)" },
+      { parameter_name: "Remarks", input_type: "free_text", placeholder: "(optional)" },
+    ],
+  },
+  OCCULT_BLOOD_FOBT: {
+    params: [{ parameter_name: "Occult Blood", ...POS_NEG_SELECT }],
+  },
+  SPUTUM_AFB: {
+    params: [
+      {
+        parameter_name: "AFB Smear",
+        input_type: "select",
+        allowed_values: ["Negative", "Scanty", "1+", "2+", "3+"],
+        abnormal_values: ["Scanty", "1+", "2+", "3+"],
+      },
+      { parameter_name: "Remarks", input_type: "free_text", placeholder: "(optional)" },
+    ],
+  },
+  STOOL_CULTURE_SENSITIVITY: {
+    params: [
+      { parameter_name: "Culture Result", input_type: "free_text", placeholder: "Describe isolated organism(s)" },
+      { parameter_name: "Sensitivity",    input_type: "free_text", placeholder: "Antimicrobial susceptibility / resistance pattern" },
+    ],
+  },
+};
+
+// ---------------------------------------------------------------------------
+// package panels — multi-row `simple` templates composed inline. Params are
+// copies (not references) so each panel is self-contained and renders with
+// the right unit + ref range without runtime composition.
+// ---------------------------------------------------------------------------
+
+// Reusable chemistry row builders (copy, don't reference — TS object spread
+// would alias the same object).
+const FBS_ROW = (): ParamSeed => ({
+  parameter_name: "FBS", input_type: "numeric",
+  unit_si: "mg/dL", ref_low_si: 70, ref_high_si: 110,
+});
+const BUN_ROW = (): ParamSeed => ({
+  parameter_name: "BUN", input_type: "numeric",
+  unit_si: "mmol/L", ref_low_si: 2.1, ref_high_si: 7.1,
+  unit_conv: "mg/dL", ref_low_conv: 5.88, ref_high_conv: 19.89,
+  si_to_conv_factor: 2.8,
+});
+const CREATININE_ROW = (): ParamSeed => ({
+  parameter_name: "Creatinine", input_type: "numeric",
+  unit_si: "mg/dL", ref_low_si: 0.6, ref_high_si: 1.3,
+});
+const URIC_ACID_ROW = (): ParamSeed => ({
+  parameter_name: "Uric Acid", input_type: "numeric",
+  unit_si: "µmol/L", ref_low_si: 142, ref_high_si: 416,
+});
+const CHOL_ROW = (): ParamSeed => ({
+  parameter_name: "Total Cholesterol", input_type: "numeric",
+  unit_si: "mmol/L", ref_low_si: 0, ref_high_si: 5.2,
+  unit_conv: "mg/dL", ref_low_conv: 0, ref_high_conv: 200,
+  si_to_conv_factor: 38.67,
+});
+const TRIG_ROW = (): ParamSeed => ({
+  parameter_name: "Triglycerides", input_type: "numeric",
+  unit_si: "mmol/L", ref_low_si: 0, ref_high_si: 1.7,
+  unit_conv: "mg/dL", ref_low_conv: 0, ref_high_conv: 150,
+  si_to_conv_factor: 88.5,
+});
+const HDL_ROW = (): ParamSeed => ({
+  parameter_name: "HDL", input_type: "numeric", unit_si: "mg/dL", ref_low_si: 40,
+});
+const LDL_ROW = (): ParamSeed => ({
+  parameter_name: "LDL", input_type: "numeric", unit_si: "mg/dL", ref_low_si: 0, ref_high_si: 100,
+});
+const VLDL_ROW = (): ParamSeed => ({
+  parameter_name: "VLDL", input_type: "numeric", unit_si: "mg/dL", ref_low_si: 0, ref_high_si: 30,
+});
+const SGPT_ROW = (): ParamSeed => ({
+  parameter_name: "SGPT (ALT)", input_type: "numeric",
+  unit_si: "U/L", ref_low_si: 0, ref_high_si: 41,
+});
+const SGOT_ROW = (): ParamSeed => ({
+  parameter_name: "SGOT (AST)", input_type: "numeric",
+  unit_si: "U/L", ref_low_si: 0, ref_high_si: 37,
+});
+const HBA1C_ROW = (): ParamSeed => ({
+  parameter_name: "HbA1c", input_type: "numeric", unit_si: "%", ref_low_si: 4.5, ref_high_si: 6.5,
+});
+const ALBUMIN_ROW = (): ParamSeed => ({
+  parameter_name: "Albumin", input_type: "numeric", unit_si: "g/L", ref_low_si: 35, ref_high_si: 55,
+});
+const TOTAL_PROTEIN_ROW = (): ParamSeed => ({
+  parameter_name: "Total Protein", input_type: "numeric", unit_si: "g/L", ref_low_si: 60, ref_high_si: 80,
+});
+const BILIRUBIN_ROW = (): ParamSeed => ({
+  parameter_name: "Bilirubin (Total)", input_type: "numeric", unit_si: "µmol/L", ref_low_si: 0, ref_high_si: 21,
+});
+const ALP_ROW = (): ParamSeed => ({
+  parameter_name: "ALP", input_type: "numeric", unit_si: "U/L", ref_low_si: 30, ref_high_si: 120,
+});
+const TSH_ROW = (): ParamSeed => ({
+  parameter_name: "TSH", input_type: "numeric", unit_si: "mIU/L", ref_low_si: 0.4, ref_high_si: 4.0,
+});
+const FT3_ROW = (): ParamSeed => ({
+  parameter_name: "FT3", input_type: "numeric", unit_si: "pmol/L", ref_low_si: 3.1, ref_high_si: 6.8,
+});
+const FT4_ROW = (): ParamSeed => ({
+  parameter_name: "FT4", input_type: "numeric", unit_si: "pmol/L", ref_low_si: 9.0, ref_high_si: 19.0,
+});
+
+// "Included test" placeholder for tests that have their own dedicated template
+// (CBC, Urinalysis, Chest X-Ray, ECG, etc.) but appear inside a package panel
+// — the medtech records a summary/notes here while the actual sub-test is
+// finalised separately.
+const INCLUDED = (label: string, placeholder?: string): ParamSeed => ({
+  parameter_name: label,
+  input_type: "free_text",
+  placeholder: placeholder ?? "Summary / reference to the individual test result",
+});
+
+const PACKAGE_PANELS: Record<string, SectionEntry> = {
+  STANDARD_CHEMISTRY: {
+    params: [
+      FBS_ROW(), BUN_ROW(), CREATININE_ROW(), URIC_ACID_ROW(),
+      CHOL_ROW(), TRIG_ROW(), HDL_ROW(), LDL_ROW(), VLDL_ROW(),
+      SGPT_ROW(), SGOT_ROW(),
+    ],
+  },
+  BASIC_PACKAGE: {
+    params: [
+      INCLUDED("CBC", "CBC summary — see CBC + PC sub-test for full breakdown"),
+      INCLUDED("Urinalysis", "Urinalysis summary — see URINALYSIS sub-test for full breakdown"),
+    ],
+  },
+  ROUTINE_PACKAGE: {
+    // Best-guess composition for a routine check-up.
+    params: [
+      INCLUDED("CBC"),
+      INCLUDED("Urinalysis"),
+      FBS_ROW(),
+    ],
+  },
+  ANNUAL_PHYSICAL_EXAM: {
+    params: [
+      INCLUDED("CBC"),
+      INCLUDED("Urinalysis"),
+      FBS_ROW(),
+      CHOL_ROW(),
+      CREATININE_ROW(),
+      BUN_ROW(),
+      INCLUDED("Chest X-Ray", "Chest X-Ray reading"),
+      INCLUDED("ECG", "ECG reading"),
+    ],
+  },
+  EXECUTIVE_PACKAGE_STANDARD: {
+    params: [
+      INCLUDED("CBC"),
+      INCLUDED("Urinalysis"),
+      FBS_ROW(), BUN_ROW(), CREATININE_ROW(),
+      CHOL_ROW(), TRIG_ROW(), HDL_ROW(), LDL_ROW(), VLDL_ROW(),
+      SGPT_ROW(), SGOT_ROW(),
+      INCLUDED("ECG", "ECG reading"),
+      INCLUDED("Chest X-Ray", "Chest X-Ray reading"),
+    ],
+  },
+  EXECUTIVE_PACKAGE_COMPREHENSIVE: {
+    params: [
+      INCLUDED("CBC"),
+      INCLUDED("Urinalysis"),
+      FBS_ROW(), BUN_ROW(), CREATININE_ROW(),
+      CHOL_ROW(), TRIG_ROW(), HDL_ROW(), LDL_ROW(), VLDL_ROW(),
+      SGPT_ROW(), SGOT_ROW(),
+      HBA1C_ROW(),
+      URIC_ACID_ROW(),
+      INCLUDED("Fecalysis", "Stool exam result"),
+      INCLUDED("Ultrasound", "Whole abdomen ultrasound reading"),
+      INCLUDED("ECG", "ECG reading"),
+      INCLUDED("Chest X-Ray", "Chest X-Ray reading"),
+    ],
+  },
+  EXECUTIVE_PACKAGE_DELUXE_MEN_S: {
+    params: [
+      INCLUDED("CBC"),
+      INCLUDED("Urinalysis"),
+      FBS_ROW(), BUN_ROW(), CREATININE_ROW(),
+      CHOL_ROW(), TRIG_ROW(), HDL_ROW(), LDL_ROW(), VLDL_ROW(),
+      SGPT_ROW(), SGOT_ROW(),
+      HBA1C_ROW(),
+      URIC_ACID_ROW(),
+      { parameter_name: "PSA", input_type: "numeric", unit_si: "ng/mL", ref_low_si: 0, ref_high_si: 4.0 },
+      INCLUDED("Fecalysis", "Stool exam result"),
+      INCLUDED("Ultrasound", "Whole abdomen ultrasound reading"),
+      INCLUDED("ECG", "ECG reading"),
+      INCLUDED("Chest X-Ray", "Chest X-Ray reading"),
+    ],
+  },
+  EXECUTIVE_PACKAGE_DELUXE_WOMEN_S: {
+    params: [
+      INCLUDED("CBC"),
+      INCLUDED("Urinalysis"),
+      FBS_ROW(), BUN_ROW(), CREATININE_ROW(),
+      CHOL_ROW(), TRIG_ROW(), HDL_ROW(), LDL_ROW(), VLDL_ROW(),
+      SGPT_ROW(), SGOT_ROW(),
+      HBA1C_ROW(),
+      URIC_ACID_ROW(),
+      INCLUDED("Pap Smear", "Pap smear cytology reading"),
+      INCLUDED("Fecalysis", "Stool exam result"),
+      INCLUDED("Ultrasound", "Whole abdomen ultrasound reading"),
+      INCLUDED("ECG", "ECG reading"),
+      INCLUDED("Chest X-Ray", "Chest X-Ray reading"),
+    ],
+  },
+  PRE_EMPLOYMENT_PACKAGE: {
+    params: [
+      INCLUDED("CBC"),
+      INCLUDED("Urinalysis"),
+      INCLUDED("Chest X-Ray", "Chest X-Ray reading"),
+      INCLUDED("Drug Test", "Drug test result"),
+    ],
+  },
+  PREGNANCY_CARE_PACKAGE: {
+    params: [
+      INCLUDED("CBC"),
+      INCLUDED("Urinalysis"),
+      { parameter_name: "HBsAg", ...REACTIVE_SELECT },
+      { parameter_name: "Blood Type", input_type: "select", allowed_values: ["A", "B", "AB", "O"] },
+      { parameter_name: "Rh Factor", input_type: "select", allowed_values: ["Positive", "Negative"] },
+      { parameter_name: "Pregnancy Test", ...POS_NEG_SELECT },
+    ],
+  },
+  DIABETIC_HEALTH_PACKAGE: {
+    params: [FBS_ROW(), HBA1C_ROW(), CHOL_ROW(), TRIG_ROW(), CREATININE_ROW()],
+  },
+  KIDNEY_FUNCTION_PACKAGE: {
+    params: [
+      BUN_ROW(), CREATININE_ROW(), URIC_ACID_ROW(),
+      INCLUDED("Urinalysis"),
+      placeholderNumeric("Urine Protein", "g/L"),
+    ],
+  },
+  LIVER_FUNCTION_PACKAGE: {
+    params: [
+      SGPT_ROW(), SGOT_ROW(),
+      BILIRUBIN_ROW(),
+      ALP_ROW(),
+      TOTAL_PROTEIN_ROW(),
+      ALBUMIN_ROW(),
+    ],
+  },
+  LIPID_PROFILE_PACKAGE: {
+    params: [CHOL_ROW(), TRIG_ROW(), HDL_ROW(), LDL_ROW(), VLDL_ROW()],
+  },
+  THYROID_HEALTH_PACKAGE: {
+    params: [TSH_ROW(), FT3_ROW(), FT4_ROW()],
+  },
+  IRON_DEFICIENCY_PACKAGE: {
+    params: [
+      placeholderNumeric("Ferritin", "ng/mL"),
+      placeholderNumeric("Serum Iron", "µmol/L"),
+      placeholderNumeric("TIBC", "µmol/L"),
+      INCLUDED("CBC"),
+    ],
+  },
+  DENGUE_PACKAGE: {
+    params: [
+      { parameter_name: "Dengue NS1", ...REACTIVE_SELECT },
+      { parameter_name: "Dengue IgG", ...REACTIVE_SELECT },
+      { parameter_name: "Dengue IgM", ...REACTIVE_SELECT },
+    ],
+  },
+};
+
+/**
+ * Section fanout — walk every active service in `section` and seed a template
+ * for each, using `defaults[code]` if present or a single-param placeholder
+ * otherwise. Returns { seeded, fromDefaults, placeholders }.
+ */
+async function seedSectionFanout(
+  section: string,
+  defaults: Record<string, SectionEntry>,
+  skipCodes: Set<string> = new Set(),
+): Promise<{ seeded: number; fromDefaults: number; placeholders: number }> {
+  const { data: matched, error } = await admin
+    .from("services")
+    .select("id, code, name")
+    .eq("section", section)
+    .eq("is_active", true)
+    .eq("is_send_out", false)
+    .order("code");
+  if (error) {
+    throw new Error(`look up section=${section} services: ${error.message}`);
+  }
+  const services = (matched ?? []).filter(
+    (s) => !s.code.startsWith("CONSULT_") && !skipCodes.has(s.code),
+  );
+
+  if (services.length === 0) {
+    console.warn(`! no active services with section='${section}' — skipping`);
+    return { seeded: 0, fromDefaults: 0, placeholders: 0 };
+  }
+
+  let fromDefaults = 0;
+  let placeholders = 0;
+  for (const svc of services) {
+    const entry = defaults[svc.code];
+    const layout: Layout = entry?.layout ?? "simple";
+    const params: ParamSeed[] = entry?.params ?? [
+      // Placeholder: single numeric param named after the test, no unit, no
+      // range. The medtech can still finalise; admin fills metadata via CRUD.
+      placeholderNumeric(humaniseCode(svc.code)),
+    ];
+
+    await clearExistingTemplate(svc.id, svc.code);
+    await insertTemplate(svc.id, layout, params, svc.code);
+
+    if (entry) fromDefaults += 1;
+    else placeholders += 1;
+  }
+
+  console.log(
+    `✓ section=${section}: seeded ${services.length} templates ` +
+      `(${fromDefaults} curated, ${placeholders} placeholder)`,
+  );
+  return { seeded: services.length, fromDefaults, placeholders };
+}
+
+/** Strip the section prefix / underscores and Title-Case the rest. */
+function humaniseCode(code: string): string {
+  return code
+    .replace(/_/g, " ")
+    .toLowerCase()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 async function seedImagingFanout(
   section: "imaging_xray" | "imaging_ultrasound",
   prefix: "XRAY_" | "ULTRASOUND_",
@@ -656,6 +1455,19 @@ async function main() {
     const ok = await seedFixedTemplate(t);
     if (ok) total += 1;
   }
+
+  // Codes already handled by FIXED_TEMPLATES — skip in section fanout so
+  // we don't redo work (and so the fixed template's multi_section layout for
+  // URINALYSIS doesn't get clobbered by a simple-layout placeholder).
+  const FIXED_CODES = new Set(FIXED_TEMPLATES.map((t) => t.service_code));
+
+  const chem = await seedSectionFanout("chemistry",   CHEMISTRY_DEFAULTS,   FIXED_CODES);
+  const imm  = await seedSectionFanout("immunology",  IMMUNOLOGY_DEFAULTS,  FIXED_CODES);
+  const uri  = await seedSectionFanout("urinalysis",  URINALYSIS_DEFAULTS,  FIXED_CODES);
+  const hem  = await seedSectionFanout("hematology",  HEMATOLOGY_DEFAULTS,  FIXED_CODES);
+  const mic  = await seedSectionFanout("microbiology", MICROBIOLOGY_DEFAULTS, FIXED_CODES);
+  const pkg  = await seedSectionFanout("package",     PACKAGE_PANELS,       FIXED_CODES);
+  total += chem.seeded + imm.seeded + uri.seeded + hem.seeded + mic.seeded + pkg.seeded;
 
   const xrayCount = await seedImagingFanout(
     "imaging_xray",
