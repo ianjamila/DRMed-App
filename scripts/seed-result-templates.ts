@@ -188,37 +188,47 @@ const cbc: TemplateSeed = {
 };
 
 // ---------------------------------------------------------------------------
-// CREATININE — Creatinine  →  'simple', gender-banded
+// CREATININE — Creatinine  →  'dual_unit', gender-banded
+// SI is µmol/L; Conventional is mg/dL. si_to_conv_factor = 0.0113.
 // ---------------------------------------------------------------------------
 const crea: TemplateSeed = {
   service_code: "CREATININE",
-  layout: "simple",
+  layout: "dual_unit",
   params: [
     {
       parameter_name: "Creatinine", input_type: "numeric",
-      unit_si: "mg/dL", gender: "F",
-      ref_low_si: 0.6, ref_high_si: 1.1,
+      unit_si: "µmol/L", gender: "F",
+      ref_low_si: 45, ref_high_si: 84,
+      unit_conv: "mg/dL",
+      ref_low_conv: 0.51, ref_high_conv: 0.95,
+      si_to_conv_factor: 0.0113,
     },
     {
       parameter_name: "Creatinine", input_type: "numeric",
-      unit_si: "mg/dL", gender: "M",
-      ref_low_si: 0.7, ref_high_si: 1.3,
+      unit_si: "µmol/L", gender: "M",
+      ref_low_si: 59, ref_high_si: 104,
+      unit_conv: "mg/dL",
+      ref_low_conv: 0.67, ref_high_conv: 1.18,
+      si_to_conv_factor: 0.0113,
     },
   ],
 };
 
 // ---------------------------------------------------------------------------
-// FBS_RBS — Fasting / Random Blood Sugar  →  'simple'
-// Same numeric range applies to both fasting and random screens.
+// FBS_RBS — Fasting / Random Blood Sugar  →  'dual_unit'
+// Same numeric range applies to both fasting and random screens. Reported in
+// SI (mmol/L) and Conventional (mg/dL); medtech types SI and the form
+// auto-fills Conv via si_to_conv_factor.
 // ---------------------------------------------------------------------------
 const fbs: TemplateSeed = {
   service_code: "FBS_RBS",
-  layout: "simple",
+  layout: "dual_unit",
   params: [
     {
       parameter_name: "Blood Sugar (FBS / RBS)", input_type: "numeric",
-      unit_si: "mg/dL",
-      ref_low_si: 70, ref_high_si: 110,
+      unit_si: "mmol/L", ref_low_si: 4.1, ref_high_si: 5.9,
+      unit_conv: "mg/dL", ref_low_conv: 73.87, ref_high_conv: 106.31,
+      si_to_conv_factor: 18.0156,
     },
   ],
 };
@@ -264,39 +274,46 @@ const sgot: TemplateSeed = {
 };
 
 // ---------------------------------------------------------------------------
-// LIPID_PROFILE — Lipid Profile  →  'simple', 5 params
+// LIPID_PROFILE — Lipid Profile  →  'dual_unit', 5 params
+// All lipids are reported in SI (mmol/L) and Conventional (mg/dL). Conversion
+// factors: TG ×88.5, Cholesterol ×38.67, HDL/LDL/VLDL ×38.67.
 // ---------------------------------------------------------------------------
 const lipid: TemplateSeed = {
   service_code: "LIPID_PROFILE",
-  layout: "simple",
+  layout: "dual_unit",
   params: [
     {
       parameter_name: "Triglycerides", input_type: "numeric",
-      unit_si: "mg/dL",
-      ref_low_si: 0, ref_high_si: 150,
+      unit_si: "mmol/L", ref_low_si: 0, ref_high_si: 1.7,
+      unit_conv: "mg/dL", ref_low_conv: 0, ref_high_conv: 150.44,
+      si_to_conv_factor: 88.5,
     },
     {
       parameter_name: "Total Cholesterol", input_type: "numeric",
-      unit_si: "mg/dL",
-      ref_low_si: 0, ref_high_si: 200,
+      unit_si: "mmol/L", ref_low_si: 0, ref_high_si: 5.2,
+      unit_conv: "mg/dL", ref_low_conv: 0, ref_high_conv: 200,
+      si_to_conv_factor: 38.67,
     },
     {
       // HDL — only a lower bound is clinically meaningful; values above 40
-      // (M) / 50 (F) are protective. We use 40 as a conservative cut-off;
-      // admin can refine via CRUD if needed.
+      // (M) / 50 (F) are protective. We use 40 mg/dL (~1.03 mmol/L) as a
+      // conservative cut-off; admin can refine via CRUD if needed.
       parameter_name: "HDL", input_type: "numeric",
-      unit_si: "mg/dL",
-      ref_low_si: 40,
+      unit_si: "mmol/L", ref_low_si: 1.03,
+      unit_conv: "mg/dL", ref_low_conv: 40,
+      si_to_conv_factor: 38.67,
     },
     {
       parameter_name: "LDL", input_type: "numeric",
-      unit_si: "mg/dL",
-      ref_low_si: 0, ref_high_si: 100,
+      unit_si: "mmol/L", ref_low_si: 0, ref_high_si: 2.59,
+      unit_conv: "mg/dL", ref_low_conv: 0, ref_high_conv: 100,
+      si_to_conv_factor: 38.67,
     },
     {
       parameter_name: "VLDL", input_type: "numeric",
-      unit_si: "mg/dL",
-      ref_low_si: 0, ref_high_si: 30,
+      unit_si: "mmol/L", ref_low_si: 0, ref_high_si: 0.78,
+      unit_conv: "mg/dL", ref_low_conv: 0, ref_high_conv: 30,
+      si_to_conv_factor: 38.67,
     },
   ],
 };
@@ -687,16 +704,36 @@ const CHEMISTRY_DEFAULTS: Record<string, SectionEntry> = {
     params: [{ parameter_name: "Amylase", input_type: "numeric", unit_si: "U/L", ref_low_si: 25, ref_high_si: 125 }],
   },
   BILIRUBIN: {
-    params: [{ parameter_name: "Bilirubin (Total)", input_type: "numeric", unit_si: "µmol/L", ref_low_si: 0, ref_high_si: 21 }],
+    layout: "dual_unit",
+    params: [{
+      parameter_name: "Bilirubin (Total)", input_type: "numeric",
+      unit_si: "µmol/L", ref_low_si: 0, ref_high_si: 21,
+      unit_conv: "mg/dL", ref_low_conv: 0, ref_high_conv: 1.2,
+      si_to_conv_factor: 0.0585,
+    }],
   },
   BUA_URIC_ACID: {
-    // Gender-banded — F 142–339, M 202–416 µmol/L
+    // Gender-banded — F 142–339, M 202.3–416.5 µmol/L; Conv mg/dL via ×0.0168.
+    layout: "dual_unit",
     params: [
-      { parameter_name: "Uric Acid", input_type: "numeric", unit_si: "µmol/L", gender: "F", ref_low_si: 142, ref_high_si: 339 },
-      { parameter_name: "Uric Acid", input_type: "numeric", unit_si: "µmol/L", gender: "M", ref_low_si: 202, ref_high_si: 416 },
+      {
+        parameter_name: "Uric Acid", input_type: "numeric",
+        unit_si: "µmol/L", gender: "F",
+        ref_low_si: 142, ref_high_si: 339,
+        unit_conv: "mg/dL", ref_low_conv: 2.38, ref_high_conv: 5.7,
+        si_to_conv_factor: 0.0168,
+      },
+      {
+        parameter_name: "Uric Acid", input_type: "numeric",
+        unit_si: "µmol/L", gender: "M",
+        ref_low_si: 202.3, ref_high_si: 416.5,
+        unit_conv: "mg/dL", ref_low_conv: 3.4, ref_high_conv: 6.99,
+        si_to_conv_factor: 0.0168,
+      },
     ],
   },
   BUN: {
+    layout: "dual_unit",
     params: [{
       parameter_name: "BUN",
       input_type: "numeric",
@@ -709,6 +746,7 @@ const CHEMISTRY_DEFAULTS: Record<string, SectionEntry> = {
     params: [{ parameter_name: "Calcium", input_type: "numeric", unit_si: "mmol/L", ref_low_si: 2.15, ref_high_si: 2.50 }],
   },
   CHOLESTEROL: {
+    layout: "dual_unit",
     params: [{
       parameter_name: "Total Cholesterol",
       input_type: "numeric",
@@ -756,10 +794,26 @@ const CHEMISTRY_DEFAULTS: Record<string, SectionEntry> = {
     params: [{ parameter_name: "HbA1c", input_type: "numeric", unit_si: "%", ref_low_si: 4.5, ref_high_si: 6.5 }],
   },
   HDL_LDL_VLDL: {
+    layout: "dual_unit",
     params: [
-      { parameter_name: "HDL", input_type: "numeric", unit_si: "mg/dL", ref_low_si: 40 },
-      { parameter_name: "LDL", input_type: "numeric", unit_si: "mg/dL", ref_low_si: 0, ref_high_si: 100 },
-      { parameter_name: "VLDL", input_type: "numeric", unit_si: "mg/dL", ref_low_si: 0, ref_high_si: 30 },
+      {
+        parameter_name: "HDL", input_type: "numeric",
+        unit_si: "mmol/L", ref_low_si: 1.03,
+        unit_conv: "mg/dL", ref_low_conv: 40,
+        si_to_conv_factor: 38.67,
+      },
+      {
+        parameter_name: "LDL", input_type: "numeric",
+        unit_si: "mmol/L", ref_low_si: 0, ref_high_si: 2.59,
+        unit_conv: "mg/dL", ref_low_conv: 0, ref_high_conv: 100,
+        si_to_conv_factor: 38.67,
+      },
+      {
+        parameter_name: "VLDL", input_type: "numeric",
+        unit_si: "mmol/L", ref_low_si: 0, ref_high_si: 0.78,
+        unit_conv: "mg/dL", ref_low_conv: 0, ref_high_conv: 30,
+        si_to_conv_factor: 38.67,
+      },
     ],
   },
   ICA: {
@@ -837,11 +891,12 @@ const CHEMISTRY_DEFAULTS: Record<string, SectionEntry> = {
     ],
   },
   TRIGLYCERIDES: {
+    layout: "dual_unit",
     params: [{
       parameter_name: "Triglycerides",
       input_type: "numeric",
       unit_si: "mmol/L", ref_low_si: 0, ref_high_si: 1.7,
-      unit_conv: "mg/dL", ref_low_conv: 0, ref_high_conv: 150,
+      unit_conv: "mg/dL", ref_low_conv: 0, ref_high_conv: 150.44,
       si_to_conv_factor: 88.5,
     }],
   },
@@ -1108,9 +1163,19 @@ const MICROBIOLOGY_DEFAULTS: Record<string, SectionEntry> = {
 
 // Reusable chemistry row builders (copy, don't reference — TS object spread
 // would alias the same object).
+//
+// Package panels render as `dual_unit` (see PACKAGE_PANELS below), so every
+// row must populate the SI side AND the Conv side, plus `si_to_conv_factor`.
+//   • Convertible rows (FBS, BUN, Creatinine, Uric Acid, Cholesterol, TG,
+//     HDL/LDL/VLDL, Bilirubin) carry the real SI ↔ Conv conversion.
+//   • Non-convertible rows (SGPT, SGOT, ALP, Albumin, Total Protein, HbA1c,
+//     TSH, FT3, FT4) mirror their SI value into Conv with factor 1, matching
+//     the reference PDF's SGPT 22.1 / 22.1 / U/L / U/L pattern.
 const FBS_ROW = (): ParamSeed => ({
   parameter_name: "FBS", input_type: "numeric",
-  unit_si: "mg/dL", ref_low_si: 70, ref_high_si: 110,
+  unit_si: "mmol/L", ref_low_si: 4.1, ref_high_si: 5.9,
+  unit_conv: "mg/dL", ref_low_conv: 73.87, ref_high_conv: 106.31,
+  si_to_conv_factor: 18.0156,
 });
 const BUN_ROW = (): ParamSeed => ({
   parameter_name: "BUN", input_type: "numeric",
@@ -1120,11 +1185,15 @@ const BUN_ROW = (): ParamSeed => ({
 });
 const CREATININE_ROW = (): ParamSeed => ({
   parameter_name: "Creatinine", input_type: "numeric",
-  unit_si: "mg/dL", ref_low_si: 0.6, ref_high_si: 1.3,
+  unit_si: "µmol/L", ref_low_si: 59, ref_high_si: 104,
+  unit_conv: "mg/dL", ref_low_conv: 0.67, ref_high_conv: 1.18,
+  si_to_conv_factor: 0.0113,
 });
 const URIC_ACID_ROW = (): ParamSeed => ({
   parameter_name: "Uric Acid", input_type: "numeric",
-  unit_si: "µmol/L", ref_low_si: 142, ref_high_si: 416,
+  unit_si: "µmol/L", ref_low_si: 142, ref_high_si: 416.5,
+  unit_conv: "mg/dL", ref_low_conv: 2.38, ref_high_conv: 6.99,
+  si_to_conv_factor: 0.0168,
 });
 const CHOL_ROW = (): ParamSeed => ({
   parameter_name: "Total Cholesterol", input_type: "numeric",
@@ -1135,49 +1204,88 @@ const CHOL_ROW = (): ParamSeed => ({
 const TRIG_ROW = (): ParamSeed => ({
   parameter_name: "Triglycerides", input_type: "numeric",
   unit_si: "mmol/L", ref_low_si: 0, ref_high_si: 1.7,
-  unit_conv: "mg/dL", ref_low_conv: 0, ref_high_conv: 150,
+  unit_conv: "mg/dL", ref_low_conv: 0, ref_high_conv: 150.44,
   si_to_conv_factor: 88.5,
 });
 const HDL_ROW = (): ParamSeed => ({
-  parameter_name: "HDL", input_type: "numeric", unit_si: "mg/dL", ref_low_si: 40,
+  parameter_name: "HDL", input_type: "numeric",
+  unit_si: "mmol/L", ref_low_si: 1.03,
+  unit_conv: "mg/dL", ref_low_conv: 40,
+  si_to_conv_factor: 38.67,
 });
 const LDL_ROW = (): ParamSeed => ({
-  parameter_name: "LDL", input_type: "numeric", unit_si: "mg/dL", ref_low_si: 0, ref_high_si: 100,
+  parameter_name: "LDL", input_type: "numeric",
+  unit_si: "mmol/L", ref_low_si: 0, ref_high_si: 2.59,
+  unit_conv: "mg/dL", ref_low_conv: 0, ref_high_conv: 100,
+  si_to_conv_factor: 38.67,
 });
 const VLDL_ROW = (): ParamSeed => ({
-  parameter_name: "VLDL", input_type: "numeric", unit_si: "mg/dL", ref_low_si: 0, ref_high_si: 30,
+  parameter_name: "VLDL", input_type: "numeric",
+  unit_si: "mmol/L", ref_low_si: 0, ref_high_si: 0.78,
+  unit_conv: "mg/dL", ref_low_conv: 0, ref_high_conv: 30,
+  si_to_conv_factor: 38.67,
 });
+// Non-convertible (U/L) — mirror SI into Conv with factor 1 so the dual-unit
+// form auto-fills the same value into both columns (matches reference PDF).
 const SGPT_ROW = (): ParamSeed => ({
   parameter_name: "SGPT (ALT)", input_type: "numeric",
   unit_si: "U/L", ref_low_si: 0, ref_high_si: 41,
+  unit_conv: "U/L", ref_low_conv: 0, ref_high_conv: 41,
+  si_to_conv_factor: 1,
 });
 const SGOT_ROW = (): ParamSeed => ({
   parameter_name: "SGOT (AST)", input_type: "numeric",
   unit_si: "U/L", ref_low_si: 0, ref_high_si: 37,
+  unit_conv: "U/L", ref_low_conv: 0, ref_high_conv: 37,
+  si_to_conv_factor: 1,
 });
 const HBA1C_ROW = (): ParamSeed => ({
-  parameter_name: "HbA1c", input_type: "numeric", unit_si: "%", ref_low_si: 4.5, ref_high_si: 6.5,
+  parameter_name: "HbA1c", input_type: "numeric",
+  unit_si: "%", ref_low_si: 4.5, ref_high_si: 6.5,
+  unit_conv: "%", ref_low_conv: 4.5, ref_high_conv: 6.5,
+  si_to_conv_factor: 1,
 });
 const ALBUMIN_ROW = (): ParamSeed => ({
-  parameter_name: "Albumin", input_type: "numeric", unit_si: "g/L", ref_low_si: 35, ref_high_si: 55,
+  parameter_name: "Albumin", input_type: "numeric",
+  unit_si: "g/L", ref_low_si: 35, ref_high_si: 55,
+  unit_conv: "g/L", ref_low_conv: 35, ref_high_conv: 55,
+  si_to_conv_factor: 1,
 });
 const TOTAL_PROTEIN_ROW = (): ParamSeed => ({
-  parameter_name: "Total Protein", input_type: "numeric", unit_si: "g/L", ref_low_si: 60, ref_high_si: 80,
+  parameter_name: "Total Protein", input_type: "numeric",
+  unit_si: "g/L", ref_low_si: 60, ref_high_si: 80,
+  unit_conv: "g/L", ref_low_conv: 60, ref_high_conv: 80,
+  si_to_conv_factor: 1,
 });
 const BILIRUBIN_ROW = (): ParamSeed => ({
-  parameter_name: "Bilirubin (Total)", input_type: "numeric", unit_si: "µmol/L", ref_low_si: 0, ref_high_si: 21,
+  parameter_name: "Bilirubin (Total)", input_type: "numeric",
+  unit_si: "µmol/L", ref_low_si: 0, ref_high_si: 21,
+  unit_conv: "mg/dL", ref_low_conv: 0, ref_high_conv: 1.2,
+  si_to_conv_factor: 0.0585,
 });
 const ALP_ROW = (): ParamSeed => ({
-  parameter_name: "ALP", input_type: "numeric", unit_si: "U/L", ref_low_si: 30, ref_high_si: 120,
+  parameter_name: "ALP", input_type: "numeric",
+  unit_si: "U/L", ref_low_si: 30, ref_high_si: 120,
+  unit_conv: "U/L", ref_low_conv: 30, ref_high_conv: 120,
+  si_to_conv_factor: 1,
 });
 const TSH_ROW = (): ParamSeed => ({
-  parameter_name: "TSH", input_type: "numeric", unit_si: "mIU/L", ref_low_si: 0.4, ref_high_si: 4.0,
+  parameter_name: "TSH", input_type: "numeric",
+  unit_si: "mIU/L", ref_low_si: 0.4, ref_high_si: 4.0,
+  unit_conv: "mIU/L", ref_low_conv: 0.4, ref_high_conv: 4.0,
+  si_to_conv_factor: 1,
 });
 const FT3_ROW = (): ParamSeed => ({
-  parameter_name: "FT3", input_type: "numeric", unit_si: "pmol/L", ref_low_si: 3.1, ref_high_si: 6.8,
+  parameter_name: "FT3", input_type: "numeric",
+  unit_si: "pmol/L", ref_low_si: 3.1, ref_high_si: 6.8,
+  unit_conv: "pmol/L", ref_low_conv: 3.1, ref_high_conv: 6.8,
+  si_to_conv_factor: 1,
 });
 const FT4_ROW = (): ParamSeed => ({
-  parameter_name: "FT4", input_type: "numeric", unit_si: "pmol/L", ref_low_si: 9.0, ref_high_si: 19.0,
+  parameter_name: "FT4", input_type: "numeric",
+  unit_si: "pmol/L", ref_low_si: 9.0, ref_high_si: 19.0,
+  unit_conv: "pmol/L", ref_low_conv: 9.0, ref_high_conv: 19.0,
+  si_to_conv_factor: 1,
 });
 
 // "Included test" placeholder for tests that have their own dedicated template
@@ -1192,6 +1300,7 @@ const INCLUDED = (label: string, placeholder?: string): ParamSeed => ({
 
 const PACKAGE_PANELS: Record<string, SectionEntry> = {
   STANDARD_CHEMISTRY: {
+    layout: "dual_unit",
     params: [
       FBS_ROW(), BUN_ROW(), CREATININE_ROW(), URIC_ACID_ROW(),
       CHOL_ROW(), TRIG_ROW(), HDL_ROW(), LDL_ROW(), VLDL_ROW(),
@@ -1225,6 +1334,7 @@ const PACKAGE_PANELS: Record<string, SectionEntry> = {
     ],
   },
   EXECUTIVE_PACKAGE_STANDARD: {
+    layout: "dual_unit",
     params: [
       INCLUDED("CBC"),
       INCLUDED("Urinalysis"),
@@ -1236,6 +1346,7 @@ const PACKAGE_PANELS: Record<string, SectionEntry> = {
     ],
   },
   EXECUTIVE_PACKAGE_COMPREHENSIVE: {
+    layout: "dual_unit",
     params: [
       INCLUDED("CBC"),
       INCLUDED("Urinalysis"),
@@ -1251,6 +1362,7 @@ const PACKAGE_PANELS: Record<string, SectionEntry> = {
     ],
   },
   EXECUTIVE_PACKAGE_DELUXE_MEN_S: {
+    layout: "dual_unit",
     params: [
       INCLUDED("CBC"),
       INCLUDED("Urinalysis"),
@@ -1259,7 +1371,12 @@ const PACKAGE_PANELS: Record<string, SectionEntry> = {
       SGPT_ROW(), SGOT_ROW(),
       HBA1C_ROW(),
       URIC_ACID_ROW(),
-      { parameter_name: "PSA", input_type: "numeric", unit_si: "ng/mL", ref_low_si: 0, ref_high_si: 4.0 },
+      {
+        parameter_name: "PSA", input_type: "numeric",
+        unit_si: "ng/mL", ref_low_si: 0, ref_high_si: 4.0,
+        unit_conv: "ng/mL", ref_low_conv: 0, ref_high_conv: 4.0,
+        si_to_conv_factor: 1,
+      },
       INCLUDED("Fecalysis", "Stool exam result"),
       INCLUDED("Ultrasound", "Whole abdomen ultrasound reading"),
       INCLUDED("ECG", "ECG reading"),
@@ -1267,6 +1384,7 @@ const PACKAGE_PANELS: Record<string, SectionEntry> = {
     ],
   },
   EXECUTIVE_PACKAGE_DELUXE_WOMEN_S: {
+    layout: "dual_unit",
     params: [
       INCLUDED("CBC"),
       INCLUDED("Urinalysis"),
@@ -1301,16 +1419,24 @@ const PACKAGE_PANELS: Record<string, SectionEntry> = {
     ],
   },
   DIABETIC_HEALTH_PACKAGE: {
+    layout: "dual_unit",
     params: [FBS_ROW(), HBA1C_ROW(), CHOL_ROW(), TRIG_ROW(), CREATININE_ROW()],
   },
   KIDNEY_FUNCTION_PACKAGE: {
+    layout: "dual_unit",
     params: [
       BUN_ROW(), CREATININE_ROW(), URIC_ACID_ROW(),
       INCLUDED("Urinalysis"),
-      placeholderNumeric("Urine Protein", "g/L"),
+      {
+        parameter_name: "Urine Protein", input_type: "numeric",
+        unit_si: "g/L",
+        unit_conv: "g/L",
+        si_to_conv_factor: 1,
+      },
     ],
   },
   LIVER_FUNCTION_PACKAGE: {
+    layout: "dual_unit",
     params: [
       SGPT_ROW(), SGOT_ROW(),
       BILIRUBIN_ROW(),
@@ -1320,16 +1446,33 @@ const PACKAGE_PANELS: Record<string, SectionEntry> = {
     ],
   },
   LIPID_PROFILE_PACKAGE: {
+    layout: "dual_unit",
     params: [CHOL_ROW(), TRIG_ROW(), HDL_ROW(), LDL_ROW(), VLDL_ROW()],
   },
   THYROID_HEALTH_PACKAGE: {
     params: [TSH_ROW(), FT3_ROW(), FT4_ROW()],
   },
   IRON_DEFICIENCY_PACKAGE: {
+    layout: "dual_unit",
     params: [
-      placeholderNumeric("Ferritin", "ng/mL"),
-      placeholderNumeric("Serum Iron", "µmol/L"),
-      placeholderNumeric("TIBC", "µmol/L"),
+      {
+        parameter_name: "Ferritin", input_type: "numeric",
+        unit_si: "ng/mL",
+        unit_conv: "ng/mL",
+        si_to_conv_factor: 1,
+      },
+      {
+        parameter_name: "Serum Iron", input_type: "numeric",
+        unit_si: "µmol/L",
+        unit_conv: "µmol/L",
+        si_to_conv_factor: 1,
+      },
+      {
+        parameter_name: "TIBC", input_type: "numeric",
+        unit_si: "µmol/L",
+        unit_conv: "µmol/L",
+        si_to_conv_factor: 1,
+      },
       INCLUDED("CBC"),
     ],
   },

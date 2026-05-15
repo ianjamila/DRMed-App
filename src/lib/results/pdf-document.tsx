@@ -494,29 +494,29 @@ function PatientInfoGrid({
         </Text>
       </View>
       <View style={styles.patientRow}>
-        <View style={[styles.patientCell, { width: "34%" }]}>
+        <View style={[styles.patientCell, { width: "50%" }]}>
           <Text style={styles.patientLabel}>BIRTHDAY:</Text>
           <Text style={styles.patientValue}>{birthdayDisplay}</Text>
         </View>
-        <View style={[styles.patientCell, { width: "33%" }]}>
+        <View style={[styles.patientCell, { width: "25%" }]}>
           <Text style={styles.patientLabel}>GENDER:</Text>
           <Text style={styles.patientValue}>{sexLabel}</Text>
         </View>
-        <View style={[styles.patientCell, { width: "33%" }]}>
+        <View style={[styles.patientCell, { width: "25%" }]}>
           <Text style={styles.patientLabel}>CONTACT #:</Text>
           <Text style={styles.patientValue}></Text>
         </View>
       </View>
       <View style={styles.patientRow}>
-        <View style={[styles.patientCell, { width: "34%" }]}>
+        <View style={[styles.patientCell, { width: "50%" }]}>
           <Text style={styles.patientLabel}>PHYSICIAN:</Text>
           <Text style={styles.patientValue}></Text>
         </View>
-        <View style={[styles.patientCell, { width: "33%" }]}>
+        <View style={[styles.patientCell, { width: "25%" }]}>
           <Text style={styles.patientLabel}>AGE:</Text>
           <Text style={styles.patientValue}>{age != null ? String(age) : ""}</Text>
         </View>
-        <View style={[styles.patientCell, { width: "33%" }]}>
+        <View style={[styles.patientCell, { width: "25%" }]}>
           <Text style={styles.patientLabel}>SENIOR / PWD ID:</Text>
           <Text style={styles.patientValue}></Text>
         </View>
