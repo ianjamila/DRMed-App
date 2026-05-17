@@ -82,10 +82,12 @@ export default async function VisitDetailPage({ params }: Props) {
           base_price_php, discount_kind, discount_amount_php, final_price_php,
           clinic_fee_php, doctor_pf_php,
           procedure_description, hmo_approved_amount_php,
-          services!inner ( id, code, name, kind, price_php )
+          parent_id, is_package_header, package_completed_at,
+          services!inner ( id, code, name, kind, section, price_php )
         `,
       )
       .eq("visit_id", id)
+      .order("is_package_header", { ascending: false })
       .order("requested_at", { ascending: true }),
     supabase
       .from("payments")
@@ -98,6 +100,29 @@ export default async function VisitDetailPage({ params }: Props) {
   const balance = Number(visit.total_php) - Number(visit.paid_php);
   const activePayments = (payments ?? []).filter((p) => !p.voided_at);
   const voidedPayments = (payments ?? []).filter((p) => p.voided_at);
+
+  // Group test_requests by package: headers first (as cards with their
+  // components indented beneath), then standalones below in the existing
+  // detail table. Bridge guard in 14.1 ensures ₱0 package components don't
+  // appear in standalone billing rows.
+  const allRows = tests ?? [];
+  type TestRow = (typeof allRows)[number];
+  const packageHeaders: TestRow[] = [];
+  const componentsByParent = new Map<string, TestRow[]>();
+  const standalones: TestRow[] = [];
+  for (const t of allRows) {
+    if (t.is_package_header) {
+      packageHeaders.push(t);
+      continue;
+    }
+    if (t.parent_id) {
+      const arr = componentsByParent.get(t.parent_id) ?? [];
+      arr.push(t);
+      componentsByParent.set(t.parent_id, arr);
+    } else {
+      standalones.push(t);
+    }
+  }
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
@@ -196,6 +221,102 @@ export default async function VisitDetailPage({ params }: Props) {
         <h2 className="mb-3 font-[family-name:var(--font-heading)] text-xl font-extrabold text-[color:var(--color-brand-navy)]">
           Tests
         </h2>
+
+        {packageHeaders.length > 0 ? (
+          <div className="mb-4 space-y-4">
+            {packageHeaders.map((h) => {
+              const svc = Array.isArray(h.services) ? h.services[0] : h.services;
+              if (!svc) return null;
+              const finalPrice =
+                h.final_price_php != null
+                  ? Number(h.final_price_php)
+                  : Number(svc.price_php);
+              const components = componentsByParent.get(h.id) ?? [];
+              return (
+                <div
+                  key={h.id}
+                  className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5"
+                >
+                  <Link
+                    href={`/staff/queue/${h.id}`}
+                    className="block hover:opacity-90"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-mono text-[10px] uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+                          {svc.code} · Package
+                        </p>
+                        <p className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+                          {svc.name}
+                        </p>
+                        {h.package_completed_at ? (
+                          <p className="mt-1 text-[11px] text-emerald-700">
+                            Completed{" "}
+                            {new Date(h.package_completed_at).toLocaleString(
+                              "en-PH",
+                            )}
+                          </p>
+                        ) : null}
+                      </div>
+                      <div className="flex flex-col items-end gap-1">
+                        <span className="font-mono text-sm font-semibold text-[color:var(--color-brand-navy)]">
+                          {formatPhp(finalPrice)}
+                        </span>
+                        <span
+                          className={`rounded-md px-2 py-0.5 text-xs font-semibold ${
+                            TEST_STATUS_STYLE[h.status] ?? ""
+                          }`}
+                        >
+                          {h.status.replace(/_/g, " ")}
+                        </span>
+                      </div>
+                    </div>
+                  </Link>
+                  <ul className="mt-3 space-y-1 border-l-2 border-[color:var(--color-brand-bg-mid)] pl-4">
+                    {components.length === 0 ? (
+                      <li className="py-1 text-xs text-[color:var(--color-brand-text-soft)]">
+                        No components linked yet.
+                      </li>
+                    ) : (
+                      components.map((c) => {
+                        const csvc = Array.isArray(c.services)
+                          ? c.services[0]
+                          : c.services;
+                        if (!csvc) return null;
+                        return (
+                          <li
+                            key={c.id}
+                            className="flex flex-wrap items-center justify-between gap-2 py-1 text-sm"
+                          >
+                            <Link
+                              href={`/staff/queue/${c.id}`}
+                              className="font-medium text-[color:var(--color-brand-navy)] hover:text-[color:var(--color-brand-cyan)] hover:underline"
+                            >
+                              {csvc.name}
+                            </Link>
+                            <span className="flex items-center gap-2 text-[11px] text-[color:var(--color-brand-text-soft)]">
+                              <span className="font-mono uppercase tracking-wider">
+                                {csvc.section ?? "—"}
+                              </span>
+                              <span
+                                className={`rounded-md px-2 py-0.5 font-semibold ${
+                                  TEST_STATUS_STYLE[c.status] ?? ""
+                                }`}
+                              >
+                                {c.status.replace(/_/g, " ")}
+                              </span>
+                            </span>
+                          </li>
+                        );
+                      })
+                    )}
+                  </ul>
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+
         <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
           <table className="w-full min-w-[720px] text-sm">
             <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
@@ -209,7 +330,7 @@ export default async function VisitDetailPage({ params }: Props) {
               </tr>
             </thead>
             <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
-              {(tests ?? []).map((t) => {
+              {standalones.map((t) => {
                 const svc = Array.isArray(t.services) ? t.services[0] : t.services;
                 if (!svc) return null;
                 // Snapshot fields on the line; fall back to live service price
@@ -328,13 +449,15 @@ export default async function VisitDetailPage({ params }: Props) {
                   </tr>
                 );
               })}
-              {(tests ?? []).length === 0 ? (
+              {standalones.length === 0 ? (
                 <tr>
                   <td
                     colSpan={6}
                     className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]"
                   >
-                    No tests on this visit yet.
+                    {packageHeaders.length > 0
+                      ? "No standalone tests on this visit."
+                      : "No tests on this visit yet."}
                   </td>
                 </tr>
               ) : null}
