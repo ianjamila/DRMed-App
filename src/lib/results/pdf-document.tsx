@@ -1161,6 +1161,34 @@ function ImagingBody({
 }
 
 // ---------------------------------------------------------------------------
+// Layout: package_summary (cover page for the consolidated package PDF)
+// ---------------------------------------------------------------------------
+
+function PackageSummaryBody({
+  packageSummary,
+}: {
+  packageSummary: NonNullable<ResultDocumentInput["packageSummary"]>;
+}) {
+  return (
+    <View style={styles.imagingBody}>
+      <Text style={styles.imagingHeading}>Package Result Summary</Text>
+      <Text style={[styles.imagingText, { marginBottom: 8 }]}>
+        This package includes the following {packageSummary.components.length}{" "}
+        test results, attached on subsequent pages:
+      </Text>
+      <View>
+        {packageSummary.components.map((c, idx) => (
+          <Text key={c.code} style={styles.imagingText}>
+            {String(idx + 1).padStart(2, " ")}. {c.name}{" "}
+            <Text style={{ color: C.inkMuted }}>({c.code})</Text>
+          </Text>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Remarks block (sits between body and signatures)
 // ---------------------------------------------------------------------------
 
@@ -1228,6 +1256,11 @@ export function ResultDocument(input: ResultDocumentInput) {
             values={input.values}
             imageAttachment={input.imageAttachment}
           />
+        ) : null}
+        {input.template.layout === "package_summary" ? (
+          input.packageSummary ? (
+            <PackageSummaryBody packageSummary={input.packageSummary} />
+          ) : null
         ) : null}
 
         <RemarksBlock notes={input.template.footer_notes} />

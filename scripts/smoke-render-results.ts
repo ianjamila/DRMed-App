@@ -85,10 +85,59 @@ async function renderOne(code: string) {
   console.log(`✓ ${code} (${tpl.layout}, ${params.length} params) → ${out} (${pdf.byteLength} bytes)`);
 }
 
+async function renderPackageSummary() {
+  const coverSample: ResultDocumentInput = {
+    template: {
+      layout: "package_summary",
+      header_notes: null,
+      footer_notes: null,
+    },
+    params: [],
+    values: {},
+    service: {
+      code: "EXECUTIVE_PACKAGE_STANDARD",
+      name: "Executive Package - Standard",
+    },
+    patient: {
+      drm_id: "DRM-PREVIEW",
+      last_name: "DOE",
+      first_name: "JANE",
+      sex: "F",
+      birthdate: "1985-04-12",
+    },
+    visit: { visit_number: "0007" },
+    controlNo: 7777,
+    finalisedAt: new Date(),
+    medtech: null,
+    packageSummary: {
+      packageCode: "EXECUTIVE_PACKAGE_STANDARD",
+      packageName: "Executive Package - Standard",
+      components: [
+        { code: "CBC_PC", name: "CBC + PC", status: "released" },
+        { code: "URINALYSIS", name: "Urinalysis", status: "released" },
+        { code: "FBS_RBS", name: "FBS/RBS", status: "released" },
+        { code: "ECG", name: "12-Lead ECG", status: "released" },
+        {
+          code: "XRAY_CHEST_PA_LAT_ADULT",
+          name: "Chest X-Ray PA/LAT (Adult)",
+          status: "released",
+        },
+      ],
+    },
+  };
+  const coverPdf = await renderResultPdf(coverSample);
+  const out = "/tmp/drmed-package-summary.pdf";
+  writeFileSync(out, coverPdf);
+  console.log(
+    `✓ package_summary cover → ${out} (${coverPdf.byteLength} bytes)`,
+  );
+}
+
 async function main() {
   for (const code of SERVICE_CODES) {
     await renderOne(code);
   }
+  await renderPackageSummary();
 }
 
 main().catch((err) => {

@@ -6,7 +6,8 @@ export type ResultLayout =
   | "simple"
   | "dual_unit"
   | "multi_section"
-  | "imaging_report";
+  | "imaging_report"
+  | "package_summary";
 
 export type ParamInputType = "numeric" | "free_text" | "select";
 
@@ -112,6 +113,15 @@ export interface ResultDocumentInput {
     data: Uint8Array;
     mime: string;
     filename: string;
+  };
+  // Component list for `package_summary` layouts. The consolidated PDF
+  // endpoint (`getPackagePdfDownloadUrl`) renders this as a cover page that
+  // lists every released component before the per-component PDFs are
+  // concatenated behind it.
+  packageSummary?: {
+    packageCode: string;
+    packageName: string;
+    components: Array<{ code: string; name: string; status: string }>;
   };
   isPreview?: boolean;
 }
