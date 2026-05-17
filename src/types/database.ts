@@ -1354,6 +1354,42 @@ export type Database = {
         }
         Relationships: []
       }
+      package_components: {
+        Row: {
+          component_service_id: string
+          created_at: string
+          package_service_id: string
+          sort_order: number
+        }
+        Insert: {
+          component_service_id: string
+          created_at?: string
+          package_service_id: string
+          sort_order?: number
+        }
+        Update: {
+          component_service_id?: string
+          created_at?: string
+          package_service_id?: string
+          sort_order?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "package_components_component_service_id_fkey"
+            columns: ["component_service_id"]
+            isOneToOne: false
+            referencedRelation: "services"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "package_components_package_service_id_fkey"
+            columns: ["package_service_id"]
+            isOneToOne: false
+            referencedRelation: "services"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       patients: {
         Row: {
           address: string | null
@@ -2376,6 +2412,9 @@ export type Database = {
           home_service_fee_php: number | null
           id: string
           is_historical: boolean
+          is_package_header: boolean
+          package_completed_at: string | null
+          parent_id: string | null
           procedure_description: string | null
           receptionist_remarks: string | null
           release_medium: string | null
@@ -2412,6 +2451,9 @@ export type Database = {
           home_service_fee_php?: number | null
           id?: string
           is_historical?: boolean
+          is_package_header?: boolean
+          package_completed_at?: string | null
+          parent_id?: string | null
           procedure_description?: string | null
           receptionist_remarks?: string | null
           release_medium?: string | null
@@ -2448,6 +2490,9 @@ export type Database = {
           home_service_fee_php?: number | null
           id?: string
           is_historical?: boolean
+          is_package_header?: boolean
+          package_completed_at?: string | null
+          parent_id?: string | null
           procedure_description?: string | null
           receptionist_remarks?: string | null
           release_medium?: string | null
@@ -2485,6 +2530,20 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "v_hmo_provider_summary"
             referencedColumns: ["provider_id"]
+          },
+          {
+            foreignKeyName: "test_requests_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "test_requests"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "test_requests_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "v_hmo_unbilled"
+            referencedColumns: ["test_request_id"]
           },
           {
             foreignKeyName: "test_requests_service_id_fkey"
