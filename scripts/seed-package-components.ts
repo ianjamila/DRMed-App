@@ -9,9 +9,10 @@
  *   npm run seed:package-components  (this script)
  *   npm run seed:templates           (templates per component service)
  *
- * Idempotent: ON CONFLICT DO NOTHING on the (package, component) PK so
- * re-runs are safe. To remove a component from a package, edit the map and
- * delete the row via SQL or admin UI (Phase 14.x).
+ * Idempotent: re-runs safely overwrite `sort_order` to match the current map
+ * via ON CONFLICT DO UPDATE (other columns are untouched since they aren't
+ * in the upsert payload). Removing a component from a package requires
+ * deleting the row via SQL or the (future) admin UI.
  *
  * Sourced from PACKAGE_PANELS in scripts/seed-result-templates.ts, minus the
  * INCLUDED("CBC") free-text placeholders — those are replaced by real
@@ -105,65 +106,58 @@ const PACKAGE_COMPONENTS: Record<string, string[]> = {
   DENGUE_PACKAGE: ["DENGUE_NS1", "DENGUE_DUO"],
 };
 
-async function findServiceIdByCode(code: string): Promise<string | null> {
-  const { data, error } = await admin
-    .from("services")
-    .select("id")
-    .eq("code", code)
-    .single();
-  if (error || !data) return null;
-  return data.id;
-}
-
-async function seedPackage(
-  packageCode: string,
-  componentCodes: string[],
-): Promise<{ pkg: string; inserted: number; skipped: number }> {
-  const packageId = await findServiceIdByCode(packageCode);
-  if (!packageId) {
-    throw new Error(`Service code ${packageCode} not found in services table`);
-  }
-
-  let inserted = 0;
-  const skipped = 0;
-  for (let i = 0; i < componentCodes.length; i++) {
-    const componentCode = componentCodes[i];
-    const componentId = await findServiceIdByCode(componentCode);
-    if (!componentId) {
-      throw new Error(
-        `Component code ${componentCode} (referenced by ${packageCode}) not found in services table`,
-      );
-    }
-    const { error } = await admin
-      .from("package_components")
-      .upsert(
-        {
-          package_service_id: packageId,
-          component_service_id: componentId,
-          sort_order: i,
-        },
-        { onConflict: "package_service_id,component_service_id" },
-      );
-    if (error) {
-      throw new Error(
-        `Failed to upsert ${packageCode} → ${componentCode}: ${error.message}`,
-      );
-    }
-    inserted++;
-  }
-  return { pkg: packageCode, inserted, skipped };
-}
-
 async function main() {
   console.log(
     `Seeding package_components against ${SUPABASE_URL}...`,
   );
+
+  // 1. Collect all codes (packages + components) into a single set.
+  const codes = new Set<string>();
+  for (const [pkgCode, componentCodes] of Object.entries(PACKAGE_COMPONENTS)) {
+    codes.add(pkgCode);
+    componentCodes.forEach((c) => codes.add(c));
+  }
+
+  // 2. Single batch lookup of all service codes.
+  const { data, error } = await admin
+    .from("services")
+    .select("id, code")
+    .in("code", Array.from(codes));
+  if (error) {
+    console.error(`Failed to look up service codes: ${error.message}`);
+    process.exit(1);
+  }
+  const codeToId = new Map((data ?? []).map((s) => [s.code, s.id]));
+
+  // 3. Validate all codes present — list ALL missing codes at once.
+  const missing = Array.from(codes).filter((c) => !codeToId.has(c));
+  if (missing.length > 0) {
+    console.error(
+      `Missing service codes (run npm run seed:services first?):\n  - ${missing.join("\n  - ")}`,
+    );
+    process.exit(1);
+  }
+
+  // 4. Per-package: build row array + single batch upsert.
   let totalRows = 0;
   for (const [pkgCode, componentCodes] of Object.entries(PACKAGE_COMPONENTS)) {
-    const { pkg, inserted } = await seedPackage(pkgCode, componentCodes);
-    console.log(`✓ ${pkg}: ${inserted} components`);
-    totalRows += inserted;
+    const packageId = codeToId.get(pkgCode)!;
+    const rows = componentCodes.map((cmpCode, i) => ({
+      package_service_id: packageId,
+      component_service_id: codeToId.get(cmpCode)!,
+      sort_order: i,
+    }));
+    const { error: upErr } = await admin
+      .from("package_components")
+      .upsert(rows, { onConflict: "package_service_id,component_service_id" });
+    if (upErr) {
+      console.error(`Failed to upsert ${pkgCode}: ${upErr.message}`);
+      process.exit(1);
+    }
+    console.log(`✓ ${pkgCode}: ${rows.length} components`);
+    totalRows += rows.length;
   }
+
   console.log(
     `Done. ${totalRows} package_components rows across ${Object.keys(PACKAGE_COMPONENTS).length} packages.`,
   );

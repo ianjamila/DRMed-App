@@ -9,6 +9,7 @@
 --   5. package_completed_at trigger sets on last-component release
 --   6. package_completed_at does NOT set on cancelled headers (cascade case)
 --   7. package_completed_at does NOT re-stamp on amendment
+--   8. (A7) 0042 trigger stamps when components released BEFORE header release
 --
 -- Cleanup via begin/rollback. Self-bootstraps services + visit + admin.
 -- =============================================================================
@@ -135,8 +136,7 @@ begin
   select package_completed_at into v_completed
     from public.test_requests where id = v_pkg_id;
   if v_completed is not null then
-    raise exception 'A4 FAIL: package_completed_at set after first component release (still %s components pending)',
-      'one';
+    raise exception 'A4 FAIL: package_completed_at set after first component release (still 1 component pending)';
   end if;
   raise notice 'A4 PASS: package_completed_at NULL after 1-of-2 components released';
 
@@ -171,7 +171,54 @@ begin
   end;
   raise notice 'A6 PASS: amendment did not re-stamp package_completed_at';
 
-  raise notice 'all 6 D1 smoke assertions PASS';
+  -- A7: opposite ordering — components release BEFORE header release. The
+  -- 0040 component-side trigger bails because the header is not yet
+  -- 'released'; the 0042 header-side trigger must then stamp on the header's
+  -- 'released' transition once all components are already terminal.
+  --
+  -- Reset state: NULL completion stamp, header back to ready_for_release,
+  -- components back to in_progress.
+  update public.test_requests
+     set package_completed_at = null,
+         status = 'ready_for_release',
+         released_at = null
+   where id = v_pkg_id;
+  update public.test_requests
+     set status = 'in_progress',
+         released_at = null
+   where parent_id = v_pkg_id;
+
+  -- Release both components first — header still ready_for_release.
+  update public.test_requests set status = 'released', released_at = now()
+    where id = v_cbc_id;
+  update public.test_requests set status = 'released', released_at = now()
+    where id = v_xray_id;
+
+  -- Pre-check: completion stamp should still be NULL (0040 bails because
+  -- header is not 'released').
+  declare
+    v_pre_check timestamptz;
+  begin
+    select package_completed_at into v_pre_check
+      from public.test_requests where id = v_pkg_id;
+    if v_pre_check is not null then
+      raise exception 'A7-pre FAIL: completion stamped before header release (got %)',
+        v_pre_check;
+    end if;
+  end;
+
+  -- Release the header — 0042 trigger must stamp completion.
+  update public.test_requests set status = 'released', released_at = now()
+    where id = v_pkg_id;
+
+  select package_completed_at into v_completed
+    from public.test_requests where id = v_pkg_id;
+  if v_completed is null then
+    raise exception 'A7 FAIL: completion stamp not set on header release after components were already terminal';
+  end if;
+  raise notice 'A7 PASS: completion stamped when header releases after components were already terminal (= %)', v_completed;
+
+  raise notice 'all 7 D1 smoke assertions PASS';
 end$$;
 
 rollback;
