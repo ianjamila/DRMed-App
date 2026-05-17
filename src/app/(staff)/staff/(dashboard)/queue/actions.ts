@@ -14,6 +14,25 @@ export async function claimTestAction(
   const session = await requireActiveStaff();
   const supabase = await createClient();
 
+  // Defense in depth: headers carry no work, so reject any attempt to claim
+  // one even if someone reaches this path via URL trick or stale state. The
+  // queue list already filters is_package_header=false.
+  const { data: testRequest } = await supabase
+    .from("test_requests")
+    .select("id, is_package_header")
+    .eq("id", testRequestId)
+    .maybeSingle();
+
+  if (!testRequest) {
+    return { ok: false, error: "Test not found." };
+  }
+  if (testRequest.is_package_header) {
+    return {
+      ok: false,
+      error: "Package headers cannot be claimed — they have no work.",
+    };
+  }
+
   // Only claim if currently 'requested' — concurrency-safe.
   const { data, error } = await supabase
     .from("test_requests")

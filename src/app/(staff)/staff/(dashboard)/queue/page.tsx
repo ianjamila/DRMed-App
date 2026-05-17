@@ -44,6 +44,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
       `,
     )
     .in("status", ["requested", "in_progress"])
+    .eq("is_package_header", false)
     .order("requested_at", { ascending: true })
     .limit(100);
 

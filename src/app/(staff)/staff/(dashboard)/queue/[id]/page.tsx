@@ -44,6 +44,7 @@ export default async function QueueTestDetailPage({ params }: Props) {
     .select(
       `
         id, status, requested_at, started_at, completed_at, assigned_to,
+        is_package_header, parent_id, package_completed_at, final_price_php,
         services!inner ( id, code, name, turnaround_hours, requires_signoff, is_send_out ),
         visits!inner (
           id, visit_number,
@@ -62,6 +63,45 @@ export default async function QueueTestDetailPage({ params }: Props) {
   if (!svc || !visit) notFound();
   const patient = Array.isArray(visit.patients) ? visit.patients[0] : visit.patients;
   if (!patient) notFound();
+
+  // Phase 14 D3: package headers carry no work. Render a read-only summary
+  // panel listing component test_requests instead of the structured form /
+  // PDF upload / amend form.
+  if (test.is_package_header) {
+    const { data: componentsRaw } = await supabase
+      .from("test_requests")
+      .select(
+        `
+          id, status, released_at, package_completed_at, requested_at,
+          services!inner ( code, name, section )
+        `,
+      )
+      .eq("parent_id", test.id)
+      .order("requested_at", { ascending: true });
+
+    const components = (componentsRaw ?? []).map((c) => ({
+      id: c.id,
+      status: c.status,
+      released_at: c.released_at,
+      service: Array.isArray(c.services) ? c.services[0] : c.services,
+    }));
+
+    return (
+      <PackageHeaderSummary
+        headerStatus={test.status}
+        finalPricePhp={test.final_price_php}
+        packageCompletedAt={test.package_completed_at}
+        serviceCode={svc.code}
+        serviceName={svc.name}
+        visitId={visit.id}
+        visitNumber={visit.visit_number}
+        patientFirstName={patient.first_name}
+        patientLastName={patient.last_name}
+        patientDrmId={patient.drm_id}
+        components={components}
+      />
+    );
+  }
 
   const result = Array.isArray(test.results) ? test.results[0] : test.results;
   const ownedByMe = test.assigned_to === user?.id;
@@ -379,6 +419,163 @@ export default async function QueueTestDetailPage({ params }: Props) {
 
       <Link
         href={`/staff/visits/${visit.id}`}
+        className="mt-6 inline-block text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
+      >
+        Open visit →
+      </Link>
+    </div>
+  );
+}
+
+interface PackageComponentSummary {
+  id: string;
+  status: string;
+  released_at: string | null;
+  service: { code: string; name: string; section: string | null } | null;
+}
+
+function PackageHeaderSummary({
+  headerStatus,
+  finalPricePhp,
+  packageCompletedAt,
+  serviceCode,
+  serviceName,
+  visitId,
+  visitNumber,
+  patientFirstName,
+  patientLastName,
+  patientDrmId,
+  components,
+}: {
+  headerStatus: string;
+  finalPricePhp: number | null;
+  packageCompletedAt: string | null;
+  serviceCode: string;
+  serviceName: string;
+  visitId: string;
+  visitNumber: number;
+  patientFirstName: string;
+  patientLastName: string;
+  patientDrmId: string;
+  components: PackageComponentSummary[];
+}) {
+  return (
+    <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
+      <Link
+        href="/staff/queue"
+        className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
+      >
+        ← Queue
+      </Link>
+
+      <header className="mt-3 flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <p className="font-mono text-sm text-[color:var(--color-brand-text-soft)]">
+            {serviceCode}
+          </p>
+          <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+            {serviceName}
+          </h1>
+          <p className="mt-1 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
+            Package header — read-only
+          </p>
+        </div>
+        <span
+          className={`rounded-md px-3 py-1 text-xs font-bold uppercase tracking-wider ${
+            TEST_STATUS_STYLE[headerStatus] ?? ""
+          }`}
+        >
+          {headerStatus.replace(/_/g, " ")}
+        </span>
+      </header>
+
+      <section className="mt-6 grid gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5 sm:grid-cols-2">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+            Patient
+          </p>
+          <p className="mt-0.5 font-semibold text-[color:var(--color-brand-navy)]">
+            {patientLastName}, {patientFirstName}
+          </p>
+          <p className="font-mono text-xs text-[color:var(--color-brand-text-soft)]">
+            {patientDrmId} · Visit #{visitNumber}
+          </p>
+        </div>
+        <div>
+          <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+            Package
+          </p>
+          <p className="mt-0.5 text-sm text-[color:var(--color-brand-text-mid)]">
+            ₱{(finalPricePhp ?? 0).toLocaleString("en-PH")}
+          </p>
+          {packageCompletedAt ? (
+            <p className="text-sm text-emerald-700">
+              Completed {new Date(packageCompletedAt).toLocaleString("en-PH")}
+            </p>
+          ) : (
+            <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+              Awaiting component completion
+            </p>
+          )}
+        </div>
+      </section>
+
+      <section className="mt-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
+        <p className="text-sm text-[color:var(--color-brand-text-mid)]">
+          Package headers carry no work of their own. Open each component below
+          to enter results; the header releases automatically once every
+          component is released and the visit is paid.
+        </p>
+      </section>
+
+      <section className="mt-6">
+        <h2 className="mb-3 font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+          Components ({components.length})
+        </h2>
+        {components.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-[color:var(--color-brand-bg-mid)] bg-white p-4 text-sm text-[color:var(--color-brand-text-soft)]">
+            No component test requests linked to this header.
+          </p>
+        ) : (
+          <ul className="space-y-2">
+            {components.map((c) => (
+              <li
+                key={c.id}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-3"
+              >
+                <div className="min-w-0">
+                  <Link
+                    href={`/staff/queue/${c.id}`}
+                    className="font-semibold text-[color:var(--color-brand-navy)] hover:text-[color:var(--color-brand-cyan)]"
+                  >
+                    {c.service?.name ?? "(unknown)"}
+                  </Link>
+                  <p className="font-mono text-xs text-[color:var(--color-brand-text-soft)]">
+                    {c.service?.code ?? "—"} · {c.service?.section ?? "—"}
+                  </p>
+                </div>
+                <div className="flex flex-col items-end gap-1">
+                  <span
+                    className={`rounded-md px-2 py-0.5 text-xs font-semibold ${
+                      TEST_STATUS_STYLE[c.status] ?? ""
+                    }`}
+                  >
+                    {c.status.replace(/_/g, " ")}
+                  </span>
+                  {c.released_at ? (
+                    <span className="text-[10px] text-[color:var(--color-brand-text-soft)]">
+                      released {new Date(c.released_at).toLocaleString("en-PH")}
+                    </span>
+                  ) : null}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <Link
+        href={`/staff/visits/${visitId}`}
         className="mt-6 inline-block text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
       >
         Open visit →
