@@ -59,10 +59,10 @@
     "@types/react-dom": "^19",
     "@vercel/blob": "^2.3.3",
     "eslint": "^9",
-    "eslint-config-next": "16.2.4",
-    "supabase": "^2.95.6",
+    "eslint-config-next": "16.2.6",
+    "supabase": "^2.98.2",
     "tailwindcss": "^4",
-    "tsx": "^4.21.0",
+    "tsx": "^4.22.1",
     "typescript": "^5"
   }
 }
