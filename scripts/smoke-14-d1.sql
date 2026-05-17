@@ -17,15 +17,9 @@
 
 begin;
 
--- Disable the 12.2 GL bridge for the duration of this smoke. The bridge
--- fires on test_request.status → 'released' and creates a revenue
--- recognition JE. For Phase 14 components we deliberately use base_price=0
--- (header carries all pricing), so the bridge would emit an unbalanced JE
--- and fail journal_lines_check1. The bridge's interaction with ₱0
--- components is out of scope for D1; this smoke only verifies the package
--- triggers added in migration 0040. Re-enabled implicitly on ROLLBACK.
-alter table public.test_requests disable trigger trg_bridge_test_request_released;
-alter table public.test_requests disable trigger trg_bridge_test_request_cancelled;
+-- Migration 0041 gates the 12.2 GL bridge on parent_id IS NULL so package
+-- components (final_price_php = 0) skip JE emission and roll up to the
+-- header. No trigger-disable workaround is needed here.
 
 do $$
 declare
