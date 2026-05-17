@@ -2,11 +2,14 @@ import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requirePatientProfile } from "@/lib/auth/require-patient";
 import { DownloadButton } from "./download-button";
+import { PackageCard, type PackageComponentRow } from "./package-card";
 
 export const metadata = {
   title: "Your results — drmed.ph",
 };
 
+// Standalone (non-package) released result, rendered as a row in the
+// flat list below the package cards.
 interface ReleasedRow {
   test_request_id: string;
   visit_id: string;
@@ -18,6 +21,26 @@ interface ReleasedRow {
   has_result: boolean;
 }
 
+// Package header surfaced as a card. Components hang off it via
+// `components`. The card decides whether the consolidated download is
+// available based on `consolidatedAvailable` (every non-cancelled
+// component is released AND we have ≥ 1 released component).
+interface PackageGroup {
+  header: {
+    id: string;
+    visit_id: string;
+    visit_number: string;
+    visit_date: string;
+    package_name: string;
+    package_code: string;
+    released_at: string | null;
+  };
+  components: PackageComponentRow[];
+  releasedCount: number;
+  totalCount: number;
+  consolidatedAvailable: boolean;
+}
+
 interface VisitWithPending {
   id: string;
   visit_number: string;
@@ -25,19 +48,25 @@ interface VisitWithPending {
   pending: number;
 }
 
-async function loadReleasedResults(patientId: string): Promise<{
-  released: ReleasedRow[];
+interface PortalData {
+  packages: PackageGroup[];
+  standalones: ReleasedRow[];
   visitsWithPending: VisitWithPending[];
-}> {
+}
+
+async function loadResults(patientId: string): Promise<PortalData> {
   const admin = createAdminClient();
 
   // All visits for this patient — used for the "still in progress" hint.
+  // Package headers are excluded from the pending count: a header sits
+  // in `in_progress` until every component releases, but from the
+  // patient's perspective the *components* are what's pending.
   const { data: visits } = await admin
     .from("visits")
     .select(
       `
         id, visit_number, visit_date,
-        test_requests ( id, status )
+        test_requests ( id, status, is_package_header )
       `,
     )
     .eq("patient_id", patientId)
@@ -46,7 +75,12 @@ async function loadReleasedResults(patientId: string): Promise<{
   const visitsWithPending: VisitWithPending[] = [];
   for (const v of visits ?? []) {
     const trs = v.test_requests ?? [];
-    const pending = trs.filter((t) => t.status !== "released" && t.status !== "cancelled").length;
+    const pending = trs.filter(
+      (t) =>
+        t.is_package_header !== true &&
+        t.status !== "released" &&
+        t.status !== "cancelled",
+    ).length;
     if (pending > 0) {
       visitsWithPending.push({
         id: v.id,
@@ -57,27 +91,99 @@ async function loadReleasedResults(patientId: string): Promise<{
     }
   }
 
-  // Released results, flat, newest first.
-  const { data: releasedRaw } = await admin
+  // Patient-visible test_requests: every released row, plus every
+  // package header whose visit belongs to this patient (so the card
+  // surfaces even before components release), plus every non-cancelled
+  // component of those headers so the card can show progress. We do the
+  // patient-id filter via the visits!inner join.
+  const { data: trRaw } = await admin
     .from("test_requests")
     .select(
       `
-        id, released_at,
-        services!inner ( name, code ),
+        id, status, released_at, parent_id, is_package_header, created_at,
+        services!test_requests_service_id_fkey ( code, name ),
         visits!inner ( id, visit_number, visit_date, patient_id ),
         results ( id )
       `,
     )
-    .eq("status", "released")
-    .order("released_at", { ascending: false });
+    .eq("visits.patient_id", patientId)
+    .order("is_package_header", { ascending: false })
+    .order("created_at", { ascending: true });
 
-  const released: ReleasedRow[] = [];
-  for (const r of releasedRaw ?? []) {
-    const visit = Array.isArray(r.visits) ? r.visits[0] : r.visits;
-    const svc = Array.isArray(r.services) ? r.services[0] : r.services;
-    const result = Array.isArray(r.results) ? r.results[0] : r.results;
-    if (!visit || visit.patient_id !== patientId || !svc) continue;
-    released.push({
+  type TRRow = NonNullable<typeof trRaw>[number];
+
+  // Normalise embedded relations (Supabase types these as
+  // single-or-array depending on the relation hint shape).
+  function unwrap<T>(v: T | T[] | null | undefined): T | null {
+    if (v == null) return null;
+    return Array.isArray(v) ? (v[0] ?? null) : v;
+  }
+
+  const rows = trRaw ?? [];
+  const headerRows: TRRow[] = [];
+  const componentsByParent = new Map<string, TRRow[]>();
+  const standaloneReleased: TRRow[] = [];
+
+  for (const r of rows) {
+    const visit = unwrap(r.visits);
+    if (!visit || visit.patient_id !== patientId) continue;
+    if (r.is_package_header) {
+      headerRows.push(r);
+    } else if (r.parent_id) {
+      const arr = componentsByParent.get(r.parent_id) ?? [];
+      arr.push(r);
+      componentsByParent.set(r.parent_id, arr);
+    } else if (r.status === "released") {
+      standaloneReleased.push(r);
+    }
+  }
+
+  const packages: PackageGroup[] = [];
+  for (const h of headerRows) {
+    const svc = unwrap(h.services);
+    const visit = unwrap(h.visits);
+    if (!svc || !visit) continue;
+    const rawComps = componentsByParent.get(h.id) ?? [];
+    const components: PackageComponentRow[] = rawComps.map((c) => {
+      const csvc = unwrap(c.services);
+      const cresult = unwrap(c.results);
+      return {
+        id: c.id,
+        status: c.status,
+        test_name: csvc?.name ?? "",
+        test_code: csvc?.code ?? "",
+        has_result: Boolean(cresult),
+      };
+    });
+    const nonCancelled = components.filter((c) => c.status !== "cancelled");
+    const released = nonCancelled.filter((c) => c.status === "released");
+    packages.push({
+      header: {
+        id: h.id,
+        visit_id: visit.id,
+        visit_number: visit.visit_number,
+        visit_date: visit.visit_date,
+        package_name: svc.name,
+        package_code: svc.code,
+        released_at: h.released_at,
+      },
+      components,
+      releasedCount: released.length,
+      totalCount: nonCancelled.length,
+      consolidatedAvailable:
+        h.status === "released" &&
+        nonCancelled.length > 0 &&
+        released.length === nonCancelled.length,
+    });
+  }
+
+  const standalones: ReleasedRow[] = [];
+  for (const r of standaloneReleased) {
+    const svc = unwrap(r.services);
+    const visit = unwrap(r.visits);
+    const result = unwrap(r.results);
+    if (!svc || !visit) continue;
+    standalones.push({
       test_request_id: r.id,
       visit_id: visit.id,
       visit_number: visit.visit_number,
@@ -88,15 +194,23 @@ async function loadReleasedResults(patientId: string): Promise<{
       has_result: Boolean(result),
     });
   }
+  // Newest standalones first to match prior behaviour.
+  standalones.sort((a, b) => {
+    const ar = a.released_at ?? "";
+    const br = b.released_at ?? "";
+    return br.localeCompare(ar);
+  });
 
-  return { released, visitsWithPending };
+  return { packages, standalones, visitsWithPending };
 }
 
 export default async function PatientPortalPage() {
   const patient = await requirePatientProfile();
-  const { released, visitsWithPending } = await loadReleasedResults(
+  const { packages, standalones, visitsWithPending } = await loadResults(
     patient.patient_id,
   );
+
+  const nothingToShow = packages.length === 0 && standalones.length === 0;
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
@@ -107,6 +221,22 @@ export default async function PatientPortalPage() {
         Released laboratory results, newest first. Tap Download to get the
         official signed PDF.
       </p>
+
+      {packages.length > 0 ? (
+        <section className="mt-6">
+          <h2 className="sr-only">Packages</h2>
+          {packages.map((pkg) => (
+            <PackageCard
+              key={pkg.header.id}
+              header={pkg.header}
+              components={pkg.components}
+              releasedCount={pkg.releasedCount}
+              totalCount={pkg.totalCount}
+              consolidatedAvailable={pkg.consolidatedAvailable}
+            />
+          ))}
+        </section>
+      ) : null}
 
       <div className="mt-6 overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
         <table className="w-full min-w-[560px] text-sm">
@@ -121,18 +251,27 @@ export default async function PatientPortalPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
-            {released.length === 0 ? (
+            {standalones.length === 0 ? (
               <tr>
                 <td
                   colSpan={6}
                   className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]"
                 >
-                  No released results yet. We&apos;ll text and email you when
-                  they&apos;re ready.
+                  {nothingToShow ? (
+                    <>
+                      No released results yet. We&apos;ll text and email you
+                      when they&apos;re ready.
+                    </>
+                  ) : (
+                    <>
+                      No individual results — your released results are grouped
+                      into the package cards above.
+                    </>
+                  )}
                 </td>
               </tr>
             ) : (
-              released.map((row) => (
+              standalones.map((row) => (
                 <tr
                   key={row.test_request_id}
                   className="hover:bg-[color:var(--color-brand-bg)]"
