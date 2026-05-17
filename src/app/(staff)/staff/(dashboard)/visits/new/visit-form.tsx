@@ -1,6 +1,12 @@
 "use client";
 
-import { useActionState, useDeferredValue, useMemo, useState } from "react";
+import {
+  useActionState,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,7 +16,11 @@ import {
   StableTextarea,
 } from "@/components/forms/stable-fields";
 import { formatPhp } from "@/lib/marketing/format";
-import { createVisitAction, type CreateVisitResult } from "./actions";
+import {
+  createVisitAction,
+  getPackageComponentsAction,
+  type CreateVisitResult,
+} from "./actions";
 
 export interface ServiceLite {
   id: string;
@@ -110,6 +120,13 @@ export function VisitForm({ services, patient, hmoProviders }: Props) {
   const [lineState, setLineState] = useState<Record<string, LineState>>({});
   const [serviceQuery, setServiceQuery] = useState("");
   const deferredQuery = useDeferredValue(serviceQuery);
+  // Phase 14: when reception selects a lab_package, fetch its components so
+  // the package row can render an indented "Includes:" list inline. Keyed by
+  // package service_id. Loaded lazily on selection; never unloaded — re-
+  // selecting the same package reads from cache.
+  const [packageComponents, setPackageComponents] = useState<
+    Record<string, Array<{ code: string; name: string }>>
+  >({});
   const [state, formAction, pending] = useActionState<
     CreateVisitResult | null,
     FormData
@@ -150,6 +167,49 @@ export function VisitForm({ services, patient, hmoProviders }: Props) {
   }, [services, deferredQuery, selected]);
 
   const hmoSelected = hmoProviderId !== "";
+
+  // Load components for any selected lab_package we haven't fetched yet.
+  // Runs whenever the selection changes; lazy + cached so re-selecting the
+  // same package doesn't re-fetch.
+  useEffect(() => {
+    const missing = services.filter(
+      (s) =>
+        s.kind === "lab_package" &&
+        selected.has(s.id) &&
+        !(s.id in packageComponents),
+    );
+    if (missing.length === 0) return;
+    let cancelled = false;
+    void Promise.all(
+      missing.map(async (s) => {
+        const result = await getPackageComponentsAction(s.id);
+        if (cancelled) return null;
+        if (!result.ok) {
+          console.error(`Package components for ${s.code}: ${result.error}`);
+          return { id: s.id, components: [] };
+        }
+        return {
+          id: s.id,
+          components: result.components.map((c) => ({
+            code: c.component_code,
+            name: c.component_name,
+          })),
+        };
+      }),
+    ).then((batches) => {
+      if (cancelled) return;
+      setPackageComponents((prev) => {
+        const next = { ...prev };
+        for (const batch of batches) {
+          if (batch) next[batch.id] = batch.components;
+        }
+        return next;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [services, selected, packageComponents]);
 
   function toggle(id: string) {
     setSelected((prev) => {
@@ -290,40 +350,75 @@ export function VisitForm({ services, patient, hmoProviders }: Props) {
           {visibleServices.map((s) => {
             const checked = selected.has(s.id);
             const display = basePriceFor(s, hmoSelected);
+            const isPackage = s.kind === "lab_package";
+            const components = isPackage ? packageComponents[s.id] : undefined;
             return (
-              <label
+              <div
                 key={s.id}
-                className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm transition-colors ${
+                className={`rounded-lg border ${
                   checked
                     ? "border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-bg)]"
-                    : "border-[color:var(--color-brand-bg-mid)] bg-white hover:bg-[color:var(--color-brand-bg)]"
+                    : "border-[color:var(--color-brand-bg-mid)] bg-white"
                 }`}
               >
-                <input
-                  type="checkbox"
-                  name="service_ids"
-                  value={s.id}
-                  checked={checked}
-                  onChange={() => toggle(s.id)}
-                  className="mt-0.5"
-                />
-                <span className="flex-1">
-                  <span className="block font-semibold text-[color:var(--color-brand-navy)]">
-                    {s.name}
-                  </span>
-                  <span className="block text-xs text-[color:var(--color-brand-text-soft)]">
-                    {s.code}
-                  </span>
-                </span>
-                <span className="font-semibold text-[color:var(--color-brand-cyan)]">
-                  {formatPhp(display)}
-                  {hmoSelected && s.hmo_price_php != null ? (
-                    <span className="ml-1 text-[10px] uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-                      hmo
+                <label
+                  className={`flex cursor-pointer items-start gap-3 p-3 text-sm transition-colors ${
+                    checked
+                      ? ""
+                      : "hover:bg-[color:var(--color-brand-bg)]"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    name="service_ids"
+                    value={s.id}
+                    checked={checked}
+                    onChange={() => toggle(s.id)}
+                    className="mt-0.5"
+                  />
+                  <span className="flex-1">
+                    <span className="block font-semibold text-[color:var(--color-brand-navy)]">
+                      {s.name}
                     </span>
-                  ) : null}
-                </span>
-              </label>
+                    <span className="block text-xs text-[color:var(--color-brand-text-soft)]">
+                      {s.code}
+                    </span>
+                  </span>
+                  <span className="font-semibold text-[color:var(--color-brand-cyan)]">
+                    {formatPhp(display)}
+                    {hmoSelected && s.hmo_price_php != null ? (
+                      <span className="ml-1 text-[10px] uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+                        hmo
+                      </span>
+                    ) : null}
+                  </span>
+                </label>
+                {checked && isPackage ? (
+                  <div className="border-t border-[color:var(--color-brand-bg-mid)] px-3 py-2 text-xs text-[color:var(--color-brand-text-soft)]">
+                    <p className="mb-1 font-semibold uppercase tracking-wider text-[10px]">
+                      Includes
+                    </p>
+                    {components === undefined ? (
+                      <p className="italic">Loading components…</p>
+                    ) : components.length === 0 ? (
+                      <p className="italic text-red-600">
+                        No components configured — contact admin.
+                      </p>
+                    ) : (
+                      <ul className="grid gap-0.5">
+                        {components.map((c) => (
+                          <li key={c.code}>
+                            • {c.name}{" "}
+                            <span className="text-[10px] text-[color:var(--color-brand-text-soft)]">
+                              ({c.code})
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                ) : null}
+              </div>
             );
           })}
         </div>
