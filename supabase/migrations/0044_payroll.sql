@@ -453,3 +453,9 @@ create index idx_payroll_deduction_lines_employee_run on public.payroll_deductio
 create index idx_payroll_deduction_lines_loan on public.payroll_deduction_lines (loan_id) where loan_id is not null;
 create index idx_payroll_dtr_rows_import on public.payroll_dtr_rows (import_id);
 create index idx_payroll_dtr_imports_period on public.payroll_dtr_imports (period_id);
+
+-- ---- cash_adjustment_account_map: salary_payout ---------------------------
+insert into public.cash_adjustment_account_map (kind, account_id, requires_user_choice, notes)
+values ('salary_payout', public.coa_uuid_for_code('2360'), false,
+  'Per-employee cash payout from /cash-drawer on payroll pay date. Routes to Salaries Payable.')
+on conflict (kind) do nothing;
