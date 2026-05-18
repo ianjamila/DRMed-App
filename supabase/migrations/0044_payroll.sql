@@ -612,3 +612,69 @@ as $$
 $$;
 
 grant execute on function public.employee_leave_balance(uuid, text, date) to authenticated;
+
+-- ---- apply_leave_entitlements(p_year int) ---------------------------------
+-- Idempotent. For each active employee:
+--   * If regularization_date is set: grant pro-rated SL for the calendar year
+--     (full 5 days if regularized before Jan 1 of p_year; pro-rated if mid-year).
+--   * If 1-year anniversary has passed: grant 12 monthly VL accrual rows for
+--     the year's anniversary cycle (annual_entitlement / 12 per month).
+--     Annual entitlement = 5 + min(years_since_first_anniversary, 5), capped 10.
+create or replace function public.apply_leave_entitlements(p_year int)
+returns table (employee_id uuid, kind text, days_granted numeric, notes text)
+language plpgsql security definer set search_path = public as $$
+declare
+  e record;
+  v_anniv int;
+  v_annual numeric(5,2);
+  v_monthly numeric(5,2);
+  v_month int;
+  v_eff_date date;
+  v_expiry date;
+  v_days_pro numeric(5,2);
+  v_remaining_days int;
+begin
+  for e in select * from public.employees where is_active = true loop
+    -- SL: any regular employee gets annual SL, pro-rated if regularized mid-year
+    if e.regularization_date is not null then
+      if e.regularization_date <= make_date(p_year, 1, 1) then
+        v_days_pro := 5.00;
+      else
+        -- pro-rate to days remaining in p_year
+        v_remaining_days := (make_date(p_year, 12, 31) - e.regularization_date) + 1;
+        v_days_pro := round(5.00 * v_remaining_days::numeric / 365, 2);
+      end if;
+      if v_days_pro > 0 then
+        insert into public.employee_leave_records (employee_id, kind, record_kind, days_delta, effective_date, expiry_date, reason)
+        values (e.id, 'SL', 'entitlement', v_days_pro,
+          greatest(e.regularization_date, make_date(p_year, 1, 1)),
+          make_date(p_year, 12, 31),
+          format('Annual SL entitlement for %s', p_year))
+        on conflict do nothing;
+        return query select e.id, 'SL'::text, v_days_pro, format('annual SL for %s', p_year)::text;
+      end if;
+    end if;
+
+    -- VL: monthly accrual once past 1-year anniversary
+    if e.hire_date + interval '1 year' <= make_date(p_year, 12, 31) then
+      v_anniv := extract(year from age(make_date(p_year, 1, 1), e.hire_date))::int;
+      v_annual := least(5 + greatest(v_anniv - 1, 0), 10)::numeric(5,2);
+      v_monthly := round(v_annual / 12, 2);
+
+      for v_month in 1..12 loop
+        v_eff_date := make_date(p_year, v_month, extract(day from e.hire_date)::int);
+        -- skip months before the 1-year mark
+        if v_eff_date < (e.hire_date + interval '1 year')::date then
+          continue;
+        end if;
+        v_expiry := make_date(p_year + 1, 4, 1);
+        insert into public.employee_leave_records (employee_id, kind, record_kind, days_delta, effective_date, expiry_date, reason)
+        values (e.id, 'VL', 'entitlement', v_monthly, v_eff_date, v_expiry,
+          format('Monthly VL accrual %s-%02d (annual entitlement %s)', p_year, v_month, v_annual))
+        on conflict do nothing;
+      end loop;
+      return query select e.id, 'VL'::text, v_monthly * 12, format('monthly VL ~%s', v_annual)::text;
+    end if;
+  end loop;
+end;
+$$;
