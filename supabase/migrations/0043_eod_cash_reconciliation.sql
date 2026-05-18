@@ -613,3 +613,80 @@ create trigger trg_staff_advance_sync_void
   for each row
   when (OLD.voided_at is null and NEW.voided_at is not null)
   execute function public.staff_advance_sync_void();
+
+-- ---- Guard P0015: EOD lock -------------------------------------------------
+-- Blocks writes that would target a closed (business_date, shift_id).
+-- v1: shift is the single active row in cash_shifts (payments has no shift_id).
+create or replace function public.eod_lock_check(
+  p_business_date date,
+  p_shift_id uuid
+)
+returns void
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_closed_at timestamptz;
+  v_shift_code text;
+begin
+  select ec.closed_at into v_closed_at
+    from public.eod_close_records ec
+    where ec.business_date = p_business_date
+      and ec.shift_id      = p_shift_id
+      and ec.status        = 'closed'
+    limit 1;
+
+  if v_closed_at is null then
+    return;
+  end if;
+
+  select code into v_shift_code from public.cash_shifts where id = p_shift_id;
+
+  raise exception
+    'EOD already closed for business_date % (shift %) at %. Ask an admin to reopen the close before recording further activity.',
+    p_business_date, coalesce(v_shift_code, '?'), v_closed_at
+    using errcode = 'P0015';
+end;
+$$;
+
+create or replace function public.eod_cash_adjustments_block_after_close()
+returns trigger
+language plpgsql
+as $$
+begin
+  perform public.eod_lock_check(NEW.business_date, NEW.shift_id);
+  return NEW;
+end;
+$$;
+
+create or replace function public.payments_block_after_close()
+returns trigger
+language plpgsql
+as $$
+declare
+  v_date date;
+  v_shift_id uuid;
+begin
+  v_date := (coalesce(NEW.received_at, OLD.received_at) at time zone 'Asia/Manila')::date;
+  select id into v_shift_id
+    from public.cash_shifts
+    where is_active = true
+    order by sort_order, code
+    limit 1;
+  if v_shift_id is null then
+    return coalesce(NEW, OLD);
+  end if;
+  perform public.eod_lock_check(v_date, v_shift_id);
+  return coalesce(NEW, OLD);
+end;
+$$;
+
+create trigger trg_eod_cash_adjustments_block_after_close_iu
+  before insert or update on public.eod_cash_adjustments
+  for each row execute function public.eod_cash_adjustments_block_after_close();
+
+create trigger trg_payments_block_after_close_iu
+  before insert or update on public.payments
+  for each row execute function public.payments_block_after_close();
