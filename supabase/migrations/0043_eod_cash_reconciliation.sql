@@ -21,3 +21,13 @@
 --   journal_entries_one_posted_per_source
 -- already covers the two new source_kind values; no index change needed.
 -- =============================================================================
+
+-- ---- Enum additions --------------------------------------------------------
+-- Must run before any function/trigger that references these values.
+-- IMPORTANT: ALTER TYPE … ADD VALUE inside a transaction does NOT make the
+-- new enum value visible to later statements in that same transaction in
+-- PG <12. Supabase runs PG 15+, where the value IS visible — verified by
+-- 12.3's migration 0034 (which used the same pattern). If you back-port
+-- this to a PG <12 environment, split into two migrations.
+alter type public.je_source_kind add value if not exists 'cash_adjustment';
+alter type public.je_source_kind add value if not exists 'eod_close';
