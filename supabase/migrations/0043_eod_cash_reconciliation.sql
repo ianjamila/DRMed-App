@@ -797,3 +797,80 @@ join public.staff_profiles sp on sp.id = sa.staff_id
 group by sa.staff_id, sp.full_name, sp.role;
 
 alter view public.v_staff_advances_outstanding owner to postgres;
+
+-- ---- cash_drawer_state -----------------------------------------------------
+create or replace function public.cash_drawer_state(
+  p_business_date date,
+  p_shift_id      uuid
+)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  with
+    baseline as (
+      select coalesce(value_php, 0)::numeric(14,2) as v
+        from public.accounting_settings
+        where key = 'default_change_fund_php'
+    ),
+    floats as (
+      select
+        coalesce(sum(case when kind = 'float_topup'   then amount_php else 0 end), 0)::numeric(14,2) as topups,
+        coalesce(sum(case when kind = 'float_pullout' then amount_php else 0 end), 0)::numeric(14,2) as pullouts
+      from public.eod_cash_adjustments
+      where business_date = p_business_date
+        and shift_id      = p_shift_id
+        and voided_at is null
+    ),
+    cash_in as (
+      select coalesce(sum(p.amount_php), 0)::numeric(14,2) as v
+        from public.payments p
+        where (p.received_at at time zone 'Asia/Manila')::date = p_business_date
+          and p.method = 'cash'
+          and p.voided_at is null
+    ),
+    cash_in_by_method as (
+      select coalesce(jsonb_object_agg(p.method, total), '{}'::jsonb) as v
+      from (
+        select p.method, sum(p.amount_php)::numeric(14,2) as total
+          from public.payments p
+          where (p.received_at at time zone 'Asia/Manila')::date = p_business_date
+            and p.voided_at is null
+          group by p.method
+      ) p
+    ),
+    payouts as (
+      select coalesce(sum(amount_php), 0)::numeric(14,2) as v
+        from public.eod_cash_adjustments
+        where business_date = p_business_date
+          and shift_id      = p_shift_id
+          and kind in ('petty_cash','salary_advance','courier','other_payout')
+          and voided_at is null
+    ),
+    closed as (
+      select id, closed_at, closed_by, variance_php, variance_reason, counted_cash_php, expected_cash_php
+        from public.eod_close_records
+        where business_date = p_business_date
+          and shift_id      = p_shift_id
+          and status        = 'closed'
+        limit 1
+    )
+  select jsonb_build_object(
+    'business_date',      p_business_date,
+    'shift_id',           p_shift_id,
+    'baseline_float_php', baseline.v,
+    'float_topups_php',   floats.topups,
+    'float_pullouts_php', floats.pullouts,
+    'opening_float_php',  (baseline.v + floats.topups - floats.pullouts),
+    'cash_payments_php',  cash_in.v,
+    'payments_by_method', cash_in_by_method.v,
+    'cash_payouts_php',   payouts.v,
+    'expected_cash_php',  (baseline.v + floats.topups - floats.pullouts + cash_in.v - payouts.v),
+    'closed',             (select to_jsonb(c) from closed c)
+  )
+  from baseline, floats, cash_in, cash_in_by_method, payouts;
+$$;
+
+grant execute on function public.cash_drawer_state(date, uuid) to authenticated;
