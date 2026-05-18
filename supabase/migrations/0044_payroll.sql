@@ -459,3 +459,50 @@ insert into public.cash_adjustment_account_map (kind, account_id, requires_user_
 values ('salary_payout', public.coa_uuid_for_code('2360'), false,
   'Per-employee cash payout from /cash-drawer on payroll pay date. Routes to Salaries Payable.')
 on conflict (kind) do nothing;
+
+-- ---- accounting_settings extensions ---------------------------------------
+alter table public.accounting_settings drop constraint accounting_settings_key_check;
+alter table public.accounting_settings add constraint accounting_settings_key_check check (key in (
+  'default_change_fund_php',
+  'tardiness_per_minute_php',
+  'tardiness_threshold_for_halfday_deduction',
+  'perfect_attendance_bonus_php',
+  'standard_workday_minutes',
+  'scheduled_start_hour',
+  'scheduled_start_minute',
+  'scheduled_end_hour',
+  'scheduled_end_minute',
+  'lunch_break_minutes',
+  'night_diff_premium_rate',
+  'night_diff_start_hour',
+  'night_diff_end_hour',
+  'ot_rate_regular_day',
+  'ot_rate_rest_day',
+  'holiday_pay_regular_worked',
+  'holiday_pay_regular_unworked',
+  'holiday_pay_special_worked',
+  'holiday_pay_special_unworked',
+  'staff_advance_settlement_max_pct'
+));
+
+insert into public.accounting_settings (key, value_php, description) values
+  ('tardiness_per_minute_php', 1.50, 'Salary deduction per minute of tardiness.'),
+  ('tardiness_threshold_for_halfday_deduction', 3, 'Tardiness instances per cutoff that trigger an additional half-day deduction.'),
+  ('perfect_attendance_bonus_php', 1000, 'Bonus per cutoff for zero tardiness, zero absences, no missing punches.'),
+  ('standard_workday_minutes', 480, 'Paid hours per standard workday (8h).'),
+  ('scheduled_start_hour', 8, 'Default scheduled start time hour (24h, Asia/Manila).'),
+  ('scheduled_start_minute', 0, ''),
+  ('scheduled_end_hour', 17, 'Default scheduled end time hour.'),
+  ('scheduled_end_minute', 0, ''),
+  ('lunch_break_minutes', 60, 'Unpaid lunch break.'),
+  ('night_diff_premium_rate', 0.10, 'Premium multiplier for ND-eligible hours.'),
+  ('night_diff_start_hour', 22, 'ND window start (22:00).'),
+  ('night_diff_end_hour', 6, 'ND window end (06:00 next day).'),
+  ('ot_rate_regular_day', 1.25, 'OT premium on a regular work day.'),
+  ('ot_rate_rest_day', 1.30, 'Base premium on a rest day; combine with OT multiplier as needed.'),
+  ('holiday_pay_regular_worked', 2.00, ''),
+  ('holiday_pay_regular_unworked', 1.00, ''),
+  ('holiday_pay_special_worked', 1.30, ''),
+  ('holiday_pay_special_unworked', 0.00, ''),
+  ('staff_advance_settlement_max_pct', 0.50, 'Cap on staff_advance settlement per cutoff, as fraction of post-statutory net.')
+on conflict (key) do nothing;
