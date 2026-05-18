@@ -487,3 +487,66 @@ create trigger trg_bridge_cash_adjustment_void
   for each row
   when (OLD.voided_at is null and NEW.voided_at is not null)
   execute function public.bridge_cash_adjustment_void();
+
+-- ---- Bridge: EOD close (variance JE) ---------------------------------------
+create or replace function public.bridge_eod_close()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_je_id        uuid;
+  v_cash_id      uuid;
+  v_shortover_id uuid;
+  v_abs_variance numeric(14,2);
+begin
+  if NEW.variance_php = 0 then
+    return NEW;
+  end if;
+
+  v_cash_id      := public.coa_uuid_for_code('1010');
+  v_shortover_id := public.coa_uuid_for_code('6900');
+  v_abs_variance := abs(NEW.variance_php);
+
+  insert into public.journal_entries (
+    posting_date, description, status, source_kind, source_id, created_by
+  )
+  values (
+    NEW.business_date,
+    case
+      when NEW.variance_php < 0 then 'Cash short ₱' || v_abs_variance
+      else 'Cash over ₱' || v_abs_variance
+    end || ' — ' || coalesce(NEW.variance_reason, '(no reason)'),
+    'draft',
+    'eod_close',
+    NEW.id,
+    NEW.closed_by
+  )
+  returning id into v_je_id;
+
+  if NEW.variance_php < 0 then
+    -- Short: counted less than expected. Write till down to actual.
+    insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
+    values
+      (v_je_id, v_shortover_id, v_abs_variance, 0, 1),
+      (v_je_id, v_cash_id,      0, v_abs_variance, 2);
+  else
+    -- Over: counted more than expected. Write till up.
+    insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
+    values
+      (v_je_id, v_cash_id,      v_abs_variance, 0, 1),
+      (v_je_id, v_shortover_id, 0, v_abs_variance, 2);
+  end if;
+
+  update public.journal_entries set status = 'posted' where id = v_je_id;
+
+  return NEW;
+end;
+$$;
+
+create trigger trg_bridge_eod_close
+  after insert on public.eod_close_records
+  for each row
+  when (NEW.status = 'closed' and NEW.variance_php <> 0)
+  execute function public.bridge_eod_close();
