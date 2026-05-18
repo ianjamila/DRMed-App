@@ -410,3 +410,29 @@ create index idx_payroll_wt_brackets_lookup on public.payroll_wt_brackets (effec
 alter table public.payroll_wt_brackets enable row level security;
 create policy "payroll_wt_brackets: admin all" on public.payroll_wt_brackets for all to authenticated
   using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
+
+-- ---- employee_leave_records (event-sourced) -------------------------------
+create table public.employee_leave_records (
+  id                  uuid primary key default gen_random_uuid(),
+  employee_id         uuid not null references public.employees(id),
+  kind                text not null check (kind in ('VL','SL')),
+  record_kind         text not null check (record_kind in
+                        ('entitlement','manual_grant','usage','expiry','cash_conversion')),
+  days_delta          numeric(5,2) not null,
+  effective_date      date not null,
+  expiry_date         date,
+  period_id           uuid references public.payroll_periods(id),
+  reason              text,
+  created_at          timestamptz not null default now(),
+  created_by          uuid references public.staff_profiles(id),
+  constraint employee_leave_records_delta_sign check (
+    (record_kind in ('entitlement','manual_grant') and days_delta > 0) or
+    (record_kind in ('usage','expiry','cash_conversion') and days_delta <= 0)
+  )
+);
+create index idx_employee_leave_records_balance on public.employee_leave_records (employee_id, kind, effective_date, expiry_date);
+alter table public.employee_leave_records enable row level security;
+create policy "employee_leave_records: admin all" on public.employee_leave_records for all to authenticated
+  using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
+create policy "employee_leave_records: self read" on public.employee_leave_records for select to authenticated
+  using (employee_id in (select id from public.employees where staff_profile_id = auth.uid()));
