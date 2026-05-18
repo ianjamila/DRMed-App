@@ -721,3 +721,47 @@ $$;
 create trigger trg_cash_adjustments_block_post_je_edits
   before update on public.eod_cash_adjustments
   for each row execute function public.cash_adjustments_block_post_je_edits();
+
+-- ---- Guard P0018: staff_advance overdraw -----------------------------------
+create or replace function public.staff_advances_block_overdraw()
+returns trigger
+language plpgsql
+as $$
+begin
+  if NEW.outstanding_balance_php < 0 then
+    raise exception
+      'Staff advance cannot go below zero (would be %).', NEW.outstanding_balance_php
+      using errcode = 'P0018';
+  end if;
+  return NEW;
+end;
+$$;
+
+create trigger trg_staff_advances_block_overdraw
+  before update on public.staff_advances
+  for each row execute function public.staff_advances_block_overdraw();
+
+-- ---- Guard P0019: cash_adjustment_account_map references inactive ---------
+create or replace function public.cash_adjustment_account_map_block_inactive()
+returns trigger
+language plpgsql
+as $$
+declare
+  v_active boolean;
+  v_code   text;
+begin
+  select is_active, code into v_active, v_code
+    from public.chart_of_accounts
+    where id = NEW.account_id;
+  if not v_active then
+    raise exception
+      'Account % is inactive and cannot be used as a cash-adjustment routing target.', v_code
+      using errcode = 'P0019';
+  end if;
+  return NEW;
+end;
+$$;
+
+create trigger trg_cash_adjustment_account_map_block_inactive
+  before insert or update on public.cash_adjustment_account_map
+  for each row execute function public.cash_adjustment_account_map_block_inactive();
