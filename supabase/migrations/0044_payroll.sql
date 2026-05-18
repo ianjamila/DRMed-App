@@ -680,7 +680,7 @@ begin
         v_expiry := make_date(p_year + 1, 4, 1);
         insert into public.employee_leave_records (employee_id, kind, record_kind, days_delta, effective_date, expiry_date, reason)
         values (e.id, 'VL', 'entitlement', v_monthly, v_eff_date, v_expiry,
-          format('Monthly VL accrual %s-%02d (annual entitlement %s)', p_year, v_month, v_annual))
+          format('Monthly VL accrual %s-%s (annual entitlement %s)', p_year, lpad(v_month::text, 2, '0'), v_annual))
         on conflict do nothing;
       end loop;
       return query select e.id, 'VL'::text, v_monthly * 12, format('monthly VL ~%s', v_annual)::text;
