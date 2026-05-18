@@ -334,3 +334,24 @@ create table public.payroll_dtr_imports (
 alter table public.payroll_dtr_imports enable row level security;
 create policy "payroll_dtr_imports: admin all" on public.payroll_dtr_imports for all to authenticated
   using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
+
+-- ---- payroll_dtr_rows -----------------------------------------------------
+create table public.payroll_dtr_rows (
+  id                  uuid primary key default gen_random_uuid(),
+  import_id           uuid not null references public.payroll_dtr_imports(id) on delete cascade,
+  employee_id         uuid references public.employees(id),
+  external_id_raw     text not null,
+  work_date           date not null,
+  time_in             timestamptz,
+  time_out            timestamptz,
+  total_hours         numeric(5,2),
+  status              text not null default 'parsed'
+                        check (status in ('parsed','flagged_no_employee','flagged_missing_punch','superseded')),
+  source_row          jsonb not null,
+  notes               text
+);
+create index idx_payroll_dtr_rows_employee_date on public.payroll_dtr_rows (employee_id, work_date);
+create index idx_payroll_dtr_rows_status on public.payroll_dtr_rows (status) where status <> 'parsed';
+alter table public.payroll_dtr_rows enable row level security;
+create policy "payroll_dtr_rows: admin all" on public.payroll_dtr_rows for all to authenticated
+  using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
