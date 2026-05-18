@@ -446,3 +446,10 @@ create policy "employee_leave_records: admin all" on public.employee_leave_recor
   using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
 create policy "employee_leave_records: self read" on public.employee_leave_records for select to authenticated
   using (employee_id in (select id from public.employees where staff_profile_id = auth.uid()));
+
+-- ---- FK indexes (filter/join helpers) -----------------------------------
+create index idx_payroll_earning_lines_employee_run on public.payroll_earning_lines (employee_run_id);
+create index idx_payroll_deduction_lines_employee_run on public.payroll_deduction_lines (employee_run_id);
+create index idx_payroll_deduction_lines_loan on public.payroll_deduction_lines (loan_id) where loan_id is not null;
+create index idx_payroll_dtr_rows_import on public.payroll_dtr_rows (import_id);
+create index idx_payroll_dtr_imports_period on public.payroll_dtr_imports (period_id);
