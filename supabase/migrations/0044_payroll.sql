@@ -246,3 +246,37 @@ create policy "payroll_earning_lines: admin all" on public.payroll_earning_lines
 create policy "payroll_earning_lines: self read" on public.payroll_earning_lines for select to authenticated
   using (employee_run_id in (select id from public.payroll_employee_runs per
     join public.employees e on e.id = per.employee_id where e.staff_profile_id = auth.uid()));
+
+-- ---- employee_loans -------------------------------------------------------
+create table public.employee_loans (
+  id                          uuid primary key default gen_random_uuid(),
+  employee_id                 uuid not null references public.employees(id),
+  principal_php               numeric(12,2) not null check (principal_php > 0),
+  amortization_per_period_php numeric(12,2) not null check (amortization_per_period_php > 0),
+  start_period_id             uuid references public.payroll_periods(id),
+  outstanding_balance_php     numeric(12,2) not null,
+  status                      text not null default 'requested'
+                                check (status in ('requested','approved','active','paid_off','written_off','voided')),
+  requested_at                timestamptz not null default now(),
+  requested_by                uuid references public.staff_profiles(id),
+  approved_at                 timestamptz,
+  approved_by                 uuid references public.staff_profiles(id),
+  approval_notes              text,
+  disbursed_at                timestamptz,
+  disbursed_by                uuid references public.staff_profiles(id),
+  notes                       text,
+  created_at                  timestamptz not null default now(),
+  updated_at                  timestamptz not null default now(),
+  constraint employee_loans_state_consistency check (
+    (status = 'requested'  and approved_at is null and disbursed_at is null) or
+    (status = 'approved'   and approved_at is not null and disbursed_at is null) or
+    (status in ('active','paid_off','written_off') and approved_at is not null and disbursed_at is not null) or
+    (status = 'voided')
+  )
+);
+create trigger trg_employee_loans_updated_at before update on public.employee_loans
+  for each row execute function public.touch_updated_at();
+create index idx_employee_loans_active on public.employee_loans (employee_id) where status = 'active';
+alter table public.employee_loans enable row level security;
+create policy "employee_loans: admin all" on public.employee_loans for all to authenticated
+  using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
