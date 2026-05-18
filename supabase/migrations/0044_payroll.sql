@@ -280,3 +280,21 @@ create index idx_employee_loans_active on public.employee_loans (employee_id) wh
 alter table public.employee_loans enable row level security;
 create policy "employee_loans: admin all" on public.employee_loans for all to authenticated
   using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
+
+-- ---- payroll_deduction_lines ----------------------------------------------
+create table public.payroll_deduction_lines (
+  id                  uuid primary key default gen_random_uuid(),
+  employee_run_id     uuid not null references public.payroll_employee_runs(id) on delete cascade,
+  kind                text not null check (kind in ('loan_amortization','manual_adjustment','other')),
+  label               text not null,
+  amount_php          numeric(12,2) not null check (amount_php >= 0),
+  loan_id             uuid references public.employee_loans(id),
+  created_at          timestamptz not null default now(),
+  created_by          uuid references public.staff_profiles(id)
+);
+alter table public.payroll_deduction_lines enable row level security;
+create policy "payroll_deduction_lines: admin all" on public.payroll_deduction_lines for all to authenticated
+  using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
+create policy "payroll_deduction_lines: self read" on public.payroll_deduction_lines for select to authenticated
+  using (employee_run_id in (select id from public.payroll_employee_runs per
+    join public.employees e on e.id = per.employee_id where e.staff_profile_id = auth.uid()));
