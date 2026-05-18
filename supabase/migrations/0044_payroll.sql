@@ -394,3 +394,19 @@ create index idx_payroll_contribution_brackets_lookup
 alter table public.payroll_contribution_brackets enable row level security;
 create policy "payroll_contribution_brackets: admin all" on public.payroll_contribution_brackets for all to authenticated
   using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
+
+-- ---- payroll_wt_brackets --------------------------------------------------
+create table public.payroll_wt_brackets (
+  id                  uuid primary key default gen_random_uuid(),
+  effective_from      date not null,
+  effective_to        date,
+  taxable_min_php     numeric(12,2) not null,
+  taxable_max_php     numeric(12,2),
+  base_tax_php        numeric(12,2) not null,
+  marginal_rate       numeric(5,4) not null,
+  notes               text
+);
+create index idx_payroll_wt_brackets_lookup on public.payroll_wt_brackets (effective_from, taxable_min_php);
+alter table public.payroll_wt_brackets enable row level security;
+create policy "payroll_wt_brackets: admin all" on public.payroll_wt_brackets for all to authenticated
+  using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
