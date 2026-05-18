@@ -583,3 +583,13 @@ insert into public.payroll_contribution_brackets (kind, effective_from, monthly_
   ('pagibig', '2026-01-01',    0,  1500,  20.00,  20.00, '1% EE/ER for low MSC'),
   ('pagibig', '2026-01-01', 1500,  5000, 100.00, 100.00, '2% EE/ER, capped'),
   ('pagibig', '2026-01-01', 5000, 99999, 100.00, 100.00, 'Ceiling at ₱5k MSC');
+
+-- ---- BIR semi-monthly WT compensation brackets ----------------------------
+-- Per BIR Revenue Regulation 11-2018, semi-monthly schedule.
+insert into public.payroll_wt_brackets (effective_from, taxable_min_php, taxable_max_php, base_tax_php, marginal_rate, notes) values
+  ('2026-01-01',      0.00,  10417.00,      0.00, 0.00,   '0% bracket — no tax up to ₱10,417 semi-monthly'),
+  ('2026-01-01',  10417.00,  16667.00,      0.00, 0.20,   '20% over ₱10,417'),
+  ('2026-01-01',  16667.00,  33333.00,   1250.00, 0.25,   '25% over ₱16,667 + ₱1,250'),
+  ('2026-01-01',  33333.00,  83333.00,   5416.67, 0.30,   '30% over ₱33,333 + ₱5,416.67'),
+  ('2026-01-01',  83333.00, 333333.00,  20416.67, 0.32,   '32% over ₱83,333 + ₱20,416.67'),
+  ('2026-01-01', 333333.00, null,      100416.67, 0.35,   '35% over ₱333,333 + ₱100,416.67');
