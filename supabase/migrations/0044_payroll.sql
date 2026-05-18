@@ -1081,3 +1081,50 @@ $$;
 create trigger trg_payroll_run_finalise_requires_dtr
   before update on public.payroll_runs
   for each row execute function public.payroll_run_finalise_requires_dtr();
+
+-- ---- Guard P0021: run locked after any employee paid ---------------------
+create or replace function public.payroll_run_locked_after_payout()
+returns trigger
+language plpgsql as $$
+declare
+  v_run_id uuid;
+  v_any_paid boolean;
+begin
+  v_run_id := coalesce(NEW.id, OLD.id);
+  select exists(select 1 from public.payroll_employee_runs
+    where run_id = v_run_id and payout_status = 'paid')
+    into v_any_paid;
+  if v_any_paid then
+    -- Allow UPDATEs to payroll_employee_runs that ONLY change the per-employee
+    -- payout fields (payout_status, paid_at, paid_by, payout_je_id, payout_cash_adjustment_id).
+    -- Block UPDATEs that change earnings/deductions on a paid run.
+    if TG_TABLE_NAME = 'payroll_employee_runs' then
+      if NEW.payment_method_used is distinct from OLD.payment_method_used
+         or NEW.basic_pay_php is distinct from OLD.basic_pay_php
+         or NEW.gross_pay_php is distinct from OLD.gross_pay_php
+         or NEW.net_pay_php is distinct from OLD.net_pay_php
+         or NEW.scheduled_days is distinct from OLD.scheduled_days then
+        raise exception 'Cannot edit employee_run after payouts have started. Adjust in next period.'
+          using errcode = 'P0021';
+      end if;
+      return NEW;
+    end if;
+    -- payroll_runs: block status changes except to 'voided' (which the void-trigger gate prevents anyway when any paid)
+    if TG_TABLE_NAME = 'payroll_runs' and NEW.status is distinct from OLD.status then
+      if NEW.status not in ('finalised') then
+        raise exception 'Cannot change run status after payouts have started.'
+          using errcode = 'P0021';
+      end if;
+    end if;
+  end if;
+  return NEW;
+end;
+$$;
+
+create trigger trg_payroll_runs_locked_after_payout
+  before update on public.payroll_runs
+  for each row execute function public.payroll_run_locked_after_payout();
+
+create trigger trg_payroll_employee_runs_locked_after_payout
+  before update on public.payroll_employee_runs
+  for each row execute function public.payroll_run_locked_after_payout();
