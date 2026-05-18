@@ -749,6 +749,8 @@ begin
     coalesce(sum(pagibig_ee_php + pagibig_er_php), 0)       as pagibig_total,
     coalesce(sum(wt_compensation_php), 0)   as wt_total,
     coalesce(sum(staff_advance_settlement_php), 0)  as advance_total,
+    coalesce(sum(tardiness_deduction_php), 0)       as tardiness_total,
+    coalesce(sum(other_deductions_total_php), 0)    as other_deductions_total,
     coalesce(sum(net_pay_php), 0)           as net_total
     into v_totals
     from public.payroll_employee_runs
@@ -766,25 +768,69 @@ begin
   )
   returning id into v_je_id;
 
-  -- Insert lines (debits)
-  insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
-  values
-    (v_je_id, public.coa_uuid_for_code('6100'), v_totals.salaries_wages, 0, 1),
-    (v_je_id, public.coa_uuid_for_code('6121'), v_totals.sss_er,         0, 2),
-    (v_je_id, public.coa_uuid_for_code('6122'), v_totals.philhealth_er,  0, 3),
-    (v_je_id, public.coa_uuid_for_code('6123'), v_totals.pagibig_er,     0, 4),
-    (v_je_id, public.coa_uuid_for_code('6124'), v_totals.month13_accrual,0, 5);
+  -- Insert lines (debits) — each line guarded against zero amounts so the
+  -- journal_lines (debit_php > 0 OR credit_php > 0) CHECK never fires.
+  if v_totals.salaries_wages > 0 then
+    insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
+    values (v_je_id, public.coa_uuid_for_code('6100'), v_totals.salaries_wages, 0, 1);
+  end if;
+  if v_totals.sss_er > 0 then
+    insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
+    values (v_je_id, public.coa_uuid_for_code('6121'), v_totals.sss_er, 0, 2);
+  end if;
+  if v_totals.philhealth_er > 0 then
+    insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
+    values (v_je_id, public.coa_uuid_for_code('6122'), v_totals.philhealth_er, 0, 3);
+  end if;
+  if v_totals.pagibig_er > 0 then
+    insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
+    values (v_je_id, public.coa_uuid_for_code('6123'), v_totals.pagibig_er, 0, 4);
+  end if;
+  if v_totals.month13_accrual > 0 then
+    insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
+    values (v_je_id, public.coa_uuid_for_code('6124'), v_totals.month13_accrual, 0, 5);
+  end if;
 
-  -- Credits
-  insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
-  values
-    (v_je_id, public.coa_uuid_for_code('2300'), 0, v_totals.sss_total,        10),
-    (v_je_id, public.coa_uuid_for_code('2310'), 0, v_totals.philhealth_total, 11),
-    (v_je_id, public.coa_uuid_for_code('2320'), 0, v_totals.pagibig_total,    12),
-    (v_je_id, public.coa_uuid_for_code('2330'), 0, v_totals.wt_total,         13),
-    (v_je_id, public.coa_uuid_for_code('2350'), 0, v_totals.month13_accrual,  14),
-    (v_je_id, public.coa_uuid_for_code('1130'), 0, v_totals.advance_total,    15),
-    (v_je_id, public.coa_uuid_for_code('2360'), 0, v_totals.net_total,        16);
+  -- Credits — each line guarded for the same reason.
+  if v_totals.sss_total > 0 then
+    insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
+    values (v_je_id, public.coa_uuid_for_code('2300'), 0, v_totals.sss_total, 10);
+  end if;
+  if v_totals.philhealth_total > 0 then
+    insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
+    values (v_je_id, public.coa_uuid_for_code('2310'), 0, v_totals.philhealth_total, 11);
+  end if;
+  if v_totals.pagibig_total > 0 then
+    insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
+    values (v_je_id, public.coa_uuid_for_code('2320'), 0, v_totals.pagibig_total, 12);
+  end if;
+  if v_totals.wt_total > 0 then
+    insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
+    values (v_je_id, public.coa_uuid_for_code('2330'), 0, v_totals.wt_total, 13);
+  end if;
+  if v_totals.month13_accrual > 0 then
+    insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
+    values (v_je_id, public.coa_uuid_for_code('2350'), 0, v_totals.month13_accrual, 14);
+  end if;
+  if v_totals.advance_total > 0 then
+    insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
+    values (v_je_id, public.coa_uuid_for_code('1130'), 0, v_totals.advance_total, 15);
+  end if;
+  if v_totals.net_total > 0 then
+    insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
+    values (v_je_id, public.coa_uuid_for_code('2360'), 0, v_totals.net_total, 16);
+  end if;
+  -- Tardiness + other deduction recoveries: credited against 6100 Salaries &
+  -- Wages as contra-expense so the JE balances (net_pay already nets these
+  -- out on the credit side; without these contra credits, Dr > Cr).
+  if v_totals.tardiness_total > 0 then
+    insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
+    values (v_je_id, public.coa_uuid_for_code('6100'), 0, v_totals.tardiness_total, 17);
+  end if;
+  if v_totals.other_deductions_total > 0 then
+    insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
+    values (v_je_id, public.coa_uuid_for_code('6100'), 0, v_totals.other_deductions_total, 18);
+  end if;
 
   update public.journal_entries set status = 'posted' where id = v_je_id;
 
