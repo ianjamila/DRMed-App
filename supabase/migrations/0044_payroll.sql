@@ -222,3 +222,27 @@ create policy "payroll_employee_runs: admin all" on public.payroll_employee_runs
   using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
 create policy "payroll_employee_runs: self read" on public.payroll_employee_runs for select to authenticated
   using (employee_id in (select id from public.employees where staff_profile_id = auth.uid()));
+
+-- ---- payroll_earning_lines ------------------------------------------------
+create table public.payroll_earning_lines (
+  id                  uuid primary key default gen_random_uuid(),
+  employee_run_id     uuid not null references public.payroll_employee_runs(id) on delete cascade,
+  kind                text not null check (kind in ('incentive','one_time_bonus','manual_adjustment','ot_supplement')),
+  label               text not null,
+  quantity            numeric(10,2),
+  rate_php            numeric(10,2),
+  amount_php          numeric(12,2) not null,
+  ref_id              uuid,
+  created_at          timestamptz not null default now(),
+  created_by          uuid references public.staff_profiles(id),
+  constraint payroll_earning_lines_consistency check (
+    (quantity is null and rate_php is null) or
+    (quantity is not null and rate_php is not null and amount_php = round(quantity * rate_php, 2))
+  )
+);
+alter table public.payroll_earning_lines enable row level security;
+create policy "payroll_earning_lines: admin all" on public.payroll_earning_lines for all to authenticated
+  using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
+create policy "payroll_earning_lines: self read" on public.payroll_earning_lines for select to authenticated
+  using (employee_run_id in (select id from public.payroll_employee_runs per
+    join public.employees e on e.id = per.employee_id where e.staff_profile_id = auth.uid()));
