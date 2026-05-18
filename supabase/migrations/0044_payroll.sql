@@ -1273,3 +1273,10 @@ $$;
 create trigger trg_employee_leave_records_no_overdraw
   before insert on public.employee_leave_records
   for each row execute function public.employee_leave_records_no_overdraw();
+
+-- ---- P0025: loan outstanding_balance cannot go negative ------------------
+-- This is a column-level CHECK; the bridge layer should never push it negative.
+-- The check raises check_violation (SQLSTATE 23514); pg-errors maps 23514→P0025
+-- only when this specific table is involved (caught at app layer too).
+alter table public.employee_loans
+  add constraint employee_loans_outstanding_nonneg check (outstanding_balance_php >= 0);
