@@ -1250,3 +1250,26 @@ $$;
 create trigger trg_payroll_run_finalise_requires_nonzero_gross
   before update on public.payroll_runs
   for each row execute function public.payroll_run_finalise_requires_nonzero_gross();
+
+-- ---- Guard P0028: leave usage cannot push balance below zero ------------
+create or replace function public.employee_leave_records_no_overdraw()
+returns trigger
+language plpgsql as $$
+declare
+  v_balance numeric;
+begin
+  if NEW.record_kind <> 'usage' then return NEW; end if;
+  v_balance := public.employee_leave_balance(NEW.employee_id, NEW.kind, NEW.effective_date);
+  -- balance is BEFORE adding NEW.days_delta (which is negative for usage)
+  if (v_balance + NEW.days_delta) < 0 then
+    raise exception 'Insufficient % balance: have %, attempting to use %. Grant additional days first if approving advance.',
+      NEW.kind, v_balance, abs(NEW.days_delta)
+      using errcode = 'P0028';
+  end if;
+  return NEW;
+end;
+$$;
+
+create trigger trg_employee_leave_records_no_overdraw
+  before insert on public.employee_leave_records
+  for each row execute function public.employee_leave_records_no_overdraw();
