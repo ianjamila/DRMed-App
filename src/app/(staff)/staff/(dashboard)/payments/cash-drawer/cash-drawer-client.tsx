@@ -14,6 +14,21 @@ type Staff = { id: string; full_name: string; role: string };
 const PESO = (n: number) =>
   new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format(n);
 
+const friendlyManilaDate = (isoDate: string) => {
+  const d = new Date(`${isoDate}T12:00:00+08:00`);
+  const weekday = new Intl.DateTimeFormat("en-US", {
+    weekday: "long",
+    timeZone: "Asia/Manila",
+  }).format(d);
+  const longDate = new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "Asia/Manila",
+  }).format(d);
+  return `${weekday}, ${longDate}`;
+};
+
 export function CashDrawerClient(props: {
   sessionUserId: string;
   businessDate: string;
@@ -54,28 +69,33 @@ export function CashDrawerClient(props: {
         <h1 className="font-[family-name:var(--font-heading)] text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
           Cash drawer
         </h1>
-        <div className="flex items-center gap-2 text-sm text-[color:var(--color-brand-text-soft)]">
-          <input
-            type="date"
-            value={props.businessDate}
-            onChange={(e) =>
-              router.push(`/staff/payments/cash-drawer?date=${e.target.value}&shift=${props.currentShiftId}`)
-            }
-            className="rounded border px-2 py-1"
-          />
-          {props.shifts.length > 1 && (
-            <select
-              value={props.currentShiftId}
+        <div className="flex flex-col items-start gap-1 text-sm text-[color:var(--color-brand-text-soft)] sm:items-end">
+          <span className="font-medium text-[color:var(--color-brand-navy)]">
+            {friendlyManilaDate(props.businessDate)}
+          </span>
+          <div className="flex items-center gap-2">
+            <input
+              type="date"
+              value={props.businessDate}
               onChange={(e) =>
-                router.push(`/staff/payments/cash-drawer?date=${props.businessDate}&shift=${e.target.value}`)
+                router.push(`/staff/payments/cash-drawer?date=${e.target.value}&shift=${props.currentShiftId}`)
               }
               className="rounded border px-2 py-1"
-            >
-              {props.shifts.map((sh) => (
-                <option key={sh.id} value={sh.id}>{sh.label}</option>
-              ))}
-            </select>
-          )}
+            />
+            {props.shifts.length > 1 && (
+              <select
+                value={props.currentShiftId}
+                onChange={(e) =>
+                  router.push(`/staff/payments/cash-drawer?date=${props.businessDate}&shift=${e.target.value}`)
+                }
+                className="rounded border px-2 py-1"
+              >
+                {props.shifts.map((sh) => (
+                  <option key={sh.id} value={sh.id}>{sh.label}</option>
+                ))}
+              </select>
+            )}
+          </div>
         </div>
       </header>
 
