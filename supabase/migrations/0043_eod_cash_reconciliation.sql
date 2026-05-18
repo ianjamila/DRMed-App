@@ -690,3 +690,34 @@ create trigger trg_eod_cash_adjustments_block_after_close_iu
 create trigger trg_payments_block_after_close_iu
   before insert or update on public.payments
   for each row execute function public.payments_block_after_close();
+
+-- ---- Guard P0017: cash adjustment immutable after JE -----------------------
+create or replace function public.cash_adjustments_block_post_je_edits()
+returns trigger
+language plpgsql
+as $$
+begin
+  if exists (
+    select 1 from public.journal_entries
+    where source_kind = 'cash_adjustment'
+      and source_id = NEW.id
+      and status = 'posted'
+  ) then
+    if NEW.amount_php       is distinct from OLD.amount_php
+       or NEW.kind          is distinct from OLD.kind
+       or NEW.business_date is distinct from OLD.business_date
+       or NEW.shift_id      is distinct from OLD.shift_id
+       or NEW.payee_staff_id is distinct from OLD.payee_staff_id
+       or NEW.contra_account_id is distinct from OLD.contra_account_id then
+      raise exception
+        'Cannot edit cash adjustment after JE has posted. Void and re-create instead.'
+        using errcode = 'P0017';
+    end if;
+  end if;
+  return NEW;
+end;
+$$;
+
+create trigger trg_cash_adjustments_block_post_je_edits
+  before update on public.eod_cash_adjustments
+  for each row execute function public.cash_adjustments_block_post_je_edits();
