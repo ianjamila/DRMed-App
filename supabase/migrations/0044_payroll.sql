@@ -84,3 +84,27 @@ create policy "employees: admin all" on public.employees for all to authenticate
   using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
 create policy "employees: self read" on public.employees for select to authenticated
   using (staff_profile_id = auth.uid());
+
+-- ---- employee_allowances --------------------------------------------------
+create table public.employee_allowances (
+  id                  uuid primary key default gen_random_uuid(),
+  employee_id         uuid not null references public.employees(id) on delete cascade,
+  name                text not null,
+  daily_amount_php    numeric(10,2) not null check (daily_amount_php >= 0),
+  is_taxable          boolean not null default true,
+  effective_from      date not null,
+  effective_to        date,
+  created_at          timestamptz not null default now(),
+  updated_at          timestamptz not null default now(),
+  constraint employee_allowances_no_overlap_per_name
+    exclude using gist (
+      employee_id with =,
+      name with =,
+      daterange(effective_from, coalesce(effective_to, 'infinity'::date), '[)') with &&
+    )
+);
+create trigger trg_employee_allowances_updated_at before update on public.employee_allowances
+  for each row execute function public.touch_updated_at();
+alter table public.employee_allowances enable row level security;
+create policy "employee_allowances: admin all" on public.employee_allowances for all to authenticated
+  using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
