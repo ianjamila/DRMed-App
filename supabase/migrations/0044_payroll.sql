@@ -669,7 +669,10 @@ begin
       v_monthly := round(v_annual / 12, 2);
 
       for v_month in 1..12 loop
-        v_eff_date := make_date(p_year, v_month, extract(day from e.hire_date)::int);
+        v_eff_date := make_date(p_year, v_month, least(
+          extract(day from e.hire_date)::int,
+          extract(day from ((make_date(p_year, v_month, 1) + interval '1 month' - interval '1 day')::date))::int
+        ));
         -- skip months before the 1-year mark
         if v_eff_date < (e.hire_date + interval '1 year')::date then
           continue;
