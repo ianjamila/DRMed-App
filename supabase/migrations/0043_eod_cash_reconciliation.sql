@@ -765,3 +765,35 @@ $$;
 create trigger trg_cash_adjustment_account_map_block_inactive
   before insert or update on public.cash_adjustment_account_map
   for each row execute function public.cash_adjustment_account_map_block_inactive();
+
+-- ---- Views: admin reports --------------------------------------------------
+create or replace view public.v_daily_revenue_by_service as
+select
+  (tr.released_at at time zone 'Asia/Manila')::date as business_date,
+  s.id   as service_id,
+  s.code as service_code,
+  s.name as service_name,
+  s.kind as service_kind,
+  count(*)                                              as released_count,
+  coalesce(sum(tr.final_price_php), 0)::numeric(14,2)   as revenue_php,
+  coalesce(sum(tr.discount_amount_php), 0)::numeric(14,2) as discount_php
+from public.test_requests tr
+join public.services s on s.id = tr.service_id
+where tr.status = 'released'
+group by business_date, s.id, s.code, s.name, s.kind;
+
+alter view public.v_daily_revenue_by_service owner to postgres;
+
+create or replace view public.v_staff_advances_outstanding as
+select
+  sa.staff_id,
+  sp.full_name,
+  sp.role,
+  count(*) filter (where sa.status = 'outstanding')                  as advance_count,
+  coalesce(sum(sa.outstanding_balance_php), 0)::numeric(14,2)         as outstanding_php,
+  min(sa.business_date) filter (where sa.status = 'outstanding')      as oldest_advance_date
+from public.staff_advances sa
+join public.staff_profiles sp on sp.id = sa.staff_id
+group by sa.staff_id, sp.full_name, sp.role;
+
+alter view public.v_staff_advances_outstanding owner to postgres;
