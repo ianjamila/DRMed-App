@@ -678,3 +678,29 @@ begin
   end loop;
 end;
 $$;
+
+-- ---- apply_leave_expiry(p_year int) ---------------------------------------
+-- Run on April 1 each year to forfeit unused VL from p_year-1 (Mar 31 deadline).
+-- Also run on Dec 31 implicitly via expiry_date — but for VL the deadline is
+-- staggered (Mar 31 of year after), so this function handles the VL case.
+-- SL expires on Dec 31 of its own year via its expiry_date row already.
+create or replace function public.apply_leave_expiry(p_year int)
+returns table (employee_id uuid, kind text, days_expired numeric)
+language plpgsql security definer set search_path = public as $$
+declare
+  e record;
+  v_bal numeric(5,2);
+begin
+  for e in select id from public.employees where is_active = true loop
+    -- Only handle VL: any positive balance accrued during p_year that's still
+    -- present on April 1 of p_year+1 gets expired here.
+    v_bal := public.employee_leave_balance(e.id, 'VL', make_date(p_year + 1, 3, 31));
+    if v_bal > 0 then
+      insert into public.employee_leave_records (employee_id, kind, record_kind, days_delta, effective_date, reason)
+      values (e.id, 'VL', 'expiry', -v_bal, make_date(p_year + 1, 4, 1),
+        format('Carryover expiry — %s VL unused by Mar 31 %s', p_year, p_year + 1));
+      return query select e.id, 'VL'::text, v_bal;
+    end if;
+  end loop;
+end;
+$$;
