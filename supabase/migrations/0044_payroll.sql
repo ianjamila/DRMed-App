@@ -35,3 +35,15 @@ alter table public.eod_cash_adjustments drop constraint eod_cash_adjustments_kin
 alter table public.eod_cash_adjustments add constraint eod_cash_adjustments_kind_check check (kind in (
   'petty_cash','salary_advance','courier','other_payout','float_topup','float_pullout','salary_payout'
 ));
+
+-- ---- CoA additions --------------------------------------------------------
+-- Split employer contributions into per-kind sub-accounts so the P&L can
+-- trace each statutory cost separately (cleaner than lumping into 6120).
+insert into public.chart_of_accounts (code, name, type, normal_balance, description) values
+  ('2350', '13th-Month Payable',                'liability', 'credit', 'Monthly accrual of 13th-month pay; paid out in December Run #1.'),
+  ('2360', 'Salaries Payable',                  'liability', 'credit', 'Net pay owed to employees between run finalisation and actual payout.'),
+  ('6121', 'Employer SSS Contribution',         'expense',   'debit',  'Employer share of SSS (split from 6120 Benefits for tracing).'),
+  ('6122', 'Employer PhilHealth Contribution',  'expense',   'debit',  'Employer share of PhilHealth.'),
+  ('6123', 'Employer Pag-IBIG Contribution',    'expense',   'debit',  'Employer share of Pag-IBIG.'),
+  ('6124', '13th-Month Pay Expense',            'expense',   'debit',  'Monthly accrual recognised as expense; paired with 2350 13th-Month Payable.')
+on conflict (code) do nothing;
