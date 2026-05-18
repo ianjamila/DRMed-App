@@ -47,3 +47,40 @@ insert into public.chart_of_accounts (code, name, type, normal_balance, descript
   ('6123', 'Employer Pag-IBIG Contribution',    'expense',   'debit',  'Employer share of Pag-IBIG.'),
   ('6124', '13th-Month Pay Expense',            'expense',   'debit',  'Monthly accrual recognised as expense; paired with 2350 13th-Month Payable.')
 on conflict (code) do nothing;
+
+-- ---- employees ------------------------------------------------------------
+create table public.employees (
+  id                            uuid primary key default gen_random_uuid(),
+  staff_profile_id              uuid unique not null references public.staff_profiles(id) on delete restrict,
+  employee_number               text unique,
+  hire_date                     date not null,
+  regularization_date           date,
+  termination_date              date,
+  civil_status                  text check (civil_status in ('single','married','widowed','separated','divorced')),
+  basic_daily_rate_php          numeric(10,2) not null check (basic_daily_rate_php > 0),
+  monthly_salary_credit_php     numeric(10,2) not null check (monthly_salary_credit_php > 0),
+  schedule_kind                 text not null check (schedule_kind in
+                                  ('fixed_5day_mon_fri','fixed_6day_mon_sat','shifting_5of6_mon_sat')),
+  rest_days                     int[],
+  dtr_external_id               text,
+  payment_method                text not null default 'cash' check (payment_method in ('cash','bank')),
+  bank_name                     text,
+  bank_account_number           text,
+  bank_account_holder_name      text,
+  sss_number                    text,
+  philhealth_number             text,
+  pagibig_number                text,
+  tin                           text,
+  tax_status                    text not null default 'standard' check (tax_status in ('standard','minimum_wage_earner')),
+  is_active                     boolean not null default true,
+  notes                         text,
+  created_at                    timestamptz not null default now(),
+  updated_at                    timestamptz not null default now()
+);
+create trigger trg_employees_updated_at before update on public.employees
+  for each row execute function public.touch_updated_at();
+alter table public.employees enable row level security;
+create policy "employees: admin all" on public.employees for all to authenticated
+  using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
+create policy "employees: self read" on public.employees for select to authenticated
+  using (staff_profile_id = auth.uid());
