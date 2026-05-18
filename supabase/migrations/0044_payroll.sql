@@ -298,3 +298,23 @@ create policy "payroll_deduction_lines: admin all" on public.payroll_deduction_l
 create policy "payroll_deduction_lines: self read" on public.payroll_deduction_lines for select to authenticated
   using (employee_run_id in (select id from public.payroll_employee_runs per
     join public.employees e on e.id = per.employee_id where e.staff_profile_id = auth.uid()));
+
+-- ---- payroll_ot_slips -----------------------------------------------------
+create table public.payroll_ot_slips (
+  id                  uuid primary key default gen_random_uuid(),
+  employee_id         uuid not null references public.employees(id),
+  work_date           date not null,
+  hours_requested     numeric(5,2) not null check (hours_requested > 0),
+  reason              text,
+  status              text not null default 'pending' check (status in ('pending','approved','rejected','voided')),
+  requested_at        timestamptz not null default now(),
+  decided_at          timestamptz,
+  decided_by          uuid references public.staff_profiles(id),
+  decision_notes      text,
+  constraint payroll_ot_slips_unique_per_day unique (employee_id, work_date)
+);
+alter table public.payroll_ot_slips enable row level security;
+create policy "payroll_ot_slips: admin all" on public.payroll_ot_slips for all to authenticated
+  using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
+create policy "payroll_ot_slips: self read" on public.payroll_ot_slips for select to authenticated
+  using (employee_id in (select id from public.employees where staff_profile_id = auth.uid()));
