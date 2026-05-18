@@ -254,7 +254,7 @@ alter table public.payroll_earning_lines enable row level security;
 create policy "payroll_earning_lines: admin all" on public.payroll_earning_lines for all to authenticated
   using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
 create policy "payroll_earning_lines: self read" on public.payroll_earning_lines for select to authenticated
-  using (employee_run_id in (select id from public.payroll_employee_runs per
+  using (employee_run_id in (select per.id from public.payroll_employee_runs per
     join public.employees e on e.id = per.employee_id where e.staff_profile_id = auth.uid()));
 
 -- ---- employee_loans -------------------------------------------------------
@@ -306,7 +306,7 @@ alter table public.payroll_deduction_lines enable row level security;
 create policy "payroll_deduction_lines: admin all" on public.payroll_deduction_lines for all to authenticated
   using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
 create policy "payroll_deduction_lines: self read" on public.payroll_deduction_lines for select to authenticated
-  using (employee_run_id in (select id from public.payroll_employee_runs per
+  using (employee_run_id in (select per.id from public.payroll_employee_runs per
     join public.employees e on e.id = per.employee_id where e.staff_profile_id = auth.uid()));
 
 -- ---- payroll_ot_slips -----------------------------------------------------
