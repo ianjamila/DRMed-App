@@ -506,3 +506,27 @@ insert into public.accounting_settings (key, value_php, description) values
   ('holiday_pay_special_unworked', 0.00, ''),
   ('staff_advance_settlement_max_pct', 0.50, 'Cap on staff_advance settlement per cutoff, as fraction of post-statutory net.')
 on conflict (key) do nothing;
+
+-- ---- PH official holidays — 2026 calendar year ----------------------------
+insert into public.payroll_holidays (date, kind, name) values
+  -- Regular holidays
+  ('2026-01-01', 'regular',             'New Year''s Day'),
+  ('2026-04-02', 'regular',             'Maundy Thursday'),
+  ('2026-04-03', 'regular',             'Good Friday'),
+  ('2026-04-09', 'regular',             'Araw ng Kagitingan'),
+  ('2026-05-01', 'regular',             'Labor Day'),
+  ('2026-06-12', 'regular',             'Independence Day'),
+  ('2026-08-31', 'regular',             'National Heroes Day'),
+  ('2026-11-30', 'regular',             'Bonifacio Day'),
+  ('2026-12-25', 'regular',             'Christmas Day'),
+  ('2026-12-30', 'regular',             'Rizal Day'),
+  -- Special non-working
+  ('2026-02-25', 'special_non_working', 'EDSA Revolution Anniversary'),
+  ('2026-04-04', 'special_non_working', 'Black Saturday'),
+  ('2026-08-21', 'special_non_working', 'Ninoy Aquino Day'),
+  ('2026-11-01', 'special_non_working', 'All Saints'' Day'),
+  ('2026-11-02', 'special_non_working', 'All Souls'' Day'),
+  ('2026-12-08', 'special_non_working', 'Feast of the Immaculate Conception'),
+  ('2026-12-24', 'special_non_working', 'Christmas Eve'),
+  ('2026-12-31', 'special_non_working', 'New Year''s Eve')
+on conflict (date, kind) do nothing;
