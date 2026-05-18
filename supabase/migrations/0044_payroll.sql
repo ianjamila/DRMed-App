@@ -562,3 +562,17 @@ insert into public.payroll_contribution_brackets (kind, effective_from, monthly_
   ('sss', '2026-01-01',    15750,    16250,   720.00,  1585.00, ''),
   ('sss', '2026-01-01',    16250,    19999.99, 765.00, 1685.00, 'Upper-band approximation; consult current SSS table'),
   ('sss', '2026-01-01',    20000,    99999.99, 900.00, 1900.00, 'Maximum MSC band');
+
+-- ---- PhilHealth premium brackets — effective 2026-01-01 -------------------
+-- 5% premium rate (split equally EE/ER). MSC floor ₱10k, ceiling ₱100k.
+-- Bands here are ₱500-step "bands of convenience" for daily-rate employees;
+-- spec treats them as lookup rows even though PhilHealth's actual formula is
+-- continuous percentage-based.
+insert into public.payroll_contribution_brackets (kind, effective_from, monthly_salary_credit_min_php, monthly_salary_credit_max_php, employee_share_php, employer_share_php, notes) values
+  ('philhealth', '2026-01-01',      0,    10000,  250.00,  250.00, 'Min MSC floor at ₱10k'),
+  ('philhealth', '2026-01-01',  10000,    20000,  500.00,  500.00, ''),
+  ('philhealth', '2026-01-01',  20000,    30000,  750.00,  750.00, ''),
+  ('philhealth', '2026-01-01',  30000,    40000, 1000.00, 1000.00, ''),
+  ('philhealth', '2026-01-01',  40000,    50000, 1250.00, 1250.00, ''),
+  ('philhealth', '2026-01-01',  50000,   100000, 1500.00, 1500.00, ''),
+  ('philhealth', '2026-01-01', 100000, 99999999, 2500.00, 2500.00, 'Ceiling at ₱100k MSC');
