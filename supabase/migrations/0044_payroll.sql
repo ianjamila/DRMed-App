@@ -871,9 +871,12 @@ begin
        set outstanding_balance_php = outstanding_balance_php + per.staff_advance_settlement_php,
            status = case when status = 'settled' then 'outstanding' else status end,
            updated_at = now()
-     where staff_id = per.staff_id and status in ('outstanding','settled')
-     order by created_at desc
-     limit 1;
+     where id = (
+       select id from public.staff_advances
+        where staff_id = per.staff_id and status in ('outstanding','settled')
+        order by created_at desc
+        limit 1
+     );
   end loop;
 
   return NEW;
