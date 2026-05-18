@@ -31,3 +31,35 @@
 -- this to a PG <12 environment, split into two migrations.
 alter type public.je_source_kind add value if not exists 'cash_adjustment';
 alter type public.je_source_kind add value if not exists 'eod_close';
+
+-- ---- cash_shifts -----------------------------------------------------------
+create table public.cash_shifts (
+  id          uuid primary key default gen_random_uuid(),
+  code        text unique not null,
+  label       text not null,
+  is_active   boolean not null default true,
+  sort_order  int not null default 0,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+
+create trigger trg_cash_shifts_updated_at
+  before update on public.cash_shifts
+  for each row execute function public.touch_updated_at();
+
+alter table public.cash_shifts enable row level security;
+
+create policy "cash_shifts: staff read"
+  on public.cash_shifts
+  for select to authenticated
+  using (public.has_role(array['reception','admin']));
+
+create policy "cash_shifts: admin write"
+  on public.cash_shifts
+  for all to authenticated
+  using (public.has_role(array['admin']))
+  with check (public.has_role(array['admin']));
+
+insert into public.cash_shifts (code, label, sort_order)
+values ('default', 'Default shift', 0)
+on conflict (code) do nothing;
