@@ -63,3 +63,40 @@ create policy "cash_shifts: admin write"
 insert into public.cash_shifts (code, label, sort_order)
 values ('default', 'Default shift', 0)
 on conflict (code) do nothing;
+
+-- ---- accounting_settings (key-value) -----------------------------------------------
+create table public.accounting_settings (
+  id            uuid primary key default gen_random_uuid(),
+  key           text unique not null check (key in ('default_change_fund_php')),
+  value_text    text,
+  value_php     numeric(14,2),
+  value_jsonb   jsonb,
+  description   text,
+  updated_at    timestamptz not null default now(),
+  updated_by    uuid references public.staff_profiles(id)
+);
+
+create trigger trg_accounting_settings_updated_at
+  before update on public.accounting_settings
+  for each row execute function public.touch_updated_at();
+
+alter table public.accounting_settings enable row level security;
+
+create policy "accounting_settings: admin all"
+  on public.accounting_settings
+  for all to authenticated
+  using (public.has_role(array['admin']))
+  with check (public.has_role(array['admin']));
+
+create policy "accounting_settings: staff read"
+  on public.accounting_settings
+  for select to authenticated
+  using (public.has_role(array['reception','admin']));
+
+insert into public.accounting_settings (key, value_php, description)
+values (
+  'default_change_fund_php',
+  2000.00,
+  'Baseline cash drawer float at start of each business date. Adjust via eod_cash_adjustments float_topup/float_pullout.'
+)
+on conflict (key) do nothing;
