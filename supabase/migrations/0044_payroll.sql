@@ -885,3 +885,54 @@ create trigger trg_bridge_payroll_run_void
   for each row
   when (OLD.status = 'finalised' and NEW.status = 'voided')
   execute function public.bridge_payroll_run_void();
+
+-- ---- Bridge: per-employee BANK payout -------------------------------------
+-- Fires when an employee_run flips to payout_status='paid' for a bank-paid employee.
+-- (For cash-paid, the existing 12.C bridge_cash_adjustment_insert posts the JE.)
+create or replace function public.bridge_payroll_payout_bank()
+returns trigger
+language plpgsql security definer set search_path = public
+as $$
+declare
+  v_je_id uuid;
+  v_user_id uuid := coalesce(current_setting('app.current_user_id', true)::uuid, NEW.paid_by);
+  v_emp_name text;
+begin
+  if NEW.payout_status <> 'paid' or OLD.payout_status = 'paid' then
+    return NEW;
+  end if;
+  if NEW.payment_method_used <> 'bank' then
+    return NEW;  -- cash payouts handled by the 12.C bridge
+  end if;
+
+  select full_name into v_emp_name
+    from public.employees e
+    join public.staff_profiles sp on sp.id = e.staff_profile_id
+    where e.id = NEW.employee_id;
+
+  insert into public.journal_entries (posting_date, description, status, source_kind, source_id, created_by)
+  values (current_date,
+          format('Payroll payout (bank): %s · run %s', v_emp_name, NEW.run_id),
+          'draft',
+          'payroll_run',
+          NEW.id,
+          v_user_id)
+  returning id into v_je_id;
+
+  insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
+  values
+    (v_je_id, public.coa_uuid_for_code('2360'), NEW.net_pay_php, 0, 1),
+    (v_je_id, public.coa_uuid_for_code('1020'), 0, NEW.net_pay_php, 2);
+
+  update public.journal_entries set status = 'posted' where id = v_je_id;
+  update public.payroll_employee_runs set payout_je_id = v_je_id where id = NEW.id;
+
+  return NEW;
+end;
+$$;
+
+create trigger trg_bridge_payroll_payout_bank
+  after update on public.payroll_employee_runs
+  for each row
+  when (OLD.payout_status is distinct from NEW.payout_status and NEW.payout_status = 'paid')
+  execute function public.bridge_payroll_payout_bank();
