@@ -576,3 +576,10 @@ insert into public.payroll_contribution_brackets (kind, effective_from, monthly_
   ('philhealth', '2026-01-01',  40000,    50000, 1250.00, 1250.00, ''),
   ('philhealth', '2026-01-01',  50000,   100000, 1500.00, 1500.00, ''),
   ('philhealth', '2026-01-01', 100000, 99999999, 2500.00, 2500.00, 'Ceiling at ₱100k MSC');
+
+-- ---- Pag-IBIG contribution brackets — effective 2026-01-01 ---------------
+-- 2% EE + 2% ER, capped at ₱5,000 MSC for v1 (per current rules).
+insert into public.payroll_contribution_brackets (kind, effective_from, monthly_salary_credit_min_php, monthly_salary_credit_max_php, employee_share_php, employer_share_php, notes) values
+  ('pagibig', '2026-01-01',    0,  1500,  20.00,  20.00, '1% EE/ER for low MSC'),
+  ('pagibig', '2026-01-01', 1500,  5000, 100.00, 100.00, '2% EE/ER, capped'),
+  ('pagibig', '2026-01-01', 5000, 99999, 100.00, 100.00, 'Ceiling at ₱5k MSC');
