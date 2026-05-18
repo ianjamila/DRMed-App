@@ -8,6 +8,12 @@ import { reopenEodCloseAction } from "@/app/(staff)/staff/(dashboard)/admin/acco
 const PESO = (n: number) =>
   new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format(n);
 
+const weekdayManila = (isoDate: string) =>
+  new Intl.DateTimeFormat("en-PH", {
+    weekday: "long",
+    timeZone: "Asia/Manila",
+  }).format(new Date(`${isoDate}T12:00:00+08:00`));
+
 export function EodClient(props: {
   isAdmin: boolean;
   businessDate: string;
@@ -70,7 +76,7 @@ export function EodClient(props: {
   return (
     <main className="mx-auto max-w-2xl px-4 py-6 sm:px-6">
       <h1 className="font-[family-name:var(--font-heading)] text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
-        End-of-day close · {props.businessDate}
+        End-of-day close · {weekdayManila(props.businessDate)}, {props.businessDate}
       </h1>
 
       {closed ? (
