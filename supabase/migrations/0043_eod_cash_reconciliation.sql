@@ -1,0 +1,23 @@
+-- =============================================================================
+-- 0043_eod_cash_reconciliation.sql
+-- =============================================================================
+-- Phase 12.C: Daily cash reconciliation. Adds reception-facing end-of-day
+-- close workflow, cash adjustments subledger, staff-advance receivable
+-- subledger, and the GL bridge that turns each cash movement into a
+-- balanced JE through the same pattern as 0030 (draft → lines → posted).
+--
+-- After this migration:
+--   * /staff/payments/cash-drawer logs petty cash, salary advances, courier
+--     payouts, and float adjustments. Each fires a balanced JE in-transaction.
+--   * /staff/payments/eod closes the day; non-zero variance posts a cash
+--     short/over JE.
+--   * Closed (date, shift) combos are DB-locked (P0015) until admin reopens.
+--   * salary_advance payouts mirror into staff_advances; 12.6 (payroll) will
+--     draw down outstanding balances via payslip deductions.
+--   * /staff/admin/accounting/cash-routing manages the kind → CoA map.
+--   * /staff/admin/reports/{daily-revenue,staff-advances} are read-only views.
+--
+-- NOTE: Existing partial unique index from 0030
+--   journal_entries_one_posted_per_source
+-- already covers the two new source_kind values; no index change needed.
+-- =============================================================================
