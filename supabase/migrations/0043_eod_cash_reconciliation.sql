@@ -341,3 +341,90 @@ begin
   return query select v_map_account, false;
 end;
 $$;
+
+-- ---- Bridge: cash adjustment INSERT -----------------------------------------
+create or replace function public.bridge_cash_adjustment_insert()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_je_id          uuid;
+  v_existing_je    uuid;
+  v_cash_id        uuid;
+  v_contra_id      uuid;
+  v_used_suspense  boolean;
+  v_debit_acct     uuid;
+  v_credit_acct    uuid;
+begin
+  -- Idempotency.
+  select id into v_existing_je
+    from public.journal_entries
+    where source_kind = 'cash_adjustment'
+      and source_id = NEW.id
+      and status = 'posted'
+    for update;
+  if v_existing_je is not null then
+    return NEW;
+  end if;
+
+  v_cash_id := public.coa_uuid_for_code('1010');
+
+  select r.account_id, r.used_suspense
+    into v_contra_id, v_used_suspense
+    from public.resolve_cash_adjustment_account(NEW.kind, NEW.contra_account_id) r;
+
+  -- Direction: float_topup is cash IN; everything else is cash OUT.
+  if NEW.kind = 'float_topup' then
+    v_debit_acct  := v_cash_id;
+    v_credit_acct := v_contra_id;
+  else
+    v_debit_acct  := v_contra_id;
+    v_credit_acct := v_cash_id;
+  end if;
+
+  insert into public.journal_entries (
+    posting_date, description, status, source_kind, source_id, created_by
+  )
+  values (
+    NEW.business_date,
+    'Cash ' || NEW.kind || coalesce(' · ' || NEW.payee, ''),
+    'draft',
+    'cash_adjustment',
+    NEW.id,
+    NEW.recorded_by
+  )
+  returning id into v_je_id;
+
+  insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
+  values
+    (v_je_id, v_debit_acct,  NEW.amount_php, 0, 1),
+    (v_je_id, v_credit_acct, 0, NEW.amount_php, 2);
+
+  update public.journal_entries set status = 'posted' where id = v_je_id;
+
+  if v_used_suspense then
+    insert into public.audit_log (actor_id, actor_type, action, resource_type, resource_id, metadata)
+    values (
+      NEW.recorded_by,
+      'staff',
+      'coa.suspense_post',
+      'journal_entries',
+      v_je_id,
+      jsonb_build_object(
+        'source_kind', 'cash_adjustment',
+        'source_id',   NEW.id,
+        'reason',      'cash adjustment kind required contra choice but received null',
+        'kind',        NEW.kind
+      )
+    );
+  end if;
+
+  return NEW;
+end;
+$$;
+
+create trigger trg_bridge_cash_adjustment_insert
+  after insert on public.eod_cash_adjustments
+  for each row execute function public.bridge_cash_adjustment_insert();
