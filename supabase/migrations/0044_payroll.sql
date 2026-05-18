@@ -1148,3 +1148,35 @@ $$;
 create trigger trg_employees_require_daily_rate
   before insert on public.payroll_employee_runs
   for each row execute function public.employees_require_daily_rate();
+
+-- ---- Guard P0023: OT pay requires an approved OT slip --------------------
+create or replace function public.ot_pay_requires_slip()
+returns trigger
+language plpgsql as $$
+declare
+  v_period record;
+  v_any_slip boolean;
+begin
+  if NEW.ot_pay_php <= 0 then return NEW; end if;
+  select pp.period_start, pp.period_end into v_period
+    from public.payroll_periods pp
+    join public.payroll_runs pr on pr.period_id = pp.id
+    where pr.id = NEW.run_id;
+  select exists(
+    select 1 from public.payroll_ot_slips
+    where employee_id = NEW.employee_id
+      and status = 'approved'
+      and work_date between v_period.period_start and v_period.period_end
+  ) into v_any_slip;
+  if not v_any_slip then
+    raise exception 'OT pay requires an approved OT slip for employee % in the period %–%.',
+      NEW.employee_id, v_period.period_start, v_period.period_end
+      using errcode = 'P0023';
+  end if;
+  return NEW;
+end;
+$$;
+
+create trigger trg_ot_pay_requires_slip
+  before insert or update on public.payroll_employee_runs
+  for each row execute function public.ot_pay_requires_slip();
