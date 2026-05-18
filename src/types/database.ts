@@ -87,6 +87,47 @@ export type Database = {
           },
         ]
       }
+      accounting_settings: {
+        Row: {
+          description: string | null
+          id: string
+          key: string
+          updated_at: string
+          updated_by: string | null
+          value_jsonb: Json | null
+          value_php: number | null
+          value_text: string | null
+        }
+        Insert: {
+          description?: string | null
+          id?: string
+          key: string
+          updated_at?: string
+          updated_by?: string | null
+          value_jsonb?: Json | null
+          value_php?: number | null
+          value_text?: string | null
+        }
+        Update: {
+          description?: string | null
+          id?: string
+          key?: string
+          updated_at?: string
+          updated_by?: string | null
+          value_jsonb?: Json | null
+          value_php?: number | null
+          value_text?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "accounting_settings_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       appointments: {
         Row: {
           booking_group_id: string | null
@@ -155,6 +196,13 @@ export type Database = {
             referencedRelation: "services"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "appointments_service_id_fkey"
+            columns: ["service_id"]
+            isOneToOne: false
+            referencedRelation: "v_daily_revenue_by_service"
+            referencedColumns: ["service_id"]
+          },
         ]
       }
       audit_log: {
@@ -206,6 +254,74 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      cash_adjustment_account_map: {
+        Row: {
+          account_id: string
+          created_at: string
+          id: string
+          kind: string
+          notes: string | null
+          requires_user_choice: boolean
+          updated_at: string
+        }
+        Insert: {
+          account_id: string
+          created_at?: string
+          id?: string
+          kind: string
+          notes?: string | null
+          requires_user_choice?: boolean
+          updated_at?: string
+        }
+        Update: {
+          account_id?: string
+          created_at?: string
+          id?: string
+          kind?: string
+          notes?: string | null
+          requires_user_choice?: boolean
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cash_adjustment_account_map_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "chart_of_accounts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cash_shifts: {
+        Row: {
+          code: string
+          created_at: string
+          id: string
+          is_active: boolean
+          label: string
+          sort_order: number
+          updated_at: string
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          label: string
+          sort_order?: number
+          updated_at?: string
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          label?: string
+          sort_order?: number
+          updated_at?: string
+        }
+        Relationships: []
       }
       chart_of_accounts: {
         Row: {
@@ -401,6 +517,175 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "v_hmo_unbilled"
             referencedColumns: ["test_request_id"]
+          },
+        ]
+      }
+      eod_cash_adjustments: {
+        Row: {
+          amount_php: number
+          business_date: string
+          contra_account_id: string | null
+          id: string
+          kind: string
+          notes: string | null
+          payee: string | null
+          payee_staff_id: string | null
+          recorded_at: string
+          recorded_by: string
+          shift_id: string
+          void_reason: string | null
+          voided_at: string | null
+          voided_by: string | null
+        }
+        Insert: {
+          amount_php: number
+          business_date: string
+          contra_account_id?: string | null
+          id?: string
+          kind: string
+          notes?: string | null
+          payee?: string | null
+          payee_staff_id?: string | null
+          recorded_at?: string
+          recorded_by: string
+          shift_id: string
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
+        }
+        Update: {
+          amount_php?: number
+          business_date?: string
+          contra_account_id?: string | null
+          id?: string
+          kind?: string
+          notes?: string | null
+          payee?: string | null
+          payee_staff_id?: string | null
+          recorded_at?: string
+          recorded_by?: string
+          shift_id?: string
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "eod_cash_adjustments_contra_account_id_fkey"
+            columns: ["contra_account_id"]
+            isOneToOne: false
+            referencedRelation: "chart_of_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "eod_cash_adjustments_payee_staff_id_fkey"
+            columns: ["payee_staff_id"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "eod_cash_adjustments_recorded_by_fkey"
+            columns: ["recorded_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "eod_cash_adjustments_shift_id_fkey"
+            columns: ["shift_id"]
+            isOneToOne: false
+            referencedRelation: "cash_shifts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "eod_cash_adjustments_voided_by_fkey"
+            columns: ["voided_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      eod_close_records: {
+        Row: {
+          business_date: string
+          cash_payments_php: number
+          cash_payouts_php: number
+          closed_at: string
+          closed_by: string
+          counted_cash_php: number
+          created_at: string
+          expected_cash_php: number
+          id: string
+          opening_float_php: number
+          reopen_reason: string | null
+          reopened_at: string | null
+          reopened_by: string | null
+          shift_id: string
+          status: string
+          variance_php: number
+          variance_reason: string | null
+        }
+        Insert: {
+          business_date: string
+          cash_payments_php: number
+          cash_payouts_php: number
+          closed_at?: string
+          closed_by: string
+          counted_cash_php: number
+          created_at?: string
+          expected_cash_php: number
+          id?: string
+          opening_float_php: number
+          reopen_reason?: string | null
+          reopened_at?: string | null
+          reopened_by?: string | null
+          shift_id: string
+          status?: string
+          variance_php: number
+          variance_reason?: string | null
+        }
+        Update: {
+          business_date?: string
+          cash_payments_php?: number
+          cash_payouts_php?: number
+          closed_at?: string
+          closed_by?: string
+          counted_cash_php?: number
+          created_at?: string
+          expected_cash_php?: number
+          id?: string
+          opening_float_php?: number
+          reopen_reason?: string | null
+          reopened_at?: string | null
+          reopened_by?: string | null
+          shift_id?: string
+          status?: string
+          variance_php?: number
+          variance_reason?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "eod_close_records_closed_by_fkey"
+            columns: ["closed_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "eod_close_records_reopened_by_fkey"
+            columns: ["reopened_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "eod_close_records_shift_id_fkey"
+            columns: ["shift_id"]
+            isOneToOne: false
+            referencedRelation: "cash_shifts"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -852,6 +1137,13 @@ export type Database = {
             referencedRelation: "services"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "hmo_history_staging_service_id_resolved_fkey"
+            columns: ["service_id_resolved"]
+            isOneToOne: false
+            referencedRelation: "v_daily_revenue_by_service"
+            referencedColumns: ["service_id"]
+          },
         ]
       }
       hmo_import_runs: {
@@ -1109,6 +1401,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "services"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "hmo_service_aliases_service_id_fkey"
+            columns: ["service_id"]
+            isOneToOne: false
+            referencedRelation: "v_daily_revenue_by_service"
+            referencedColumns: ["service_id"]
           },
         ]
       }
@@ -1382,11 +1681,25 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "package_components_component_service_id_fkey"
+            columns: ["component_service_id"]
+            isOneToOne: false
+            referencedRelation: "v_daily_revenue_by_service"
+            referencedColumns: ["service_id"]
+          },
+          {
             foreignKeyName: "package_components_package_service_id_fkey"
             columns: ["package_service_id"]
             isOneToOne: false
             referencedRelation: "services"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "package_components_package_service_id_fkey"
+            columns: ["package_service_id"]
+            isOneToOne: false
+            referencedRelation: "v_daily_revenue_by_service"
+            referencedColumns: ["service_id"]
           },
         ]
       }
@@ -2012,6 +2325,13 @@ export type Database = {
             referencedRelation: "services"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "result_templates_service_id_fkey"
+            columns: ["service_id"]
+            isOneToOne: true
+            referencedRelation: "v_daily_revenue_by_service"
+            referencedColumns: ["service_id"]
+          },
         ]
       }
       result_values: {
@@ -2201,6 +2521,13 @@ export type Database = {
             referencedRelation: "services"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "service_price_history_service_id_fkey"
+            columns: ["service_id"]
+            isOneToOne: false
+            referencedRelation: "v_daily_revenue_by_service"
+            referencedColumns: ["service_id"]
+          },
         ]
       }
       services: {
@@ -2300,6 +2627,60 @@ export type Database = {
           label?: string
         }
         Relationships: []
+      }
+      staff_advances: {
+        Row: {
+          business_date: string
+          created_at: string
+          id: string
+          notes: string | null
+          original_amount_php: number
+          outstanding_balance_php: number
+          source_adjustment_id: string
+          staff_id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          business_date: string
+          created_at?: string
+          id?: string
+          notes?: string | null
+          original_amount_php: number
+          outstanding_balance_php: number
+          source_adjustment_id: string
+          staff_id: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          business_date?: string
+          created_at?: string
+          id?: string
+          notes?: string | null
+          original_amount_php?: number
+          outstanding_balance_php?: number
+          source_adjustment_id?: string
+          staff_id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "staff_advances_source_adjustment_id_fkey"
+            columns: ["source_adjustment_id"]
+            isOneToOne: true
+            referencedRelation: "eod_cash_adjustments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "staff_advances_staff_id_fkey"
+            columns: ["staff_id"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       staff_profiles: {
         Row: {
@@ -2553,6 +2934,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "test_requests_service_id_fkey"
+            columns: ["service_id"]
+            isOneToOne: false
+            referencedRelation: "v_daily_revenue_by_service"
+            referencedColumns: ["service_id"]
+          },
+          {
             foreignKeyName: "test_requests_visit_id_fkey"
             columns: ["visit_id"]
             isOneToOne: false
@@ -2680,6 +3068,19 @@ export type Database = {
       }
     }
     Views: {
+      v_daily_revenue_by_service: {
+        Row: {
+          business_date: string | null
+          discount_php: number | null
+          released_count: number | null
+          revenue_php: number | null
+          service_code: string | null
+          service_id: string | null
+          service_kind: string | null
+          service_name: string | null
+        }
+        Relationships: []
+      }
       v_historical_payments: {
         Row: {
           amount_php: number | null
@@ -2861,10 +3262,33 @@ export type Database = {
           },
         ]
       }
+      v_staff_advances_outstanding: {
+        Row: {
+          advance_count: number | null
+          full_name: string | null
+          oldest_advance_date: string | null
+          outstanding_php: number | null
+          role: string | null
+          staff_id: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "staff_advances_staff_id_fkey"
+            columns: ["staff_id"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Functions: {
       bridge_replay_summary: {
         Args: { p_end: string; p_start: string }
+        Returns: Json
+      }
+      cash_drawer_state: {
+        Args: { p_business_date: string; p_shift_id: string }
         Returns: Json
       }
       coa_account_has_open_period_postings: {
@@ -2874,6 +3298,10 @@ export type Database = {
       coa_uuid_for_code: { Args: { p_code: string }; Returns: string }
       commit_hmo_history_run: { Args: { p_run_id: string }; Returns: Json }
       current_patient_id: { Args: never; Returns: string }
+      eod_lock_check: {
+        Args: { p_business_date: string; p_shift_id: string }
+        Returns: undefined
+      }
       generate_drm_id: { Args: never; Returns: string }
       generate_visit_number: { Args: never; Returns: string }
       has_role: { Args: { roles: string[] }; Returns: boolean }
@@ -2894,6 +3322,13 @@ export type Database = {
       }
       resolve_ar_account: { Args: { p_is_hmo: boolean }; Returns: string }
       resolve_cash_account: { Args: { p_method: string }; Returns: string }
+      resolve_cash_adjustment_account: {
+        Args: { p_contra_account_id: string; p_kind: string }
+        Returns: {
+          account_id: string
+          used_suspense: boolean
+        }[]
+      }
       resolve_discount_account: {
         Args: { p_service_kind: string }
         Returns: string
@@ -2931,6 +3366,8 @@ export type Database = {
         | "reversal"
         | "hmo_claim_resolution"
         | "hmo_history_opening"
+        | "cash_adjustment"
+        | "eod_close"
       je_status: "draft" | "posted" | "reversed"
       period_status: "open" | "closed"
     }
@@ -3086,10 +3523,11 @@ export const Constants = {
         "reversal",
         "hmo_claim_resolution",
         "hmo_history_opening",
+        "cash_adjustment",
+        "eod_close",
       ],
       je_status: ["draft", "posted", "reversed"],
       period_status: ["open", "closed"],
     },
   },
 } as const
-
