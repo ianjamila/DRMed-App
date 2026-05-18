@@ -428,3 +428,62 @@ $$;
 create trigger trg_bridge_cash_adjustment_insert
   after insert on public.eod_cash_adjustments
   for each row execute function public.bridge_cash_adjustment_insert();
+
+-- ---- Bridge: cash adjustment VOID ------------------------------------------
+create or replace function public.bridge_cash_adjustment_void()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_original_je  uuid;
+  v_orig_number  text;
+  v_reversal_je  uuid;
+begin
+  select id, entry_number into v_original_je, v_orig_number
+    from public.journal_entries
+    where source_kind = 'cash_adjustment'
+      and source_id = NEW.id
+      and status = 'posted'
+    for update;
+  if v_original_je is null then
+    return NEW;
+  end if;
+
+  insert into public.journal_entries (
+    posting_date, description, status, source_kind, source_id, reverses, created_by
+  )
+  values (
+    NEW.voided_at::date,
+    'Reversal of ' || v_orig_number || ': ' || coalesce(NEW.void_reason, '(no reason)'),
+    'draft',
+    'reversal',
+    null,
+    v_original_je,
+    NEW.voided_by
+  )
+  returning id into v_reversal_je;
+
+  insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
+  select v_reversal_je, account_id, credit_php, debit_php, line_order
+    from public.journal_lines
+    where entry_id = v_original_je
+    order by line_order;
+
+  update public.journal_entries set status = 'posted' where id = v_reversal_je;
+
+  update public.journal_entries
+    set status = 'reversed',
+        reversed_by = v_reversal_je
+    where id = v_original_je;
+
+  return NEW;
+end;
+$$;
+
+create trigger trg_bridge_cash_adjustment_void
+  after update on public.eod_cash_adjustments
+  for each row
+  when (OLD.voided_at is null and NEW.voided_at is not null)
+  execute function public.bridge_cash_adjustment_void();
