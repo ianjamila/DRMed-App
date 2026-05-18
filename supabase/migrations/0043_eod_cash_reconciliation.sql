@@ -259,3 +259,41 @@ create policy "eod_close_records: admin update"
   for update to authenticated
   using (public.has_role(array['admin']))
   with check (public.has_role(array['admin']));
+
+-- ---- staff_advances --------------------------------------------------------
+-- Receivable subledger maintained by the staff_advance_sync trigger.
+-- Application code in 12.C never INSERTs here directly.
+create table public.staff_advances (
+  id                       uuid primary key default gen_random_uuid(),
+  staff_id                 uuid not null references public.staff_profiles(id),
+  source_adjustment_id     uuid unique not null references public.eod_cash_adjustments(id) on delete restrict,
+  business_date            date not null,
+  original_amount_php      numeric(14,2) not null check (original_amount_php > 0),
+  outstanding_balance_php  numeric(14,2) not null check (outstanding_balance_php >= 0),
+  status                   text not null default 'outstanding'
+                             check (status in ('outstanding','settled','voided','written_off')),
+  notes                    text,
+  created_at               timestamptz not null default now(),
+  updated_at               timestamptz not null default now()
+);
+
+create trigger trg_staff_advances_updated_at
+  before update on public.staff_advances
+  for each row execute function public.touch_updated_at();
+
+create index idx_staff_advances_staff_outstanding
+  on public.staff_advances (staff_id)
+  where status = 'outstanding';
+
+alter table public.staff_advances enable row level security;
+
+create policy "staff_advances: admin all"
+  on public.staff_advances
+  for all to authenticated
+  using (public.has_role(array['admin']))
+  with check (public.has_role(array['admin']));
+
+create policy "staff_advances: reception read"
+  on public.staff_advances
+  for select to authenticated
+  using (public.has_role(array['reception','admin']));
