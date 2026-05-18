@@ -1180,3 +1180,31 @@ $$;
 create trigger trg_ot_pay_requires_slip
   before insert or update on public.payroll_employee_runs
   for each row execute function public.ot_pay_requires_slip();
+
+-- ---- Guard P0024: staff_advance settlement caps at outstanding ----------
+create or replace function public.staff_advance_settlement_within_outstanding()
+returns trigger
+language plpgsql as $$
+declare
+  v_outstanding numeric(12,2);
+  v_staff_id uuid;
+begin
+  if NEW.staff_advance_settlement_php <= 0 then return NEW; end if;
+  select sp.id into v_staff_id
+    from public.employees e join public.staff_profiles sp on sp.id = e.staff_profile_id
+    where e.id = NEW.employee_id;
+  select coalesce(sum(outstanding_balance_php), 0) into v_outstanding
+    from public.staff_advances
+    where staff_id = v_staff_id and status = 'outstanding';
+  if NEW.staff_advance_settlement_php > v_outstanding then
+    raise exception 'Settlement % exceeds outstanding advance balance %.',
+      NEW.staff_advance_settlement_php, v_outstanding
+      using errcode = 'P0024';
+  end if;
+  return NEW;
+end;
+$$;
+
+create trigger trg_staff_advance_settlement_within_outstanding
+  before insert or update on public.payroll_employee_runs
+  for each row execute function public.staff_advance_settlement_within_outstanding();
