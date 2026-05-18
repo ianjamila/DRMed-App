@@ -153,3 +153,72 @@ create trigger trg_payroll_runs_updated_at before update on public.payroll_runs
 alter table public.payroll_runs enable row level security;
 create policy "payroll_runs: admin all" on public.payroll_runs for all to authenticated
   using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
+
+-- ---- payroll_employee_runs ------------------------------------------------
+create table public.payroll_employee_runs (
+  id                              uuid primary key default gen_random_uuid(),
+  run_id                          uuid not null references public.payroll_runs(id) on delete cascade,
+  employee_id                     uuid not null references public.employees(id),
+  -- Attendance summary
+  scheduled_days                  int not null default 0,
+  days_present                    int not null default 0,
+  days_unpaid_absent              int not null default 0,
+  days_vl_used                    int not null default 0,
+  days_sl_used                    int not null default 0,
+  days_regular_holiday_worked     int not null default 0,
+  days_regular_holiday_unworked   int not null default 0,
+  days_special_holiday_worked     int not null default 0,
+  days_special_holiday_unworked   int not null default 0,
+  minutes_late_total              int not null default 0,
+  tardiness_count                 int not null default 0,
+  missing_punch_days              int not null default 0,
+  ot_overage_unpaid_minutes_total int not null default 0,
+  -- Earnings (currency)
+  basic_pay_php                   numeric(12,2) not null default 0,
+  allowances_total_php            numeric(12,2) not null default 0,
+  ot_pay_php                      numeric(12,2) not null default 0,
+  night_diff_pay_php              numeric(12,2) not null default 0,
+  holiday_pay_php                 numeric(12,2) not null default 0,
+  incentives_total_php            numeric(12,2) not null default 0,
+  perfect_attendance_bonus_php    numeric(12,2) not null default 0,
+  thirteenth_month_accrual_php    numeric(12,2) not null default 0,
+  thirteenth_month_payout_php     numeric(12,2) not null default 0,
+  gross_pay_php                   numeric(12,2) not null default 0,
+  -- Deductions (currency)
+  sss_ee_php                      numeric(12,2) not null default 0,
+  sss_er_php                      numeric(12,2) not null default 0,
+  philhealth_ee_php               numeric(12,2) not null default 0,
+  philhealth_er_php               numeric(12,2) not null default 0,
+  pagibig_ee_php                  numeric(12,2) not null default 0,
+  pagibig_er_php                  numeric(12,2) not null default 0,
+  wt_compensation_php             numeric(12,2) not null default 0,
+  tardiness_deduction_php         numeric(12,2) not null default 0,
+  staff_advance_settlement_php    numeric(12,2) not null default 0,
+  other_deductions_total_php      numeric(12,2) not null default 0,
+  -- Final
+  net_pay_php                     numeric(12,2) not null default 0,
+  -- Payout
+  payment_method_used             text check (payment_method_used in ('cash','bank')),
+  payout_status                   text not null default 'pending'
+                                    check (payout_status in ('pending','paid','voided')),
+  paid_at                         timestamptz,
+  paid_by                         uuid references public.staff_profiles(id),
+  payout_je_id                    uuid references public.journal_entries(id),
+  payout_cash_adjustment_id       uuid references public.eod_cash_adjustments(id),
+  payslip_file_path               text,
+  payslip_generated_at            timestamptz,
+  created_at                      timestamptz not null default now(),
+  updated_at                      timestamptz not null default now(),
+  constraint payroll_employee_runs_unique_per_run unique (run_id, employee_id),
+  constraint payroll_employee_runs_net_nonneg check (net_pay_php >= 0)
+);
+create trigger trg_payroll_employee_runs_updated_at before update on public.payroll_employee_runs
+  for each row execute function public.touch_updated_at();
+create index idx_payroll_employee_runs_employee on public.payroll_employee_runs (employee_id, run_id);
+create index idx_payroll_employee_runs_payout_pending on public.payroll_employee_runs (run_id)
+  where payout_status = 'pending';
+alter table public.payroll_employee_runs enable row level security;
+create policy "payroll_employee_runs: admin all" on public.payroll_employee_runs for all to authenticated
+  using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
+create policy "payroll_employee_runs: self read" on public.payroll_employee_runs for select to authenticated
+  using (employee_id in (select id from public.employees where staff_profile_id = auth.uid()));
