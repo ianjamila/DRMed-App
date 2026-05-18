@@ -223,3 +223,91 @@ export const commitRunInput = z.object({
 export const discardRunInput = z.object({
   run_id: z.string().uuid(),
 });
+
+// ============================================================
+// 12.C — Daily cash reconciliation schemas
+// ============================================================
+
+const CashAdjustmentKindEnum = z.enum([
+  "petty_cash",
+  "salary_advance",
+  "courier",
+  "other_payout",
+  "float_topup",
+  "float_pullout",
+]);
+
+export const RecordCashAdjustmentSchema = z
+  .object({
+    business_date: z
+      .string()
+      .refine(isOnOrBeforeTodayManila, "business_date must be a date on or before today"),
+    shift_id: z.string().uuid(),
+    kind: CashAdjustmentKindEnum,
+    amount_php: z.coerce.number().positive().max(1_000_000),
+    payee: z.string().trim().max(120).nullable().optional(),
+    payee_staff_id: z.string().uuid().nullable().optional(),
+    contra_account_id: z.string().uuid().nullable().optional(),
+    notes: z.string().trim().max(500).nullable().optional(),
+  })
+  .refine(
+    (v) => v.kind !== "salary_advance" || !!v.payee_staff_id,
+    { message: "Salary advance requires a staff member", path: ["payee_staff_id"] },
+  );
+export type RecordCashAdjustmentInput = z.infer<typeof RecordCashAdjustmentSchema>;
+
+export const VoidCashAdjustmentSchema = z.object({
+  id: z.string().uuid(),
+  void_reason: z.string().trim().min(1, "Reason is required.").max(500),
+});
+export type VoidCashAdjustmentInput = z.infer<typeof VoidCashAdjustmentSchema>;
+
+export const CloseEodSchema = z
+  .object({
+    business_date: z
+      .string()
+      .refine(isOnOrBeforeTodayManila, "business_date must be a date on or before today"),
+    shift_id: z.string().uuid(),
+    counted_cash_php: z.coerce.number().min(0).max(10_000_000),
+    variance_reason: z.string().trim().max(1000).nullable().optional(),
+  });
+export type CloseEodInput = z.infer<typeof CloseEodSchema>;
+
+export const ReopenEodSchema = z.object({
+  close_id: z.string().uuid(),
+  reopen_reason: z.string().trim().min(1, "Reason is required.").max(1000),
+});
+export type ReopenEodInput = z.infer<typeof ReopenEodSchema>;
+
+export const UpdateCashAdjustmentRoutingSchema = z.object({
+  kind: CashAdjustmentKindEnum,
+  account_id: z.string().uuid(),
+  requires_user_choice: z.coerce.boolean(),
+  notes: z.string().trim().max(500).nullable().optional(),
+});
+export type UpdateCashAdjustmentRoutingInput = z.infer<typeof UpdateCashAdjustmentRoutingSchema>;
+
+export const UpdateDefaultChangeFundSchema = z.object({
+  amount_php: z.coerce.number().min(0).max(1_000_000),
+});
+export type UpdateDefaultChangeFundInput = z.infer<typeof UpdateDefaultChangeFundSchema>;
+
+export const CashShiftCreateSchema = z.object({
+  code: z
+    .string()
+    .trim()
+    .min(2)
+    .max(20)
+    .regex(/^[a-z0-9_]+$/, "lowercase letters, digits, underscore only"),
+  label: z.string().trim().min(1).max(60),
+  sort_order: z.coerce.number().int().min(0).default(0),
+});
+export type CashShiftCreateInput = z.infer<typeof CashShiftCreateSchema>;
+
+export const CashShiftUpdateSchema = z.object({
+  id: z.string().uuid(),
+  label: z.string().trim().min(1).max(60).optional(),
+  is_active: z.coerce.boolean().optional(),
+  sort_order: z.coerce.number().int().min(0).optional(),
+});
+export type CashShiftUpdateInput = z.infer<typeof CashShiftUpdateSchema>;
