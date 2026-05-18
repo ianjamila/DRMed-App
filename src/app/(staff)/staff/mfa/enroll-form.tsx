@@ -83,7 +83,7 @@ export function EnrollForm({ role }: Props) {
 
       <div className="mt-4 flex justify-center rounded-lg bg-white p-3">
         <Image
-          src={enroll.qrCode}
+          src={enroll.qrCode.trimEnd()}
           alt="TOTP QR code"
           width={200}
           height={200}
