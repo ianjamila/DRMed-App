@@ -318,3 +318,19 @@ create policy "payroll_ot_slips: admin all" on public.payroll_ot_slips for all t
   using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
 create policy "payroll_ot_slips: self read" on public.payroll_ot_slips for select to authenticated
   using (employee_id in (select id from public.employees where staff_profile_id = auth.uid()));
+
+-- ---- payroll_dtr_imports --------------------------------------------------
+create table public.payroll_dtr_imports (
+  id                  uuid primary key default gen_random_uuid(),
+  period_id           uuid not null references public.payroll_periods(id),
+  uploaded_at         timestamptz not null default now(),
+  uploaded_by         uuid not null references public.staff_profiles(id),
+  filename            text,
+  raw_csv_text        text not null,
+  parsed_rows_count   int not null,
+  parse_errors        jsonb,
+  notes               text
+);
+alter table public.payroll_dtr_imports enable row level security;
+create policy "payroll_dtr_imports: admin all" on public.payroll_dtr_imports for all to authenticated
+  using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
