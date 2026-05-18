@@ -520,6 +520,302 @@ export type Database = {
           },
         ]
       }
+      employee_allowances: {
+        Row: {
+          created_at: string
+          daily_amount_php: number
+          effective_from: string
+          effective_to: string | null
+          employee_id: string
+          id: string
+          is_taxable: boolean
+          name: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          daily_amount_php: number
+          effective_from: string
+          effective_to?: string | null
+          employee_id: string
+          id?: string
+          is_taxable?: boolean
+          name: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          daily_amount_php?: number
+          effective_from?: string
+          effective_to?: string | null
+          employee_id?: string
+          id?: string
+          is_taxable?: boolean
+          name?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "employee_allowances_employee_id_fkey"
+            columns: ["employee_id"]
+            isOneToOne: false
+            referencedRelation: "employees"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      employee_leave_records: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          days_delta: number
+          effective_date: string
+          employee_id: string
+          expiry_date: string | null
+          id: string
+          kind: string
+          period_id: string | null
+          reason: string | null
+          record_kind: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          days_delta: number
+          effective_date: string
+          employee_id: string
+          expiry_date?: string | null
+          id?: string
+          kind: string
+          period_id?: string | null
+          reason?: string | null
+          record_kind: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          days_delta?: number
+          effective_date?: string
+          employee_id?: string
+          expiry_date?: string | null
+          id?: string
+          kind?: string
+          period_id?: string | null
+          reason?: string | null
+          record_kind?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "employee_leave_records_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "employee_leave_records_employee_id_fkey"
+            columns: ["employee_id"]
+            isOneToOne: false
+            referencedRelation: "employees"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "employee_leave_records_period_id_fkey"
+            columns: ["period_id"]
+            isOneToOne: false
+            referencedRelation: "payroll_periods"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      employee_loans: {
+        Row: {
+          amortization_per_period_php: number
+          approval_notes: string | null
+          approved_at: string | null
+          approved_by: string | null
+          created_at: string
+          disbursed_at: string | null
+          disbursed_by: string | null
+          employee_id: string
+          id: string
+          notes: string | null
+          outstanding_balance_php: number
+          principal_php: number
+          requested_at: string
+          requested_by: string | null
+          start_period_id: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          amortization_per_period_php: number
+          approval_notes?: string | null
+          approved_at?: string | null
+          approved_by?: string | null
+          created_at?: string
+          disbursed_at?: string | null
+          disbursed_by?: string | null
+          employee_id: string
+          id?: string
+          notes?: string | null
+          outstanding_balance_php: number
+          principal_php: number
+          requested_at?: string
+          requested_by?: string | null
+          start_period_id?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          amortization_per_period_php?: number
+          approval_notes?: string | null
+          approved_at?: string | null
+          approved_by?: string | null
+          created_at?: string
+          disbursed_at?: string | null
+          disbursed_by?: string | null
+          employee_id?: string
+          id?: string
+          notes?: string | null
+          outstanding_balance_php?: number
+          principal_php?: number
+          requested_at?: string
+          requested_by?: string | null
+          start_period_id?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "employee_loans_approved_by_fkey"
+            columns: ["approved_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "employee_loans_disbursed_by_fkey"
+            columns: ["disbursed_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "employee_loans_employee_id_fkey"
+            columns: ["employee_id"]
+            isOneToOne: false
+            referencedRelation: "employees"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "employee_loans_requested_by_fkey"
+            columns: ["requested_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "employee_loans_start_period_id_fkey"
+            columns: ["start_period_id"]
+            isOneToOne: false
+            referencedRelation: "payroll_periods"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      employees: {
+        Row: {
+          bank_account_holder_name: string | null
+          bank_account_number: string | null
+          bank_name: string | null
+          basic_daily_rate_php: number
+          civil_status: string | null
+          created_at: string
+          dtr_external_id: string | null
+          employee_number: string | null
+          hire_date: string
+          id: string
+          is_active: boolean
+          monthly_salary_credit_php: number
+          notes: string | null
+          pagibig_number: string | null
+          payment_method: string
+          philhealth_number: string | null
+          regularization_date: string | null
+          rest_days: number[] | null
+          schedule_kind: string
+          sss_number: string | null
+          staff_profile_id: string
+          tax_status: string
+          termination_date: string | null
+          tin: string | null
+          updated_at: string
+        }
+        Insert: {
+          bank_account_holder_name?: string | null
+          bank_account_number?: string | null
+          bank_name?: string | null
+          basic_daily_rate_php: number
+          civil_status?: string | null
+          created_at?: string
+          dtr_external_id?: string | null
+          employee_number?: string | null
+          hire_date: string
+          id?: string
+          is_active?: boolean
+          monthly_salary_credit_php: number
+          notes?: string | null
+          pagibig_number?: string | null
+          payment_method?: string
+          philhealth_number?: string | null
+          regularization_date?: string | null
+          rest_days?: number[] | null
+          schedule_kind: string
+          sss_number?: string | null
+          staff_profile_id: string
+          tax_status?: string
+          termination_date?: string | null
+          tin?: string | null
+          updated_at?: string
+        }
+        Update: {
+          bank_account_holder_name?: string | null
+          bank_account_number?: string | null
+          bank_name?: string | null
+          basic_daily_rate_php?: number
+          civil_status?: string | null
+          created_at?: string
+          dtr_external_id?: string | null
+          employee_number?: string | null
+          hire_date?: string
+          id?: string
+          is_active?: boolean
+          monthly_salary_credit_php?: number
+          notes?: string | null
+          pagibig_number?: string | null
+          payment_method?: string
+          philhealth_number?: string | null
+          regularization_date?: string | null
+          rest_days?: number[] | null
+          schedule_kind?: string
+          sss_number?: string | null
+          staff_profile_id?: string
+          tax_status?: string
+          termination_date?: string | null
+          tin?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "employees_staff_profile_id_fkey"
+            columns: ["staff_profile_id"]
+            isOneToOne: true
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       eod_cash_adjustments: {
         Row: {
           amount_php: number
@@ -1886,6 +2182,696 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      payroll_contribution_brackets: {
+        Row: {
+          created_at: string
+          effective_from: string
+          effective_to: string | null
+          employee_share_php: number
+          employer_share_php: number
+          id: string
+          kind: string
+          monthly_salary_credit_max_php: number
+          monthly_salary_credit_min_php: number
+          notes: string | null
+        }
+        Insert: {
+          created_at?: string
+          effective_from: string
+          effective_to?: string | null
+          employee_share_php: number
+          employer_share_php: number
+          id?: string
+          kind: string
+          monthly_salary_credit_max_php: number
+          monthly_salary_credit_min_php: number
+          notes?: string | null
+        }
+        Update: {
+          created_at?: string
+          effective_from?: string
+          effective_to?: string | null
+          employee_share_php?: number
+          employer_share_php?: number
+          id?: string
+          kind?: string
+          monthly_salary_credit_max_php?: number
+          monthly_salary_credit_min_php?: number
+          notes?: string | null
+        }
+        Relationships: []
+      }
+      payroll_deduction_lines: {
+        Row: {
+          amount_php: number
+          created_at: string
+          created_by: string | null
+          employee_run_id: string
+          id: string
+          kind: string
+          label: string
+          loan_id: string | null
+        }
+        Insert: {
+          amount_php: number
+          created_at?: string
+          created_by?: string | null
+          employee_run_id: string
+          id?: string
+          kind: string
+          label: string
+          loan_id?: string | null
+        }
+        Update: {
+          amount_php?: number
+          created_at?: string
+          created_by?: string | null
+          employee_run_id?: string
+          id?: string
+          kind?: string
+          label?: string
+          loan_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payroll_deduction_lines_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payroll_deduction_lines_employee_run_id_fkey"
+            columns: ["employee_run_id"]
+            isOneToOne: false
+            referencedRelation: "payroll_employee_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payroll_deduction_lines_loan_id_fkey"
+            columns: ["loan_id"]
+            isOneToOne: false
+            referencedRelation: "employee_loans"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      payroll_dtr_imports: {
+        Row: {
+          filename: string | null
+          id: string
+          notes: string | null
+          parse_errors: Json | null
+          parsed_rows_count: number
+          period_id: string
+          raw_csv_text: string
+          uploaded_at: string
+          uploaded_by: string
+        }
+        Insert: {
+          filename?: string | null
+          id?: string
+          notes?: string | null
+          parse_errors?: Json | null
+          parsed_rows_count: number
+          period_id: string
+          raw_csv_text: string
+          uploaded_at?: string
+          uploaded_by: string
+        }
+        Update: {
+          filename?: string | null
+          id?: string
+          notes?: string | null
+          parse_errors?: Json | null
+          parsed_rows_count?: number
+          period_id?: string
+          raw_csv_text?: string
+          uploaded_at?: string
+          uploaded_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payroll_dtr_imports_period_id_fkey"
+            columns: ["period_id"]
+            isOneToOne: false
+            referencedRelation: "payroll_periods"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payroll_dtr_imports_uploaded_by_fkey"
+            columns: ["uploaded_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      payroll_dtr_rows: {
+        Row: {
+          employee_id: string | null
+          external_id_raw: string
+          id: string
+          import_id: string
+          notes: string | null
+          source_row: Json
+          status: string
+          time_in: string | null
+          time_out: string | null
+          total_hours: number | null
+          work_date: string
+        }
+        Insert: {
+          employee_id?: string | null
+          external_id_raw: string
+          id?: string
+          import_id: string
+          notes?: string | null
+          source_row: Json
+          status?: string
+          time_in?: string | null
+          time_out?: string | null
+          total_hours?: number | null
+          work_date: string
+        }
+        Update: {
+          employee_id?: string | null
+          external_id_raw?: string
+          id?: string
+          import_id?: string
+          notes?: string | null
+          source_row?: Json
+          status?: string
+          time_in?: string | null
+          time_out?: string | null
+          total_hours?: number | null
+          work_date?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payroll_dtr_rows_employee_id_fkey"
+            columns: ["employee_id"]
+            isOneToOne: false
+            referencedRelation: "employees"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payroll_dtr_rows_import_id_fkey"
+            columns: ["import_id"]
+            isOneToOne: false
+            referencedRelation: "payroll_dtr_imports"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      payroll_earning_lines: {
+        Row: {
+          amount_php: number
+          created_at: string
+          created_by: string | null
+          employee_run_id: string
+          id: string
+          kind: string
+          label: string
+          quantity: number | null
+          rate_php: number | null
+          ref_id: string | null
+        }
+        Insert: {
+          amount_php: number
+          created_at?: string
+          created_by?: string | null
+          employee_run_id: string
+          id?: string
+          kind: string
+          label: string
+          quantity?: number | null
+          rate_php?: number | null
+          ref_id?: string | null
+        }
+        Update: {
+          amount_php?: number
+          created_at?: string
+          created_by?: string | null
+          employee_run_id?: string
+          id?: string
+          kind?: string
+          label?: string
+          quantity?: number | null
+          rate_php?: number | null
+          ref_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payroll_earning_lines_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payroll_earning_lines_employee_run_id_fkey"
+            columns: ["employee_run_id"]
+            isOneToOne: false
+            referencedRelation: "payroll_employee_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      payroll_employee_runs: {
+        Row: {
+          allowances_total_php: number
+          basic_pay_php: number
+          created_at: string
+          days_present: number
+          days_regular_holiday_unworked: number
+          days_regular_holiday_worked: number
+          days_sl_used: number
+          days_special_holiday_unworked: number
+          days_special_holiday_worked: number
+          days_unpaid_absent: number
+          days_vl_used: number
+          employee_id: string
+          gross_pay_php: number
+          holiday_pay_php: number
+          id: string
+          incentives_total_php: number
+          minutes_late_total: number
+          missing_punch_days: number
+          net_pay_php: number
+          night_diff_pay_php: number
+          ot_overage_unpaid_minutes_total: number
+          ot_pay_php: number
+          other_deductions_total_php: number
+          pagibig_ee_php: number
+          pagibig_er_php: number
+          paid_at: string | null
+          paid_by: string | null
+          payment_method_used: string | null
+          payout_cash_adjustment_id: string | null
+          payout_je_id: string | null
+          payout_status: string
+          payslip_file_path: string | null
+          payslip_generated_at: string | null
+          perfect_attendance_bonus_php: number
+          philhealth_ee_php: number
+          philhealth_er_php: number
+          run_id: string
+          scheduled_days: number
+          sss_ee_php: number
+          sss_er_php: number
+          staff_advance_settlement_php: number
+          tardiness_count: number
+          tardiness_deduction_php: number
+          thirteenth_month_accrual_php: number
+          thirteenth_month_payout_php: number
+          updated_at: string
+          wt_compensation_php: number
+        }
+        Insert: {
+          allowances_total_php?: number
+          basic_pay_php?: number
+          created_at?: string
+          days_present?: number
+          days_regular_holiday_unworked?: number
+          days_regular_holiday_worked?: number
+          days_sl_used?: number
+          days_special_holiday_unworked?: number
+          days_special_holiday_worked?: number
+          days_unpaid_absent?: number
+          days_vl_used?: number
+          employee_id: string
+          gross_pay_php?: number
+          holiday_pay_php?: number
+          id?: string
+          incentives_total_php?: number
+          minutes_late_total?: number
+          missing_punch_days?: number
+          net_pay_php?: number
+          night_diff_pay_php?: number
+          ot_overage_unpaid_minutes_total?: number
+          ot_pay_php?: number
+          other_deductions_total_php?: number
+          pagibig_ee_php?: number
+          pagibig_er_php?: number
+          paid_at?: string | null
+          paid_by?: string | null
+          payment_method_used?: string | null
+          payout_cash_adjustment_id?: string | null
+          payout_je_id?: string | null
+          payout_status?: string
+          payslip_file_path?: string | null
+          payslip_generated_at?: string | null
+          perfect_attendance_bonus_php?: number
+          philhealth_ee_php?: number
+          philhealth_er_php?: number
+          run_id: string
+          scheduled_days?: number
+          sss_ee_php?: number
+          sss_er_php?: number
+          staff_advance_settlement_php?: number
+          tardiness_count?: number
+          tardiness_deduction_php?: number
+          thirteenth_month_accrual_php?: number
+          thirteenth_month_payout_php?: number
+          updated_at?: string
+          wt_compensation_php?: number
+        }
+        Update: {
+          allowances_total_php?: number
+          basic_pay_php?: number
+          created_at?: string
+          days_present?: number
+          days_regular_holiday_unworked?: number
+          days_regular_holiday_worked?: number
+          days_sl_used?: number
+          days_special_holiday_unworked?: number
+          days_special_holiday_worked?: number
+          days_unpaid_absent?: number
+          days_vl_used?: number
+          employee_id?: string
+          gross_pay_php?: number
+          holiday_pay_php?: number
+          id?: string
+          incentives_total_php?: number
+          minutes_late_total?: number
+          missing_punch_days?: number
+          net_pay_php?: number
+          night_diff_pay_php?: number
+          ot_overage_unpaid_minutes_total?: number
+          ot_pay_php?: number
+          other_deductions_total_php?: number
+          pagibig_ee_php?: number
+          pagibig_er_php?: number
+          paid_at?: string | null
+          paid_by?: string | null
+          payment_method_used?: string | null
+          payout_cash_adjustment_id?: string | null
+          payout_je_id?: string | null
+          payout_status?: string
+          payslip_file_path?: string | null
+          payslip_generated_at?: string | null
+          perfect_attendance_bonus_php?: number
+          philhealth_ee_php?: number
+          philhealth_er_php?: number
+          run_id?: string
+          scheduled_days?: number
+          sss_ee_php?: number
+          sss_er_php?: number
+          staff_advance_settlement_php?: number
+          tardiness_count?: number
+          tardiness_deduction_php?: number
+          thirteenth_month_accrual_php?: number
+          thirteenth_month_payout_php?: number
+          updated_at?: string
+          wt_compensation_php?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payroll_employee_runs_employee_id_fkey"
+            columns: ["employee_id"]
+            isOneToOne: false
+            referencedRelation: "employees"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payroll_employee_runs_paid_by_fkey"
+            columns: ["paid_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payroll_employee_runs_payout_cash_adjustment_id_fkey"
+            columns: ["payout_cash_adjustment_id"]
+            isOneToOne: false
+            referencedRelation: "eod_cash_adjustments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payroll_employee_runs_payout_je_id_fkey"
+            columns: ["payout_je_id"]
+            isOneToOne: false
+            referencedRelation: "journal_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payroll_employee_runs_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "payroll_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      payroll_holidays: {
+        Row: {
+          created_at: string
+          date: string
+          id: string
+          is_active: boolean
+          kind: string
+          name: string
+          notes: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          date: string
+          id?: string
+          is_active?: boolean
+          kind: string
+          name: string
+          notes?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          date?: string
+          id?: string
+          is_active?: boolean
+          kind?: string
+          name?: string
+          notes?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      payroll_ot_slips: {
+        Row: {
+          decided_at: string | null
+          decided_by: string | null
+          decision_notes: string | null
+          employee_id: string
+          hours_requested: number
+          id: string
+          reason: string | null
+          requested_at: string
+          status: string
+          work_date: string
+        }
+        Insert: {
+          decided_at?: string | null
+          decided_by?: string | null
+          decision_notes?: string | null
+          employee_id: string
+          hours_requested: number
+          id?: string
+          reason?: string | null
+          requested_at?: string
+          status?: string
+          work_date: string
+        }
+        Update: {
+          decided_at?: string | null
+          decided_by?: string | null
+          decision_notes?: string | null
+          employee_id?: string
+          hours_requested?: number
+          id?: string
+          reason?: string | null
+          requested_at?: string
+          status?: string
+          work_date?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payroll_ot_slips_decided_by_fkey"
+            columns: ["decided_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payroll_ot_slips_employee_id_fkey"
+            columns: ["employee_id"]
+            isOneToOne: false
+            referencedRelation: "employees"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      payroll_periods: {
+        Row: {
+          closed_at: string | null
+          closed_by: string | null
+          created_at: string
+          id: string
+          pay_date: string
+          period_end: string
+          period_start: string
+          status: string
+        }
+        Insert: {
+          closed_at?: string | null
+          closed_by?: string | null
+          created_at?: string
+          id?: string
+          pay_date: string
+          period_end: string
+          period_start: string
+          status?: string
+        }
+        Update: {
+          closed_at?: string | null
+          closed_by?: string | null
+          created_at?: string
+          id?: string
+          pay_date?: string
+          period_end?: string
+          period_start?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payroll_periods_closed_by_fkey"
+            columns: ["closed_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      payroll_runs: {
+        Row: {
+          computed_at: string | null
+          created_at: string
+          finalised_at: string | null
+          finalised_by: string | null
+          gross_up_je_id: string | null
+          id: string
+          notes: string | null
+          period_id: string
+          status: string
+          thirteenth_payout_je_id: string | null
+          updated_at: string
+          void_reason: string | null
+          voided_at: string | null
+          voided_by: string | null
+        }
+        Insert: {
+          computed_at?: string | null
+          created_at?: string
+          finalised_at?: string | null
+          finalised_by?: string | null
+          gross_up_je_id?: string | null
+          id?: string
+          notes?: string | null
+          period_id: string
+          status?: string
+          thirteenth_payout_je_id?: string | null
+          updated_at?: string
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
+        }
+        Update: {
+          computed_at?: string | null
+          created_at?: string
+          finalised_at?: string | null
+          finalised_by?: string | null
+          gross_up_je_id?: string | null
+          id?: string
+          notes?: string | null
+          period_id?: string
+          status?: string
+          thirteenth_payout_je_id?: string | null
+          updated_at?: string
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payroll_runs_finalised_by_fkey"
+            columns: ["finalised_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payroll_runs_gross_up_je_id_fkey"
+            columns: ["gross_up_je_id"]
+            isOneToOne: false
+            referencedRelation: "journal_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payroll_runs_period_id_fkey"
+            columns: ["period_id"]
+            isOneToOne: true
+            referencedRelation: "payroll_periods"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payroll_runs_thirteenth_payout_je_id_fkey"
+            columns: ["thirteenth_payout_je_id"]
+            isOneToOne: false
+            referencedRelation: "journal_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payroll_runs_voided_by_fkey"
+            columns: ["voided_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      payroll_wt_brackets: {
+        Row: {
+          base_tax_php: number
+          effective_from: string
+          effective_to: string | null
+          id: string
+          marginal_rate: number
+          notes: string | null
+          taxable_max_php: number | null
+          taxable_min_php: number
+        }
+        Insert: {
+          base_tax_php: number
+          effective_from: string
+          effective_to?: string | null
+          id?: string
+          marginal_rate: number
+          notes?: string | null
+          taxable_max_php?: number | null
+          taxable_min_php: number
+        }
+        Update: {
+          base_tax_php?: number
+          effective_from?: string
+          effective_to?: string | null
+          id?: string
+          marginal_rate?: number
+          notes?: string | null
+          taxable_max_php?: number | null
+          taxable_min_php?: number
+        }
+        Relationships: []
       }
       physician_schedule_overrides: {
         Row: {
@@ -3283,6 +4269,23 @@ export type Database = {
       }
     }
     Functions: {
+      apply_leave_entitlements: {
+        Args: { p_year: number }
+        Returns: {
+          days_granted: number
+          employee_id: string
+          kind: string
+          notes: string
+        }[]
+      }
+      apply_leave_expiry: {
+        Args: { p_year: number }
+        Returns: {
+          days_expired: number
+          employee_id: string
+          kind: string
+        }[]
+      }
       bridge_replay_summary: {
         Args: { p_end: string; p_start: string }
         Returns: Json
@@ -3298,6 +4301,10 @@ export type Database = {
       coa_uuid_for_code: { Args: { p_code: string }; Returns: string }
       commit_hmo_history_run: { Args: { p_run_id: string }; Returns: Json }
       current_patient_id: { Args: never; Returns: string }
+      employee_leave_balance: {
+        Args: { p_as_of_date?: string; p_employee_id: string; p_kind: string }
+        Returns: number
+      }
       eod_lock_check: {
         Args: { p_business_date: string; p_shift_id: string }
         Returns: undefined
@@ -3368,6 +4375,7 @@ export type Database = {
         | "hmo_history_opening"
         | "cash_adjustment"
         | "eod_close"
+        | "payroll_13th_month_payout"
       je_status: "draft" | "posted" | "reversed"
       period_status: "open" | "closed"
     }
@@ -3525,9 +4533,11 @@ export const Constants = {
         "hmo_history_opening",
         "cash_adjustment",
         "eod_close",
+        "payroll_13th_month_payout",
       ],
       je_status: ["draft", "posted", "reversed"],
       period_status: ["open", "closed"],
     },
   },
 } as const
+
