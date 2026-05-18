@@ -24,3 +24,14 @@
 -- NEW CoA codes (idempotent seed): 2350 13th-Month Payable, 2360 Salaries
 -- Payable, 6121-6124 employer contribution sub-accounts.
 -- =============================================================================
+
+-- ---- Enum extensions ------------------------------------------------------
+-- Required by later bridge functions. PG 15 allows in-transaction visibility.
+alter type public.je_source_kind add value if not exists 'payroll_run';
+alter type public.je_source_kind add value if not exists 'payroll_13th_month_payout';
+
+-- Extend 12.C's eod_cash_adjustments.kind for cash payroll payouts.
+alter table public.eod_cash_adjustments drop constraint eod_cash_adjustments_kind_check;
+alter table public.eod_cash_adjustments add constraint eod_cash_adjustments_kind_check check (kind in (
+  'petty_cash','salary_advance','courier','other_payout','float_topup','float_pullout','salary_payout'
+));
