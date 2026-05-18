@@ -1090,7 +1090,11 @@ declare
   v_run_id uuid;
   v_any_paid boolean;
 begin
-  v_run_id := coalesce(NEW.id, OLD.id);
+  if TG_TABLE_NAME = 'payroll_employee_runs' then
+    v_run_id := coalesce(NEW.run_id, OLD.run_id);
+  else
+    v_run_id := coalesce(NEW.id, OLD.id);
+  end if;
   select exists(select 1 from public.payroll_employee_runs
     where run_id = v_run_id and payout_status = 'paid')
     into v_any_paid;
