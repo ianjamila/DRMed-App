@@ -108,3 +108,20 @@ create trigger trg_employee_allowances_updated_at before update on public.employ
 alter table public.employee_allowances enable row level security;
 create policy "employee_allowances: admin all" on public.employee_allowances for all to authenticated
   using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
+
+-- ---- payroll_periods ------------------------------------------------------
+create table public.payroll_periods (
+  id                  uuid primary key default gen_random_uuid(),
+  period_start        date not null,
+  period_end          date not null,
+  pay_date            date not null,
+  status              text not null default 'open' check (status in ('open','closed')),
+  created_at          timestamptz not null default now(),
+  closed_at           timestamptz,
+  closed_by           uuid references public.staff_profiles(id),
+  constraint payroll_periods_dates_consistent check (period_end >= period_start and pay_date >= period_end)
+);
+create unique index payroll_periods_unique_range on public.payroll_periods (period_start, period_end);
+alter table public.payroll_periods enable row level security;
+create policy "payroll_periods: admin all" on public.payroll_periods for all to authenticated
+  using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
