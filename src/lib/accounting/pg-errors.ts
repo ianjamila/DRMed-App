@@ -49,6 +49,14 @@ export function translatePgError(err: PgError): string {
       return err.message ?? "That import run no longer exists.";
     case "P0014":
       return err.message ?? "Can't commit — there are still rows with errors. Fix the workbook or resolve in the preview.";
+    case "P0015":
+      return err.message ?? "End of day is already closed for that date. Ask an admin to reopen first.";
+    case "P0017":
+      return err.message ?? "Cannot edit this cash adjustment after its journal entry has posted. Void and re-create instead.";
+    case "P0018":
+      return err.message ?? "Staff advance cannot go below zero.";
+    case "P0019":
+      return err.message ?? "That account is inactive. Pick a different one.";
     default:
       return err.message ?? "Database error. Please try again.";
   }
