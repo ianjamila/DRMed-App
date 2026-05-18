@@ -936,3 +936,64 @@ create trigger trg_bridge_payroll_payout_bank
   for each row
   when (OLD.payout_status is distinct from NEW.payout_status and NEW.payout_status = 'paid')
   execute function public.bridge_payroll_payout_bank();
+
+-- ---- Bridge: 13th-month annual payout (December Run #1 only) --------------
+-- Fires AFTER bridge_payroll_run_finalise. If the run's period covers Dec 1-15,
+-- posts a SEPARATE JE that flushes the year's 2350 balance into 2360 Salaries
+-- Payable. Each employee's payroll_employee_runs.thirteenth_month_payout_php
+-- column is set by the compute pipeline before this fires.
+create or replace function public.bridge_payroll_13th_month_payout()
+returns trigger
+language plpgsql security definer set search_path = public
+as $$
+declare
+  v_je_id uuid;
+  v_period record;
+  v_payout_total numeric(12,2);
+  v_user_id uuid := coalesce(current_setting('app.current_user_id', true)::uuid, NEW.finalised_by);
+begin
+  if NEW.status <> 'finalised' or OLD.status = 'finalised' then
+    return NEW;
+  end if;
+
+  select period_start, period_end into v_period
+    from public.payroll_periods where id = NEW.period_id;
+
+  -- Only Dec 1-15 cutoff triggers the year-end payout
+  if v_period.period_start <> make_date(extract(year from v_period.period_start)::int, 12, 1) then
+    return NEW;
+  end if;
+
+  select coalesce(sum(thirteenth_month_payout_php), 0) into v_payout_total
+    from public.payroll_employee_runs where run_id = NEW.id;
+
+  if v_payout_total <= 0 then
+    return NEW;
+  end if;
+
+  insert into public.journal_entries (posting_date, description, status, source_kind, source_id, created_by)
+  values (v_period.period_end,
+          format('13th-month annual payout · %s', extract(year from v_period.period_start)),
+          'draft',
+          'payroll_13th_month_payout',
+          NEW.id,
+          v_user_id)
+  returning id into v_je_id;
+
+  insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
+  values
+    (v_je_id, public.coa_uuid_for_code('2350'), v_payout_total, 0, 1),
+    (v_je_id, public.coa_uuid_for_code('2360'), 0, v_payout_total, 2);
+
+  update public.journal_entries set status = 'posted' where id = v_je_id;
+  update public.payroll_runs set thirteenth_payout_je_id = v_je_id where id = NEW.id;
+
+  return NEW;
+end;
+$$;
+
+create trigger trg_bridge_payroll_13th_month_payout
+  after update on public.payroll_runs
+  for each row
+  when (OLD.status is distinct from NEW.status and NEW.status = 'finalised')
+  execute function public.bridge_payroll_13th_month_payout();
