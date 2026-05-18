@@ -1128,3 +1128,23 @@ create trigger trg_payroll_runs_locked_after_payout
 create trigger trg_payroll_employee_runs_locked_after_payout
   before update on public.payroll_employee_runs
   for each row execute function public.payroll_run_locked_after_payout();
+
+-- ---- Guard P0022: employee must have a daily rate to be in a run ---------
+create or replace function public.employees_require_daily_rate()
+returns trigger
+language plpgsql as $$
+declare
+  v_rate numeric;
+begin
+  select basic_daily_rate_php into v_rate from public.employees where id = NEW.employee_id;
+  if v_rate is null or v_rate <= 0 then
+    raise exception 'Employee % has no positive basic_daily_rate_php; cannot enroll in payroll run.', NEW.employee_id
+      using errcode = 'P0022';
+  end if;
+  return NEW;
+end;
+$$;
+
+create trigger trg_employees_require_daily_rate
+  before insert on public.payroll_employee_runs
+  for each row execute function public.employees_require_daily_rate();
