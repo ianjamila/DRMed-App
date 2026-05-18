@@ -152,3 +152,55 @@ values
   ('float_topup',    public.coa_uuid_for_code('1020'), true,  'Source of the cash (bank withdrawal, owner cap, etc.). Default BPI.'),
   ('float_pullout',  public.coa_uuid_for_code('1020'), true,  'Destination of the cash (bank deposit, owner drawing). Default BPI.')
 on conflict (kind) do nothing;
+
+-- ---- eod_cash_adjustments --------------------------------------------------
+create table public.eod_cash_adjustments (
+  id                  uuid primary key default gen_random_uuid(),
+  business_date       date not null,
+  shift_id            uuid not null references public.cash_shifts(id),
+  kind                text not null check (kind in (
+    'petty_cash', 'salary_advance', 'courier', 'other_payout',
+    'float_topup', 'float_pullout'
+  )),
+  amount_php          numeric(14,2) not null check (amount_php > 0),
+  payee               text,
+  payee_staff_id      uuid references public.staff_profiles(id),
+  contra_account_id   uuid references public.chart_of_accounts(id),
+  notes               text,
+  recorded_by         uuid not null references public.staff_profiles(id),
+  recorded_at         timestamptz not null default now(),
+  voided_at           timestamptz,
+  voided_by           uuid references public.staff_profiles(id),
+  void_reason         text,
+  constraint eod_cash_adjustments_salary_advance_has_staff
+    check (kind != 'salary_advance' or payee_staff_id is not null),
+  constraint eod_cash_adjustments_void_consistency
+    check ((voided_at is null) = (voided_by is null))
+);
+
+create index idx_eod_cash_adjustments_date
+  on public.eod_cash_adjustments (business_date, shift_id);
+
+create index idx_eod_cash_adjustments_kind
+  on public.eod_cash_adjustments (kind);
+
+create index idx_eod_cash_adjustments_active
+  on public.eod_cash_adjustments (business_date, shift_id)
+  where voided_at is null;
+
+create index idx_eod_cash_adjustments_staff
+  on public.eod_cash_adjustments (payee_staff_id)
+  where payee_staff_id is not null;
+
+alter table public.eod_cash_adjustments enable row level security;
+
+create policy "eod_cash_adjustments: staff read"
+  on public.eod_cash_adjustments
+  for select to authenticated
+  using (public.has_role(array['reception','admin']));
+
+create policy "eod_cash_adjustments: staff write"
+  on public.eod_cash_adjustments
+  for all to authenticated
+  using (public.has_role(array['reception','admin']))
+  with check (public.has_role(array['reception','admin']));
