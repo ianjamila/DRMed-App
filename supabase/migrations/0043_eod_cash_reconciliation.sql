@@ -550,3 +550,66 @@ create trigger trg_bridge_eod_close
   for each row
   when (NEW.status = 'closed' and NEW.variance_php <> 0)
   execute function public.bridge_eod_close();
+
+-- ---- staff_advance_sync ----------------------------------------------------
+-- Mirrors salary_advance cash adjustments into the staff_advances receivable
+-- subledger. INSERT creates the row; void zeros the balance.
+create or replace function public.staff_advance_sync_insert()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if NEW.kind != 'salary_advance' then
+    return NEW;
+  end if;
+
+  insert into public.staff_advances (
+    staff_id, source_adjustment_id, business_date,
+    original_amount_php, outstanding_balance_php, status
+  )
+  values (
+    NEW.payee_staff_id,
+    NEW.id,
+    NEW.business_date,
+    NEW.amount_php,
+    NEW.amount_php,
+    'outstanding'
+  )
+  on conflict (source_adjustment_id) do nothing;
+
+  return NEW;
+end;
+$$;
+
+create or replace function public.staff_advance_sync_void()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if NEW.kind != 'salary_advance' then
+    return NEW;
+  end if;
+
+  update public.staff_advances
+    set outstanding_balance_php = 0,
+        status = 'voided',
+        updated_at = now()
+    where source_adjustment_id = NEW.id;
+
+  return NEW;
+end;
+$$;
+
+create trigger trg_staff_advance_sync_insert
+  after insert on public.eod_cash_adjustments
+  for each row execute function public.staff_advance_sync_insert();
+
+create trigger trg_staff_advance_sync_void
+  after update on public.eod_cash_adjustments
+  for each row
+  when (OLD.voided_at is null and NEW.voided_at is not null)
+  execute function public.staff_advance_sync_void();
