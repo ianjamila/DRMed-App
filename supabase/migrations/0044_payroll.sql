@@ -1208,3 +1208,23 @@ $$;
 create trigger trg_staff_advance_settlement_within_outstanding
   before insert or update on public.payroll_employee_runs
   for each row execute function public.staff_advance_settlement_within_outstanding();
+
+-- ---- Guard P0026: no INSERT into payroll_employee_runs after finalise ---
+create or replace function public.payroll_employee_runs_no_insert_after_finalise()
+returns trigger
+language plpgsql as $$
+declare
+  v_status text;
+begin
+  select status into v_status from public.payroll_runs where id = NEW.run_id;
+  if v_status in ('finalised','voided') then
+    raise exception 'Cannot add an employee_run to a % run. Void and reopen first.', v_status
+      using errcode = 'P0026';
+  end if;
+  return NEW;
+end;
+$$;
+
+create trigger trg_payroll_employee_runs_no_insert_after_finalise
+  before insert on public.payroll_employee_runs
+  for each row execute function public.payroll_employee_runs_no_insert_after_finalise();
