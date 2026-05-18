@@ -375,3 +375,22 @@ create policy "payroll_holidays: admin read" on public.payroll_holidays for sele
   using (public.has_role(array['admin']));
 create policy "payroll_holidays: admin write" on public.payroll_holidays for all to authenticated
   using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
+
+-- ---- payroll_contribution_brackets ----------------------------------------
+create table public.payroll_contribution_brackets (
+  id                              uuid primary key default gen_random_uuid(),
+  kind                            text not null check (kind in ('sss','philhealth','pagibig')),
+  effective_from                  date not null,
+  effective_to                    date,
+  monthly_salary_credit_min_php   numeric(12,2) not null,
+  monthly_salary_credit_max_php   numeric(12,2) not null,
+  employee_share_php              numeric(10,2) not null,
+  employer_share_php              numeric(10,2) not null,
+  notes                           text,
+  created_at                      timestamptz not null default now()
+);
+create index idx_payroll_contribution_brackets_lookup
+  on public.payroll_contribution_brackets (kind, effective_from, effective_to);
+alter table public.payroll_contribution_brackets enable row level security;
+create policy "payroll_contribution_brackets: admin all" on public.payroll_contribution_brackets for all to authenticated
+  using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
