@@ -454,6 +454,13 @@ create index idx_payroll_deduction_lines_loan on public.payroll_deduction_lines 
 create index idx_payroll_dtr_rows_import on public.payroll_dtr_rows (import_id);
 create index idx_payroll_dtr_imports_period on public.payroll_dtr_imports (period_id);
 
+-- ---- payroll-idempotency indexes ------------------------------------------
+-- Backs the `on conflict do nothing` in apply_leave_entitlements(). Without
+-- this unique key, re-running the function would silently double-grant leave.
+create unique index employee_leave_records_entitlement_unique
+  on public.employee_leave_records (employee_id, kind, record_kind, effective_date)
+  where record_kind = 'entitlement';
+
 -- ---- cash_adjustment_account_map: salary_payout ---------------------------
 insert into public.cash_adjustment_account_map (kind, account_id, requires_user_choice, notes)
 values ('salary_payout', public.coa_uuid_for_code('2360'), false,
