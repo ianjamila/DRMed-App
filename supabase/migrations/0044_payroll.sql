@@ -1046,3 +1046,38 @@ create trigger trg_bridge_payroll_13th_month_payout
   for each row
   when (OLD.status is distinct from NEW.status and NEW.status = 'finalised')
   execute function public.bridge_payroll_13th_month_payout();
+
+-- ---- Guard P0020: finalise requires complete day coverage ----------------
+create or replace function public.payroll_run_finalise_requires_dtr()
+returns trigger
+language plpgsql as $$
+declare
+  v_offender record;
+begin
+  if NEW.status <> 'finalised' or OLD.status = 'finalised' then
+    return NEW;
+  end if;
+  select er.id, er.scheduled_days,
+    (er.days_present + er.days_vl_used + er.days_sl_used + er.days_unpaid_absent
+     + er.days_regular_holiday_worked + er.days_regular_holiday_unworked
+     + er.days_special_holiday_worked + er.days_special_holiday_unworked) as accounted
+    into v_offender
+    from public.payroll_employee_runs er
+    where er.run_id = NEW.id
+      and (er.days_present + er.days_vl_used + er.days_sl_used + er.days_unpaid_absent
+           + er.days_regular_holiday_worked + er.days_regular_holiday_unworked
+           + er.days_special_holiday_worked + er.days_special_holiday_unworked)
+          <> er.scheduled_days
+    limit 1;
+  if v_offender.id is not null then
+    raise exception 'Cannot finalise: employee_run % has % accounted vs % scheduled days. Check DTR + leave records.',
+      v_offender.id, v_offender.accounted, v_offender.scheduled_days
+      using errcode = 'P0020';
+  end if;
+  return NEW;
+end;
+$$;
+
+create trigger trg_payroll_run_finalise_requires_dtr
+  before update on public.payroll_runs
+  for each row execute function public.payroll_run_finalise_requires_dtr();
