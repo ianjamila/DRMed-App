@@ -109,3 +109,46 @@ insert into public.chart_of_accounts (code, name, type, normal_balance, descript
   ('6320', 'Courier',            'expense', 'debit', 'Courier and delivery costs (specimen transport, document delivery, etc.).'),
   ('6900', 'Cash Short / Over',  'expense', 'debit', 'Net daily till variances. Negative balance is acceptable (net overs).')
 on conflict (code) do nothing;
+
+-- ---- cash_adjustment_account_map -------------------------------------------
+-- Mirrors payment_method_account_map from 0030. Admin manages via
+-- /staff/admin/accounting/cash-routing.
+create table public.cash_adjustment_account_map (
+  id                     uuid primary key default gen_random_uuid(),
+  kind                   text unique not null check (kind in (
+    'petty_cash', 'salary_advance', 'courier', 'other_payout',
+    'float_topup', 'float_pullout'
+  )),
+  account_id             uuid not null references public.chart_of_accounts(id),
+  requires_user_choice   boolean not null default false,
+  notes                  text,
+  created_at             timestamptz not null default now(),
+  updated_at             timestamptz not null default now()
+);
+
+create trigger trg_cash_adjustment_account_map_updated_at
+  before update on public.cash_adjustment_account_map
+  for each row execute function public.touch_updated_at();
+
+alter table public.cash_adjustment_account_map enable row level security;
+
+create policy "cash_adjustment_account_map: admin read"
+  on public.cash_adjustment_account_map
+  for select to authenticated
+  using (public.has_role(array['admin']));
+
+create policy "cash_adjustment_account_map: admin write"
+  on public.cash_adjustment_account_map
+  for all to authenticated
+  using (public.has_role(array['admin']))
+  with check (public.has_role(array['admin']));
+
+insert into public.cash_adjustment_account_map (kind, account_id, requires_user_choice, notes)
+values
+  ('petty_cash',     public.coa_uuid_for_code('6400'), true,  'Default for petty cash; reception picks a more specific expense account when adding the row.'),
+  ('salary_advance', public.coa_uuid_for_code('1130'), false, 'Always 1130 in v1; not user-overridable.'),
+  ('courier',        public.coa_uuid_for_code('6320'), false, 'Dedicated courier expense; fixed mapping.'),
+  ('other_payout',   public.coa_uuid_for_code('9999'), true,  'Falls back to Suspense with audit if reception skips contra picker.'),
+  ('float_topup',    public.coa_uuid_for_code('1020'), true,  'Source of the cash (bank withdrawal, owner cap, etc.). Default BPI.'),
+  ('float_pullout',  public.coa_uuid_for_code('1020'), true,  'Destination of the cash (bank deposit, owner drawing). Default BPI.')
+on conflict (kind) do nothing;
