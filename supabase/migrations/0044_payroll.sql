@@ -125,3 +125,31 @@ create unique index payroll_periods_unique_range on public.payroll_periods (peri
 alter table public.payroll_periods enable row level security;
 create policy "payroll_periods: admin all" on public.payroll_periods for all to authenticated
   using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
+
+-- ---- payroll_runs ---------------------------------------------------------
+create table public.payroll_runs (
+  id                  uuid primary key default gen_random_uuid(),
+  period_id           uuid unique not null references public.payroll_periods(id),
+  status              text not null default 'draft'
+                        check (status in ('draft','computed','finalised','voided')),
+  computed_at         timestamptz,
+  finalised_at        timestamptz,
+  finalised_by        uuid references public.staff_profiles(id),
+  voided_at           timestamptz,
+  voided_by           uuid references public.staff_profiles(id),
+  void_reason         text,
+  gross_up_je_id      uuid references public.journal_entries(id),
+  thirteenth_payout_je_id uuid references public.journal_entries(id),
+  notes               text,
+  created_at          timestamptz not null default now(),
+  updated_at          timestamptz not null default now(),
+  constraint payroll_runs_void_consistency check (
+    (voided_at is null and voided_by is null and void_reason is null) or
+    (voided_at is not null and voided_by is not null and void_reason is not null and status = 'voided')
+  )
+);
+create trigger trg_payroll_runs_updated_at before update on public.payroll_runs
+  for each row execute function public.touch_updated_at();
+alter table public.payroll_runs enable row level security;
+create policy "payroll_runs: admin all" on public.payroll_runs for all to authenticated
+  using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
