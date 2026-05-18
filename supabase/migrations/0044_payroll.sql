@@ -714,3 +714,89 @@ begin
   end loop;
 end;
 $$;
+
+-- ---- Bridge: payroll run FINALISE -----------------------------------------
+-- Fires on payroll_runs.UPDATE when status flips to 'finalised'.
+-- Posts the gross-up JE; December Run #1 (period covers Dec 1-15) also posts
+-- a SEPARATE 13th-month payout JE via bridge_payroll_13th_month_payout().
+create or replace function public.bridge_payroll_run_finalise()
+returns trigger
+language plpgsql security definer set search_path = public
+as $$
+declare
+  v_je_id            uuid;
+  v_period           record;
+  v_totals           record;
+  v_user_id          uuid := coalesce(current_setting('app.current_user_id', true)::uuid, NEW.finalised_by);
+begin
+  if NEW.status <> 'finalised' or OLD.status = 'finalised' then
+    return NEW;
+  end if;
+
+  select period_start, period_end into v_period
+    from public.payroll_periods where id = NEW.period_id;
+
+  -- Sum all per-employee numbers for the run
+  select
+    coalesce(sum(basic_pay_php + allowances_total_php + ot_pay_php + night_diff_pay_php
+                 + holiday_pay_php + incentives_total_php + perfect_attendance_bonus_php), 0) as salaries_wages,
+    coalesce(sum(sss_er_php), 0)            as sss_er,
+    coalesce(sum(philhealth_er_php), 0)     as philhealth_er,
+    coalesce(sum(pagibig_er_php), 0)        as pagibig_er,
+    coalesce(sum(thirteenth_month_accrual_php), 0)  as month13_accrual,
+    coalesce(sum(sss_ee_php + sss_er_php), 0)       as sss_total,
+    coalesce(sum(philhealth_ee_php + philhealth_er_php), 0) as philhealth_total,
+    coalesce(sum(pagibig_ee_php + pagibig_er_php), 0)       as pagibig_total,
+    coalesce(sum(wt_compensation_php), 0)   as wt_total,
+    coalesce(sum(staff_advance_settlement_php), 0)  as advance_total,
+    coalesce(sum(net_pay_php), 0)           as net_total
+    into v_totals
+    from public.payroll_employee_runs
+    where run_id = NEW.id;
+
+  -- Create draft JE
+  insert into public.journal_entries (posting_date, description, status, source_kind, source_id, created_by)
+  values (
+    v_period.period_end,
+    format('Payroll run %s to %s', v_period.period_start, v_period.period_end),
+    'draft',
+    'payroll_run',
+    NEW.id,
+    v_user_id
+  )
+  returning id into v_je_id;
+
+  -- Insert lines (debits)
+  insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
+  values
+    (v_je_id, public.coa_uuid_for_code('6100'), v_totals.salaries_wages, 0, 1),
+    (v_je_id, public.coa_uuid_for_code('6121'), v_totals.sss_er,         0, 2),
+    (v_je_id, public.coa_uuid_for_code('6122'), v_totals.philhealth_er,  0, 3),
+    (v_je_id, public.coa_uuid_for_code('6123'), v_totals.pagibig_er,     0, 4),
+    (v_je_id, public.coa_uuid_for_code('6124'), v_totals.month13_accrual,0, 5);
+
+  -- Credits
+  insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
+  values
+    (v_je_id, public.coa_uuid_for_code('2300'), 0, v_totals.sss_total,        10),
+    (v_je_id, public.coa_uuid_for_code('2310'), 0, v_totals.philhealth_total, 11),
+    (v_je_id, public.coa_uuid_for_code('2320'), 0, v_totals.pagibig_total,    12),
+    (v_je_id, public.coa_uuid_for_code('2330'), 0, v_totals.wt_total,         13),
+    (v_je_id, public.coa_uuid_for_code('2350'), 0, v_totals.month13_accrual,  14),
+    (v_je_id, public.coa_uuid_for_code('1130'), 0, v_totals.advance_total,    15),
+    (v_je_id, public.coa_uuid_for_code('2360'), 0, v_totals.net_total,        16);
+
+  update public.journal_entries set status = 'posted' where id = v_je_id;
+
+  -- Set the FK back on the run
+  update public.payroll_runs set gross_up_je_id = v_je_id where id = NEW.id;
+
+  return NEW;
+end;
+$$;
+
+create trigger trg_bridge_payroll_run_finalise
+  after update on public.payroll_runs
+  for each row
+  when (OLD.status is distinct from NEW.status and NEW.status = 'finalised')
+  execute function public.bridge_payroll_run_finalise();
