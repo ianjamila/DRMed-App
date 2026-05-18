@@ -800,3 +800,88 @@ create trigger trg_bridge_payroll_run_finalise
   for each row
   when (OLD.status is distinct from NEW.status and NEW.status = 'finalised')
   execute function public.bridge_payroll_run_finalise();
+
+-- ---- Bridge: payroll run VOID ---------------------------------------------
+create or replace function public.bridge_payroll_run_void()
+returns trigger
+language plpgsql security definer set search_path = public
+as $$
+declare
+  v_orig_je      uuid;
+  v_orig_number  text;
+  v_reversal_je  uuid;
+  v_user_id      uuid;
+  per record;
+begin
+  if NEW.status <> 'voided' or OLD.status = 'voided' then
+    return NEW;
+  end if;
+
+  v_user_id := coalesce(current_setting('app.current_user_id', true)::uuid, NEW.voided_by);
+
+  -- Reverse the gross-up JE
+  if NEW.gross_up_je_id is not null then
+    select entry_number into v_orig_number from public.journal_entries where id = NEW.gross_up_je_id;
+
+    insert into public.journal_entries (posting_date, description, status, source_kind, reverses, created_by)
+    values (current_date, format('Reversal of %s · void run', v_orig_number),
+            'draft', 'reversal', NEW.gross_up_je_id, v_user_id)
+    returning id into v_reversal_je;
+
+    insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
+    select v_reversal_je, account_id, credit_php, debit_php, line_order
+      from public.journal_lines
+      where entry_id = NEW.gross_up_je_id
+      order by line_order;
+
+    update public.journal_entries set status = 'posted' where id = v_reversal_je;
+    update public.journal_entries set status = 'reversed', reversed_by = v_reversal_je
+      where id = NEW.gross_up_je_id;
+  end if;
+
+  -- Reverse the 13th-month payout JE if present (Dec runs)
+  if NEW.thirteenth_payout_je_id is not null then
+    select entry_number into v_orig_number from public.journal_entries where id = NEW.thirteenth_payout_je_id;
+
+    insert into public.journal_entries (posting_date, description, status, source_kind, reverses, created_by)
+    values (current_date, format('Reversal of %s · void 13th-month payout', v_orig_number),
+            'draft', 'reversal', NEW.thirteenth_payout_je_id, v_user_id)
+    returning id into v_reversal_je;
+
+    insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
+    select v_reversal_je, account_id, credit_php, debit_php, line_order
+      from public.journal_lines where entry_id = NEW.thirteenth_payout_je_id
+      order by line_order;
+
+    update public.journal_entries set status = 'posted' where id = v_reversal_je;
+    update public.journal_entries set status = 'reversed', reversed_by = v_reversal_je
+      where id = NEW.thirteenth_payout_je_id;
+  end if;
+
+  -- Restore staff_advance settlements: for each employee_run that had a settlement,
+  -- increment the outstanding balance back. Walk the most-recently-closed advances.
+  for per in
+    select er.employee_id, er.staff_advance_settlement_php, sp.id as staff_id
+      from public.payroll_employee_runs er
+      join public.employees e on e.id = er.employee_id
+      join public.staff_profiles sp on sp.id = e.staff_profile_id
+      where er.run_id = NEW.id and er.staff_advance_settlement_php > 0
+  loop
+    update public.staff_advances
+       set outstanding_balance_php = outstanding_balance_php + per.staff_advance_settlement_php,
+           status = case when status = 'settled' then 'outstanding' else status end,
+           updated_at = now()
+     where staff_id = per.staff_id and status in ('outstanding','settled')
+     order by created_at desc
+     limit 1;
+  end loop;
+
+  return NEW;
+end;
+$$;
+
+create trigger trg_bridge_payroll_run_void
+  after update on public.payroll_runs
+  for each row
+  when (OLD.status = 'finalised' and NEW.status = 'voided')
+  execute function public.bridge_payroll_run_void();
