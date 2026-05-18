@@ -593,3 +593,22 @@ insert into public.payroll_wt_brackets (effective_from, taxable_min_php, taxable
   ('2026-01-01',  33333.00,  83333.00,   5416.67, 0.30,   '30% over ₱33,333 + ₱5,416.67'),
   ('2026-01-01',  83333.00, 333333.00,  20416.67, 0.32,   '32% over ₱83,333 + ₱20,416.67'),
   ('2026-01-01', 333333.00, null,      100416.67, 0.35,   '35% over ₱333,333 + ₱100,416.67');
+
+-- ---- employee_leave_balance(employee_id, kind, as_of_date) ----------------
+create or replace function public.employee_leave_balance(
+  p_employee_id uuid,
+  p_kind        text,
+  p_as_of_date  date default current_date
+)
+returns numeric
+language sql stable security definer set search_path = public
+as $$
+  select coalesce(sum(days_delta), 0)::numeric(5,2)
+  from public.employee_leave_records
+  where employee_id = p_employee_id
+    and kind = p_kind
+    and effective_date <= p_as_of_date
+    and (expiry_date is null or expiry_date > p_as_of_date);
+$$;
+
+grant execute on function public.employee_leave_balance(uuid, text, date) to authenticated;
