@@ -1,0 +1,26 @@
+-- =============================================================================
+-- 0044_payroll.sql
+-- =============================================================================
+-- Phase 12.6: Payroll, attendance, payslips. Adds employees + run lifecycle +
+-- DTR ingest + leave management + OT slips + admin-editable contribution &
+-- WT brackets, plus the GL bridge that turns each payroll event into balanced
+-- JEs through the same pattern as 12.2 / 12.C (draft → lines → posted).
+--
+-- After this migration:
+--   * /staff/admin/payroll/runs runs the semi-monthly payroll cycle:
+--       draft → computed → finalised → (per-employee paid) → done
+--       (or voided / reopened-voided)
+--   * Finalise posts a gross-up JE; Dec 1-15 run posts a SECOND JE for the
+--     annual 13th-month payout.
+--   * Cash payouts route through eod_cash_adjustments (kind='salary_payout');
+--     bank payouts post direct JEs.
+--   * employee_leave_records is event-sourced: balance = SUM(days_delta)
+--     where effective_date ≤ now AND (expiry IS NULL OR expiry > now).
+--   * OT pay requires an approved payroll_ot_slip row (DTR overage alone
+--     does NOT pay OT).
+--   * Tardiness: ₱1.50/min + half-day deduction if ≥3 tardies/cutoff
+--     (rates editable via accounting_settings).
+--
+-- NEW CoA codes (idempotent seed): 2350 13th-Month Payable, 2360 Salaries
+-- Payable, 6121-6124 employer contribution sub-accounts.
+-- =============================================================================
