@@ -1228,3 +1228,25 @@ $$;
 create trigger trg_payroll_employee_runs_no_insert_after_finalise
   before insert on public.payroll_employee_runs
   for each row execute function public.payroll_employee_runs_no_insert_after_finalise();
+
+-- ---- Guard P0027: finalise requires nonzero total gross -----------------
+create or replace function public.payroll_run_finalise_requires_nonzero_gross()
+returns trigger
+language plpgsql as $$
+declare
+  v_total numeric;
+begin
+  if NEW.status <> 'finalised' or OLD.status = 'finalised' then return NEW; end if;
+  select coalesce(sum(gross_pay_php), 0) into v_total
+    from public.payroll_employee_runs where run_id = NEW.id;
+  if v_total = 0 then
+    raise exception 'Cannot finalise an empty run. Compute first, or delete the run if no payroll is due.'
+      using errcode = 'P0027';
+  end if;
+  return NEW;
+end;
+$$;
+
+create trigger trg_payroll_run_finalise_requires_nonzero_gross
+  before update on public.payroll_runs
+  for each row execute function public.payroll_run_finalise_requires_nonzero_gross();
