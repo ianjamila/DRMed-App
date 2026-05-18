@@ -1,0 +1,1163 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DRMed · 12.C · Daily Cash Reconciliation · Design Deliverable</title>
+    <style>
+      :root {
+        --navy: #284570;
+        --navy-soft: #34507e;
+        --steel: #4682b4;
+        --cyan: #06aef1;
+        --cyan-light: #7fbeff;
+        --cyan-mid: #3eafe3;
+        --bg: #f0f6fc;
+        --bg-mid: #e3eef9;
+        --ink: #1a2537;
+        --ink-mid: #374151;
+        --ink-soft: #6b7280;
+        --line: #d8e3f0;
+        --line-soft: #ebf1f8;
+        --white: #ffffff;
+        --shadow-sm: 0 1px 2px rgba(40, 69, 112, 0.06);
+        --shadow-md: 0 8px 24px -8px rgba(40, 69, 112, 0.18);
+        --r-sm: 6px;
+        --r-md: 10px;
+        --r-lg: 16px;
+        --r-xl: 24px;
+
+        --ok: #10b981;
+        --ok-bg: #ecfdf5;
+        --ok-border: #a7f3d0;
+        --info: var(--cyan);
+        --info-bg: #ecf6fc;
+        --info-border: #b6e2f5;
+        --warn: #d97706;
+        --warn-bg: #fffbeb;
+        --warn-border: #fde68a;
+        --crit: #dc2626;
+        --crit-bg: #fef2f2;
+        --crit-border: #fecaca;
+        --neutral: var(--ink-soft);
+        --neutral-bg: #f3f4f6;
+        --neutral-border: #e5e7eb;
+      }
+
+      * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter",
+          "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        font-size: 15px;
+        line-height: 1.55;
+        color: var(--ink);
+        background: var(--bg);
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+      ::selection { background: var(--cyan-light); color: var(--navy); }
+
+      .shell {
+        display: grid;
+        grid-template-columns: 260px minmax(0, 1fr);
+        max-width: 1400px;
+        margin: 0 auto;
+        min-height: 100vh;
+      }
+
+      aside.toc {
+        position: sticky;
+        top: 0;
+        align-self: start;
+        height: 100vh;
+        overflow-y: auto;
+        padding: 32px 24px 32px 32px;
+        border-right: 1px solid var(--line);
+        background: linear-gradient(180deg, var(--white) 0%, var(--bg) 100%);
+      }
+      .toc-brand { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+      .toc-brand-dot {
+        width: 8px; height: 8px; border-radius: 50%;
+        background: var(--cyan);
+        box-shadow: 0 0 0 4px rgba(6, 174, 241, 0.18);
+      }
+      .toc-brand-name { font-weight: 800; letter-spacing: -0.01em; color: var(--navy); font-size: 18px; }
+      .toc-eyebrow { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; color: var(--ink-soft); margin-bottom: 24px; }
+      .toc h3 { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; color: var(--ink-soft); margin: 24px 0 8px; }
+      .toc ul { list-style: none; padding: 0; margin: 0; }
+      .toc li { margin: 0; }
+      .toc a {
+        display: block;
+        padding: 7px 10px;
+        margin-left: -10px;
+        font-size: 13.5px;
+        color: var(--ink-mid);
+        text-decoration: none;
+        border-radius: var(--r-sm);
+        border-left: 2px solid transparent;
+        transition: background 120ms, color 120ms, border-color 120ms;
+      }
+      .toc a:hover { background: var(--bg-mid); color: var(--navy); border-left-color: var(--cyan); }
+      .toc-meta {
+        margin-top: 32px;
+        padding: 16px;
+        background: var(--white);
+        border: 1px solid var(--line);
+        border-radius: var(--r-md);
+        font-size: 12px;
+        color: var(--ink-soft);
+      }
+      .toc-meta strong { color: var(--navy); display: block; margin-bottom: 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
+      .toc-meta code { font-size: 11px; }
+
+      main { padding: 56px 64px 96px 64px; max-width: 960px; }
+
+      .hero { margin-bottom: 56px; padding-bottom: 40px; border-bottom: 1px solid var(--line); }
+      .hero-eyebrow { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.14em; color: var(--cyan); margin-bottom: 10px; }
+      .hero h1 { font-size: 40px; line-height: 1.1; letter-spacing: -0.02em; color: var(--navy); margin: 0 0 14px; font-weight: 800; }
+      .hero-lead { font-size: 17px; color: var(--ink-mid); max-width: 760px; margin: 0 0 24px; }
+      .hero-meta { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+      .pill {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 6px 12px; border-radius: 999px;
+        background: var(--white); border: 1px solid var(--line);
+        font-size: 12px; color: var(--ink-mid); font-weight: 500;
+      }
+      .pill.status-draft { background: var(--info-bg); border-color: var(--info-border); color: var(--navy); }
+      .pill-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--cyan); }
+
+      section.section { margin-bottom: 64px; scroll-margin-top: 24px; }
+      .section-eyebrow {
+        font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.14em;
+        color: var(--cyan-mid); margin-bottom: 10px;
+      }
+      h2.section-title {
+        font-size: 28px; line-height: 1.15; letter-spacing: -0.015em;
+        color: var(--navy); margin: 0 0 14px; font-weight: 700;
+      }
+      .section-lead { font-size: 16px; color: var(--ink-mid); margin: 0 0 28px; max-width: 760px; }
+      h3.sub { font-size: 18px; color: var(--navy); margin: 32px 0 12px; font-weight: 700; letter-spacing: -0.01em; }
+      h4.sub-sub { font-size: 14px; color: var(--navy); margin: 24px 0 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+      p { margin: 10px 0; }
+
+      code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; background: var(--bg-mid); padding: 1px 6px; border-radius: 4px; color: var(--navy); }
+      pre {
+        font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px;
+        background: #0f1729; color: #d6e4f5; padding: 16px 20px;
+        border-radius: var(--r-md); overflow-x: auto; line-height: 1.55;
+        border: 1px solid #1a2945;
+      }
+      pre .kw { color: #7fbeff; }
+      pre .com { color: #6b7280; font-style: italic; }
+      pre .str { color: #a7f3d0; }
+
+      table.basic { width: 100%; border-collapse: separate; border-spacing: 0; background: var(--white); border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden; }
+      table.basic th, table.basic td { padding: 12px 14px; text-align: left; font-size: 13.5px; vertical-align: top; }
+      table.basic th { background: var(--bg-mid); color: var(--navy); font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; border-bottom: 1px solid var(--line); }
+      table.basic td { border-bottom: 1px solid var(--line-soft); color: var(--ink-mid); }
+      table.basic tr:last-child td { border-bottom: none; }
+      table.basic td strong { color: var(--navy); font-weight: 600; }
+
+      .callout {
+        border: 1px solid var(--info-border);
+        background: var(--info-bg);
+        border-radius: var(--r-md);
+        padding: 14px 18px;
+        margin: 18px 0;
+      }
+      .callout-label {
+        font-size: 10px; font-weight: 800; text-transform: uppercase;
+        letter-spacing: 0.12em; color: var(--cyan); margin-bottom: 6px;
+        display: block;
+      }
+      .callout.ok { background: var(--ok-bg); border-color: var(--ok-border); }
+      .callout.ok .callout-label { color: var(--ok); }
+      .callout.warn { background: var(--warn-bg); border-color: var(--warn-border); }
+      .callout.warn .callout-label { color: var(--warn); }
+      .callout.crit { background: var(--crit-bg); border-color: var(--crit-border); }
+      .callout.crit .callout-label { color: var(--crit); }
+      .callout.neutral { background: var(--neutral-bg); border-color: var(--neutral-border); }
+      .callout.neutral .callout-label { color: var(--neutral); }
+      .callout strong { color: var(--navy); font-weight: 600; }
+      .callout p:first-child { margin-top: 0; }
+      .callout p:last-child { margin-bottom: 0; }
+
+      .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 20px 0 8px; }
+      .metric {
+        background: var(--white); border: 1px solid var(--line); border-radius: var(--r-md);
+        padding: 16px 18px; position: relative;
+      }
+      .metric::before {
+        content: ""; position: absolute; left: 0; top: 14px; bottom: 14px;
+        width: 3px; border-radius: 2px; background: var(--cyan);
+      }
+      .metric.ok::before { background: var(--ok); }
+      .metric.info::before { background: var(--cyan); }
+      .metric.warn::before { background: var(--warn); }
+      .metric.crit::before { background: var(--crit); }
+      .metric-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-soft); margin-bottom: 6px; }
+      .metric-value { font-size: 22px; font-weight: 700; color: var(--navy); letter-spacing: -0.01em; }
+      .metric-unit { font-size: 13px; color: var(--ink-soft); font-weight: 500; margin-left: 4px; }
+      .metric-foot { font-size: 12px; color: var(--ink-soft); margin-top: 6px; }
+
+      /* Phase timeline */
+      .phase { position: relative; padding: 0 0 36px 32px; border-left: 2px solid var(--line); }
+      .phase:last-child { padding-bottom: 0; border-left-color: transparent; }
+      .phase::before {
+        content: ""; position: absolute; left: -8px; top: 4px;
+        width: 14px; height: 14px; border-radius: 50%;
+        background: var(--white); border: 2px solid var(--cyan-mid);
+        box-shadow: 0 0 0 3px var(--white);
+      }
+      .phase.planned::before { border-color: var(--neutral-border); }
+      .phase.gated::before { border-color: var(--warn); background: var(--warn-bg); }
+      .phase-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; margin-bottom: 8px; }
+      .phase-id {
+        font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.1em;
+        color: var(--cyan-mid); background: var(--info-bg); padding: 3px 8px; border-radius: 4px;
+        border: 1px solid var(--info-border);
+      }
+      .phase-title { font-size: 17px; color: var(--navy); font-weight: 700; letter-spacing: -0.01em; }
+      .phase-est { font-size: 12px; color: var(--ink-soft); margin-left: auto; }
+      .phase-body { color: var(--ink-mid); }
+      .phase-body p { margin: 6px 0; }
+      .phase-tasks {
+        margin: 10px 0 0;
+        padding: 12px 16px;
+        background: var(--white); border: 1px solid var(--line); border-radius: var(--r-sm);
+      }
+      .phase-tasks strong { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-soft); margin-bottom: 6px; }
+      .phase-tasks ul { list-style: none; padding: 0; margin: 0; font-size: 13.5px; }
+      .phase-tasks li {
+        padding: 5px 0 5px 24px; position: relative; color: var(--ink-mid);
+      }
+      .phase-tasks li::before {
+        content: "";
+        position: absolute; left: 0; top: 9px;
+        width: 12px; height: 12px; border-radius: 3px;
+        background: var(--white); border: 1.5px solid var(--neutral-border);
+      }
+      .phase-tasks .task-id { color: var(--cyan-mid); font-weight: 700; font-family: "SF Mono", monospace; font-size: 12px; margin-right: 6px; }
+      .phase-milestone {
+        margin: 14px 0 0; padding: 12px 16px;
+        background: var(--ok-bg); border: 1px solid var(--ok-border); border-radius: var(--r-sm);
+        font-size: 13.5px; color: var(--navy);
+      }
+      .phase-milestone strong { color: var(--ok); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; display: block; margin-bottom: 4px; }
+
+      /* Risks */
+      .risks { display: grid; grid-template-columns: 1fr; gap: 10px; }
+      .risk {
+        background: var(--white); border: 1px solid var(--line);
+        border-left: 4px solid var(--warn);
+        border-radius: var(--r-sm);
+        padding: 14px 18px;
+      }
+      .risk.crit { border-left-color: var(--crit); }
+      .risk.info { border-left-color: var(--cyan); }
+      .risk.ok { border-left-color: var(--ok); }
+      .risk-head { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+      .risk-title { font-size: 14px; color: var(--navy); font-weight: 700; }
+      .risk-tag {
+        font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
+        padding: 2px 8px; border-radius: 999px;
+      }
+      .risk.crit .risk-tag { background: var(--crit-bg); color: var(--crit); }
+      .risk .risk-tag { background: var(--warn-bg); color: var(--warn); }
+      .risk.info .risk-tag { background: var(--info-bg); color: var(--cyan); }
+      .risk.ok .risk-tag { background: var(--ok-bg); color: var(--ok); }
+      .risk-body { font-size: 13.5px; color: var(--ink-mid); margin-top: 8px; }
+      .risk-body strong { color: var(--navy); font-weight: 600; }
+
+      /* Architecture diagram */
+      .arch-diagram {
+        background: var(--white); border: 1px solid var(--line);
+        border-radius: var(--r-md); padding: 24px; margin: 20px 0;
+      }
+      .arch-row { display: flex; align-items: stretch; gap: 12px; margin-bottom: 12px; }
+      .arch-row:last-child { margin-bottom: 0; }
+      .arch-box {
+        flex: 1;
+        background: var(--bg-mid); border: 1px solid var(--line);
+        border-radius: var(--r-sm); padding: 14px 16px;
+        font-size: 13px; color: var(--navy); line-height: 1.45;
+      }
+      .arch-box strong { display: block; color: var(--navy); font-weight: 700; margin-bottom: 4px; font-size: 13px; }
+      .arch-box .arch-detail { color: var(--ink-soft); font-size: 12px; line-height: 1.5; }
+      .arch-box.input { background: var(--info-bg); border-color: var(--info-border); }
+      .arch-box.action { background: var(--white); }
+      .arch-box.gate { background: var(--warn-bg); border-color: var(--warn-border); }
+      .arch-box.output { background: var(--ok-bg); border-color: var(--ok-border); }
+      .arch-arrow { text-align: center; color: var(--ink-soft); font-size: 18px; line-height: 1; margin: 4px 0; }
+
+      /* JE matrix */
+      .je-matrix { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin: 14px 0; }
+      .je-card {
+        background: var(--white); border: 1px solid var(--line); border-radius: var(--r-md);
+        padding: 14px 16px;
+      }
+      .je-card-kind {
+        font-family: "SF Mono", monospace; font-size: 11px; font-weight: 700;
+        color: var(--cyan-mid); text-transform: uppercase; letter-spacing: 0.08em;
+        margin-bottom: 6px;
+      }
+      .je-line { display: flex; gap: 8px; align-items: baseline; font-size: 13px; padding: 3px 0; }
+      .je-line .je-dr { font-weight: 700; color: var(--ok); width: 22px; }
+      .je-line .je-cr { font-weight: 700; color: var(--crit); width: 22px; }
+      .je-line .je-acct { color: var(--ink-mid); }
+      .je-line .je-code { color: var(--ink-soft); font-family: "SF Mono", monospace; font-size: 11.5px; }
+
+      /* Dependency map */
+      .deps { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 14px 0; }
+      .dep {
+        background: var(--white); border: 1px solid var(--line); border-radius: var(--r-md);
+        padding: 14px 16px;
+      }
+      .dep.shipped { border-left: 4px solid var(--ok); }
+      .dep.pending { border-left: 4px solid var(--warn); }
+      .dep.consumes { border-left: 4px solid var(--cyan); }
+      .dep-title { font-weight: 700; color: var(--navy); font-size: 14px; margin-bottom: 4px; }
+      .dep-tag { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-soft); }
+      .dep-body { font-size: 13px; color: var(--ink-mid); margin-top: 6px; }
+
+      /* Mock UI screen */
+      .mock {
+        background: var(--white); border: 1px solid var(--line); border-radius: var(--r-md);
+        padding: 0; overflow: hidden; margin: 14px 0;
+      }
+      .mock-bar { background: var(--bg-mid); padding: 10px 14px; border-bottom: 1px solid var(--line);
+                  font-size: 12px; color: var(--navy); font-weight: 600; font-family: "SF Mono", monospace; }
+      .mock-body { padding: 18px 22px; font-size: 13.5px; color: var(--ink-mid); }
+      .mock-body .mock-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dashed var(--line-soft); }
+      .mock-body .mock-row:last-child { border-bottom: none; }
+      .mock-body .mock-row strong { color: var(--navy); }
+      .mock-body .mock-amount { font-family: "SF Mono", monospace; color: var(--navy); }
+      .mock-h { font-weight: 700; color: var(--navy); margin: 12px 0 6px; font-size: 13px; }
+      .mock-btn {
+        display: inline-block; padding: 8px 16px; background: var(--cyan); color: var(--white);
+        border-radius: var(--r-sm); font-size: 13px; font-weight: 600; margin-top: 8px;
+      }
+      .mock-btn.secondary { background: var(--white); color: var(--navy); border: 1px solid var(--line); }
+
+      footer.foot { margin-top: 96px; padding-top: 32px; border-top: 1px solid var(--line); font-size: 12px; color: var(--ink-soft); }
+      footer.foot a { color: var(--steel); }
+
+      @media (max-width: 900px) {
+        .shell { grid-template-columns: 1fr; }
+        aside.toc { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--line); }
+        main { padding: 32px 24px 64px; }
+        .hero h1 { font-size: 30px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="toc">
+        <div class="toc-brand">
+          <span class="toc-brand-dot"></span>
+          <span class="toc-brand-name">DRMed</span>
+        </div>
+        <div class="toc-eyebrow">12.C · Design Deliverable</div>
+
+        <h3>On this page</h3>
+        <ul>
+          <li><a href="#summary">Executive summary</a></li>
+          <li><a href="#decisions">Decisions locked in</a></li>
+          <li><a href="#architecture">Architecture</a></li>
+          <li><a href="#schema">Schema additions</a></li>
+          <li><a href="#bridge">GL bridge &amp; JE matrix</a></li>
+          <li><a href="#ui">UI surfaces</a></li>
+          <li><a href="#errors">Errors &amp; invariants</a></li>
+          <li><a href="#timeline">Phase timeline</a></li>
+          <li><a href="#risks">Risks &amp; dependencies</a></li>
+          <li><a href="#deferred">Deferred / out of scope</a></li>
+        </ul>
+
+        <div class="toc-meta">
+          <strong>Status</strong>Draft · pending user review
+          <br /><br />
+          <strong>Source spec</strong><code>docs/superpowers/specs/2026-05-18-12.C-daily-cash-reconciliation-design.md</code>
+          <br /><br />
+          <strong>Prerequisites</strong>12.1 · v1.2.0<br />12.2 · v1.3.0<br />12.A · v1.5.0<br />Phase 14 · v1.6.0
+          <br /><br />
+          <strong>Target tag</strong>v1.7.0
+        </div>
+      </aside>
+
+      <main>
+        <div class="hero">
+          <div class="hero-eyebrow">Phase 12 · Sub-project 12.C</div>
+          <h1>Daily Cash Reconciliation</h1>
+          <p class="hero-lead">
+            Reception's end-of-day close moves from the DAILY MONITORING tab in DR MED MASTERSHEET into the system.
+            Every cash payout, every float adjustment, and every till count fires a balanced JE through the 12.2 bridge —
+            the GL stays in lockstep with operational reality, and stale cash gets surfaced the moment the variance
+            doesn&rsquo;t zero out.
+          </p>
+          <div class="hero-meta">
+            <span class="pill status-draft"><span class="pill-dot"></span> Draft · pending review</span>
+            <span class="pill">2026-05-18</span>
+            <span class="pill">5 dispatches · ~5 working days</span>
+            <span class="pill">migration 0043</span>
+            <span class="pill">5 new tables</span>
+            <span class="pill">P0015–P0019</span>
+          </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <section class="section" id="summary">
+          <div class="section-eyebrow">01 · Executive summary</div>
+          <h2 class="section-title">Three sub-deliverables, one daily flow</h2>
+          <p class="section-lead">
+            12.C is the reception-facing end of Phase 12. It takes the work the bookkeeper currently does in the DAILY
+            MONITORING tab and re-homes it in the app, while extending the GL bridge so the books reconcile automatically
+            instead of after the fact.
+          </p>
+
+          <div class="metrics">
+            <div class="metric info">
+              <div class="metric-label">New tables</div>
+              <div class="metric-value">5<span class="metric-unit">+ 1 KV row</span></div>
+              <div class="metric-foot">cash_shifts · eod_close_records · eod_cash_adjustments · staff_advances · cash_adjustment_account_map</div>
+            </div>
+            <div class="metric info">
+              <div class="metric-label">CoA additions</div>
+              <div class="metric-value">3<span class="metric-unit">accounts</span></div>
+              <div class="metric-foot">1130 Staff Advances · 6320 Courier · 6900 Cash Short / Over</div>
+            </div>
+            <div class="metric ok">
+              <div class="metric-label">JE source kinds</div>
+              <div class="metric-value">+2<span class="metric-unit">enum values</span></div>
+              <div class="metric-foot">cash_adjustment · eod_close</div>
+            </div>
+            <div class="metric warn">
+              <div class="metric-label">Lock invariant</div>
+              <div class="metric-value">P0015</div>
+              <div class="metric-foot">Closed days are DB-locked. Admin reopen is the only escape hatch.</div>
+            </div>
+          </div>
+
+          <div class="callout ok">
+            <span class="callout-label">In scope</span>
+            <p>
+              <strong>Reception:</strong> <code>/staff/payments/cash-drawer</code> (running daily flow + payouts) &amp;
+              <code>/staff/payments/eod</code> (close).
+              <strong>Admin:</strong> <code>/cash-routing</code> (kind&nbsp;→&nbsp;contra map),
+              <code>/reports/daily-revenue</code> (service&nbsp;×&nbsp;day pivot),
+              <code>/reports/staff-advances</code> (outstanding balances).
+              <strong>Bridge:</strong> triggers on <code>eod_cash_adjustments</code> +
+              <code>eod_close_records</code> emit balanced JEs.
+              <strong>Receivable:</strong> <code>salary_advance</code> payouts create <code>staff_advances</code>
+              rows that 12.6 will draw down via payslip deductions.
+            </p>
+          </div>
+
+          <div class="callout warn">
+            <span class="callout-label">Out of scope · deferred</span>
+            <p>
+              Bank / wallet reconciliation for GCash·BPI·Maybank·card (future <strong>12.D</strong>) · petty-cash voucher
+              print · cash-advance payslip deduction (owned by <strong>12.6</strong> when payroll lands) · multi-shift
+              handover-count UI (schema supports it; defer the UI) · bulk-edit / bulk-void of cash adjustments.
+            </p>
+          </div>
+        </section>
+
+        <!-- ============================================================ -->
+        <section class="section" id="decisions">
+          <div class="section-eyebrow">02 · Decisions</div>
+          <h2 class="section-title">Locked in from the brainstorm</h2>
+          <p class="section-lead">
+            Five clarifying questions (Q1–Q5), three standard defaults (A/B/C), and one user-added field requirement.
+            Each one drove a concrete schema or UX implication.
+          </p>
+
+          <table class="basic">
+            <thead><tr><th style="width:8%">Q</th><th style="width:36%">Decision</th><th>Implication</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><strong>Q1</strong></td>
+                <td><strong>Flex schema.</strong> v1 ships one default shift; multi-shift unlocks later without migration.</td>
+                <td><code>cash_shifts</code> lookup. <code>eod_close_records</code> keyed on <code>(business_date, shift_id)</code>. UI hides the shift picker while only one is active.</td>
+              </tr>
+              <tr>
+                <td><strong>Q2</strong></td>
+                <td><strong>Adjustable float.</strong> Baseline setting + per-date <code>float_topup</code>&thinsp;/&thinsp;<code>float_pullout</code> adjustments.</td>
+                <td>New <code>accounting_settings</code> KV table (key <code>default_change_fund_php</code>, default ₱2,000). Effective opening&nbsp;= baseline + Σ float adjustments.</td>
+              </tr>
+              <tr>
+                <td><strong>Q3</strong></td>
+                <td><strong>Dedicated <code>/staff/payments/cash-drawer</code>.</strong> Running daily flow lives here; EOD page consumes the totals.</td>
+                <td>Two reception routes. Both reach for <code>cash_drawer_state(date, shift_id)</code> SECURITY DEFINER function as the single source of truth for math.</td>
+              </tr>
+              <tr>
+                <td><strong>Q4</strong></td>
+                <td><strong>Admin-only daily-revenue pivot.</strong> Service&thinsp;×&thinsp;day. NOT on reception's EOD page.</td>
+                <td>Read-only view <code>v_daily_revenue_by_service</code> at <code>/staff/admin/reports/daily-revenue</code>. Sidecar deliverable.</td>
+              </tr>
+              <tr>
+                <td><strong>Q5</strong></td>
+                <td><strong>Full <code>staff_advances</code> integration now.</strong> 12.6 (payroll) draws down later.</td>
+                <td>New <code>staff_advances</code> receivable table maintained by trigger. View <code>v_staff_advances_outstanding</code> drives admin report.</td>
+              </tr>
+              <tr>
+                <td><strong>+</strong></td>
+                <td><strong><code>closed_by</code> on the close record.</strong> Two receptionists may be on duty simultaneously.</td>
+                <td>FK column on <code>eod_close_records</code>. Per-payment <code>received_by</code> already captures the other on-duty actor.</td>
+              </tr>
+              <tr>
+                <td><strong>A</strong></td>
+                <td><strong>Variance threshold.</strong> Any non-zero variance requires a reason note. No tolerance.</td>
+                <td>CHECK <code>(variance_php = 0 OR variance_reason IS NOT NULL)</code> + Zod refinement client-side.</td>
+              </tr>
+              <tr>
+                <td><strong>B</strong></td>
+                <td><strong>Method coverage.</strong> v1 counts physical cash only.</td>
+                <td>GCash / BPI / Maybank / card balances <em>display</em> on the drawer page for context but are not reconciled. Future 12.D owns bank reconciliation.</td>
+              </tr>
+              <tr>
+                <td><strong>C</strong></td>
+                <td><strong>Reopen-after-close.</strong> Closed records are DB-locked; admin reopens with audit.</td>
+                <td>P0015 trigger blocks writes to <code>payments</code> + <code>eod_cash_adjustments</code> targeting closed (date, shift). <code>reopenEodCloseAction</code> flips status, audits reason.</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <!-- ============================================================ -->
+        <section class="section" id="architecture">
+          <div class="section-eyebrow">03 · Architecture</div>
+          <h2 class="section-title">Where the bytes flow</h2>
+          <p class="section-lead">
+            Same shape as 12.2: operational writes flow into trigger-driven JEs in the same transaction. Reception's
+            existing payment surface is untouched; 12.C only <em>adds</em> tables, routes, and triggers.
+          </p>
+
+          <div class="arch-diagram">
+            <div class="arch-row">
+              <div class="arch-box input">
+                <strong>Daytime activity</strong>
+                <div class="arch-detail">
+                  Reception logs payouts &amp; float adjustments on <code>/cash-drawer</code>.
+                  Payments continue to land via the visit page (untouched).
+                </div>
+              </div>
+            </div>
+            <div class="arch-arrow">↓</div>
+            <div class="arch-row">
+              <div class="arch-box action">
+                <strong>eod_cash_adjustments (INSERT / UPDATE-void)</strong>
+                <div class="arch-detail">
+                  Triggers <code>bridge_cash_adjustment_insert</code>, <code>bridge_cash_adjustment_void</code>,
+                  and <code>staff_advance_sync</code> fire in the same transaction.
+                </div>
+              </div>
+              <div class="arch-box gate">
+                <strong>Guard triggers</strong>
+                <div class="arch-detail">
+                  P0015 (eod_lock) blocks writes targeting a closed (date, shift). P0017 freezes JE-bearing rows.
+                </div>
+              </div>
+            </div>
+            <div class="arch-arrow">↓</div>
+            <div class="arch-row">
+              <div class="arch-box input">
+                <strong>End of day</strong>
+                <div class="arch-detail">
+                  Reception goes to <code>/eod</code>, counts physical cash, enters reason if variance &ne; 0,
+                  clicks <em>Close day</em>.
+                </div>
+              </div>
+            </div>
+            <div class="arch-arrow">↓</div>
+            <div class="arch-row">
+              <div class="arch-box action">
+                <strong>eod_close_records (INSERT)</strong>
+                <div class="arch-detail">
+                  <code>bridge_eod_close</code> posts a "Cash Short / Over" JE when variance &ne; 0.
+                  P0015 now blocks further cash-side writes for that (date, shift).
+                </div>
+              </div>
+            </div>
+            <div class="arch-arrow">↓</div>
+            <div class="arch-row">
+              <div class="arch-box output">
+                <strong>journal_entries · journal_lines (12.1 GL spine)</strong>
+                <div class="arch-detail">
+                  New <code>je_source_kind</code> values: <code>cash_adjustment</code> &middot;
+                  <code>eod_close</code>. Existing partial unique index from 0030 covers idempotency unchanged.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="callout neutral">
+            <span class="callout-label">Architectural invariants</span>
+            <p>
+              <strong>(1)</strong> Debits = credits on every posted JE.
+              <strong>(2)</strong> No JE posts to a closed accounting period (P0002 surfaces).
+              <strong>(3)</strong> One operational event → one posted JE (partial unique index, unchanged).
+              <strong>(4)</strong> CoA is append-only.
+              <strong>(5)</strong> Reception's existing payment UI is untouched.
+              <strong>(6)</strong> RLS is the source of truth for access.
+              <strong>(7)</strong> Every write is audit-logged.
+            </p>
+          </div>
+        </section>
+
+        <!-- ============================================================ -->
+        <section class="section" id="schema">
+          <div class="section-eyebrow">04 · Schema</div>
+          <h2 class="section-title">Five tables, three CoA codes, two enum values</h2>
+          <p class="section-lead">
+            All changes ride in migration <code>0043_eod_cash_reconciliation.sql</code>. The CoA seed is idempotent
+            (<code>ON CONFLICT (code) DO NOTHING</code>) so fresh-clone <code>supabase db reset</code> keeps working.
+          </p>
+
+          <h3 class="sub">New tables</h3>
+          <table class="basic">
+            <thead><tr><th style="width:24%">Table</th><th style="width:18%">Role</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><strong><code>cash_shifts</code></strong></td>
+                <td>lookup</td>
+                <td>Seeded with one row <code>('default', 'Default shift')</code>. Admin adds more to enable AM/PM splits.</td>
+              </tr>
+              <tr>
+                <td><strong><code>accounting_settings</code></strong></td>
+                <td>key-value</td>
+                <td>Seeded with <code>default_change_fund_php = ₱2,000</code>. CHECK gates the allowed key set; future sub-projects extend via migration.</td>
+              </tr>
+              <tr>
+                <td><strong><code>cash_adjustment_account_map</code></strong></td>
+                <td>routing</td>
+                <td>Mirrors <code>payment_method_account_map</code> from 12.2. Maps <code>kind</code> → contra CoA + <code>requires_user_choice</code> flag.</td>
+              </tr>
+              <tr>
+                <td><strong><code>eod_cash_adjustments</code></strong></td>
+                <td>daily flow (write)</td>
+                <td>Six kinds: <code>petty_cash · salary_advance · courier · other_payout · float_topup · float_pullout</code>. Soft-void via <code>voided_at</code>. CHECK forces <code>payee_staff_id</code> for <code>salary_advance</code>.</td>
+              </tr>
+              <tr>
+                <td><strong><code>eod_close_records</code></strong></td>
+                <td>daily flow (close)</td>
+                <td>UNIQUE <code>(business_date, shift_id) WHERE status='closed'</code>. Stores snapshots of opening float / cash in / cash out / expected / counted at close time.</td>
+              </tr>
+              <tr>
+                <td><strong><code>staff_advances</code></strong></td>
+                <td>receivable subledger</td>
+                <td>Maintained by <code>staff_advance_sync</code> trigger only. 12.6 (payroll) will UPDATE <code>outstanding_balance_php</code> down as payslips deduct.</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h3 class="sub">CoA additions (seeded in 0043)</h3>
+          <table class="basic">
+            <thead><tr><th>Code</th><th>Name</th><th>Type</th><th>Purpose</th></tr></thead>
+            <tbody>
+              <tr><td><strong><code>1130</code></strong></td><td>Staff Advances</td><td>asset · debit</td><td>Outstanding cash advances to employees. Reduced by payroll deductions in 12.6.</td></tr>
+              <tr><td><strong><code>6320</code></strong></td><td>Courier</td><td>expense · debit</td><td>Courier &amp; delivery costs (specimen transport, document delivery).</td></tr>
+              <tr><td><strong><code>6900</code></strong></td><td>Cash Short / Over</td><td>expense · debit</td><td>Net daily till variances. Negative balance = net overs (acceptable).</td></tr>
+            </tbody>
+          </table>
+
+          <h3 class="sub">Enum additions on <code>je_source_kind</code></h3>
+          <pre><span class="kw">alter type</span> public.je_source_kind <span class="kw">add value if not exists</span> <span class="str">'cash_adjustment'</span>;
+<span class="kw">alter type</span> public.je_source_kind <span class="kw">add value if not exists</span> <span class="str">'eod_close'</span>;</pre>
+
+          <h3 class="sub"><code>cash_adjustment_account_map</code> seed</h3>
+          <table class="basic">
+            <thead><tr><th>Kind</th><th>Default contra</th><th>User choice?</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr><td><code>petty_cash</code></td><td><code>6400</code> Office Supplies</td><td>required</td><td>Reception picks actual expense account; default fills if skipped.</td></tr>
+              <tr><td><code>salary_advance</code></td><td><code>1130</code> Staff Advances</td><td>fixed</td><td>Not user-overridable in v1; the only valid contra.</td></tr>
+              <tr><td><code>courier</code></td><td><code>6320</code> Courier</td><td>fixed</td><td>Dedicated CoA seeded in 0043.</td></tr>
+              <tr><td><code>other_payout</code></td><td><code>9999</code> Suspense</td><td>required</td><td>Falls back to Suspense + audit event if reception skips.</td></tr>
+              <tr><td><code>float_topup</code></td><td><code>1020</code> Cash in Bank — BPI</td><td>required</td><td>Source of the cash (bank withdrawal, owner capital, etc.).</td></tr>
+              <tr><td><code>float_pullout</code></td><td><code>1020</code> Cash in Bank — BPI</td><td>required</td><td>Destination of the cash (bank deposit, owner drawing).</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <!-- ============================================================ -->
+        <section class="section" id="bridge">
+          <div class="section-eyebrow">05 · GL Bridge</div>
+          <h2 class="section-title">JE matrix per adjustment kind</h2>
+          <p class="section-lead">
+            All JEs follow the 12.2 pattern: insert header as <code>draft</code>, insert lines, flip to <code>posted</code>
+            (the flip is when <code>je_status_balance_check</code> validates). Idempotency rides on the partial unique
+            index from migration 0030.
+          </p>
+
+          <div class="je-matrix">
+            <div class="je-card">
+              <div class="je-card-kind">petty_cash · courier · other_payout</div>
+              <div class="je-line"><span class="je-dr">DR</span> <span class="je-acct">Expense account <span class="je-code">(mapped or chosen)</span></span></div>
+              <div class="je-line"><span class="je-cr">CR</span> <span class="je-acct">Cash on Hand <span class="je-code">1010</span></span></div>
+            </div>
+            <div class="je-card">
+              <div class="je-card-kind">salary_advance</div>
+              <div class="je-line"><span class="je-dr">DR</span> <span class="je-acct">Staff Advances <span class="je-code">1130</span></span></div>
+              <div class="je-line"><span class="je-cr">CR</span> <span class="je-acct">Cash on Hand <span class="je-code">1010</span></span></div>
+            </div>
+            <div class="je-card">
+              <div class="je-card-kind">float_topup</div>
+              <div class="je-line"><span class="je-dr">DR</span> <span class="je-acct">Cash on Hand <span class="je-code">1010</span></span></div>
+              <div class="je-line"><span class="je-cr">CR</span> <span class="je-acct">Source account <span class="je-code">(chosen)</span></span></div>
+            </div>
+            <div class="je-card">
+              <div class="je-card-kind">float_pullout</div>
+              <div class="je-line"><span class="je-dr">DR</span> <span class="je-acct">Destination account <span class="je-code">(chosen)</span></span></div>
+              <div class="je-line"><span class="je-cr">CR</span> <span class="je-acct">Cash on Hand <span class="je-code">1010</span></span></div>
+            </div>
+            <div class="je-card">
+              <div class="je-card-kind">eod_close · variance &lt; 0 (short)</div>
+              <div class="je-line"><span class="je-dr">DR</span> <span class="je-acct">Cash Short / Over <span class="je-code">6900</span></span></div>
+              <div class="je-line"><span class="je-cr">CR</span> <span class="je-acct">Cash on Hand <span class="je-code">1010</span></span></div>
+            </div>
+            <div class="je-card">
+              <div class="je-card-kind">eod_close · variance &gt; 0 (over)</div>
+              <div class="je-line"><span class="je-dr">DR</span> <span class="je-acct">Cash on Hand <span class="je-code">1010</span></span></div>
+              <div class="je-line"><span class="je-cr">CR</span> <span class="je-acct">Cash Short / Over <span class="je-code">6900</span></span></div>
+            </div>
+          </div>
+
+          <h3 class="sub">Trigger inventory</h3>
+          <table class="basic">
+            <thead><tr><th style="width:34%">Trigger</th><th style="width:16%">Fires on</th><th>Job</th></tr></thead>
+            <tbody>
+              <tr><td><code>bridge_cash_adjustment_insert</code></td><td>AFTER INSERT</td><td>Posts the kind's JE. Falls back to <code>9999</code> + Suspense audit if contra is required but missing.</td></tr>
+              <tr><td><code>bridge_cash_adjustment_void</code></td><td>AFTER UPDATE (void flip)</td><td>Posts a mirrored reversal JE; flips original to <code>reversed</code>.</td></tr>
+              <tr><td><code>bridge_eod_close</code></td><td>AFTER INSERT</td><td>If <code>variance_php &ne; 0</code>, posts the cash short/over JE dated <code>business_date</code>.</td></tr>
+              <tr><td><code>staff_advance_sync</code></td><td>AFTER INSERT &amp; UPDATE</td><td>INSERT → mirror into <code>staff_advances</code>. UPDATE (void) → set <code>outstanding=0</code>, <code>status='voided'</code>.</td></tr>
+              <tr><td><code>P0015 eod_lock</code></td><td>BEFORE *</td><td>Blocks writes to <code>payments</code> + <code>eod_cash_adjustments</code> when the target (date, shift) has an active close.</td></tr>
+              <tr><td><code>P0017 cash_adjustment_immutable</code></td><td>BEFORE UPDATE</td><td>After JE posts, blocks mutations to <code>amount_php</code>, <code>kind</code>, <code>business_date</code>, <code>shift_id</code>, <code>payee_staff_id</code>, <code>contra_account_id</code>.</td></tr>
+              <tr><td><code>P0018 staff_advance_overdraw</code></td><td>BEFORE UPDATE</td><td>Belt-and-suspenders for 12.6: rejects <code>outstanding_balance_php &lt; 0</code> with a friendly message.</td></tr>
+              <tr><td><code>P0019 cash_account_map_inactive</code></td><td>BEFORE INSERT/UPDATE</td><td>Rejects mapping a kind to an inactive CoA account.</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <!-- ============================================================ -->
+        <section class="section" id="ui">
+          <div class="section-eyebrow">06 · UI Surfaces</div>
+          <h2 class="section-title">Six routes · two reception, four admin</h2>
+          <p class="section-lead">
+            All surfaces validated at 390&times;844 (mobile-first per <em>feedback_mobile_first_for_new_pages</em>) and
+            1280&times;800. Modals route through the shared <code>&lt;ActionModal&gt;</code> wrapper extracted in 12.3.5.
+          </p>
+
+          <div class="mock">
+            <div class="mock-bar">/staff/payments/cash-drawer · Tue, May 18, 2026 · Default shift</div>
+            <div class="mock-body">
+              <div class="mock-row"><strong>Opening float</strong><span class="mock-amount">₱2,000.00</span></div>
+              <div style="font-size:11.5px; color:var(--ink-soft); padding-bottom:6px;">Baseline ₱2,000 · Topups +₱0 · Pullouts −₱0</div>
+              <div class="mock-row"><strong>Cash in (payments today)</strong><span class="mock-amount">₱12,450.00</span></div>
+              <div style="font-size:11.5px; color:var(--ink-soft); padding-bottom:6px;">23 cash payments · Other methods: GCash ₱4,200 · BPI ₱8,100 · HMO ₱6,500 <em>(read-only)</em></div>
+              <div class="mock-row"><strong>Cash out</strong><span class="mock-amount">−₱1,820.00</span></div>
+              <div style="font-size:12.5px; padding:8px 0;">
+                <div style="padding:4px 0; border-bottom:1px dashed var(--line-soft);">14:22 · <strong>petty_cash</strong> ₱350 · Office staples · contra 6400 Office Supplies</div>
+                <div style="padding:4px 0;">13:05 · <strong>salary_advance</strong> ₱1,500 · to Jane Doe · contra 1130 Staff Advances · <em>currently owes ₱1,500</em></div>
+              </div>
+              <div class="mock-row" style="font-size:15px;"><strong>Expected cash now</strong><span class="mock-amount" style="font-weight:700;">₱12,630.00</span></div>
+              <div style="margin-top:10px;">
+                <span class="mock-btn secondary">+ Add payout</span>
+                <span class="mock-btn secondary">+ Float adjustment</span>
+                <span class="mock-btn">Close day →</span>
+              </div>
+            </div>
+          </div>
+
+          <table class="basic" style="margin-top:18px;">
+            <thead><tr><th>Route</th><th>Audience</th><th>Purpose</th></tr></thead>
+            <tbody>
+              <tr><td><code>/staff/payments/cash-drawer</code></td><td>reception + admin</td><td>Running daily flow: opening float, payments in (read-only), payouts &amp; adjustments out, current expected cash.</td></tr>
+              <tr><td><code>/staff/payments/eod</code></td><td>reception + admin</td><td>Count physical cash, enter reason if variance &ne; 0, lock the day. Already-closed view shows close metadata + reopen affordance for admin.</td></tr>
+              <tr><td><code>/staff/admin/accounting/cash-routing</code></td><td>admin</td><td>Kind&nbsp;→&nbsp;contra account map. Same pattern as <code>/payment-routing</code> from 12.2.</td></tr>
+              <tr><td><code>/staff/admin/reports/daily-revenue</code></td><td>admin</td><td>Service&nbsp;×&nbsp;day pivot over <code>v_daily_revenue_by_service</code>. Default range = current month. Mobile: single-day vertical list fallback.</td></tr>
+              <tr><td><code>/staff/admin/reports/staff-advances</code></td><td>admin</td><td>Outstanding-balance table over <code>v_staff_advances_outstanding</code>. Drill-down to per-advance source adjustments + JE links.</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <!-- ============================================================ -->
+        <section class="section" id="errors">
+          <div class="section-eyebrow">07 · Errors</div>
+          <h2 class="section-title">New pg-error codes</h2>
+          <p class="section-lead">
+            Claimed range P0015–P0019. P0016 is reserved (the <code>variance_reason</code> requirement is enforced
+            client-side via Zod refinement; CHECK constraint doubles as safety net but should never surface).
+          </p>
+
+          <table class="basic">
+            <thead><tr><th style="width:14%">Code</th><th style="width:30%">Name</th><th>User-facing message</th></tr></thead>
+            <tbody>
+              <tr><td><code>P0015</code></td><td>eod_lock</td><td>End of day is already closed for that date. Ask an admin to reopen first.</td></tr>
+              <tr><td><code>P0017</code></td><td>cash_adjustment_immutable</td><td>Cannot edit this cash adjustment after its journal entry has posted. Void and re-create instead.</td></tr>
+              <tr><td><code>P0018</code></td><td>staff_advance_overdraw</td><td>Staff advance cannot go below zero.</td></tr>
+              <tr><td><code>P0019</code></td><td>cash_account_map_inactive</td><td>That account is inactive. Pick a different one.</td></tr>
+            </tbody>
+          </table>
+
+          <div class="callout neutral">
+            <span class="callout-label">Translation layer</span>
+            <p>
+              <code>src/lib/accounting/pg-errors.ts</code> gets four new <code>case</code> arms. Server Actions
+              continue to return <code>{ ok: true, data } | { ok: false, error }</code> with the translated message.
+              Sentry receives the raw <code>PgError</code> via <code>reportError</code> as usual.
+            </p>
+          </div>
+        </section>
+
+        <!-- ============================================================ -->
+        <section class="section" id="timeline">
+          <div class="section-eyebrow">08 · Phase Timeline</div>
+          <h2 class="section-title">Five dispatches · roughly one working week</h2>
+          <p class="section-lead">
+            Same cadence as 12.2 / 12.3 / 12.A: D1 ships the migration + smoke; D2 ships Server Actions; D3 + D4 ship the
+            two halves of the UI; D5 wraps a Playwright smoke and tags the release. Each phase is gated by typecheck +
+            lint clean + code review before the next phase begins.
+          </p>
+
+          <div class="phase">
+            <div class="phase-head">
+              <span class="phase-id">D1</span>
+              <span class="phase-title">Migration 0043 · schema + bridge + smoke</span>
+              <span class="phase-est">~1.5 days</span>
+            </div>
+            <div class="phase-body">
+              <p>
+                Land the entire DB-side change in one migration. Triggers, RLS policies, CoA seeds, enum additions, and a
+                ~22-assertion smoke test all ship together so subsequent dispatches build on a settled base.
+              </p>
+              <div class="phase-tasks">
+                <strong>Deliverables</strong>
+                <ul>
+                  <li><span class="task-id">T1</span> Migration <code>0043_eod_cash_reconciliation.sql</code>: enum additions, 5 tables, indexes, CHECKs.</li>
+                  <li><span class="task-id">T2</span> CoA seed (<code>1130</code>, <code>6320</code>, <code>6900</code>) with <code>ON CONFLICT DO NOTHING</code>.</li>
+                  <li><span class="task-id">T3</span> Seed: <code>cash_shifts</code> default row, <code>accounting_settings</code> KV row, <code>cash_adjustment_account_map</code> 6 rows.</li>
+                  <li><span class="task-id">T4</span> Bridge trigger functions + AFTER INSERT/UPDATE triggers on the new tables.</li>
+                  <li><span class="task-id">T5</span> Guard triggers P0015 / P0017 / P0018 / P0019 wired with friendly messages.</li>
+                  <li><span class="task-id">T6</span> <code>cash_drawer_state(date, shift_id)</code> SECURITY DEFINER function.</li>
+                  <li><span class="task-id">T7</span> Views <code>v_daily_revenue_by_service</code>, <code>v_staff_advances_outstanding</code>.</li>
+                  <li><span class="task-id">T8</span> Smoke test <code>supabase/tests/0043_eod_cash_reconciliation_smoke.sql</code> with 20–25 assertions + self-cleanup.</li>
+                  <li><span class="task-id">T9</span> Regenerate <code>src/types/database.ts</code> after migration applies.</li>
+                </ul>
+              </div>
+              <div class="phase-milestone">
+                <strong>Milestone · M1</strong>
+                Smoke test green on local Supabase; <code>db:types</code> regenerated; baseline rows survive smoke cleanup; <code>journal_entries</code> count returns to 0 after cleanup.
+              </div>
+            </div>
+          </div>
+
+          <div class="phase">
+            <div class="phase-head">
+              <span class="phase-id">D2</span>
+              <span class="phase-title">Server Actions · Zod · pg-errors translations</span>
+              <span class="phase-est">~1 day</span>
+            </div>
+            <div class="phase-body">
+              <p>
+                Eight Server Actions (six reception, five admin — overlap is the read action) plus their Zod schemas, plus
+                four new <code>translatePgError</code> arms. All actions audit-log mutations and return the standard
+                <code>{ ok, data | error }</code> envelope.
+              </p>
+              <div class="phase-tasks">
+                <strong>Deliverables</strong>
+                <ul>
+                  <li><span class="task-id">T10</span> <code>src/lib/accounting/cash/schemas.ts</code> with 8 Zod schemas, dates validated via <code>todayManilaISODate()</code>.</li>
+                  <li><span class="task-id">T11</span> <code>recordCashAdjustmentAction</code>, <code>voidCashAdjustmentAction</code>, <code>closeEodAction</code>, <code>getCashDrawerStateAction</code>.</li>
+                  <li><span class="task-id">T12</span> <code>reopenEodCloseAction</code>, <code>updateCashAdjustmentRoutingAction</code>, <code>updateDefaultChangeFundAction</code>, <code>createCashShiftAction</code>, <code>updateCashShiftAction</code>.</li>
+                  <li><span class="task-id">T13</span> Add P0015 / P0017 / P0018 / P0019 cases to <code>src/lib/accounting/pg-errors.ts</code>.</li>
+                  <li><span class="task-id">T14</span> Audit-log helper extensions for the new action names.</li>
+                  <li><span class="task-id">T15</span> Unit-of-work tests for the cash-drawer math via the SECURITY DEFINER function.</li>
+                </ul>
+              </div>
+              <div class="phase-milestone">
+                <strong>Milestone · M2</strong>
+                All actions typecheck. <code>recordCashAdjustmentAction</code> demo run via tinker script posts a balanced JE and creates a <code>staff_advances</code> row when given a <code>salary_advance</code> input.
+              </div>
+            </div>
+          </div>
+
+          <div class="phase">
+            <div class="phase-head">
+              <span class="phase-id">D3</span>
+              <span class="phase-title">Reception UI · <code>/cash-drawer</code> + <code>/eod</code></span>
+              <span class="phase-est">~1 day</span>
+            </div>
+            <div class="phase-body">
+              <p>
+                Build the two reception-facing routes. Math derives from <code>cash_drawer_state(date, shift_id)</code> on
+                the server; client just renders + submits. Modals route through <code>&lt;ActionModal&gt;</code>.
+              </p>
+              <div class="phase-tasks">
+                <strong>Deliverables</strong>
+                <ul>
+                  <li><span class="task-id">T16</span> <code>/staff/payments/cash-drawer/page.tsx</code> + client component.</li>
+                  <li><span class="task-id">T17</span> Add-payout modal · Add-float-adjustment modal · Void-confirmation modal.</li>
+                  <li><span class="task-id">T18</span> Salary-advance modal with staff-picker + "currently owes ₱X" hint from <code>v_staff_advances_outstanding</code>.</li>
+                  <li><span class="task-id">T19</span> <code>/staff/payments/eod/page.tsx</code> + client component (live variance computation, already-closed state, admin reopen affordance).</li>
+                  <li><span class="task-id">T20</span> Nav: add "Cash drawer" + "End of day" entries to reception side nav.</li>
+                  <li><span class="task-id">T21</span> Mobile pass at 390&times;844: no horizontal overflow, 44&times;44 tap targets.</li>
+                </ul>
+              </div>
+              <div class="phase-milestone">
+                <strong>Milestone · M3</strong>
+                Reception can record a petty_cash payout + salary advance, then close the day with a non-zero variance + reason, end-to-end in the browser.
+              </div>
+            </div>
+          </div>
+
+          <div class="phase">
+            <div class="phase-head">
+              <span class="phase-id">D4</span>
+              <span class="phase-title">Admin UI · cash-routing + reports + nav</span>
+              <span class="phase-est">~1 day</span>
+            </div>
+            <div class="phase-body">
+              <p>
+                Three admin pages. <code>cash-routing</code> reuses the <code>payment-routing</code> pattern almost verbatim;
+                the two reports are reads over the two views.
+              </p>
+              <div class="phase-tasks">
+                <strong>Deliverables</strong>
+                <ul>
+                  <li><span class="task-id">T22</span> <code>/staff/admin/accounting/cash-routing/{page,client,actions}.tsx</code>.</li>
+                  <li><span class="task-id">T23</span> <code>/staff/admin/reports/daily-revenue/page.tsx</code> with month-range picker + service kind filter.</li>
+                  <li><span class="task-id">T24</span> <code>/staff/admin/reports/staff-advances/page.tsx</code> with per-staff drill-down to <code>staff_advances</code> rows.</li>
+                  <li><span class="task-id">T25</span> Admin nav entries: Accounting&nbsp;·&nbsp;Cash routing; Reports&nbsp;·&nbsp;Daily revenue; Reports&nbsp;·&nbsp;Staff advances.</li>
+                  <li><span class="task-id">T26</span> Mobile pass at 390&times;844 (table&nbsp;→&nbsp;list fallback for daily-revenue pivot).</li>
+                </ul>
+              </div>
+              <div class="phase-milestone">
+                <strong>Milestone · M4</strong>
+                Admin can update a kind&nbsp;→&nbsp;account mapping and see the audit row with before/after metadata. Reports render with seeded test data and match SQL-derived totals.
+              </div>
+            </div>
+          </div>
+
+          <div class="phase gated">
+            <div class="phase-head">
+              <span class="phase-id">D5</span>
+              <span class="phase-title">Manual Playwright smoke · tag <code>v1.7.0</code></span>
+              <span class="phase-est">~0.5 day</span>
+            </div>
+            <div class="phase-body">
+              <p>
+                Browser-driven end-to-end smoke at 390&times;844 + 1280&times;800. Cleanup any smoke residue, then tag.
+              </p>
+              <div class="phase-tasks">
+                <strong>Deliverables</strong>
+                <ul>
+                  <li><span class="task-id">T27</span> Smoke script run end-to-end: login&nbsp;→&nbsp;drawer&nbsp;→&nbsp;payouts&nbsp;→&nbsp;EOD&nbsp;→&nbsp;close&nbsp;→&nbsp;reopen&nbsp;→&nbsp;close.</li>
+                  <li><span class="task-id">T28</span> Verify variance JE in <code>journal_entries</code> with correct DR/CR per matrix.</li>
+                  <li><span class="task-id">T29</span> Verify <code>staff_advances</code> row created on <code>salary_advance</code> + voided on void.</li>
+                  <li><span class="task-id">T30</span> Verify audit_log entries for all action names from §10 of the spec.</li>
+                  <li><span class="task-id">T31</span> Smoke residue cleanup: NULL self-FKs first, delete in dependency order, reset <code>je_year_counters.next_n</code>.</li>
+                  <li><span class="task-id">T32</span> Tag annotated release <code>v1.7.0</code> on the D5b commit (after code-review fixes).</li>
+                </ul>
+              </div>
+              <div class="phase-milestone">
+                <strong>Milestone · M5 (release)</strong>
+                All five surfaces smoke-tested. typecheck + lint green on every commit. <code>v1.7.0</code> annotated tag in place. Memory file updated with shipped status.
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============================================================ -->
+        <section class="section" id="risks">
+          <div class="section-eyebrow">09 · Risks &amp; dependencies</div>
+          <h2 class="section-title">Things that could bite</h2>
+          <p class="section-lead">
+            Each risk is rated by likelihood × blast radius. Mitigations are concrete and either ship in the migration
+            (DB-enforced) or are owned by a specific dispatch.
+          </p>
+
+          <div class="risks">
+            <div class="risk crit">
+              <div class="risk-head">
+                <span class="risk-title">P0015 fires on legitimate void of pre-close payments</span>
+                <span class="risk-tag">High impact · medium likelihood</span>
+              </div>
+              <div class="risk-body">
+                <strong>Scenario:</strong> A payment recorded at 14:00 turns out to be a duplicate; reception tries to void
+                at 19:00 after the day is closed. Current spec blocks. <strong>Mitigation:</strong> Documented behavior —
+                voids after close require admin reopen because they retroactively change cash balance. UI surfaces a
+                "Day closed · admin must reopen" message with the close metadata. Alternative (re-snapshot variance) was
+                considered and rejected as too magical for v1.
+              </div>
+            </div>
+
+            <div class="risk crit">
+              <div class="risk-head">
+                <span class="risk-title">P0015 needs single-active-shift assumption on <code>payments</code></span>
+                <span class="risk-tag">Tech-debt risk · low likelihood</span>
+              </div>
+              <div class="risk-body">
+                <strong>Scenario:</strong> v1 infers shift via "the one active row in <code>cash_shifts</code>" because
+                <code>payments</code> doesn't carry a <code>shift_id</code>. When multi-shift UI ships, every payment will
+                need to claim a shift. <strong>Mitigation:</strong> Comment in trigger explicitly references this; deferred
+                follow-up adds <code>payments.shift_id</code> with a backfill. Schema is forward-compatible.
+              </div>
+            </div>
+
+            <div class="risk">
+              <div class="risk-head">
+                <span class="risk-title">Closed accounting period blocks an EOD close</span>
+                <span class="risk-tag">Medium impact · low likelihood</span>
+              </div>
+              <div class="risk-body">
+                <strong>Scenario:</strong> Admin closes Q1 2026 (per 12.1), then reception tries to close a back-dated day
+                in Q1. <code>bridge_eod_close</code> JE trips P0002. <strong>Mitigation:</strong> The Server Action surfaces
+                the canonical "That accounting period is closed." message. Admin must reopen the period in
+                <code>/staff/admin/accounting/periods</code> before the close can land. Documented in spec §6.6.
+              </div>
+            </div>
+
+            <div class="risk">
+              <div class="risk-head">
+                <span class="risk-title">Race condition: two receptionists both click "Close day"</span>
+                <span class="risk-tag">Low impact · medium likelihood</span>
+              </div>
+              <div class="risk-body">
+                <strong>Scenario:</strong> Both receptionists submit close form within seconds. <strong>Mitigation:</strong>
+                UNIQUE <code>(business_date, shift_id) WHERE status='closed'</code> partial index. Second submission trips
+                23505 → translated to "Day already closed at HH:MM by X" in the UI.
+              </div>
+            </div>
+
+            <div class="risk info">
+              <div class="risk-head">
+                <span class="risk-title">Suspense postings under-surfaced</span>
+                <span class="risk-tag">Operational hygiene</span>
+              </div>
+              <div class="risk-body">
+                <strong>Scenario:</strong> Reception ignores the contra-account picker; bridge falls back to
+                <code>9999</code> with a <code>coa.suspense_post</code> audit row. Visible only in raw audit_log today.
+                <strong>Mitigation:</strong> Deferred follow-up — add a "Suspense activity" sidecar on the cash-routing
+                page (and on payment-routing while we're there). Same audit query, just surfaced.
+              </div>
+            </div>
+
+            <div class="risk info">
+              <div class="risk-head">
+                <span class="risk-title">Daily-revenue pivot performance on year-range queries</span>
+                <span class="risk-tag">Performance · low likelihood</span>
+              </div>
+              <div class="risk-body">
+                <strong>Scenario:</strong> Admin opens daily-revenue at year scale (~50 services × 365 days = 18K cells).
+                <strong>Mitigation:</strong> Default range is current month. View is a simple GROUP BY on
+                <code>test_requests</code> + <code>services</code>; existing indexes handle it. Add range cap (max 12 months)
+                in the page client if it becomes a concern.
+              </div>
+            </div>
+
+            <div class="risk ok">
+              <div class="risk-head">
+                <span class="risk-title">Bridge idempotency already proven (12.2 / 12.3 / 12.A)</span>
+                <span class="risk-tag">No action needed</span>
+              </div>
+              <div class="risk-body">
+                Partial unique index on <code>journal_entries (source_kind, source_id) WHERE status='posted' AND source_kind NOT IN ('reversal', 'hmo_history_opening')</code> already permits the two new source kinds. Tested under load across three sub-projects.
+              </div>
+            </div>
+          </div>
+
+          <h3 class="sub">Upstream dependencies</h3>
+          <div class="deps">
+            <div class="dep shipped">
+              <div class="dep-title">12.1 · GL foundation</div>
+              <div class="dep-tag">shipped · v1.2.0</div>
+              <div class="dep-body">CoA, periods, journal_entries spine, P0001 / P0002 / P0003 invariants. All consumed unchanged.</div>
+            </div>
+            <div class="dep shipped">
+              <div class="dep-title">12.2 · Op→GL bridge</div>
+              <div class="dep-tag">shipped · v1.3.0</div>
+              <div class="dep-body">Bridge pattern (insert-draft → lines → flip-posted), partial unique index, payment_method_account_map, P0004 / P0005 / P0006 / P0007 guards.</div>
+            </div>
+            <div class="dep shipped">
+              <div class="dep-title">12.3.5 · ActionModal wrapper</div>
+              <div class="dep-tag">shipped · post v1.4.0</div>
+              <div class="dep-body">Shared modal component for action-style flows. All 12.C modals route through it.</div>
+            </div>
+            <div class="dep shipped">
+              <div class="dep-title">12.3.5 · Manila-tz helpers</div>
+              <div class="dep-tag">shipped · post v1.4.0</div>
+              <div class="dep-body"><code>src/lib/dates/manila.ts</code> exports <code>todayManilaISODate</code> + <code>isOnOrBeforeTodayManila</code>. All date validation in 12.C uses these.</div>
+            </div>
+          </div>
+
+          <h3 class="sub">Downstream consumers</h3>
+          <div class="deps">
+            <div class="dep consumes">
+              <div class="dep-title">12.4 · OPEX / AP subledger</div>
+              <div class="dep-tag">queued</div>
+              <div class="dep-body">Will reuse the <code>cash_adjustment_account_map</code> pattern for AP voucher routing. No direct schema dependency on 12.C.</div>
+            </div>
+            <div class="dep consumes">
+              <div class="dep-title">12.6 · Payroll</div>
+              <div class="dep-tag">future</div>
+              <div class="dep-body">Will UPDATE <code>staff_advances.outstanding_balance_php</code> down as payslip deductions land. <code>v_staff_advances_outstanding</code> is its inbound queue.</div>
+            </div>
+            <div class="dep pending">
+              <div class="dep-title">12.D · Bank reconciliation</div>
+              <div class="dep-tag">future · not yet scoped</div>
+              <div class="dep-body">Will consume <code>float_topup</code> / <code>float_pullout</code> rows that represent bank movements + reconcile <code>1020</code> / <code>1021</code> / <code>1030</code> to bank/wallet statements.</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============================================================ -->
+        <section class="section" id="deferred">
+          <div class="section-eyebrow">10 · Deferred</div>
+          <h2 class="section-title">Explicitly not doing</h2>
+          <p class="section-lead">
+            Surfaced during the brainstorm or self-review and consciously punted. Listed here so they're discoverable when
+            the next sub-project picks the project up.
+          </p>
+
+          <table class="basic">
+            <thead><tr><th style="width:32%">Item</th><th>Where it goes</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Bank/wallet reconciliation</strong> for non-cash methods</td><td>Future <strong>12.D</strong>. Cash-drawer page already <em>displays</em> non-cash totals so reception is aware.</td></tr>
+              <tr><td><strong>Cash-advance payslip deduction loop</strong></td><td><strong>12.6</strong>. <code>staff_advances</code> schema is forward-compatible — 12.6 ships the UPDATE + a JE that draws down the receivable.</td></tr>
+              <tr><td><strong>Multi-shift handover-count workflow</strong></td><td>Post-v1 follow-up. Schema already supports a second active shift; the UI extension is the only missing piece.</td></tr>
+              <tr><td><strong>Petty-cash voucher PDF print</strong></td><td>Post-v1 polish. Today the in-app row + JE is the paper trail.</td></tr>
+              <tr><td><strong>Bulk-edit / bulk-void of adjustments</strong></td><td>Out of scope. Admin can void individually.</td></tr>
+              <tr><td><strong>Auto-close at midnight</strong></td><td>Explicitly rejected. Close is always user-initiated; an idle day stays open until reception closes it.</td></tr>
+              <tr><td><strong><code>shift_id</code> column on <code>payments</code></strong></td><td>Deferred to multi-shift work. Backfill required; not warranted while single-active-shift inference is correct.</td></tr>
+              <tr><td><strong>Staff-advance write-off UI</strong></td><td><strong>12.6</strong>. Schema has <code>status='written_off'</code> ready.</td></tr>
+              <tr><td><strong>Suspense-posting daily digest</strong></td><td>Post-v1 sidecar on cash-routing + payment-routing. Same query, just surfaced.</td></tr>
+            </tbody>
+          </table>
+
+          <div class="callout neutral" style="margin-top:24px;">
+            <span class="callout-label">Resume checklist · implementation plan author</span>
+            <p>
+              <strong>(1)</strong> Confirm CoA codes <code>1130</code>, <code>6320</code>, <code>6900</code> don't exist
+              in prod (<code>select code from chart_of_accounts where code in ('1130','6320','6900')</code>).
+              <strong>(2)</strong> Confirm <code>P0015</code>–<code>P0019</code> aren't already used
+              (<code>grep -r 'P001[5-9]' src/ supabase/</code>).
+              <strong>(3)</strong> Invoke <code>superpowers:writing-plans</code> against this spec to produce the D1–D5
+              implementation plan.
+            </p>
+          </div>
+        </section>
+
+        <footer class="foot">
+          <p>
+            <strong>DRMed · 12.C — Daily Cash Reconciliation · Design Deliverable.</strong>
+            Source spec: <code>docs/superpowers/specs/2026-05-18-12.C-daily-cash-reconciliation-design.md</code>.
+            Related deliverables: <a href="./accounting-roadmap.html">accounting roadmap</a> ·
+            <a href="./12.A-hmo-history-import.html">12.A design</a> ·
+            <a href="./12.A-hmo-history-import-plan.html">12.A plan</a>.
+          </p>
+        </footer>
+      </main>
+    </div>
+  </body>
+</html>
