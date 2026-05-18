@@ -100,3 +100,12 @@ values (
   'Baseline cash drawer float at start of each business date. Adjust via eod_cash_adjustments float_topup/float_pullout.'
 )
 on conflict (key) do nothing;
+
+-- ---- CoA additions ---------------------------------------------------------
+-- Idempotent: existing rows in production are unchanged; missing rows in a
+-- fresh local DB get inserted.
+insert into public.chart_of_accounts (code, name, type, normal_balance, description) values
+  ('1130', 'Staff Advances',     'asset',   'debit', 'Outstanding cash advances to employees. Reduced by payroll deductions in 12.6.'),
+  ('6320', 'Courier',            'expense', 'debit', 'Courier and delivery costs (specimen transport, document delivery, etc.).'),
+  ('6900', 'Cash Short / Over',  'expense', 'debit', 'Net daily till variances. Negative balance is acceptable (net overs).')
+on conflict (code) do nothing;
