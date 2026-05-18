@@ -297,3 +297,47 @@ create policy "staff_advances: reception read"
   on public.staff_advances
   for select to authenticated
   using (public.has_role(array['reception','admin']));
+
+-- ---- Helper: resolve_cash_adjustment_account -------------------------------
+-- Resolves the non-cash side of a cash-adjustment JE.
+-- If contra_account_id is provided, use it. Otherwise look up the kind's
+-- default from cash_adjustment_account_map. If the map requires user choice
+-- and we got here without a chosen account, fall back to 9999 Suspense.
+create or replace function public.resolve_cash_adjustment_account(
+  p_kind               text,
+  p_contra_account_id  uuid
+)
+returns table (account_id uuid, used_suspense boolean)
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_map_account uuid;
+  v_requires    boolean;
+begin
+  if p_contra_account_id is not null then
+    return query select p_contra_account_id, false;
+    return;
+  end if;
+
+  select cam.account_id, cam.requires_user_choice
+    into v_map_account, v_requires
+    from public.cash_adjustment_account_map cam
+    where cam.kind = p_kind;
+
+  if v_map_account is null then
+    return query select public.coa_uuid_for_code('9999'), true;
+    return;
+  end if;
+
+  if v_requires then
+    -- User-choice required but skipped → suspense fallback.
+    return query select public.coa_uuid_for_code('9999'), true;
+    return;
+  end if;
+
+  return query select v_map_account, false;
+end;
+$$;
