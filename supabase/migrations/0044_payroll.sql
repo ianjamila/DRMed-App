@@ -85,6 +85,9 @@ create policy "employees: admin all" on public.employees for all to authenticate
 create policy "employees: self read" on public.employees for select to authenticated
   using (staff_profile_id = auth.uid());
 
+-- Required for the exclusion constraint below (uuid/text equality inside gist).
+create extension if not exists btree_gist;
+
 -- ---- employee_allowances --------------------------------------------------
 create table public.employee_allowances (
   id                  uuid primary key default gen_random_uuid(),
