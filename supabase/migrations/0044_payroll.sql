@@ -355,3 +355,23 @@ create index idx_payroll_dtr_rows_status on public.payroll_dtr_rows (status) whe
 alter table public.payroll_dtr_rows enable row level security;
 create policy "payroll_dtr_rows: admin all" on public.payroll_dtr_rows for all to authenticated
   using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
+
+-- ---- payroll_holidays -----------------------------------------------------
+create table public.payroll_holidays (
+  id                  uuid primary key default gen_random_uuid(),
+  date                date not null,
+  kind                text not null check (kind in ('regular','special_non_working','special_working')),
+  name                text not null,
+  is_active           boolean not null default true,
+  notes               text,
+  created_at          timestamptz not null default now(),
+  updated_at          timestamptz not null default now(),
+  constraint payroll_holidays_unique_per_date_kind unique (date, kind)
+);
+create trigger trg_payroll_holidays_updated_at before update on public.payroll_holidays
+  for each row execute function public.touch_updated_at();
+alter table public.payroll_holidays enable row level security;
+create policy "payroll_holidays: admin read" on public.payroll_holidays for select to authenticated
+  using (public.has_role(array['admin']));
+create policy "payroll_holidays: admin write" on public.payroll_holidays for all to authenticated
+  using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
