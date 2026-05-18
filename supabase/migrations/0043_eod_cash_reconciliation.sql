@@ -204,3 +204,58 @@ create policy "eod_cash_adjustments: staff write"
   for all to authenticated
   using (public.has_role(array['reception','admin']))
   with check (public.has_role(array['reception','admin']));
+
+-- ---- eod_close_records -----------------------------------------------------
+create table public.eod_close_records (
+  id                    uuid primary key default gen_random_uuid(),
+  business_date         date not null,
+  shift_id              uuid not null references public.cash_shifts(id),
+  status                text not null default 'closed'
+                          check (status in ('closed', 'reopened')),
+  opening_float_php     numeric(14,2) not null,
+  cash_payments_php     numeric(14,2) not null,
+  cash_payouts_php      numeric(14,2) not null,
+  expected_cash_php     numeric(14,2) not null,
+  counted_cash_php      numeric(14,2) not null check (counted_cash_php >= 0),
+  variance_php          numeric(14,2) not null,
+  variance_reason       text,
+  closed_by             uuid not null references public.staff_profiles(id),
+  closed_at             timestamptz not null default now(),
+  reopened_by           uuid references public.staff_profiles(id),
+  reopened_at           timestamptz,
+  reopen_reason         text,
+  created_at            timestamptz not null default now(),
+  constraint eod_close_variance_matches
+    check (variance_php = counted_cash_php - expected_cash_php),
+  constraint eod_close_variance_reason_required
+    check (variance_php = 0 or variance_reason is not null),
+  constraint eod_close_reopen_reason_required
+    check (status != 'reopened' or reopen_reason is not null)
+);
+
+-- One ACTIVE close per (business_date, shift_id). Reopened rows linger
+-- for audit; a fresh re-close inserts a new row.
+create unique index eod_close_records_one_active
+  on public.eod_close_records (business_date, shift_id)
+  where status = 'closed';
+
+create index idx_eod_close_records_date
+  on public.eod_close_records (business_date desc, shift_id);
+
+alter table public.eod_close_records enable row level security;
+
+create policy "eod_close_records: staff read"
+  on public.eod_close_records
+  for select to authenticated
+  using (public.has_role(array['reception','admin']));
+
+create policy "eod_close_records: staff insert"
+  on public.eod_close_records
+  for insert to authenticated
+  with check (public.has_role(array['reception','admin']));
+
+create policy "eod_close_records: admin update"
+  on public.eod_close_records
+  for update to authenticated
+  using (public.has_role(array['admin']))
+  with check (public.has_role(array['admin']));
