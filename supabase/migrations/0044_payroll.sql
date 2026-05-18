@@ -36,6 +36,13 @@ alter table public.eod_cash_adjustments add constraint eod_cash_adjustments_kind
   'petty_cash','salary_advance','courier','other_payout','float_topup','float_pullout','salary_payout'
 ));
 
+-- Extend 12.C's cash_adjustment_account_map.kind alongside eod_cash_adjustments.kind
+-- so Task 19 below can register the salary_payout routing row.
+alter table public.cash_adjustment_account_map drop constraint cash_adjustment_account_map_kind_check;
+alter table public.cash_adjustment_account_map add constraint cash_adjustment_account_map_kind_check check (kind in (
+  'petty_cash','salary_advance','courier','other_payout','float_topup','float_pullout','salary_payout'
+));
+
 -- ---- CoA additions --------------------------------------------------------
 -- Split employer contributions into per-kind sub-accounts so the P&L can
 -- trace each statutory cost separately (cleaner than lumping into 6120).
