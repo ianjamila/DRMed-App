@@ -155,6 +155,17 @@ export type PayslipData = {
 // minimumFractionDigits: 0) lives with the table-drawing code that uses it,
 // reintroduced in T71.
 
+const PESO_FMT = new Intl.NumberFormat("en-PH", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+// Payslip-specific peso formatter — fixed .00 decimals always, unlike the
+// marketing formatPhp which uses minimumFractionDigits: 0.
+function formatPeso(amount: number): string {
+  return `₱${PESO_FMT.format(amount)}`;
+}
+
 // ---------------------------------------------------------------------------
 // Data loader
 // ---------------------------------------------------------------------------
@@ -614,6 +625,237 @@ function drawEmployeePeriodBlock(
 }
 
 // ---------------------------------------------------------------------------
+// Earnings + deductions tables (T71)
+// ---------------------------------------------------------------------------
+//
+// Two-column layout: earnings on the left, deductions on the right.
+// Page width 595 with 30pt margins and a 20pt gutter gives ~257.5pt per
+// column. Labels are GRAY, values are right-aligned in INK.
+
+const COL_GAP = 20;
+const COL_W = (PAGE_W - 2 * MARGIN - COL_GAP) / 2;
+const LEFT_X = MARGIN;
+const RIGHT_X = MARGIN + COL_W + COL_GAP;
+
+const SECTION_HEADER_SIZE = 11;
+const ROW_LABEL_SIZE = 9;
+const ROW_VALUE_SIZE = 9;
+const SUBSECTION_HEADER_SIZE = 8;
+const ROW_LINE_H = 13;
+const SUBSECTION_LINE_H = 11;
+
+function drawRow(
+  ctx: DrawCtx,
+  label: string,
+  amount: number,
+  x: number,
+  y: number,
+  options: { bold?: boolean; indent?: number } = {},
+): number /* next Y */ {
+  const { bold = false, indent = 0 } = options;
+  drawText(ctx, label, x + indent, y, {
+    size: ROW_LABEL_SIZE,
+    color: bold ? INK : GRAY,
+    bold,
+  });
+  const value = formatPeso(amount);
+  const valueFont = bold ? ctx.fontBold : ctx.font;
+  const valueWidth = valueFont.widthOfTextAtSize(value, ROW_VALUE_SIZE);
+  drawText(ctx, value, x + COL_W - valueWidth, y, {
+    size: ROW_VALUE_SIZE,
+    color: INK,
+    bold,
+  });
+  return y - ROW_LINE_H;
+}
+
+function drawEarnings(
+  ctx: DrawCtx,
+  data: PayslipData,
+  startY: number,
+): number /* next Y */ {
+  let y = startY;
+
+  // Section header.
+  drawText(ctx, "EARNINGS", LEFT_X, y, {
+    size: SECTION_HEADER_SIZE,
+    color: NAVY,
+    bold: true,
+  });
+  y -= ROW_LINE_H + 2;
+
+  // Always-shown rows.
+  y = drawRow(ctx, "Basic pay", data.run.basic_pay_php, LEFT_X, y);
+  y = drawRow(ctx, "Allowances", data.run.allowances_total_php, LEFT_X, y);
+  y = drawRow(ctx, "Overtime", data.run.ot_pay_php, LEFT_X, y);
+  y = drawRow(
+    ctx,
+    "Night differential",
+    data.run.night_diff_pay_php,
+    LEFT_X,
+    y,
+  );
+  y = drawRow(ctx, "Holiday pay", data.run.holiday_pay_php, LEFT_X, y);
+  y = drawRow(ctx, "Incentives", data.run.incentives_total_php, LEFT_X, y);
+  y = drawRow(
+    ctx,
+    "Perfect attendance",
+    data.run.perfect_attendance_bonus_php,
+    LEFT_X,
+    y,
+  );
+
+  // 13th-month payout — only if > 0 (typically December).
+  if (data.run.thirteenth_month_payout_php > 0) {
+    y = drawRow(
+      ctx,
+      "13th-month payout",
+      data.run.thirteenth_month_payout_php,
+      LEFT_X,
+      y,
+    );
+  }
+
+  return y;
+}
+
+function drawDeductions(
+  ctx: DrawCtx,
+  data: PayslipData,
+  startY: number,
+): number /* next Y */ {
+  let y = startY;
+
+  // Section header.
+  drawText(ctx, "DEDUCTIONS", RIGHT_X, y, {
+    size: SECTION_HEADER_SIZE,
+    color: NAVY,
+    bold: true,
+  });
+  y -= ROW_LINE_H + 2;
+
+  // Statutory + standard deductions.
+  y = drawRow(ctx, "SSS contribution", data.run.sss_ee_php, RIGHT_X, y);
+  y = drawRow(
+    ctx,
+    "PhilHealth contribution",
+    data.run.philhealth_ee_php,
+    RIGHT_X,
+    y,
+  );
+  y = drawRow(
+    ctx,
+    "Pag-IBIG contribution",
+    data.run.pagibig_ee_php,
+    RIGHT_X,
+    y,
+  );
+  y = drawRow(
+    ctx,
+    "Withholding tax",
+    data.run.wt_compensation_php,
+    RIGHT_X,
+    y,
+  );
+
+  // Conditional rows.
+  if (data.run.tardiness_deduction_php > 0) {
+    y = drawRow(
+      ctx,
+      "Tardiness",
+      data.run.tardiness_deduction_php,
+      RIGHT_X,
+      y,
+    );
+  }
+  if (data.run.staff_advance_settlement_php > 0) {
+    y = drawRow(
+      ctx,
+      "Staff advance settlement",
+      data.run.staff_advance_settlement_php,
+      RIGHT_X,
+      y,
+    );
+  }
+
+  // Loan amortizations subsection.
+  const loanLines = data.deductionLines.filter(
+    (l) => l.kind === "loan_amortization",
+  );
+  if (loanLines.length > 0) {
+    drawText(ctx, "Loan amortizations", RIGHT_X, y, {
+      size: SUBSECTION_HEADER_SIZE,
+      color: GRAY,
+      bold: true,
+    });
+    y -= SUBSECTION_LINE_H;
+    for (const line of loanLines) {
+      y = drawRow(ctx, line.label, line.amount_php, RIGHT_X, y, { indent: 8 });
+    }
+  }
+
+  // Manual deductions subsection — manual_adjustment + other.
+  const manualLines = data.deductionLines.filter(
+    (l) => l.kind === "manual_adjustment" || l.kind === "other",
+  );
+  if (manualLines.length > 0) {
+    drawText(ctx, "Manual deductions", RIGHT_X, y, {
+      size: SUBSECTION_HEADER_SIZE,
+      color: GRAY,
+      bold: true,
+    });
+    y -= SUBSECTION_LINE_H;
+    for (const line of manualLines) {
+      y = drawRow(ctx, line.label, line.amount_php, RIGHT_X, y, { indent: 8 });
+    }
+  }
+
+  // Total deductions — sum of statutory + standard + all deduction lines.
+  // (Per the schema CHECK, deduction line `kind` is limited to
+  // loan_amortization / manual_adjustment / other — so iterating all lines
+  // equals iterating the subsection-shown ones.)
+  const linesTotal = data.deductionLines.reduce(
+    (acc, l) => acc + l.amount_php,
+    0,
+  );
+  const totalDeductions =
+    data.run.sss_ee_php +
+    data.run.philhealth_ee_php +
+    data.run.pagibig_ee_php +
+    data.run.wt_compensation_php +
+    data.run.tardiness_deduction_php +
+    data.run.staff_advance_settlement_php +
+    linesTotal;
+
+  // Thin divider above total.
+  const dividerY = y + ROW_LINE_H - 3;
+  ctx.page.drawLine({
+    start: { x: RIGHT_X, y: dividerY },
+    end: { x: RIGHT_X + COL_W, y: dividerY },
+    thickness: 0.5,
+    color: GRAY,
+  });
+  y -= 2;
+  y = drawRow(ctx, "Total deductions", totalDeductions, RIGHT_X, y, {
+    bold: true,
+  });
+
+  return y;
+}
+
+function drawEarningsAndDeductions(
+  ctx: DrawCtx,
+  data: PayslipData,
+  startY: number,
+): number /* next Y */ {
+  // 18pt gap between the employee/period block and the section headers.
+  const tablesStartY = startY - 18;
+  const leftAfterY = drawEarnings(ctx, data, tablesStartY);
+  const rightAfterY = drawDeductions(ctx, data, tablesStartY);
+  return Math.min(leftAfterY, rightAfterY) - 6;
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -650,12 +892,11 @@ export async function generatePayslipPdf(
   const ctx: DrawCtx = { page, font, fontBold };
 
   const afterLetterheadY = drawLetterhead(ctx, logoImg);
-  drawEmployeePeriodBlock(ctx, data, afterLetterheadY);
+  const afterEmployeeY = drawEmployeePeriodBlock(ctx, data, afterLetterheadY);
+  drawEarningsAndDeductions(ctx, data, afterEmployeeY);
 
-  // T71 will chain off drawEmployeePeriodBlock's return value:
-  //   const cursorY = drawEmployeePeriodBlock(ctx, data, afterLetterheadY);
-  //   drawEarnings(ctx, data, cursorY); drawDeductions(...); etc.
-  // T72 will append: drawNetPay + drawYtd + drawLeave + drawSignatures.
+  // T72 will chain off drawEarningsAndDeductions' return value (afterTablesY)
+  // and append: drawNetPay + drawYtd + drawLeave + drawSignatures.
   // T73 will measure section heights and break pages when cursorY < MARGIN.
 
   const bytes = await pdfDoc.save();
