@@ -1,24 +1,16 @@
 "use server";
 
-import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
+import { ipAndAgent } from "@/lib/server/action-helpers";
 import {
   OverrideSchema,
   ScheduleBlockSchema,
 } from "@/lib/validations/physician";
 
 export type ScheduleResult = { ok: true } | { ok: false; error: string };
-
-async function ipAndAgent() {
-  const h = await headers();
-  return {
-    ip: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
-    ua: h.get("user-agent"),
-  };
-}
 
 export async function addBlockAction(
   physicianId: string,

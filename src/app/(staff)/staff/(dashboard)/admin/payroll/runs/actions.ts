@@ -1,6 +1,5 @@
 "use server";
 
-import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -9,6 +8,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { computePayrollRun } from "@/lib/payroll/compute";
 import { reportError } from "@/lib/observability/report-error";
+import { ipAndAgent, firstIssue } from "@/lib/server/action-helpers";
 import { generatePayslipsForRunAction } from "./[id]/payslip-actions";
 import {
   CreatePeriodSchema,
@@ -35,18 +35,6 @@ export type RunActionResult<T = undefined> =
 
 const RUNS_PATH = "/staff/admin/payroll/runs";
 const CASH_DRAWER_PATH = "/staff/payments/cash-drawer";
-
-async function ipAndAgent() {
-  const h = await headers();
-  return {
-    ip: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
-    ua: h.get("user-agent"),
-  };
-}
-
-function firstIssue(err: z.ZodError, fallback = "Please check the form."): string {
-  return err.issues[0]?.message ?? fallback;
-}
 
 function runDetailPath(run_id: string) {
   return `${RUNS_PATH}/${run_id}`;

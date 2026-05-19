@@ -1,6 +1,5 @@
 "use server";
 
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -14,20 +13,13 @@ import {
 } from "@/lib/newsletter/email-template";
 import { ComposeCampaignSchema } from "@/lib/validations/newsletter";
 import { SITE } from "@/lib/marketing/site";
+import { ipAndAgent } from "@/lib/server/action-helpers";
 
 export type CampaignResult =
   | { ok: true; recipientCount: number }
   | { ok: false; error: string };
 
 const BATCH_SIZE = 5; // ≤ Resend free-tier 10 req/sec ceiling
-
-async function ipAndAgent() {
-  const h = await headers();
-  return {
-    ip: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
-    ua: h.get("user-agent"),
-  };
-}
 
 export async function sendCampaignAction(
   _prev: CampaignResult | null,

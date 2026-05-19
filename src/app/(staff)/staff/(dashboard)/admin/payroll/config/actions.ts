@@ -9,13 +9,13 @@
 //
 // Spec: docs/superpowers/specs/2026-05-18-12.6-payroll-design.md §13.
 
-import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { translatePgError } from "@/lib/accounting/pg-errors";
+import { ipAndAgent, firstIssue } from "@/lib/server/action-helpers";
 import {
   CreateOtSlipSchema,
   AddHolidaySchema,
@@ -34,18 +34,6 @@ export type ConfigActionResult<T = undefined> =
   | { ok: false; error: string };
 
 const CONFIG_PATH = "/staff/admin/payroll/config";
-
-async function ipAndAgent() {
-  const h = await headers();
-  return {
-    ip: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
-    ua: h.get("user-agent"),
-  };
-}
-
-function firstIssue(err: z.ZodError, fallback = "Please check the form."): string {
-  return err.issues[0]?.message ?? fallback;
-}
 
 // =============================================================================
 // OT slips
