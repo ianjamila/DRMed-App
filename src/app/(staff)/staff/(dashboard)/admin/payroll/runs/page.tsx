@@ -47,30 +47,76 @@ export default async function PayrollRunsPage({ searchParams }: PageProps) {
   const yearStart = `${year}-01-01`;
   const yearEnd = `${year + 1}-01-01`;
 
-  // Step 1: fetch the runs joined to their period in the selected year. The
-  // PostgREST inner-join filter (`period:payroll_periods!inner(...)`) restricts
-  // by `period_start` on the joined row.
-  let runsQuery = admin
-    .from("payroll_runs")
-    .select(
-      "id, status, created_at, period:payroll_periods!inner(id, period_start, period_end, pay_date)",
-    )
-    .gte("period.period_start", yearStart)
-    .lt("period.period_start", yearEnd);
+  // Track DB errors to surface to the admin instead of silently rendering
+  // an empty table.
+  const dbErrors: string[] = [];
 
-  if (status !== "all") {
-    runsQuery = runsQuery.eq("status", status);
+  // Step A: fetch the period ids in the target year directly off
+  // payroll_periods. PostgREST does NOT honour `period.period_start` filters
+  // against an aliased embedded resource via supabase-js — the filter is
+  // silently dropped and ALL runs come back regardless of ?year=. So we
+  // resolve the period ids first, then filter runs by those ids.
+  const { data: periodRows, error: periodIdsErr } = await admin
+    .from("payroll_periods")
+    .select("id")
+    .gte("period_start", yearStart)
+    .lt("period_start", yearEnd);
+  if (periodIdsErr) {
+    console.error(
+      "[payroll/runs] periods-for-year query failed:",
+      periodIdsErr,
+    );
+    dbErrors.push("Failed to load pay periods.");
+  }
+  const periodIds = (periodRows ?? []).map((p) => p.id);
+
+  type RawRunRow = {
+    id: string;
+    status: string;
+    created_at: string;
+    period:
+      | {
+          id: string;
+          period_start: string;
+          period_end: string;
+          pay_date: string;
+        }
+      | {
+          id: string;
+          period_start: string;
+          period_end: string;
+          pay_date: string;
+        }[]
+      | null;
+  };
+
+  // Step B: fetch runs by those period ids. Short-circuit when there are no
+  // periods in the year so we don't issue an empty IN-list query.
+  let rawRuns: RawRunRow[] = [];
+  if (periodIds.length > 0) {
+    let runsQuery = admin
+      .from("payroll_runs")
+      .select(
+        "id, status, created_at, period:payroll_periods!inner(id, period_start, period_end, pay_date)",
+      )
+      .in("period_id", periodIds);
+
+    if (status !== "all") {
+      runsQuery = runsQuery.eq("status", status);
+    }
+
+    const { data, error: runsErr } = await runsQuery;
+    if (runsErr) {
+      console.error("[payroll/runs] runs query failed:", runsErr);
+      dbErrors.push("Failed to load pay runs.");
+    }
+    rawRuns = (data ?? []) as RawRunRow[];
   }
 
-  const { data: rawRuns, error: runsErr } = await runsQuery;
-  if (runsErr) {
-    // Surface the error to the client by passing an empty list — the
-    // page-level error boundary will handle anything more catastrophic.
-    console.error("[payroll/runs] runs query failed:", runsErr);
-  }
-
-  // Step 2: aggregate payroll_employee_runs for the selected run ids.
-  const runIds = (rawRuns ?? []).map((r) => r.id);
+  // Step C: aggregate payroll_employee_runs for the selected run ids. The
+  // IN-list is sent in the URL, so chunk it to stay under PostgREST's URL
+  // limits (~50 UUIDs is a comfortable ceiling).
+  const runIds = rawRuns.map((r) => r.id);
   type EmpAgg = {
     sumGross: number;
     sumNet: number;
@@ -79,31 +125,47 @@ export default async function PayrollRunsPage({ searchParams }: PageProps) {
   };
   const aggByRun = new Map<string, EmpAgg>();
   if (runIds.length > 0) {
-    const { data: empRows, error: empErr } = await admin
-      .from("payroll_employee_runs")
-      .select("run_id, gross_pay_php, net_pay_php, payout_status")
-      .in("run_id", runIds);
-    if (empErr) {
-      console.error("[payroll/runs] employee_runs query failed:", empErr);
+    const CHUNK = 30;
+    const chunks: string[][] = [];
+    for (let i = 0; i < runIds.length; i += CHUNK) {
+      chunks.push(runIds.slice(i, i + CHUNK));
     }
-    for (const row of empRows ?? []) {
-      const agg = aggByRun.get(row.run_id) ?? {
-        sumGross: 0,
-        sumNet: 0,
-        countTotal: 0,
-        countPaid: 0,
-      };
-      agg.sumGross += Number(row.gross_pay_php ?? 0);
-      agg.sumNet += Number(row.net_pay_php ?? 0);
-      agg.countTotal += 1;
-      if (row.payout_status === "paid") agg.countPaid += 1;
-      aggByRun.set(row.run_id, agg);
+    const empResults = await Promise.all(
+      chunks.map((ids) =>
+        admin
+          .from("payroll_employee_runs")
+          .select("run_id, gross_pay_php, net_pay_php, payout_status")
+          .in("run_id", ids),
+      ),
+    );
+    for (const res of empResults) {
+      if (res.error) {
+        console.error(
+          "[payroll/runs] employee_runs chunk query failed:",
+          res.error,
+        );
+        dbErrors.push("Failed to load run aggregates.");
+        continue;
+      }
+      for (const row of res.data ?? []) {
+        const agg = aggByRun.get(row.run_id) ?? {
+          sumGross: 0,
+          sumNet: 0,
+          countTotal: 0,
+          countPaid: 0,
+        };
+        agg.sumGross += Number(row.gross_pay_php ?? 0);
+        agg.sumNet += Number(row.net_pay_php ?? 0);
+        agg.countTotal += 1;
+        if (row.payout_status === "paid") agg.countPaid += 1;
+        aggByRun.set(row.run_id, agg);
+      }
     }
   }
 
   // Shape rows for the client; PostgREST may return the to-one join as an
   // object or as a single-element array depending on the generated type.
-  const runs: RunListRow[] = (rawRuns ?? [])
+  const runs: RunListRow[] = rawRuns
     .map((row) => {
       const period = Array.isArray(row.period) ? row.period[0] : row.period;
       const agg = aggByRun.get(row.id) ?? {
@@ -128,21 +190,24 @@ export default async function PayrollRunsPage({ searchParams }: PageProps) {
     // Most recent period first.
     .sort((a, b) => (a.period_start < b.period_start ? 1 : -1));
 
-  // Step 3: build the year filter list from distinct payroll_periods.period_start.
-  const { data: yearRows } = await admin
-    .from("payroll_periods")
-    .select("period_start");
-  const yearsSet = new Set<number>();
-  for (const r of yearRows ?? []) {
-    if (r.period_start && r.period_start.length >= 4) {
-      yearsSet.add(Number.parseInt(r.period_start.slice(0, 4), 10));
-    }
-  }
-  // Make sure the currently selected year is selectable even if there are no
-  // periods in it yet (e.g. a freshly-installed prod).
-  yearsSet.add(currentYear);
-  yearsSet.add(year);
+  // Step D: build the year filter list. Payroll history is bounded (started
+  // 2026), so use a 5-year synthetic window centred on the current Manila
+  // year instead of issuing a dedicated query just for the dropdown.
+  const yearsSet = new Set<number>([
+    currentYear - 2,
+    currentYear - 1,
+    currentYear,
+    currentYear + 1,
+    currentYear + 2,
+    // Always include the currently selected year so it's a valid option even
+    // when it falls outside the synthetic window.
+    year,
+  ]);
   const years = Array.from(yearsSet).sort((a, b) => b - a);
+
+  // De-dup error messages so we don't spam the banner if multiple chunks fail.
+  const uniqueErrors = Array.from(new Set(dbErrors));
+  const errorMessage = uniqueErrors.length > 0 ? uniqueErrors.join(" ") : null;
 
   return (
     <div className="mx-auto max-w-[1400px] px-4 py-8 sm:px-6 lg:px-8">
@@ -160,6 +225,7 @@ export default async function PayrollRunsPage({ searchParams }: PageProps) {
         years={years}
         currentYear={year}
         currentStatus={status}
+        error={errorMessage}
       />
     </div>
   );

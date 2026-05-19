@@ -23,6 +23,7 @@ interface Props {
   years: number[];
   currentYear: number;
   currentStatus: "all" | "draft" | "computed" | "finalised" | "voided";
+  error?: string | null;
 }
 
 const PERIOD_FMT = new Intl.DateTimeFormat("en-PH", {
@@ -53,7 +54,13 @@ function formatDate(iso: string): string {
   return DATE_FMT.format(new Date(`${iso}T00:00:00+08:00`));
 }
 
-export function RunsClient({ runs, years, currentYear, currentStatus }: Props) {
+export function RunsClient({
+  runs,
+  years,
+  currentYear,
+  currentStatus,
+  error,
+}: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
@@ -82,6 +89,11 @@ export function RunsClient({ runs, years, currentYear, currentStatus }: Props) {
 
   return (
     <div className="space-y-4">
+      {error ? (
+        <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
+          {error}
+        </p>
+      ) : null}
       <div className="flex flex-wrap items-center gap-3">
         <label className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
           Year
@@ -120,7 +132,7 @@ export function RunsClient({ runs, years, currentYear, currentStatus }: Props) {
           href="/staff/admin/payroll/periods"
           className="ml-auto min-h-[44px] inline-flex items-center rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-2 text-sm font-bold text-[color:var(--color-brand-navy)] hover:border-[color:var(--color-brand-cyan)]"
         >
-          Manage periods -&gt;
+          Manage periods -{">"}
         </Link>
       </div>
 
@@ -149,7 +161,7 @@ export function RunsClient({ runs, years, currentYear, currentStatus }: Props) {
                     href="/staff/admin/payroll/periods"
                     className="mt-2 inline-block font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
                   >
-                    Create a period first -&gt;
+                    Create a period first -{">"}
                   </Link>
                 </td>
               </tr>
@@ -206,7 +218,7 @@ export function RunsClient({ runs, years, currentYear, currentStatus }: Props) {
               href="/staff/admin/payroll/periods"
               className="font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
             >
-              Create a period first -&gt;
+              Create a period first -{">"}
             </Link>
           </p>
         ) : (

@@ -24,6 +24,7 @@ interface Props {
   runByPeriod: RunByPeriod;
   defaultStart: string;
   defaultEnd: string;
+  error?: string | null;
 }
 
 const PERIOD_FMT = new Intl.DateTimeFormat("en-PH", {
@@ -73,6 +74,7 @@ export function PeriodsClient({
   runByPeriod,
   defaultStart,
   defaultEnd,
+  error,
 }: Props) {
   const router = useRouter();
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -106,6 +108,11 @@ export function PeriodsClient({
 
   return (
     <div className="space-y-4">
+      {error ? (
+        <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
+          {error}
+        </p>
+      ) : null}
       <div className="flex flex-wrap items-center gap-3">
         <p className="text-xs text-[color:var(--color-brand-text-soft)]">
           {periods.length} {periods.length === 1 ? "period" : "periods"}
@@ -161,7 +168,7 @@ export function PeriodsClient({
                           href={`/staff/admin/payroll/runs/${run.id}`}
                           className="font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
                         >
-                          View run -&gt;
+                          View run -{">"}
                         </Link>
                       ) : (
                         <span className="text-[color:var(--color-brand-text-soft)]">
@@ -226,7 +233,7 @@ export function PeriodsClient({
                         href={`/staff/admin/payroll/runs/${run.id}`}
                         className="font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
                       >
-                        View -&gt;
+                        View -{">"}
                       </Link>
                     ) : (
                       "—"
@@ -378,7 +385,6 @@ function CreatePeriodDialog({
 
   return (
     <div
-      ref={dialogRef as React.RefObject<HTMLDivElement>}
       role="dialog"
       aria-modal="true"
       aria-labelledby="create-period-title"
@@ -390,7 +396,10 @@ function CreatePeriodDialog({
         onClick={onClose}
         className="absolute inset-0 bg-[color:var(--color-brand-navy)]/40 backdrop-blur-[2px]"
       />
-      <div className="relative w-full max-w-md rounded-xl bg-white shadow-2xl">
+      <div
+        ref={dialogRef as React.RefObject<HTMLDivElement>}
+        className="relative w-full max-w-md rounded-xl bg-white shadow-2xl"
+      >
         <div className="flex items-center justify-between border-b border-[color:var(--color-brand-bg-mid)] px-5 py-4">
           <h2
             id="create-period-title"
@@ -415,7 +424,15 @@ function CreatePeriodDialog({
             <input
               type="date"
               value={periodStart}
-              onChange={(e) => setPeriodStart(e.target.value)}
+              onChange={(e) => {
+                const v = e.target.value;
+                setPeriodStart(v);
+                // Defensive: if the admin pushes period_start past the current
+                // period_end, drag period_end (and pay_date) along so the form
+                // can never enter the "end < start" invalid state.
+                setPeriodEnd((end) => (end < v ? v : end));
+                setPayDate((d) => (d < v ? v : d));
+              }}
               className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
             />
           </label>
@@ -426,7 +443,14 @@ function CreatePeriodDialog({
             <input
               type="date"
               value={periodEnd}
-              onChange={(e) => setPeriodEnd(e.target.value)}
+              onChange={(e) => {
+                const v = e.target.value;
+                setPeriodEnd(v);
+                // pay_date must be >= period_end; if the admin edits period_end
+                // forward we drag pay_date with it so the action doesn't reject
+                // a now-stale pay_date.
+                setPayDate((d) => (d < v ? v : d));
+              }}
               min={periodStart}
               className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
             />

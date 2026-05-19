@@ -64,6 +64,19 @@ export default async function PayrollPeriodsPage() {
     admin.from("payroll_runs").select("id, period_id, status"),
   ]);
 
+  // Surface DB errors to the client banner instead of silently rendering empty
+  // — admin needs to be able to tell "no data" from "query failed".
+  const dbErrors: string[] = [];
+  if (periodsRes.error) {
+    console.error("[payroll/periods] periods query failed:", periodsRes.error);
+    dbErrors.push("Failed to load pay periods.");
+  }
+  if (runsRes.error) {
+    console.error("[payroll/periods] runs query failed:", runsRes.error);
+    dbErrors.push("Failed to load runs.");
+  }
+  const errorMessage = dbErrors.length > 0 ? dbErrors.join(" ") : null;
+
   const periods: PeriodRow[] = (periodsRes.data ?? []).map((row) => ({
     id: row.id,
     period_start: row.period_start,
@@ -99,6 +112,7 @@ export default async function PayrollPeriodsPage() {
         runByPeriod={runByPeriod}
         defaultStart={defaultStart}
         defaultEnd={defaultEnd}
+        error={errorMessage}
       />
     </div>
   );
