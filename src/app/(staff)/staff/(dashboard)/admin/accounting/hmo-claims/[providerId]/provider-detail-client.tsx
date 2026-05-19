@@ -210,7 +210,7 @@ function BatchesTab({ batches }: { batches: BatchRow[] }) {
                     </td>
                     <td className="px-4 py-3 text-xs">
                       {b.submitted_at
-                        ? new Date(b.submitted_at).toLocaleDateString("en-PH")
+                        ? new Date(b.submitted_at).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })
                         : "—"}
                     </td>
                     <td className="px-4 py-3 text-right">
@@ -334,7 +334,7 @@ function UnbilledTab({
                   </td>
                   <td className="px-4 py-3 text-xs">
                     {r.released_at
-                      ? new Date(r.released_at).toLocaleDateString("en-PH")
+                      ? new Date(r.released_at).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })
                       : "—"}
                   </td>
                   <td className="px-4 py-3 text-right font-mono text-xs">

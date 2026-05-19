@@ -84,7 +84,7 @@ export default async function ReceiptPage({ params }: Props) {
             </p>
             <p className="mt-0.5 font-semibold">#{visit.visit_number}</p>
             <p className="text-xs text-[color:var(--color-brand-text-soft)]">
-              {new Date(visit.visit_date).toLocaleDateString("en-PH")}
+              {new Date(visit.visit_date).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })}
             </p>
           </div>
         </div>

@@ -293,11 +293,11 @@ export default async function PatientPortalPage() {
                     </p>
                   </td>
                   <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
-                    {new Date(row.test_date).toLocaleDateString("en-PH")}
+                    {new Date(row.test_date).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })}
                   </td>
                   <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
                     {row.released_at
-                      ? new Date(row.released_at).toLocaleDateString("en-PH")
+                      ? new Date(row.released_at).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })
                       : "—"}
                   </td>
                   <td className="px-4 py-3">
@@ -342,7 +342,7 @@ export default async function PatientPortalPage() {
                   Visit #{v.visit_number}
                 </Link>
                 <span className="text-xs text-[color:var(--color-brand-text-soft)]">
-                  {new Date(v.visit_date).toLocaleDateString("en-PH")} ·{" "}
+                  {new Date(v.visit_date).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })} ·{" "}
                   {v.pending} test{v.pending === 1 ? "" : "s"} pending
                 </span>
               </li>

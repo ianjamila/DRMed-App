@@ -111,7 +111,7 @@ export default async function PatientVisitDetailPage({ params }: Props) {
                     </td>
                     <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
                       {t.released_at
-                        ? new Date(t.released_at).toLocaleDateString("en-PH")
+                        ? new Date(t.released_at).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })
                         : "—"}
                     </td>
                     <td className="px-4 py-3">

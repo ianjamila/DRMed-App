@@ -255,7 +255,7 @@ export function PatientForm({ initial }: Props) {
         {consentAlreadySigned ? (
           <p className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
             ✓ Consent already on file (signed{" "}
-            {new Date(initial!.consent_signed_at!).toLocaleDateString("en-PH")})
+            {new Date(initial!.consent_signed_at!).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })})
           </p>
         ) : (
           <label className="flex items-start gap-2 text-sm">

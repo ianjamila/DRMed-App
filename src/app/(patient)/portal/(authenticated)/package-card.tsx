@@ -89,14 +89,14 @@ export function PackageCard(props: PackageCardProps) {
           </h2>
           <p className="mt-0.5 font-mono text-xs text-[color:var(--color-brand-text-soft)]">
             {props.header.package_code} · Visit #{props.header.visit_number} ·{" "}
-            {new Date(props.header.visit_date).toLocaleDateString("en-PH")}
+            {new Date(props.header.visit_date).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })}
           </p>
           <p className="mt-1 text-xs text-[color:var(--color-brand-text-mid)]">
             {props.releasedCount} of {props.totalCount} components released
             {props.header.released_at ? (
               <>
                 {" · released "}
-                {new Date(props.header.released_at).toLocaleDateString("en-PH")}
+                {new Date(props.header.released_at).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })}
               </>
             ) : null}
           </p>

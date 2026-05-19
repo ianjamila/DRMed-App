@@ -72,11 +72,11 @@ const HMO_RESPONSE_LABEL: Record<string, string> = {
 
 function fmtDate(s: string | null | undefined): string {
   if (!s) return "—";
-  return new Date(s).toLocaleDateString("en-PH");
+  return new Date(s).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" });
 }
 function fmtDateTime(s: string | null | undefined): string {
   if (!s) return "—";
-  return new Date(s).toLocaleString("en-PH");
+  return new Date(s).toLocaleString("en-PH", { timeZone: "Asia/Manila" });
 }
 
 function unresolvedOf(it: ItemRow): number {

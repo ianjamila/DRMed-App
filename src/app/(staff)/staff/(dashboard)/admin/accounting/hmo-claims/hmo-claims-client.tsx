@@ -153,7 +153,7 @@ function ProviderCard({
   const unbilled = row.total_unbilled_php ?? 0;
   const stuck = row.total_stuck_php ?? 0;
   const oldest = row.oldest_open_released_at
-    ? new Date(row.oldest_open_released_at).toLocaleDateString("en-PH")
+    ? new Date(row.oldest_open_released_at).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })
     : "—";
 
   const unbilledLabel =
@@ -234,7 +234,7 @@ function AllUnbilled({ rows }: { rows: UnbilledRow[] }) {
               <td className="px-4 py-3">{r.provider_name ?? "—"}</td>
               <td className="px-4 py-3 text-xs">
                 {r.released_at
-                  ? new Date(r.released_at).toLocaleDateString("en-PH")
+                  ? new Date(r.released_at).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })
                   : "—"}
               </td>
               <td className="px-4 py-3 text-right font-mono text-xs">
@@ -286,7 +286,7 @@ function AllStuck({ rows }: { rows: StuckRow[] }) {
               <td className="px-4 py-3">{r.provider_name ?? "—"}</td>
               <td className="px-4 py-3 text-xs">
                 {r.submitted_at
-                  ? new Date(r.submitted_at).toLocaleDateString("en-PH")
+                  ? new Date(r.submitted_at).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })
                   : "—"}
               </td>
               <td className="px-4 py-3 text-right font-mono text-xs text-red-700">

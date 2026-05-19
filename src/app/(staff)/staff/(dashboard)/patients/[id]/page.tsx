@@ -107,7 +107,7 @@ export default async function PatientDetailPage({ params }: Props) {
         <Field label="Address" value={patient.address ?? "—"} />
         <Field
           label="Registered"
-          value={new Date(patient.created_at).toLocaleDateString("en-PH")}
+          value={new Date(patient.created_at).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })}
         />
       </section>
 
@@ -149,7 +149,7 @@ export default async function PatientDetailPage({ params }: Props) {
           label="RA 10173 consent"
           value={
             patient.consent_signed_at
-              ? `Signed ${new Date(patient.consent_signed_at).toLocaleDateString("en-PH")}`
+              ? `Signed ${new Date(patient.consent_signed_at).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })}`
               : "Not on file"
           }
           highlight={!patient.consent_signed_at}
@@ -200,7 +200,7 @@ export default async function PatientDetailPage({ params }: Props) {
                       </Link>
                     </td>
                     <td className="px-4 py-3">
-                      {new Date(v.visit_date).toLocaleDateString("en-PH")}
+                      {new Date(v.visit_date).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })}
                     </td>
                     <td className="px-4 py-3">{formatPhp(v.total_php)}</td>
                     <td className="px-4 py-3">{formatPhp(v.paid_php)}</td>
