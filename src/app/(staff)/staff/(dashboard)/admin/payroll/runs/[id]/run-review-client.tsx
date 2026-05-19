@@ -1,11 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { formatPhp } from "@/lib/marketing/format";
 import { formatPeriodRange, formatManilaDate } from "@/lib/payroll/format";
 import { PAYMENT_LABEL } from "@/lib/payroll/labels";
 import { EarningDeductionDrawer } from "./_components/earning-deduction-drawer";
+import { ConfirmDialog } from "./_components/confirm-dialog";
+import {
+  recomputePayrollRunAction,
+  finaliseRunAction,
+  voidRunAction,
+} from "../actions";
 
 // =============================================================================
 // Prop shapes (mirror page.tsx)
@@ -166,11 +173,79 @@ function useDrawerStylePreference(): [DrawerStyle, (next: DrawerStyle) => void] 
 // Top-level component
 // =============================================================================
 
+type DialogKind = "reimport" | "finalise" | "void-run";
+
 export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
+  const router = useRouter();
+
   const [selectedEmployeeRunId, setSelectedEmployeeRunId] = useState<
     string | null
   >(null);
   const [drawerStylePref, setDrawerStylePref] = useDrawerStylePreference();
+
+  // Header-level action plumbing -- one dialog state at a time.
+  const [openDialog, setOpenDialog] = useState<DialogKind | null>(null);
+  const [voidReason, setVoidReason] = useState("");
+  const [dialogError, setDialogError] = useState<string | null>(null);
+  const [recomputeError, setRecomputeError] = useState<string | null>(null);
+  const [isHeaderPending, startHeaderTransition] = useTransition();
+
+  const closeDialog = () => {
+    if (isHeaderPending) return;
+    setOpenDialog(null);
+    setVoidReason("");
+    setDialogError(null);
+  };
+
+  const onRecompute = () => {
+    setRecomputeError(null);
+    startHeaderTransition(async () => {
+      const res = await recomputePayrollRunAction(run.id);
+      if (!res.ok) {
+        setRecomputeError(res.error);
+        return;
+      }
+      router.refresh();
+    });
+  };
+
+  const onConfirmReimport = () => {
+    // No server call -- this is a destructive-prefaced nav. The actual
+    // re-import gating lives on the /dtr screen.
+    setOpenDialog(null);
+    router.push(`/staff/admin/payroll/runs/${run.id}/dtr`);
+  };
+
+  const onConfirmFinalise = () => {
+    setDialogError(null);
+    startHeaderTransition(async () => {
+      const res = await finaliseRunAction(run.id);
+      if (!res.ok) {
+        setDialogError(res.error);
+        return;
+      }
+      setOpenDialog(null);
+      router.refresh();
+    });
+  };
+
+  const onConfirmVoidRun = () => {
+    setDialogError(null);
+    startHeaderTransition(async () => {
+      const res = await voidRunAction({
+        run_id: run.id,
+        void_reason: voidReason.trim(),
+      });
+      if (!res.ok) {
+        setDialogError(res.error);
+        return;
+      }
+      setOpenDialog(null);
+      setVoidReason("");
+      router.refresh();
+    });
+  };
+
 
   // Detect mobile viewport to force slide-out style. Tailwind's md breakpoint
   // is 768px; match that here so the toggle's effective state matches the
@@ -207,6 +282,18 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
     [employeeRuns],
   );
 
+  // Void-run is disabled while ANY employee payout has already been processed
+  // -- the void should be done at the payout level first to keep the per-row
+  // JE reversals tractable.
+  const paidEmployeeCount = useMemo(
+    () => employeeRuns.filter((er) => er.payout_status === "paid").length,
+    [employeeRuns],
+  );
+  const voidRunDisabled = paidEmployeeCount > 0;
+  const voidRunDisabledReason = voidRunDisabled
+    ? `Cannot void -- ${paidEmployeeCount} employee${paidEmployeeCount === 1 ? "" : "s"} already paid. Void individual payouts first.`
+    : null;
+
   const finaliserLabel = run.finaliser_name ?? "Not finalised yet";
 
   return (
@@ -234,12 +321,38 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
               {run.employee_count === 1 ? "employee" : "employees"}
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <RunStatusPill status={run.status} />
-            {/* Right-side action slot kept empty intentionally — finalise / void /
-                mark-paid / re-import controls land in the next batch (T61/T62). */}
+            <RunActionCluster
+              status={run.status}
+              isPending={isHeaderPending}
+              voidRunDisabled={voidRunDisabled}
+              voidRunDisabledReason={voidRunDisabledReason}
+              onRecompute={onRecompute}
+              onReimportClick={() => {
+                setDialogError(null);
+                setOpenDialog("reimport");
+              }}
+              onFinaliseClick={() => {
+                setDialogError(null);
+                setOpenDialog("finalise");
+              }}
+              onVoidRunClick={() => {
+                setDialogError(null);
+                setVoidReason("");
+                setOpenDialog("void-run");
+              }}
+            />
           </div>
         </div>
+        {recomputeError ? (
+          <p
+            role="alert"
+            className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800"
+          >
+            Recompute failed: {recomputeError}
+          </p>
+        ) : null}
       </header>
 
       {/* Load error banner -- surfaces a partial fetch failure for the
@@ -320,6 +433,7 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
             </p>
           </Banner>
         ) : null}
+
       </div>
 
       {/* Per-employee table */}
@@ -464,6 +578,265 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
           onClose={() => setSelectedEmployeeRunId(null)}
         />
       ) : null}
+
+      {/* Re-import DTR — destructive nav (no server call). */}
+      <ConfirmDialog
+        open={openDialog === "reimport"}
+        title="Re-import DTR for this period?"
+        confirmLabel="Yes, re-import DTR"
+        confirmVariant="danger"
+        cancelLabel="Cancel"
+        isPending={isHeaderPending}
+        onCancel={closeDialog}
+        onConfirm={onConfirmReimport}
+        errorMessage={dialogError}
+        body={
+          <div className="space-y-3">
+            <p>
+              This run is currently{" "}
+              <strong className="text-amber-800">{run.status}</strong>.
+              Re-importing the DTR will:
+            </p>
+            <ul className="list-inside list-disc space-y-1 text-sm">
+              <li>Supersede the existing DTR rows (kept for audit)</li>
+              <li>Reset the run status to draft</li>
+              <li>
+                Clear earning / deduction lines created by the previous compute
+                (manual lines preserved)
+              </li>
+              <li>
+                Require you to click Recompute before you can finalise again
+              </li>
+            </ul>
+            <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <strong>Heads up:</strong> Any manual incentive / bonus /
+              manual_adjustment lines you added will be preserved. Only the
+              auto-computed numbers will be cleared.
+            </p>
+            <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+              Choose the CSV file on the next screen. Cancel here to abort.
+            </p>
+          </div>
+        }
+      />
+
+      {/* Finalise pay run. */}
+      <ConfirmDialog
+        open={openDialog === "finalise"}
+        title="Finalise pay run?"
+        confirmLabel="Yes, finalise and post JE"
+        confirmVariant="success"
+        cancelLabel="Cancel -- keep as draft"
+        isPending={isHeaderPending}
+        onCancel={closeDialog}
+        onConfirm={onConfirmFinalise}
+        errorMessage={dialogError}
+        body={
+          <div className="space-y-3">
+            <div className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-bg-mid)] px-3 py-2 text-xs">
+              <SummaryRow
+                label="Period"
+                value={formatPeriodRange(run.period_start, run.period_end)}
+              />
+              <SummaryRow
+                label="Pay date"
+                value={formatManilaDate(run.pay_date)}
+              />
+              <SummaryRow
+                label="Employees"
+                value={`${run.employee_count} in run`}
+              />
+              <SummaryRow
+                label={"Σ Gross pay"}
+                value={formatPhp(run.sum_gross_php)}
+              />
+              <SummaryRow
+                label={"Σ Statutory + WT"}
+                value={formatPhp(run.sum_statutory_and_wt_php)}
+              />
+              <div className="mt-1 flex items-center justify-between border-t border-[color:var(--color-brand-bg-mid)] pt-2">
+                <strong>{"Σ Net pay (to disburse)"}</strong>
+                <strong className="font-[family-name:var(--font-heading)] text-sm">
+                  {formatPhp(run.sum_net_php)}
+                </strong>
+              </div>
+            </div>
+
+            <p>On confirm, the system will:</p>
+            <ul className="list-inside list-disc space-y-1 text-sm">
+              <li>
+                Post a single gross-up journal entry (DR Salaries + Benefits,
+                CR statutory payables + Salaries Payable)
+              </li>
+              <li>
+                Generate payslip PDFs for each employee (stored in Supabase
+                Storage)
+              </li>
+              <li>
+                Lock the run from further line edits -- corrections after this
+                go to the next period as manual_adjustment lines
+              </li>
+              <li>Make Mark Paid buttons available per employee on pay date</li>
+            </ul>
+
+            {otOverageEmployees.length > 0 ? (
+              <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                <p>
+                  <strong>OT overage notice:</strong> The following{" "}
+                  {otOverageEmployees.length === 1 ? "employee has" : "employees have"}{" "}
+                  DTR overage without an approved OT slip. Those hours will NOT
+                  be paid.
+                </p>
+                <ul className="mt-1 list-inside list-disc">
+                  {otOverageEmployees.map((er) => (
+                    <li key={er.id}>
+                      {er.full_name} -- {er.ot_overage_unpaid_minutes_total} min
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-1">
+                  <Link
+                    href="/staff/admin/payroll/ot-slips"
+                    className="font-semibold text-amber-900 underline hover:text-amber-700"
+                  >
+                    Create OT slip
+                  </Link>{" "}
+                  if you want to include them -- otherwise proceed.
+                </p>
+              </div>
+            ) : null}
+          </div>
+        }
+      />
+
+      {/* Void run. */}
+      <ConfirmDialog
+        open={openDialog === "void-run"}
+        title="Void this pay run?"
+        confirmLabel="Yes, void run"
+        confirmVariant="danger"
+        cancelLabel="Cancel"
+        isPending={isHeaderPending}
+        onCancel={closeDialog}
+        onConfirm={onConfirmVoidRun}
+        reasonRequired
+        reasonValue={voidReason}
+        onReasonChange={setVoidReason}
+        errorMessage={dialogError}
+        body={
+          <div className="space-y-3">
+            <p>
+              Voiding this run will reverse the gross-up journal entry. The
+              generated payslip PDFs remain in storage but are flagged voided
+              for audit.
+            </p>
+            <p className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+              This action cannot be undone silently -- a reversal JE is posted
+              and the run is locked in voided state. Use Reopen to bring it
+              back to draft.
+            </p>
+          </div>
+        }
+      />
+
+    </div>
+  );
+}
+
+// =============================================================================
+// Run action cluster (header right side)
+// =============================================================================
+
+function RunActionCluster({
+  status,
+  isPending,
+  voidRunDisabled,
+  voidRunDisabledReason,
+  onRecompute,
+  onReimportClick,
+  onFinaliseClick,
+  onVoidRunClick,
+}: {
+  status: string;
+  isPending: boolean;
+  voidRunDisabled: boolean;
+  voidRunDisabledReason: string | null;
+  onRecompute: () => void;
+  onReimportClick: () => void;
+  onFinaliseClick: () => void;
+  onVoidRunClick: () => void;
+}) {
+  if (status === "draft") {
+    return (
+      <button
+        type="button"
+        onClick={onRecompute}
+        disabled={isPending}
+        className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-xs font-bold text-white hover:bg-[color:var(--color-brand-cyan)] disabled:opacity-50"
+      >
+        {isPending ? "Recomputing..." : "Recompute"}
+      </button>
+    );
+  }
+
+  if (status === "computed") {
+    return (
+      <>
+        <button
+          type="button"
+          onClick={onReimportClick}
+          disabled={isPending}
+          className="min-h-[44px] rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-2 text-xs font-bold text-[color:var(--color-brand-navy)] hover:border-[color:var(--color-brand-cyan)] disabled:opacity-50"
+        >
+          Re-import DTR
+        </button>
+        <button
+          type="button"
+          onClick={onRecompute}
+          disabled={isPending}
+          className="min-h-[44px] rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-2 text-xs font-bold text-[color:var(--color-brand-navy)] hover:border-[color:var(--color-brand-cyan)] disabled:opacity-50"
+        >
+          {isPending ? "Working..." : "Recompute"}
+        </button>
+        <button
+          type="button"
+          onClick={onFinaliseClick}
+          disabled={isPending}
+          className="min-h-[44px] rounded-md bg-emerald-700 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-800 disabled:opacity-50"
+        >
+          Finalise
+        </button>
+      </>
+    );
+  }
+
+  if (status === "finalised") {
+    return (
+      <button
+        type="button"
+        onClick={onVoidRunClick}
+        disabled={isPending || voidRunDisabled}
+        title={voidRunDisabledReason ?? undefined}
+        aria-disabled={isPending || voidRunDisabled}
+        className="min-h-[44px] rounded-md border border-rose-200 bg-white px-4 py-2 text-xs font-bold text-rose-700 hover:border-rose-400 disabled:opacity-50"
+      >
+        Void run
+      </button>
+    );
+  }
+
+  return null;
+}
+
+// =============================================================================
+// Summary row used inside the finalise dialog
+// =============================================================================
+
+function SummaryRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between py-0.5 text-xs">
+      <span className="text-[color:var(--color-brand-text-soft)]">{label}</span>
+      <strong className="text-[color:var(--color-brand-navy)]">{value}</strong>
     </div>
   );
 }
