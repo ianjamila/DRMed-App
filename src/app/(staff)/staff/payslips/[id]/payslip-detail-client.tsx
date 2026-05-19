@@ -367,7 +367,7 @@ export function PayslipDetailClient({
                 Pay date: {formatManilaDate(data.period.pay_date)}
               </p>
               <p className="mt-1 text-base font-bold uppercase tracking-wide text-white">
-                {(data.run.payment_method_used ?? "pending").toUpperCase()}
+                {methodLabel}
               </p>
               <p className="mt-1 text-xs text-white/80">
                 Gross {formatPeso(data.run.gross_pay_php)} − Deductions{" "}
