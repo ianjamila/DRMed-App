@@ -53,7 +53,7 @@ export function EarningDeductionDrawer({
   runStatus,
   onClose,
 }: Props) {
-  const focusTrapRef = useFocusTrap(variant === "slide-out");
+  const focusTrapRef = useFocusTrap<HTMLElement>(variant === "slide-out");
 
   // ESC closes the drawer in both variants; Inline drawer also responds, but
   // is much less likely to be confused with another modal.
@@ -119,7 +119,7 @@ export function EarningDeductionDrawer({
         className="absolute inset-0 bg-[color:var(--color-brand-navy)]/40 backdrop-blur-[2px]"
       />
       <aside
-        ref={focusTrapRef as React.RefObject<HTMLElement>}
+        ref={focusTrapRef}
         role="dialog"
         aria-modal="true"
         aria-label={`Earnings and deductions for ${employeeRun.full_name}`}
@@ -459,7 +459,7 @@ function AddEarningForm({ employeeRunId }: { employeeRunId: string }) {
           disabled={isPending}
           className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-3 py-1.5 text-xs font-bold text-white hover:bg-[color:var(--color-brand-cyan)] disabled:opacity-50"
         >
-          {isPending ? "Adding…" : "Add earning"}
+          {isPending ? "Adding..." : "Add earning"}
         </button>
       </div>
     </div>
@@ -703,7 +703,7 @@ function AddDeductionForm({ employeeRunId }: { employeeRunId: string }) {
           disabled={isPending}
           className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-3 py-1.5 text-xs font-bold text-white hover:bg-[color:var(--color-brand-cyan)] disabled:opacity-50"
         >
-          {isPending ? "Adding…" : "Add deduction"}
+          {isPending ? "Adding..." : "Add deduction"}
         </button>
       </div>
     </div>

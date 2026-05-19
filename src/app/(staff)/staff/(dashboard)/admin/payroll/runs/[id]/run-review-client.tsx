@@ -96,6 +96,7 @@ export interface RunHeader {
 interface Props {
   run: RunHeader;
   employeeRuns: EmployeeRunRow[];
+  loadError?: string | null;
 }
 
 // =============================================================================
@@ -129,19 +130,7 @@ function RunStatusPill({ status }: { status: string }) {
 }
 
 // =============================================================================
-// Year extractor (for the page title)
-// =============================================================================
-
-function periodYearLabel(endISO: string): string {
-  if (!endISO) return "";
-  return new Intl.DateTimeFormat("en-PH", {
-    timeZone: "Asia/Manila",
-    year: "numeric",
-  }).format(new Date(`${endISO}T00:00:00+08:00`));
-}
-
-// =============================================================================
-// useLocalStorage — tiny inline hook (no shared util exists yet)
+// useLocalStorage -- tiny inline hook (no shared util exists yet)
 // =============================================================================
 
 type DrawerStyle = "inline" | "slide-out";
@@ -177,7 +166,7 @@ function useDrawerStylePreference(): [DrawerStyle, (next: DrawerStyle) => void] 
 // Top-level component
 // =============================================================================
 
-export function RunReviewClient({ run, employeeRuns }: Props) {
+export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
   const [selectedEmployeeRunId, setSelectedEmployeeRunId] = useState<
     string | null
   >(null);
@@ -218,7 +207,6 @@ export function RunReviewClient({ run, employeeRuns }: Props) {
     [employeeRuns],
   );
 
-  const periodYear = periodYearLabel(run.period_end);
   const finaliserLabel = run.finaliser_name ?? "Not finalised yet";
 
   return (
@@ -229,7 +217,7 @@ export function RunReviewClient({ run, employeeRuns }: Props) {
           href="/staff/admin/payroll/runs"
           className="hover:text-[color:var(--color-brand-navy)]"
         >
-          ← Pay runs
+          {"<-"} Pay runs
         </Link>
       </p>
 
@@ -239,7 +227,6 @@ export function RunReviewClient({ run, employeeRuns }: Props) {
           <div className="min-w-0 flex-1">
             <h1 className="font-[family-name:var(--font-heading)] text-2xl font-extrabold text-[color:var(--color-brand-navy)] sm:text-3xl">
               Pay run · {formatPeriodRange(run.period_start, run.period_end)}
-              {periodYear ? null : null}
             </h1>
             <p className="mt-2 text-sm text-[color:var(--color-brand-text-soft)]">
               Pay date {formatManilaDate(run.pay_date)} · {finaliserLabel} ·{" "}
@@ -254,6 +241,22 @@ export function RunReviewClient({ run, employeeRuns }: Props) {
           </div>
         </div>
       </header>
+
+      {/* Load error banner -- surfaces a partial fetch failure for the
+          per-employee list. We render the rest of the page (the run header
+          read succeeded) but flag that the table is empty due to a DB error
+          rather than a truly empty run. */}
+      {loadError ? (
+        <div
+          role="alert"
+          className="mb-6 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3"
+        >
+          <p className="font-[family-name:var(--font-heading)] text-sm font-extrabold text-rose-900">
+            Could not load per-employee rows
+          </p>
+          <p className="mt-1 text-sm text-rose-900">{loadError}</p>
+        </div>
+      ) : null}
 
       {/* KPI strip */}
       <section className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -295,7 +298,7 @@ export function RunReviewClient({ run, employeeRuns }: Props) {
                 href="/staff/admin/payroll/ot-slips"
                 className="font-semibold text-amber-900 underline hover:text-amber-700"
               >
-                Create OT slips →
+                Create OT slips -{">"}
               </Link>
             </p>
           </Banner>
@@ -312,7 +315,7 @@ export function RunReviewClient({ run, employeeRuns }: Props) {
                 href={`/staff/admin/payroll/runs/${run.id}/dtr`}
                 className="font-semibold text-amber-900 underline hover:text-amber-700"
               >
-                Import DTR →
+                Import DTR -{">"}
               </Link>
             </p>
           </Banner>
@@ -367,9 +370,7 @@ export function RunReviewClient({ run, employeeRuns }: Props) {
                       key={er.id}
                       er={er}
                       isSelected={isSelected}
-                      isInlineSelected={
-                        isSelected && effectiveDrawerStyle === "inline"
-                      }
+                      drawerStyle={effectiveDrawerStyle}
                       onSelect={() =>
                         setSelectedEmployeeRunId((cur) =>
                           cur === er.id ? null : er.id,
@@ -546,13 +547,13 @@ function PayMethodPill({ method }: { method: "cash" | "bank" }) {
 function RunRowDesktop({
   er,
   isSelected,
-  isInlineSelected,
+  drawerStyle,
   onSelect,
   inlineDrawer,
 }: {
   er: EmployeeRunRow;
   isSelected: boolean;
-  isInlineSelected: boolean;
+  drawerStyle: DrawerStyle;
   onSelect: () => void;
   inlineDrawer: React.ReactNode;
 }) {
@@ -562,12 +563,23 @@ function RunRowDesktop({
       onSelect();
     }
   };
+  const isInlineSelected = isSelected && drawerStyle === "inline";
+  // Inline mode: row toggles an inline disclosure below itself, so aria-expanded
+  // is the semantically correct state. Slide-out mode: row opens a separate
+  // dialog, so use aria-haspopup="dialog" + aria-current to mark selection.
+  const inlineAria =
+    drawerStyle === "inline"
+      ? ({ "aria-expanded": isSelected } as const)
+      : ({
+          "aria-haspopup": "dialog",
+          "aria-current": isSelected ? ("true" as const) : undefined,
+        } as const);
   return (
     <>
       <tr
         tabIndex={0}
         role="button"
-        aria-pressed={isSelected}
+        {...inlineAria}
         aria-label={`Edit lines for ${er.full_name}`}
         onClick={onSelect}
         onKeyDown={onKeyDown}

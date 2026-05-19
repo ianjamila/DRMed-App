@@ -300,7 +300,7 @@ function CreatePeriodDialog({
   const [payDate, setPayDate] = useState(defaultEnd);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
-  const dialogRef = useFocusTrap(open);
+  const dialogRef = useFocusTrap<HTMLDivElement>(open);
 
   // Re-prime the inputs whenever the dialog opens with fresh defaults.
   useEffect(() => {
@@ -375,7 +375,7 @@ function CreatePeriodDialog({
         className="absolute inset-0 bg-[color:var(--color-brand-navy)]/40 backdrop-blur-[2px]"
       />
       <div
-        ref={dialogRef as React.RefObject<HTMLDivElement>}
+        ref={dialogRef}
         className="relative w-full max-w-md rounded-xl bg-white shadow-2xl"
       >
         <div className="flex items-center justify-between border-b border-[color:var(--color-brand-bg-mid)] px-5 py-4">

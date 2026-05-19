@@ -1638,7 +1638,7 @@ function Dialog({
   onClose: () => void;
   children: React.ReactNode;
 }) {
-  const dialogRef = useFocusTrap(true);
+  const dialogRef = useFocusTrap<HTMLDivElement>(true);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -1652,7 +1652,7 @@ function Dialog({
       onClick={onClose}
     >
       <div
-        ref={dialogRef as React.RefObject<HTMLDivElement>}
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label={title}

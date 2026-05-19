@@ -17,10 +17,10 @@ const FOCUSABLE_SELECTOR =
  *
  * The hook is server-safe — all DOM access happens inside effects.
  */
-export function useFocusTrap(
+export function useFocusTrap<T extends HTMLElement = HTMLElement>(
   open: boolean,
-): React.RefObject<HTMLElement | null> {
-  const containerRef = useRef<HTMLElement | null>(null);
+): React.RefObject<T | null> {
+  const containerRef = useRef<T | null>(null);
 
   useEffect(() => {
     if (!open) return;

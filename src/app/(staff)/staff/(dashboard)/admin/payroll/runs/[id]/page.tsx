@@ -67,6 +67,19 @@ export default async function RunReviewPage({ params }: PageProps) {
     notFound();
   }
 
+  // employeeRunsRes failure is non-fatal: we still want to render the run
+  // header, KPIs (which will read zero), and a visible error banner -- rather
+  // than 404 a transient DB error and confuse the admin into thinking the run
+  // itself disappeared.
+  let loadError: string | null = null;
+  if (employeeRunsRes.error) {
+    console.error(
+      "[payroll/runs/[id]] employee_runs fetch failed:",
+      employeeRunsRes.error,
+    );
+    loadError = "Database error while loading per-employee rows. Please refresh; if it persists, check the server logs.";
+  }
+
   const runRow = runRes.data;
   const periodJoin = Array.isArray(runRow.period)
     ? runRow.period[0]
@@ -215,5 +228,11 @@ export default async function RunReviewPage({ params }: PageProps) {
     paid_count: countPaid,
   };
 
-  return <RunReviewClient run={run} employeeRuns={employeeRuns} />;
+  return (
+    <RunReviewClient
+      run={run}
+      employeeRuns={employeeRuns}
+      loadError={loadError}
+    />
+  );
 }

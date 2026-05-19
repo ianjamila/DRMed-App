@@ -317,7 +317,7 @@ function AddEmployeeDrawer({
   const [paymentMethod, setPaymentMethod] = useState<"cash" | "bank">("cash");
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
-  const dialogRef = useFocusTrap(open);
+  const dialogRef = useFocusTrap<HTMLDivElement>(open);
 
   // Lock body scroll while drawer is open.
   useEffect(() => {
@@ -383,7 +383,7 @@ function AddEmployeeDrawer({
 
   return (
     <div
-      ref={dialogRef as React.RefObject<HTMLDivElement>}
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-labelledby="add-employee-title"
