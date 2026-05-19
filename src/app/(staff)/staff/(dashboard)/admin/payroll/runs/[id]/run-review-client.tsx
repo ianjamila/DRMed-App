@@ -192,6 +192,10 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
   const [dialogError, setDialogError] = useState<string | null>(null);
   const [recomputeError, setRecomputeError] = useState<string | null>(null);
   const [isHeaderPending, startHeaderTransition] = useTransition();
+  // Recompute runs on its own transition so it doesn't disable the dialog
+  // OPEN buttons (Re-import / Finalise / Void / Reopen) or their Confirm
+  // buttons while a recompute is in flight, and vice versa.
+  const [isRecomputePending, startRecomputeTransition] = useTransition();
 
   const closeDialog = () => {
     if (isHeaderPending) return;
@@ -202,7 +206,7 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
 
   const onRecompute = () => {
     setRecomputeError(null);
-    startHeaderTransition(async () => {
+    startRecomputeTransition(async () => {
       const res = await recomputePayrollRunAction(run.id);
       if (!res.ok) {
         setRecomputeError(res.error);
@@ -215,7 +219,7 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
   const onConfirmReimport = () => {
     // No server call -- this is a destructive-prefaced nav. The actual
     // re-import gating lives on the /dtr screen.
-    setOpenDialog(null);
+    closeDialog();
     router.push(`/staff/admin/payroll/runs/${run.id}/dtr`);
   };
 
@@ -270,14 +274,8 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
     const mq = window.matchMedia("(max-width: 767px)");
     const handler = () => setIsMobile(mq.matches);
     handler();
-    // Older Safari uses addListener / removeListener; modern browsers use
-    // addEventListener. Both are supported by MediaQueryList.
-    if (mq.addEventListener) {
-      mq.addEventListener("change", handler);
-      return () => mq.removeEventListener("change", handler);
-    }
-    mq.addListener(handler);
-    return () => mq.removeListener(handler);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
   }, []);
 
   const effectiveDrawerStyle: DrawerStyle = isMobile
@@ -355,6 +353,7 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
             <RunActionCluster
               status={run.status}
               isPending={isHeaderPending}
+              isRecomputePending={isRecomputePending}
               voidRunDisabled={voidRunDisabled}
               voidRunDisabledReason={voidRunDisabledReason}
               onRecompute={onRecompute}
@@ -838,6 +837,7 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
 function RunActionCluster({
   status,
   isPending,
+  isRecomputePending,
   voidRunDisabled,
   voidRunDisabledReason,
   onRecompute,
@@ -848,6 +848,7 @@ function RunActionCluster({
 }: {
   status: string;
   isPending: boolean;
+  isRecomputePending: boolean;
   voidRunDisabled: boolean;
   voidRunDisabledReason: string | null;
   onRecompute: () => void;
@@ -861,15 +862,18 @@ function RunActionCluster({
       <button
         type="button"
         onClick={onRecompute}
-        disabled={isPending}
+        disabled={isRecomputePending}
         className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-xs font-bold text-white hover:bg-[color:var(--color-brand-cyan)] disabled:opacity-50"
       >
-        {isPending ? "Recomputing..." : "Recompute"}
+        {isRecomputePending ? "Recomputing..." : "Recompute"}
       </button>
     );
   }
 
   if (status === "computed") {
+    // Recompute is intentionally NOT rendered here: server-side it only
+    // accepts status='draft', so a Recompute click from computed always
+    // fails. Use Re-import DTR to reset to draft first.
     return (
       <>
         <button
@@ -879,14 +883,6 @@ function RunActionCluster({
           className="min-h-[44px] rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-2 text-xs font-bold text-[color:var(--color-brand-navy)] hover:border-[color:var(--color-brand-cyan)] disabled:opacity-50"
         >
           Re-import DTR
-        </button>
-        <button
-          type="button"
-          onClick={onRecompute}
-          disabled={isPending}
-          className="min-h-[44px] rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-2 text-xs font-bold text-[color:var(--color-brand-navy)] hover:border-[color:var(--color-brand-cyan)] disabled:opacity-50"
-        >
-          {isPending ? "Working..." : "Recompute"}
         </button>
         <button
           type="button"
@@ -1149,7 +1145,7 @@ function DrawerStyleToggle({
             key={i.key}
             type="button"
             onClick={() => onChange(i.key)}
-            className={`min-h-[36px] px-3 py-1.5 text-xs font-bold transition ${
+            className={`min-h-[44px] px-3 py-1.5 text-xs font-bold transition ${
               active
                 ? "bg-[color:var(--color-brand-navy)] text-white"
                 : "text-[color:var(--color-brand-text-soft)] hover:text-[color:var(--color-brand-navy)]"

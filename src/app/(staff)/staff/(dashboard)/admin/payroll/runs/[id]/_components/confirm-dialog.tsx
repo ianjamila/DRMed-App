@@ -116,15 +116,21 @@ export function ConfirmDialog({
           {body}
           {reasonRequired ? (
             <div className="mt-4">
-              <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+              <label
+                htmlFor="confirm-reason"
+                className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]"
+              >
                 Reason (required)
               </label>
               <textarea
-                aria-label="Reason"
+                id="confirm-reason"
                 value={reasonValue}
                 onChange={(e) => onReasonChange?.(e.target.value)}
                 rows={3}
                 disabled={isPending}
+                required
+                aria-required={true}
+                aria-describedby={errorMessage ? "confirm-reason-error" : undefined}
                 placeholder="State why this action is being taken"
                 className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none disabled:bg-slate-50"
               />
@@ -132,6 +138,7 @@ export function ConfirmDialog({
           ) : null}
           {errorMessage ? (
             <p
+              id="confirm-reason-error"
               role="alert"
               className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800"
             >
