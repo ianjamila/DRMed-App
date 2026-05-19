@@ -80,6 +80,7 @@ export default async function PayslipDetailPage({
       data={data}
       employeeRunId={employeeRunId}
       hasFile={!!er.payslip_file_path}
+      viewingAsAdmin={!isOwn && isAdmin}
     />
   );
 }
