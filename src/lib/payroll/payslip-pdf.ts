@@ -467,11 +467,13 @@ function drawText(
 function drawLetterhead(
   ctx: DrawCtx,
   logoImg: PDFImage,
+  options: { compact?: boolean } = {},
 ): number /* next Y */ {
+  const { compact = false } = options;
   const topY = PAGE_H - MARGIN;
 
-  // Logo — scale to a 60pt-tall band, preserving aspect ratio.
-  const logoTargetH = 60;
+  // Logo — scale to a 60pt band on page 1, 42pt on continuation pages.
+  const logoTargetH = compact ? 42 : 60;
   const logoScale = logoTargetH / logoImg.height;
   const logoW = logoImg.width * logoScale;
   ctx.page.drawImage(logoImg, {
@@ -483,32 +485,37 @@ function drawLetterhead(
 
   // Company text block, to the right of the logo.
   const textX = MARGIN + logoW + 14;
-  drawText(ctx, COMPANY_NAME, textX, topY - 16, {
-    size: 12,
+  const nameSize = compact ? 10 : 12;
+  const taglineSize = compact ? 8 : 9;
+  drawText(ctx, COMPANY_NAME, textX, topY - (compact ? 12 : 16), {
+    size: nameSize,
     color: NAVY,
     bold: true,
   });
-  drawText(ctx, COMPANY_TAGLINE, textX, topY - 30, {
-    size: 9,
+  drawText(ctx, COMPANY_TAGLINE, textX, topY - (compact ? 24 : 30), {
+    size: taglineSize,
     color: GRAY,
   });
-  drawText(ctx, COMPANY_ADDRESS, textX, topY - 42, {
-    size: 8,
-    color: GRAY,
-  });
+  if (!compact) {
+    drawText(ctx, COMPANY_ADDRESS, textX, topY - 42, {
+      size: 8,
+      color: GRAY,
+    });
+  }
 
-  // "PAYSLIP" title — right-aligned to the page margin.
-  const title = "PAYSLIP";
-  const titleSize = 16;
+  // Title — right-aligned to the page margin. Continuation pages get
+  // "PAYSLIP cont'd" at a slightly smaller size.
+  const title = compact ? "PAYSLIP cont'd" : "PAYSLIP";
+  const titleSize = compact ? 13 : 16;
   const titleWidth = ctx.fontBold.widthOfTextAtSize(title, titleSize);
-  drawText(ctx, title, PAGE_W - MARGIN - titleWidth, topY - 16, {
+  drawText(ctx, title, PAGE_W - MARGIN - titleWidth, topY - (compact ? 12 : 16), {
     size: titleSize,
     color: NAVY,
     bold: true,
   });
 
   // Divider rule.
-  const dividerY = topY - logoTargetH - 10;
+  const dividerY = topY - logoTargetH - (compact ? 6 : 10);
   ctx.page.drawLine({
     start: { x: MARGIN, y: dividerY },
     end: { x: PAGE_W - MARGIN, y: dividerY },
@@ -516,7 +523,47 @@ function drawLetterhead(
     color: NAVY,
   });
 
-  return dividerY - 14;
+  return dividerY - (compact ? 10 : 14);
+}
+
+// "Continued from page 1 · Gross pay carried: ₱X,XXX.XX" notice, drawn at
+// the top of page 2 immediately below the compact letterhead. Single navy
+// line, small text.
+function drawContinuedNotice(
+  ctx: DrawCtx,
+  data: PayslipData,
+  startY: number,
+): number /* next Y */ {
+  const employeeLabel = data.employee.employee_number
+    ? `${data.employee.full_name} (#${data.employee.employee_number})`
+    : data.employee.full_name;
+  const line = `Continued from page 1 · ${employeeLabel} · Gross pay carried: ${formatPeso(data.run.gross_pay_php)}`;
+  drawText(ctx, line, MARGIN, startY, {
+    size: 9,
+    color: NAVY,
+    bold: true,
+  });
+  return startY - 18;
+}
+
+// Small "Page X of Y" marker, top-right of every page. Drawn AFTER all
+// sections are laid out so the totalPages count is known.
+function drawPageMarker(
+  page: PDFPage,
+  font: PDFFont,
+  pageIndex: number,
+  totalPages: number,
+): void {
+  const label = `Page ${pageIndex + 1} of ${totalPages}`;
+  const size = 8;
+  const width = font.widthOfTextAtSize(label, size);
+  page.drawText(label, {
+    x: PAGE_W - MARGIN - width,
+    y: PAGE_H - 14,
+    size,
+    font,
+    color: GRAY,
+  });
 }
 
 function drawEmployeePeriodBlock(
@@ -1132,10 +1179,11 @@ function drawYtdAndLeave(
 // ---------------------------------------------------------------------------
 //
 // Two horizontal signature lines side by side, pinned near the bottom of the
-// page so the printed payslip has a fixed signing footer. T73 will measure
-// section heights and break to a new page if YTD/Leave would overlap this
-// block — for now we just draw it at a fixed bottom Y and accept whitespace
-// or overlap as appropriate.
+// page so the printed payslip has a fixed signing footer. T73 added the
+// pagination logic in generatePayslipPdf() that decides whether to draw the
+// signatures on page 1 or push them (and the preceding net-pay + YTD blocks)
+// to page 2 — but the signature drawer itself remains anchored to a fixed
+// bottom Y on whichever page is "current".
 
 const SIGNATURE_BOTTOM_Y = MARGIN + 70;
 const SIGNATURE_LINE_W = 220;
@@ -1204,6 +1252,37 @@ function drawSignatures(
 }
 
 // ---------------------------------------------------------------------------
+// Pagination — section-height estimation (T73)
+// ---------------------------------------------------------------------------
+//
+// We don't draw twice. Instead, we estimate the height of each post-tables
+// section ahead of time using fixed line-counts (plus the dynamic deduction-
+// line count for the tables block), then decide upfront whether to break to
+// a continuation page. Signatures always live on the LAST page.
+//
+// The pagination model: page 1 always carries the letterhead, employee/period
+// block, and the earnings/deductions tables. If the net-pay band, YTD/leave
+// block, AND signature footer all fit on the remaining space, everything
+// stays on one page. Otherwise we break BEFORE the net-pay band — net pay,
+// YTD/leave, and signatures move to page 2 with a compact letterhead and a
+// "continued" notice.
+//
+// Estimated heights are intentionally pessimistic — better to break to page 2
+// when 95% would still fit than to overlap the signature footer.
+
+// Signature footer occupies fixed Y range, anchored to MARGIN + 70 (see
+// SIGNATURE_BOTTOM_Y). The signature lines are 28pt above that, and we draw
+// captions 36pt below the line. Reserve from MARGIN + 70 - 12 up to about
+// SIGNATURE_BOTTOM_Y + 40 to be safe.
+const SIGNATURE_RESERVE_Y = SIGNATURE_BOTTOM_Y + 50; // y at or above this is "in the signature zone"
+// Net-pay band height plus the gap below.
+const NETPAY_TOTAL_H = NETPAY_BAND_H + NETPAY_GAP_BELOW + 10; /* +10 for the gap above the band */
+// YTD + Leave block: ~9 YTD rows × 13pt + section header + divider + bottom
+// padding, plus on the right ~5 leave/attendance rows + subsection header.
+// Worst case ≈ 165pt; pad to 180pt.
+const YTD_LEAVE_TOTAL_H = 180;
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -1212,10 +1291,10 @@ function drawSignatures(
  * rendered bytes as a Node Buffer. Caller (Server Action) is responsible for
  * uploading to storage + audit-logging the access.
  *
- * T70 shipped the base: letterhead + employee/period block. T71 added the
- * earnings + deductions tables. T72 adds the net-pay band, YTD + leave block,
- * and signature footer. T73 will measure section heights and break pages
- * when content overflows.
+ * T73 implements section-atom pagination: if the net-pay band + YTD/Leave +
+ * signature footer would overlap below the tables on page 1, we break to a
+ * continuation page with a compact letterhead and a "continued from page 1"
+ * notice. Signatures always live on the LAST page.
  */
 export async function generatePayslipPdf(
   employee_run_id: string,
@@ -1237,21 +1316,48 @@ export async function generatePayslipPdf(
   // embed into this document.
   const logoImg = await pdfDoc.embedPng(LOGO_BYTES);
 
-  const page = pdfDoc.addPage([PAGE_W, PAGE_H]);
-  const ctx: DrawCtx = { page, font, fontBold };
+  // ----- Page 1: letterhead → employee block → tables ---------------------
+  const page1 = pdfDoc.addPage([PAGE_W, PAGE_H]);
+  const ctx1: DrawCtx = { page: page1, font, fontBold };
 
-  const afterLetterheadY = drawLetterhead(ctx, logoImg);
-  const afterEmployeeY = drawEmployeePeriodBlock(ctx, data, afterLetterheadY);
-  const afterTablesY = drawEarningsAndDeductions(ctx, data, afterEmployeeY);
-  const afterNetPayY = drawNetPayBlock(ctx, data, afterTablesY);
-  // YTD + leave block flows below the net-pay band. T73 will compare its
-  // ending Y against the signature band's fixed top edge and break to a new
-  // page if they would overlap.
-  drawYtdAndLeave(ctx, data, afterNetPayY);
-  drawSignatures(ctx, data);
+  const afterLetterheadY = drawLetterhead(ctx1, logoImg);
+  const afterEmployeeY = drawEmployeePeriodBlock(ctx1, data, afterLetterheadY);
+  const afterTablesY = drawEarningsAndDeductions(ctx1, data, afterEmployeeY);
 
-  // T73 will measure section heights and break pages when content overflows
-  // (e.g. long deduction-line lists pushing YTD/Leave into the signature band).
+  // Decide whether everything still fits on page 1. We need:
+  //   afterTablesY - NETPAY_TOTAL_H - YTD_LEAVE_TOTAL_H >= SIGNATURE_RESERVE_Y
+  // If false, the trailing sections move to page 2.
+  const needsPage2 =
+    afterTablesY - NETPAY_TOTAL_H - YTD_LEAVE_TOTAL_H < SIGNATURE_RESERVE_Y;
+
+  if (!needsPage2) {
+    // Single-page layout — original flow.
+    const afterNetPayY = drawNetPayBlock(ctx1, data, afterTablesY);
+    drawYtdAndLeave(ctx1, data, afterNetPayY);
+    drawSignatures(ctx1, data);
+  } else {
+    // Two-page layout — net pay onward moves to page 2.
+    const page2 = pdfDoc.addPage([PAGE_W, PAGE_H]);
+    const ctx2: DrawCtx = { page: page2, font, fontBold };
+
+    const afterCompactLetterheadY = drawLetterhead(ctx2, logoImg, {
+      compact: true,
+    });
+    const afterNoticeY = drawContinuedNotice(
+      ctx2,
+      data,
+      afterCompactLetterheadY,
+    );
+    const afterNetPayY = drawNetPayBlock(ctx2, data, afterNoticeY);
+    drawYtdAndLeave(ctx2, data, afterNetPayY);
+    drawSignatures(ctx2, data);
+  }
+
+  // Page markers: drawn last so we know the total count.
+  const pages = pdfDoc.getPages();
+  for (let i = 0; i < pages.length; i++) {
+    drawPageMarker(pages[i], font, i, pages.length);
+  }
 
   const bytes = await pdfDoc.save();
   return Buffer.from(bytes);

@@ -8,6 +8,8 @@ import { audit } from "@/lib/audit/log";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { computePayrollRun } from "@/lib/payroll/compute";
+import { reportError } from "@/lib/observability/report-error";
+import { generatePayslipsForRunAction } from "./[id]/payslip-actions";
 import {
   CreatePeriodSchema,
   CreateRunSchema,
@@ -281,9 +283,15 @@ export async function recomputePayrollRunAction(
   return { ok: true, data: { updated: result.updated } };
 }
 
+type FinaliseResultData = {
+  payslipsGenerated?: number;
+  payslipsFailed?: number;
+  payslipWarning?: string;
+};
+
 export async function finaliseRunAction(
   run_id: string,
-): Promise<RunActionResult> {
+): Promise<RunActionResult<FinaliseResultData | undefined>> {
   const session = await requireAdminStaff();
   if (!run_id || typeof run_id !== "string") {
     return { ok: false, error: "Run id is required." };
@@ -336,9 +344,36 @@ export async function finaliseRunAction(
     user_agent: ua,
   });
 
+  // Auto-generate payslip PDFs now that the gross-up JE has posted (the T29
+  // bridge fires on the status flip above, so by the time we get here the
+  // ledger entry exists). Wrap in try/catch — if PDF generation fails (e.g.
+  // bucket missing pre-T74), the run itself stays finalised; admins can
+  // re-trigger via the run-review UI later.
+  const payslipData: FinaliseResultData = {};
+  try {
+    const result = await generatePayslipsForRunAction(run_id);
+    if (result.ok) {
+      payslipData.payslipsGenerated = result.data.generated;
+      payslipData.payslipsFailed = result.data.failed;
+      if (result.data.warning) {
+        payslipData.payslipWarning = result.data.warning;
+      }
+    } else {
+      payslipData.payslipWarning = `Payslip generation deferred: ${result.error}`;
+    }
+  } catch (err) {
+    await reportError({
+      scope: "payroll.finalise_auto_payslips",
+      error: err,
+      metadata: { run_id },
+    });
+    payslipData.payslipWarning =
+      "Payslip generation failed — please retry from the run page.";
+  }
+
   revalidatePath(RUNS_PATH);
   revalidatePath(runDetailPath(run_id));
-  return { ok: true, data: undefined };
+  return { ok: true, data: payslipData };
 }
 
 export async function voidRunAction(
