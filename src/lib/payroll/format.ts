@@ -13,9 +13,10 @@ const YEAR_FMT = new Intl.DateTimeFormat("en-PH", {
 });
 
 /**
- * Format a period range as "May 1 – 15, 2026". If the two dates span calendar
- * years (rare for half-month payroll), the year still appears once at the end
- * — the start month label keeps the user oriented.
+ * Format a period range as "May 1 – May 15, 2026" (or "Apr 16 – May 15, 2026"
+ * when the range crosses a month boundary, which is common for half-month
+ * payroll periods). Year appears once at the end; if the two dates span
+ * calendar years (rare) the end-year still keeps the user oriented.
  */
 export function formatPeriodRange(startISO: string, endISO: string): string {
   if (!startISO || !endISO) return "—";

@@ -1,6 +1,6 @@
 import "server-only";
-import fs from "node:fs/promises";
-import path from "node:path";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   PDFDocument,
   StandardFonts,
@@ -11,6 +11,14 @@ import {
   type RGB,
 } from "pdf-lib";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { formatManilaDate, formatPeriodRange } from "./format";
+
+// Read the letterhead logo once at module load. T73 will batch generatePayslipPdf
+// across 20-50 employees per run; per-call fs reads of the same file would be
+// wasteful. Matches the precedent in src/lib/results/pdf-document.tsx.
+// If public/logo.png is missing in production, this throws at server boot —
+// loud and early, which is what we want.
+const LOGO_BYTES = readFileSync(join(process.cwd(), "public/logo.png"));
 
 // ---------------------------------------------------------------------------
 // Brand + page constants
@@ -139,46 +147,13 @@ export type PayslipData = {
 };
 
 // ---------------------------------------------------------------------------
-// Formatters (local — keep off the public surface of format.ts so T71-T73 can
-// extend without competing with other payroll surfaces).
+// Formatters
 // ---------------------------------------------------------------------------
-
-const PESO_FMT = new Intl.NumberFormat("en-PH", {
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
-
-function formatPeso(amount: number): string {
-  return `₱${PESO_FMT.format(amount)}`;
-}
-
-const DATE_FMT = new Intl.DateTimeFormat("en-PH", {
-  timeZone: "Asia/Manila",
-  month: "short",
-  day: "numeric",
-  year: "numeric",
-});
-
-function formatManilaDate(iso: string): string {
-  return DATE_FMT.format(new Date(`${iso}T00:00:00+08:00`));
-}
-
-function formatPeriodRange(startISO: string, endISO: string): string {
-  const start = new Date(`${startISO}T00:00:00+08:00`);
-  const end = new Date(`${endISO}T00:00:00+08:00`);
-  const startFmt = new Intl.DateTimeFormat("en-PH", {
-    timeZone: "Asia/Manila",
-    month: "short",
-    day: "numeric",
-  }).format(start);
-  const endFmt = new Intl.DateTimeFormat("en-PH", {
-    timeZone: "Asia/Manila",
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(end);
-  return `${startFmt} – ${endFmt}`;
-}
+//
+// formatManilaDate + formatPeriodRange come from ./format. The payslip-
+// specific peso formatter (fixed .00, unlike the marketing formatPhp's
+// minimumFractionDigits: 0) lives with the table-drawing code that uses it,
+// reintroduced in T71.
 
 // ---------------------------------------------------------------------------
 // Data loader
@@ -311,6 +286,8 @@ async function loadPayslipData(
 
   // 2. Earning + deduction lines, and YTD source rows, and leave balances —
   // all independent of one another.
+  // YTD includes the current run (standard payslip convention — YTD-through-
+  // this-period, not YTD-before-this-period).
   const yearStart = `${period.pay_date.slice(0, 4)}-01-01`;
   const yearEnd = `${period.pay_date.slice(0, 4)}-12-31`;
 
@@ -633,10 +610,6 @@ function drawEmployeePeriodBlock(
     rightY -= lineH;
   }
 
-  // Mark unused vars for downstream sections — silences the lint warning if
-  // formatPeso isn't referenced yet (T71/T72 will use it for the tables).
-  void formatPeso;
-
   return Math.min(leftY, rightY) - 4;
 }
 
@@ -669,22 +642,21 @@ export async function generatePayslipPdf(
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
-  // Load the letterhead logo. If the file is missing in production this
-  // should fail loudly — the caller catches and audit-logs the failure.
-  const logoPath = path.join(process.cwd(), "public/logo.png");
-  const logoBytes = await fs.readFile(logoPath);
-  const logoImg = await pdfDoc.embedPng(logoBytes);
+  // Logo bytes are read once at module load (see LOGO_BYTES above) — just
+  // embed into this document.
+  const logoImg = await pdfDoc.embedPng(LOGO_BYTES);
 
   const page = pdfDoc.addPage([PAGE_W, PAGE_H]);
   const ctx: DrawCtx = { page, font, fontBold };
 
-  let cursorY = drawLetterhead(ctx, logoImg);
-  cursorY = drawEmployeePeriodBlock(ctx, data, cursorY);
+  const afterLetterheadY = drawLetterhead(ctx, logoImg);
+  drawEmployeePeriodBlock(ctx, data, afterLetterheadY);
 
-  // T71 will append: drawEarnings(ctx, data, cursorY) + drawDeductions
-  // T72 will append: drawNetPay + drawYtd + drawLeave + drawSignatures
+  // T71 will chain off drawEmployeePeriodBlock's return value:
+  //   const cursorY = drawEmployeePeriodBlock(ctx, data, afterLetterheadY);
+  //   drawEarnings(ctx, data, cursorY); drawDeductions(...); etc.
+  // T72 will append: drawNetPay + drawYtd + drawLeave + drawSignatures.
   // T73 will measure section heights and break pages when cursorY < MARGIN.
-  void cursorY;
 
   const bytes = await pdfDoc.save();
   return Buffer.from(bytes);
