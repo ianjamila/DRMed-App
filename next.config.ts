@@ -54,6 +54,12 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // Next 16 blocks cross-origin requests to /_next/webpack-hmr by default.
+  // Playwright sometimes resolves the dev server as 127.0.0.1 even when
+  // navigated via localhost (and vice versa), so the HMR websocket fails
+  // and React doesn't hydrate. Allowing both here keeps the local dev loop
+  // + Playwright MCP smokes working. No effect in production.
+  allowedDevOrigins: ["localhost", "127.0.0.1"],
   async headers() {
     return [
       {

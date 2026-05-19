@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { loadPayslipData } from "@/lib/payroll/payslip-pdf";
 import { audit } from "@/lib/audit/log";
 import { reportError } from "@/lib/observability/report-error";
+import { hasRecentAudit } from "@/lib/server/action-helpers";
 import { PayslipDetailClient } from "./payslip-detail-client";
 
 export const metadata = { title: "Payslip" };
@@ -58,22 +59,39 @@ export default async function PayslipDetailPage({
   // getPayslipUrlAction) — `.viewed` covers opening the detail page even if
   // the PDF is never fetched. Mirrors the result.viewed / result.downloaded
   // split used by the lab-result portal.
-  const h = await headers();
-  await audit({
-    actor_id: session.user_id,
-    actor_type: "staff",
-    action: "payroll_payslip.viewed",
-    resource_type: "payroll_employee_run",
-    resource_id: employeeRunId,
-    metadata: {
-      employee_id: er.employee_id,
-      payroll_run_id: er.run_id,
-      viewer_role: session.role,
-      cross_employee: !isOwn,
+  //
+  // Dedupe at write time: `dynamic = 'force-dynamic'` re-emits a viewed row
+  // on every navigation (back button, tab switch). Suppress if the same
+  // viewer audited this resource in the last 5 minutes — that window covers
+  // session-like browsing while still catching genuine re-opens.
+  const recentlyViewed = await hasRecentAudit(
+    admin,
+    {
+      actor_id: session.user_id,
+      action: "payroll_payslip.viewed",
+      resource_id: employeeRunId,
     },
-    ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
-    user_agent: h.get("user-agent"),
-  });
+    5,
+  );
+
+  if (!recentlyViewed) {
+    const h = await headers();
+    await audit({
+      actor_id: session.user_id,
+      actor_type: "staff",
+      action: "payroll_payslip.viewed",
+      resource_type: "payroll_employee_run",
+      resource_id: employeeRunId,
+      metadata: {
+        employee_id: er.employee_id,
+        payroll_run_id: er.run_id,
+        viewer_role: session.role,
+        cross_employee: !isOwn,
+      },
+      ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+      user_agent: h.get("user-agent"),
+    });
+  }
 
   return (
     <PayslipDetailClient

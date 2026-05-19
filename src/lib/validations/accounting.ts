@@ -406,6 +406,16 @@ export type VoidRunInput = z.infer<typeof VoidRunSchema>;
 export const MarkEmployeePaidSchema = z.object({
   employee_run_id: z.string().uuid(),
   contra_account_id: z.string().uuid().optional(),
+  // Optional bank-only fields. Reception may backdate a Friday payout
+  // processed on Monday, or attach a bank transfer reference number. Both
+  // ignored for cash (cash payouts are always "today" in the active
+  // reception shift). YYYY-MM-DD in Asia/Manila is stamped as Manila
+  // midnight ISO on the row.
+  paid_at_local_date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD.")
+    .optional(),
+  bank_reference: z.string().trim().min(1).max(200).optional(),
 });
 export type MarkEmployeePaidInput = z.infer<typeof MarkEmployeePaidSchema>;
 
