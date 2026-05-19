@@ -131,6 +131,15 @@ export function PayslipsClient({
   const [privacyMode, togglePrivacyStored] = usePrivacyMode();
   const [revealedIds, setRevealedIds] = useState<Set<string>>(new Set());
 
+  // Defensive: drop reveals when admin switches employee. router.push already
+  // remounts via server render, but resetting in-render here makes this
+  // independent of how the parent re-renders.
+  const [prevEmployeeId, setPrevEmployeeId] = useState(selectedEmployeeId);
+  if (prevEmployeeId !== selectedEmployeeId) {
+    setPrevEmployeeId(selectedEmployeeId);
+    setRevealedIds(new Set());
+  }
+
   function togglePrivacy() {
     setRevealedIds(new Set());
     togglePrivacyStored();
@@ -415,16 +424,21 @@ function LatestPayslipCard({
       <button
         type="button"
         onClick={onToggleReveal}
+        disabled={!privacyMode}
         aria-label={blurred ? "Reveal net pay" : "Hide net pay"}
-        className="mt-3 block w-full text-left"
+        className="mt-3 block w-full text-left disabled:cursor-default"
       >
         <span
+          aria-hidden={blurred}
           className={`block font-[family-name:var(--font-heading)] text-4xl font-extrabold leading-tight transition select-none sm:text-5xl ${
             blurred ? "blur-md" : ""
           }`}
         >
           {formatPhp(payslip.net_pay_php)}
         </span>
+        {blurred ? (
+          <span className="sr-only">Amount hidden. Activate to reveal.</span>
+        ) : null}
       </button>
 
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-white/85">
@@ -481,16 +495,21 @@ function OlderPayslipCard({
         <button
           type="button"
           onClick={onToggleReveal}
+          disabled={!privacyMode}
           aria-label={blurred ? "Reveal net pay" : "Hide net pay"}
-          className="inline-flex min-h-11 items-center text-left"
+          className="inline-flex min-h-11 items-center text-left disabled:cursor-default"
         >
           <span
+            aria-hidden={blurred}
             className={`block font-[family-name:var(--font-heading)] text-xl font-extrabold text-[color:var(--color-brand-navy)] transition select-none ${
               blurred ? "blur-md" : ""
             }`}
           >
             {formatPhp(payslip.net_pay_php)}
           </span>
+          {blurred ? (
+            <span className="sr-only">Amount hidden. Activate to reveal.</span>
+          ) : null}
         </button>
         <DownloadButton
           employeeRunId={payslip.id}
@@ -534,9 +553,10 @@ function YtdCard({
         <button
           type="button"
           onClick={onToggleReveal}
+          disabled={!privacyMode}
           aria-pressed={!blurred}
           aria-label={blurred ? "Reveal YTD totals" : "Hide YTD totals"}
-          className="inline-flex h-11 w-11 items-center justify-center rounded-full text-[color:var(--color-brand-text-soft)] hover:bg-[color:var(--color-brand-bg-mid)] hover:text-[color:var(--color-brand-navy)]"
+          className="inline-flex h-11 w-11 items-center justify-center rounded-full text-[color:var(--color-brand-text-soft)] hover:bg-[color:var(--color-brand-bg-mid)] hover:text-[color:var(--color-brand-navy)] disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-[color:var(--color-brand-text-soft)]"
         >
           {blurred ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
         </button>
@@ -545,8 +565,9 @@ function YtdCard({
       <button
         type="button"
         onClick={onToggleReveal}
+        disabled={!privacyMode}
         aria-label={blurred ? "Reveal YTD totals" : "Hide YTD totals"}
-        className="mt-3 grid w-full grid-cols-1 gap-3 text-left sm:grid-cols-3"
+        className="mt-3 grid w-full grid-cols-1 gap-3 text-left sm:grid-cols-3 disabled:cursor-default"
       >
         <YtdField
           label="Gross"
@@ -586,6 +607,7 @@ function YtdField({
         {label}
       </p>
       <span
+        aria-hidden={blurred}
         className={`mt-1 block font-[family-name:var(--font-heading)] font-extrabold transition select-none ${
           emphasised
             ? "text-2xl text-[color:var(--color-brand-navy)]"
@@ -594,6 +616,11 @@ function YtdField({
       >
         {formatPhp(value)}
       </span>
+      {blurred ? (
+        <span className="sr-only">
+          {label} hidden. Activate the YTD totals to reveal.
+        </span>
+      ) : null}
     </div>
   );
 }

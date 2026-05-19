@@ -10,6 +10,7 @@ type Props = {
   data: PayslipData;
   employeeRunId: string;
   hasFile: boolean;
+  viewingAsAdmin: boolean;
 };
 
 // Peso formatter — fixed .00 decimals, matching the PDF (and the payslip-
@@ -55,6 +56,7 @@ export function PayslipDetailClient({
   data,
   employeeRunId,
   hasFile,
+  viewingAsAdmin,
 }: Props) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -91,6 +93,15 @@ export function PayslipDetailClient({
   return (
     <div className="min-h-dvh bg-[color:var(--color-brand-bg)]">
       <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-10">
+        {viewingAsAdmin ? (
+          <div
+            role="status"
+            className="mb-3 flex items-center gap-2 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900"
+          >
+            <span className="font-semibold">Viewing as admin:</span>
+            <span>{data.employee.full_name}&apos;s payslip</span>
+          </div>
+        ) : null}
         {/* Top bar — back link + download button */}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <Link
