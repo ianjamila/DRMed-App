@@ -1,6 +1,5 @@
 "use server";
 
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -8,16 +7,9 @@ import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { PaymentRecordSchema } from "@/lib/validations/payment";
 import { RedeemGiftCodePaymentSchema } from "@/lib/validations/gift-code";
+import { ipAndAgent } from "@/lib/server/action-helpers";
 
 export type PaymentResult = { ok: true } | { ok: false; error: string };
-
-async function ipAndAgent() {
-  const h = await headers();
-  return {
-    ip: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
-    ua: h.get("user-agent"),
-  };
-}
 
 export async function recordPaymentAction(
   _prev: PaymentResult | null,

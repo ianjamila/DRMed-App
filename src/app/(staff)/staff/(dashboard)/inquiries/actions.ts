@@ -1,11 +1,11 @@
 "use server";
 
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { requireActiveStaff, type StaffSession } from "@/lib/auth/require-staff";
+import { ipAndAgent } from "@/lib/server/action-helpers";
 import { z } from "zod";
 import {
   InquiryCreateSchema,
@@ -55,14 +55,6 @@ function readForm(formData: FormData) {
 
 function requireReception(role: StaffSession["role"]): boolean {
   return role === "reception" || role === "admin";
-}
-
-async function ipAndAgent() {
-  const h = await headers();
-  return {
-    ip: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
-    ua: h.get("user-agent"),
-  };
 }
 
 export async function createInquiryAction(

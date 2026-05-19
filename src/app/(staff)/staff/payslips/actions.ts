@@ -1,10 +1,10 @@
 "use server";
 
-import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { audit } from "@/lib/audit/log";
+import { ipAndAgent } from "@/lib/server/action-helpers";
 
 type ActionResult<T = void> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -25,14 +25,6 @@ export type ListMyPayslipsArgs = {
   /** Optional 4-digit year filter (e.g. 2026). Filters on payroll_periods.pay_date. */
   year?: number;
 };
-
-async function ipAndAgent() {
-  const h = await headers();
-  return {
-    ip: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
-    ua: h.get("user-agent"),
-  };
-}
 
 /**
  * Returns the calling employee's own payslips by default. Admins may pass an

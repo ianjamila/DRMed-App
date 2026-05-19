@@ -1,12 +1,12 @@
 "use server";
 
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { generateGiftCodes } from "@/lib/gift-codes/generate";
+import { ipAndAgent } from "@/lib/server/action-helpers";
 import {
   CancelGiftCodeSchema,
   GenerateBatchSchema,
@@ -15,14 +15,6 @@ import {
 export type GiftCodeResult =
   | { ok: true }
   | { ok: false; error: string };
-
-async function ipAndAgent() {
-  const h = await headers();
-  return {
-    ip: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
-    ua: h.get("user-agent"),
-  };
-}
 
 export async function generateBatchAction(
   _prev: GiftCodeResult | null,

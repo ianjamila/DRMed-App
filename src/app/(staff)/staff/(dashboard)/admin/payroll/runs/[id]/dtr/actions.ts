@@ -9,7 +9,6 @@
 // for the period is currently in 'computed' state, it is bumped back to
 // 'draft' (Q23) so it gets a chance to re-pull the new DTR data.
 
-import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
@@ -23,6 +22,7 @@ import {
   type UploadDtrInput,
 } from "@/lib/validations/accounting";
 import type { Json } from "@/types/database";
+import { ipAndAgent, firstIssue } from "@/lib/server/action-helpers";
 
 // Discriminated-union shape consistent with the other payroll actions
 // (createPeriodAction, recomputePayrollRunAction, etc.).
@@ -38,18 +38,6 @@ function runDtrPath(run_id: string) {
 
 function runDetailPath(run_id: string) {
   return `${RUNS_PATH}/${run_id}`;
-}
-
-async function ipAndAgent() {
-  const h = await headers();
-  return {
-    ip: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
-    ua: h.get("user-agent"),
-  };
-}
-
-function firstIssue(err: z.ZodError, fallback = "Please check the form."): string {
-  return err.issues[0]?.message ?? fallback;
 }
 
 // =============================================================================

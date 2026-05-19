@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import Link from "next/link";
 import { ArrowLeft, Download, Loader2 } from "lucide-react";
 import type { PayslipData } from "@/lib/payroll/payslip-pdf";
+import { formatManilaDate, formatPeriodRange } from "@/lib/payroll/format";
 import { getPayslipUrlAction } from "../actions";
 
 type Props = {
@@ -21,35 +22,6 @@ const PESO_FMT = new Intl.NumberFormat("en-PH", {
 });
 function formatPeso(amount: number): string {
   return `₱${PESO_FMT.format(amount)}`;
-}
-
-// Manila-zone date helpers — local copies (the lib/payroll/format helpers
-// are server-only-friendly but pulling them in here would also work; we
-// re-implement to avoid widening the client bundle's server deps).
-function formatManilaDate(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const d = new Date(`${iso}T00:00:00+08:00`);
-  return new Intl.DateTimeFormat("en-PH", {
-    timeZone: "Asia/Manila",
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(d);
-}
-
-function formatPeriodRange(start: string, end: string): string {
-  const s = new Date(`${start}T00:00:00+08:00`);
-  const e = new Date(`${end}T00:00:00+08:00`);
-  const range = new Intl.DateTimeFormat("en-PH", {
-    timeZone: "Asia/Manila",
-    month: "short",
-    day: "numeric",
-  });
-  const year = new Intl.DateTimeFormat("en-PH", {
-    timeZone: "Asia/Manila",
-    year: "numeric",
-  });
-  return `${range.format(s)} – ${range.format(e)}, ${year.format(e)}`;
 }
 
 export function PayslipDetailClient({

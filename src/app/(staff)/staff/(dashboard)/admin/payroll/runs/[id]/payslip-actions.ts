@@ -9,7 +9,6 @@
 // by T74's migration 0045). The path is keyed by employee + period so the
 // patient-facing reader (T76) can resolve by lookup.
 
-import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
@@ -23,6 +22,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { generatePayslipPdf } from "@/lib/payroll/payslip-pdf";
 import { reportError } from "@/lib/observability/report-error";
 import { translatePgError } from "@/lib/accounting/pg-errors";
+import { ipAndAgent, firstIssue } from "@/lib/server/action-helpers";
 import {
   RegeneratePayslipSchema,
   type RegeneratePayslipInput,
@@ -33,18 +33,6 @@ export type PayslipActionResult<T = undefined> =
   | { ok: false; error: string };
 
 const PAYSLIP_BUCKET = "payslips";
-
-async function ipAndAgent() {
-  const h = await headers();
-  return {
-    ip: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
-    ua: h.get("user-agent"),
-  };
-}
-
-function firstIssue(err: z.ZodError, fallback = "Please check the form."): string {
-  return err.issues[0]?.message ?? fallback;
-}
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 
