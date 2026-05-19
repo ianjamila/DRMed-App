@@ -172,6 +172,46 @@ export const STAFF_NAV: StaffNavSection[] = [
         label: "Staff advances",
         roles: ["admin"],
       },
+      {
+        href: "/staff/admin/payroll/employees",
+        label: "Employees",
+        roles: ["admin"],
+      },
+      {
+        href: "/staff/admin/payroll/periods",
+        label: "Pay periods",
+        roles: ["admin"],
+      },
+      {
+        href: "/staff/admin/payroll/runs",
+        label: "Pay runs",
+        roles: ["admin"],
+      },
+      {
+        href: "/staff/admin/payroll/ot-slips",
+        label: "OT slips",
+        roles: ["admin"],
+      },
+      {
+        href: "/staff/admin/payroll/holidays",
+        label: "Holidays",
+        roles: ["admin"],
+      },
+      {
+        href: "/staff/admin/payroll/rates",
+        label: "Statutory rates",
+        roles: ["admin"],
+      },
+      {
+        href: "/staff/admin/payroll/leaves",
+        label: "Leave dashboard",
+        roles: ["admin"],
+      },
+      {
+        href: "/staff/admin/payroll/settings",
+        label: "Payroll settings",
+        roles: ["admin"],
+      },
       { href: "/staff/users", label: "Staff users", roles: ["admin"] },
       { href: "/staff/audit", label: "Audit log", roles: ["admin"] },
       {
@@ -183,6 +223,16 @@ export const STAFF_NAV: StaffNavSection[] = [
         href: "/staff/admin/patient-merge",
         label: "Merge patients",
         roles: ["admin"],
+      },
+    ],
+  },
+  {
+    heading: "Personal",
+    items: [
+      {
+        href: "/staff/payslips",
+        label: "My payslips",
+        roles: ["reception", "medtech", "pathologist", "admin", "xray_technician"],
       },
     ],
   },
