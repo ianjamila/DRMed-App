@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useCallback,
   useDeferredValue,
   useEffect,
   useMemo,
@@ -10,6 +11,8 @@ import {
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { formatPhp } from "@/lib/marketing/format";
+import { useFocusTrap } from "@/lib/a11y/use-focus-trap";
+import { PAYMENT_LABEL, ROLE_LABEL, SCHEDULE_LABEL } from "@/lib/payroll/labels";
 import { createEmployeeAction } from "./actions";
 
 export interface EmployeeListRow {
@@ -33,26 +36,6 @@ export interface EligibleStaffOption {
 }
 
 type StatusFilter = "all" | "active" | "inactive";
-
-const SCHEDULE_LABEL: Record<string, string> = {
-  fixed_5day_mon_fri: "Mon–Fri (5d)",
-  fixed_6day_mon_sat: "Mon–Sat (6d)",
-  shifting_5of6_mon_sat: "Shifting 5/6",
-};
-
-const PAYMENT_LABEL: Record<string, string> = {
-  cash: "Cash",
-  bank: "Bank",
-};
-
-const ROLE_LABEL: Record<string, string> = {
-  admin: "Admin",
-  reception: "Reception",
-  medtech: "Medtech",
-  pathologist: "Pathologist",
-  xray_tech: "X-ray tech",
-  physician: "Physician",
-};
 
 function todayManila(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
@@ -93,6 +76,26 @@ export function EmployeesClient({ employees, eligibleStaff }: Props) {
     });
   }, [employees, deferredQuery, status]);
 
+  const activeCount = useMemo(
+    () => employees.filter((e) => e.is_active).length,
+    [employees],
+  );
+  const inactiveCount = useMemo(
+    () => employees.filter((e) => !e.is_active).length,
+    [employees],
+  );
+
+  const closeDrawer = useCallback(() => setDrawerOpen(false), []);
+  const handleCreated = useCallback(() => {
+    setDrawerOpen(false);
+    router.refresh();
+  }, [router]);
+
+  const openEmployee = useCallback(
+    (id: string) => router.push(`/staff/admin/payroll/employees/${id}`),
+    [router],
+  );
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
@@ -109,12 +112,8 @@ export function EmployeesClient({ employees, eligibleStaff }: Props) {
           className="rounded-lg border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2.5 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
         >
           <option value="all">All ({employees.length})</option>
-          <option value="active">
-            Active ({employees.filter((e) => e.is_active).length})
-          </option>
-          <option value="inactive">
-            Inactive ({employees.filter((e) => !e.is_active).length})
-          </option>
+          <option value="active">Active ({activeCount})</option>
+          <option value="inactive">Inactive ({inactiveCount})</option>
         </select>
         <p className="hidden text-xs text-[color:var(--color-brand-text-soft)] sm:block">
           Showing {filtered.length} of {employees.length}
@@ -157,10 +156,20 @@ export function EmployeesClient({ employees, eligibleStaff }: Props) {
               filtered.map((e) => (
                 <tr
                   key={e.id}
-                  onClick={() =>
-                    router.push(`/staff/admin/payroll/employees/${e.id}`)
-                  }
-                  className="cursor-pointer hover:bg-[color:var(--color-brand-bg)]/40"
+                  onClick={() => openEmployee(e.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      openEmployee(e.id);
+                    } else if (event.key === " ") {
+                      event.preventDefault();
+                      openEmployee(e.id);
+                    }
+                  }}
+                  tabIndex={0}
+                  role="button"
+                  aria-label={`Open ${e.full_name}`}
+                  className="cursor-pointer hover:bg-[color:var(--color-brand-bg)]/40 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-brand-cyan)] focus:ring-inset"
                 >
                   <td className="px-4 py-3 align-middle">
                     <div className="font-semibold text-[color:var(--color-brand-navy)]">
@@ -263,12 +272,9 @@ export function EmployeesClient({ employees, eligibleStaff }: Props) {
 
       <AddEmployeeDrawer
         open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
+        onClose={closeDrawer}
         eligibleStaff={eligibleStaff}
-        onCreated={() => {
-          setDrawerOpen(false);
-          router.refresh();
-        }}
+        onCreated={handleCreated}
       />
     </div>
   );
@@ -311,6 +317,7 @@ function AddEmployeeDrawer({
   const [paymentMethod, setPaymentMethod] = useState<"cash" | "bank">("cash");
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const dialogRef = useFocusTrap(open);
 
   // Lock body scroll while drawer is open.
   useEffect(() => {
@@ -376,6 +383,7 @@ function AddEmployeeDrawer({
 
   return (
     <div
+      ref={dialogRef as React.RefObject<HTMLDivElement>}
       role="dialog"
       aria-modal="true"
       aria-labelledby="add-employee-title"
@@ -401,7 +409,7 @@ function AddEmployeeDrawer({
             aria-label="Close"
             className="min-h-[44px] min-w-[44px] rounded-md text-[color:var(--color-brand-text-soft)] hover:bg-[color:var(--color-brand-bg)]"
           >
-            ✕
+            Close
           </button>
         </div>
         <div className="space-y-4 px-5 py-5">

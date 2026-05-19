@@ -1,9 +1,11 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { formatPhp } from "@/lib/marketing/format";
+import { useFocusTrap } from "@/lib/a11y/use-focus-trap";
+import { PAYMENT_LABEL, ROLE_LABEL, SCHEDULE_LABEL } from "@/lib/payroll/labels";
 import {
   updateEmployeeAction,
   deactivateEmployeeAction,
@@ -90,26 +92,6 @@ export interface EmployeeRunHistoryRow {
 }
 
 type TabKey = "overview" | "allowances" | "loans" | "leaves";
-
-const SCHEDULE_LABEL: Record<string, string> = {
-  fixed_5day_mon_fri: "Mon–Fri (5d)",
-  fixed_6day_mon_sat: "Mon–Sat (6d)",
-  shifting_5of6_mon_sat: "Shifting 5/6",
-};
-
-const PAYMENT_LABEL: Record<string, string> = {
-  cash: "Cash",
-  bank: "Bank",
-};
-
-const ROLE_LABEL: Record<string, string> = {
-  admin: "Admin",
-  reception: "Reception",
-  medtech: "Medtech",
-  pathologist: "Pathologist",
-  xray_tech: "X-ray tech",
-  physician: "Physician",
-};
 
 const LOAN_STATUS_LABEL: Record<string, string> = {
   requested: "Requested",
@@ -372,6 +354,7 @@ function OverviewTab({ employee }: { employee: EmployeeDetail }) {
   };
 
   const deactivate = () => {
+    if (isPending) return;
     setError(null);
     setSaved(false);
     const ok = window.confirm(
@@ -395,8 +378,8 @@ function OverviewTab({ employee }: { employee: EmployeeDetail }) {
         Employment details
       </h2>
       <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
-        Update HR fields. Setting a termination date will also deactivate the
-        employee.
+        Update HR fields. To end employment, use the Deactivate button below;
+        it records the termination date and sets the employee inactive.
       </p>
 
       <div className="mt-5 grid gap-4 sm:grid-cols-2">
@@ -474,7 +457,7 @@ function OverviewTab({ employee }: { employee: EmployeeDetail }) {
 
       {error ? <p className="mt-4 text-sm text-red-600">{error}</p> : null}
       {saved ? (
-        <p className="mt-4 text-sm text-emerald-700">Saved ✓</p>
+        <p className="mt-4 text-sm text-emerald-700">Saved.</p>
       ) : null}
 
       <div className="mt-6 flex flex-wrap justify-between gap-3">
@@ -1076,7 +1059,7 @@ function DisbursementDialog({
       <DialogActions
         onClose={onClose}
         onConfirm={submit}
-        disabled={isPending}
+        disabled={isPending || periodOptions.length === 0 || !periodId}
         confirmLabel={isPending ? "Saving…" : "Confirm disbursement"}
       />
     </Dialog>
@@ -1655,15 +1638,24 @@ function Dialog({
   onClose: () => void;
   children: React.ReactNode;
 }) {
+  const dialogRef = useFocusTrap(true);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
   return (
     <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={title}
       className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4"
       onClick={onClose}
     >
       <div
+        ref={dialogRef as React.RefObject<HTMLDivElement>}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
         className="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
