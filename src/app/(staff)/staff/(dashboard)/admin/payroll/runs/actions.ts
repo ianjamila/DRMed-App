@@ -792,6 +792,25 @@ async function lookupEmployeeRunForLine(
   return data ?? null;
 }
 
+// After a manual earning/deduction line is added or removed on a `computed`
+// run, the parent run's roll-up totals on payroll_employee_runs are stale.
+// Flip the run back to `draft` so the Recompute button re-appears and the
+// next finalise sees fresh numbers. The status='computed' guard is a
+// noop on draft (already stale-friendly) and on finalised/voided (where
+// edits shouldn't reach here at all). The locked-after-payout trigger
+// would block this anyway if any payout was paid, but we only get here
+// for runs whose UI still permits line edits.
+async function flipRunToDraftIfComputed(
+  admin: ReturnType<typeof createAdminClient>,
+  run_id: string,
+): Promise<void> {
+  await admin
+    .from("payroll_runs")
+    .update({ status: "draft" })
+    .eq("id", run_id)
+    .eq("status", "computed");
+}
+
 export async function addEarningLineAction(
   raw: AddEarningLineInput,
 ): Promise<RunActionResult<{ id: string }>> {
@@ -823,6 +842,7 @@ export async function addEarningLineAction(
   }
 
   const er = await lookupEmployeeRunForLine(admin, created.employee_run_id);
+  if (er) await flipRunToDraftIfComputed(admin, er.run_id);
 
   const { ip, ua } = await ipAndAgent();
   await audit({
@@ -877,6 +897,7 @@ export async function removeEarningLineAction(
   }
 
   const er = await lookupEmployeeRunForLine(admin, existing.employee_run_id);
+  if (er) await flipRunToDraftIfComputed(admin, er.run_id);
 
   const { ip, ua } = await ipAndAgent();
   await audit({
@@ -930,6 +951,7 @@ export async function addDeductionLineAction(
   }
 
   const er = await lookupEmployeeRunForLine(admin, created.employee_run_id);
+  if (er) await flipRunToDraftIfComputed(admin, er.run_id);
 
   const { ip, ua } = await ipAndAgent();
   await audit({
@@ -984,6 +1006,7 @@ export async function removeDeductionLineAction(
   }
 
   const er = await lookupEmployeeRunForLine(admin, existing.employee_run_id);
+  if (er) await flipRunToDraftIfComputed(admin, er.run_id);
 
   const { ip, ua } = await ipAndAgent();
   await audit({
