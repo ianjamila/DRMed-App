@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState, useTransition } from "react"
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useFocusTrap } from "@/lib/a11y/use-focus-trap";
+import { formatPeriodRange } from "@/lib/payroll/format";
 import {
   closePeriodAction,
   createPeriodAction,
@@ -25,29 +26,6 @@ interface Props {
   defaultStart: string;
   defaultEnd: string;
   error?: string | null;
-}
-
-const PERIOD_FMT = new Intl.DateTimeFormat("en-PH", {
-  timeZone: "Asia/Manila",
-  month: "short",
-  day: "numeric",
-});
-
-/**
- * Format a period range as "May 1 – 15, 2026". If the two dates span calendar
- * years (rare for half-month payroll), the year is appended once at the end.
- */
-function formatPeriodRange(startISO: string, endISO: string): string {
-  // Parse as Manila wall-clock by appending the +08:00 offset.
-  const start = new Date(`${startISO}T00:00:00+08:00`);
-  const end = new Date(`${endISO}T00:00:00+08:00`);
-  const startLabel = PERIOD_FMT.format(start);
-  const endLabel = PERIOD_FMT.format(end);
-  const endYear = new Intl.DateTimeFormat("en-PH", {
-    timeZone: "Asia/Manila",
-    year: "numeric",
-  }).format(end);
-  return `${startLabel} – ${endLabel}, ${endYear}`;
 }
 
 function formatRelative(iso: string): string {
