@@ -180,7 +180,10 @@ function formatPeso(amount: number): string {
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 
-async function loadPayslipData(
+// Exported so the T76 detail page (/staff/payslips/[id]) can reuse the same
+// join shape we render in the PDF — keeps the HTML view and the PDF view in
+// lockstep on every schema change.
+export async function loadPayslipData(
   admin: AdminClient,
   employee_run_id: string,
 ): Promise<PayslipData> {
