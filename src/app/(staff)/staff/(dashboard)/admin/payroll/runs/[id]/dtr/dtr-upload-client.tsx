@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState, useTransition } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { formatPeriodRange, formatManilaDate } from "@/lib/payroll/format";
@@ -133,11 +139,17 @@ export function DtrUploadClient({
   const [isCommitting, startCommitTransition] = useTransition();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   // Mirrors `filename` so the parse transition can detect a stale race.
+  // Writing the ref inside an effect (rather than during render) keeps us
+  // inside React's "refs are written outside render" rule.
   const filenameRef = useRef<string>("");
-  filenameRef.current = filename;
+  useEffect(() => {
+    filenameRef.current = filename;
+  }, [filename]);
 
   // Stable "now" for relative timestamps so we don't tick on every render.
-  const nowMs = useMemo(() => Date.now(), []);
+  // `useState` initialiser runs exactly once at mount, which keeps the value
+  // stable and avoids calling the impure `Date.now()` during render.
+  const [nowMs] = useState<number>(() => Date.now());
 
   const handleFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {

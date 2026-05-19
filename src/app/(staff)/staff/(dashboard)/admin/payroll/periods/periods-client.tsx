@@ -242,7 +242,11 @@ export function PeriodsClient({
         )}
       </div>
 
+      {/* `key` remounts the dialog each time it opens so the `useState`
+          initialisers re-run with fresh defaults. This replaces a useEffect
+          that called setState to re-prime the fields on open. */}
       <CreatePeriodDialog
+        key={dialogOpen ? `open-${defaultStart}-${defaultEnd}` : "closed"}
         open={dialogOpen}
         onClose={() => setDialogOpen(false)}
         defaultStart={defaultStart}
@@ -302,15 +306,9 @@ function CreatePeriodDialog({
   const [isPending, startTransition] = useTransition();
   const dialogRef = useFocusTrap<HTMLDivElement>(open);
 
-  // Re-prime the inputs whenever the dialog opens with fresh defaults.
-  useEffect(() => {
-    if (open) {
-      setPeriodStart(defaultStart);
-      setPeriodEnd(defaultEnd);
-      setPayDate(defaultEnd);
-      setError(null);
-    }
-  }, [open, defaultStart, defaultEnd]);
+  // Field reset on open is handled by the parent passing a `key` that changes
+  // whenever the dialog opens, which remounts this component and re-runs the
+  // useState initialisers above. No reset effect needed.
 
   // Lock body scroll + Escape-to-close while the dialog is open.
   useEffect(() => {

@@ -211,8 +211,12 @@ export function RatesClient({
         />
       )}
 
-      {/* Add drawer */}
+      {/* Add drawer — `key` remounts the drawer each time it opens (or when
+          the active rate kind changes while open) so the `useState`
+          initialisers re-run with fresh defaults. This replaces a useEffect
+          that called setState to re-prime the fields on open / kind change. */}
       <AddBracketDrawer
+        key={drawerOpen ? `open-${kind}-${todayManila}` : "closed"}
         open={drawerOpen}
         kind={kind}
         defaultEffectiveFrom={todayManila}
@@ -669,23 +673,9 @@ function AddBracketDrawer({
     };
   }, [open, onClose]);
 
-  // Reset every field when the drawer opens or the active kind changes — the
-  // user might open it on the SSS tab, close, switch to WT, reopen, and we
-  // don't want stale contribution inputs hanging around.
-  useEffect(() => {
-    if (open) {
-      setEffectiveFrom(defaultEffectiveFrom);
-      setNoUpperBound(false);
-      setLowerBound("");
-      setUpperBound("");
-      setNotes("");
-      setEeShare("");
-      setErShare("");
-      setBaseTax("");
-      setMarginalRatePct("");
-      setError(null);
-    }
-  }, [open, defaultEffectiveFrom, kind]);
+  // Field reset on open / kind change is handled by the parent passing a
+  // `key` that changes whenever the drawer opens or `kind` changes, which
+  // remounts this component and re-runs the useState initialisers above.
 
   if (!open) return null;
 

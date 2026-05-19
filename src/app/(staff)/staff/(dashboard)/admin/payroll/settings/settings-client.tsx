@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { updatePayrollSettingAction } from "../config/actions";
 
@@ -157,7 +157,13 @@ export function SettingsClient({ rows, error }: Props) {
             </header>
             <ul className="divide-y divide-[color:var(--color-brand-bg-mid)]">
               {items.map((row) => (
-                <SettingItem key={row.key} row={row} />
+                // Re-mount the row whenever the server-rendered value changes
+                // (e.g. after router.refresh() following a successful save).
+                // This replaces a useEffect(setValue(initial), [initial]) sync.
+                <SettingItem
+                  key={`${row.key}-${row.value_php ?? "null"}`}
+                  row={row}
+                />
               ))}
             </ul>
           </section>
@@ -178,16 +184,12 @@ function SettingItem({ row }: { row: SettingRow }) {
 
   // Controlled input: React 19 form-action would reset uncontrolled inputs on
   // the post-server re-render, which would silently discard edits on error.
+  // Re-sync with `initial` is handled by the parent's key={row.key + value}
+  // which remounts this component whenever the server-rendered value changes.
   const [value, setValue] = useState(initial);
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
-
-  // Keep the input in sync if the server-rendered row.value_php changes
-  // (e.g. after router.refresh() following a successful save elsewhere).
-  useEffect(() => {
-    setValue(initial);
-  }, [initial]);
 
   const isDirty = value !== initial;
 

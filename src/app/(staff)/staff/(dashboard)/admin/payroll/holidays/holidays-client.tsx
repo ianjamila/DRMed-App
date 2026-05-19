@@ -296,8 +296,11 @@ export function HolidaysClient({
         )}
       </div>
 
-      {/* Add drawer */}
+      {/* Add drawer — `key` remounts the drawer each time it opens, so the
+          `useState` initialisers re-run with fresh defaults. This replaces a
+          useEffect that called setState to re-prime the fields on open. */}
       <AddHolidayDrawer
+        key={drawerOpen ? `open-${defaultAddDate}` : "closed"}
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         defaultDate={defaultAddDate}
@@ -381,17 +384,9 @@ function AddHolidayDrawer({
     };
   }, [open, onClose]);
 
-  // Reset fields each time the drawer opens. The default date can change
-  // between opens (e.g. if a holiday for today was just added), so re-sync.
-  useEffect(() => {
-    if (open) {
-      setDate(defaultDate);
-      setKind("regular");
-      setName("");
-      setNotes("");
-      setError(null);
-    }
-  }, [open, defaultDate]);
+  // Field reset on open is handled by the parent passing a `key` that changes
+  // whenever the drawer opens, which remounts this component and re-runs the
+  // useState initialisers above. No reset effect needed.
 
   if (!open) return null;
 

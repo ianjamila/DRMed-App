@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  useTransition,
+} from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { formatPhp } from "@/lib/marketing/format";
@@ -145,29 +152,56 @@ function RunStatusPill({ status }: { status: string }) {
 
 type DrawerStyle = "inline" | "slide-out";
 
+const DRAWER_STYLE_KEY = "payroll-run-drawer-style";
+
+// React 19 `useSyncExternalStore` is the canonical way to read from an
+// external source (localStorage here) while staying SSR-safe and avoiding a
+// setState-in-effect rehydration step.
+
+function subscribeToStorage(callback: () => void): () => void {
+  const onStorage = (e: StorageEvent) => {
+    if (e.key === DRAWER_STYLE_KEY) callback();
+  };
+  window.addEventListener("storage", onStorage);
+  return () => window.removeEventListener("storage", onStorage);
+}
+
+function readStoredDrawerStyle(): DrawerStyle {
+  try {
+    const raw = window.localStorage.getItem(DRAWER_STYLE_KEY);
+    if (raw === "inline" || raw === "slide-out") return raw;
+  } catch {
+    // Storage may be blocked in private windows.
+  }
+  return "inline";
+}
+
+// During SSR there is no localStorage; the snapshot returns the default.
+function getServerDrawerStyle(): DrawerStyle {
+  return "inline";
+}
+
 function useDrawerStylePreference(): [DrawerStyle, (next: DrawerStyle) => void] {
-  const [style, setStyle] = useState<DrawerStyle>("inline");
+  const style = useSyncExternalStore(
+    subscribeToStorage,
+    readStoredDrawerStyle,
+    getServerDrawerStyle,
+  );
 
-  // Read from localStorage on mount only — avoid SSR/CSR hydration mismatch.
-  useEffect(() => {
+  // Local "echo" counter forces a re-read when the same tab writes — the
+  // `storage` event only fires across tabs, so we bump our own subscription
+  // by writing then dispatching a synthetic event.
+  const update = useCallback((next: DrawerStyle) => {
     try {
-      const raw = window.localStorage.getItem("payroll-run-drawer-style");
-      if (raw === "inline" || raw === "slide-out") {
-        setStyle(raw);
-      }
-    } catch {
-      // Ignore — Storage may be blocked in private windows.
-    }
-  }, []);
-
-  const update = (next: DrawerStyle) => {
-    setStyle(next);
-    try {
-      window.localStorage.setItem("payroll-run-drawer-style", next);
+      window.localStorage.setItem(DRAWER_STYLE_KEY, next);
+      // Fire a same-tab storage event so useSyncExternalStore re-reads.
+      window.dispatchEvent(
+        new StorageEvent("storage", { key: DRAWER_STYLE_KEY, newValue: next }),
+      );
     } catch {
       // Ignore.
     }
-  };
+  }, []);
 
   return [style, update];
 }

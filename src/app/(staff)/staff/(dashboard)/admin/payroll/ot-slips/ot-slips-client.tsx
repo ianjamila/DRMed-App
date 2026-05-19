@@ -429,8 +429,12 @@ export function OtSlipsClient({
         />
       ) : null}
 
-      {/* Request drawer */}
+      {/* Request drawer — `key` remounts the drawer each time it opens so
+          the `useState` initialisers re-run with fresh defaults (e.g. the
+          work date defaulting back to today). This replaces a useEffect that
+          called setState to re-prime the fields on open. */}
       <RequestOtSlipDrawer
+        key={drawerOpen ? `open-${defaultWorkDate}` : "closed"}
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         employees={employees}
@@ -689,12 +693,9 @@ function RequestOtSlipDrawer({
     };
   }, [open, onClose]);
 
-  // Reset the date back to today's default whenever the drawer is opened.
-  useEffect(() => {
-    if (open) {
-      setWorkDate(defaultWorkDate);
-    }
-  }, [open, defaultWorkDate]);
+  // Field reset on open is handled by the parent passing a `key` that changes
+  // whenever the drawer opens, which remounts this component and re-runs the
+  // useState initialisers above. No reset effect needed.
 
   if (!open) return null;
 
