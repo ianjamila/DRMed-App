@@ -10,7 +10,13 @@
 // patient-facing reader (T76) can resolve by lookup.
 
 import { headers } from "next/headers";
+import { revalidatePath } from "next/cache";
 import { z } from "zod";
+
+const RUNS_PATH = "/staff/admin/payroll/runs";
+function runDetailPath(run_id: string) {
+  return `${RUNS_PATH}/${run_id}`;
+}
 import { audit } from "@/lib/audit/log";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -227,6 +233,9 @@ export async function generatePayslipsForRunAction(
       ? `${failures.length} of ${rows.length} payslip(s) failed to generate — see audit log.`
       : undefined;
 
+  revalidatePath(RUNS_PATH);
+  revalidatePath(runDetailPath(parsed.data.run_id));
+
   return {
     ok: true,
     data: { generated, failed: failures.length, warning },
@@ -324,6 +333,9 @@ export async function regeneratePayslipAction(
     ip_address: ip,
     user_agent: ua,
   });
+
+  revalidatePath(RUNS_PATH);
+  revalidatePath(runDetailPath(row.run_id));
 
   return { ok: true, data: { storage_path } };
 }

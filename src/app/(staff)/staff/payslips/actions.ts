@@ -93,6 +93,8 @@ export async function listMyPayslipsAction(
     `)
     .eq("employee_id", targetEmployeeId)
     .order("paid_at", { ascending: false, nullsFirst: false })
+    // 200 caps an employee's history at ~7.7 years of bi-weekly payslips.
+    // Raise if anyone in DRMed actually hits the limit (audit will show).
     .limit(200);
   if (error) return { ok: false, error: translatePgError(error) };
 

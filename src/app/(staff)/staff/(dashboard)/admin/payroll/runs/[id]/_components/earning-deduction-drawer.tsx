@@ -80,7 +80,6 @@ export function EarningDeductionDrawer({
     <DrawerBody
       employeeRun={employeeRun}
       runStatus={runStatus}
-      onClose={onClose}
     />
   );
 
@@ -156,11 +155,9 @@ export function EarningDeductionDrawer({
 function DrawerBody({
   employeeRun,
   runStatus,
-  onClose: _onClose,
 }: {
   employeeRun: EmployeeRunRow;
   runStatus: string;
-  onClose: () => void;
 }) {
   const editable = runStatus === "draft" || runStatus === "computed";
 

@@ -15,15 +15,21 @@ const YEAR_FMT = new Intl.DateTimeFormat("en-PH", {
 /**
  * Format a period range as "May 1 – May 15, 2026" (or "Apr 16 – May 15, 2026"
  * when the range crosses a month boundary, which is common for half-month
- * payroll periods). Year appears once at the end; if the two dates span
- * calendar years (rare) the end-year still keeps the user oriented.
+ * payroll periods). When the period crosses a calendar year (Dec 26 – Jan 8)
+ * both years are shown so the reader stays oriented: "Dec 26, 2026 – Jan 8,
+ * 2027".
  */
 export function formatPeriodRange(startISO: string, endISO: string): string {
   if (!startISO || !endISO) return "—";
   // Parse as Manila wall-clock by appending the +08:00 offset.
   const start = new Date(`${startISO}T00:00:00+08:00`);
   const end = new Date(`${endISO}T00:00:00+08:00`);
-  return `${RANGE_FMT.format(start)} – ${RANGE_FMT.format(end)}, ${YEAR_FMT.format(end)}`;
+  const startYear = YEAR_FMT.format(start);
+  const endYear = YEAR_FMT.format(end);
+  if (startYear !== endYear) {
+    return `${RANGE_FMT.format(start)}, ${startYear} – ${RANGE_FMT.format(end)}, ${endYear}`;
+  }
+  return `${RANGE_FMT.format(start)} – ${RANGE_FMT.format(end)}, ${endYear}`;
 }
 
 const FULL_DATE_FMT = new Intl.DateTimeFormat("en-PH", {

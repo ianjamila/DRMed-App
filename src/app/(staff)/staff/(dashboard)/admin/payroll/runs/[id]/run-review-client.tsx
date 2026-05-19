@@ -780,6 +780,15 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
               <li>Make Mark Paid buttons available per employee on pay date</li>
             </ul>
 
+            {run.employee_count >= 5 ? (
+              <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+                Heads up: payslip PDFs render sequentially (~2s each), so this
+                may take up to {Math.ceil(run.employee_count * 2)}s for{" "}
+                {run.employee_count} employees. The button stays disabled
+                until the run is fully finalised.
+              </p>
+            ) : null}
+
             {otOverageEmployees.length > 0 ? (
               <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                 <p>

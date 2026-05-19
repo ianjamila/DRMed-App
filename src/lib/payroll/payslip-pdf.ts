@@ -11,6 +11,7 @@ import {
 } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { reportError } from "@/lib/observability/report-error";
 import { formatManilaDate, formatPeriodRange } from "./format";
 
 // Read the letterhead logo once at module load. T73 will batch generatePayslipPdf
@@ -1353,6 +1354,20 @@ export async function generatePayslipPdf(
   const afterLetterheadY = drawLetterhead(ctx1, logoImg);
   const afterEmployeeY = drawEmployeePeriodBlock(ctx1, data, afterLetterheadY);
   const afterTablesY = drawEarningsAndDeductions(ctx1, data, afterEmployeeY);
+
+  // If the tables themselves overflow into the signature zone, our 2-page
+  // fallback already lost. Surface a warning so we hear about it in prod
+  // before someone receives a clipped payslip. 3+ page support is a future
+  // refactor (followup item 11).
+  if (afterTablesY < SIGNATURE_RESERVE_Y) {
+    const msg = `payslip-pdf: earnings/deductions overflow page 1 (afterTablesY=${afterTablesY}, signature_reserve=${SIGNATURE_RESERVE_Y})`;
+    console.warn(msg);
+    void reportError({
+      scope: "payroll.payslip_pdf_overflow",
+      error: new Error(msg),
+      metadata: { afterTablesY, signature_reserve: SIGNATURE_RESERVE_Y },
+    });
+  }
 
   // Decide whether everything still fits on page 1. We need:
   //   afterTablesY - NETPAY_TOTAL_H - YTD_LEAVE_TOTAL_H >= SIGNATURE_RESERVE_Y

@@ -4,6 +4,7 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { loadPayslipData } from "@/lib/payroll/payslip-pdf";
 import { audit } from "@/lib/audit/log";
+import { reportError } from "@/lib/observability/report-error";
 import { PayslipDetailClient } from "./payslip-detail-client";
 
 export const metadata = { title: "Payslip" };
@@ -42,9 +43,14 @@ export default async function PayslipDetailPage({
   let data;
   try {
     data = await loadPayslipData(admin, employeeRunId);
-  } catch {
-    // Malformed/missing joins — treat as not found rather than crash. The
-    // shared loader already logs the underlying error.
+  } catch (err) {
+    // Malformed/missing joins — treat as not found rather than crash. Report
+    // to Sentry so production 500s don't silently become 404s.
+    await reportError({
+      scope: "payroll.payslip_detail_load",
+      error: err,
+      metadata: { employee_run_id: employeeRunId },
+    });
     notFound();
   }
 

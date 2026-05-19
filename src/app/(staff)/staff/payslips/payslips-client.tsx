@@ -482,7 +482,7 @@ function OlderPayslipCard({
           type="button"
           onClick={onToggleReveal}
           aria-label={blurred ? "Reveal net pay" : "Hide net pay"}
-          className="text-left"
+          className="inline-flex min-h-11 items-center text-left"
         >
           <span
             className={`block font-[family-name:var(--font-heading)] text-xl font-extrabold text-[color:var(--color-brand-navy)] transition select-none ${
