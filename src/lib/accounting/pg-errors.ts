@@ -17,6 +17,9 @@ export function translatePgError(err: PgError): string {
     case "23514":
       // check_violation — most likely the normal_balance / type mismatch.
       return "Invalid value: that combination is not allowed by the schema.";
+    case "23503":
+      // foreign_key_violation — caller referenced a row that doesn't exist or is locked from deletion.
+      return err.message ?? "Referenced record was not found.";
     case "P0001":
       // Our je_lines_balance_check raise. The message already names the JE.
       return err.message ?? "Journal entry is unbalanced.";
@@ -57,6 +60,22 @@ export function translatePgError(err: PgError): string {
       return err.message ?? "Staff advance cannot go below zero.";
     case "P0019":
       return err.message ?? "That account is inactive. Pick a different one.";
+    case "P0020":
+      return err.message ?? "Cannot finalise: at least one employee is missing complete DTR / leave data.";
+    case "P0021":
+      return err.message ?? "Cannot edit this run after payouts have started. Adjust in the next period.";
+    case "P0022":
+      return err.message ?? "Employee has no daily rate set.";
+    case "P0023":
+      return err.message ?? "OT pay requires an approved OT slip for the same date.";
+    case "P0024":
+      return err.message ?? "Staff advance settlement cannot exceed the outstanding balance.";
+    case "P0026":
+      return err.message ?? "Cannot add an employee to a finalised run. Void and reopen first.";
+    case "P0027":
+      return err.message ?? "Cannot finalise an empty run. Compute first, or delete the run if no payroll is due.";
+    case "P0028":
+      return err.message ?? "Cannot use more leave than the employee has accrued. Grant additional days first if approving an advance.";
     default:
       return err.message ?? "Database error. Please try again.";
   }
