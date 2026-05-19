@@ -90,8 +90,8 @@ export async function updateEmployeeAction(
     return { ok: false, error: firstIssue(parsed.error) };
   }
   // Strip `id` out of the payload; the rest is the update set.
-  const updateFields: Omit<typeof parsed.data, "id"> = { ...parsed.data };
-  delete (updateFields as { id?: string }).id;
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { id: _id, ...updateFields } = parsed.data;
 
   const admin = createAdminClient();
   const { error } = await admin
@@ -429,12 +429,11 @@ export async function voidLoanAction(
   }
 
   const admin = createAdminClient();
-  // The DB doesn't have a dedicated voided_at column on employee_loans, so we
-  // stash the reason and timestamp in `notes` while flipping the status.
-  // The audit_log row is the canonical record of who/when/why.
+  // The DB doesn't have a dedicated voided_at column on employee_loans, so the
+  // audit_log row is the canonical record of who/when/why.
   const { data: existing, error: fetchErr } = await admin
     .from("employee_loans")
-    .select("id, status, employee_id, notes")
+    .select("id, status, employee_id")
     .eq("id", parsed.data.id)
     .maybeSingle();
   if (fetchErr) {
@@ -443,15 +442,18 @@ export async function voidLoanAction(
   if (!existing) {
     return { ok: false, error: "Loan not found." };
   }
+  if (
+    existing.status === "voided" ||
+    existing.status === "written_off" ||
+    existing.status === "paid_off"
+  ) {
+    return { ok: false, error: "Loan is already in a terminal state." };
+  }
 
   const stamp = new Date().toISOString();
-  const noteSuffix = `\n[VOIDED ${stamp}] ${parsed.data.void_reason}`;
   const { error } = await admin
     .from("employee_loans")
-    .update({
-      status: "voided",
-      notes: (existing.notes ?? "") + noteSuffix,
-    })
+    .update({ status: "voided" })
     .eq("id", parsed.data.id);
   if (error) {
     return { ok: false, error: translatePgError(error) };
@@ -494,11 +496,11 @@ export async function writeOffLoanAction(
   }
 
   const admin = createAdminClient();
-  // Same notes-stash pattern as voidLoanAction — no dedicated written_off_at
-  // column on the table; the audit_log row holds the canonical timestamp.
+  // No dedicated written_off_at column on the table; the audit_log row holds
+  // the canonical timestamp.
   const { data: existing, error: fetchErr } = await admin
     .from("employee_loans")
-    .select("id, status, employee_id, notes")
+    .select("id, status, employee_id")
     .eq("id", parsed.data.id)
     .maybeSingle();
   if (fetchErr) {
@@ -507,15 +509,14 @@ export async function writeOffLoanAction(
   if (!existing) {
     return { ok: false, error: "Loan not found." };
   }
+  if (existing.status !== "active") {
+    return { ok: false, error: "Only active loans can be written off." };
+  }
 
   const stamp = new Date().toISOString();
-  const noteSuffix = `\n[WRITTEN OFF ${stamp}] ${parsed.data.write_off_reason}`;
   const { error } = await admin
     .from("employee_loans")
-    .update({
-      status: "written_off",
-      notes: (existing.notes ?? "") + noteSuffix,
-    })
+    .update({ status: "written_off" })
     .eq("id", parsed.data.id);
   if (error) {
     return { ok: false, error: translatePgError(error) };
