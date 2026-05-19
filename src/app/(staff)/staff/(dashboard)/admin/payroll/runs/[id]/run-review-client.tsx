@@ -5,6 +5,7 @@ import Link from "next/link";
 import { formatPhp } from "@/lib/marketing/format";
 import { formatPeriodRange, formatManilaDate } from "@/lib/payroll/format";
 import { PAYMENT_LABEL } from "@/lib/payroll/labels";
+import { EarningDeductionDrawer } from "./_components/earning-deduction-drawer";
 
 // =============================================================================
 // Prop shapes (mirror page.tsx)
@@ -376,10 +377,10 @@ export function RunReviewClient({ run, employeeRuns }: Props) {
                       }
                       inlineDrawer={
                         isSelected && effectiveDrawerStyle === "inline" ? (
-                          // Drawer body lands in T60 — placeholder for now so
-                          // the inline row reserves visual space.
-                          <DrawerPlaceholder
-                            employeeName={er.full_name}
+                          <EarningDeductionDrawer
+                            variant="inline"
+                            employeeRun={er}
+                            runStatus={run.status}
                             onClose={() => setSelectedEmployeeRunId(null)}
                           />
                         ) : null
@@ -453,88 +454,15 @@ export function RunReviewClient({ run, employeeRuns }: Props) {
         </div>
       </section>
 
-      {/* Slide-out drawer body lands in T60 — for now, use a placeholder so
-          the selection state still has a visible affordance. */}
+      {/* Slide-out drawer (rendered outside the table when in slide-out mode) */}
       {selected && effectiveDrawerStyle === "slide-out" ? (
-        <SlideOutPlaceholder
-          employeeName={selected.full_name}
+        <EarningDeductionDrawer
+          variant="slide-out"
+          employeeRun={selected}
+          runStatus={run.status}
           onClose={() => setSelectedEmployeeRunId(null)}
         />
       ) : null}
-    </div>
-  );
-}
-
-// =============================================================================
-// Drawer placeholders (T59 only — replaced by EarningDeductionDrawer in T60)
-// =============================================================================
-
-function DrawerPlaceholder({
-  employeeName,
-  onClose,
-}: {
-  employeeName: string;
-  onClose: () => void;
-}) {
-  return (
-    <div className="rounded-xl border border-dashed border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-semibold text-[color:var(--color-brand-navy)]">
-          {employeeName} — earnings &amp; deductions
-        </p>
-        <button
-          type="button"
-          onClick={onClose}
-          className="min-h-[44px] rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-1.5 text-xs font-bold text-[color:var(--color-brand-navy)] hover:border-[color:var(--color-brand-cyan)]"
-        >
-          Close
-        </button>
-      </div>
-      <p className="mt-2 text-xs text-[color:var(--color-brand-text-soft)]">
-        Line CRUD lands in the next batch (T60).
-      </p>
-    </div>
-  );
-}
-
-function SlideOutPlaceholder({
-  employeeName,
-  onClose,
-}: {
-  employeeName: string;
-  onClose: () => void;
-}) {
-  return (
-    <div className="fixed inset-0 z-[60]">
-      <button
-        type="button"
-        aria-label="Close drawer"
-        onClick={onClose}
-        className="absolute inset-0 bg-[color:var(--color-brand-navy)]/40 backdrop-blur-[2px]"
-      />
-      <aside
-        role="dialog"
-        aria-modal="true"
-        aria-label={`Lines for ${employeeName}`}
-        className="absolute right-0 top-0 flex h-full w-full flex-col bg-white shadow-2xl sm:max-w-[560px]"
-      >
-        <div className="flex items-center justify-between border-b border-[color:var(--color-brand-bg-mid)] px-5 py-4">
-          <h3 className="font-[family-name:var(--font-heading)] text-base font-extrabold text-[color:var(--color-brand-navy)]">
-            {employeeName}
-          </h3>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="min-h-[44px] min-w-[44px] rounded-md text-[color:var(--color-brand-text-soft)] hover:bg-[color:var(--color-brand-bg)]"
-          >
-            Close
-          </button>
-        </div>
-        <div className="flex-1 overflow-y-auto px-5 py-4 text-sm text-[color:var(--color-brand-text-soft)]">
-          Line CRUD lands in the next batch (T60).
-        </div>
-      </aside>
     </div>
   );
 }
