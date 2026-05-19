@@ -17,6 +17,9 @@ export function translatePgError(err: PgError): string {
     case "23514":
       // check_violation — most likely the normal_balance / type mismatch.
       return "Invalid value: that combination is not allowed by the schema.";
+    case "23503":
+      // foreign_key_violation — caller referenced a row that doesn't exist or is locked from deletion.
+      return err.message ?? "Referenced record was not found.";
     case "P0001":
       // Our je_lines_balance_check raise. The message already names the JE.
       return err.message ?? "Journal entry is unbalanced.";

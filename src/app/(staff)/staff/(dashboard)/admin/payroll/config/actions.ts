@@ -115,7 +115,26 @@ export async function approveOtSlipAction(
   }
 
   const admin = createAdminClient();
-  // Match on status='pending' so a double-click can't flip a decided row.
+  // Fetch-then-decide so the error message can be specific (voided vs already
+  // decided vs missing). Mirrors voidOtSlipAction.
+  const { data: existing, error: fetchErr } = await admin
+    .from("payroll_ot_slips")
+    .select("id, status, employee_id, work_date")
+    .eq("id", parsed.data.slip_id)
+    .maybeSingle();
+  if (fetchErr) {
+    return { ok: false, error: translatePgError(fetchErr) };
+  }
+  if (!existing) {
+    return { ok: false, error: "OT slip not found." };
+  }
+  if (existing.status === "voided") {
+    return { ok: false, error: "OT slip is voided. It can't be approved." };
+  }
+  if (existing.status !== "pending") {
+    return { ok: false, error: `OT slip is already ${existing.status}.` };
+  }
+
   const { data: updated, error } = await admin
     .from("payroll_ot_slips")
     .update({
@@ -125,14 +144,13 @@ export async function approveOtSlipAction(
       decision_notes: parsed.data.notes ?? null,
     })
     .eq("id", parsed.data.slip_id)
-    .eq("status", "pending")
     .select("id, employee_id, work_date")
     .maybeSingle();
   if (error) {
     return { ok: false, error: translatePgError(error) };
   }
   if (!updated) {
-    return { ok: false, error: "OT slip not found, or not in 'pending' status." };
+    return { ok: false, error: "OT slip not found." };
   }
 
   const { ip, ua } = await ipAndAgent();
@@ -171,6 +189,26 @@ export async function rejectOtSlipAction(
   }
 
   const admin = createAdminClient();
+  // Fetch-then-decide so the error message can be specific (voided vs already
+  // decided vs missing). Mirrors voidOtSlipAction.
+  const { data: existing, error: fetchErr } = await admin
+    .from("payroll_ot_slips")
+    .select("id, status, employee_id, work_date")
+    .eq("id", parsed.data.slip_id)
+    .maybeSingle();
+  if (fetchErr) {
+    return { ok: false, error: translatePgError(fetchErr) };
+  }
+  if (!existing) {
+    return { ok: false, error: "OT slip not found." };
+  }
+  if (existing.status === "voided") {
+    return { ok: false, error: "OT slip is voided. It can't be rejected." };
+  }
+  if (existing.status !== "pending") {
+    return { ok: false, error: `OT slip is already ${existing.status}.` };
+  }
+
   const { data: updated, error } = await admin
     .from("payroll_ot_slips")
     .update({
@@ -180,14 +218,13 @@ export async function rejectOtSlipAction(
       decision_notes: parsed.data.notes,
     })
     .eq("id", parsed.data.slip_id)
-    .eq("status", "pending")
     .select("id, employee_id, work_date")
     .maybeSingle();
   if (error) {
     return { ok: false, error: translatePgError(error) };
   }
   if (!updated) {
-    return { ok: false, error: "OT slip not found, or not in 'pending' status." };
+    return { ok: false, error: "OT slip not found." };
   }
 
   const { ip, ua } = await ipAndAgent();
@@ -339,19 +376,25 @@ export async function removeHolidayAction(
 
   const admin = createAdminClient();
   // Soft-disable via is_active = false. Avoids cascading effects on any past
-  // payroll runs that already booked holiday pay for this date.
+  // payroll runs that already booked holiday pay for this date. The
+  // `.eq("is_active", true)` filter makes this idempotent: re-running on an
+  // already-removed holiday returns 0 affected rows and we skip the audit
+  // write so we don't spam the log with no-op flips.
   const { data: updated, error } = await admin
     .from("payroll_holidays")
     .update({ is_active: false })
     .eq("id", parsed.data.id)
-    .select("id, date, kind, name")
-    .maybeSingle();
+    .eq("is_active", true)
+    .select("id, date, kind, name");
   if (error) {
     return { ok: false, error: translatePgError(error) };
   }
-  if (!updated) {
-    return { ok: false, error: "Holiday not found." };
+  if (!updated || updated.length === 0) {
+    // Either the holiday doesn't exist, or it was already inactive. In both
+    // cases this is a no-op; don't write an audit row.
+    return { ok: true, data: undefined };
   }
+  const row = updated[0]!;
 
   const { ip, ua } = await ipAndAgent();
   await audit({
@@ -359,11 +402,11 @@ export async function removeHolidayAction(
     actor_type: "staff",
     action: "payroll_holiday.removed",
     resource_type: "payroll_holiday",
-    resource_id: updated.id,
+    resource_id: row.id,
     metadata: {
-      date: updated.date,
-      kind: updated.kind,
-      name: updated.name,
+      date: row.date,
+      kind: row.kind,
+      name: row.name,
     },
     ip_address: ip,
     user_agent: ua,

@@ -446,7 +446,7 @@ export function parseDtrCsv(rawCsv: string): DtrParseResult {
       parse_warnings: warnings,
     });
 
-    const key = `${extIdRaw} ${workDate}`;
+    const key = `${extIdRaw}|${workDate}`;
     const bucket = dedupe.get(key);
     if (bucket) {
       bucket.push(idx);

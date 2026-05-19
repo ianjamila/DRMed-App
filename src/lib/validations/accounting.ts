@@ -324,12 +324,14 @@ const PayrollScheduleKindEnum = z.enum([
 
 const PaymentMethodEnum = z.enum(["cash", "bank"]);
 
+const LeaveKindEnum = z.enum(["VL", "SL"]);
+
 export const CreateEmployeeSchema = z.object({
   staff_profile_id: z.string().uuid(),
   employee_number: z.string().trim().min(1).max(40).optional(),
   hire_date: z.string().refine(isOnOrBeforeTodayManila, "hire_date must be a date on or before today"),
   regularization_date: z.string().nullable().optional(),
-  civil_status: z.enum(["single","married","widowed","separated","divorced"]).optional(),
+  civil_status: z.enum(["single", "married", "widowed", "separated", "divorced"]).optional(),
   basic_daily_rate_php: z.coerce.number().positive().max(100_000),
   monthly_salary_credit_php: z.coerce.number().positive().max(1_000_000),
   schedule_kind: PayrollScheduleKindEnum,
@@ -343,7 +345,7 @@ export const CreateEmployeeSchema = z.object({
   philhealth_number: z.string().trim().max(40).nullable().optional(),
   pagibig_number: z.string().trim().max(40).nullable().optional(),
   tin: z.string().trim().max(40).nullable().optional(),
-  tax_status: z.enum(["standard","minimum_wage_earner"]).default("standard"),
+  tax_status: z.enum(["standard", "minimum_wage_earner"]).default("standard"),
   notes: z.string().trim().max(1000).nullable().optional(),
 });
 export type CreateEmployeeInput = z.infer<typeof CreateEmployeeSchema>;
@@ -409,7 +411,7 @@ export type MarkEmployeePaidInput = z.infer<typeof MarkEmployeePaidSchema>;
 
 export const AddEarningLineSchema = z.object({
   employee_run_id: z.string().uuid(),
-  kind: z.enum(["incentive","one_time_bonus","manual_adjustment","ot_supplement"]),
+  kind: z.enum(["incentive", "one_time_bonus", "manual_adjustment", "ot_supplement"]),
   label: z.string().trim().min(1).max(120),
   quantity: z.coerce.number().nullable().optional(),
   rate_php: z.coerce.number().nullable().optional(),
@@ -419,7 +421,7 @@ export type AddEarningLineInput = z.infer<typeof AddEarningLineSchema>;
 
 export const AddDeductionLineSchema = z.object({
   employee_run_id: z.string().uuid(),
-  kind: z.enum(["loan_amortization","manual_adjustment","other"]),
+  kind: z.enum(["loan_amortization", "manual_adjustment", "other"]),
   label: z.string().trim().min(1).max(120),
   amount_php: z.coerce.number().min(0).max(10_000_000),
   loan_id: z.string().uuid().nullable().optional(),
@@ -436,14 +438,14 @@ export type CreateOtSlipInput = z.infer<typeof CreateOtSlipSchema>;
 
 export const AddHolidaySchema = z.object({
   date: z.string(),
-  kind: z.enum(["regular","special_non_working","special_working"]),
+  kind: z.enum(["regular", "special_non_working", "special_working"]),
   name: z.string().trim().min(1).max(120),
   notes: z.string().trim().max(500).nullable().optional(),
 });
 export type AddHolidayInput = z.infer<typeof AddHolidaySchema>;
 
 export const CreateContributionBracketSchema = z.object({
-  kind: z.enum(["sss","philhealth","pagibig"]),
+  kind: z.enum(["sss", "philhealth", "pagibig"]),
   effective_from: z.string(),
   effective_to: z.string().nullable().optional(),
   monthly_salary_credit_min_php: z.coerce.number().min(0),
@@ -472,7 +474,7 @@ export type UpdatePayrollSettingInput = z.infer<typeof UpdatePayrollSettingSchem
 
 export const AddLeaveGrantSchema = z.object({
   employee_id: z.string().uuid(),
-  kind: z.enum(["VL","SL"]),
+  kind: LeaveKindEnum,
   days: z.coerce.number().positive().max(365),
   effective_date: z.string(),
   expiry_date: z.string().nullable().optional(),
@@ -482,7 +484,7 @@ export type AddLeaveGrantInput = z.infer<typeof AddLeaveGrantSchema>;
 
 export const RecordLeaveUsageSchema = z.object({
   employee_id: z.string().uuid(),
-  kind: z.enum(["VL","SL"]),
+  kind: LeaveKindEnum,
   days: z.coerce.number().positive().max(365),
   effective_date: z.string(),
   period_id: z.string().uuid().nullable().optional(),

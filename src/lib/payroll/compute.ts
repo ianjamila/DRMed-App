@@ -726,13 +726,18 @@ export async function compute13thMonth(
     const periodStartExclusive = periodStartISO;
     // Sum prior accruals for this employee for the calendar year. We join
     // payroll_employee_runs → payroll_runs → payroll_periods.period_start
-    // and filter to runs whose period_start is in [Jan 1, Dec 1).
+    // and filter to runs whose period_start is in [Jan 1, Dec 1). The
+    // gte/lt below use PostgREST's nested-relation filter against the joined
+    // payroll_runs.payroll_periods.period_start column so the year window is
+    // enforced server-side instead of in JS.
     const { data, error } = await admin
       .from("payroll_employee_runs")
       .select(
         "thirteenth_month_accrual_php, payroll_runs!inner(payroll_periods!inner(period_start))",
       )
-      .eq("employee_id", employeeId);
+      .eq("employee_id", employeeId)
+      .gte("payroll_runs.payroll_periods.period_start", yearStart)
+      .lt("payroll_runs.payroll_periods.period_start", periodStartExclusive);
     if (error) {
       throw new Error(`compute13thMonth: ${error.message}`);
     }
@@ -743,6 +748,9 @@ export async function compute13thMonth(
     };
     for (const row of (data ?? []) as unknown as Joined[]) {
       const ps = row.payroll_runs?.payroll_periods?.period_start;
+      // Defensive JS-side backstop in case the join returns rows whose
+      // period_start somehow falls outside the requested window (e.g. driver
+      // version mismatch). Cheap; keeps the smoke deterministic.
       if (!ps) continue;
       if (ps >= yearStart && ps < periodStartExclusive) {
         priorSum += Number(row.thirteenth_month_accrual_php);

@@ -424,6 +424,7 @@ export async function forfeitLeaveOnTerminationAction(
   const admin = createAdminClient();
   const today = todayManila();
   const forfeited: ForfeitRow[] = [];
+  const { ip, ua } = await ipAndAgent();
 
   for (const kind of ["VL", "SL"] as const) {
     // Fetch current balance for this kind via the SQL helper.
@@ -440,7 +441,7 @@ export async function forfeitLeaveOnTerminationAction(
     }
     const balance = Number(balanceRaw ?? 0);
     if (!Number.isFinite(balance) || balance <= 0) {
-      // Nothing to forfeit for this kind.
+      // Nothing to forfeit for this kind; no audit row written.
       continue;
     }
 
@@ -466,23 +467,25 @@ export async function forfeitLeaveOnTerminationAction(
       };
     }
     forfeited.push({ kind, balance, record_id: created.id });
-  }
 
-  const { ip, ua } = await ipAndAgent();
-  await audit({
-    actor_id: session.user_id,
-    actor_type: "staff",
-    action: "payroll_leave.forfeit_on_termination",
-    resource_type: "employee",
-    resource_id: parsed.data.employee_id,
-    metadata: {
-      employee_id: parsed.data.employee_id,
-      effective_date: today,
-      forfeited,
-    },
-    ip_address: ip,
-    user_agent: ua,
-  });
+    // Audit-in-loop: one row per kind keyed to the inserted leave record. If
+    // a later kind's insert fails, earlier audit rows are still durable.
+    await audit({
+      actor_id: session.user_id,
+      actor_type: "staff",
+      action: "payroll_leave.forfeit_on_termination",
+      resource_type: "employee_leave_record",
+      resource_id: created.id,
+      metadata: {
+        employee_id: parsed.data.employee_id,
+        kind,
+        days_forfeited: balance,
+        reason: "termination",
+      },
+      ip_address: ip,
+      user_agent: ua,
+    });
+  }
 
   revalidatePath(LEAVES_PATH);
   return { ok: true, data: { forfeited } };

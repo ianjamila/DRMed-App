@@ -159,32 +159,40 @@ export async function createRunAction(
 
   const admin = createAdminClient();
 
-  // 1. Insert the run row (status defaults to 'draft' per migration 0044).
-  const { data: createdRun, error: runErr } = await admin
-    .from("payroll_runs")
-    .insert({ period_id: parsed.data.period_id })
-    .select("id")
-    .single();
+  // 1. Insert the run row (status defaults to 'draft' per migration 0044) and
+  //    fetch the active-employees slate in parallel — the two queries are
+  //    independent of each other. If the run insert fails we bail; if the
+  //    employees fetch fails we best-effort delete the just-created run.
+  const [
+    { data: createdRun, error: runErr },
+    { data: activeEmployees, error: emplErr },
+  ] = await Promise.all([
+    admin
+      .from("payroll_runs")
+      .insert({ period_id: parsed.data.period_id })
+      .select("id")
+      .single(),
+    admin
+      .from("employees")
+      .select("id")
+      .eq("is_active", true)
+      .is("termination_date", null),
+  ]);
   if (runErr || !createdRun) {
     return {
       ok: false,
       error: runErr ? translatePgError(runErr) : "Could not create run.",
     };
   }
-
-  // 2. Bulk-insert one payroll_employee_runs row per active employee. Currency
-  //    columns default to zero; scheduled_days defaults to 0 too. The DTR ingest
-  //    in Task 50 fills in attendance + scheduled_days. We just need a slate.
-  const { data: activeEmployees, error: emplErr } = await admin
-    .from("employees")
-    .select("id")
-    .eq("is_active", true)
-    .is("termination_date", null);
   if (emplErr) {
     // Best-effort cleanup so we don't leave an empty run laying around.
     await admin.from("payroll_runs").delete().eq("id", createdRun.id);
     return { ok: false, error: translatePgError(emplErr) };
   }
+
+  // 2. Bulk-insert one payroll_employee_runs row per active employee. Currency
+  //    columns default to zero; scheduled_days defaults to 0 too. The DTR ingest
+  //    in Task 50 fills in attendance + scheduled_days. We just need a slate.
 
   const employeeRows = (activeEmployees ?? []).map((e) => ({
     run_id: createdRun.id,
@@ -511,7 +519,7 @@ export async function markEmployeePaidAction(
       .toLocaleDateString("en-CA", { timeZone: "Asia/Manila" }); // YYYY-MM-DD
 
     // 2. Insert the cash adjustment. The 12.C bridge auto-posts the JE
-    //    (DR 2360 Salaries Payable / CR 1000 Cash) on insert.
+    //    (DR 2360 Salaries Payable / CR 1010 Cash on Hand) on insert.
     const { data: adj, error: adjErr } = await admin
       .from("eod_cash_adjustments")
       .insert({
