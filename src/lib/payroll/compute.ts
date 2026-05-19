@@ -304,37 +304,40 @@ export async function pullAttendanceFacts(
   if (impErr) throw new Error(`pullAttendanceFacts.imports: ${impErr.message}`);
   const latestImportId = imports?.[0]?.id ?? null;
 
-  let dtrRows: DtrRow[] = [];
-  if (latestImportId) {
-    const { data: rows, error: rowsErr } = await admin
-      .from("payroll_dtr_rows")
+  // The dtr-rows / holidays / leaves queries are mutually independent once
+  // `latestImportId` is known, so fan them out with Promise.all.
+  const [dtrResult, holidaysResult, leavesResult] = await Promise.all([
+    latestImportId
+      ? admin
+          .from("payroll_dtr_rows")
+          .select("*")
+          .eq("import_id", latestImportId)
+          .eq("employee_id", employee.id)
+          .eq("status", "parsed")
+      : Promise.resolve({ data: [] as DtrRow[], error: null }),
+    admin
+      .from("payroll_holidays")
       .select("*")
-      .eq("import_id", latestImportId)
+      .gte("date", period.period_start)
+      .lte("date", period.period_end)
+      .eq("is_active", true),
+    admin
+      .from("employee_leave_records")
+      .select("*")
       .eq("employee_id", employee.id)
-      .eq("status", "parsed");
-    if (rowsErr) throw new Error(`pullAttendanceFacts.rows: ${rowsErr.message}`);
-    dtrRows = rows ?? [];
-  }
-
-  // Holidays in range, active only.
-  const { data: holidays, error: hErr } = await admin
-    .from("payroll_holidays")
-    .select("*")
-    .gte("date", period.period_start)
-    .lte("date", period.period_end)
-    .eq("is_active", true);
-  if (hErr) throw new Error(`pullAttendanceFacts.holidays: ${hErr.message}`);
-
-  // Leave usage records covering this period. We sum |days_delta| per day
-  // for VL/SL separately; in v1, usage rows are single-day.
-  const { data: leaves, error: lErr } = await admin
-    .from("employee_leave_records")
-    .select("*")
-    .eq("employee_id", employee.id)
-    .eq("record_kind", "usage")
-    .gte("effective_date", period.period_start)
-    .lte("effective_date", period.period_end);
-  if (lErr) throw new Error(`pullAttendanceFacts.leaves: ${lErr.message}`);
+      .eq("record_kind", "usage")
+      .gte("effective_date", period.period_start)
+      .lte("effective_date", period.period_end),
+  ]);
+  if (dtrResult.error)
+    throw new Error(`pullAttendanceFacts.rows: ${dtrResult.error.message}`);
+  if (holidaysResult.error)
+    throw new Error(`pullAttendanceFacts.holidays: ${holidaysResult.error.message}`);
+  if (leavesResult.error)
+    throw new Error(`pullAttendanceFacts.leaves: ${leavesResult.error.message}`);
+  const dtrRows: DtrRow[] = (dtrResult.data ?? []) as DtrRow[];
+  const holidays = holidaysResult.data;
+  const leaves = leavesResult.data;
 
   const dtrByDate = new Map<string, DtrRow>();
   for (const row of dtrRows) {
@@ -544,7 +547,7 @@ export function computeEarnings(
   counts: DayCategoryCounts,
 ): EarningComponents {
   const dailyRate = Number(employee.basic_daily_rate_php);
-  const hourlyRate = dailyRate / 8;
+  const hourlyRate = dailyRate / (settings.standard_workday_minutes / 60);
 
   // Basic pay: presence + paid leaves.
   const basicPaidDays =
@@ -793,9 +796,11 @@ export async function computeStatutory(
       er: Number(top.employer_share_php),
     };
   }
-  const sss = await lookup("sss");
-  const phil = await lookup("philhealth");
-  const pag = await lookup("pagibig");
+  const [sss, phil, pag] = await Promise.all([
+    lookup("sss"),
+    lookup("philhealth"),
+    lookup("pagibig"),
+  ]);
   return {
     sss_ee_php: round2(sss.ee / 2),
     sss_er_php: round2(sss.er / 2),
@@ -1034,11 +1039,14 @@ export async function computePayrollRun(
     >[];
     if (employeeRuns.length === 0) {
       // Nothing to compute, but still flip the run state.
-      const { error: flipErr } = await admin
-        .from("payroll_runs")
-        .update({ status: "computed", computed_at: new Date().toISOString() })
-        .eq("id", runId);
-      if (flipErr) return { ok: false, error: `Flip status: ${flipErr.message}` };
+      try {
+        await flipRunToComputed(admin, runId);
+      } catch (e) {
+        return {
+          ok: false,
+          error: e instanceof Error ? e.message : String(e),
+        };
+      }
       return { ok: true, updated: 0 };
     }
 
@@ -1063,46 +1071,61 @@ export async function computePayrollRun(
         };
       }
 
-      // 5b. Attendance facts (§6.1) + categorisation (§6.2).
-      const facts = await pullAttendanceFacts(admin, period, empl);
+      // 5b–5e. Fan out the four independent per-employee reads: attendance
+      // facts (§6.1), allowances, approved OT slips, and earning lines. They
+      // all feed into `computeEarnings` (5f) and have no inter-dependency, so
+      // running them sequentially was a pure latency tax.
+      const [factsResult, allowancesResult, otSlipsResult, earningLinesResult] =
+        await Promise.all([
+          pullAttendanceFacts(admin, period, empl),
+          admin
+            .from("employee_allowances")
+            .select("*")
+            .eq("employee_id", er.employee_id)
+            .lte("effective_from", period.period_end)
+            .or(`effective_to.is.null,effective_to.gte.${period.period_start}`),
+          admin
+            .from("payroll_ot_slips")
+            .select("*")
+            .eq("employee_id", er.employee_id)
+            .eq("status", "approved")
+            .gte("work_date", period.period_start)
+            .lte("work_date", period.period_end),
+          admin
+            .from("payroll_earning_lines")
+            .select("*")
+            .eq("employee_run_id", er.id),
+        ]);
+      const facts = factsResult;
       const categories = new Map<string, DayCategory>();
       for (const d of facts.calendarDays) {
         categories.set(d, categoriseDay(d, facts));
       }
       const counts = countDayCategories(facts, categories);
 
-      // 5c. Load allowances active in period (effective_from ≤ period_end AND
-      //     (effective_to IS NULL OR effective_to ≥ period_start)).
-      const { data: allowances, error: aErr } = await admin
-        .from("employee_allowances")
-        .select("*")
-        .eq("employee_id", er.employee_id)
-        .lte("effective_from", period.period_end)
-        .or(`effective_to.is.null,effective_to.gte.${period.period_start}`);
-      if (aErr) {
-        return { ok: false, error: `Load allowances: ${aErr.message}` };
+      if (allowancesResult.error) {
+        return {
+          ok: false,
+          error: `Load allowances: ${allowancesResult.error.message}`,
+        };
       }
+      const allowances = allowancesResult.data;
 
-      // 5d. Approved OT slips in period.
-      const { data: otSlips, error: otErr } = await admin
-        .from("payroll_ot_slips")
-        .select("*")
-        .eq("employee_id", er.employee_id)
-        .eq("status", "approved")
-        .gte("work_date", period.period_start)
-        .lte("work_date", period.period_end);
-      if (otErr) {
-        return { ok: false, error: `Load OT slips: ${otErr.message}` };
+      if (otSlipsResult.error) {
+        return {
+          ok: false,
+          error: `Load OT slips: ${otSlipsResult.error.message}`,
+        };
       }
+      const otSlips = otSlipsResult.data;
 
-      // 5e. Earning lines (admin-entered incentives, manual adjustments, etc.).
-      const { data: earningLines, error: elErr } = await admin
-        .from("payroll_earning_lines")
-        .select("*")
-        .eq("employee_run_id", er.id);
-      if (elErr) {
-        return { ok: false, error: `Load earning lines: ${elErr.message}` };
+      if (earningLinesResult.error) {
+        return {
+          ok: false,
+          error: `Load earning lines: ${earningLinesResult.error.message}`,
+        };
       }
+      const earningLines = earningLinesResult.data;
 
       // 5f. §6.3 earnings.
       const earnings = computeEarnings(
@@ -1297,15 +1320,13 @@ export async function computePayrollRun(
     }
 
     // 6. Flip the run status.
-    const { error: flipErr } = await admin
-      .from("payroll_runs")
-      .update({
-        status: "computed",
-        computed_at: new Date().toISOString(),
-      })
-      .eq("id", runId);
-    if (flipErr) {
-      return { ok: false, error: `Flip status: ${flipErr.message}` };
+    try {
+      await flipRunToComputed(admin, runId);
+    } catch (e) {
+      return {
+        ok: false,
+        error: e instanceof Error ? e.message : String(e),
+      };
     }
 
     return { ok: true, updated: updatedCount };
@@ -1313,4 +1334,15 @@ export async function computePayrollRun(
     const msg = e instanceof Error ? e.message : String(e);
     return { ok: false, error: msg };
   }
+}
+
+async function flipRunToComputed(
+  admin: SupabaseClient<Database>,
+  runId: string,
+): Promise<void> {
+  const { error } = await admin
+    .from("payroll_runs")
+    .update({ status: "computed", computed_at: new Date().toISOString() })
+    .eq("id", runId);
+  if (error) throw new Error(`Flip status: ${error.message}`);
 }
