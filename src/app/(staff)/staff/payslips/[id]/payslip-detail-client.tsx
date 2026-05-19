@@ -134,16 +134,24 @@ export function PayslipDetailClient({
         {/* Letterhead */}
         <section className="mt-5 rounded-2xl bg-white p-5 shadow-sm sm:p-7">
           <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="font-[family-name:var(--font-heading)] text-base font-extrabold leading-tight text-[color:var(--color-brand-navy)] sm:text-lg">
-                DRM Medical Diagnostics &amp; Wellness Center
-              </p>
-              <p className="mt-0.5 text-xs text-[color:var(--color-brand-text-soft)]">
-                drmed.ph
-              </p>
-              <p className="text-xs text-[color:var(--color-brand-text-soft)]">
-                Mandaluyong City, Metro Manila, Philippines
-              </p>
+            <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+              {/* eslint-disable-next-line @next/next/no-img-element -- public/logo.png is intentionally an unoptimized brand asset; matches the PDF letterhead */}
+              <img
+                src="/logo.png"
+                alt="DRMed logo"
+                className="h-12 w-auto shrink-0 sm:h-14"
+              />
+              <div className="min-w-0">
+                <p className="font-[family-name:var(--font-heading)] text-base font-extrabold leading-tight text-[color:var(--color-brand-navy)] sm:text-lg">
+                  DRM Medical Diagnostics &amp; Wellness Center
+                </p>
+                <p className="mt-0.5 text-xs text-[color:var(--color-brand-text-soft)]">
+                  drmed.ph
+                </p>
+                <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+                  Mandaluyong City, Metro Manila, Philippines
+                </p>
+              </div>
             </div>
             <p className="font-[family-name:var(--font-heading)] text-xl font-extrabold tracking-wide text-[color:var(--color-brand-navy)] sm:text-2xl">
               PAYSLIP

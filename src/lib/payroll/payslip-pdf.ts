@@ -3,13 +3,13 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   PDFDocument,
-  StandardFonts,
   rgb,
   type PDFFont,
   type PDFImage,
   type PDFPage,
   type RGB,
 } from "pdf-lib";
+import fontkit from "@pdf-lib/fontkit";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { formatManilaDate, formatPeriodRange } from "./format";
 
@@ -19,6 +19,18 @@ import { formatManilaDate, formatPeriodRange } from "./format";
 // If public/logo.png is missing in production, this throws at server boot —
 // loud and early, which is what we want.
 const LOGO_BYTES = readFileSync(join(process.cwd(), "public/logo.png"));
+
+// Inter variable font — bundled in public/font/. We use this instead of
+// pdf-lib's StandardFonts (Helvetica/HelveticaBold) because StandardFonts
+// only support WinAnsi encoding, which has no glyph for the Peso symbol
+// (₱, U+20B1) or the true minus sign (−, U+2212). Inter (OFL license) ships
+// the full Unicode range including ₱, −, –, ·, etc.
+// The single variable font is used for both "regular" and "bold" calls; the
+// font is embedded once at its default master (wght=400). Real per-weight
+// bold rendering would require static TTFs or fontkit's variation-instance
+// API — for v1 we rely on ALL CAPS + font-size + color for visual hierarchy.
+// Tracked in followups.
+const FONT_BYTES = readFileSync(join(process.cwd(), "public/font/Inter.ttf"));
 
 // ---------------------------------------------------------------------------
 // Brand + page constants
@@ -771,6 +783,20 @@ function drawEarnings(
     );
   }
 
+  // Gross pay subtotal — mirrors the "Total deductions" treatment on the
+  // right column and matches the HTML detail view's earnings card.
+  const dividerY = y + ROW_LINE_H - 3;
+  ctx.page.drawLine({
+    start: { x: LEFT_X, y: dividerY },
+    end: { x: LEFT_X + COL_W, y: dividerY },
+    thickness: 0.5,
+    color: GRAY,
+  });
+  y -= 2;
+  y = drawRow(ctx, "Gross pay", data.run.gross_pay_php, LEFT_X, y, {
+    bold: true,
+  });
+
   return y;
 }
 
@@ -1312,8 +1338,15 @@ export async function generatePayslipPdf(
   pdfDoc.setProducer("drmed.ph payroll");
   pdfDoc.setCreationDate(new Date());
 
-  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  pdfDoc.registerFontkit(fontkit);
+  // subset:false intentionally — pdf-lib's subsetting logic doesn't handle
+  // Inter's multi-axis (wdth, wght) variable font correctly and drops most
+  // glyphs. The full embed is ~880KB which inflates the PDF but the asset is
+  // server-side only. Followup: switch to a static-instance TTF or a
+  // single-axis variable font once we have time to vet candidates.
+  const font = await pdfDoc.embedFont(FONT_BYTES);
+  // Single variable font used for both — see FONT_BYTES comment.
+  const fontBold = font;
 
   // Logo bytes are read once at module load (see LOGO_BYTES above) — just
   // embed into this document.
