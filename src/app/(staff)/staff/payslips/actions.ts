@@ -76,10 +76,10 @@ export async function listMyPayslipsAction(
     await audit({
       actor_id: session.user_id,
       actor_type: "staff",
-      action: "payslip.admin_viewed_other_employee_list",
+      action: "payroll_payslip.admin_viewed_list",
       resource_type: "employee",
       resource_id: targetEmployeeId,
-      metadata: { year: args.year ?? null },
+      metadata: { year: args.year ?? null, cross_employee: true },
       ip_address: ip,
       user_agent: ua,
     });
@@ -266,7 +266,7 @@ export async function getPayslipUrlAction(employee_run_id: string): Promise<Acti
   const admin = createAdminClient();
   const { data: er, error: erErr } = await admin
     .from("payroll_employee_runs")
-    .select("employee_id, payslip_file_path, employees!inner(staff_profile_id)")
+    .select("employee_id, payslip_file_path, run_id, employees!inner(staff_profile_id)")
     .eq("id", employee_run_id)
     .maybeSingle();
   if (erErr || !er) return { ok: false, error: "Payslip not found." };
@@ -278,5 +278,23 @@ export async function getPayslipUrlAction(employee_run_id: string): Promise<Acti
   const { data: signed, error: signedErr } = await admin.storage
     .from("payslips").createSignedUrl(er.payslip_file_path, 300);
   if (signedErr) return { ok: false, error: translatePgError(signedErr) };
+
+  const { ip, ua } = await ipAndAgent();
+  await audit({
+    actor_id: session.user_id,
+    actor_type: "staff",
+    action: "payroll_payslip.downloaded",
+    resource_type: "payroll_employee_run",
+    resource_id: employee_run_id,
+    metadata: {
+      employee_id: er.employee_id,
+      payroll_run_id: er.run_id,
+      viewer_role: session.role,
+      cross_employee: !isOwn,
+    },
+    ip_address: ip,
+    user_agent: ua,
+  });
+
   return { ok: true, data: { url: signed.signedUrl } };
 }
