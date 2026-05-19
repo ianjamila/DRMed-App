@@ -1216,6 +1216,9 @@ function PayoutCell({ employeeRun }: { employeeRun: EmployeeRunRow }) {
   const [markOpen, setMarkOpen] = useState(false);
   const [voidOpen, setVoidOpen] = useState(false);
   const [voidReason, setVoidReason] = useState("");
+  // Bank-only optional fields; reset on dialog close.
+  const [paidAtLocalDate, setPaidAtLocalDate] = useState("");
+  const [bankReference, setBankReference] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -1224,24 +1227,34 @@ function PayoutCell({ employeeRun }: { employeeRun: EmployeeRunRow }) {
     setMarkOpen(false);
     setVoidOpen(false);
     setVoidReason("");
+    setPaidAtLocalDate("");
+    setBankReference("");
     setError(null);
   };
 
   const onConfirmMarkPaid = () => {
     setError(null);
     startTransition(async () => {
-      // Note: the schema only accepts employee_run_id (+ optional
-      // contra_account_id). The action stamps paid_at server-side using
-      // new Date(); date / bank reference inputs are not currently
-      // round-tripped through Zod (see 12.6 D-batch follow-up).
       const res = await markEmployeePaidAction({
         employee_run_id: employeeRun.id,
+        // Bank-only; cash ignores. Empty strings become undefined so Zod
+        // accepts a blank optional field instead of failing the regex.
+        paid_at_local_date:
+          employeeRun.payment_method === "bank" && paidAtLocalDate
+            ? paidAtLocalDate
+            : undefined,
+        bank_reference:
+          employeeRun.payment_method === "bank" && bankReference.trim()
+            ? bankReference.trim()
+            : undefined,
       });
       if (!res.ok) {
         setError(res.error);
         return;
       }
       setMarkOpen(false);
+      setPaidAtLocalDate("");
+      setBankReference("");
       router.refresh();
     });
   };
@@ -1299,12 +1312,47 @@ function PayoutCell({ employeeRun }: { employeeRun: EmployeeRunRow }) {
                   ? " The action writes an eod_cash_adjustments row against today's active reception shift and posts the payout JE (DR 2360 Salaries Payable, CR 1010 Cash on Hand)."
                   : " The bridge posts the JE automatically (DR 2360 Salaries Payable, CR 1020 Bank)."}
               </p>
-              <p className="text-xs text-[color:var(--color-brand-text-soft)]">
-                The paid-at timestamp is captured server-side at confirmation.
-                {isCash
-                  ? " For cash, the eod_cash_adjustments row will appear in the cash drawer for today."
-                  : " Bank reference is recorded via the journal entry note in a follow-up batch."}
-              </p>
+              {isCash ? (
+                <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+                  The eod_cash_adjustments row will appear in the cash
+                  drawer for today (Asia/Manila).
+                </p>
+              ) : (
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <label className="text-xs">
+                    <span className="block font-semibold text-[color:var(--color-brand-text-mid)]">
+                      Paid date (optional)
+                    </span>
+                    <input
+                      type="date"
+                      value={paidAtLocalDate}
+                      onChange={(e) => setPaidAtLocalDate(e.target.value)}
+                      className="mt-1 w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1.5 text-sm"
+                    />
+                    <span className="mt-1 block text-[color:var(--color-brand-text-soft)]">
+                      Leave blank for now.
+                    </span>
+                  </label>
+                  <label className="text-xs">
+                    <span className="block font-semibold text-[color:var(--color-brand-text-mid)]">
+                      Bank reference (optional)
+                    </span>
+                    <input
+                      type="text"
+                      inputMode="text"
+                      autoComplete="off"
+                      maxLength={200}
+                      value={bankReference}
+                      onChange={(e) => setBankReference(e.target.value)}
+                      placeholder="e.g. BPI ref 1234567"
+                      className="mt-1 w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1.5 text-sm"
+                    />
+                    <span className="mt-1 block text-[color:var(--color-brand-text-soft)]">
+                      Captured in the audit log.
+                    </span>
+                  </label>
+                </div>
+              )}
             </div>
           }
         />

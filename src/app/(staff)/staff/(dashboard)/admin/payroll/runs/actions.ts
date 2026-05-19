@@ -518,7 +518,12 @@ export async function markEmployeePaidAction(
     : er.run_id;
 
   const paymentMethod = employee.payment_method as "cash" | "bank";
-  const stamp = new Date().toISOString();
+  // Bank: optional paid_at_local_date stamps Manila midnight on that date.
+  // Cash: always "now" (the cash drawer business_date drives the day).
+  const stamp =
+    paymentMethod === "bank" && parsed.data.paid_at_local_date
+      ? new Date(`${parsed.data.paid_at_local_date}T00:00:00+08:00`).toISOString()
+      : new Date().toISOString();
   const { ip, ua } = await ipAndAgent();
 
   if (paymentMethod === "cash") {
@@ -642,6 +647,8 @@ export async function markEmployeePaidAction(
       employee_id: er.employee_id,
       payment_method: "bank",
       amount_php: er.net_pay_php,
+      paid_at_local_date: parsed.data.paid_at_local_date ?? null,
+      bank_reference: parsed.data.bank_reference ?? null,
     },
     ip_address: ip,
     user_agent: ua,
