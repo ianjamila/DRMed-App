@@ -137,7 +137,7 @@ export default async function VisitDetailPage({ params }: Props) {
         <div>
           <p className="font-mono text-sm text-[color:var(--color-brand-text-soft)]">
             Visit #{visit.visit_number} ·{" "}
-            {new Date(visit.visit_date).toLocaleDateString("en-PH")}
+            {new Date(visit.visit_date).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })}
           </p>
           <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
             {patient.last_name}, {patient.first_name}
@@ -492,7 +492,7 @@ export default async function VisitDetailPage({ params }: Props) {
               {activePayments.map((p) => (
                 <tr key={p.id}>
                   <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
-                    {new Date(p.received_at).toLocaleString("en-PH")}
+                    {new Date(p.received_at).toLocaleString("en-PH", { timeZone: "Asia/Manila" })}
                   </td>
                   <td className="px-4 py-3 font-semibold">
                     {formatPhp(p.amount_php)}
@@ -536,7 +536,7 @@ export default async function VisitDetailPage({ params }: Props) {
                   <div className="font-semibold text-[color:var(--color-brand-text-mid)]">
                     {formatPhp(p.amount_php)} · {p.method ? PAYMENT_METHOD_LABEL[p.method] ?? p.method : "—"}
                     <span className="ml-2 text-[color:var(--color-brand-text-soft)]">
-                      voided {p.voided_at ? new Date(p.voided_at).toLocaleString("en-PH") : ""}
+                      voided {p.voided_at ? new Date(p.voided_at).toLocaleString("en-PH", { timeZone: "Asia/Manila" }) : ""}
                     </span>
                   </div>
                   {p.void_reason ? (

@@ -179,7 +179,7 @@ export function NewBatchClient({
                       </label>
                     </td>
                     <td className="px-4 py-3 text-xs">
-                      {new Date(r.released_at).toLocaleDateString("en-PH")}
+                      {new Date(r.released_at).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })}
                     </td>
                     <td className="px-4 py-3 text-right font-mono text-xs">
                       {r.days_since_release}

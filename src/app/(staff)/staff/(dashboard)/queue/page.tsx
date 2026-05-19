@@ -123,7 +123,9 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                     className="hover:bg-[color:var(--color-brand-bg)]"
                   >
                     <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
-                      {new Date(r.requested_at).toLocaleString("en-PH")}
+                      {new Date(r.requested_at).toLocaleString("en-PH", {
+                        timeZone: "Asia/Manila",
+                      })}
                     </td>
                     <td className="px-4 py-3">
                       <Link
