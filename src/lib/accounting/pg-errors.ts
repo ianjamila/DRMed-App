@@ -57,6 +57,22 @@ export function translatePgError(err: PgError): string {
       return err.message ?? "Staff advance cannot go below zero.";
     case "P0019":
       return err.message ?? "That account is inactive. Pick a different one.";
+    case "P0020":
+      return err.message ?? "Cannot finalise: at least one employee is missing complete DTR / leave data.";
+    case "P0021":
+      return err.message ?? "Cannot edit this run after payouts have started. Adjust in the next period.";
+    case "P0022":
+      return err.message ?? "Employee has no daily rate set.";
+    case "P0023":
+      return err.message ?? "OT pay requires an approved OT slip for the same date.";
+    case "P0024":
+      return err.message ?? "Staff advance settlement cannot exceed the outstanding balance.";
+    case "P0026":
+      return err.message ?? "Cannot add an employee to a finalised run. Void and reopen first.";
+    case "P0027":
+      return err.message ?? "Cannot finalise an empty run. Compute first, or delete the run if no payroll is due.";
+    case "P0028":
+      return err.message ?? "Cannot use more leave than the employee has accrued. Grant additional days first if approving an advance.";
     default:
       return err.message ?? "Database error. Please try again.";
   }
