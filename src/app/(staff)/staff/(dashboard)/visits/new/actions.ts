@@ -259,6 +259,7 @@ export async function createVisitAction(
       doctor_pf_php: l.doctor_pf_php,
       procedure_description: l.procedure_description,
       hmo_approved_amount_php: l.hmo_approved_amount_php,
+      is_package_header: false as const,
     }));
 
   // Insert headers first (we need their ids to populate parent_id on components).
