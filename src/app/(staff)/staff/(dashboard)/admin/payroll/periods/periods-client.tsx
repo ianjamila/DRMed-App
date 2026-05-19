@@ -8,6 +8,7 @@ import { formatPeriodRange } from "@/lib/payroll/format";
 import {
   closePeriodAction,
   createPeriodAction,
+  createRunAction,
 } from "../runs/actions";
 
 export interface PeriodRow {
@@ -60,6 +61,24 @@ export function PeriodsClient({
   // Track per-row pending state so the right button shows the spinner.
   const [closingId, setClosingId] = useState<string | null>(null);
   const [isClosePending, startCloseTransition] = useTransition();
+  const [creatingRunFor, setCreatingRunFor] = useState<string | null>(null);
+  const [isCreateRunPending, startCreateRunTransition] = useTransition();
+
+  const handleCreateRun = useCallback(
+    (periodId: string) => {
+      setCreatingRunFor(periodId);
+      startCreateRunTransition(async () => {
+        const result = await createRunAction({ period_id: periodId });
+        setCreatingRunFor(null);
+        if (!result.ok) {
+          window.alert(result.error);
+          return;
+        }
+        router.push(`/staff/admin/payroll/runs/${result.data.run_id}`);
+      });
+    },
+    [router],
+  );
 
   const handleClose = useCallback(
     (periodId: string) => {
@@ -148,6 +167,17 @@ export function PeriodsClient({
                         >
                           View run -{">"}
                         </Link>
+                      ) : p.status === "open" ? (
+                        <button
+                          type="button"
+                          onClick={() => handleCreateRun(p.id)}
+                          disabled={isCreateRunPending && creatingRunFor === p.id}
+                          className="min-h-[44px] rounded-md bg-[color:var(--color-brand-cyan)] px-3 py-2 text-xs font-bold text-white hover:brightness-95 disabled:opacity-50"
+                        >
+                          {isCreateRunPending && creatingRunFor === p.id
+                            ? "Creating…"
+                            : "+ Create run"}
+                        </button>
                       ) : (
                         <span className="text-[color:var(--color-brand-text-soft)]">
                           —
@@ -213,6 +243,17 @@ export function PeriodsClient({
                       >
                         View -{">"}
                       </Link>
+                    ) : p.status === "open" ? (
+                      <button
+                        type="button"
+                        onClick={() => handleCreateRun(p.id)}
+                        disabled={isCreateRunPending && creatingRunFor === p.id}
+                        className="inline-flex min-h-[44px] items-center rounded-md bg-[color:var(--color-brand-cyan)] px-3 py-2 text-xs font-bold text-white hover:brightness-95 disabled:opacity-50"
+                      >
+                        {isCreateRunPending && creatingRunFor === p.id
+                          ? "Creating…"
+                          : "+ Create run"}
+                      </button>
                     ) : (
                       "—"
                     )}

@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 import {
   useCallback,
   useEffect,
@@ -8,7 +10,6 @@ import {
   useSyncExternalStore,
   useTransition,
 } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { formatPhp } from "@/lib/marketing/format";
 import { formatPeriodRange, formatManilaDate } from "@/lib/payroll/format";
@@ -1255,17 +1256,7 @@ function PayoutCell({ employeeRun }: { employeeRun: EmployeeRunRow }) {
 
   // --- Pending branches ---------------------------------------------------
   if (employeeRun.payout_status === "pending") {
-    if (employeeRun.payment_method === "cash") {
-      return (
-        <Link
-          href={`/staff/payments/cash-drawer?employee_run_id=${employeeRun.id}`}
-          className="inline-flex min-h-[44px] items-center rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700"
-        >
-          Pay from drawer -{">"}
-        </Link>
-      );
-    }
-    // Bank
+    const isCash = employeeRun.payment_method === "cash";
     return (
       <>
         <button
@@ -1277,7 +1268,7 @@ function PayoutCell({ employeeRun }: { employeeRun: EmployeeRunRow }) {
           disabled={isPending}
           className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-3 py-1.5 text-xs font-bold text-white hover:bg-[color:var(--color-brand-cyan)] disabled:opacity-50"
         >
-          Mark paid
+          {isCash ? "Mark paid (cash)" : "Mark paid"}
         </button>
         <ConfirmDialog
           open={markOpen}
@@ -1292,15 +1283,18 @@ function PayoutCell({ employeeRun }: { employeeRun: EmployeeRunRow }) {
           body={
             <div className="space-y-3">
               <p>
-                This records a bank payout of{" "}
+                This records a {isCash ? "cash" : "bank"} payout of{" "}
                 <strong>{formatPhp(employeeRun.net_pay_php)}</strong> to{" "}
-                {employeeRun.full_name}. The bridge posts the JE automatically
-                (DR 2360 Salaries Payable, CR 1020 Bank).
+                {employeeRun.full_name}.
+                {isCash
+                  ? " The action writes an eod_cash_adjustments row against today's active reception shift and posts the payout JE (DR 2360 Salaries Payable, CR 1010 Cash on Hand)."
+                  : " The bridge posts the JE automatically (DR 2360 Salaries Payable, CR 1020 Bank)."}
               </p>
               <p className="text-xs text-[color:var(--color-brand-text-soft)]">
                 The paid-at timestamp is captured server-side at confirmation.
-                Bank reference is recorded via the journal entry note in a
-                follow-up batch.
+                {isCash
+                  ? " For cash, the eod_cash_adjustments row will appear in the cash drawer for today."
+                  : " Bank reference is recorded via the journal entry note in a follow-up batch."}
               </p>
             </div>
           }
