@@ -12,6 +12,9 @@ import {
   recomputePayrollRunAction,
   finaliseRunAction,
   voidRunAction,
+  reopenVoidedRunAction,
+  markEmployeePaidAction,
+  voidEmployeePayoutAction,
 } from "../actions";
 
 // =============================================================================
@@ -173,7 +176,7 @@ function useDrawerStylePreference(): [DrawerStyle, (next: DrawerStyle) => void] 
 // Top-level component
 // =============================================================================
 
-type DialogKind = "reimport" | "finalise" | "void-run";
+type DialogKind = "reimport" | "finalise" | "void-run" | "reopen";
 
 export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
   const router = useRouter();
@@ -246,6 +249,18 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
     });
   };
 
+  const onConfirmReopen = () => {
+    setDialogError(null);
+    startHeaderTransition(async () => {
+      const res = await reopenVoidedRunAction({ run_id: run.id });
+      if (!res.ok) {
+        setDialogError(res.error);
+        return;
+      }
+      setOpenDialog(null);
+      router.refresh();
+    });
+  };
 
   // Detect mobile viewport to force slide-out style. Tailwind's md breakpoint
   // is 768px; match that here so the toggle's effective state matches the
@@ -294,7 +309,21 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
     ? `Cannot void -- ${paidEmployeeCount} employee${paidEmployeeCount === 1 ? "" : "s"} already paid. Void individual payouts first.`
     : null;
 
+  // Cash payouts still pending for today's pay date -- surfaces the banner
+  // pointing reception at the cash drawer.
+  const cashPendingCount = useMemo(
+    () =>
+      employeeRuns.filter(
+        (er) =>
+          er.payout_status === "pending" && er.payment_method === "cash",
+      ).length,
+    [employeeRuns],
+  );
+
   const finaliserLabel = run.finaliser_name ?? "Not finalised yet";
+  const showPayoutColumn =
+    run.status === "finalised" || run.status === "voided";
+  const tableColCount = showPayoutColumn ? 7 : 6;
 
   return (
     <div className="mx-auto max-w-[1400px] px-4 py-8 sm:px-6 lg:px-8">
@@ -341,6 +370,10 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
                 setDialogError(null);
                 setVoidReason("");
                 setOpenDialog("void-run");
+              }}
+              onReopenClick={() => {
+                setDialogError(null);
+                setOpenDialog("reopen");
               }}
             />
           </div>
@@ -434,6 +467,26 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
           </Banner>
         ) : null}
 
+        {run.status === "finalised" && cashPendingCount > 0 ? (
+          <Banner
+            tone="amber"
+            title={`${cashPendingCount} cash payout${cashPendingCount === 1 ? "" : "s"} pending`}
+          >
+            <p className="text-sm text-amber-900">
+              {cashPendingCount === 1 ? "One employee is" : `${cashPendingCount} employees are`}{" "}
+              waiting on a cash payout for {formatManilaDate(run.pay_date)}.
+              Reception can process them at the cash drawer.
+            </p>
+            <p className="mt-2 text-sm">
+              <Link
+                href="/staff/payments/cash-drawer"
+                className="font-semibold text-amber-900 underline hover:text-amber-700"
+              >
+                Open cash drawer -{">"}
+              </Link>
+            </p>
+          </Banner>
+        ) : null}
       </div>
 
       {/* Per-employee table */}
@@ -463,6 +516,9 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
                   <th className="px-4 py-3 text-right">Gross</th>
                   <th className="px-4 py-3 text-right">Net</th>
                   <th className="px-4 py-3">Pay method</th>
+                  {showPayoutColumn ? (
+                    <th className="px-4 py-3">Payout</th>
+                  ) : null}
                   <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
@@ -470,7 +526,7 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
                 {employeeRuns.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={6}
+                      colSpan={tableColCount}
                       className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]"
                     >
                       No employees on this run.
@@ -485,6 +541,8 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
                       er={er}
                       isSelected={isSelected}
                       drawerStyle={effectiveDrawerStyle}
+                      showPayoutCell={showPayoutColumn}
+                      tableColCount={tableColCount}
                       onSelect={() =>
                         setSelectedEmployeeRunId((cur) =>
                           cur === er.id ? null : er.id,
@@ -516,55 +574,64 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
             </p>
           ) : null}
           {employeeRuns.map((er) => (
-            <button
+            <div
               key={er.id}
-              type="button"
-              onClick={() => setSelectedEmployeeRunId(er.id)}
-              className="block w-full min-h-[44px] rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4 text-left shadow-sm hover:border-[color:var(--color-brand-cyan)]"
+              className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4 shadow-sm"
             >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="font-semibold text-[color:var(--color-brand-navy)]">
-                    {er.full_name}
-                  </p>
-                  {er.employee_number ? (
-                    <p className="text-xs text-[color:var(--color-brand-text-soft)]">
-                      #{er.employee_number}
+              <button
+                type="button"
+                onClick={() => setSelectedEmployeeRunId(er.id)}
+                className="block w-full min-h-[44px] text-left"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold text-[color:var(--color-brand-navy)]">
+                      {er.full_name}
                     </p>
-                  ) : null}
+                    {er.employee_number ? (
+                      <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+                        #{er.employee_number}
+                      </p>
+                    ) : null}
+                  </div>
+                  <PayMethodPill method={er.payment_method} />
                 </div>
-                <PayMethodPill method={er.payment_method} />
-              </div>
-              <dl className="mt-3 grid grid-cols-3 gap-2 text-xs">
-                <div>
-                  <dt className="text-[color:var(--color-brand-text-soft)]">
-                    Days
-                  </dt>
-                  <dd className="font-semibold text-[color:var(--color-brand-navy)]">
-                    {er.days_present}
-                    {er.scheduled_days > 0
-                      ? ` / ${er.scheduled_days}`
-                      : ""}
-                  </dd>
+                <dl className="mt-3 grid grid-cols-3 gap-2 text-xs">
+                  <div>
+                    <dt className="text-[color:var(--color-brand-text-soft)]">
+                      Days
+                    </dt>
+                    <dd className="font-semibold text-[color:var(--color-brand-navy)]">
+                      {er.days_present}
+                      {er.scheduled_days > 0
+                        ? ` / ${er.scheduled_days}`
+                        : ""}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-[color:var(--color-brand-text-soft)]">
+                      Gross
+                    </dt>
+                    <dd className="font-semibold text-[color:var(--color-brand-navy)]">
+                      {formatPhp(er.gross_pay_php)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-[color:var(--color-brand-text-soft)]">
+                      Net
+                    </dt>
+                    <dd className="font-bold text-[color:var(--color-brand-navy)]">
+                      {formatPhp(er.net_pay_php)}
+                    </dd>
+                  </div>
+                </dl>
+              </button>
+              {showPayoutColumn ? (
+                <div className="mt-3 border-t border-[color:var(--color-brand-bg-mid)] pt-3">
+                  <PayoutCell employeeRun={er} />
                 </div>
-                <div>
-                  <dt className="text-[color:var(--color-brand-text-soft)]">
-                    Gross
-                  </dt>
-                  <dd className="font-semibold text-[color:var(--color-brand-navy)]">
-                    {formatPhp(er.gross_pay_php)}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-[color:var(--color-brand-text-soft)]">
-                    Net
-                  </dt>
-                  <dd className="font-bold text-[color:var(--color-brand-navy)]">
-                    {formatPhp(er.net_pay_php)}
-                  </dd>
-                </div>
-              </dl>
-            </button>
+              ) : null}
+            </div>
           ))}
         </div>
       </section>
@@ -739,6 +806,27 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
         }
       />
 
+      {/* Reopen voided run. */}
+      <ConfirmDialog
+        open={openDialog === "reopen"}
+        title="Reopen this voided run?"
+        confirmLabel="Yes, reopen"
+        confirmVariant="primary"
+        cancelLabel="Cancel"
+        isPending={isHeaderPending}
+        onCancel={closeDialog}
+        onConfirm={onConfirmReopen}
+        errorMessage={dialogError}
+        body={
+          <div className="space-y-3">
+            <p>
+              Reopen this run? The previously voided JE remains reversed in the
+              ledger. The run goes back to draft so it can be recomputed and
+              finalised again.
+            </p>
+          </div>
+        }
+      />
     </div>
   );
 }
@@ -756,6 +844,7 @@ function RunActionCluster({
   onReimportClick,
   onFinaliseClick,
   onVoidRunClick,
+  onReopenClick,
 }: {
   status: string;
   isPending: boolean;
@@ -765,6 +854,7 @@ function RunActionCluster({
   onReimportClick: () => void;
   onFinaliseClick: () => void;
   onVoidRunClick: () => void;
+  onReopenClick: () => void;
 }) {
   if (status === "draft") {
     return (
@@ -821,6 +911,19 @@ function RunActionCluster({
         className="min-h-[44px] rounded-md border border-rose-200 bg-white px-4 py-2 text-xs font-bold text-rose-700 hover:border-rose-400 disabled:opacity-50"
       >
         Void run
+      </button>
+    );
+  }
+
+  if (status === "voided") {
+    return (
+      <button
+        type="button"
+        onClick={onReopenClick}
+        disabled={isPending}
+        className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-xs font-bold text-white hover:bg-[color:var(--color-brand-cyan)] disabled:opacity-50"
+      >
+        Reopen run
       </button>
     );
   }
@@ -921,12 +1024,16 @@ function RunRowDesktop({
   er,
   isSelected,
   drawerStyle,
+  showPayoutCell,
+  tableColCount,
   onSelect,
   inlineDrawer,
 }: {
   er: EmployeeRunRow;
   isSelected: boolean;
   drawerStyle: DrawerStyle;
+  showPayoutCell: boolean;
+  tableColCount: number;
   onSelect: () => void;
   inlineDrawer: React.ReactNode;
 }) {
@@ -985,6 +1092,15 @@ function RunRowDesktop({
         <td className="px-4 py-3">
           <PayMethodPill method={er.payment_method} />
         </td>
+        {showPayoutCell ? (
+          <td
+            className="px-4 py-3"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
+          >
+            <PayoutCell employeeRun={er} />
+          </td>
+        ) : null}
         <td className="px-4 py-3 text-right">
           <button
             type="button"
@@ -1000,7 +1116,7 @@ function RunRowDesktop({
       </tr>
       {isInlineSelected ? (
         <tr className="bg-[color:var(--color-brand-bg)]/60">
-          <td colSpan={6} className="px-4 py-4">
+          <td colSpan={tableColCount} className="px-4 py-4">
             {inlineDrawer}
           </td>
         </tr>
@@ -1045,5 +1161,183 @@ function DrawerStyleToggle({
         );
       })}
     </div>
+  );
+}
+
+// =============================================================================
+// PayoutCell -- per-employee post-finalise action (mark paid / void payout).
+// Only mounted when the parent table is rendering the Payout column, which is
+// gated on run.status in (finalised, voided). Each cell carries its own dialog
+// + useTransition because the actions are independent per row.
+// =============================================================================
+
+function PayoutCell({ employeeRun }: { employeeRun: EmployeeRunRow }) {
+  const router = useRouter();
+  const [markOpen, setMarkOpen] = useState(false);
+  const [voidOpen, setVoidOpen] = useState(false);
+  const [voidReason, setVoidReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
+
+  const closeAll = () => {
+    if (isPending) return;
+    setMarkOpen(false);
+    setVoidOpen(false);
+    setVoidReason("");
+    setError(null);
+  };
+
+  const onConfirmMarkPaid = () => {
+    setError(null);
+    startTransition(async () => {
+      // Note: the schema only accepts employee_run_id (+ optional
+      // contra_account_id). The action stamps paid_at server-side using
+      // new Date(); date / bank reference inputs are not currently
+      // round-tripped through Zod (see 12.6 D-batch follow-up).
+      const res = await markEmployeePaidAction({
+        employee_run_id: employeeRun.id,
+      });
+      if (!res.ok) {
+        setError(res.error);
+        return;
+      }
+      setMarkOpen(false);
+      router.refresh();
+    });
+  };
+
+  const onConfirmVoidPayout = () => {
+    setError(null);
+    startTransition(async () => {
+      const res = await voidEmployeePayoutAction(
+        employeeRun.id,
+        voidReason.trim(),
+      );
+      if (!res.ok) {
+        setError(res.error);
+        return;
+      }
+      setVoidOpen(false);
+      setVoidReason("");
+      router.refresh();
+    });
+  };
+
+  // --- Pending branches ---------------------------------------------------
+  if (employeeRun.payout_status === "pending") {
+    if (employeeRun.payment_method === "cash") {
+      return (
+        <Link
+          href={`/staff/payments/cash-drawer?employee_run_id=${employeeRun.id}`}
+          className="inline-flex min-h-[44px] items-center rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700"
+        >
+          Pay from drawer -{">"}
+        </Link>
+      );
+    }
+    // Bank
+    return (
+      <>
+        <button
+          type="button"
+          onClick={() => {
+            setError(null);
+            setMarkOpen(true);
+          }}
+          disabled={isPending}
+          className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-3 py-1.5 text-xs font-bold text-white hover:bg-[color:var(--color-brand-cyan)] disabled:opacity-50"
+        >
+          Mark paid
+        </button>
+        <ConfirmDialog
+          open={markOpen}
+          title={`Mark ${employeeRun.full_name} as paid?`}
+          confirmLabel="Yes, mark paid"
+          confirmVariant="success"
+          cancelLabel="Cancel"
+          isPending={isPending}
+          onCancel={closeAll}
+          onConfirm={onConfirmMarkPaid}
+          errorMessage={error}
+          body={
+            <div className="space-y-3">
+              <p>
+                This records a bank payout of{" "}
+                <strong>{formatPhp(employeeRun.net_pay_php)}</strong> to{" "}
+                {employeeRun.full_name}. The bridge posts the JE automatically
+                (DR 2360 Salaries Payable, CR 1020 Bank).
+              </p>
+              <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+                The paid-at timestamp is captured server-side at confirmation.
+                Bank reference is recorded via the journal entry note in a
+                follow-up batch.
+              </p>
+            </div>
+          }
+        />
+      </>
+    );
+  }
+
+  // --- Paid branch --------------------------------------------------------
+  if (employeeRun.payout_status === "paid") {
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="rounded-md bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-900">
+          Paid
+        </span>
+        <button
+          type="button"
+          onClick={() => {
+            setError(null);
+            setVoidReason("");
+            setVoidOpen(true);
+          }}
+          disabled={isPending}
+          className="min-h-[44px] rounded-md border border-rose-200 bg-white px-3 py-1.5 text-xs font-bold text-rose-700 hover:border-rose-400 disabled:opacity-50"
+        >
+          Void payout
+        </button>
+        <ConfirmDialog
+          open={voidOpen}
+          title={`Void payout for ${employeeRun.full_name}?`}
+          confirmLabel="Yes, void this payout"
+          confirmVariant="danger"
+          cancelLabel="Cancel"
+          isPending={isPending}
+          onCancel={closeAll}
+          onConfirm={onConfirmVoidPayout}
+          reasonRequired
+          reasonValue={voidReason}
+          onReasonChange={setVoidReason}
+          errorMessage={error}
+          body={
+            <div className="space-y-3">
+              <p>
+                This reverses only this employee&apos;s payout JE. The gross-up
+                JE remains; this employee&apos;s net pay stays in 2360 Salaries
+                Payable until re-paid.
+              </p>
+            </div>
+          }
+        />
+      </div>
+    );
+  }
+
+  // --- Voided branch ------------------------------------------------------
+  if (employeeRun.payout_status === "voided") {
+    return (
+      <span className="rounded-md bg-slate-200 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-700">
+        Voided
+      </span>
+    );
+  }
+
+  // Defensive fallback for any future payout_status value.
+  return (
+    <span className="text-xs text-[color:var(--color-brand-text-soft)]">
+      {employeeRun.payout_status}
+    </span>
   );
 }
