@@ -20,17 +20,17 @@ import { formatManilaDate, formatPeriodRange } from "./format";
 // loud and early, which is what we want.
 const LOGO_BYTES = readFileSync(join(process.cwd(), "public/logo.png"));
 
-// Inter variable font — bundled in public/font/. We use this instead of
-// pdf-lib's StandardFonts (Helvetica/HelveticaBold) because StandardFonts
-// only support WinAnsi encoding, which has no glyph for the Peso symbol
-// (₱, U+20B1) or the true minus sign (−, U+2212). Inter (OFL license) ships
-// the full Unicode range including ₱, −, –, ·, etc.
-// The single variable font is used for both "regular" and "bold" calls; the
-// font is embedded once at its default master (wght=400). Real per-weight
-// bold rendering would require static TTFs or fontkit's variation-instance
-// API — for v1 we rely on ALL CAPS + font-size + color for visual hierarchy.
-// Tracked in followups.
-const FONT_BYTES = readFileSync(join(process.cwd(), "public/font/Inter.ttf"));
+// Inter Regular + Bold static TTFs — bundled in public/font/. We use these
+// instead of pdf-lib's StandardFonts (Helvetica/HelveticaBold) because
+// StandardFonts only support WinAnsi encoding, which has no glyph for the
+// Peso symbol (₱, U+20B1) or the true minus sign (−, U+2212). Inter (OFL
+// license) ships the full Unicode range including ₱, −, –, ·, etc.
+//
+// Static-instance TTFs (not variable) so pdf-lib's subset:true can prune
+// down to just the glyphs each PDF actually uses — keeps generated PDFs
+// small (~10-20KB of font data per payslip instead of ~880KB).
+const FONT_REGULAR_BYTES = readFileSync(join(process.cwd(), "public/font/Inter-Regular.ttf"));
+const FONT_BOLD_BYTES = readFileSync(join(process.cwd(), "public/font/Inter-Bold.ttf"));
 
 // ---------------------------------------------------------------------------
 // Brand + page constants
@@ -1339,14 +1339,8 @@ export async function generatePayslipPdf(
   pdfDoc.setCreationDate(new Date());
 
   pdfDoc.registerFontkit(fontkit);
-  // subset:false intentionally — pdf-lib's subsetting logic doesn't handle
-  // Inter's multi-axis (wdth, wght) variable font correctly and drops most
-  // glyphs. The full embed is ~880KB which inflates the PDF but the asset is
-  // server-side only. Followup: switch to a static-instance TTF or a
-  // single-axis variable font once we have time to vet candidates.
-  const font = await pdfDoc.embedFont(FONT_BYTES);
-  // Single variable font used for both — see FONT_BYTES comment.
-  const fontBold = font;
+  const font = await pdfDoc.embedFont(FONT_REGULAR_BYTES, { subset: true });
+  const fontBold = await pdfDoc.embedFont(FONT_BOLD_BYTES, { subset: true });
 
   // Logo bytes are read once at module load (see LOGO_BYTES above) — just
   // embed into this document.
