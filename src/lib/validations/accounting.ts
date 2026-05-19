@@ -311,3 +311,203 @@ export const CashShiftUpdateSchema = z.object({
   sort_order: z.coerce.number().int().min(0).optional(),
 });
 export type CashShiftUpdateInput = z.infer<typeof CashShiftUpdateSchema>;
+
+// ============================================================
+// 12.6 — Payroll schemas
+// ============================================================
+
+const PayrollScheduleKindEnum = z.enum([
+  "fixed_5day_mon_fri",
+  "fixed_6day_mon_sat",
+  "shifting_5of6_mon_sat",
+]);
+
+const PaymentMethodEnum = z.enum(["cash", "bank"]);
+
+export const CreateEmployeeSchema = z.object({
+  staff_profile_id: z.string().uuid(),
+  employee_number: z.string().trim().min(1).max(40).optional(),
+  hire_date: z.string().refine(isOnOrBeforeTodayManila, "hire_date must be a date on or before today"),
+  regularization_date: z.string().nullable().optional(),
+  civil_status: z.enum(["single","married","widowed","separated","divorced"]).optional(),
+  basic_daily_rate_php: z.coerce.number().positive().max(100_000),
+  monthly_salary_credit_php: z.coerce.number().positive().max(1_000_000),
+  schedule_kind: PayrollScheduleKindEnum,
+  rest_days: z.array(z.coerce.number().int().min(0).max(6)).nullable().optional(),
+  dtr_external_id: z.string().trim().max(80).nullable().optional(),
+  payment_method: PaymentMethodEnum.default("cash"),
+  bank_name: z.string().trim().max(80).nullable().optional(),
+  bank_account_number: z.string().trim().max(40).nullable().optional(),
+  bank_account_holder_name: z.string().trim().max(120).nullable().optional(),
+  sss_number: z.string().trim().max(40).nullable().optional(),
+  philhealth_number: z.string().trim().max(40).nullable().optional(),
+  pagibig_number: z.string().trim().max(40).nullable().optional(),
+  tin: z.string().trim().max(40).nullable().optional(),
+  tax_status: z.enum(["standard","minimum_wage_earner"]).default("standard"),
+  notes: z.string().trim().max(1000).nullable().optional(),
+});
+export type CreateEmployeeInput = z.infer<typeof CreateEmployeeSchema>;
+
+export const UpdateEmployeeSchema = CreateEmployeeSchema.partial().extend({
+  id: z.string().uuid(),
+});
+export type UpdateEmployeeInput = z.infer<typeof UpdateEmployeeSchema>;
+
+export const AddAllowanceSchema = z.object({
+  employee_id: z.string().uuid(),
+  name: z.string().trim().min(1).max(60),
+  daily_amount_php: z.coerce.number().min(0).max(10_000),
+  is_taxable: z.coerce.boolean().default(true),
+  effective_from: z.string(),
+  effective_to: z.string().nullable().optional(),
+});
+export type AddAllowanceInput = z.infer<typeof AddAllowanceSchema>;
+
+export const RequestLoanSchema = z.object({
+  employee_id: z.string().uuid(),
+  principal_php: z.coerce.number().positive().max(1_000_000),
+  amortization_per_period_php: z.coerce.number().positive().max(1_000_000),
+  notes: z.string().trim().max(1000).nullable().optional(),
+});
+export type RequestLoanInput = z.infer<typeof RequestLoanSchema>;
+
+export const ApproveLoanSchema = z.object({
+  loan_id: z.string().uuid(),
+  approval_notes: z.string().trim().max(1000).nullable().optional(),
+});
+export type ApproveLoanInput = z.infer<typeof ApproveLoanSchema>;
+
+export const MarkLoanDisbursedSchema = z.object({
+  loan_id: z.string().uuid(),
+  start_period_id: z.string().uuid(),
+});
+export type MarkLoanDisbursedInput = z.infer<typeof MarkLoanDisbursedSchema>;
+
+export const CreatePeriodSchema = z.object({
+  period_start: z.string(),
+  period_end: z.string(),
+  pay_date: z.string(),
+});
+export type CreatePeriodInput = z.infer<typeof CreatePeriodSchema>;
+
+export const CreateRunSchema = z.object({
+  period_id: z.string().uuid(),
+});
+export type CreateRunInput = z.infer<typeof CreateRunSchema>;
+
+export const VoidRunSchema = z.object({
+  run_id: z.string().uuid(),
+  void_reason: z.string().trim().min(1).max(1000),
+});
+export type VoidRunInput = z.infer<typeof VoidRunSchema>;
+
+export const MarkEmployeePaidSchema = z.object({
+  employee_run_id: z.string().uuid(),
+  contra_account_id: z.string().uuid().optional(),
+});
+export type MarkEmployeePaidInput = z.infer<typeof MarkEmployeePaidSchema>;
+
+export const AddEarningLineSchema = z.object({
+  employee_run_id: z.string().uuid(),
+  kind: z.enum(["incentive","one_time_bonus","manual_adjustment","ot_supplement"]),
+  label: z.string().trim().min(1).max(120),
+  quantity: z.coerce.number().nullable().optional(),
+  rate_php: z.coerce.number().nullable().optional(),
+  amount_php: z.coerce.number().min(0).max(10_000_000),
+});
+export type AddEarningLineInput = z.infer<typeof AddEarningLineSchema>;
+
+export const AddDeductionLineSchema = z.object({
+  employee_run_id: z.string().uuid(),
+  kind: z.enum(["loan_amortization","manual_adjustment","other"]),
+  label: z.string().trim().min(1).max(120),
+  amount_php: z.coerce.number().min(0).max(10_000_000),
+  loan_id: z.string().uuid().nullable().optional(),
+});
+export type AddDeductionLineInput = z.infer<typeof AddDeductionLineSchema>;
+
+export const CreateOtSlipSchema = z.object({
+  employee_id: z.string().uuid(),
+  work_date: z.string(),
+  hours_requested: z.coerce.number().positive().max(24),
+  reason: z.string().trim().max(500).nullable().optional(),
+});
+export type CreateOtSlipInput = z.infer<typeof CreateOtSlipSchema>;
+
+export const AddHolidaySchema = z.object({
+  date: z.string(),
+  kind: z.enum(["regular","special_non_working","special_working"]),
+  name: z.string().trim().min(1).max(120),
+  notes: z.string().trim().max(500).nullable().optional(),
+});
+export type AddHolidayInput = z.infer<typeof AddHolidaySchema>;
+
+export const CreateContributionBracketSchema = z.object({
+  kind: z.enum(["sss","philhealth","pagibig"]),
+  effective_from: z.string(),
+  effective_to: z.string().nullable().optional(),
+  monthly_salary_credit_min_php: z.coerce.number().min(0),
+  monthly_salary_credit_max_php: z.coerce.number().positive(),
+  employee_share_php: z.coerce.number().min(0),
+  employer_share_php: z.coerce.number().min(0),
+  notes: z.string().trim().max(500).nullable().optional(),
+});
+export type CreateContributionBracketInput = z.infer<typeof CreateContributionBracketSchema>;
+
+export const CreateWtBracketSchema = z.object({
+  effective_from: z.string(),
+  effective_to: z.string().nullable().optional(),
+  taxable_min_php: z.coerce.number().min(0),
+  taxable_max_php: z.coerce.number().positive().nullable().optional(),
+  base_tax_php: z.coerce.number().min(0),
+  marginal_rate: z.coerce.number().min(0).max(1),
+});
+export type CreateWtBracketInput = z.infer<typeof CreateWtBracketSchema>;
+
+export const UpdatePayrollSettingSchema = z.object({
+  key: z.string().trim().min(1).max(80),
+  value_php: z.coerce.number(),
+});
+export type UpdatePayrollSettingInput = z.infer<typeof UpdatePayrollSettingSchema>;
+
+export const AddLeaveGrantSchema = z.object({
+  employee_id: z.string().uuid(),
+  kind: z.enum(["VL","SL"]),
+  days: z.coerce.number().positive().max(365),
+  effective_date: z.string(),
+  expiry_date: z.string().nullable().optional(),
+  reason: z.string().trim().min(1).max(500),
+});
+export type AddLeaveGrantInput = z.infer<typeof AddLeaveGrantSchema>;
+
+export const RecordLeaveUsageSchema = z.object({
+  employee_id: z.string().uuid(),
+  kind: z.enum(["VL","SL"]),
+  days: z.coerce.number().positive().max(365),
+  effective_date: z.string(),
+  period_id: z.string().uuid().nullable().optional(),
+  reason: z.string().trim().max(500).nullable().optional(),
+});
+export type RecordLeaveUsageInput = z.infer<typeof RecordLeaveUsageSchema>;
+
+export const ApplyLeaveEntitlementsSchema = z.object({
+  year: z.coerce.number().int().min(2020).max(2100),
+});
+export type ApplyLeaveEntitlementsInput = z.infer<typeof ApplyLeaveEntitlementsSchema>;
+
+export const UploadDtrSchema = z.object({
+  period_id: z.string().uuid(),
+  filename: z.string().trim().min(1).max(200),
+  csv_text: z.string().min(1).max(5_000_000),
+});
+export type UploadDtrInput = z.infer<typeof UploadDtrSchema>;
+
+export const RegeneratePayslipSchema = z.object({
+  employee_run_id: z.string().uuid(),
+});
+export type RegeneratePayslipInput = z.infer<typeof RegeneratePayslipSchema>;
+
+export const ReopenVoidedRunSchema = z.object({
+  run_id: z.string().uuid(),
+});
+export type ReopenVoidedRunInput = z.infer<typeof ReopenVoidedRunSchema>;
