@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useRef,
   useState,
   useTransition,
 } from "react";
@@ -92,11 +93,24 @@ export function OtSlipsClient({
   const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Inline error surface for approve/reject/void. Cleared on next success and
+  // whenever filters change so it doesn't linger across unrelated actions.
+  const [actionError, setActionError] = useState<string | null>(null);
   // Reason-prompt modal for reject + void.
   const [reasonPrompt, setReasonPrompt] = useState<{
     kind: "reject" | "void";
     slipId: string;
   } | null>(null);
+
+  // Guards against state updates after unmount (e.g. user closes modal while
+  // a transition is still pending).
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const updateParam = useCallback(
     (key: string, value: string) => {
@@ -111,6 +125,7 @@ export function OtSlipsClient({
       }
       const qs = next.toString();
       const target = qs ? `${ROUTE}?${qs}` : ROUTE;
+      setActionError(null);
       startTransition(() => {
         router.replace(target);
       });
@@ -123,11 +138,10 @@ export function OtSlipsClient({
       startTransition(async () => {
         const result = await approveOtSlipAction(slipId);
         if (!result.ok) {
-          // We surface action errors via the alert window since approve has no
-          // per-row UI slot. A more elaborate inline toast is overkill here.
-          window.alert(result.error);
+          setActionError(result.error);
           return;
         }
+        setActionError(null);
         router.refresh();
       });
     },
@@ -139,10 +153,13 @@ export function OtSlipsClient({
       startTransition(async () => {
         const result = await rejectOtSlipAction(slipId, reason);
         if (!result.ok) {
-          window.alert(result.error);
+          setActionError(result.error);
           return;
         }
-        setReasonPrompt(null);
+        setActionError(null);
+        if (mountedRef.current) {
+          setReasonPrompt(null);
+        }
         router.refresh();
       });
     },
@@ -154,10 +171,13 @@ export function OtSlipsClient({
       startTransition(async () => {
         const result = await voidOtSlipAction(slipId);
         if (!result.ok) {
-          window.alert(result.error);
+          setActionError(result.error);
           return;
         }
-        setReasonPrompt(null);
+        setActionError(null);
+        if (mountedRef.current) {
+          setReasonPrompt(null);
+        }
         router.refresh();
       });
     },
@@ -169,6 +189,12 @@ export function OtSlipsClient({
       {error ? (
         <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
           {error}
+        </p>
+      ) : null}
+
+      {actionError ? (
+        <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
+          {actionError}
         </p>
       ) : null}
 
@@ -393,7 +419,8 @@ export function OtSlipsClient({
           onCancel={() => setReasonPrompt(null)}
           onConfirm={(reason) => {
             if (reasonPrompt.kind === "reject") {
-              handleReject(reasonPrompt.slipId, reason);
+              // reject path always provides a non-null trimmed reason.
+              handleReject(reasonPrompt.slipId, reason ?? "");
             } else {
               // Void action doesn't accept a reason; we just confirm intent.
               handleVoid(reasonPrompt.slipId);
@@ -500,7 +527,7 @@ interface ReasonPromptProps {
   kind: "reject" | "void";
   isPending: boolean;
   onCancel: () => void;
-  onConfirm: (reason: string) => void;
+  onConfirm: (reason: string | null) => void;
 }
 
 function ReasonPrompt({
@@ -538,7 +565,7 @@ function ReasonPrompt({
       return;
     }
     // Void doesn't carry a reason; this is just a confirmation step.
-    onConfirm("");
+    onConfirm(null);
   };
 
   const title = kind === "reject" ? "Reject OT slip" : "Void OT slip";
@@ -606,11 +633,7 @@ function ReasonPrompt({
             type="button"
             onClick={submit}
             disabled={isPending}
-            className={`min-h-[44px] flex-1 rounded-md px-4 py-2 text-sm font-bold text-white disabled:opacity-50 ${
-              kind === "reject"
-                ? "bg-rose-600 hover:bg-rose-700"
-                : "bg-rose-600 hover:bg-rose-700"
-            }`}
+            className="min-h-[44px] flex-1 rounded-md bg-rose-600 px-4 py-2 text-sm font-bold text-white hover:bg-rose-700 disabled:opacity-50"
           >
             {isPending
               ? "Working..."

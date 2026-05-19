@@ -48,7 +48,14 @@ export default async function OtSlipsPage({ searchParams }: PageProps) {
   const status: StatusFilter = STATUS_FILTERS.has(statusParam as StatusFilter)
     ? (statusParam as StatusFilter)
     : "all";
-  const employeeParam = sp.employee && sp.employee !== "all" ? sp.employee : "";
+  // Reject any non-UUID employee value before it reaches Postgres — otherwise
+  // .eq("employee_id", "garbage") raises 22P02.
+  const uuidRe =
+    /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+  const employeeParam =
+    sp.employee && sp.employee !== "all" && uuidRe.test(sp.employee)
+      ? sp.employee
+      : "";
   // Loose validation: must be 10-char YYYY-MM-DD. Anything else falls back to
   // the default, so a malformed query string can't blow up the page.
   const isoRe = /^\d{4}-\d{2}-\d{2}$/;

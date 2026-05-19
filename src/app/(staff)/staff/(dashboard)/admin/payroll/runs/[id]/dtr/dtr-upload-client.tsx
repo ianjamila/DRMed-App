@@ -132,6 +132,9 @@ export function DtrUploadClient({
   const [isParsing, startParseTransition] = useTransition();
   const [isCommitting, startCommitTransition] = useTransition();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // Mirrors `filename` so the parse transition can detect a stale race.
+  const filenameRef = useRef<string>("");
+  filenameRef.current = filename;
 
   // Stable "now" for relative timestamps so we don't tick on every render.
   const nowMs = useMemo(() => Date.now(), []);
@@ -146,6 +149,14 @@ export function DtrUploadClient({
       if (!file) {
         setCsvText("");
         setFilename("");
+        return;
+      }
+      // Cap CSV size before we ever read it into memory. 2 MB easily covers
+      // a month of biometric punches for our staff size.
+      if (file.size > 2 * 1024 * 1024) {
+        setCsvText("");
+        setFilename("");
+        setParseError("File is too large (max 2 MB).");
         return;
       }
       setFilename(file.name);
@@ -171,12 +182,21 @@ export function DtrUploadClient({
       setParseError("Pick a CSV file first.");
       return;
     }
+    // Snapshot the filename at dispatch time. If the user races a second file
+    // in before this transition resolves, we discard the stale result rather
+    // than committing the wrong import. filenameRef is mirrored on every
+    // render so it always reflects the latest picked file.
+    const dispatchedFilename = filename;
     startParseTransition(async () => {
       const result = await uploadDtrAction({
         period_id: run.period_id,
-        filename,
+        filename: dispatchedFilename,
         csv_text: csvText,
       });
+      if (dispatchedFilename !== filenameRef.current) {
+        // The picker changed mid-flight — drop this result silently.
+        return;
+      }
       if (!result.ok) {
         setParseError(result.error);
         return;
