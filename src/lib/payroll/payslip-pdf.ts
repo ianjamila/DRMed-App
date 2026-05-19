@@ -36,6 +36,14 @@ const PAGE_W = 595; // A4 portrait, points
 const PAGE_H = 842;
 const MARGIN = 30;
 
+// Two-column body geometry — shared by the earnings/deductions tables (T71)
+// and the YTD/Leave block (T72). Hoisted to module scope so both sections
+// line up visually on the same column grid.
+const COL_GAP = 20;
+const COL_W = (PAGE_W - 2 * MARGIN - COL_GAP) / 2;
+const LEFT_X = MARGIN;
+const RIGHT_X = MARGIN + COL_W + COL_GAP;
+
 // Hardcoded for now. Once `payroll_settings` (or equivalent) grows
 // `company_name` / `company_address` keys, swap these for a settings lookup
 // inside loadPayslipData().
@@ -630,12 +638,9 @@ function drawEmployeePeriodBlock(
 //
 // Two-column layout: earnings on the left, deductions on the right.
 // Page width 595 with 30pt margins and a 20pt gutter gives ~257.5pt per
-// column. Labels are GRAY, values are right-aligned in INK.
-
-const COL_GAP = 20;
-const COL_W = (PAGE_W - 2 * MARGIN - COL_GAP) / 2;
-const LEFT_X = MARGIN;
-const RIGHT_X = MARGIN + COL_W + COL_GAP;
+// column. Labels are GRAY, values are right-aligned in INK. The column
+// geometry constants (COL_GAP, COL_W, LEFT_X, RIGHT_X) live at module
+// scope so T72's YTD/Leave block shares the same grid.
 
 const SECTION_HEADER_SIZE = 11;
 const ROW_LABEL_SIZE = 9;
@@ -856,6 +861,349 @@ function drawEarningsAndDeductions(
 }
 
 // ---------------------------------------------------------------------------
+// Net-pay band (T72)
+// ---------------------------------------------------------------------------
+//
+// Full-width horizontal band drawn as a simulated navy→cyan gradient (pdf-lib
+// has no native gradient primitive — we approximate via thin vertical
+// rectangles with interpolated colors). White text on top: a "NET PAY" caption
+// and the prominent net-pay value on the left, contextual pay-date + payment
+// method + gross/deductions helper on the right.
+
+const NETPAY_BAND_H = 58;
+const NETPAY_GAP_BELOW = 18;
+const NETPAY_GRADIENT_STEPS = 60;
+// Start: NAVY (#284570). End: Tailwind cyan-500-ish (#06B6D4).
+const NETPAY_GRADIENT_START = { r: 0x28, g: 0x45, b: 0x70 } as const;
+const NETPAY_GRADIENT_END = { r: 0x06, g: 0xb6, b: 0xd4 } as const;
+
+function drawNetPayBlock(
+  ctx: DrawCtx,
+  data: PayslipData,
+  startY: number,
+): number /* next Y */ {
+  // Add a small gap above the band so it doesn't kiss the deductions total.
+  const bandTopY = startY - 10;
+  const bandBottomY = bandTopY - NETPAY_BAND_H;
+  const bandX = MARGIN;
+  const bandW = PAGE_W - 2 * MARGIN;
+  const stepW = bandW / NETPAY_GRADIENT_STEPS;
+
+  for (let i = 0; i < NETPAY_GRADIENT_STEPS; i++) {
+    const t = i / (NETPAY_GRADIENT_STEPS - 1);
+    const r = Math.round(
+      NETPAY_GRADIENT_START.r +
+        (NETPAY_GRADIENT_END.r - NETPAY_GRADIENT_START.r) * t,
+    );
+    const g = Math.round(
+      NETPAY_GRADIENT_START.g +
+        (NETPAY_GRADIENT_END.g - NETPAY_GRADIENT_START.g) * t,
+    );
+    const b = Math.round(
+      NETPAY_GRADIENT_START.b +
+        (NETPAY_GRADIENT_END.b - NETPAY_GRADIENT_START.b) * t,
+    );
+    ctx.page.drawRectangle({
+      x: bandX + i * stepW,
+      y: bandBottomY,
+      // Small overlap to hide hairline seams between steps.
+      width: stepW + 0.5,
+      height: NETPAY_BAND_H,
+      color: rgb(r / 255, g / 255, b / 255),
+    });
+  }
+
+  const white = rgb(1, 1, 1);
+  const innerPad = 16;
+
+  // Left side: small caption + big value.
+  drawText(ctx, "NET PAY", bandX + innerPad, bandTopY - 18, {
+    size: 9,
+    color: white,
+    bold: true,
+  });
+  const netStr = formatPeso(data.run.net_pay_php);
+  drawText(ctx, netStr, bandX + innerPad, bandTopY - 46, {
+    size: 24,
+    color: white,
+    bold: true,
+  });
+
+  // Right side: pay date + payment method + small gross/deductions helper.
+  // All right-aligned to the band's inner edge.
+  const rightEdge = bandX + bandW - innerPad;
+  const payDateLine = `Pay date: ${formatManilaDate(data.period.pay_date)}`;
+  const payDateSize = 9;
+  const payDateW = ctx.fontBold.widthOfTextAtSize(payDateLine, payDateSize);
+  drawText(ctx, payDateLine, rightEdge - payDateW, bandTopY - 18, {
+    size: payDateSize,
+    color: white,
+    bold: true,
+  });
+
+  const methodLine =
+    (data.run.payment_method_used ?? "pending").toUpperCase();
+  const methodSize = 11;
+  const methodW = ctx.fontBold.widthOfTextAtSize(methodLine, methodSize);
+  drawText(ctx, methodLine, rightEdge - methodW, bandTopY - 34, {
+    size: methodSize,
+    color: white,
+    bold: true,
+  });
+
+  // Helper: "Gross ₱X − Deductions ₱Y". Compute deductions as gross − net so
+  // it always reconciles, regardless of how individual deduction rows landed.
+  const totalDeductions = data.run.gross_pay_php - data.run.net_pay_php;
+  const helper = `Gross ${formatPeso(data.run.gross_pay_php)} − Deductions ${formatPeso(totalDeductions)}`;
+  const helperSize = 8;
+  const helperW = ctx.font.widthOfTextAtSize(helper, helperSize);
+  drawText(ctx, helper, rightEdge - helperW, bandTopY - 48, {
+    size: helperSize,
+    color: white,
+  });
+
+  return bandBottomY - NETPAY_GAP_BELOW;
+}
+
+// ---------------------------------------------------------------------------
+// YTD + Leave block (T72)
+// ---------------------------------------------------------------------------
+//
+// Two-column block sharing the same column grid as the earnings/deductions
+// tables above. Left = year-to-date totals through this period. Right = leave
+// balances as of period_end + a small attendance-this-period sub-block.
+
+function drawYtd(
+  ctx: DrawCtx,
+  data: PayslipData,
+  startY: number,
+): number /* next Y */ {
+  let y = startY;
+
+  drawText(ctx, "YEAR-TO-DATE TOTALS", LEFT_X, y, {
+    size: SECTION_HEADER_SIZE,
+    color: NAVY,
+    bold: true,
+  });
+  y -= ROW_LINE_H + 2;
+
+  y = drawRow(ctx, "YTD Gross pay", data.ytd.gross_pay_php, LEFT_X, y);
+  y = drawRow(ctx, "YTD Basic pay", data.ytd.basic_pay_php, LEFT_X, y);
+  y = drawRow(
+    ctx,
+    "YTD Overtime + night diff",
+    data.ytd.ot_pay_php + data.ytd.night_diff_pay_php,
+    LEFT_X,
+    y,
+  );
+  y = drawRow(ctx, "YTD Holiday pay", data.ytd.holiday_pay_php, LEFT_X, y);
+  y = drawRow(ctx, "YTD Incentives", data.ytd.incentives_total_php, LEFT_X, y);
+
+  // 13th-month YTD — only show when there's been a payout this year.
+  if (data.ytd.thirteenth_month_payout_php > 0) {
+    y = drawRow(
+      ctx,
+      "YTD 13th-month",
+      data.ytd.thirteenth_month_payout_php,
+      LEFT_X,
+      y,
+    );
+  }
+
+  y = drawRow(
+    ctx,
+    "YTD SSS + PhilHealth + Pag-IBIG",
+    data.ytd.sss_ee_php + data.ytd.philhealth_ee_php + data.ytd.pagibig_ee_php,
+    LEFT_X,
+    y,
+  );
+  y = drawRow(
+    ctx,
+    "YTD Withholding tax",
+    data.ytd.wt_compensation_php,
+    LEFT_X,
+    y,
+  );
+
+  // Thin divider above the YTD net-pay row.
+  const dividerY = y + ROW_LINE_H - 3;
+  ctx.page.drawLine({
+    start: { x: LEFT_X, y: dividerY },
+    end: { x: LEFT_X + COL_W, y: dividerY },
+    thickness: 0.5,
+    color: GRAY,
+  });
+  y -= 2;
+  y = drawRow(ctx, "YTD Net pay", data.ytd.net_pay_php, LEFT_X, y, {
+    bold: true,
+  });
+
+  return y;
+}
+
+function drawLeaveAndAttendance(
+  ctx: DrawCtx,
+  data: PayslipData,
+  startY: number,
+): number /* next Y */ {
+  let y = startY;
+
+  // Header — includes the as-of date so the reader knows the snapshot point.
+  drawText(
+    ctx,
+    `LEAVE BALANCES (as of ${formatManilaDate(data.period.period_end)})`,
+    RIGHT_X,
+    y,
+    { size: SECTION_HEADER_SIZE, color: NAVY, bold: true },
+  );
+  y -= ROW_LINE_H + 2;
+
+  // Leave balances are days, not pesos — reuse drawRow's two-column layout
+  // but format the right value as days manually rather than peso.
+  const drawDaysRow = (label: string, days: number, bold = false): number => {
+    drawText(ctx, label, RIGHT_X, y, {
+      size: ROW_LABEL_SIZE,
+      color: bold ? INK : GRAY,
+      bold,
+    });
+    const value = `${days.toFixed(2)} days`;
+    const valueFont = bold ? ctx.fontBold : ctx.font;
+    const valueW = valueFont.widthOfTextAtSize(value, ROW_VALUE_SIZE);
+    drawText(ctx, value, RIGHT_X + COL_W - valueW, y, {
+      size: ROW_VALUE_SIZE,
+      color: INK,
+      bold,
+    });
+    return y - ROW_LINE_H;
+  };
+
+  y = drawDaysRow("Vacation leave", data.leave.vl_balance);
+  y = drawDaysRow("Sick leave", data.leave.sl_balance);
+
+  // Attendance-this-period sub-block. Separated by a small gap and an italic-
+  // ish small-caps label so it reads as supporting context, not the headline.
+  y -= 6;
+  drawText(ctx, "ATTENDANCE THIS PERIOD", RIGHT_X, y, {
+    size: SUBSECTION_HEADER_SIZE,
+    color: GRAY,
+    bold: true,
+  });
+  y -= SUBSECTION_LINE_H;
+
+  const drawTextRow = (label: string, value: string): number => {
+    drawText(ctx, label, RIGHT_X, y, {
+      size: ROW_LABEL_SIZE,
+      color: GRAY,
+    });
+    const valueW = ctx.font.widthOfTextAtSize(value, ROW_VALUE_SIZE);
+    drawText(ctx, value, RIGHT_X + COL_W - valueW, y, {
+      size: ROW_VALUE_SIZE,
+      color: INK,
+    });
+    return y - ROW_LINE_H;
+  };
+
+  y = drawTextRow(
+    "Days worked",
+    `${data.run.days_present} of ${data.run.scheduled_days}`,
+  );
+  y = drawTextRow("Unpaid absence", `${data.run.days_unpaid_absent} d`);
+  y = drawTextRow(
+    "VL used / SL used",
+    `${data.run.days_vl_used} d / ${data.run.days_sl_used} d`,
+  );
+
+  return y;
+}
+
+function drawYtdAndLeave(
+  ctx: DrawCtx,
+  data: PayslipData,
+  startY: number,
+): number /* next Y */ {
+  const blockStartY = startY;
+  const leftAfterY = drawYtd(ctx, data, blockStartY);
+  const rightAfterY = drawLeaveAndAttendance(ctx, data, blockStartY);
+  return Math.min(leftAfterY, rightAfterY) - 6;
+}
+
+// ---------------------------------------------------------------------------
+// Signature block (T72)
+// ---------------------------------------------------------------------------
+//
+// Two horizontal signature lines side by side, pinned near the bottom of the
+// page so the printed payslip has a fixed signing footer. T73 will measure
+// section heights and break to a new page if YTD/Leave would overlap this
+// block — for now we just draw it at a fixed bottom Y and accept whitespace
+// or overlap as appropriate.
+
+const SIGNATURE_BOTTOM_Y = MARGIN + 70;
+const SIGNATURE_LINE_W = 220;
+const SIGNATURE_LINE_THICKNESS = 0.5;
+
+function drawSignatures(
+  ctx: DrawCtx,
+  data: PayslipData,
+): number /* next Y */ {
+  // Two columns, evenly spaced across the page body.
+  const lineY = SIGNATURE_BOTTOM_Y + 28;
+  const leftLineX = MARGIN + 10;
+  const rightLineX = PAGE_W - MARGIN - 10 - SIGNATURE_LINE_W;
+
+  // Draw the two signature rules.
+  ctx.page.drawLine({
+    start: { x: leftLineX, y: lineY },
+    end: { x: leftLineX + SIGNATURE_LINE_W, y: lineY },
+    thickness: SIGNATURE_LINE_THICKNESS,
+    color: INK,
+  });
+  ctx.page.drawLine({
+    start: { x: rightLineX, y: lineY },
+    end: { x: rightLineX + SIGNATURE_LINE_W, y: lineY },
+    thickness: SIGNATURE_LINE_THICKNESS,
+    color: INK,
+  });
+
+  // Captions below each line.
+  drawText(ctx, "Employee signature", leftLineX, lineY - 12, {
+    size: 8,
+    color: GRAY,
+    bold: true,
+  });
+  drawText(ctx, data.employee.full_name, leftLineX, lineY - 24, {
+    size: 9,
+    color: INK,
+  });
+  drawText(
+    ctx,
+    `Date: ${formatManilaDate(data.period.pay_date)}`,
+    leftLineX,
+    lineY - 36,
+    { size: 9, color: GRAY },
+  );
+
+  drawText(ctx, "Approved by — Cashier / Admin", rightLineX, lineY - 12, {
+    size: 8,
+    color: GRAY,
+    bold: true,
+  });
+  // Blank printed-name line — staff sign physically and write their name.
+  drawText(ctx, "Name & signature:", rightLineX, lineY - 24, {
+    size: 9,
+    color: INK,
+  });
+  drawText(
+    ctx,
+    `Date: ${formatManilaDate(data.period.pay_date)}`,
+    rightLineX,
+    lineY - 36,
+    { size: 9, color: GRAY },
+  );
+
+  return SIGNATURE_BOTTOM_Y;
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -864,9 +1212,10 @@ function drawEarningsAndDeductions(
  * rendered bytes as a Node Buffer. Caller (Server Action) is responsible for
  * uploading to storage + audit-logging the access.
  *
- * T70 ships the base: letterhead + employee/period block. T71-T73 will append
- * earnings/deductions tables, the net-pay block, YTD + leave block, and
- * pagination measurement.
+ * T70 shipped the base: letterhead + employee/period block. T71 added the
+ * earnings + deductions tables. T72 adds the net-pay band, YTD + leave block,
+ * and signature footer. T73 will measure section heights and break pages
+ * when content overflows.
  */
 export async function generatePayslipPdf(
   employee_run_id: string,
@@ -893,11 +1242,16 @@ export async function generatePayslipPdf(
 
   const afterLetterheadY = drawLetterhead(ctx, logoImg);
   const afterEmployeeY = drawEmployeePeriodBlock(ctx, data, afterLetterheadY);
-  drawEarningsAndDeductions(ctx, data, afterEmployeeY);
+  const afterTablesY = drawEarningsAndDeductions(ctx, data, afterEmployeeY);
+  const afterNetPayY = drawNetPayBlock(ctx, data, afterTablesY);
+  // YTD + leave block flows below the net-pay band. T73 will compare its
+  // ending Y against the signature band's fixed top edge and break to a new
+  // page if they would overlap.
+  drawYtdAndLeave(ctx, data, afterNetPayY);
+  drawSignatures(ctx, data);
 
-  // T72 will chain off drawEarningsAndDeductions' return value (afterTablesY)
-  // and append: drawNetPay + drawYtd + drawLeave + drawSignatures.
-  // T73 will measure section heights and break pages when cursorY < MARGIN.
+  // T73 will measure section heights and break pages when content overflows
+  // (e.g. long deduction-line lists pushing YTD/Leave into the signature band).
 
   const bytes = await pdfDoc.save();
   return Buffer.from(bytes);
