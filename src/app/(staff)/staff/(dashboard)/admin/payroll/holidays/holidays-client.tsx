@@ -422,20 +422,20 @@ function AddHolidayDrawer({
   };
 
   return (
-    <div
-      ref={dialogRef}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="add-holiday-title"
-      className="fixed inset-0 z-[60]"
-    >
+    <div className="fixed inset-0 z-[60]">
       <button
         type="button"
         aria-label="Close drawer"
         onClick={onClose}
         className="absolute inset-0 bg-[color:var(--color-brand-navy)]/40 backdrop-blur-[2px]"
       />
-      <div className="absolute right-0 top-0 flex h-full w-full max-w-md flex-col overflow-y-auto bg-white shadow-2xl">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="add-holiday-title"
+        className="absolute right-0 top-0 flex h-full w-full max-w-md flex-col overflow-y-auto bg-white shadow-2xl"
+      >
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[color:var(--color-brand-bg-mid)] bg-white px-5 py-4">
           <h2
             id="add-holiday-title"
