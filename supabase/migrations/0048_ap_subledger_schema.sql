@@ -225,3 +225,62 @@ create index idx_bill_attachments_bill        on public.bill_attachments (bill_i
 -- recurring_bill_templates: cron query hot path.
 create index idx_recurring_bill_templates_active_next_run
   on public.recurring_bill_templates (next_run_date) where is_active = true;
+
+-- ==========================================================================
+-- Section 4 — Row Level Security.
+-- ==========================================================================
+
+alter table public.vendors                    enable row level security;
+alter table public.bills                      enable row level security;
+alter table public.bill_lines                 enable row level security;
+alter table public.bill_payments              enable row level security;
+alter table public.bill_payment_allocations   enable row level security;
+alter table public.bill_attachments           enable row level security;
+alter table public.recurring_bill_templates   enable row level security;
+alter table public.bill_year_counters         enable row level security;
+alter table public.bill_payment_year_counters enable row level security;
+
+-- Admin-only policies on the 7 operational tables.
+create policy vendors_admin_all on public.vendors
+  for all using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
+
+create policy bills_admin_all on public.bills
+  for all using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
+
+create policy bill_lines_admin_all on public.bill_lines
+  for all using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
+
+create policy bill_payments_admin_all on public.bill_payments
+  for all using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
+
+create policy bill_payment_allocations_admin_all on public.bill_payment_allocations
+  for all using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
+
+create policy bill_attachments_admin_all on public.bill_attachments
+  for all using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
+
+create policy recurring_bill_templates_admin_all on public.recurring_bill_templates
+  for all using (public.has_role(array['admin'])) with check (public.has_role(array['admin']));
+
+-- Counters (bill_year_counters, bill_payment_year_counters): RLS enabled,
+-- no policy granted. Only SECURITY DEFINER trigger functions (owned by
+-- supabase_admin / postgres superuser) touch them. Admin never reads
+-- or writes directly.
+
+-- ==========================================================================
+-- Section 5 — Storage bucket for bill attachments.
+-- Path convention: bills/<bill_id>/<uuid>-<sanitized_filename>
+-- All access goes through service-role-issued signed URLs (5-minute TTL)
+-- from Server Actions. No bucket-level RLS policies (matches 0001 results
+-- bucket pattern).
+-- ==========================================================================
+
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'bill-attachments',
+  'bill-attachments',
+  false,
+  10485760,                                                          -- 10 MB
+  array['application/pdf','image/jpeg','image/png']
+)
+on conflict (id) do nothing;
