@@ -657,7 +657,7 @@ declare
   v_status text;
   v_line   jsonb;
 begin
-  select status into v_status from public.bills where id = p_bill_id;
+  select status into v_status from public.bills where id = p_bill_id for update;
 
   if v_status is null then
     raise exception 'Bill % not found', p_bill_id using errcode = 'P0002';
@@ -1065,3 +1065,87 @@ begin
   );
 end;
 $$;
+
+-- ==========================================================================
+-- Section 8 — Trigger wiring.
+-- Triggers are listed in dependency order. Constraint trigger is
+-- DEFERRABLE INITIALLY DEFERRED so it fires at transaction commit.
+-- ==========================================================================
+
+-- updated_at maintenance on the 4 tables with that column.
+create trigger trg_vendors_updated_at
+  before update on public.vendors
+  for each row execute function public.ap_set_updated_at();
+
+create trigger trg_bills_updated_at
+  before update on public.bills
+  for each row execute function public.ap_set_updated_at();
+
+create trigger trg_bill_payments_updated_at
+  before update on public.bill_payments
+  for each row execute function public.ap_set_updated_at();
+
+create trigger trg_recurring_bill_templates_updated_at
+  before update on public.recurring_bill_templates
+  for each row execute function public.ap_set_updated_at();
+
+-- BL-YYYY-NNNN / BP-YYYY-NNNN counter assignment.
+create trigger trg_bills_assign_number
+  before insert on public.bills
+  for each row execute function public.ap_assign_bill_number();
+
+create trigger trg_bill_payments_assign_number
+  before insert on public.bill_payments
+  for each row execute function public.ap_assign_payment_number();
+
+-- Gross recompute (gated to fire only when relevant columns change).
+create trigger trg_bill_lines_recompute_gross_ins
+  after insert on public.bill_lines
+  for each row execute function public.ap_recompute_bill_gross();
+
+create trigger trg_bill_lines_recompute_gross_upd
+  after update on public.bill_lines
+  for each row
+  when (old.amount_php is distinct from new.amount_php
+        or old.bill_id is distinct from new.bill_id
+        or old.account_id is distinct from new.account_id)
+  execute function public.ap_recompute_bill_gross();
+
+create trigger trg_bill_lines_recompute_gross_del
+  after delete on public.bill_lines
+  for each row execute function public.ap_recompute_bill_gross();
+
+-- Paid_amount + bidirectional status recompute (per-row).
+create trigger trg_allocations_recompute_paid
+  after insert or update or delete on public.bill_payment_allocations
+  for each row execute function public.ap_recompute_bill_paid_and_status();
+
+-- Void cascade from payment to allocations.
+create trigger trg_bill_payment_void_cascade
+  after update of voided_at on public.bill_payments
+  for each row execute function public.ap_bill_payment_void_cascade();
+
+-- Constraint trigger (deferred to commit) for allocation invariants P0014-P0017.
+create constraint trigger trg_validate_bill_payment_allocations
+  after insert or update or delete on public.bill_payment_allocations
+  deferrable initially deferred
+  for each row execute function public.ap_validate_bill_payment_allocations();
+
+-- P0013 guard: cannot void bill with active payments.
+create trigger trg_bills_void_guard
+  before update on public.bills
+  for each row
+  when (old.status is distinct from 'voided' and new.status = 'voided')
+  execute function public.ap_bill_void_guard();
+
+-- Bridge: bill_post fires on the draft → posted transition.
+create trigger trg_bill_post_bridge
+  after update on public.bills
+  for each row
+  when (old.status = 'draft' and new.status = 'posted')
+  execute function public.ap_bill_post_bridge();
+
+-- Bridge: bill_payment fires on INSERT.
+create trigger trg_bill_payment_bridge
+  after insert on public.bill_payments
+  for each row execute function public.ap_bill_payment_bridge();
