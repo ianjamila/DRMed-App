@@ -188,3 +188,40 @@ create table public.recurring_bill_templates (
 alter table public.bills
   add constraint bills_template_fk
   foreign key (template_id) references public.recurring_bill_templates(id) on delete set null;
+
+-- ==========================================================================
+-- Section 3 — Indexes.
+-- ==========================================================================
+
+-- vendors: case-insensitive uniqueness on name; partial unique on tin; trigram for search.
+create unique index vendors_lower_name_unique on public.vendors (lower(name));
+create unique index vendors_tin_unique        on public.vendors (tin) where tin is not null;
+create index idx_vendors_name_trgm            on public.vendors using gin (name gin_trgm_ops);
+create index idx_vendors_active               on public.vendors (is_active) where is_active = true;
+
+-- bills: aging queries hit (vendor_id, status, due_date); outstanding > 0 hot path is its own partial index.
+create index idx_bills_vendor_status_due      on public.bills (vendor_id, status, due_date);
+create index idx_bills_outstanding            on public.bills (outstanding_amount) where outstanding_amount > 0;
+create index idx_bills_status                 on public.bills (status);
+create index idx_bills_search_trgm            on public.bills using gin (vendor_invoice_number gin_trgm_ops, description gin_trgm_ops);
+create index idx_bills_template               on public.bills (template_id) where template_id is not null;
+create index idx_bills_bill_date              on public.bills (bill_date);
+
+-- bill_lines: by-account aggregation.
+create index idx_bill_lines_account           on public.bill_lines (account_id);
+
+-- bill_payments: filter views by vendor/method/date.
+create index idx_bill_payments_vendor         on public.bill_payments (vendor_id);
+create index idx_bill_payments_method         on public.bill_payments (method);
+create index idx_bill_payments_date           on public.bill_payments (payment_date);
+
+-- bill_payment_allocations: paid_amount denorm hot path.
+create index idx_bill_payment_allocations_bill_active
+  on public.bill_payment_allocations (bill_id) where voided_at is null;
+
+-- bill_attachments: list-by-bill.
+create index idx_bill_attachments_bill        on public.bill_attachments (bill_id);
+
+-- recurring_bill_templates: cron query hot path.
+create index idx_recurring_bill_templates_active_next_run
+  on public.recurring_bill_templates (next_run_date) where is_active = true;
