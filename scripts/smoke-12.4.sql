@@ -184,26 +184,31 @@ end $$;
 do $$
 declare v_vendor uuid; v_year int := extract(year from (now() at time zone 'Asia/Manila'))::int;
 declare v_bp_id uuid; v_cash uuid;
+declare v_bill1_num text; v_bill2_num text;
+declare v_bill1_seq int; v_bill2_seq int;
 begin
   -- Setup: seed a vendor + a cash account uuid.
   insert into public.vendors (name) values ('SMOKE-12.4-COUNTER-V1') returning id into v_vendor;
   select id into v_cash from public.chart_of_accounts where code='1010' limit 1;
 
-  -- A22: First bill in current year is BL-YYYY-0001
+  -- A22: Bill number follows BL-YYYY-NNNN pattern (counter may be > 1 after prior smoke runs).
   insert into public.bills (vendor_id, bill_date, due_date, description)
   values (v_vendor, current_date, current_date, 'smoke counter test 1');
 
-  assert (select bill_number from public.bills where description='smoke counter test 1')
-    = format('BL-%s-0001', v_year::text),
-    'A22: first bill_number not BL-YYYY-0001';
+  select bill_number into v_bill1_num from public.bills where description='smoke counter test 1';
+  assert v_bill1_num like 'BL-' || v_year::text || '-%',
+    'A22: first bill_number does not match BL-YYYY-NNNN pattern';
 
-  -- A23: Second increments
+  -- A23: Second bill increments by exactly 1.
   insert into public.bills (vendor_id, bill_date, due_date, description)
   values (v_vendor, current_date, current_date, 'smoke counter test 2');
 
-  assert (select bill_number from public.bills where description='smoke counter test 2')
-    = format('BL-%s-0002', v_year::text),
-    'A23: second bill_number not BL-YYYY-0002';
+  select bill_number into v_bill2_num from public.bills where description='smoke counter test 2';
+  -- Extract the sequence suffix (after the second '-') and compare.
+  v_bill1_seq := (split_part(v_bill1_num, '-', 3))::int;
+  v_bill2_seq := (split_part(v_bill2_num, '-', 3))::int;
+  assert v_bill2_seq = v_bill1_seq + 1,
+    format('A23: second bill seq (%s) not one more than first (%s)', v_bill2_seq, v_bill1_seq);
 
   -- A24: payment number assigned via trigger.
   insert into public.bill_payments (
@@ -254,7 +259,7 @@ declare
 begin
   -- Setup: vendor (no WT), find expense + AP CoA accounts.
   insert into public.vendors (name) values ('SMOKE-12.4-BRIDGE-V1') returning id into v_vendor;
-  select id into v_exp_acct from public.chart_of_accounts where code = '6510' limit 1;
+  select id into v_exp_acct from public.chart_of_accounts where code = '6400' limit 1;
   select id into v_ap_acct  from public.chart_of_accounts where code = '2100' limit 1;
 
   -- Post a bill with one line of ₱1000, no WT.
@@ -336,7 +341,7 @@ declare
   v_bill_dt   date := current_date;
 begin
   insert into public.vendors (name) values ('SMOKE-12.4-BRIDGE-V2') returning id into v_vendor;
-  select id into v_exp_acct from public.chart_of_accounts where code = '6510' limit 1;
+  select id into v_exp_acct from public.chart_of_accounts where code = '6400' limit 1;
   select id into v_wt_acct  from public.chart_of_accounts where code = '2340' limit 1;
   select id into v_ap_acct  from public.chart_of_accounts where code = '2100' limit 1;
 
@@ -416,7 +421,7 @@ declare
   v_bill_dt     date := current_date;
 begin
   insert into public.vendors (name) values ('SMOKE-12.4-PAY-V1') returning id into v_vendor;
-  select id into v_exp_acct  from public.chart_of_accounts where code = '6510' limit 1;
+  select id into v_exp_acct  from public.chart_of_accounts where code = '6400' limit 1;
   select id into v_cash_acct from public.chart_of_accounts where code = '1010' limit 1;
   select id into v_ap_acct   from public.chart_of_accounts where code = '2100' limit 1;
 
@@ -522,7 +527,7 @@ declare
   v_rev_je      uuid;
 begin
   insert into public.vendors (name) values ('SMOKE-12.4-ALLOC-V1') returning id into v_vendor;
-  select id into v_exp_acct  from public.chart_of_accounts where code = '6510' limit 1;
+  select id into v_exp_acct  from public.chart_of_accounts where code = '6400' limit 1;
   select id into v_cash_acct from public.chart_of_accounts where code = '1010' limit 1;
 
   -- Create two posted bills (1000 + 500).
@@ -616,7 +621,12 @@ begin
                where source_kind = 'bill_payment' and source_id = v_payment_id))
     );
 
-  -- Delete reversal first (has FK to bill_payment JE via reverses column).
+  -- Null out reversed_by on original bill_payment JE before deleting reversal
+  -- (reversed_by FK points to the reversal JE; must clear it first).
+  update public.journal_entries set reversed_by = null
+    where source_kind = 'bill_payment' and source_id = v_payment_id;
+
+  -- Now delete reversal (references original via reverses column; that FK is OK).
   delete from public.journal_entries
     where source_kind = 'reversal'
       and reverses in (
@@ -649,7 +659,7 @@ declare
   v_bill_dt  date := current_date;
 begin
   insert into public.vendors (name) values ('SMOKE-12.4-IDEM-V1') returning id into v_vendor;
-  select id into v_exp_acct from public.chart_of_accounts where code = '6510' limit 1;
+  select id into v_exp_acct from public.chart_of_accounts where code = '6400' limit 1;
 
   v_bill_id := (public.ap_create_bill_and_post(
     jsonb_build_object(
@@ -706,7 +716,7 @@ declare
   v_je_payment uuid;
 begin
   insert into public.vendors (name) values ('SMOKE-12.4-GUARD-A46') returning id into v_vendor;
-  select id into v_exp_acct  from public.chart_of_accounts where code = '6510' limit 1;
+  select id into v_exp_acct  from public.chart_of_accounts where code = '6400' limit 1;
   select id into v_cash_acct from public.chart_of_accounts where code = '1010' limit 1;
 
   v_bill_id := (public.ap_create_bill_and_post(
@@ -816,7 +826,7 @@ declare
   v_bill_dt     date := current_date;
 begin
   insert into public.vendors (name) values ('SMOKE-12.4-POE-V1') returning id into v_vendor;
-  select id into v_exp_acct  from public.chart_of_accounts where code = '6510' limit 1;
+  select id into v_exp_acct  from public.chart_of_accounts where code = '6400' limit 1;
   select id into v_cash_acct from public.chart_of_accounts where code = '1010' limit 1;
 
   -- Call ap_create_bill_paid_on_entry.
@@ -889,7 +899,7 @@ declare
   v_bill_dt      date := current_date;
 begin
   insert into public.vendors (name) values ('SMOKE-12.4-VOID-V1') returning id into v_vendor;
-  select id into v_exp_acct from public.chart_of_accounts where code = '6510' limit 1;
+  select id into v_exp_acct from public.chart_of_accounts where code = '6400' limit 1;
 
   -- Create a posted bill (no payment).
   v_bill_id := (public.ap_create_bill_and_post(
@@ -959,7 +969,7 @@ declare
   v_att_cnt  int;
 begin
   insert into public.vendors (name) values ('SMOKE-12.4-CASCADE-V1') returning id into v_vendor;
-  select id into v_exp_acct from public.chart_of_accounts where code = '6510' limit 1;
+  select id into v_exp_acct from public.chart_of_accounts where code = '6400' limit 1;
 
   -- Create a draft bill with 2 lines.
   v_bill_id := (public.ap_create_bill_draft(
@@ -1029,7 +1039,7 @@ declare
   v_audit_cnt   int;
 begin
   insert into public.vendors (name) values ('SMOKE-12.4-RECUR-V1') returning id into v_vendor;
-  select id into v_exp_acct from public.chart_of_accounts where code = '6510' limit 1;
+  select id into v_exp_acct from public.chart_of_accounts where code = '6400' limit 1;
 
   -- Create a recurring template with next_run_date = today.
   insert into public.recurring_bill_templates (
@@ -1203,7 +1213,7 @@ declare
   v_bill_dt date := current_date;
 begin
   insert into public.vendors (name) values ('SMOKE-12.4-AUDIT-A68') returning id into v_vendor;
-  select id into v_exp_acct from public.chart_of_accounts where code = '6510' limit 1;
+  select id into v_exp_acct from public.chart_of_accounts where code = '6400' limit 1;
 
   v_bill_id := (public.ap_create_bill_draft(
     jsonb_build_object(
@@ -1238,7 +1248,7 @@ declare
   v_bill_dt  date := current_date;
 begin
   insert into public.vendors (name) values ('SMOKE-12.4-AUDIT-A69') returning id into v_vendor;
-  select id into v_exp_acct from public.chart_of_accounts where code = '6510' limit 1;
+  select id into v_exp_acct from public.chart_of_accounts where code = '6400' limit 1;
 
   v_bill_id := (public.ap_create_bill_and_post(
     jsonb_build_object(
@@ -1283,7 +1293,7 @@ declare
   v_bill_dt     date := current_date;
 begin
   insert into public.vendors (name) values ('SMOKE-12.4-AUDIT-A70') returning id into v_vendor;
-  select id into v_exp_acct  from public.chart_of_accounts where code = '6510' limit 1;
+  select id into v_exp_acct  from public.chart_of_accounts where code = '6400' limit 1;
   select id into v_cash_acct from public.chart_of_accounts where code = '1010' limit 1;
 
   v_result := public.ap_create_bill_paid_on_entry(
@@ -1344,7 +1354,7 @@ declare
   v_bill_dt     date := current_date;
 begin
   insert into public.vendors (name) values ('SMOKE-12.4-AUDIT-A71') returning id into v_vendor;
-  select id into v_exp_acct  from public.chart_of_accounts where code = '6510' limit 1;
+  select id into v_exp_acct  from public.chart_of_accounts where code = '6400' limit 1;
   select id into v_cash_acct from public.chart_of_accounts where code = '1010' limit 1;
 
   v_bill_id := (public.ap_create_bill_and_post(
@@ -1391,12 +1401,13 @@ begin
          or (source_kind = 'bill_payment' and source_id = v_payment_id)
          or (source_kind = 'bill_post'    and source_id = v_bill_id));
 
-  -- Delete reversal (which references original via reverses) first.
-  delete from public.journal_entries where id = v_rev_je_id;
-
-  -- Null out reversed_by on original bill_payment JE, then delete it.
+  -- Null out reversed_by on original bill_payment JE before deleting reversal
+  -- (reversed_by FK points to the reversal JE; must clear it first).
   update public.journal_entries set reversed_by = null
     where source_kind = 'bill_payment' and source_id = v_payment_id;
+
+  -- Now delete reversal (which references original via reverses; that FK is OK after above).
+  delete from public.journal_entries where id = v_rev_je_id;
 
   delete from public.journal_entries
     where source_kind in ('bill_payment','bill_post')
@@ -1420,7 +1431,7 @@ declare
   v_today       date := (now() at time zone 'Asia/Manila')::date;
 begin
   insert into public.vendors (name) values ('SMOKE-12.4-AUDIT-A72') returning id into v_vendor;
-  select id into v_exp_acct from public.chart_of_accounts where code = '6510' limit 1;
+  select id into v_exp_acct from public.chart_of_accounts where code = '6400' limit 1;
 
   insert into public.recurring_bill_templates (
     vendor_id, description, cadence, due_day_of_month,
