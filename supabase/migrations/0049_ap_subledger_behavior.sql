@@ -328,3 +328,198 @@ begin
   return new;
 end;
 $$;
+
+-- ==========================================================================
+-- Section 6 — Bridge trigger functions
+-- (post balanced JEs to journal_entries / journal_lines).
+-- ==========================================================================
+
+-- Posts the bill_post JE when bills.status transitions draft → posted.
+-- One DR per bill_line, one CR on 2340 (if wt > 0), one CR on 2100 for net.
+create or replace function public.ap_bill_post_bridge()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_je_id        uuid;
+  v_vendor_name  text;
+  v_ap_acct      uuid;
+  v_wt_acct      uuid;
+  v_line_order   int := 1;
+  v_line         record;
+begin
+  -- Resolve vendor name + the two fixed CoA accounts.
+  select name into v_vendor_name from public.vendors where id = new.vendor_id;
+  select public.coa_uuid_for_code('2100') into v_ap_acct;
+  if new.wt_amount > 0 then
+    select public.coa_uuid_for_code('2340') into v_wt_acct;
+  end if;
+
+  -- Insert JE header as draft. entry_number auto-assigned by trigger.
+  insert into public.journal_entries (
+    posting_date, description, status, source_kind, source_id, created_by
+  ) values (
+    new.bill_date,
+    format('Bill %s — %s — %s', new.bill_number, v_vendor_name, coalesce(new.description, '')),
+    'draft',
+    'bill_post',
+    new.id,
+    new.posted_by
+  ) returning id into v_je_id;
+
+  -- DR lines (one per bill_line, in line_no order).
+  for v_line in
+    select line_no, amount_php, account_id, description
+      from public.bill_lines
+      where bill_id = new.id
+      order by line_no
+  loop
+    insert into public.journal_lines (
+      entry_id, line_order, account_id, debit_php, credit_php, description
+    ) values (
+      v_je_id, v_line_order, v_line.account_id, v_line.amount_php, 0,
+      coalesce(v_line.description, format('Bill line %s', v_line.line_no))
+    );
+    v_line_order := v_line_order + 1;
+  end loop;
+
+  -- CR 2340 for WT (if applicable).
+  if new.wt_amount > 0 then
+    insert into public.journal_lines (
+      entry_id, line_order, account_id, debit_php, credit_php, description
+    ) values (
+      v_je_id, v_line_order, v_wt_acct, 0, new.wt_amount,
+      format('WT %s (%s)', new.wt_rate, coalesce(new.wt_classification, ''))
+    );
+    v_line_order := v_line_order + 1;
+  end if;
+
+  -- CR 2100 for net_payable.
+  insert into public.journal_lines (
+    entry_id, line_order, account_id, debit_php, credit_php, description
+  ) values (
+    v_je_id, v_line_order, v_ap_acct, 0, new.net_payable, 'AP — Trade'
+  );
+
+  -- Flip JE to posted (triggers balance check + closed-period check).
+  update public.journal_entries set status = 'posted' where id = v_je_id;
+
+  return new;
+end;
+$$;
+
+-- Posts the bill_payment JE when a bill_payment is inserted.
+-- DR 2100 AP — Trade, CR cash_account_id.
+create or replace function public.ap_bill_payment_bridge()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_je_id        uuid;
+  v_vendor_name  text;
+  v_ap_acct      uuid;
+  v_method_ref   text;
+begin
+  select name into v_vendor_name from public.vendors where id = new.vendor_id;
+  select public.coa_uuid_for_code('2100') into v_ap_acct;
+
+  v_method_ref := case
+    when new.method = 'cheque' then format('Cheque #%s', new.cheque_number)
+    when new.reference is not null and new.reference <> ''
+      then format('%s #%s', new.method, new.reference)
+    else new.method
+  end;
+
+  insert into public.journal_entries (
+    posting_date, description, status, source_kind, source_id, created_by
+  ) values (
+    new.payment_date,
+    format('Payment %s — %s — %s', new.payment_number, v_vendor_name, v_method_ref),
+    'draft',
+    'bill_payment',
+    new.id,
+    new.created_by
+  ) returning id into v_je_id;
+
+  insert into public.journal_lines (
+    entry_id, line_order, account_id, debit_php, credit_php, description
+  ) values
+    (v_je_id, 1, v_ap_acct, new.amount_php, 0, 'AP — Trade'),
+    (v_je_id, 2, new.cash_account_id, 0, new.amount_php, v_method_ref);
+
+  update public.journal_entries set status = 'posted' where id = v_je_id;
+
+  return new;
+end;
+$$;
+
+-- Helper: post a reversal JE for an existing posted bridge JE.
+-- Called from the void PG functions in T12-T14 (ap_void_bill_with_guard,
+-- ap_void_bill_payment_cascade). Returns the reversal JE id.
+create or replace function public.ap_reverse_je_for_source(
+  p_source_kind text,
+  p_source_id   uuid,
+  p_actor_id    uuid
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_orig_je_id   uuid;
+  v_orig_number  text;
+  v_orig_desc    text;
+  v_rev_je_id    uuid;
+begin
+  -- Find the original posted JE for this source.
+  select id, entry_number, description
+    into v_orig_je_id, v_orig_number, v_orig_desc
+  from public.journal_entries
+  where source_kind = p_source_kind::public.je_source_kind
+    and source_id = p_source_id
+    and status = 'posted'
+  for update;
+
+  if v_orig_je_id is null then
+    raise exception 'No posted JE found for source % (%)',
+      p_source_kind, p_source_id;
+  end if;
+
+  -- Insert reversal header as draft. source_id is null on reversals;
+  -- linkage is via the reverses column.
+  insert into public.journal_entries (
+    posting_date, description, status, source_kind, source_id, reverses, created_by
+  ) values (
+    (now() at time zone 'Asia/Manila')::date,
+    format('Reversal of %s: %s', v_orig_number, v_orig_desc),
+    'draft',
+    'reversal',
+    null,
+    v_orig_je_id,
+    p_actor_id
+  ) returning id into v_rev_je_id;
+
+  -- Mirror original lines with debit/credit swapped.
+  insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order, description)
+  select v_rev_je_id, account_id, credit_php, debit_php, line_order,
+         format('REV: %s', coalesce(description, ''))
+    from public.journal_lines
+    where entry_id = v_orig_je_id
+    order by line_order;
+
+  -- Flip reversal to posted (validates balance).
+  update public.journal_entries set status = 'posted' where id = v_rev_je_id;
+
+  -- Flip original to reversed, link reversal back.
+  update public.journal_entries
+    set status = 'reversed', reversed_by = v_rev_je_id
+    where id = v_orig_je_id;
+
+  return v_rev_je_id;
+end;
+$$;
