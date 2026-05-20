@@ -883,3 +883,185 @@ begin
   return jsonb_build_object('payment_id', p_payment_id);
 end;
 $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 7 (final): void + cron atomic-op functions
+-- ---------------------------------------------------------------------------
+
+-- Void a payment: post reversal JE + mark voided_at on payment.
+-- The T8 cascade trigger then soft-marks allocations as voided.
+-- The recompute trigger then bidirectionally flips affected bills' status.
+-- Idempotent on already-voided payments.
+create or replace function public.ap_void_bill_payment_cascade(
+  p_payment_id uuid,
+  p_reason     text,
+  p_actor_id   uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_already_voided timestamptz;
+  v_reversal_je    uuid;
+begin
+  -- Idempotency: lock + check.
+  select voided_at into v_already_voided
+    from public.bill_payments
+    where id = p_payment_id
+    for update;
+
+  if not found then
+    raise exception 'Payment % not found', p_payment_id using errcode = 'P0002';
+  end if;
+
+  if v_already_voided is not null then
+    return jsonb_build_object('payment_id', p_payment_id, 'already_voided', true);
+  end if;
+
+  -- Post the reversal JE for the bill_payment source.
+  v_reversal_je := public.ap_reverse_je_for_source('bill_payment', p_payment_id, p_actor_id);
+
+  -- Mark payment voided. The T8 trigger cascades to allocations;
+  -- the recompute trigger then re-evaluates affected bills' status.
+  update public.bill_payments
+    set voided_at = now(), voided_by = p_actor_id, void_reason = p_reason
+    where id = p_payment_id and voided_at is null;
+
+  insert into public.audit_log (actor_id, actor_type, action, resource_type, resource_id, metadata)
+  values (p_actor_id, 'staff', 'bill_payment.voided', 'bill_payment', p_payment_id,
+          jsonb_build_object('reason', p_reason, 'reversal_je_id', v_reversal_je));
+
+  return jsonb_build_object('payment_id', p_payment_id, 'reversal_je_id', v_reversal_je);
+end;
+$$;
+
+-- Void a posted bill. Raises P0013 (via the bills BEFORE-UPDATE guard
+-- trigger from T10) if active payments exist; admin must void payments
+-- first. Idempotent.
+create or replace function public.ap_void_bill_with_guard(
+  p_bill_id  uuid,
+  p_reason   text,
+  p_actor_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_status      text;
+  v_reversal_je uuid;
+begin
+  select status into v_status
+    from public.bills
+    where id = p_bill_id
+    for update;
+
+  if not found then
+    raise exception 'Bill % not found', p_bill_id using errcode = 'P0002';
+  end if;
+
+  if v_status = 'voided' then
+    return jsonb_build_object('bill_id', p_bill_id, 'already_voided', true);
+  end if;
+
+  if v_status = 'draft' then
+    raise exception 'Cannot void a draft bill; delete it instead'
+      using errcode = 'P0002';
+  end if;
+
+  -- Post the reversal JE for the bill_post source.
+  v_reversal_je := public.ap_reverse_je_for_source('bill_post', p_bill_id, p_actor_id);
+
+  -- Flip status. The T10 P0013 guard fires here if active payments exist
+  -- (this raises before this update commits, abort the whole transaction
+  -- and rolling back the reversal JE inserted above).
+  update public.bills
+    set status = 'voided', voided_at = now(), voided_by = p_actor_id, void_reason = p_reason
+    where id = p_bill_id;
+
+  insert into public.audit_log (actor_id, actor_type, action, resource_type, resource_id, metadata)
+  values (p_actor_id, 'staff', 'bill.voided', 'bill', p_bill_id,
+          jsonb_build_object('reason', p_reason, 'reversal_je_id', v_reversal_je));
+
+  return jsonb_build_object('bill_id', p_bill_id, 'reversal_je_id', v_reversal_je);
+end;
+$$;
+
+-- Cron-invoked: create a draft bill from a template if it's due.
+-- Atomic: bill + line + audit + next_run_date advance all in one tx.
+-- Returns {skipped: true} if not yet due (cron should exit its loop on this).
+create or replace function public.ap_post_recurring_template(
+  p_template_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_template  record;
+  v_bill_id   uuid;
+  v_bill_date date;
+  v_today     date := (now() at time zone 'Asia/Manila')::date;
+begin
+  select * into v_template
+    from public.recurring_bill_templates
+    where id = p_template_id and is_active = true
+    for update;
+
+  if not found then
+    raise exception 'Template % not found or inactive', p_template_id
+      using errcode = 'P0002';
+  end if;
+
+  if v_template.next_run_date > v_today then
+    return jsonb_build_object('skipped', true, 'reason', 'not yet due');
+  end if;
+
+  v_bill_date := v_template.next_run_date + v_template.bill_date_offset_days;
+
+  -- Create draft bill (vendor + dates + WT defaults from template).
+  insert into public.bills (
+    vendor_id, bill_date, due_date, description,
+    wt_classification, wt_rate, wt_exempt, template_id,
+    created_by, updated_by
+  ) values (
+    v_template.vendor_id,
+    v_bill_date,
+    v_template.next_run_date,
+    v_template.description,
+    v_template.default_wt_classification,
+    v_template.default_wt_rate,
+    v_template.default_wt_exempt,
+    v_template.id,
+    null, null    -- system-created via cron; no staff actor
+  ) returning id into v_bill_id;
+
+  -- Single line (templates are single-line in v1).
+  insert into public.bill_lines (bill_id, line_no, description, amount_php, account_id)
+  values (
+    v_bill_id, 1, v_template.description,
+    coalesce(v_template.amount_php, 0),    -- 0 if variable; admin fills in later
+    v_template.default_account_id
+  );
+
+  -- Advance next_run_date by one month.
+  update public.recurring_bill_templates
+    set next_run_date = (next_run_date + interval '1 month')::date,
+        updated_at = now()
+    where id = p_template_id;
+
+  -- System-actor audit row (no staff actor_id; actor_type = 'system').
+  insert into public.audit_log (actor_id, actor_type, action, resource_type, resource_id, metadata)
+  values (null, 'system', 'recurring_template.fired', 'recurring_bill_template', p_template_id,
+          jsonb_build_object('bill_id', v_bill_id, 'run_date', v_today));
+
+  return jsonb_build_object(
+    'bill_id', v_bill_id,
+    'next_run_date', (v_template.next_run_date + interval '1 month')::date
+  );
+end;
+$$;
