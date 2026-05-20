@@ -291,3 +291,40 @@ begin
   return null;
 end;
 $$;
+
+-- ==========================================================================
+-- Section 5 — Guard trigger (P0013).
+-- Wired in T15 as BEFORE UPDATE ON bills
+--   WHEN (old.status is distinct from 'voided' and new.status = 'voided').
+-- ==========================================================================
+
+-- P0013: a bill being voided must have no active (non-voided) payments
+-- allocated to it. Forces admin to void payments first, preserving the
+-- audit trail. Active = allocation.voided_at IS NULL AND parent
+-- bill_payment.voided_at IS NULL.
+create or replace function public.ap_bill_void_guard()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_active_count int;
+begin
+  select count(*)
+    into v_active_count
+  from public.bill_payment_allocations a
+  join public.bill_payments p on p.id = a.payment_id
+  where a.bill_id = new.id
+    and a.voided_at is null
+    and p.voided_at is null;
+
+  if v_active_count > 0 then
+    raise exception 'Bill % has % active payment(s); void payments first.',
+      new.bill_number, v_active_count
+      using errcode = 'P0013';
+  end if;
+
+  return new;
+end;
+$$;
