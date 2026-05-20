@@ -169,3 +169,27 @@ begin
   return null;
 end;
 $$;
+
+-- ==========================================================================
+-- Section 3 — Cascade triggers.
+-- ==========================================================================
+
+-- When a bill_payment is marked voided, soft-mark its allocations as voided.
+-- The recompute trigger on allocations then re-evaluates affected bills,
+-- bidirectionally flipping their status (paid → partially_paid → posted).
+-- Fires AFTER UPDATE OF voided_at ON bill_payments (wired in T15).
+create or replace function public.ap_bill_payment_void_cascade()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if old.voided_at is null and new.voided_at is not null then
+    update public.bill_payment_allocations
+    set voided_at = new.voided_at
+    where payment_id = new.id and voided_at is null;
+  end if;
+  return new;
+end;
+$$;
