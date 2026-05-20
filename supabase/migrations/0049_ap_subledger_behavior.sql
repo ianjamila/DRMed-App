@@ -702,3 +702,184 @@ begin
   return jsonb_build_object('bill_id', p_bill_id);
 end;
 $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 7 (cont.) — payment-flow atomic ops
+-- ---------------------------------------------------------------------------
+
+-- Create + post + pay-in-full + single allocation, all atomic.
+-- p_input shape: bill fields (vendor_id, vendor_invoice_number, bill_date, due_date,
+--                description, wt_classification, wt_rate, wt_exempt, lines)
+--              + payment fields (vendor_id [redundant; pull from bill], payment_date,
+--                method, cash_account_id, reference, cheque_number, cheque_date)
+create or replace function public.ap_create_bill_paid_on_entry(
+  p_input    jsonb,
+  p_actor_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_bill_id      uuid;
+  v_payment_id   uuid;
+  v_request_id   uuid := gen_random_uuid();
+  v_net_payable  numeric(12,2);
+begin
+  -- Step 1-4: bill draft + lines + wt_amount compute + status='posted'.
+  v_bill_id := (public.ap_create_bill_and_post(p_input, p_actor_id)->>'bill_id')::uuid;
+
+  -- Read the now-frozen net_payable.
+  select net_payable into v_net_payable from public.bills where id = v_bill_id;
+
+  -- Step 5: create payment (fires ap_bill_payment_bridge when T15 lands).
+  insert into public.bill_payments (
+    vendor_id, payment_date, method, cash_account_id, amount_php,
+    reference, cheque_number, cheque_date, created_by, updated_by
+  ) values (
+    (p_input->>'vendor_id')::uuid,
+    (p_input->>'payment_date')::date,
+    p_input->>'method',
+    (p_input->>'cash_account_id')::uuid,
+    v_net_payable,
+    p_input->>'reference',
+    p_input->>'cheque_number',
+    nullif(p_input->>'cheque_date', '')::date,
+    p_actor_id, p_actor_id
+  ) returning id into v_payment_id;
+
+  -- Step 6: single allocation for full net_payable.
+  -- Recompute trigger fires; status flips to 'paid'.
+  -- Deferred constraint trigger validates sum invariants at transaction commit.
+  insert into public.bill_payment_allocations (payment_id, bill_id, allocated_amount)
+  values (v_payment_id, v_bill_id, v_net_payable);
+
+  insert into public.audit_log (actor_id, actor_type, action, resource_type, resource_id, metadata)
+  values (p_actor_id, 'staff', 'bill_payment.created', 'bill_payment', v_payment_id,
+    jsonb_build_object(
+      'request_id', v_request_id,
+      'paid_on_entry', true,
+      'allocations', jsonb_build_array(jsonb_build_object('bill_id', v_bill_id, 'amount', v_net_payable))
+    ));
+
+  return jsonb_build_object('bill_id', v_bill_id, 'payment_id', v_payment_id);
+end;
+$$;
+
+-- Create a payment + allocations atomically. The deferred constraint
+-- trigger ap_validate_bill_payment_allocations enforces P0014-P0017
+-- at transaction commit.
+-- p_input shape:
+--   { vendor_id, payment_date, method, cash_account_id, amount_php,
+--     reference, cheque_number, cheque_date,
+--     allocations: [{ bill_id, allocated_amount }, ...] }
+create or replace function public.ap_create_bill_payment_with_allocations(
+  p_input    jsonb,
+  p_actor_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_payment_id uuid;
+  v_alloc      jsonb;
+begin
+  insert into public.bill_payments (
+    vendor_id, payment_date, method, cash_account_id, amount_php,
+    reference, cheque_number, cheque_date, created_by, updated_by
+  ) values (
+    (p_input->>'vendor_id')::uuid,
+    (p_input->>'payment_date')::date,
+    p_input->>'method',
+    (p_input->>'cash_account_id')::uuid,
+    (p_input->>'amount_php')::numeric(12,2),
+    p_input->>'reference',
+    p_input->>'cheque_number',
+    nullif(p_input->>'cheque_date', '')::date,
+    p_actor_id, p_actor_id
+  ) returning id into v_payment_id;
+
+  for v_alloc in select * from jsonb_array_elements(p_input->'allocations')
+  loop
+    insert into public.bill_payment_allocations (
+      payment_id, bill_id, allocated_amount
+    ) values (
+      v_payment_id,
+      (v_alloc->>'bill_id')::uuid,
+      (v_alloc->>'allocated_amount')::numeric(12,2)
+    );
+  end loop;
+
+  insert into public.audit_log (actor_id, actor_type, action, resource_type, resource_id, metadata)
+  values (p_actor_id, 'staff', 'bill_payment.created', 'bill_payment', v_payment_id,
+          jsonb_build_object('allocations', p_input->'allocations'));
+
+  return jsonb_build_object('payment_id', v_payment_id);
+end;
+$$;
+
+-- Reallocate a non-voided payment's allocations.
+-- Atomic delete-then-insert; deferred trigger validates sum invariants
+-- at commit. Bills' status flips bidirectionally via the recompute
+-- trigger as allocations come and go.
+create or replace function public.ap_reallocate_bill_payment(
+  p_payment_id  uuid,
+  p_allocations jsonb,
+  p_actor_id    uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_voided_at  timestamptz;
+  v_old        jsonb;
+  v_alloc      jsonb;
+begin
+  select voided_at into v_voided_at
+    from public.bill_payments
+    where id = p_payment_id
+    for update;
+
+  if not found then
+    raise exception 'Payment % not found', p_payment_id using errcode = 'P0002';
+  end if;
+  if v_voided_at is not null then
+    raise exception 'Cannot reallocate a voided payment' using errcode = 'P0004';
+  end if;
+
+  -- Snapshot old allocations for audit metadata.
+  select jsonb_agg(jsonb_build_object('bill_id', bill_id, 'allocated_amount', allocated_amount))
+    into v_old
+    from public.bill_payment_allocations
+    where payment_id = p_payment_id and voided_at is null;
+
+  -- DELETE existing active allocations (recompute trigger fires per row).
+  delete from public.bill_payment_allocations
+    where payment_id = p_payment_id and voided_at is null;
+
+  -- INSERT new allocations (recompute trigger fires per row again).
+  for v_alloc in select * from jsonb_array_elements(p_allocations)
+  loop
+    insert into public.bill_payment_allocations (
+      payment_id, bill_id, allocated_amount
+    ) values (
+      p_payment_id,
+      (v_alloc->>'bill_id')::uuid,
+      (v_alloc->>'allocated_amount')::numeric(12,2)
+    );
+  end loop;
+
+  -- At transaction commit, deferred trigger validates P0014-P0017.
+
+  insert into public.audit_log (actor_id, actor_type, action, resource_type, resource_id, metadata)
+  values (p_actor_id, 'staff', 'bill_payment.reallocated', 'bill_payment', p_payment_id,
+          jsonb_build_object('before', v_old, 'after', p_allocations));
+
+  return jsonb_build_object('payment_id', p_payment_id);
+end;
+$$;
