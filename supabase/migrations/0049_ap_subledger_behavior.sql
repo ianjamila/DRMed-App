@@ -523,3 +523,182 @@ begin
   return v_rev_je_id;
 end;
 $$;
+
+-- ==========================================================================
+-- Section 7 — Atomic-op PG functions for bill lifecycle.
+-- All take p_actor_id (staff_profiles.id) for audit context. All return jsonb.
+-- ==========================================================================
+
+-- Insert a draft bill + its lines atomically.
+-- p_input shape:
+--   { vendor_id, vendor_invoice_number, bill_date, due_date, description,
+--     wt_classification, wt_rate, wt_exempt,
+--     lines: [{ line_no, description, amount_php, account_id }, ...] }
+create or replace function public.ap_create_bill_draft(
+  p_input    jsonb,
+  p_actor_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_bill_id uuid;
+  v_line    jsonb;
+begin
+  insert into public.bills (
+    vendor_id, vendor_invoice_number, bill_date, due_date, description,
+    wt_classification, wt_rate, wt_exempt,
+    created_by, updated_by
+  ) values (
+    (p_input->>'vendor_id')::uuid,
+    p_input->>'vendor_invoice_number',
+    (p_input->>'bill_date')::date,
+    (p_input->>'due_date')::date,
+    p_input->>'description',
+    p_input->>'wt_classification',
+    nullif(p_input->>'wt_rate', '')::numeric(5,4),
+    coalesce((p_input->>'wt_exempt')::boolean, false),
+    p_actor_id, p_actor_id
+  ) returning id into v_bill_id;
+
+  for v_line in select * from jsonb_array_elements(p_input->'lines')
+  loop
+    insert into public.bill_lines (
+      bill_id, line_no, description, amount_php, account_id
+    ) values (
+      v_bill_id,
+      (v_line->>'line_no')::int,
+      v_line->>'description',
+      (v_line->>'amount_php')::numeric(12,2),
+      (v_line->>'account_id')::uuid
+    );
+  end loop;
+
+  insert into public.audit_log (actor_id, actor_type, action, resource_type, resource_id, metadata)
+  values (p_actor_id, 'staff', 'bill.created', 'bill', v_bill_id,
+          jsonb_build_object('status', 'draft'));
+
+  return jsonb_build_object('bill_id', v_bill_id);
+end;
+$$;
+
+-- Create + post in one transaction.
+-- After the draft INSERT, the recompute trigger has set bills.gross_amount.
+-- We compute wt_amount = ROUND(gross * rate, 2), write it, and flip to posted
+-- (which fires the bill_post_bridge trigger).
+create or replace function public.ap_create_bill_and_post(
+  p_input    jsonb,
+  p_actor_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_bill_id   uuid;
+  v_result    jsonb;
+  v_gross     numeric(12,2);
+  v_rate      numeric(5,4);
+  v_exempt    boolean;
+  v_wt        numeric(12,2) := 0;
+begin
+  -- Step 1-2: draft + lines via the dedicated function.
+  v_result := public.ap_create_bill_draft(p_input, p_actor_id);
+  v_bill_id := (v_result->>'bill_id')::uuid;
+
+  -- Step 3: read denormed gross_amount + WT params; compute wt_amount.
+  select gross_amount, wt_rate, wt_exempt
+    into v_gross, v_rate, v_exempt
+    from public.bills where id = v_bill_id;
+
+  if v_gross <= 0 then
+    raise exception 'Cannot post bill with non-positive gross_amount (got %)', v_gross
+      using errcode = 'P0002';
+  end if;
+
+  if not v_exempt and v_rate is not null and v_rate > 0 then
+    v_wt := round(v_gross * v_rate, 2);
+  end if;
+
+  update public.bills
+    set wt_amount = v_wt
+    where id = v_bill_id;
+
+  -- Step 4: flip to posted (fires ap_bill_post_bridge trigger).
+  update public.bills
+    set status = 'posted', posted_at = now(), posted_by = p_actor_id
+    where id = v_bill_id;
+
+  insert into public.audit_log (actor_id, actor_type, action, resource_type, resource_id, metadata)
+  values (p_actor_id, 'staff', 'bill.posted', 'bill', v_bill_id,
+          jsonb_build_object('wt_amount', v_wt, 'gross_amount', v_gross));
+
+  return jsonb_build_object('bill_id', v_bill_id);
+end;
+$$;
+
+-- Update a draft bill: replace header + lines. Status must be 'draft'.
+-- Posted bills cannot be edited (P0004 from 12.2 trigger blocks; we raise
+-- an earlier, clearer error here).
+create or replace function public.ap_update_bill_draft(
+  p_bill_id  uuid,
+  p_input    jsonb,
+  p_actor_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_status text;
+  v_line   jsonb;
+begin
+  select status into v_status from public.bills where id = p_bill_id;
+
+  if v_status is null then
+    raise exception 'Bill % not found', p_bill_id using errcode = 'P0002';
+  end if;
+  if v_status <> 'draft' then
+    raise exception 'Cannot edit bill in status %; use void+rebill', v_status
+      using errcode = 'P0004';
+  end if;
+
+  update public.bills set
+    vendor_id              = (p_input->>'vendor_id')::uuid,
+    vendor_invoice_number  = p_input->>'vendor_invoice_number',
+    bill_date              = (p_input->>'bill_date')::date,
+    due_date               = (p_input->>'due_date')::date,
+    description            = p_input->>'description',
+    wt_classification      = p_input->>'wt_classification',
+    wt_rate                = nullif(p_input->>'wt_rate', '')::numeric(5,4),
+    wt_exempt              = coalesce((p_input->>'wt_exempt')::boolean, false),
+    updated_by             = p_actor_id,
+    updated_at             = now()
+    where id = p_bill_id;
+
+  -- Replace lines (delete then re-insert; recompute trigger handles gross).
+  delete from public.bill_lines where bill_id = p_bill_id;
+
+  for v_line in select * from jsonb_array_elements(p_input->'lines')
+  loop
+    insert into public.bill_lines (
+      bill_id, line_no, description, amount_php, account_id
+    ) values (
+      p_bill_id,
+      (v_line->>'line_no')::int,
+      v_line->>'description',
+      (v_line->>'amount_php')::numeric(12,2),
+      (v_line->>'account_id')::uuid
+    );
+  end loop;
+
+  insert into public.audit_log (actor_id, actor_type, action, resource_type, resource_id, metadata)
+  values (p_actor_id, 'staff', 'bill.updated', 'bill', p_bill_id, p_input);
+
+  return jsonb_build_object('bill_id', p_bill_id);
+end;
+$$;
