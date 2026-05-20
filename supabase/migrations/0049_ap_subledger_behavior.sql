@@ -90,3 +90,82 @@ begin
   return new;
 end;
 $$;
+
+-- ==========================================================================
+-- Section 2 — Recompute triggers.
+-- ==========================================================================
+
+-- Recompute bills.gross_amount from sum of its bill_lines.
+-- Fires AFTER INSERT/UPDATE/DELETE on bill_lines. NEW.bill_id on insert/update,
+-- OLD.bill_id on delete.
+create or replace function public.ap_recompute_bill_gross()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_bill_id uuid := coalesce(new.bill_id, old.bill_id);
+begin
+  update public.bills
+  set gross_amount = coalesce((
+    select sum(amount_php) from public.bill_lines where bill_id = v_bill_id
+  ), 0)
+  where id = v_bill_id;
+
+  return null;
+end;
+$$;
+
+-- Recompute bills.paid_amount + bidirectionally flip status
+-- (posted ↔ partially_paid ↔ paid). Only counts non-voided allocations.
+-- Draft and voided bills are skipped (their status is managed by the
+-- bill lifecycle, not by allocation activity).
+create or replace function public.ap_recompute_bill_paid_and_status()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_bill_id        uuid := coalesce(new.bill_id, old.bill_id);
+  v_paid           numeric(12,2);
+  v_net_payable    numeric(12,2);
+  v_current_status text;
+  v_new_status     text;
+begin
+  -- Sum non-voided allocations for this bill; fetch bill's net_payable + status.
+  select
+    coalesce((
+      select sum(allocated_amount)
+      from public.bill_payment_allocations
+      where bill_id = v_bill_id and voided_at is null
+    ), 0),
+    b.net_payable,
+    b.status
+  into v_paid, v_net_payable, v_current_status
+  from public.bills b
+  where b.id = v_bill_id;
+
+  -- Skip status update for draft/voided bills; just update paid_amount.
+  if v_current_status in ('draft', 'voided') then
+    update public.bills set paid_amount = v_paid where id = v_bill_id;
+    return null;
+  end if;
+
+  -- Determine new status (bidirectional flip).
+  if v_paid >= v_net_payable and v_net_payable > 0 then
+    v_new_status := 'paid';
+  elsif v_paid > 0 then
+    v_new_status := 'partially_paid';
+  else
+    v_new_status := 'posted';
+  end if;
+
+  update public.bills
+  set paid_amount = v_paid, status = v_new_status
+  where id = v_bill_id;
+
+  return null;
+end;
+$$;
