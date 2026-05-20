@@ -255,6 +255,341 @@ export type Database = {
           },
         ]
       }
+      bill_attachments: {
+        Row: {
+          bill_id: string
+          filename: string
+          id: string
+          mime_type: string
+          size_bytes: number
+          storage_path: string
+          uploaded_at: string
+          uploaded_by: string
+        }
+        Insert: {
+          bill_id: string
+          filename: string
+          id?: string
+          mime_type: string
+          size_bytes: number
+          storage_path: string
+          uploaded_at?: string
+          uploaded_by: string
+        }
+        Update: {
+          bill_id?: string
+          filename?: string
+          id?: string
+          mime_type?: string
+          size_bytes?: number
+          storage_path?: string
+          uploaded_at?: string
+          uploaded_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bill_attachments_bill_id_fkey"
+            columns: ["bill_id"]
+            isOneToOne: false
+            referencedRelation: "bills"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bill_lines: {
+        Row: {
+          account_id: string
+          amount_php: number
+          bill_id: string
+          created_at: string
+          description: string | null
+          id: string
+          line_no: number
+        }
+        Insert: {
+          account_id: string
+          amount_php: number
+          bill_id: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          line_no: number
+        }
+        Update: {
+          account_id?: string
+          amount_php?: number
+          bill_id?: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          line_no?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bill_lines_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "chart_of_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bill_lines_bill_id_fkey"
+            columns: ["bill_id"]
+            isOneToOne: false
+            referencedRelation: "bills"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bill_payment_allocations: {
+        Row: {
+          allocated_amount: number
+          bill_id: string
+          created_at: string
+          id: string
+          payment_id: string
+          voided_at: string | null
+        }
+        Insert: {
+          allocated_amount: number
+          bill_id: string
+          created_at?: string
+          id?: string
+          payment_id: string
+          voided_at?: string | null
+        }
+        Update: {
+          allocated_amount?: number
+          bill_id?: string
+          created_at?: string
+          id?: string
+          payment_id?: string
+          voided_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bill_payment_allocations_bill_id_fkey"
+            columns: ["bill_id"]
+            isOneToOne: false
+            referencedRelation: "bills"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bill_payment_allocations_payment_id_fkey"
+            columns: ["payment_id"]
+            isOneToOne: false
+            referencedRelation: "bill_payments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bill_payment_year_counters: {
+        Row: {
+          next_n: number
+          year: number
+        }
+        Insert: {
+          next_n?: number
+          year: number
+        }
+        Update: {
+          next_n?: number
+          year?: number
+        }
+        Relationships: []
+      }
+      bill_payments: {
+        Row: {
+          amount_php: number
+          cash_account_id: string
+          cheque_date: string | null
+          cheque_number: string | null
+          created_at: string
+          created_by: string | null
+          id: string
+          method: string
+          payment_date: string
+          payment_number: string
+          reference: string | null
+          updated_at: string
+          updated_by: string | null
+          vendor_id: string
+          void_reason: string | null
+          voided_at: string | null
+          voided_by: string | null
+        }
+        Insert: {
+          amount_php: number
+          cash_account_id: string
+          cheque_date?: string | null
+          cheque_number?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          method: string
+          payment_date: string
+          payment_number: string
+          reference?: string | null
+          updated_at?: string
+          updated_by?: string | null
+          vendor_id: string
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
+        }
+        Update: {
+          amount_php?: number
+          cash_account_id?: string
+          cheque_date?: string | null
+          cheque_number?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          method?: string
+          payment_date?: string
+          payment_number?: string
+          reference?: string | null
+          updated_at?: string
+          updated_by?: string | null
+          vendor_id?: string
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bill_payments_cash_account_id_fkey"
+            columns: ["cash_account_id"]
+            isOneToOne: false
+            referencedRelation: "chart_of_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bill_payments_vendor_id_fkey"
+            columns: ["vendor_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bill_year_counters: {
+        Row: {
+          next_n: number
+          year: number
+        }
+        Insert: {
+          next_n?: number
+          year: number
+        }
+        Update: {
+          next_n?: number
+          year?: number
+        }
+        Relationships: []
+      }
+      bills: {
+        Row: {
+          bill_date: string
+          bill_number: string
+          created_at: string
+          created_by: string | null
+          description: string | null
+          due_date: string
+          gross_amount: number
+          id: string
+          net_payable: number | null
+          outstanding_amount: number | null
+          paid_amount: number
+          posted_at: string | null
+          posted_by: string | null
+          status: string
+          template_id: string | null
+          updated_at: string
+          updated_by: string | null
+          vendor_id: string
+          vendor_invoice_number: string | null
+          void_reason: string | null
+          voided_at: string | null
+          voided_by: string | null
+          wt_amount: number
+          wt_classification: string | null
+          wt_exempt: boolean
+          wt_rate: number | null
+        }
+        Insert: {
+          bill_date: string
+          bill_number: string
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          due_date: string
+          gross_amount?: number
+          id?: string
+          net_payable?: number | null
+          outstanding_amount?: number | null
+          paid_amount?: number
+          posted_at?: string | null
+          posted_by?: string | null
+          status?: string
+          template_id?: string | null
+          updated_at?: string
+          updated_by?: string | null
+          vendor_id: string
+          vendor_invoice_number?: string | null
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
+          wt_amount?: number
+          wt_classification?: string | null
+          wt_exempt?: boolean
+          wt_rate?: number | null
+        }
+        Update: {
+          bill_date?: string
+          bill_number?: string
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          due_date?: string
+          gross_amount?: number
+          id?: string
+          net_payable?: number | null
+          outstanding_amount?: number | null
+          paid_amount?: number
+          posted_at?: string | null
+          posted_by?: string | null
+          status?: string
+          template_id?: string | null
+          updated_at?: string
+          updated_by?: string | null
+          vendor_id?: string
+          vendor_invoice_number?: string | null
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
+          wt_amount?: number
+          wt_classification?: string | null
+          wt_exempt?: boolean
+          wt_rate?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bills_template_fk"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "recurring_bill_templates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bills_vendor_id_fkey"
+            columns: ["vendor_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       cash_adjustment_account_map: {
         Row: {
           account_id: string
@@ -3048,6 +3383,81 @@ export type Database = {
         }
         Relationships: []
       }
+      recurring_bill_templates: {
+        Row: {
+          amount_php: number | null
+          bill_date_offset_days: number
+          cadence: string
+          created_at: string
+          created_by: string | null
+          default_account_id: string
+          default_wt_classification: string | null
+          default_wt_exempt: boolean
+          default_wt_rate: number | null
+          description: string
+          due_day_of_month: number
+          id: string
+          is_active: boolean
+          next_run_date: string
+          updated_at: string
+          updated_by: string | null
+          vendor_id: string
+        }
+        Insert: {
+          amount_php?: number | null
+          bill_date_offset_days?: number
+          cadence?: string
+          created_at?: string
+          created_by?: string | null
+          default_account_id: string
+          default_wt_classification?: string | null
+          default_wt_exempt?: boolean
+          default_wt_rate?: number | null
+          description: string
+          due_day_of_month: number
+          id?: string
+          is_active?: boolean
+          next_run_date: string
+          updated_at?: string
+          updated_by?: string | null
+          vendor_id: string
+        }
+        Update: {
+          amount_php?: number | null
+          bill_date_offset_days?: number
+          cadence?: string
+          created_at?: string
+          created_by?: string | null
+          default_account_id?: string
+          default_wt_classification?: string | null
+          default_wt_exempt?: boolean
+          default_wt_rate?: number | null
+          description?: string
+          due_day_of_month?: number
+          id?: string
+          is_active?: boolean
+          next_run_date?: string
+          updated_at?: string
+          updated_by?: string | null
+          vendor_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recurring_bill_templates_default_account_id_fkey"
+            columns: ["default_account_id"]
+            isOneToOne: false
+            referencedRelation: "chart_of_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recurring_bill_templates_vendor_id_fkey"
+            columns: ["vendor_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       result_amendments: {
         Row: {
           amended_at: string
@@ -3935,6 +4345,65 @@ export type Database = {
           },
         ]
       }
+      vendors: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          default_account_id: string | null
+          default_wt_classification: string | null
+          default_wt_rate: number | null
+          email: string | null
+          id: string
+          is_active: boolean
+          name: string
+          notes: string | null
+          phone: string | null
+          tin: string | null
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          default_account_id?: string | null
+          default_wt_classification?: string | null
+          default_wt_rate?: number | null
+          email?: string | null
+          id?: string
+          is_active?: boolean
+          name: string
+          notes?: string | null
+          phone?: string | null
+          tin?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          default_account_id?: string | null
+          default_wt_classification?: string | null
+          default_wt_rate?: number | null
+          email?: string | null
+          id?: string
+          is_active?: boolean
+          name?: string
+          notes?: string | null
+          phone?: string | null
+          tin?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vendors_default_account_id_fkey"
+            columns: ["default_account_id"]
+            isOneToOne: false
+            referencedRelation: "chart_of_accounts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       visit_pins: {
         Row: {
           created_at: string
@@ -4269,6 +4738,48 @@ export type Database = {
       }
     }
     Functions: {
+      ap_create_bill_and_post: {
+        Args: { p_actor_id: string; p_input: Json }
+        Returns: Json
+      }
+      ap_create_bill_draft: {
+        Args: { p_actor_id: string; p_input: Json }
+        Returns: Json
+      }
+      ap_create_bill_paid_on_entry: {
+        Args: { p_actor_id: string; p_input: Json }
+        Returns: Json
+      }
+      ap_create_bill_payment_with_allocations: {
+        Args: { p_actor_id: string; p_input: Json }
+        Returns: Json
+      }
+      ap_next_bill_number: { Args: never; Returns: string }
+      ap_next_payment_number: { Args: never; Returns: string }
+      ap_post_recurring_template: {
+        Args: { p_template_id: string }
+        Returns: Json
+      }
+      ap_reallocate_bill_payment: {
+        Args: { p_actor_id: string; p_allocations: Json; p_payment_id: string }
+        Returns: Json
+      }
+      ap_reverse_je_for_source: {
+        Args: { p_actor_id: string; p_source_id: string; p_source_kind: string }
+        Returns: string
+      }
+      ap_update_bill_draft: {
+        Args: { p_actor_id: string; p_bill_id: string; p_input: Json }
+        Returns: Json
+      }
+      ap_void_bill_payment_cascade: {
+        Args: { p_actor_id: string; p_payment_id: string; p_reason: string }
+        Returns: Json
+      }
+      ap_void_bill_with_guard: {
+        Args: { p_actor_id: string; p_bill_id: string; p_reason: string }
+        Returns: Json
+      }
       apply_leave_entitlements: {
         Args: { p_year: number }
         Returns: {
@@ -4348,6 +4859,8 @@ export type Database = {
         Args: { p_patient_id: string }
         Returns: undefined
       }
+      show_limit: { Args: never; Returns: number }
+      show_trgm: { Args: { "": string }; Returns: string[] }
       staff_role: { Args: never; Returns: string }
     }
     Enums: {
@@ -4376,6 +4889,8 @@ export type Database = {
         | "cash_adjustment"
         | "eod_close"
         | "payroll_13th_month_payout"
+        | "bill_post"
+        | "bill_payment"
       je_status: "draft" | "posted" | "reversed"
       period_status: "open" | "closed"
     }
@@ -4534,6 +5049,8 @@ export const Constants = {
         "cash_adjustment",
         "eod_close",
         "payroll_13th_month_payout",
+        "bill_post",
+        "bill_payment",
       ],
       je_status: ["draft", "posted", "reversed"],
       period_status: ["open", "closed"],
