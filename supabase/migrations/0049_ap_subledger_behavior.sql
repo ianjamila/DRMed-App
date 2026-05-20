@@ -193,3 +193,101 @@ begin
   return new;
 end;
 $$;
+
+-- ==========================================================================
+-- Section 4 — Constraint trigger for allocation invariants
+-- (deferred to transaction commit; wired in T15 with
+--  DEFERRABLE INITIALLY DEFERRED).
+-- ==========================================================================
+
+-- Validates four invariants for bill_payment_allocations rows.
+-- P0014: sum of non-voided allocations per payment must equal payment.amount_php
+-- P0015: sum of non-voided allocations per bill must not exceed bill.net_payable
+-- P0016: allocation.bill.vendor_id must equal allocation.payment.vendor_id
+-- P0017: allocation's bill.status must be in ('posted', 'partially_paid', 'paid')
+--        (allow 'paid' because recompute may have flipped status mid-transaction)
+create or replace function public.ap_validate_bill_payment_allocations()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_payment_id      uuid := coalesce(new.payment_id, old.payment_id);
+  v_bill_id         uuid := coalesce(new.bill_id, old.bill_id);
+  v_alloc_sum_pay   numeric(12,2);
+  v_alloc_sum_bill  numeric(12,2);
+  v_payment_amount  numeric(12,2);
+  v_payment_vendor  uuid;
+  v_bill_net        numeric(12,2);
+  v_bill_status     text;
+  v_bill_vendor     uuid;
+begin
+  -- If the payment row no longer exists (cascade-delete via payment_id FK
+  -- on bill_payment_allocations), nothing to validate.
+  select amount_php, vendor_id
+    into v_payment_amount, v_payment_vendor
+  from public.bill_payments
+  where id = v_payment_id;
+
+  if v_payment_amount is null then
+    return null;
+  end if;
+
+  -- P0014: sum per payment (active allocations only) = payment.amount_php
+  select coalesce(sum(allocated_amount), 0)
+    into v_alloc_sum_pay
+  from public.bill_payment_allocations
+  where payment_id = v_payment_id and voided_at is null;
+
+  if v_alloc_sum_pay <> v_payment_amount then
+    raise exception 'Allocation total (%) does not match payment amount (%).',
+      v_alloc_sum_pay, v_payment_amount
+      using errcode = 'P0014';
+  end if;
+
+  -- The remaining three checks only apply when a bill is involved.
+  -- DELETE operations may not have a bill_id (if the parent bill was also
+  -- deleted in the same transaction), so we tolerate that here too.
+  if v_bill_id is not null then
+    select coalesce(sum(allocated_amount), 0)
+      into v_alloc_sum_bill
+    from public.bill_payment_allocations
+    where bill_id = v_bill_id and voided_at is null;
+
+    select net_payable, status, vendor_id
+      into v_bill_net, v_bill_status, v_bill_vendor
+    from public.bills
+    where id = v_bill_id;
+
+    -- If the bill row vanished, skip (cascade scenario).
+    if v_bill_status is null then
+      return null;
+    end if;
+
+    -- P0015: sum per bill <= bill.net_payable
+    if v_alloc_sum_bill > v_bill_net then
+      raise exception 'Allocation total (%) exceeds bill net payable (%).',
+        v_alloc_sum_bill, v_bill_net
+        using errcode = 'P0015';
+    end if;
+
+    -- P0016: vendor match
+    if v_payment_vendor <> v_bill_vendor then
+      raise exception 'Allocation bill vendor (%) does not match payment vendor (%).',
+        v_bill_vendor, v_payment_vendor
+        using errcode = 'P0016';
+    end if;
+
+    -- P0017: bill status must be a live state.
+    -- (Include 'paid' because the recompute trigger may have flipped the
+    -- status mid-transaction; the deferred validation fires at commit.)
+    if v_bill_status not in ('posted', 'partially_paid', 'paid') then
+      raise exception 'Cannot allocate to bill in status %.', v_bill_status
+        using errcode = 'P0017';
+    end if;
+  end if;
+
+  return null;
+end;
+$$;
