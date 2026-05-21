@@ -39,6 +39,7 @@ const BILLS_LIST_PATH = "/staff/admin/accounting/ap/bills";
 
 type BillRow = {
   id: string;
+  bill_number: string;
   vendor_id: string;
   vendor_name: string | null;
   vendor_invoice_number: string | null;
@@ -46,6 +47,8 @@ type BillRow = {
   due_date: string;
   gross_amount: number;
   wt_amount: number;
+  net_payable: number;
+  paid_amount: number;
   outstanding_amount: number;
   status: string;
   description: string | null;
@@ -72,6 +75,7 @@ export async function listBillsAction(filter?: {
     .from("bills")
     .select(`
       id,
+      bill_number,
       vendor_id,
       vendors:vendors!vendor_id (name),
       vendor_invoice_number,
@@ -79,6 +83,8 @@ export async function listBillsAction(filter?: {
       due_date,
       gross_amount,
       wt_amount,
+      net_payable,
+      paid_amount,
       outstanding_amount,
       status,
       description,
@@ -93,7 +99,12 @@ export async function listBillsAction(filter?: {
   if (filter?.date_from) q = q.gte("bill_date", filter.date_from);
   if (filter?.date_to) q = q.lte("bill_date", filter.date_to);
   if (filter?.has_wt) q = q.gt("wt_amount", 0);
-  if (filter?.search) q = q.ilike("vendor_invoice_number", `%${filter.search}%`);
+  if (filter?.search) {
+    const escaped = filter.search.replace(/[%,()]/g, "");
+    q = q.or(
+      `bill_number.ilike.%${escaped}%,vendor_invoice_number.ilike.%${escaped}%,description.ilike.%${escaped}%`
+    );
+  }
 
   const { data, error } = await q;
   if (error) {
@@ -103,6 +114,7 @@ export async function listBillsAction(filter?: {
 
   type RawBill = {
     id: string;
+    bill_number: string;
     vendor_id: string;
     vendors: { name: string } | null;
     vendor_invoice_number: string | null;
@@ -110,6 +122,8 @@ export async function listBillsAction(filter?: {
     due_date: string;
     gross_amount: number;
     wt_amount: number;
+    net_payable: number;
+    paid_amount: number;
     outstanding_amount: number;
     status: string;
     description: string | null;
@@ -118,6 +132,7 @@ export async function listBillsAction(filter?: {
 
   const rows: BillRow[] = ((data ?? []) as RawBill[]).map((b) => ({
     id: b.id,
+    bill_number: b.bill_number,
     vendor_id: b.vendor_id,
     vendor_name: b.vendors?.name ?? null,
     vendor_invoice_number: b.vendor_invoice_number,
@@ -125,6 +140,8 @@ export async function listBillsAction(filter?: {
     due_date: b.due_date,
     gross_amount: Number(b.gross_amount),
     wt_amount: Number(b.wt_amount),
+    net_payable: Number(b.net_payable),
+    paid_amount: Number(b.paid_amount),
     outstanding_amount: Number(b.outstanding_amount),
     status: b.status,
     description: b.description,

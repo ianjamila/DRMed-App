@@ -10,6 +10,7 @@ type Vendor = { id: string; name: string };
 
 type Bill = {
   id: string;
+  bill_number: string;
   vendor_id: string;
   vendor_name: string | null;
   vendor_invoice_number: string | null;
@@ -18,6 +19,8 @@ type Bill = {
   status: string;
   gross_amount: number;
   wt_amount: number;
+  net_payable: number;
+  paid_amount: number;
   outstanding_amount: number;
   description: string | null;
   created_at: string;
@@ -180,7 +183,7 @@ export function BillsIndexClient({
                     href={`/staff/admin/accounting/ap/bills/${b.id}`}
                     className="font-medium text-[color:var(--color-brand-navy)] hover:underline"
                   >
-                    {b.id.slice(0, 8).toUpperCase()}
+                    {b.bill_number}
                   </Link>
                 </td>
                 <td className="px-3 py-2">{b.vendor_name ?? "—"}</td>
