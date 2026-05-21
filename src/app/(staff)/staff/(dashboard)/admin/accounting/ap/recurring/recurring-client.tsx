@@ -8,6 +8,13 @@ import {
   deactivateRecurringTemplateAction,
   reactivateRecurringTemplateAction,
 } from "@/lib/actions/accounting/recurring-templates";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 const PHP = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
 
@@ -85,19 +92,37 @@ export function RecurringClient({
         </div>
       )}
 
-      {editMode && (
-        <TemplateForm
-          key={editMode.kind === "edit" ? editMode.template.id : "new"}
-          mode={editMode}
-          vendors={vendors}
-          accounts={expenseAccounts}
-          onClose={() => setEditMode(null)}
-          onSaved={() => {
-            setEditMode(null);
-            router.refresh();
-          }}
-        />
-      )}
+      <Dialog
+        open={editMode !== null}
+        onOpenChange={(open) => { if (!open) setEditMode(null); }}
+      >
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {editMode?.kind === "edit" ? "Edit template" : "New template"}
+            </DialogTitle>
+            <DialogDescription className="sr-only">
+              {editMode?.kind === "edit"
+                ? "Edit the recurring bill template."
+                : "Create a new recurring bill template."}
+            </DialogDescription>
+          </DialogHeader>
+
+          {editMode && (
+            <TemplateForm
+              key={editMode.kind === "edit" ? editMode.template.id : "new"}
+              mode={editMode}
+              vendors={vendors}
+              accounts={expenseAccounts}
+              onClose={() => setEditMode(null)}
+              onSaved={() => {
+                setEditMode(null);
+                router.refresh();
+              }}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
 
       <div className="overflow-x-auto rounded-md border border-gray-200">
         <table className="w-full min-w-[720px] text-sm">
@@ -228,21 +253,8 @@ function TemplateForm({
   return (
     <form
       onSubmit={submit}
-      className="space-y-4 rounded-md border border-[color:var(--color-brand-cyan)] bg-white p-4 shadow-sm"
+      className="space-y-4"
     >
-      <div className="flex items-center justify-between">
-        <h2 className="font-[family-name:var(--font-heading)] text-lg font-bold text-[color:var(--color-brand-navy)]">
-          {isEdit ? "Edit template" : "New template"}
-        </h2>
-        <button
-          type="button"
-          onClick={onClose}
-          className="text-xs text-[color:var(--color-brand-text-soft)] hover:underline"
-        >
-          Cancel
-        </button>
-      </div>
-
       {error && (
         <div
           role="alert"
@@ -401,6 +413,13 @@ function TemplateForm({
           className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold uppercase tracking-wider text-white hover:bg-[color:var(--color-brand-cyan)] disabled:opacity-50"
         >
           {isPending ? "Saving…" : isEdit ? "Save changes" : "Create template"}
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          className="min-h-[44px] rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)] hover:bg-gray-50"
+        >
+          Cancel
         </button>
       </div>
     </form>
