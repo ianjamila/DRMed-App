@@ -148,6 +148,12 @@ begin
   from public.bills b
   where b.id = v_bill_id;
 
+  -- Defense-in-depth: bill must exist (FK + on-update-restrict already enforce this).
+  if v_current_status is null then
+    raise warning 'ap_recompute_bill_paid_and_status: bill % no longer exists; skipping recompute', v_bill_id;
+    return null;
+  end if;
+
   -- Skip status update for draft/voided bills; just update paid_amount.
   if v_current_status in ('draft', 'voided') then
     update public.bills set paid_amount = v_paid where id = v_bill_id;
