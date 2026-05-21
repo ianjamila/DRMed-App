@@ -226,18 +226,28 @@ declare
   v_alloc_sum_bill  numeric(12,2);
   v_payment_amount  numeric(12,2);
   v_payment_vendor  uuid;
+  v_payment_voided  timestamptz;
   v_bill_net        numeric(12,2);
   v_bill_status     text;
   v_bill_vendor     uuid;
 begin
   -- If the payment row no longer exists (cascade-delete via payment_id FK
   -- on bill_payment_allocations), nothing to validate.
-  select amount_php, vendor_id
-    into v_payment_amount, v_payment_vendor
+  select amount_php, vendor_id, voided_at
+    into v_payment_amount, v_payment_vendor, v_payment_voided
   from public.bill_payments
   where id = v_payment_id;
 
   if v_payment_amount is null then
+    return null;
+  end if;
+
+  -- If the payment itself is voided in this transaction, the void cascade
+  -- has soft-marked every allocation as voided_at = now(). The sum-equality
+  -- check below would then fail (sum=0 vs amount_php>0). Skip all
+  -- validations because nothing is "active" anymore — by-vendor and
+  -- by-bill invariants are trivially satisfied for voided rows.
+  if v_payment_voided is not null then
     return null;
   end if;
 
