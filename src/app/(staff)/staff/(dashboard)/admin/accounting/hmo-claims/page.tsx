@@ -35,6 +35,13 @@ export default async function HmoClaimsIndexPage() {
           Per-provider HMO accounts receivable with unbilled / stuck-claim
           detection. Drill into a provider to manage their claim batches.
         </p>
+        <p className="mt-2 max-w-2xl text-xs text-[color:var(--color-brand-text-soft)]">
+          <strong>PHIC (PhilHealth) claims are handled manually</strong> via the
+          PhilHealth portal — they are intentionally not tracked here. See
+          <code className="ml-1 rounded bg-[color:var(--color-brand-bg)] px-1 py-0.5">
+            docs/decisions/0002-phic-billing-integration.md
+          </code>.
+        </p>
       </header>
       <HmoClaimsClient
         summary={summary.data ?? []}

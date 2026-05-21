@@ -16,7 +16,8 @@ import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit/check";
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_MINUTES = 15;
 
-const GENERIC_ERROR = "Invalid DRM-ID or PIN.";
+const GENERIC_ERROR =
+  "Invalid DRM-ID or PIN. If you've lost your receipt, please visit reception for a new PIN.";
 const LOCKED_ERROR = `Too many failed attempts. Try again in ${LOCKOUT_MINUTES} minutes.`;
 
 export type SignInResult = { ok: true } | { ok: false; error: string };
