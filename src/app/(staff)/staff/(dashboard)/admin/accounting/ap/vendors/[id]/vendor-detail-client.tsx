@@ -14,6 +14,7 @@ import {
   CardDescription,
   CardHeader,
 } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { CircleAlert } from "lucide-react";
 
 const PHP = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
@@ -160,18 +161,19 @@ export function VendorDetailClient({ vendor, bills, payments }: Props) {
         >
           + Edit
         </Link>
-        <button
+        <Button
           type="button"
+          variant="brand"
+          size="touch"
           onClick={toggleActive}
           disabled={isPending}
-          className="min-h-[44px] inline-flex items-center rounded-md bg-[color:var(--color-brand-navy)] px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-white hover:bg-[color:var(--color-brand-cyan)] disabled:opacity-50"
         >
           {isPending
             ? "Saving…"
             : vendor.is_active
               ? "Deactivate"
               : "Reactivate"}
-        </button>
+        </Button>
         <Link
           href="/staff/admin/accounting/ap/vendors"
           className="min-h-[44px] inline-flex items-center text-xs text-[color:var(--color-brand-text-soft)] hover:underline"

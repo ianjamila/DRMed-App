@@ -16,6 +16,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { CircleAlert } from "lucide-react";
 import { StatusBadge } from "@/lib/ui/status-badge";
 
@@ -77,13 +78,14 @@ export function RecurringClient({
           {initialTemplates.length} template
           {initialTemplates.length === 1 ? "" : "s"}
         </p>
-        <button
+        <Button
           type="button"
+          variant="brand"
+          size="touch"
           onClick={() => setEditMode({ kind: "new" })}
-          className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-white hover:bg-[color:var(--color-brand-cyan)]"
         >
           + New template
-        </button>
+        </Button>
       </div>
 
       {rowError && (
@@ -158,24 +160,24 @@ export function RecurringClient({
                   <StatusBadge status={t.is_active ? "active" : "inactive"} />
                 </td>
                 <td className="px-3 py-2 text-right">
-                  <button
+                  <Button
                     type="button"
+                    variant="link"
+                    size="sm"
                     onClick={() => setEditMode({ kind: "edit", template: t })}
-                    className="mr-3 text-[color:var(--color-brand-navy)] hover:underline"
+                    className="mr-1 text-[color:var(--color-brand-navy)]"
                   >
                     Edit
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
+                    variant="link"
+                    size="sm"
                     onClick={() => toggle(t)}
-                    className={
-                      t.is_active
-                        ? "text-red-700 hover:underline"
-                        : "text-green-700 hover:underline"
-                    }
+                    className={t.is_active ? "text-red-700" : "text-green-700"}
                   >
                     {t.is_active ? "Deactivate" : "Reactivate"}
-                  </button>
+                  </Button>
                 </td>
               </tr>
             ))}
@@ -406,20 +408,22 @@ function TemplateForm({
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
-        <button
+        <Button
           type="submit"
+          variant="brand"
+          size="touch"
           disabled={isPending}
-          className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold uppercase tracking-wider text-white hover:bg-[color:var(--color-brand-cyan)] disabled:opacity-50"
         >
           {isPending ? "Saving…" : isEdit ? "Save changes" : "Create template"}
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
+          variant="outline"
+          size="touch"
           onClick={onClose}
-          className="min-h-[44px] rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)] hover:bg-gray-50"
         >
           Cancel
-        </button>
+        </Button>
       </div>
     </form>
   );

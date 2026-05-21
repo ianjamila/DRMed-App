@@ -19,6 +19,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { CircleAlert } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -345,13 +346,14 @@ export function BillFormClient(props: Props) {
                 </option>
               ))}
             </select>
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="touch"
               onClick={() => setNewVendorOpen(true)}
-              className="min-h-[44px] rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)] hover:bg-gray-50"
             >
               + New
-            </button>
+            </Button>
           </div>
         </Field>
       </section>
@@ -451,13 +453,14 @@ export function BillFormClient(props: Props) {
           <div className="text-xs font-semibold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             Lines
           </div>
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="touch"
             onClick={addLine}
-            className="min-h-[44px] rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)] hover:bg-gray-50"
           >
             + Add line
-          </button>
+          </Button>
         </div>
 
         <div className="space-y-2">
@@ -490,15 +493,17 @@ export function BillFormClient(props: Props) {
                   </option>
                 ))}
               </select>
-              <button
+              <Button
                 type="button"
+                variant="outline"
+                size="touch"
                 onClick={() => removeLine(idx)}
                 disabled={lines.length === 1}
                 aria-label={`Remove line ${idx + 1}`}
-                className="col-span-1 min-h-[44px] rounded-md border border-gray-300 bg-white text-red-700 hover:bg-red-50 disabled:opacity-40"
+                className="col-span-1 border-red-300 text-red-700 hover:bg-red-50 hover:text-red-800"
               >
                 ×
-              </button>
+              </Button>
             </div>
           ))}
         </div>
@@ -645,43 +650,48 @@ export function BillFormClient(props: Props) {
       <div className="flex flex-wrap justify-end gap-2 border-t pt-4">
         {mode === "create" ? (
           <>
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="touch"
               onClick={() => handleSubmit("save-draft")}
               disabled={isPending}
-              className="min-h-[44px] rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)] hover:bg-gray-50 disabled:opacity-50"
             >
               Save as draft
-            </button>
+            </Button>
             {paidOnEntry ? (
-              <button
+              <Button
                 type="button"
+                variant="brand"
+                size="touch"
                 onClick={() => handleSubmit("save-paid-on-entry")}
                 disabled={isPending}
-                className="min-h-[44px] rounded-md bg-green-700 px-4 py-2 text-sm font-bold uppercase tracking-wider text-white hover:bg-green-800 disabled:opacity-50"
+                className="bg-green-700 hover:bg-green-800 focus-visible:ring-green-700/60"
               >
                 {isPending ? "Saving…" : "Save, post, and pay"}
-              </button>
+              </Button>
             ) : (
-              <button
+              <Button
                 type="button"
+                variant="brand"
+                size="touch"
                 onClick={() => handleSubmit("save-post")}
                 disabled={isPending}
-                className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold uppercase tracking-wider text-white hover:bg-[color:var(--color-brand-cyan)] disabled:opacity-50"
               >
                 {isPending ? "Saving…" : "Save & post"}
-              </button>
+              </Button>
             )}
           </>
         ) : (
-          <button
+          <Button
             type="button"
+            variant="brand"
+            size="touch"
             onClick={() => handleSubmit("save-draft")}
             disabled={isPending}
-            className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold uppercase tracking-wider text-white hover:bg-[color:var(--color-brand-cyan)] disabled:opacity-50"
           >
             {isPending ? "Saving…" : "Save changes"}
-          </button>
+          </Button>
         )}
       </div>
 
@@ -758,24 +768,26 @@ function InlineNewVendorDialog({
         </label>
 
         <div className="flex flex-wrap justify-end gap-2">
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="touch"
             onClick={() => {
               reset();
               onClose();
             }}
-            className="min-h-[44px] rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)] hover:bg-gray-50"
           >
             Cancel
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            variant="brand"
+            size="touch"
             onClick={submit}
             disabled={submitting || !name.trim()}
-            className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold uppercase tracking-wider text-white hover:bg-[color:var(--color-brand-cyan)] disabled:opacity-50"
           >
             {submitting ? "Creating…" : "Create"}
-          </button>
+          </Button>
         </div>
       </DialogContent>
     </Dialog>

@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createVendorAction, updateVendorAction } from "@/lib/actions/accounting/vendors";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { CircleAlert } from "lucide-react";
 
 type CoaAccount = { id: string; code: string; name: string };
@@ -187,20 +188,23 @@ export function VendorFormClient(props: Props) {
         </Field>
 
         <div className="flex flex-wrap items-center gap-3">
-          <button
+          <Button
             type="submit"
+            variant="brand"
+            size="touch"
             disabled={isPending}
-            className="min-h-[44px] w-full rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold uppercase tracking-wider text-white hover:bg-[color:var(--color-brand-cyan)] disabled:opacity-50 sm:w-auto"
+            className="w-full sm:w-auto"
           >
             {isPending ? "Saving…" : mode === "create" ? "Create vendor" : "Save changes"}
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            variant="outline"
+            size="touch"
             onClick={() => router.back()}
-            className="min-h-[44px] rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)] hover:bg-gray-50"
           >
             Cancel
-          </button>
+          </Button>
         </div>
       </form>
     </div>

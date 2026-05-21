@@ -6,6 +6,7 @@ import { createBillPaymentAction } from "@/lib/actions/accounting/bill-payments"
 import { listBillsAction } from "@/lib/actions/accounting/bills";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { CircleAlert } from "lucide-react";
 
 const PHP = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
@@ -220,13 +221,14 @@ export function PaymentFormClient({
               Allocate to bills
             </h2>
             {bills.length > 0 && (
-              <button
+              <Button
                 type="button"
+                variant="outline"
+                size="touch"
                 onClick={autoAllocate}
-                className="min-h-[44px] rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)] hover:bg-gray-50"
               >
                 Auto-fill from amount
-              </button>
+              </Button>
             )}
           </div>
 
@@ -375,14 +377,15 @@ export function PaymentFormClient({
       </section>
 
       <div className="flex flex-wrap justify-end gap-2">
-        <button
+        <Button
           type="button"
+          variant="brand"
+          size="touch"
           onClick={submit}
           disabled={!canSubmit}
-          className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold uppercase tracking-wider text-white hover:bg-[color:var(--color-brand-cyan)] disabled:opacity-50"
         >
           {isPending ? "Saving…" : "Record payment"}
-        </button>
+        </Button>
       </div>
     </div>
   );

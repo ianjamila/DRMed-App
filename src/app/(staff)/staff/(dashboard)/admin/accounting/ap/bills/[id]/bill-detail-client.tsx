@@ -17,6 +17,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -194,33 +195,38 @@ export function BillDetailClient({
             </Link>
           )}
           {canPost && (
-            <button
+            <Button
               type="button"
+              variant="brand"
+              size="touch"
               onClick={handlePost}
               disabled={isPending}
-              className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-white hover:bg-[color:var(--color-brand-cyan)] disabled:opacity-50"
             >
               {isPending ? "Posting…" : "Post"}
-            </button>
+            </Button>
           )}
           {canEditDelete && (
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="touch"
               onClick={handleDelete}
               disabled={isPending}
-              className="min-h-[44px] rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-red-700 hover:bg-red-50 disabled:opacity-50"
+              className="border-red-300 text-red-700 hover:bg-red-50 hover:text-red-800"
             >
               Delete
-            </button>
+            </Button>
           )}
           {canVoid && (
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="touch"
               onClick={() => setShowVoidConfirm(true)}
-              className="min-h-[44px] rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-red-700 hover:bg-red-50"
+              className="border-red-300 text-red-700 hover:bg-red-50 hover:text-red-800"
             >
               Void
-            </button>
+            </Button>
           )}
         </div>
       </header>
@@ -377,13 +383,15 @@ export function BillDetailClient({
           <ul className="divide-y divide-gray-100 rounded-md border border-gray-200">
             {bill.bill_attachments.map((att) => (
               <li key={att.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm">
-                <button
+                <Button
                   type="button"
+                  variant="link"
+                  size="sm"
                   onClick={() => openAttachment(att.id)}
-                  className="text-left font-medium text-[color:var(--color-brand-navy)] hover:underline"
+                  className="h-auto p-0 text-left font-medium text-[color:var(--color-brand-navy)]"
                 >
                   {att.filename}
-                </button>
+                </Button>
                 <span className="text-xs text-[color:var(--color-brand-text-soft)]">
                   {Math.round(att.size_bytes / 1024)} KB · {att.mime_type}
                 </span>
@@ -426,24 +434,27 @@ export function BillDetailClient({
           </label>
 
           <div className="flex flex-wrap justify-end gap-2">
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="touch"
               onClick={() => {
                 setShowVoidConfirm(false);
                 setVoidReason("");
               }}
-              className="min-h-[44px] rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)] hover:bg-gray-50"
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="destructive"
+              size="touch"
               onClick={handleVoid}
               disabled={isPending || voidReason.trim().length < 3}
-              className="min-h-[44px] rounded-md bg-red-700 px-4 py-2 text-sm font-bold uppercase tracking-wider text-white hover:bg-red-800 disabled:opacity-50"
+              className="bg-red-700 text-white hover:bg-red-800"
             >
               {isPending ? "Voiding…" : "Void bill"}
-            </button>
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

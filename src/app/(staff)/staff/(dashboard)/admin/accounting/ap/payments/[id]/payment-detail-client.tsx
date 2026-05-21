@@ -15,6 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -175,20 +176,23 @@ export function PaymentDetailClient({
 
         {!isVoided && (
           <div className="flex flex-wrap items-center gap-2">
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="touch"
               onClick={openReallocate}
-              className="min-h-[44px] rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)] hover:bg-gray-50"
             >
               Reallocate
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="outline"
+              size="touch"
               onClick={() => setVoidOpen(true)}
-              className="min-h-[44px] rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-red-700 hover:bg-red-50"
+              className="border-red-300 text-red-700 hover:bg-red-50 hover:text-red-800"
             >
               Void
-            </button>
+            </Button>
           </div>
         )}
       </header>
@@ -318,24 +322,27 @@ export function PaymentDetailClient({
             />
           </label>
           <div className="flex flex-wrap justify-end gap-2">
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="touch"
               onClick={() => {
                 setVoidOpen(false);
                 setVoidReason("");
               }}
-              className="min-h-[44px] rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)] hover:bg-gray-50"
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="destructive"
+              size="touch"
               onClick={handleVoid}
               disabled={isPending || voidReason.trim().length < 3}
-              className="min-h-[44px] rounded-md bg-red-700 px-4 py-2 text-sm font-bold uppercase tracking-wider text-white hover:bg-red-800 disabled:opacity-50"
+              className="bg-red-700 text-white hover:bg-red-800"
             >
               {isPending ? "Voiding…" : "Void payment"}
-            </button>
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -404,24 +411,26 @@ export function PaymentDetailClient({
           </div>
 
           <div className="flex flex-wrap justify-end gap-2">
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="touch"
               onClick={() => {
                 setReallocOpen(false);
                 setRealloc({});
               }}
-              className="min-h-[44px] rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)] hover:bg-gray-50"
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="brand"
+              size="touch"
               onClick={handleReallocate}
               disabled={isPending || !reallocValid}
-              className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold uppercase tracking-wider text-white hover:bg-[color:var(--color-brand-cyan)] disabled:opacity-50"
             >
               {isPending ? "Saving…" : "Save reallocation"}
-            </button>
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

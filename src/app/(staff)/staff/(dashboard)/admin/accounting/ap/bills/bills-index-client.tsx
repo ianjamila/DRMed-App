@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { TriangleAlert } from "lucide-react";
 import { StatusBadge } from "@/lib/ui/status-badge";
 
@@ -138,20 +139,23 @@ export function BillsIndexClient({
         />
 
         <div className="flex gap-2">
-          <button
+          <Button
             type="button"
+            variant="brand"
+            size="default"
             onClick={applyFilters}
-            className="min-h-[44px] flex-1 rounded-md bg-[color:var(--color-brand-navy)] px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-white hover:bg-[color:var(--color-brand-cyan)]"
+            className="flex-1"
           >
             Apply
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            variant="outline"
+            size="default"
             onClick={clearFilters}
-            className="min-h-[44px] rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)] hover:bg-gray-50"
           >
             Clear
-          </button>
+          </Button>
         </div>
       </div>
 
