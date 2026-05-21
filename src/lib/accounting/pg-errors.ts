@@ -11,9 +11,16 @@ interface PgError {
 // Action layer; this function only produces the UI-facing message.
 export function translatePgError(err: PgError): string {
   switch (err.code) {
-    case "23505":
-      // unique_violation — most likely a duplicate CoA code.
+    case "23505": {
+      const m = err.message ?? "";
+      if (m.includes("vendors_lower_name_unique")) {
+        return "A vendor with this name already exists.";
+      }
+      if (m.includes("vendors_tin_unique")) {
+        return "A vendor with this TIN already exists.";
+      }
       return "That value already exists. Pick a different one.";
+    }
     case "23514":
       // check_violation — most likely the normal_balance / type mismatch.
       return "Invalid value: that combination is not allowed by the schema.";
@@ -76,6 +83,18 @@ export function translatePgError(err: PgError): string {
       return err.message ?? "Cannot finalise an empty run. Compute first, or delete the run if no payroll is due.";
     case "P0028":
       return err.message ?? "Cannot use more leave than the employee has accrued. Grant additional days first if approving an advance.";
+    // 12.4 — AP subledger
+    case "P0029":
+      // bill_void_blocked — DB message includes "has N active payment(s)"; use it as-is.
+      return err.message ?? "Cannot void this bill — payments are still active. Void each payment first.";
+    case "P0030":
+      return err.message ?? "Allocation total doesn't match payment amount.";
+    case "P0031":
+      return err.message ?? "Allocation exceeds the bill's outstanding amount.";
+    case "P0032":
+      return err.message ?? "All allocated bills must be from the same vendor as the payment.";
+    case "P0033":
+      return err.message ?? "Cannot allocate to a draft or voided bill.";
     default:
       return err.message ?? "Database error. Please try again.";
   }

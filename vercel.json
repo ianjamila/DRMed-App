@@ -9,6 +9,10 @@
     {
       "path": "/api/cron/data-retention",
       "schedule": "30 17 * * *"
+    },
+    {
+      "path": "/api/cron/recurring-bills",
+      "schedule": "0 18 * * *"
     }
   ]
 }
