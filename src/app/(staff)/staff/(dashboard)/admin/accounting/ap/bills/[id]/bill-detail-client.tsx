@@ -17,6 +17,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+} from "@/components/ui/card";
 import { CircleAlert } from "lucide-react";
 import { StatusBadge } from "@/lib/ui/status-badge";
 
@@ -228,14 +234,41 @@ export function BillDetailClient({
 
       {/* KPI GRID */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat label="Gross" value={PHP.format(bill.gross_amount)} />
-        <Stat
-          label="WT"
-          value={bill.wt_amount > 0 ? PHP.format(bill.wt_amount) : "—"}
-          help={bill.wt_classification ?? undefined}
-        />
-        <Stat label="Net payable" value={bill.net_payable != null ? PHP.format(bill.net_payable) : "—"} />
-        <Stat label="Outstanding" value={bill.outstanding_amount != null ? PHP.format(bill.outstanding_amount) : "—"} />
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription className="text-xs font-semibold uppercase tracking-wider">Gross</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="font-mono text-lg tabular-nums">{PHP.format(bill.gross_amount)}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription className="text-xs font-semibold uppercase tracking-wider">WT</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="font-mono text-lg tabular-nums">{bill.wt_amount > 0 ? PHP.format(bill.wt_amount) : "—"}</div>
+            {bill.wt_classification && (
+              <div className="mt-1 text-xs text-muted-foreground">{bill.wt_classification}</div>
+            )}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription className="text-xs font-semibold uppercase tracking-wider">Net payable</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="font-mono text-lg tabular-nums">{bill.net_payable != null ? PHP.format(bill.net_payable) : "—"}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription className="text-xs font-semibold uppercase tracking-wider">Outstanding</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="font-mono text-lg tabular-nums">{bill.outstanding_amount != null ? PHP.format(bill.outstanding_amount) : "—"}</div>
+          </CardContent>
+        </Card>
       </div>
 
       {/* POSTED JE LINK */}
@@ -418,14 +451,3 @@ export function BillDetailClient({
   );
 }
 
-function Stat({ label, value, help }: { label: string; value: string; help?: string }) {
-  return (
-    <div className="rounded-md border border-gray-200 bg-white p-3">
-      <div className="text-xs font-semibold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-        {label}
-      </div>
-      <div className="mt-1 font-mono text-lg tabular-nums text-[color:var(--color-brand-navy)]">{value}</div>
-      {help && <div className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">{help}</div>}
-    </div>
-  );
-}

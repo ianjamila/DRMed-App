@@ -8,6 +8,12 @@ import {
   reactivateVendorAction,
 } from "@/lib/actions/accounting/vendors";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+} from "@/components/ui/card";
 import { CircleAlert } from "lucide-react";
 
 const PHP = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
@@ -178,30 +184,30 @@ export function VendorDetailClient({ vendor, bills, payments }: Props) {
       {/* KPI grid                                                            */}
       {/* ------------------------------------------------------------------ */}
       <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <div className="rounded-md border border-gray-200 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-            Outstanding
-          </p>
-          <p className="mt-1 text-2xl font-extrabold tabular-nums text-[color:var(--color-brand-navy)]">
-            {PHP.format(outstanding)}
-          </p>
-        </div>
-        <div className="rounded-md border border-gray-200 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-            Bills
-          </p>
-          <p className="mt-1 text-2xl font-extrabold tabular-nums text-[color:var(--color-brand-navy)]">
-            {activeBills.length}
-          </p>
-        </div>
-        <div className="rounded-md border border-gray-200 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-            Payments
-          </p>
-          <p className="mt-1 text-2xl font-extrabold tabular-nums text-[color:var(--color-brand-navy)]">
-            {PHP.format(totalPaid)}
-          </p>
-        </div>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription className="text-xs font-semibold uppercase tracking-wider">Outstanding</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="font-mono text-lg tabular-nums">{PHP.format(outstanding)}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription className="text-xs font-semibold uppercase tracking-wider">Bills</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="font-mono text-lg tabular-nums">{activeBills.length}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription className="text-xs font-semibold uppercase tracking-wider">Payments</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="font-mono text-lg tabular-nums">{PHP.format(totalPaid)}</div>
+          </CardContent>
+        </Card>
       </div>
 
       {/* ------------------------------------------------------------------ */}

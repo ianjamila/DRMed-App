@@ -15,6 +15,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+} from "@/components/ui/card";
 import { CircleAlert } from "lucide-react";
 import { StatusBadge } from "@/lib/ui/status-badge";
 
@@ -196,12 +202,30 @@ export function PaymentDetailClient({
 
       {/* KPI grid */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <Stat label="Amount" value={PHP.format(payment.amount_php)} />
-        <Stat label="Allocations (active)" value={String(activeAllocs.length)} />
-        <Stat
-          label="JE"
-          value={paymentJe?.entry_number ?? "—"}
-        />
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription className="text-xs font-semibold uppercase tracking-wider">Amount</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="font-mono text-lg tabular-nums">{PHP.format(payment.amount_php)}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription className="text-xs font-semibold uppercase tracking-wider">Allocations (active)</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="font-mono text-lg tabular-nums">{String(activeAllocs.length)}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription className="text-xs font-semibold uppercase tracking-wider">JE</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="font-mono text-lg tabular-nums">{paymentJe?.entry_number ?? "—"}</div>
+          </CardContent>
+        </Card>
       </div>
 
       {paymentJe && (
@@ -405,15 +429,3 @@ export function PaymentDetailClient({
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-md border border-gray-200 bg-white p-3">
-      <div className="text-xs font-semibold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-        {label}
-      </div>
-      <div className="mt-1 font-mono text-lg tabular-nums text-[color:var(--color-brand-navy)]">
-        {value}
-      </div>
-    </div>
-  );
-}
