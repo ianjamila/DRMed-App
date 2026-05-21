@@ -442,7 +442,7 @@ begin
   -- Insert a payment (amount = 1000 to satisfy deferred alloc-sum check later,
   -- or simply skip allocation and handle the deferred error by wrapping in a
   -- savepoint-free approach: insert both payment + allocation here).
-  -- NOTE: The deferred constraint trigger (P0014) fires at commit and requires
+  -- NOTE: The deferred constraint trigger (P0030) fires at commit and requires
   -- sum(allocations) = payment.amount_php. We insert a matching allocation below.
   insert into public.bill_payments (
     vendor_id, payment_date, method, cash_account_id, amount_php
@@ -450,7 +450,7 @@ begin
     v_vendor, v_pay_date, 'cash', v_cash_acct, 1000.00
   ) returning id into v_payment_id;
 
-  -- Insert matching allocation so P0014 is satisfied at commit.
+  -- Insert matching allocation so P0030 is satisfied at commit.
   insert into public.bill_payment_allocations (payment_id, bill_id, allocated_amount)
   values (v_payment_id, v_bill_id, 1000.00);
 
@@ -702,7 +702,7 @@ end $$;
 -- Group 11 — Guard codes (6 assertions A46-A51)
 -- ==========================================================================
 
--- A46: P0013 — void bill with active payment → fires synchronously (BEFORE trigger).
+-- A46: P0029 — void bill with active payment → fires synchronously (BEFORE trigger).
 do $$
 declare
   v_vendor     uuid;
@@ -736,16 +736,16 @@ begin
   insert into public.bill_payment_allocations (payment_id, bill_id, allocated_amount)
   values (v_payment_id, v_bill_id, 100.00);
 
-  -- Now try to void the bill (active payment exists → P0013 fires synchronously).
+  -- Now try to void the bill (active payment exists → P0029 fires synchronously).
   begin
     update public.bills
       set status = 'voided', voided_at = now(), void_reason = 'smoke test'
       where id = v_bill_id;
     -- If we reach here, guard did not fire — force assertion failure.
-    assert false, 'A46: P0013 guard did not raise';
+    assert false, 'A46: P0029 guard did not raise';
   exception when others then
     get stacked diagnostics v_sqlstate = returned_sqlstate;
-    assert v_sqlstate = 'P0013', format('A46: expected P0013, got %s', v_sqlstate);
+    assert v_sqlstate = 'P0029', format('A46: expected P0029, got %s', v_sqlstate);
   end;
 
   -- Cleanup: payment + alloc must be voided/removed before bill can be cleaned up.
@@ -773,30 +773,30 @@ begin
   delete from public.vendors where id = v_vendor;
 end $$;
 
--- A47-A50: P0014-P0017 are deferred constraint triggers that fire at COMMIT.
+-- A47-A50: P0030-P0033 are deferred constraint triggers that fire at COMMIT.
 -- Testing deferred triggers from inside a DO block is brittle: the deferred
 -- trigger fires when the outer DO block's transaction commits, which means
 -- the EXCEPTION handler in a nested BEGIN block cannot reliably catch it
 -- (the exception propagates outside the DO block's transaction boundary).
 -- Per the task brief: "If testing deferred behavior is too brittle in a DO
--- block, document the limitation in a comment and only test P0013."
+-- block, document the limitation in a comment and only test P0029."
 -- Therefore A47-A50 are documented here and skipped from inline testing.
 --
--- A47 (P0014): sum of allocations != payment.amount_php → deferred, SKIPPED.
--- A48 (P0015): allocations exceed bill.net_payable     → deferred, SKIPPED.
--- A49 (P0016): bill vendor != payment vendor           → deferred, SKIPPED.
--- A50 (P0017): allocating to a draft bill              → deferred, SKIPPED.
+-- A47 (P0030): sum of allocations != payment.amount_php → deferred, SKIPPED.
+-- A48 (P0031): allocations exceed bill.net_payable     → deferred, SKIPPED.
+-- A49 (P0032): bill vendor != payment vendor           → deferred, SKIPPED.
+-- A50 (P0033): allocating to a draft bill              → deferred, SKIPPED.
 --
 -- These guards are structurally verified in A51 (trigger existence).
 
--- A51: P0013 guard trigger + deferred constraint trigger both present in pg_trigger.
+-- A51: P0029 guard trigger + deferred constraint trigger both present in pg_trigger.
 do $$
 begin
-  -- P0013 — synchronous BEFORE trigger on bills.
+  -- P0029 — synchronous BEFORE trigger on bills.
   assert exists (select 1 from pg_trigger where tgname = 'trg_bills_void_guard'),
     'A51a: trg_bills_void_guard trigger missing';
 
-  -- P0014-P0017 — deferred constraint trigger on bill_payment_allocations.
+  -- P0030-P0033 — deferred constraint trigger on bill_payment_allocations.
   assert exists (select 1 from pg_trigger where tgname = 'trg_validate_bill_payment_allocations'),
     'A51b: trg_validate_bill_payment_allocations trigger missing';
 
