@@ -7,9 +7,14 @@ import { listBillsAction } from "@/lib/actions/accounting/bills";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { CircleAlert } from "lucide-react";
 
 const PHP = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
+
+const selectClassName =
+  "flex h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50";
 
 type Vendor = { id: string; name: string };
 type Account = { id: string; code: string; name: string };
@@ -204,7 +209,7 @@ export function PaymentFormClient({
           required
           value={vendorId}
           onChange={(e) => setVendorId(e.target.value)}
-          className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+          className={selectClassName}
         >
           <option value="">Select vendor</option>
           {vendors.map((v) => (
@@ -261,14 +266,14 @@ export function PaymentFormClient({
                           {PHP.format(b.outstanding_amount)}
                         </td>
                         <td className="px-3 py-2 text-right">
-                          <input
+                          <Input
                             type="number"
                             step="0.01"
                             min="0"
                             max={b.outstanding_amount}
                             value={allocations[b.id] ?? ""}
                             onChange={(e) => setAllocation(b.id, e.target.value)}
-                            className="min-h-[44px] w-32 rounded-md border border-gray-300 px-3 py-2 text-right text-sm tabular-nums shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+                            className="w-32 text-right tabular-nums"
                           />
                         </td>
                       </tr>
@@ -292,25 +297,24 @@ export function PaymentFormClient({
       {/* Payment header */}
       <section className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <Field label="Payment amount *" error={fieldError === "amount_php" ? error : null}>
-          <input
+          <Input
             required
             type="number"
             step="0.01"
             min="0.01"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
-            className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-right text-sm tabular-nums shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+            className="text-right tabular-nums"
           />
         </Field>
 
         <Field label="Payment date *">
-          <input
+          <Input
             required
             type="date"
             value={paymentDate}
             max={todayManilaISODate()}
             onChange={(e) => setPaymentDate(e.target.value)}
-            className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
           />
         </Field>
 
@@ -321,7 +325,7 @@ export function PaymentFormClient({
             onChange={(e) => {
               if (isPaymentMethod(e.target.value)) setMethod(e.target.value);
             }}
-            className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+            className={selectClassName}
           >
             {METHODS.map((m) => (
               <option key={m} value={m}>{m}</option>
@@ -334,7 +338,7 @@ export function PaymentFormClient({
             required
             value={cashAccountId}
             onChange={(e) => setCashAccountId(e.target.value)}
-            className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+            className={selectClassName}
           >
             <option value="">Select</option>
             {cashAccounts.map((a) => (
@@ -348,29 +352,26 @@ export function PaymentFormClient({
         {method === "cheque" ? (
           <>
             <Field label="Cheque number *">
-              <input
+              <Input
                 required
                 value={chequeNumber}
                 onChange={(e) => setChequeNumber(e.target.value)}
-                className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
               />
             </Field>
             <Field label="Cheque date *">
-              <input
+              <Input
                 required
                 type="date"
                 value={chequeDate}
                 onChange={(e) => setChequeDate(e.target.value)}
-                className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
               />
             </Field>
           </>
         ) : (
           <Field label="Reference">
-            <input
+            <Input
               value={reference}
               onChange={(e) => setReference(e.target.value)}
-              className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
             />
           </Field>
         )}
@@ -401,12 +402,10 @@ function Field({
   error?: string | null;
 }) {
   return (
-    <label className="block">
-      <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-        {label}
-      </span>
+    <div className="grid gap-2">
+      <Label>{label}</Label>
       {children}
-      {error && <span className="mt-1 block text-xs text-red-700">{error}</span>}
-    </label>
+      {error && <span className="text-xs text-destructive">{error}</span>}
+    </div>
   );
 }

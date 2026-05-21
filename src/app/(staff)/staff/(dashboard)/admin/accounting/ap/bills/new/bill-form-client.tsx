@@ -20,6 +20,8 @@ import {
 } from "@/components/ui/dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { CircleAlert } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -76,6 +78,9 @@ type PaymentMethod = "cash" | "bank_transfer" | "gcash" | "cheque";
 const METHODS: readonly PaymentMethod[] = ["cash", "bank_transfer", "gcash", "cheque"];
 
 const PHP = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
+
+const selectClassName =
+  "flex h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50";
 
 type Props =
   | {
@@ -337,7 +342,7 @@ export function BillFormClient(props: Props) {
             <select
               value={vendorId}
               onChange={(e) => onVendorChange(e.target.value)}
-              className="min-h-[44px] flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+              className={`flex-1 ${selectClassName}`}
             >
               <option value="">Select vendor</option>
               {vendorList.map((v) => (
@@ -361,37 +366,33 @@ export function BillFormClient(props: Props) {
       {/* ------- Dates + Invoice + Description ------- */}
       <section className="grid grid-cols-1 gap-3 md:grid-cols-3">
         <Field label="Bill date *">
-          <input
+          <Input
             required
             type="date"
             value={billDate}
             onChange={(e) => setBillDate(e.target.value)}
-            className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
           />
         </Field>
         <Field label="Due date *" error={fieldError === "due_date" ? error : null}>
-          <input
+          <Input
             required
             type="date"
             value={dueDate}
             onChange={(e) => setDueDate(e.target.value)}
-            className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
           />
         </Field>
         <Field label="Vendor invoice #">
-          <input
+          <Input
             value={invoiceNumber}
             onChange={(e) => setInvoiceNumber(e.target.value)}
-            className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
           />
         </Field>
       </section>
 
       <Field label="Description">
-        <input
+        <Input
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
         />
       </Field>
 
@@ -425,22 +426,20 @@ export function BillFormClient(props: Props) {
         {wtMode === "apply" && (
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <Field label="WT classification" help="BIR code, e.g. WI160 / WI100 / WI010 / WC010.">
-              <input
+              <Input
                 value={wtClassification}
                 onChange={(e) => setWtClassification(e.target.value)}
                 placeholder="WI160"
-                className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
               />
             </Field>
             <Field label="WT rate" help="Decimal — 0.0200 = 2%.">
-              <input
+              <Input
                 type="number"
                 step="0.0001"
                 min="0"
                 max="1"
                 value={wtRate}
                 onChange={(e) => setWtRate(e.target.value)}
-                className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
               />
             </Field>
           </div>
@@ -466,25 +465,25 @@ export function BillFormClient(props: Props) {
         <div className="space-y-2">
           {lines.map((line, idx) => (
             <div key={idx} className="grid grid-cols-12 gap-2">
-              <input
+              <Input
                 value={line.description}
                 onChange={(e) => updateLine(idx, { description: e.target.value })}
                 placeholder={`Line ${idx + 1} description`}
-                className="col-span-12 min-h-[44px] rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none md:col-span-5"
+                className="col-span-12 md:col-span-5"
               />
-              <input
+              <Input
                 type="number"
                 step="0.01"
                 min="0.01"
                 value={line.amount_php}
                 onChange={(e) => updateLine(idx, { amount_php: e.target.value })}
                 placeholder="Amount"
-                className="col-span-5 min-h-[44px] rounded-md border border-gray-300 px-3 py-2 text-right text-sm tabular-nums shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none md:col-span-3"
+                className="col-span-5 text-right tabular-nums md:col-span-3"
               />
               <select
                 value={line.account_id}
                 onChange={(e) => updateLine(idx, { account_id: e.target.value })}
-                className="col-span-6 min-h-[44px] rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none md:col-span-3"
+                className={`col-span-6 md:col-span-3 ${selectClassName}`}
               >
                 <option value="">Account</option>
                 {allAccounts.map((a) => (
@@ -572,13 +571,12 @@ export function BillFormClient(props: Props) {
           {paidOnEntry && (
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <Field label="Payment date *">
-                <input
+                <Input
                   required
                   type="date"
                   value={paymentDate}
                   max={todayManilaISODate()}
                   onChange={(e) => setPaymentDate(e.target.value)}
-                  className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
                 />
               </Field>
               <Field label="Method *">
@@ -588,7 +586,7 @@ export function BillFormClient(props: Props) {
                   onChange={(e) => {
                     if (isPaymentMethod(e.target.value)) setPaymentMethod(e.target.value);
                   }}
-                  className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+                  className={selectClassName}
                 >
                   {METHODS.map((m) => (
                     <option key={m} value={m}>
@@ -602,7 +600,7 @@ export function BillFormClient(props: Props) {
                   required
                   value={cashAccountId}
                   onChange={(e) => setCashAccountId(e.target.value)}
-                  className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+                  className={selectClassName}
                 >
                   <option value="">Select cash account</option>
                   {cashAccounts.map((a) => (
@@ -615,29 +613,26 @@ export function BillFormClient(props: Props) {
               {paymentMethod === "cheque" ? (
                 <>
                   <Field label="Cheque number *">
-                    <input
+                    <Input
                       required
                       value={chequeNumber}
                       onChange={(e) => setChequeNumber(e.target.value)}
-                      className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
                     />
                   </Field>
                   <Field label="Cheque date *">
-                    <input
+                    <Input
                       required
                       type="date"
                       value={chequeDate}
                       onChange={(e) => setChequeDate(e.target.value)}
-                      className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
                     />
                   </Field>
                 </>
               ) : (
                 <Field label="Reference">
-                  <input
+                  <Input
                     value={paymentReference}
                     onChange={(e) => setPaymentReference(e.target.value)}
-                    className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
                   />
                 </Field>
               )}
@@ -755,17 +750,14 @@ function InlineNewVendorDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <label className="block">
-          <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-            Vendor name *
-          </span>
-          <input
+        <div className="grid gap-2">
+          <Label>Vendor name *</Label>
+          <Input
             value={name}
             onChange={(e) => setName(e.target.value)}
             autoFocus
-            className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
           />
-        </label>
+        </div>
 
         <div className="flex flex-wrap justify-end gap-2">
           <Button
@@ -810,17 +802,11 @@ function Field({
   error?: string | null;
 }) {
   return (
-    <label className="block">
-      <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-        {label}
-      </span>
+    <div className="grid gap-2">
+      <Label>{label}</Label>
       {children}
-      {help && (
-        <span className="mt-1 block text-xs text-[color:var(--color-brand-text-soft)]">
-          {help}
-        </span>
-      )}
-      {error && <span className="mt-1 block text-xs text-red-700">{error}</span>}
-    </label>
+      {help && <span className="text-xs text-muted-foreground">{help}</span>}
+      {error && <span className="text-xs text-destructive">{error}</span>}
+    </div>
   );
 }

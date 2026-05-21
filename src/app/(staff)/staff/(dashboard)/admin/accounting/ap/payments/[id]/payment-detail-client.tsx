@@ -16,6 +16,9 @@ import {
 } from "@/components/ui/dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Card,
   CardContent,
@@ -308,19 +311,16 @@ export function PaymentDetailClient({
               recompute trigger.
             </DialogDescription>
           </DialogHeader>
-          <label className="block">
-            <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-              Reason *
-            </span>
-            <textarea
+          <div className="grid gap-2">
+            <Label>Reason *</Label>
+            <Textarea
               value={voidReason}
               onChange={(e) => setVoidReason(e.target.value)}
               rows={3}
               placeholder="3+ characters required"
               autoFocus
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
             />
-          </label>
+          </div>
           <div className="flex flex-wrap justify-end gap-2">
             <Button
               type="button"
@@ -384,7 +384,7 @@ export function PaymentDetailClient({
                         {bill.bill_number}
                       </td>
                       <td className="px-3 py-2 text-right">
-                        <input
+                        <Input
                           type="number"
                           step="0.01"
                           min="0"
@@ -392,7 +392,7 @@ export function PaymentDetailClient({
                           onChange={(e) =>
                             setRealloc((cur) => ({ ...cur, [bill.id]: e.target.value }))
                           }
-                          className="min-h-[44px] w-32 rounded-md border border-gray-300 px-3 py-2 text-right text-sm tabular-nums shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+                          className="w-32 text-right tabular-nums"
                         />
                       </td>
                     </tr>

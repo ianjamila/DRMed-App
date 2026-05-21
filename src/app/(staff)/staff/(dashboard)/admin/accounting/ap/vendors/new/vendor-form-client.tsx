@@ -5,7 +5,13 @@ import { useRouter } from "next/navigation";
 import { createVendorAction, updateVendorAction } from "@/lib/actions/accounting/vendors";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { CircleAlert } from "lucide-react";
+
+const selectClassName =
+  "flex h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50";
 
 type CoaAccount = { id: string; code: string; name: string };
 
@@ -94,37 +100,33 @@ export function VendorFormClient(props: Props) {
         )}
 
         <Field label="Name *" error={fieldError === "name" ? error : null}>
-          <input
+          <Input
             required
             value={form.name}
             onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-            className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
           />
         </Field>
 
         <Field label="TIN (optional)" error={fieldError === "tin" ? error : null}>
-          <input
+          <Input
             value={form.tin}
             onChange={(e) => setForm((f) => ({ ...f, tin: e.target.value }))}
             placeholder="123-456-789 or 123-456-789-000"
-            className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
           />
         </Field>
 
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <Field label="Email" error={fieldError === "email" ? error : null}>
-            <input
+            <Input
               type="email"
               value={form.email}
               onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-              className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
             />
           </Field>
           <Field label="Phone">
-            <input
+            <Input
               value={form.phone}
               onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
-              className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
             />
           </Field>
         </div>
@@ -136,7 +138,7 @@ export function VendorFormClient(props: Props) {
           <select
             value={form.default_account_id}
             onChange={(e) => setForm((f) => ({ ...f, default_account_id: e.target.value }))}
-            className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+            className={selectClassName}
           >
             <option value="">(none — pick per-bill)</option>
             {expenseAccounts.map((a) => (
@@ -152,13 +154,12 @@ export function VendorFormClient(props: Props) {
             label="Default WT classification"
             help="BIR code like WI160, WI100, WI010, WC010."
           >
-            <input
+            <Input
               value={form.default_wt_classification}
               onChange={(e) =>
                 setForm((f) => ({ ...f, default_wt_classification: e.target.value }))
               }
               placeholder="WI160"
-              className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
             />
           </Field>
           <Field
@@ -166,24 +167,22 @@ export function VendorFormClient(props: Props) {
             help="Decimal — 0.0200 = 2%."
             error={fieldError === "default_wt_rate" ? error : null}
           >
-            <input
+            <Input
               type="number"
               step="0.0001"
               min="0"
               max="1"
               value={form.default_wt_rate}
               onChange={(e) => setForm((f) => ({ ...f, default_wt_rate: e.target.value }))}
-              className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
             />
           </Field>
         </div>
 
         <Field label="Notes">
-          <textarea
+          <Textarea
             value={form.notes}
             onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
             rows={3}
-            className="min-h-[88px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
           />
         </Field>
 
@@ -223,17 +222,11 @@ function Field({
   error?: string | null;
 }) {
   return (
-    <label className="block">
-      <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-        {label}
-      </span>
+    <div className="grid gap-2">
+      <Label>{label}</Label>
       {children}
-      {help && (
-        <span className="mt-1 block text-xs text-[color:var(--color-brand-text-soft)]">
-          {help}
-        </span>
-      )}
-      {error && <span className="mt-1 block text-xs text-red-700">{error}</span>}
-    </label>
+      {help && <span className="text-xs text-muted-foreground">{help}</span>}
+      {error && <span className="text-xs text-destructive">{error}</span>}
+    </div>
   );
 }

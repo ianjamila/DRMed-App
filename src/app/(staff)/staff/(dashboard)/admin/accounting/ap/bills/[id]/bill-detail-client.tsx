@@ -18,6 +18,8 @@ import {
 } from "@/components/ui/dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Card,
   CardContent,
@@ -419,19 +421,16 @@ export function BillDetailClient({
             </DialogDescription>
           </DialogHeader>
 
-          <label className="block">
-            <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-              Reason *
-            </span>
-            <textarea
+          <div className="grid gap-2">
+            <Label>Reason *</Label>
+            <Textarea
               value={voidReason}
               onChange={(e) => setVoidReason(e.target.value)}
               rows={3}
               placeholder="3+ characters required"
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
               autoFocus
             />
-          </label>
+          </div>
 
           <div className="flex flex-wrap justify-end gap-2">
             <Button

@@ -17,10 +17,15 @@ import {
 } from "@/components/ui/dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { CircleAlert } from "lucide-react";
 import { StatusBadge } from "@/lib/ui/status-badge";
 
 const PHP = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
+
+const selectClassName =
+  "flex h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50";
 
 type Account = { id: string; code: string; name: string };
 type Vendor = { id: string; name: string };
@@ -271,7 +276,7 @@ function TemplateForm({
             required
             value={form.vendor_id}
             onChange={(e) => setForm((f) => ({ ...f, vendor_id: e.target.value }))}
-            className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+            className={selectClassName}
           >
             <option value="">— pick a vendor —</option>
             {vendors.map((v) => (
@@ -283,11 +288,10 @@ function TemplateForm({
         </Field>
 
         <Field label="Description *">
-          <input
+          <Input
             required
             value={form.description}
             onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-            className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
           />
         </Field>
 
@@ -298,7 +302,7 @@ function TemplateForm({
             onChange={(e) =>
               setForm((f) => ({ ...f, default_account_id: e.target.value }))
             }
-            className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+            className={selectClassName}
           >
             <option value="">— pick an account —</option>
             {accounts.map((a) => (
@@ -313,13 +317,12 @@ function TemplateForm({
           label="Amount (₱)"
           help="Leave blank for variable amounts (e.g. utility bills)."
         >
-          <input
+          <Input
             type="number"
             step="0.01"
             min="0"
             value={form.amount_php}
             onChange={(e) => setForm((f) => ({ ...f, amount_php: e.target.value }))}
-            className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
           />
         </Field>
 
@@ -327,7 +330,7 @@ function TemplateForm({
           label="Due day of month *"
           help="1–31. If shorter month, falls back to last day."
         >
-          <input
+          <Input
             type="number"
             min="1"
             max="31"
@@ -336,7 +339,6 @@ function TemplateForm({
             onChange={(e) =>
               setForm((f) => ({ ...f, due_day_of_month: Number(e.target.value) }))
             }
-            className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
           />
         </Field>
 
@@ -344,7 +346,7 @@ function TemplateForm({
           label="Bill date offset (days)"
           help="Negative = bill_date posted earlier than the run date."
         >
-          <input
+          <Input
             type="number"
             min="-30"
             max="0"
@@ -355,33 +357,30 @@ function TemplateForm({
                 bill_date_offset_days: Number(e.target.value),
               }))
             }
-            className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
           />
         </Field>
 
         <Field label="Next run date *">
-          <input
+          <Input
             type="date"
             required
             value={form.next_run_date}
             onChange={(e) => setForm((f) => ({ ...f, next_run_date: e.target.value }))}
-            className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
           />
         </Field>
 
         <Field label="Default WT classification">
-          <input
+          <Input
             value={form.default_wt_classification}
             onChange={(e) =>
               setForm((f) => ({ ...f, default_wt_classification: e.target.value }))
             }
             placeholder="WI160"
-            className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
           />
         </Field>
 
         <Field label="Default WT rate" help="Decimal — 0.0200 = 2%.">
-          <input
+          <Input
             type="number"
             step="0.0001"
             min="0"
@@ -390,7 +389,6 @@ function TemplateForm({
             onChange={(e) =>
               setForm((f) => ({ ...f, default_wt_rate: e.target.value }))
             }
-            className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
           />
         </Field>
 
@@ -439,16 +437,10 @@ function Field({
   help?: string;
 }) {
   return (
-    <label className="block">
-      <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-        {label}
-      </span>
+    <div className="grid gap-2">
+      <Label>{label}</Label>
       {children}
-      {help && (
-        <span className="mt-1 block text-xs text-[color:var(--color-brand-text-soft)]">
-          {help}
-        </span>
-      )}
-    </label>
+      {help && <span className="text-xs text-muted-foreground">{help}</span>}
+    </div>
   );
 }
