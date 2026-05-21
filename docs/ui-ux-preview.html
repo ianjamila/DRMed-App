@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DRMed — UI/UX swap preview v2 (token-bridged)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root {
+    /* Actual DRMed brand tokens, pulled from globals.css */
+    --color-brand-navy:       #284570;
+    --color-brand-steel:      #4682b4;
+    --color-brand-cyan:       #06aef1;
+    --color-brand-cyan-light: #7fbeff;
+    --color-brand-cyan-mid:   #3eafe3;
+    --color-brand-bg:         #f0f6fc;
+    --color-brand-bg-mid:     #e3eef9;
+    --color-brand-text:       #1a2537;
+    --color-brand-text-mid:   #374151;
+    --color-brand-text-soft:  #6b7280;
+    --font-heading: ui-sans-serif, system-ui;
+
+    /* Bridged shadcn tokens — what we'd add to globals.css under Option A */
+    --primary:               var(--color-brand-navy);
+    --primary-foreground:    #ffffff;
+    --ring:                  var(--color-brand-cyan);
+    --accent:                var(--color-brand-bg);
+    --accent-foreground:     var(--color-brand-text);
+    --muted:                 var(--color-brand-bg);
+    --muted-foreground:      var(--color-brand-text-soft);
+    --card:                  #ffffff;
+    --card-foreground:       var(--color-brand-text);
+    --border:                #e2e8f0;
+    --input:                 #e2e8f0;
+    --destructive:           #dc2626;
+  }
+  body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto; }
+  .col { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+  .pane { border: 1px solid #e5e7eb; border-radius: 8px; padding: 1.25rem; background: white; }
+  .pane-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: #6b7280; margin-bottom: .75rem; }
+  .demo-label-before { color: #dc2626; }
+  .demo-label-after  { color: #16a34a; }
+  h1 { font-family: var(--font-heading); }
+  .section { margin-bottom: 3rem; }
+  .section-h { font-size: 1.5rem; font-weight: 800; color: var(--color-brand-navy); margin-bottom: .5rem; }
+  .section-sub { color: var(--color-brand-text-soft); font-size: .875rem; margin-bottom: 1rem; max-width: 720px; }
+  .section-files { font-family: ui-monospace, SFMono-Regular, monospace; font-size: .75rem; color: #6b7280; margin-bottom: 1rem; }
+  .footer-actions {
+    background: var(--color-brand-bg);
+    border: 1px solid var(--color-brand-bg-mid);
+    border-radius: 8px;
+    padding: 1.25rem 1.5rem;
+    margin-top: 2.5rem;
+  }
+  .bridge-callout {
+    background: linear-gradient(135deg, var(--color-brand-bg) 0%, white 100%);
+    border: 1px solid var(--color-brand-cyan-light);
+    border-left: 4px solid var(--color-brand-cyan);
+    border-radius: 8px;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 2.5rem;
+  }
+  code.inline-bg {
+    background: #f1f5f9;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.85em;
+  }
+  pre {
+    background: #0f172a;
+    color: #e2e8f0;
+    padding: 1rem;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    overflow-x: auto;
+    line-height: 1.6;
+  }
+  pre .k { color: #c4b5fd; }
+  pre .s { color: #86efac; }
+  pre .c { color: #94a3b8; font-style: italic; }
+</style>
+</head>
+<body class="max-w-6xl mx-auto p-6 md:p-10">
+
+<header class="mb-8">
+  <p class="text-xs font-bold uppercase tracking-wider" style="color: var(--color-brand-cyan)">Phase 12.4 follow-up · UI polish proposal v2</p>
+  <h1 class="mt-1 text-3xl font-extrabold" style="color: var(--color-brand-navy)">DRMed — UI/UX swap preview</h1>
+  <p class="mt-2 text-sm" style="color: var(--color-brand-text-soft); max-width: 760px">
+    Five candidate swaps from hand-rolled Tailwind to <code class="inline-bg">shadcn/ui</code> components.
+    All "After" panels assume the <strong>token bridge</strong> (Option A) below is in place — so the brand carries through automatically.
+  </p>
+</header>
+
+<!-- ============================================================ -->
+<!-- PREREQUISITE: TOKEN BRIDGE -->
+<!-- ============================================================ -->
+<section class="bridge-callout">
+  <div class="font-bold mb-2" style="color: var(--color-brand-navy)">⓪ Prerequisite — Token bridge (one edit, ~10 lines)</div>
+  <p class="text-sm mb-3" style="color: var(--color-brand-text-soft)">
+    Today shadcn's tokens (<code class="inline-bg">--primary</code>, <code class="inline-bg">--card</code>, etc.) point at grayscale defaults. Your existing shadcn pieces (Dialog, MFA enroll Button, etc.) currently render off-brand. <strong>One <code class="inline-bg">globals.css</code> edit fixes the existing mismatch AND makes every subsequent swap inherit the brand for free.</strong>
+  </p>
+  <pre><span class="c">/* globals.css — add to :root */</span>
+<span class="k">--primary</span>:               <span class="s">var(--color-brand-navy)</span>;     <span class="c">/* #284570 */</span>
+<span class="k">--primary-foreground</span>:    <span class="s">#ffffff</span>;
+<span class="k">--ring</span>:                  <span class="s">var(--color-brand-cyan)</span>;     <span class="c">/* focus rings: brand cyan */</span>
+<span class="k">--accent</span>:                <span class="s">var(--color-brand-bg)</span>;       <span class="c">/* hover surfaces */</span>
+<span class="k">--accent-foreground</span>:     <span class="s">var(--color-brand-text)</span>;
+<span class="k">--muted</span>:                 <span class="s">var(--color-brand-bg)</span>;
+<span class="k">--muted-foreground</span>:      <span class="s">var(--color-brand-text-soft)</span>;
+<span class="k">--card-foreground</span>:       <span class="s">var(--color-brand-text)</span>;
+<span class="k">--destructive</span>:           <span class="s">#dc2626</span>;                       <span class="c">/* red stays universal */</span></pre>
+  <p class="text-xs mt-3" style="color: var(--color-brand-text-soft)">
+    <strong>Side effect</strong>: existing shadcn components (MFA enroll Button, Dialog titles in the recurring + bill-detail modals) snap to brand. Looking at the current state, that's an improvement — they're grayscale today.
+  </p>
+</section>
+
+<!-- ============================================================ -->
+<!-- 1. ALERT -->
+<!-- ============================================================ -->
+<section class="section">
+  <h2 class="section-h">1. Error banner → <code>Alert</code> <span class="text-xs font-normal" style="color: #16a34a">(NEEDS INSTALL: <code>npx shadcn@latest add alert</code>)</span></h2>
+  <p class="section-sub">
+    <strong>Brand inheritance</strong>: minimal — the destructive variant uses universal red (<code class="inline-bg">--destructive</code>). The brand bridge mostly affects the <code>default</code> variant of Alert (for non-error info banners we don't currently have).
+  </p>
+  <p class="section-files">Used in: vendor-detail, bill-detail, payment-detail, payments-index, bills-index, vendor-form, bill-form, payment-form, recurring-client. ~10 call sites.</p>
+
+  <div class="col">
+    <div class="pane">
+      <div class="pane-label demo-label-before">Before — hand-rolled</div>
+      <div role="alert" class="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800">
+        Cannot void this bill — 2 payment(s) are still active. Void each payment first.
+      </div>
+    </div>
+    <div class="pane">
+      <div class="pane-label demo-label-after">After — shadcn <code>Alert variant="destructive"</code></div>
+      <div role="alert" class="relative w-full rounded-lg border bg-background px-4 py-3 text-sm grid gap-1 [&>svg]:absolute [&>svg]:left-4 [&>svg]:top-4 [&>svg+div]:pl-7" style="border-color: var(--destructive); color: var(--destructive); background: color-mix(in srgb, var(--destructive) 6%, white)">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <div class="pl-7">
+          <div class="font-medium leading-none tracking-tight">Cannot void bill</div>
+          <div class="text-sm opacity-90 mt-1">2 payment(s) are still active. Void each payment first.</div>
+        </div>
+      </div>
+      <p class="text-xs mt-2" style="color: var(--color-brand-text-soft)">Gains: icon, title-vs-description hierarchy, semantic <code class="inline-bg">role="alert"</code>, dark-mode-aware.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- 2. BADGE -->
+<!-- ============================================================ -->
+<section class="section">
+  <h2 class="section-h">2. Status pill → <code>Badge</code></h2>
+  <p class="section-sub">
+    <strong>Brand inheritance</strong>: low — status colors are semantic (red=voided, green=paid). We'd add a status-variant helper that maps each status to existing semantic palettes. <code>Badge</code> is already installed.
+  </p>
+  <p class="section-files">Used in: bill-detail, bills-index, payment-detail, payments-index, journal-detail, recurring-client. ~6 call sites.</p>
+
+  <div class="col">
+    <div class="pane">
+      <div class="pane-label demo-label-before">Before — hand-rolled <code>&lt;span&gt;</code></div>
+      <div class="flex flex-wrap gap-2">
+        <span class="inline-block rounded px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-700">draft</span>
+        <span class="inline-block rounded px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-800">posted</span>
+        <span class="inline-block rounded px-2 py-0.5 text-xs font-medium bg-yellow-100 text-yellow-800">partially_paid</span>
+        <span class="inline-block rounded px-2 py-0.5 text-xs font-medium bg-green-100 text-green-800">paid</span>
+        <span class="inline-block rounded px-2 py-0.5 text-xs font-medium bg-red-100 text-red-800">voided</span>
+      </div>
+    </div>
+    <div class="pane">
+      <div class="pane-label demo-label-after">After — <code>Badge</code> (status variant helper)</div>
+      <div class="flex flex-wrap gap-2">
+        <span class="inline-flex h-5 items-center rounded-full border border-transparent px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-700">draft</span>
+        <span class="inline-flex h-5 items-center rounded-full border border-transparent px-2 py-0.5 text-xs font-medium" style="background: color-mix(in srgb, var(--color-brand-cyan) 15%, white); color: var(--color-brand-navy)">posted</span>
+        <span class="inline-flex h-5 items-center rounded-full border border-transparent bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">partially_paid</span>
+        <span class="inline-flex h-5 items-center rounded-full border border-transparent bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">paid</span>
+        <span class="inline-flex h-5 items-center rounded-full border border-transparent bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800">voided</span>
+      </div>
+      <p class="text-xs mt-2" style="color: var(--color-brand-text-soft)">
+        <strong>Brand touch</strong>: <code class="inline-bg">posted</code> uses brand-cyan-tinted bg + brand-navy text instead of generic Tailwind blue. Other statuses stay semantic.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- 3. BUTTON -->
+<!-- ============================================================ -->
+<section class="section">
+  <h2 class="section-h">3. Submit / action buttons → <code>Button</code></h2>
+  <p class="section-sub">
+    <strong>Brand inheritance</strong>: high — with the bridge, <code>Button</code> default variant renders <strong>brand-navy</strong> automatically. The current brand-cyan hover would shift to <code class="inline-bg">primary/90</code> (10% darker navy) by default. <em>If</em> you want the cyan hover preserved, that's a custom variant (5-line addition to button.tsx).
+  </p>
+  <p class="section-files">Used everywhere. 50+ call sites. Most pervasive change.</p>
+
+  <div class="col">
+    <div class="pane">
+      <div class="pane-label demo-label-before">Before — hand-rolled brand-styled</div>
+      <div class="flex flex-wrap gap-2">
+        <button class="min-h-[44px] rounded-md px-4 py-2 text-sm font-bold uppercase tracking-wider text-white" style="background: var(--color-brand-navy)" onmouseover="this.style.background='var(--color-brand-cyan)'" onmouseout="this.style.background='var(--color-brand-navy)'">Save changes</button>
+        <button class="min-h-[44px] rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-bold uppercase tracking-wider hover:bg-gray-50" style="color: var(--color-brand-text-soft)">Cancel</button>
+        <button class="min-h-[44px] rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-red-700 hover:bg-red-50">Void</button>
+      </div>
+      <p class="text-xs mt-3" style="color: var(--color-brand-text-soft)">~200 chars per button. Hover transitions navy → cyan.</p>
+    </div>
+    <div class="pane">
+      <div class="pane-label demo-label-after">After — shadcn <code>Button</code> (bridged)</div>
+      <div class="flex flex-wrap gap-2">
+        <button class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors h-10 px-4 py-2 text-white" style="background: var(--primary)" onmouseover="this.style.background='color-mix(in srgb, var(--primary) 90%, black)'" onmouseout="this.style.background='var(--primary)'">Save changes</button>
+        <button class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors border bg-background h-10 px-4 py-2 hover:bg-accent" style="border-color: var(--border); color: var(--color-brand-text)">Cancel</button>
+        <button class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors h-9 px-3 text-xs text-white" style="background: var(--destructive)">Void</button>
+      </div>
+      <p class="text-xs mt-3" style="color: var(--color-brand-text-soft)">
+        Primary = brand-navy (from bridge). Cancel = brand-bg hover. Destructive = universal red. ~12 chars per button: <code class="inline-bg">&lt;Button variant="destructive"&gt;Void&lt;/Button&gt;</code>
+      </p>
+      <p class="text-xs mt-2" style="color: var(--color-brand-text-soft)">
+        <strong>Trade-off</strong>: lose the navy → cyan hover transition (now navy → 90% navy). To preserve cyan hover, add a 1-line custom variant.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- 4. CARD -->
+<!-- ============================================================ -->
+<section class="section">
+  <h2 class="section-h">4. KPI tile → <code>Card</code></h2>
+  <p class="section-sub">
+    <strong>Brand inheritance</strong>: medium — bridge sets <code class="inline-bg">--card-foreground</code> to brand text, so the value number renders in brand-navy automatically. Label color via bridged <code class="inline-bg">--muted-foreground</code>.
+  </p>
+  <p class="section-files">Used in: bill-detail (4 tiles), payment-detail (3 tiles), vendor-detail (3 tiles), ap-dashboard (5 aging tiles + 4 sections). ~15 call sites.</p>
+
+  <div class="col">
+    <div class="pane">
+      <div class="pane-label demo-label-before">Before — hand-rolled</div>
+      <div class="rounded-md border border-gray-200 bg-white p-3 w-48">
+        <div class="text-xs font-semibold uppercase tracking-wider" style="color: var(--color-brand-text-soft)">Outstanding</div>
+        <div class="mt-1 font-mono text-lg tabular-nums" style="color: var(--color-brand-navy)">₱9,800.00</div>
+      </div>
+    </div>
+    <div class="pane">
+      <div class="pane-label demo-label-after">After — shadcn <code>Card</code> (bridged)</div>
+      <div class="rounded-xl border shadow-sm w-48" style="border-color: var(--border); background: var(--card); color: var(--card-foreground)">
+        <div class="flex flex-col space-y-1.5 p-4 pb-2">
+          <div class="text-xs font-semibold uppercase tracking-wider" style="color: var(--muted-foreground)">Outstanding</div>
+        </div>
+        <div class="p-4 pt-0">
+          <div class="font-mono text-2xl font-bold tabular-nums" style="color: var(--card-foreground)">₱9,800.00</div>
+        </div>
+      </div>
+      <p class="text-xs mt-2" style="color: var(--color-brand-text-soft)">
+        Same brand colors as before — value text inherits brand-navy via bridged <code class="inline-bg">--card-foreground</code>. Bonus: slightly softer rounded-xl + shadow, larger 2xl number for hierarchy.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- 5. FORM FIELD -->
+<!-- ============================================================ -->
+<section class="section">
+  <h2 class="section-h">5. Form input → <code>Input</code> + <code>Label</code></h2>
+  <p class="section-sub">
+    <strong>Brand inheritance</strong>: high on focus state (bridge sets <code class="inline-bg">--ring</code> to brand-cyan, so focus rings glow cyan). Label style shifts from "tiny uppercase muted" to "sentence-case medium" — that's a deliberate shadcn pattern, more legible.
+  </p>
+  <p class="section-files">Used in: vendor-form, bill-form, payment-form, recurring-client, MFA enroll, etc. 30+ call sites.</p>
+  <p class="section-files" style="color: #dc2626"><strong>⚠ Caveat</strong>: shadcn <code>Input</code> defaults to <code class="inline-bg">h-10</code> (40px) — BELOW the WCAG/Apple HIG 44px touch target. The current hand-rolled uses <code class="inline-bg">min-h-[44px]</code>. We'd either pass <code class="inline-bg">className="min-h-[44px]"</code> everywhere OR (cleaner) override <code class="inline-bg">input.tsx</code> to default to <code class="inline-bg">h-11</code> (44px).</p>
+
+  <div class="col">
+    <div class="pane">
+      <div class="pane-label demo-label-before">Before — hand-rolled</div>
+      <label class="block">
+        <span class="mb-1 block text-xs font-semibold uppercase tracking-wider" style="color: var(--color-brand-text-soft)">Vendor invoice #</span>
+        <input value="INV-2026-001" class="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-cyan-500 focus:outline-none" />
+      </label>
+    </div>
+    <div class="pane">
+      <div class="pane-label demo-label-after">After — shadcn <code>Input</code> + <code>Label</code> (bridged, h-11 patch)</div>
+      <div class="grid gap-2">
+        <label class="text-sm font-medium leading-none" style="color: var(--color-brand-text)">Vendor invoice #</label>
+        <input value="INV-2026-001" class="flex w-full rounded-md border bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2" style="border-color: var(--input); height: 44px; --tw-ring-color: var(--ring)" onfocus="this.style.boxShadow='0 0 0 2px var(--background), 0 0 0 4px var(--ring)'" onblur="this.style.boxShadow=''" />
+      </div>
+      <p class="text-xs mt-2" style="color: var(--color-brand-text-soft)">
+        Focus ring is brand-cyan (via bridged <code class="inline-bg">--ring</code>). Label is "sentence-case medium" — industry standard, more legible than tiny-uppercase. <strong>Click the field</strong> to see the focus ring.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- DECISION HELP -->
+<!-- ============================================================ -->
+<section class="footer-actions">
+  <div class="font-bold mb-3" style="color: var(--color-brand-navy)">Pick what to do</div>
+  <p class="text-sm mb-4" style="color: var(--color-brand-text-soft)">
+    My recommendation: <strong>do ⓪ (bridge) + 1 + 2 + 4 first</strong>. Token bridge unlocks brand inheritance everywhere; Alert + Badge + Card are low-risk + high-visibility wins. Land them as 4 small PRs in order. Re-evaluate Button + Form afterwards.
+  </p>
+  <table class="text-sm w-full">
+    <thead>
+      <tr class="text-left text-xs uppercase tracking-wider" style="color: var(--color-brand-text-soft)">
+        <th class="py-2 pr-4">Swap</th>
+        <th class="py-2 pr-4">Brand inheritance</th>
+        <th class="py-2 pr-4">Risk</th>
+        <th class="py-2 pr-4">Effort</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y" style="border-color: var(--border)">
+      <tr>
+        <td class="py-2 pr-4"><strong>⓪ Token bridge</strong></td>
+        <td class="py-2 pr-4">Unlocks brand for ALL shadcn pieces (existing + future)</td>
+        <td class="py-2 pr-4">Low (existing shadcn pieces snap to brand — visual improvement)</td>
+        <td class="py-2 pr-4">~10 lines in globals.css</td>
+      </tr>
+      <tr>
+        <td class="py-2 pr-4">1. Alert</td>
+        <td class="py-2 pr-4">Low (red is universal)</td>
+        <td class="py-2 pr-4">Low</td>
+        <td class="py-2 pr-4">~10 call sites, 1 install</td>
+      </tr>
+      <tr>
+        <td class="py-2 pr-4">2. Badge</td>
+        <td class="py-2 pr-4">Low (semantic colors)</td>
+        <td class="py-2 pr-4">Low</td>
+        <td class="py-2 pr-4">~6 call sites + 1 helper</td>
+      </tr>
+      <tr>
+        <td class="py-2 pr-4">3. Button</td>
+        <td class="py-2 pr-4">High (bridge → brand-navy default). Lose cyan hover unless custom variant.</td>
+        <td class="py-2 pr-4">Medium</td>
+        <td class="py-2 pr-4">50+ call sites</td>
+      </tr>
+      <tr>
+        <td class="py-2 pr-4">4. Card</td>
+        <td class="py-2 pr-4">Medium (bridged --card-foreground)</td>
+        <td class="py-2 pr-4">Low</td>
+        <td class="py-2 pr-4">~15 call sites</td>
+      </tr>
+      <tr>
+        <td class="py-2 pr-4">5. Form fields</td>
+        <td class="py-2 pr-4">High (bridge → cyan focus ring). Label style shifts.</td>
+        <td class="py-2 pr-4">Medium (need h-11 patch for touch target)</td>
+        <td class="py-2 pr-4">30+ call sites</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+</body>
+</html>
