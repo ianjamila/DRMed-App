@@ -3,6 +3,10 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { TriangleAlert } from "lucide-react";
+import { StatusBadge } from "@/lib/ui/status-badge";
 
 const PHP = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
 
@@ -34,14 +38,6 @@ type Filter = {
 };
 
 const STATUSES = ["draft", "posted", "partially_paid", "paid", "voided"] as const;
-
-const STATUS_COLORS: Record<string, string> = {
-  draft: "bg-gray-100 text-gray-700",
-  posted: "bg-blue-100 text-blue-800",
-  partially_paid: "bg-yellow-100 text-yellow-800",
-  paid: "bg-green-100 text-green-800",
-  voided: "bg-red-100 text-red-800",
-};
 
 const NOW_MS = Date.now();
 
@@ -85,13 +81,13 @@ export function BillsIndexClient({
   return (
     <div className="space-y-4">
       {oldDrafts > 0 && (
-        <div
-          role="alert"
-          className="rounded-md border border-yellow-300 bg-yellow-50 p-3 text-sm text-yellow-900"
-        >
-          {oldDrafts} draft{oldDrafts !== 1 ? "s" : ""} older than 7 days — review and
-          post or delete.
-        </div>
+        <Alert>
+          <TriangleAlert />
+          <AlertDescription>
+            {oldDrafts} draft{oldDrafts !== 1 ? "s" : ""} older than 7 days — review and
+            post or delete.
+          </AlertDescription>
+        </Alert>
       )}
 
       <div className="grid grid-cols-1 gap-2 md:grid-cols-5">
@@ -143,20 +139,23 @@ export function BillsIndexClient({
         />
 
         <div className="flex gap-2">
-          <button
+          <Button
             type="button"
+            variant="brand"
+            size="default"
             onClick={applyFilters}
-            className="min-h-[44px] flex-1 rounded-md bg-[color:var(--color-brand-navy)] px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-white hover:bg-[color:var(--color-brand-cyan)]"
+            className="flex-1"
           >
             Apply
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            variant="outline"
+            size="default"
             onClick={clearFilters}
-            className="min-h-[44px] rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)] hover:bg-gray-50"
           >
             Clear
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -200,13 +199,7 @@ export function BillsIndexClient({
                   {PHP.format(b.outstanding_amount)}
                 </td>
                 <td className="px-3 py-2">
-                  <span
-                    className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${
-                      STATUS_COLORS[b.status] ?? "bg-gray-100 text-gray-700"
-                    }`}
-                  >
-                    {b.status}
-                  </span>
+                  <StatusBadge status={b.status} />
                 </td>
               </tr>
             ))}

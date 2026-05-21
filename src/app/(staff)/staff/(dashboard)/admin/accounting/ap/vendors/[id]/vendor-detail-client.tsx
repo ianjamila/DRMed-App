@@ -7,6 +7,15 @@ import {
   deactivateVendorAction,
   reactivateVendorAction,
 } from "@/lib/actions/accounting/vendors";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { CircleAlert } from "lucide-react";
 
 const PHP = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
 
@@ -136,12 +145,10 @@ export function VendorDetailClient({ vendor, bills, payments }: Props) {
       {/* Error banner                                                        */}
       {/* ------------------------------------------------------------------ */}
       {error && (
-        <div
-          role="alert"
-          className="mb-4 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800"
-        >
-          {error}
-        </div>
+        <Alert variant="destructive" className="mb-4">
+          <CircleAlert />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       )}
 
       {/* ------------------------------------------------------------------ */}
@@ -154,18 +161,19 @@ export function VendorDetailClient({ vendor, bills, payments }: Props) {
         >
           + Edit
         </Link>
-        <button
+        <Button
           type="button"
+          variant="brand"
+          size="touch"
           onClick={toggleActive}
           disabled={isPending}
-          className="min-h-[44px] inline-flex items-center rounded-md bg-[color:var(--color-brand-navy)] px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-white hover:bg-[color:var(--color-brand-cyan)] disabled:opacity-50"
         >
           {isPending
             ? "Saving…"
             : vendor.is_active
               ? "Deactivate"
               : "Reactivate"}
-        </button>
+        </Button>
         <Link
           href="/staff/admin/accounting/ap/vendors"
           className="min-h-[44px] inline-flex items-center text-xs text-[color:var(--color-brand-text-soft)] hover:underline"
@@ -178,30 +186,30 @@ export function VendorDetailClient({ vendor, bills, payments }: Props) {
       {/* KPI grid                                                            */}
       {/* ------------------------------------------------------------------ */}
       <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <div className="rounded-md border border-gray-200 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-            Outstanding
-          </p>
-          <p className="mt-1 text-2xl font-extrabold tabular-nums text-[color:var(--color-brand-navy)]">
-            {PHP.format(outstanding)}
-          </p>
-        </div>
-        <div className="rounded-md border border-gray-200 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-            Bills
-          </p>
-          <p className="mt-1 text-2xl font-extrabold tabular-nums text-[color:var(--color-brand-navy)]">
-            {activeBills.length}
-          </p>
-        </div>
-        <div className="rounded-md border border-gray-200 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-            Payments
-          </p>
-          <p className="mt-1 text-2xl font-extrabold tabular-nums text-[color:var(--color-brand-navy)]">
-            {PHP.format(totalPaid)}
-          </p>
-        </div>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription className="text-xs font-semibold uppercase tracking-wider">Outstanding</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="font-mono text-lg tabular-nums">{PHP.format(outstanding)}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription className="text-xs font-semibold uppercase tracking-wider">Bills</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="font-mono text-lg tabular-nums">{activeBills.length}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription className="text-xs font-semibold uppercase tracking-wider">Payments</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="font-mono text-lg tabular-nums">{PHP.format(totalPaid)}</div>
+          </CardContent>
+        </Card>
       </div>
 
       {/* ------------------------------------------------------------------ */}

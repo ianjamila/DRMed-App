@@ -14,6 +14,19 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+} from "@/components/ui/card";
+import { CircleAlert } from "lucide-react";
+import { StatusBadge } from "@/lib/ui/status-badge";
 
 const PHP = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
 
@@ -157,46 +170,69 @@ export function PaymentDetailClient({
             {payment.reference && !payment.cheque_number && <> · Ref: {payment.reference}</>}
           </p>
           {isVoided && (
-            <p className="mt-2 inline-block rounded bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800">
-              voided · {payment.void_reason}
+            <p className="mt-2 flex items-center gap-2 text-xs">
+              <StatusBadge status="voided" />
+              <span className="text-[color:var(--color-brand-text-soft)]">· {payment.void_reason}</span>
             </p>
           )}
         </div>
 
         {!isVoided && (
           <div className="flex flex-wrap items-center gap-2">
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="touch"
               onClick={openReallocate}
-              className="min-h-[44px] rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)] hover:bg-gray-50"
             >
               Reallocate
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="outline"
+              size="touch"
               onClick={() => setVoidOpen(true)}
-              className="min-h-[44px] rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-red-700 hover:bg-red-50"
+              className="border-red-300 text-red-700 hover:bg-red-50 hover:text-red-800"
             >
               Void
-            </button>
+            </Button>
           </div>
         )}
       </header>
 
       {error && (
-        <div role="alert" className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800">
-          {error}
-        </div>
+        <Alert variant="destructive">
+          <CircleAlert />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       )}
 
       {/* KPI grid */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <Stat label="Amount" value={PHP.format(payment.amount_php)} />
-        <Stat label="Allocations (active)" value={String(activeAllocs.length)} />
-        <Stat
-          label="JE"
-          value={paymentJe?.entry_number ?? "—"}
-        />
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription className="text-xs font-semibold uppercase tracking-wider">Amount</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="font-mono text-lg tabular-nums">{PHP.format(payment.amount_php)}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription className="text-xs font-semibold uppercase tracking-wider">Allocations (active)</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="font-mono text-lg tabular-nums">{String(activeAllocs.length)}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription className="text-xs font-semibold uppercase tracking-wider">JE</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="font-mono text-lg tabular-nums">{paymentJe?.entry_number ?? "—"}</div>
+          </CardContent>
+        </Card>
       </div>
 
       {paymentJe && (
@@ -246,15 +282,7 @@ export function PaymentDetailClient({
                       {PHP.format(a.allocated_amount)}
                     </td>
                     <td className="px-3 py-2 text-xs">
-                      {a.voided_at ? (
-                        <span className="inline-block rounded bg-red-100 px-2 py-0.5 font-medium text-red-800">
-                          voided
-                        </span>
-                      ) : (
-                        <span className="inline-block rounded bg-green-100 px-2 py-0.5 font-medium text-green-800">
-                          active
-                        </span>
-                      )}
+                      <StatusBadge status={a.voided_at ? "voided" : "active"} />
                     </td>
                   </tr>
                 );
@@ -283,38 +311,38 @@ export function PaymentDetailClient({
               recompute trigger.
             </DialogDescription>
           </DialogHeader>
-          <label className="block">
-            <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-              Reason *
-            </span>
-            <textarea
+          <div className="grid gap-2">
+            <Label>Reason *</Label>
+            <Textarea
               value={voidReason}
               onChange={(e) => setVoidReason(e.target.value)}
               rows={3}
               placeholder="3+ characters required"
               autoFocus
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
             />
-          </label>
+          </div>
           <div className="flex flex-wrap justify-end gap-2">
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="touch"
               onClick={() => {
                 setVoidOpen(false);
                 setVoidReason("");
               }}
-              className="min-h-[44px] rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)] hover:bg-gray-50"
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="destructive"
+              size="touch"
               onClick={handleVoid}
               disabled={isPending || voidReason.trim().length < 3}
-              className="min-h-[44px] rounded-md bg-red-700 px-4 py-2 text-sm font-bold uppercase tracking-wider text-white hover:bg-red-800 disabled:opacity-50"
+              className="bg-red-700 text-white hover:bg-red-800"
             >
               {isPending ? "Voiding…" : "Void payment"}
-            </button>
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -356,7 +384,7 @@ export function PaymentDetailClient({
                         {bill.bill_number}
                       </td>
                       <td className="px-3 py-2 text-right">
-                        <input
+                        <Input
                           type="number"
                           step="0.01"
                           min="0"
@@ -364,7 +392,7 @@ export function PaymentDetailClient({
                           onChange={(e) =>
                             setRealloc((cur) => ({ ...cur, [bill.id]: e.target.value }))
                           }
-                          className="min-h-[44px] w-32 rounded-md border border-gray-300 px-3 py-2 text-right text-sm tabular-nums shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+                          className="w-32 text-right tabular-nums"
                         />
                       </td>
                     </tr>
@@ -383,24 +411,26 @@ export function PaymentDetailClient({
           </div>
 
           <div className="flex flex-wrap justify-end gap-2">
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="touch"
               onClick={() => {
                 setReallocOpen(false);
                 setRealloc({});
               }}
-              className="min-h-[44px] rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)] hover:bg-gray-50"
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="brand"
+              size="touch"
               onClick={handleReallocate}
               disabled={isPending || !reallocValid}
-              className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold uppercase tracking-wider text-white hover:bg-[color:var(--color-brand-cyan)] disabled:opacity-50"
             >
               {isPending ? "Saving…" : "Save reallocation"}
-            </button>
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -408,15 +438,3 @@ export function PaymentDetailClient({
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-md border border-gray-200 bg-white p-3">
-      <div className="text-xs font-semibold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-        {label}
-      </div>
-      <div className="mt-1 font-mono text-lg tabular-nums text-[color:var(--color-brand-navy)]">
-        {value}
-      </div>
-    </div>
-  );
-}

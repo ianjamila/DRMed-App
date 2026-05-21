@@ -16,6 +16,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+} from "@/components/ui/card";
+import { CircleAlert } from "lucide-react";
+import { StatusBadge } from "@/lib/ui/status-badge";
 
 const PHP = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
 
@@ -95,14 +107,6 @@ function pluckOne<T>(v: T | T[] | null): T | null {
   return Array.isArray(v) ? (v[0] ?? null) : v;
 }
 
-const STATUS_COLORS: Record<string, string> = {
-  draft: "bg-gray-100 text-gray-700",
-  posted: "bg-blue-100 text-blue-800",
-  partially_paid: "bg-yellow-100 text-yellow-800",
-  paid: "bg-green-100 text-green-800",
-  voided: "bg-red-100 text-red-800",
-};
-
 export function BillDetailClient({
   bill,
   journalEntries,
@@ -180,11 +184,7 @@ export function BillDetailClient({
           {bill.description && (
             <p className="mt-2 text-sm text-[color:var(--color-brand-text-soft)]">{bill.description}</p>
           )}
-          <span
-            className={`mt-3 inline-block rounded px-2 py-0.5 text-xs font-medium ${STATUS_COLORS[bill.status] ?? "bg-gray-100 text-gray-700"}`}
-          >
-            {bill.status}
-          </span>
+          <StatusBadge status={bill.status} className="mt-3" />
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -197,53 +197,86 @@ export function BillDetailClient({
             </Link>
           )}
           {canPost && (
-            <button
+            <Button
               type="button"
+              variant="brand"
+              size="touch"
               onClick={handlePost}
               disabled={isPending}
-              className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-white hover:bg-[color:var(--color-brand-cyan)] disabled:opacity-50"
             >
               {isPending ? "Posting…" : "Post"}
-            </button>
+            </Button>
           )}
           {canEditDelete && (
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="touch"
               onClick={handleDelete}
               disabled={isPending}
-              className="min-h-[44px] rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-red-700 hover:bg-red-50 disabled:opacity-50"
+              className="border-red-300 text-red-700 hover:bg-red-50 hover:text-red-800"
             >
               Delete
-            </button>
+            </Button>
           )}
           {canVoid && (
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="touch"
               onClick={() => setShowVoidConfirm(true)}
-              className="min-h-[44px] rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-red-700 hover:bg-red-50"
+              className="border-red-300 text-red-700 hover:bg-red-50 hover:text-red-800"
             >
               Void
-            </button>
+            </Button>
           )}
         </div>
       </header>
 
       {error && (
-        <div role="alert" className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800">
-          {error}
-        </div>
+        <Alert variant="destructive">
+          <CircleAlert />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       )}
 
       {/* KPI GRID */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat label="Gross" value={PHP.format(bill.gross_amount)} />
-        <Stat
-          label="WT"
-          value={bill.wt_amount > 0 ? PHP.format(bill.wt_amount) : "—"}
-          help={bill.wt_classification ?? undefined}
-        />
-        <Stat label="Net payable" value={bill.net_payable != null ? PHP.format(bill.net_payable) : "—"} />
-        <Stat label="Outstanding" value={bill.outstanding_amount != null ? PHP.format(bill.outstanding_amount) : "—"} />
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription className="text-xs font-semibold uppercase tracking-wider">Gross</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="font-mono text-lg tabular-nums">{PHP.format(bill.gross_amount)}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription className="text-xs font-semibold uppercase tracking-wider">WT</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="font-mono text-lg tabular-nums">{bill.wt_amount > 0 ? PHP.format(bill.wt_amount) : "—"}</div>
+            {bill.wt_classification && (
+              <div className="mt-1 text-xs text-muted-foreground">{bill.wt_classification}</div>
+            )}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription className="text-xs font-semibold uppercase tracking-wider">Net payable</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="font-mono text-lg tabular-nums">{bill.net_payable != null ? PHP.format(bill.net_payable) : "—"}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription className="text-xs font-semibold uppercase tracking-wider">Outstanding</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="font-mono text-lg tabular-nums">{bill.outstanding_amount != null ? PHP.format(bill.outstanding_amount) : "—"}</div>
+          </CardContent>
+        </Card>
       </div>
 
       {/* POSTED JE LINK */}
@@ -352,13 +385,15 @@ export function BillDetailClient({
           <ul className="divide-y divide-gray-100 rounded-md border border-gray-200">
             {bill.bill_attachments.map((att) => (
               <li key={att.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm">
-                <button
+                <Button
                   type="button"
+                  variant="link"
+                  size="sm"
                   onClick={() => openAttachment(att.id)}
-                  className="text-left font-medium text-[color:var(--color-brand-navy)] hover:underline"
+                  className="h-auto p-0 text-left font-medium text-[color:var(--color-brand-navy)]"
                 >
                   {att.filename}
-                </button>
+                </Button>
                 <span className="text-xs text-[color:var(--color-brand-text-soft)]">
                   {Math.round(att.size_bytes / 1024)} KB · {att.mime_type}
                 </span>
@@ -386,39 +421,39 @@ export function BillDetailClient({
             </DialogDescription>
           </DialogHeader>
 
-          <label className="block">
-            <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-              Reason *
-            </span>
-            <textarea
+          <div className="grid gap-2">
+            <Label>Reason *</Label>
+            <Textarea
               value={voidReason}
               onChange={(e) => setVoidReason(e.target.value)}
               rows={3}
               placeholder="3+ characters required"
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
               autoFocus
             />
-          </label>
+          </div>
 
           <div className="flex flex-wrap justify-end gap-2">
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="touch"
               onClick={() => {
                 setShowVoidConfirm(false);
                 setVoidReason("");
               }}
-              className="min-h-[44px] rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)] hover:bg-gray-50"
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="destructive"
+              size="touch"
               onClick={handleVoid}
               disabled={isPending || voidReason.trim().length < 3}
-              className="min-h-[44px] rounded-md bg-red-700 px-4 py-2 text-sm font-bold uppercase tracking-wider text-white hover:bg-red-800 disabled:opacity-50"
+              className="bg-red-700 text-white hover:bg-red-800"
             >
               {isPending ? "Voiding…" : "Void bill"}
-            </button>
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -426,14 +461,3 @@ export function BillDetailClient({
   );
 }
 
-function Stat({ label, value, help }: { label: string; value: string; help?: string }) {
-  return (
-    <div className="rounded-md border border-gray-200 bg-white p-3">
-      <div className="text-xs font-semibold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-        {label}
-      </div>
-      <div className="mt-1 font-mono text-lg tabular-nums text-[color:var(--color-brand-navy)]">{value}</div>
-      {help && <div className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">{help}</div>}
-    </div>
-  );
-}
