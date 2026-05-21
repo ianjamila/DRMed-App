@@ -7,7 +7,9 @@ export type RateLimitBucket =
   | "contact_form"
   | "newsletter_signup"
   | "patient_lookup"
-  | "staff_login";
+  | "staff_login"
+  | "newsletter_resubscribe"
+  | "appointment_cancel";
 
 export interface RateLimitConfig {
   bucket: RateLimitBucket;
@@ -89,4 +91,11 @@ export const RATE_LIMITS: Record<
   // force) buckets before hitting signInWithPassword. 10/15min is loose
   // enough that legitimate typo-then-retry won't trigger it.
   staff_login: { windowSec: 15 * 60, max: 10 },
+  // Defense-in-depth on the public token-gated actions. Both are already
+  // protected by unguessable secrets (48-char hex token / UUID), so these
+  // limits exist to throttle DB-query spam against the public endpoint,
+  // not to prevent brute-force on the token itself. Loose enough that
+  // re-clicking an unsubscribe / cancel link won't trigger.
+  newsletter_resubscribe: { windowSec: 60 * 60, max: 20 },
+  appointment_cancel: { windowSec: 60 * 60, max: 20 },
 };
