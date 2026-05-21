@@ -163,6 +163,32 @@ export const STAFF_NAV: StaffNavSection[] = [
         roles: ["admin"],
       },
       {
+        href: "/staff/admin/accounting/ap",
+        label: "AP dashboard",
+        exact: true,
+        roles: ["admin"],
+      },
+      {
+        href: "/staff/admin/accounting/ap/bills",
+        label: "AP bills",
+        roles: ["admin"],
+      },
+      {
+        href: "/staff/admin/accounting/ap/payments",
+        label: "AP payments",
+        roles: ["admin"],
+      },
+      {
+        href: "/staff/admin/accounting/ap/vendors",
+        label: "AP vendors",
+        roles: ["admin"],
+      },
+      {
+        href: "/staff/admin/accounting/ap/recurring",
+        label: "AP recurring",
+        roles: ["admin"],
+      },
+      {
         href: "/staff/admin/reports/daily-revenue",
         label: "Daily revenue",
         roles: ["admin"],
