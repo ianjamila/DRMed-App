@@ -4,8 +4,11 @@ import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
+import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit/check";
 
-export type CancelResult = { ok: true } | { ok: false; error: string };
+export type CancelResult =
+  | { ok: true }
+  | { ok: false; error: string; retryAfterSec?: number };
 
 // Public cancel — anyone holding the appointment id (UUID) from the
 // confirmation email/SMS can flip status to cancelled. We refuse if the
@@ -14,6 +17,24 @@ export type CancelResult = { ok: true } | { ok: false; error: string };
 export async function cancelAppointmentAction(
   appointmentId: string,
 ): Promise<CancelResult> {
+  const h = await headers();
+  const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+
+  if (ip) {
+    const limit = await checkRateLimit({
+      bucket: "appointment_cancel",
+      identifier: ip,
+      ...RATE_LIMITS.appointment_cancel,
+    });
+    if (!limit.allowed) {
+      return {
+        ok: false,
+        error: "Too many requests. Try again in a minute.",
+        retryAfterSec: limit.retryAfterSec,
+      };
+    }
+  }
+
   const admin = createAdminClient();
 
   const { data: existing } = await admin
@@ -45,7 +66,6 @@ export async function cancelAppointmentAction(
 
   if (error) return { ok: false, error: error.message };
 
-  const h = await headers();
   await audit({
     actor_id: null,
     actor_type: "anonymous",
@@ -54,7 +74,7 @@ export async function cancelAppointmentAction(
     resource_type: "appointment",
     resource_id: appointmentId,
     metadata: { source: "public_cancel_link" },
-    ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    ip_address: ip,
     user_agent: h.get("user-agent"),
   });
 

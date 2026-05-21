@@ -4,14 +4,35 @@ import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
+import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit/check";
 
-export type ResubscribeResult = { ok: true } | { ok: false; error: string };
+export type ResubscribeResult =
+  | { ok: true }
+  | { ok: false; error: string; retryAfterSec?: number };
 
 export async function resubscribeAction(
   token: string,
 ): Promise<ResubscribeResult> {
   if (!token || token.length < 8) {
     return { ok: false, error: "Invalid link." };
+  }
+
+  const h = await headers();
+  const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+
+  if (ip) {
+    const limit = await checkRateLimit({
+      bucket: "newsletter_resubscribe",
+      identifier: ip,
+      ...RATE_LIMITS.newsletter_resubscribe,
+    });
+    if (!limit.allowed) {
+      return {
+        ok: false,
+        error: "Too many requests. Try again in a minute.",
+        retryAfterSec: limit.retryAfterSec,
+      };
+    }
   }
 
   const admin = createAdminClient();
@@ -27,9 +48,6 @@ export async function resubscribeAction(
     // Already active — nothing to do.
     return { ok: true };
   }
-
-  const h = await headers();
-  const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
 
   const { error } = await admin
     .from("subscribers")
