@@ -164,7 +164,7 @@ async function loadBillPayment(id: string) {
       vendors:vendors!vendor_id (*),
       bill_payment_allocations (
         *,
-        bills (id, vendor_invoice_number, bill_date, gross_amount, outstanding_amount, status)
+        bills (id, bill_number, vendor_invoice_number, bill_date, gross_amount, outstanding_amount, status)
       )
     `)
     .eq("id", id)
