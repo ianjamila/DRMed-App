@@ -170,11 +170,31 @@ async function loadBill(id: string) {
     .select(`
       *,
       vendors:vendors!vendor_id (*),
-      bill_lines (*),
-      bill_payment_allocations (*),
+      bill_lines (
+        id,
+        line_no,
+        description,
+        amount_php,
+        account_id,
+        chart_of_accounts:chart_of_accounts!account_id (code, name)
+      ),
+      bill_payment_allocations (
+        id,
+        allocated_amount,
+        voided_at,
+        bill_payments:bill_payments!payment_id (
+          id,
+          payment_number,
+          payment_date,
+          method,
+          amount_php,
+          voided_at
+        )
+      ),
       bill_attachments (*)
     `)
     .eq("id", id)
+    .order("line_no", { foreignTable: "bill_lines", ascending: true })
     .maybeSingle();
   return data;
 }
