@@ -201,10 +201,10 @@ $$;
 -- ==========================================================================
 
 -- Validates four invariants for bill_payment_allocations rows.
--- P0014: sum of non-voided allocations per payment must equal payment.amount_php
--- P0015: sum of non-voided allocations per bill must not exceed bill.net_payable
--- P0016: allocation.bill.vendor_id must equal allocation.payment.vendor_id
--- P0017: allocation's bill.status must be in ('posted', 'partially_paid', 'paid')
+-- P0030: sum of non-voided allocations per payment must equal payment.amount_php
+-- P0031: sum of non-voided allocations per bill must not exceed bill.net_payable
+-- P0032: allocation.bill.vendor_id must equal allocation.payment.vendor_id
+-- P0033: allocation's bill.status must be in ('posted', 'partially_paid', 'paid')
 --        (allow 'paid' because recompute may have flipped status mid-transaction)
 create or replace function public.ap_validate_bill_payment_allocations()
 returns trigger
@@ -234,7 +234,7 @@ begin
     return null;
   end if;
 
-  -- P0014: sum per payment (active allocations only) = payment.amount_php
+  -- P0030: sum per payment (active allocations only) = payment.amount_php
   select coalesce(sum(allocated_amount), 0)
     into v_alloc_sum_pay
   from public.bill_payment_allocations
@@ -243,7 +243,7 @@ begin
   if v_alloc_sum_pay <> v_payment_amount then
     raise exception 'Allocation total (%) does not match payment amount (%).',
       v_alloc_sum_pay, v_payment_amount
-      using errcode = 'P0014';
+      using errcode = 'P0030';
   end if;
 
   -- The remaining three checks only apply when a bill is involved.
@@ -265,26 +265,26 @@ begin
       return null;
     end if;
 
-    -- P0015: sum per bill <= bill.net_payable
+    -- P0031: sum per bill <= bill.net_payable
     if v_alloc_sum_bill > v_bill_net then
       raise exception 'Allocation total (%) exceeds bill net payable (%).',
         v_alloc_sum_bill, v_bill_net
-        using errcode = 'P0015';
+        using errcode = 'P0031';
     end if;
 
-    -- P0016: vendor match
+    -- P0032: vendor match
     if v_payment_vendor <> v_bill_vendor then
       raise exception 'Allocation bill vendor (%) does not match payment vendor (%).',
         v_bill_vendor, v_payment_vendor
-        using errcode = 'P0016';
+        using errcode = 'P0032';
     end if;
 
-    -- P0017: bill status must be a live state.
+    -- P0033: bill status must be a live state.
     -- (Include 'paid' because the recompute trigger may have flipped the
     -- status mid-transaction; the deferred validation fires at commit.)
     if v_bill_status not in ('posted', 'partially_paid', 'paid') then
       raise exception 'Cannot allocate to bill in status %.', v_bill_status
-        using errcode = 'P0017';
+        using errcode = 'P0033';
     end if;
   end if;
 
@@ -293,12 +293,12 @@ end;
 $$;
 
 -- ==========================================================================
--- Section 5 — Guard trigger (P0013).
+-- Section 5 — Guard trigger (P0029).
 -- Wired in T15 as BEFORE UPDATE ON bills
 --   WHEN (old.status is distinct from 'voided' and new.status = 'voided').
 -- ==========================================================================
 
--- P0013: a bill being voided must have no active (non-voided) payments
+-- P0029: a bill being voided must have no active (non-voided) payments
 -- allocated to it. Forces admin to void payments first, preserving the
 -- audit trail. Active = allocation.voided_at IS NULL AND parent
 -- bill_payment.voided_at IS NULL.
@@ -322,7 +322,7 @@ begin
   if v_active_count > 0 then
     raise exception 'Bill % has % active payment(s); void payments first.',
       new.bill_number, v_active_count
-      using errcode = 'P0013';
+      using errcode = 'P0029';
   end if;
 
   return new;
@@ -768,7 +768,7 @@ end;
 $$;
 
 -- Create a payment + allocations atomically. The deferred constraint
--- trigger ap_validate_bill_payment_allocations enforces P0014-P0017
+-- trigger ap_validate_bill_payment_allocations enforces P0030-P0033
 -- at transaction commit.
 -- p_input shape:
 --   { vendor_id, payment_date, method, cash_account_id, amount_php,
@@ -874,7 +874,7 @@ begin
     );
   end loop;
 
-  -- At transaction commit, deferred trigger validates P0014-P0017.
+  -- At transaction commit, deferred trigger validates P0030-P0033.
 
   insert into public.audit_log (actor_id, actor_type, action, resource_type, resource_id, metadata)
   values (p_actor_id, 'staff', 'bill_payment.reallocated', 'bill_payment', p_payment_id,
@@ -937,7 +937,7 @@ begin
 end;
 $$;
 
--- Void a posted bill. Raises P0013 (via the bills BEFORE-UPDATE guard
+-- Void a posted bill. Raises P0029 (via the bills BEFORE-UPDATE guard
 -- trigger from T10) if active payments exist; admin must void payments
 -- first. Idempotent.
 create or replace function public.ap_void_bill_with_guard(
@@ -975,7 +975,7 @@ begin
   -- Post the reversal JE for the bill_post source.
   v_reversal_je := public.ap_reverse_je_for_source('bill_post', p_bill_id, p_actor_id);
 
-  -- Flip status. The T10 P0013 guard fires here if active payments exist
+  -- Flip status. The T10 P0029 guard fires here if active payments exist
   -- (this raises before this update commits, abort the whole transaction
   -- and rolling back the reversal JE inserted above).
   update public.bills
@@ -1125,13 +1125,13 @@ create trigger trg_bill_payment_void_cascade
   after update of voided_at on public.bill_payments
   for each row execute function public.ap_bill_payment_void_cascade();
 
--- Constraint trigger (deferred to commit) for allocation invariants P0014-P0017.
+-- Constraint trigger (deferred to commit) for allocation invariants P0030-P0033.
 create constraint trigger trg_validate_bill_payment_allocations
   after insert or update or delete on public.bill_payment_allocations
   deferrable initially deferred
   for each row execute function public.ap_validate_bill_payment_allocations();
 
--- P0013 guard: cannot void bill with active payments.
+-- P0029 guard: cannot void bill with active payments.
 create trigger trg_bills_void_guard
   before update on public.bills
   for each row
