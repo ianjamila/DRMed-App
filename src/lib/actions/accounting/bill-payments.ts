@@ -90,7 +90,12 @@ export async function listBillPaymentsAction(filter?: {
   if (filter?.method) q = q.eq("method", filter.method);
   if (filter?.date_from) q = q.gte("payment_date", filter.date_from);
   if (filter?.date_to) q = q.lte("payment_date", filter.date_to);
-  if (filter?.search) q = q.ilike("payment_number", `%${filter.search}%`);
+  if (filter?.search) {
+    const escaped = filter.search.replace(/[%,()]/g, "");
+    q = q.or(
+      `payment_number.ilike.%${escaped}%,reference.ilike.%${escaped}%,cheque_number.ilike.%${escaped}%`
+    );
+  }
 
   const { data, error } = await q;
   if (error) {
