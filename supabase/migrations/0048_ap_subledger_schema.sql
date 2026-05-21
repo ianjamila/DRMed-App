@@ -15,7 +15,7 @@ alter type public.je_source_kind add value if not exists 'bill_payment';
 -- Section 1 — Extensions (defense; likely already enabled by 0034).
 -- ==========================================================================
 
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
+create extension if not exists pg_trgm;
 
 -- ==========================================================================
 -- Section 2 — Tables.
