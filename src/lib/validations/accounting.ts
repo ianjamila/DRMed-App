@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isOnOrBeforeTodayManila } from "@/lib/dates/manila";
+import { isOnOrBeforeTodayManila, todayManilaISODate } from "@/lib/dates/manila";
 
 const accountCodeSchema = z
   .string()
@@ -523,3 +523,142 @@ export const ReopenVoidedRunSchema = z.object({
   run_id: z.string().uuid(),
 });
 export type ReopenVoidedRunInput = z.infer<typeof ReopenVoidedRunSchema>;
+
+// ============================================================================
+// 12.4 — Vendors / Bills / Bill payments / Attachments / Recurring templates
+// ============================================================================
+
+const phTin = z.string().regex(/^\d{3}-?\d{3}-?\d{3}(-?\d{3})?$/, "Invalid PH TIN");
+
+export const vendorCreateSchema = z.object({
+  name: z.string().trim().min(1, "Name required"),
+  tin: phTin.nullable().optional(),
+  email: z.string().email().nullable().optional(),
+  phone: z.string().nullable().optional(),
+  default_account_id: z.string().uuid().nullable().optional(),
+  default_wt_classification: z.string().nullable().optional(),
+  default_wt_rate: z.number().min(0).max(1).nullable().optional(),
+  notes: z.string().nullable().optional(),
+});
+
+export const vendorUpdateSchema = vendorCreateSchema.extend({
+  is_active: z.boolean().optional(),
+});
+
+// — Bills —
+
+const billLineSchema = z.object({
+  line_no: z.number().int().min(1),
+  description: z.string().nullable().optional(),
+  amount_php: z.number().positive(),
+  account_id: z.string().uuid(),
+});
+
+const billHeaderBase = z.object({
+  vendor_id: z.string().uuid(),
+  vendor_invoice_number: z.string().nullable().optional(),
+  bill_date: z.string().refine(
+    (s) => {
+      const d = new Date(s);
+      const today = new Date(todayManilaISODate());
+      const max = new Date(today); max.setDate(max.getDate() + 365);
+      return d <= max;
+    },
+    "bill_date too far in the future (>1 year)"
+  ),
+  due_date: z.string(),
+  description: z.string().nullable().optional(),
+  wt_classification: z.string().nullable().optional(),
+  wt_rate: z.number().min(0).max(1).nullable().optional(),
+  wt_exempt: z.boolean().default(false),
+  lines: z.array(billLineSchema).min(1, "At least one line required"),
+}).refine((v) => v.due_date >= v.bill_date, { message: "due_date must be >= bill_date" });
+
+export const billCreateDraftSchema = billHeaderBase;
+export const billCreateAndPostSchema = billHeaderBase;
+export const billUpdateDraftSchema = billHeaderBase;
+
+export const billPaidOnEntrySchema = billHeaderBase.and(z.object({
+  payment_date: z.string().refine(isOnOrBeforeTodayManila, "payment_date cannot be in the future"),
+  method: z.enum(["cash", "bank_transfer", "gcash", "cheque"]),
+  cash_account_id: z.string().uuid(),
+  reference: z.string().nullable().optional(),
+  cheque_number: z.string().nullable().optional(),
+  cheque_date: z.string().nullable().optional(),
+}).refine(
+  (v) => {
+    const hasCheque = !!v.cheque_number && !!v.cheque_date;
+    return (v.method === "cheque") === hasCheque;
+  },
+  { message: "cheque fields are required for cheque method and must be absent otherwise" }
+));
+
+// — Bill payments —
+
+const allocationItemSchema = z.object({
+  bill_id: z.string().uuid(),
+  allocated_amount: z.number().positive(),
+});
+
+const paymentBase = z.object({
+  vendor_id: z.string().uuid(),
+  payment_date: z.string().refine(isOnOrBeforeTodayManila, "payment_date cannot be in the future"),
+  cash_account_id: z.string().uuid(),
+  amount_php: z.number().positive(),
+  reference: z.string().nullable().optional(),
+  allocations: z.array(allocationItemSchema).min(1, "At least one allocation required"),
+});
+
+const paymentCashOrTransfer = paymentBase.extend({
+  method: z.enum(["cash", "bank_transfer", "gcash"]),
+  cheque_number: z.undefined().optional(),
+  cheque_date: z.undefined().optional(),
+});
+
+const paymentCheque = paymentBase.extend({
+  method: z.literal("cheque"),
+  cheque_number: z.string().min(1, "Cheque number required"),
+  cheque_date: z.string(),
+});
+
+export const billPaymentCreateSchema = z.discriminatedUnion("method", [
+  paymentCashOrTransfer,
+  paymentCheque,
+]).refine(
+  (v) =>
+    Math.round(v.allocations.reduce((s, a) => s + a.allocated_amount, 0) * 100) ===
+    Math.round(v.amount_php * 100),
+  { message: "Allocations must sum to amount_php" }
+);
+
+export const billPaymentReallocateSchema = z.object({
+  payment_id: z.string().uuid(),
+  allocations: z.array(allocationItemSchema).min(1),
+});
+
+// — Attachments and recurring templates —
+
+export const billAttachmentUploadSchema = z.object({
+  bill_id: z.string().uuid(),
+  filename: z.string().min(1),
+  mime_type: z.enum(["application/pdf", "image/jpeg", "image/png"]),
+  size_bytes: z.number().int().positive().max(10 * 1024 * 1024, "Max 10 MB"),
+});
+
+export const recurringTemplateCreateSchema = z.object({
+  vendor_id: z.string().uuid(),
+  description: z.string().min(1),
+  cadence: z.literal("monthly").default("monthly"),
+  due_day_of_month: z.number().int().min(1).max(31),
+  bill_date_offset_days: z.number().int().min(-30).max(0).default(0),
+  amount_php: z.number().positive().nullable().optional(),
+  default_account_id: z.string().uuid(),
+  default_wt_classification: z.string().nullable().optional(),
+  default_wt_rate: z.number().min(0).max(1).nullable().optional(),
+  default_wt_exempt: z.boolean().default(false),
+  next_run_date: z.string(),
+});
+
+export const recurringTemplateUpdateSchema = recurringTemplateCreateSchema.extend({
+  is_active: z.boolean().optional(),
+});
