@@ -92,7 +92,7 @@ create table public.bills (
 -- Bill line items.
 create table public.bill_lines (
   id            uuid primary key default gen_random_uuid(),
-  bill_id       uuid not null references public.bills(id) on delete cascade,
+  bill_id       uuid not null references public.bills(id) on delete cascade on update restrict,
   line_no       int not null,
   description   text,
   amount_php    numeric(12,2) not null,
@@ -134,7 +134,7 @@ create table public.bill_payments (
 create table public.bill_payment_allocations (
   id                  uuid primary key default gen_random_uuid(),
   payment_id          uuid not null references public.bill_payments(id) on delete cascade,
-  bill_id             uuid not null references public.bills(id),  -- no on-delete cascade: bills are voided not deleted; allocations are audit-preserved
+  bill_id             uuid not null references public.bills(id) on update restrict,  -- no on-delete cascade: bills are voided not deleted; allocations are audit-preserved. on-update-restrict enforces bill_id immutability post-insert.
   allocated_amount    numeric(12,2) not null,
   voided_at           timestamptz,
   created_at          timestamptz not null default now(),
