@@ -55,14 +55,14 @@ export async function listBillPaymentsAction(filter?: {
   date_from?: string;
   date_to?: string;
   search?: string;
-  page?: number;
-  page_size?: number;
+  limit?: number;
+  offset?: number;
 }): Promise<ActionResult<BillPaymentRow[]>> {
   await requireAdminStaff();
   const admin = createAdminClient();
 
-  const page = filter?.page ?? 0;
-  const pageSize = filter?.page_size ?? 50;
+  const limit = filter?.limit ?? 50;
+  const offset = filter?.offset ?? 0;
 
   let q = admin
     .from("bill_payments")
@@ -84,7 +84,7 @@ export async function listBillPaymentsAction(filter?: {
     `)
     .order("payment_date", { ascending: false })
     .order("created_at", { ascending: false })
-    .range(page * pageSize, (page + 1) * pageSize - 1);
+    .range(offset, offset + limit - 1);
 
   if (filter?.vendor_id) q = q.eq("vendor_id", filter.vendor_id);
   if (filter?.method) q = q.eq("method", filter.method);

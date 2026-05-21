@@ -18,8 +18,8 @@ export default async function VendorDetailPage({
 
   const [vendor, bills, payments] = await Promise.all([
     getVendorAction(id),
-    listBillsAction({ vendor_id: id, page_size: 100 }),
-    listBillPaymentsAction({ vendor_id: id, page_size: 100 }),
+    listBillsAction({ vendor_id: id, limit: 100 }),
+    listBillPaymentsAction({ vendor_id: id, limit: 100 }),
   ]);
 
   if (!vendor.ok || !vendor.data) notFound();
