@@ -63,6 +63,11 @@ export async function requireSignedInStaff(): Promise<StaffSession> {
 // Verifies basic auth (delegated to requireSignedInStaff) AND enforces
 // MFA: admin must reach aal2 (TOTP); other roles only need aal2 if they
 // have a verified factor enrolled (optional MFA).
+//
+// FEATURE_STAFF_MFA_REQUIRED env var (default "true"): when set to "false",
+// the MFA gate is fully disabled — admin and non-admin alike can sign in
+// at aal1. Intended for UAT environments where MFA enrollment friction
+// blocks testing. Re-enable before going live.
 export async function requireActiveStaff(): Promise<StaffSession> {
   const session = await requireSignedInStaff();
   const supabase = await createClient();
@@ -70,10 +75,13 @@ export async function requireActiveStaff(): Promise<StaffSession> {
 
   if (!aal) return session;
 
+  const mfaRequired = process.env.FEATURE_STAFF_MFA_REQUIRED !== "false";
+
   const needsMfa =
-    session.role === "admin"
+    mfaRequired &&
+    (session.role === "admin"
       ? aal.currentLevel !== "aal2"
-      : aal.nextLevel === "aal2" && aal.currentLevel !== "aal2";
+      : aal.nextLevel === "aal2" && aal.currentLevel !== "aal2");
 
   if (needsMfa) {
     redirect("/staff/mfa");
