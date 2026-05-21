@@ -535,9 +535,11 @@ $$;
 --   { vendor_id, vendor_invoice_number, bill_date, due_date, description,
 --     wt_classification, wt_rate, wt_exempt,
 --     lines: [{ line_no, description, amount_php, account_id }, ...] }
+drop function if exists public.ap_create_bill_draft(jsonb, uuid);
 create or replace function public.ap_create_bill_draft(
-  p_input    jsonb,
-  p_actor_id uuid
+  p_input      jsonb,
+  p_actor_id   uuid,
+  p_request_id uuid default null
 )
 returns jsonb
 language plpgsql
@@ -545,8 +547,9 @@ security definer
 set search_path = public, pg_temp
 as $$
 declare
-  v_bill_id uuid;
-  v_line    jsonb;
+  v_bill_id    uuid;
+  v_line       jsonb;
+  v_request_id uuid := coalesce(p_request_id, gen_random_uuid());
 begin
   insert into public.bills (
     vendor_id, vendor_invoice_number, bill_date, due_date, description,
@@ -579,7 +582,7 @@ begin
 
   insert into public.audit_log (actor_id, actor_type, action, resource_type, resource_id, metadata)
   values (p_actor_id, 'staff', 'bill.created', 'bill', v_bill_id,
-          jsonb_build_object('status', 'draft'));
+          jsonb_build_object('status', 'draft', 'request_id', v_request_id));
 
   return jsonb_build_object('bill_id', v_bill_id);
 end;
@@ -589,9 +592,11 @@ $$;
 -- After the draft INSERT, the recompute trigger has set bills.gross_amount.
 -- We compute wt_amount = ROUND(gross * rate, 2), write it, and flip to posted
 -- (which fires the bill_post_bridge trigger).
+drop function if exists public.ap_create_bill_and_post(jsonb, uuid);
 create or replace function public.ap_create_bill_and_post(
-  p_input    jsonb,
-  p_actor_id uuid
+  p_input      jsonb,
+  p_actor_id   uuid,
+  p_request_id uuid default null
 )
 returns jsonb
 language plpgsql
@@ -599,15 +604,16 @@ security definer
 set search_path = public, pg_temp
 as $$
 declare
-  v_bill_id   uuid;
-  v_result    jsonb;
-  v_gross     numeric(12,2);
-  v_rate      numeric(5,4);
-  v_exempt    boolean;
-  v_wt        numeric(12,2) := 0;
+  v_bill_id    uuid;
+  v_result     jsonb;
+  v_gross      numeric(12,2);
+  v_rate       numeric(5,4);
+  v_exempt     boolean;
+  v_wt         numeric(12,2) := 0;
+  v_request_id uuid := coalesce(p_request_id, gen_random_uuid());
 begin
-  -- Step 1-2: draft + lines via the dedicated function.
-  v_result := public.ap_create_bill_draft(p_input, p_actor_id);
+  -- Step 1-2: draft + lines via the dedicated function. Thread request_id.
+  v_result := public.ap_create_bill_draft(p_input, p_actor_id, v_request_id);
   v_bill_id := (v_result->>'bill_id')::uuid;
 
   -- Step 3: read denormed gross_amount + WT params; compute wt_amount.
@@ -635,7 +641,7 @@ begin
 
   insert into public.audit_log (actor_id, actor_type, action, resource_type, resource_id, metadata)
   values (p_actor_id, 'staff', 'bill.posted', 'bill', v_bill_id,
-          jsonb_build_object('wt_amount', v_wt, 'gross_amount', v_gross));
+          jsonb_build_object('wt_amount', v_wt, 'gross_amount', v_gross, 'request_id', v_request_id));
 
   return jsonb_build_object('bill_id', v_bill_id);
 end;
@@ -729,7 +735,7 @@ declare
   v_net_payable  numeric(12,2);
 begin
   -- Step 1-4: bill draft + lines + wt_amount compute + status='posted'.
-  v_bill_id := (public.ap_create_bill_and_post(p_input, p_actor_id)->>'bill_id')::uuid;
+  v_bill_id := (public.ap_create_bill_and_post(p_input, p_actor_id, v_request_id)->>'bill_id')::uuid;
 
   -- Read the now-frozen net_payable.
   select net_payable into v_net_payable from public.bills where id = v_bill_id;
@@ -761,7 +767,7 @@ begin
     jsonb_build_object(
       'request_id', v_request_id,
       'paid_on_entry', true,
-      'allocations', jsonb_build_array(jsonb_build_object('bill_id', v_bill_id, 'amount', v_net_payable))
+      'allocations', jsonb_build_array(jsonb_build_object('bill_id', v_bill_id, 'allocated_amount', v_net_payable))
     ));
 
   return jsonb_build_object('bill_id', v_bill_id, 'payment_id', v_payment_id);

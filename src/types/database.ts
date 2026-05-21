@@ -4739,11 +4739,11 @@ export type Database = {
     }
     Functions: {
       ap_create_bill_and_post: {
-        Args: { p_actor_id: string; p_input: Json }
+        Args: { p_actor_id: string; p_input: Json; p_request_id?: string }
         Returns: Json
       }
       ap_create_bill_draft: {
-        Args: { p_actor_id: string; p_input: Json }
+        Args: { p_actor_id: string; p_input: Json; p_request_id?: string }
         Returns: Json
       }
       ap_create_bill_paid_on_entry: {
