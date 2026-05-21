@@ -57,6 +57,7 @@ export async function listBillsAction(filter?: {
   status?: string;
   date_from?: string;
   date_to?: string;
+  has_wt?: boolean;
   search?: string;
   limit?: number;
   offset?: number;
@@ -91,6 +92,7 @@ export async function listBillsAction(filter?: {
   if (filter?.status) q = q.eq("status", filter.status);
   if (filter?.date_from) q = q.gte("bill_date", filter.date_from);
   if (filter?.date_to) q = q.lte("bill_date", filter.date_to);
+  if (filter?.has_wt) q = q.gt("wt_amount", 0);
   if (filter?.search) q = q.ilike("vendor_invoice_number", `%${filter.search}%`);
 
   const { data, error } = await q;
