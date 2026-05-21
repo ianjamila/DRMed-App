@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { createBillPaymentAction } from "@/lib/actions/accounting/bill-payments";
 import { listBillsAction } from "@/lib/actions/accounting/bills";
 import { todayManilaISODate } from "@/lib/dates/manila";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { CircleAlert } from "lucide-react";
 
 const PHP = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
 
@@ -189,9 +191,10 @@ export function PaymentFormClient({
   return (
     <div className="space-y-6">
       {error && (
-        <div role="alert" className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800">
-          {error}
-        </div>
+        <Alert variant="destructive">
+          <CircleAlert />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       )}
 
       {/* Vendor */}

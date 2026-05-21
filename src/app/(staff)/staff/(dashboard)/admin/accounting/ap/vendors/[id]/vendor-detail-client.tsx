@@ -7,6 +7,8 @@ import {
   deactivateVendorAction,
   reactivateVendorAction,
 } from "@/lib/actions/accounting/vendors";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { CircleAlert } from "lucide-react";
 
 const PHP = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
 
@@ -136,12 +138,10 @@ export function VendorDetailClient({ vendor, bills, payments }: Props) {
       {/* Error banner                                                        */}
       {/* ------------------------------------------------------------------ */}
       {error && (
-        <div
-          role="alert"
-          className="mb-4 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800"
-        >
-          {error}
-        </div>
+        <Alert variant="destructive" className="mb-4">
+          <CircleAlert />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       )}
 
       {/* ------------------------------------------------------------------ */}

@@ -3,6 +3,8 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { TriangleAlert } from "lucide-react";
 
 const PHP = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
 
@@ -85,13 +87,13 @@ export function BillsIndexClient({
   return (
     <div className="space-y-4">
       {oldDrafts > 0 && (
-        <div
-          role="alert"
-          className="rounded-md border border-yellow-300 bg-yellow-50 p-3 text-sm text-yellow-900"
-        >
-          {oldDrafts} draft{oldDrafts !== 1 ? "s" : ""} older than 7 days — review and
-          post or delete.
-        </div>
+        <Alert>
+          <TriangleAlert />
+          <AlertDescription>
+            {oldDrafts} draft{oldDrafts !== 1 ? "s" : ""} older than 7 days — review and
+            post or delete.
+          </AlertDescription>
+        </Alert>
       )}
 
       <div className="grid grid-cols-1 gap-2 md:grid-cols-5">

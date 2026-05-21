@@ -15,6 +15,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { CircleAlert } from "lucide-react";
 
 const PHP = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
 
@@ -84,12 +86,10 @@ export function RecurringClient({
       </div>
 
       {rowError && (
-        <div
-          role="alert"
-          className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800"
-        >
-          {rowError}
-        </div>
+        <Alert variant="destructive">
+          <CircleAlert />
+          <AlertDescription>{rowError}</AlertDescription>
+        </Alert>
       )}
 
       <Dialog
@@ -256,12 +256,10 @@ function TemplateForm({
       className="space-y-4"
     >
       {error && (
-        <div
-          role="alert"
-          className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800"
-        >
-          {error}
-        </div>
+        <Alert variant="destructive">
+          <CircleAlert />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       )}
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">

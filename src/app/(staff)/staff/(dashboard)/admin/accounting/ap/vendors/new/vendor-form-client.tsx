@@ -3,6 +3,8 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createVendorAction, updateVendorAction } from "@/lib/actions/accounting/vendors";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { CircleAlert } from "lucide-react";
 
 type CoaAccount = { id: string; code: string; name: string };
 
@@ -84,12 +86,10 @@ export function VendorFormClient(props: Props) {
 
       <form onSubmit={submit} className="space-y-4">
         {error && (
-          <div
-            role="alert"
-            className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800"
-          >
-            {error}
-          </div>
+          <Alert variant="destructive">
+            <CircleAlert />
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
         )}
 
         <Field label="Name *" error={fieldError === "name" ? error : null}>
