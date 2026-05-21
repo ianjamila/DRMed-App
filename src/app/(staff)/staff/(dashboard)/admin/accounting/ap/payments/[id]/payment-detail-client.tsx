@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { CircleAlert } from "lucide-react";
+import { StatusBadge } from "@/lib/ui/status-badge";
 
 const PHP = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
 
@@ -159,8 +160,9 @@ export function PaymentDetailClient({
             {payment.reference && !payment.cheque_number && <> · Ref: {payment.reference}</>}
           </p>
           {isVoided && (
-            <p className="mt-2 inline-block rounded bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800">
-              voided · {payment.void_reason}
+            <p className="mt-2 flex items-center gap-2 text-xs">
+              <StatusBadge status="voided" />
+              <span className="text-[color:var(--color-brand-text-soft)]">· {payment.void_reason}</span>
             </p>
           )}
         </div>
@@ -249,15 +251,7 @@ export function PaymentDetailClient({
                       {PHP.format(a.allocated_amount)}
                     </td>
                     <td className="px-3 py-2 text-xs">
-                      {a.voided_at ? (
-                        <span className="inline-block rounded bg-red-100 px-2 py-0.5 font-medium text-red-800">
-                          voided
-                        </span>
-                      ) : (
-                        <span className="inline-block rounded bg-green-100 px-2 py-0.5 font-medium text-green-800">
-                          active
-                        </span>
-                      )}
+                      <StatusBadge status={a.voided_at ? "voided" : "active"} />
                     </td>
                   </tr>
                 );

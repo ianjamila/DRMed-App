@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { StatusBadge } from "@/lib/ui/status-badge";
 
 const PHP = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
 
@@ -155,13 +156,7 @@ export function PaymentsIndexClient({
                   {PHP.format(p.amount_php)}
                 </td>
                 <td className="px-3 py-2">
-                  {p.voided_at ? (
-                    <span className="inline-block rounded bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800">
-                      voided
-                    </span>
-                  ) : (
-                    <span className="text-xs text-[color:var(--color-brand-text-soft)]">—</span>
-                  )}
+                  {p.voided_at ? <StatusBadge status="voided" /> : <span className="text-xs text-[color:var(--color-brand-text-soft)]">—</span>}
                 </td>
               </tr>
             ))}

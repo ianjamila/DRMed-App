@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { CircleAlert } from "lucide-react";
+import { StatusBadge } from "@/lib/ui/status-badge";
 
 const PHP = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
 
@@ -154,7 +155,7 @@ export function RecurringClient({
                 </td>
                 <td className="px-3 py-2 text-xs">{t.next_run_date}</td>
                 <td className="px-3 py-2 text-xs">
-                  {t.is_active ? "Active" : "Inactive"}
+                  <StatusBadge status={t.is_active ? "active" : "inactive"} />
                 </td>
                 <td className="px-3 py-2 text-right">
                   <button

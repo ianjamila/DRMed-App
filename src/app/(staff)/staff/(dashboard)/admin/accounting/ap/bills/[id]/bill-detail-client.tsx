@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { CircleAlert } from "lucide-react";
+import { StatusBadge } from "@/lib/ui/status-badge";
 
 const PHP = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
 
@@ -97,14 +98,6 @@ function pluckOne<T>(v: T | T[] | null): T | null {
   return Array.isArray(v) ? (v[0] ?? null) : v;
 }
 
-const STATUS_COLORS: Record<string, string> = {
-  draft: "bg-gray-100 text-gray-700",
-  posted: "bg-blue-100 text-blue-800",
-  partially_paid: "bg-yellow-100 text-yellow-800",
-  paid: "bg-green-100 text-green-800",
-  voided: "bg-red-100 text-red-800",
-};
-
 export function BillDetailClient({
   bill,
   journalEntries,
@@ -182,11 +175,7 @@ export function BillDetailClient({
           {bill.description && (
             <p className="mt-2 text-sm text-[color:var(--color-brand-text-soft)]">{bill.description}</p>
           )}
-          <span
-            className={`mt-3 inline-block rounded px-2 py-0.5 text-xs font-medium ${STATUS_COLORS[bill.status] ?? "bg-gray-100 text-gray-700"}`}
-          >
-            {bill.status}
-          </span>
+          <StatusBadge status={bill.status} className="mt-3" />
         </div>
 
         <div className="flex flex-wrap items-center gap-2">

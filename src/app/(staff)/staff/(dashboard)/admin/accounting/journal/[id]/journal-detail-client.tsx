@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { StatusBadge } from "@/lib/ui/status-badge";
 
 const PHP = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
 
@@ -37,13 +38,6 @@ function pluckOne<T>(v: T | T[] | null): T | null {
   return Array.isArray(v) ? (v[0] ?? null) : v;
 }
 
-const STATUS_COLORS: Record<string, string> = {
-  draft: "bg-gray-100 text-gray-700",
-  posted: "bg-blue-100 text-blue-800",
-  reversed: "bg-amber-100 text-amber-800",
-  voided: "bg-red-100 text-red-800",
-};
-
 export function JournalDetailClient({ je }: { je: Je }) {
   const sortedLines = [...je.journal_lines].sort((a, b) => a.line_order - b.line_order);
   const totalDebit = sortedLines.reduce((s, l) => s + Number(l.debit_php), 0);
@@ -64,11 +58,7 @@ export function JournalDetailClient({ je }: { je: Je }) {
           Source kind:{" "}
           <span className="font-mono">{je.source_kind ?? "—"}</span>
         </p>
-        <span
-          className={`mt-3 inline-block rounded px-2 py-0.5 text-xs font-medium ${STATUS_COLORS[je.status] ?? "bg-gray-100 text-gray-700"}`}
-        >
-          {je.status}
-        </span>
+        <StatusBadge status={je.status} className="mt-3" />
         {je.description && (
           <p className="mt-2 text-sm text-[color:var(--color-brand-text-soft)]">
             {je.description}

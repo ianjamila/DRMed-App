@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { TriangleAlert } from "lucide-react";
+import { StatusBadge } from "@/lib/ui/status-badge";
 
 const PHP = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
 
@@ -36,14 +37,6 @@ type Filter = {
 };
 
 const STATUSES = ["draft", "posted", "partially_paid", "paid", "voided"] as const;
-
-const STATUS_COLORS: Record<string, string> = {
-  draft: "bg-gray-100 text-gray-700",
-  posted: "bg-blue-100 text-blue-800",
-  partially_paid: "bg-yellow-100 text-yellow-800",
-  paid: "bg-green-100 text-green-800",
-  voided: "bg-red-100 text-red-800",
-};
 
 const NOW_MS = Date.now();
 
@@ -202,13 +195,7 @@ export function BillsIndexClient({
                   {PHP.format(b.outstanding_amount)}
                 </td>
                 <td className="px-3 py-2">
-                  <span
-                    className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${
-                      STATUS_COLORS[b.status] ?? "bg-gray-100 text-gray-700"
-                    }`}
-                  >
-                    {b.status}
-                  </span>
+                  <StatusBadge status={b.status} />
                 </td>
               </tr>
             ))}
