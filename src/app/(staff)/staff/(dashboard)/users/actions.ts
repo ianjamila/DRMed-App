@@ -7,9 +7,11 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import {
+  AdminResetPasswordSchema,
   StaffCreateSchema,
   StaffUpdateSchema,
 } from "@/lib/validations/staff-user";
+import { ipAndAgent, firstIssue } from "@/lib/server/action-helpers";
 
 export type StaffResult =
   | { ok: true; redirect_to?: string }
@@ -127,4 +129,68 @@ export async function updateStaffUserAction(
   revalidatePath("/staff/users");
   revalidatePath(`/staff/users/${staffUserId}/edit`);
   redirect("/staff/users");
+}
+
+export type AdminResetResult =
+  | { ok: true; message: string }
+  | { ok: false; error: string };
+
+export async function adminResetStaffPasswordAction(
+  staffUserId: string,
+  _prev: AdminResetResult | null,
+  formData: FormData,
+): Promise<AdminResetResult> {
+  const session = await requireAdminStaff();
+
+  if (session.user_id === staffUserId) {
+    return {
+      ok: false,
+      error: "Use Personal → My profile to change your own password.",
+    };
+  }
+
+  const parsed = AdminResetPasswordSchema.safeParse({
+    new_password: formData.get("new_password"),
+  });
+  if (!parsed.success) {
+    return { ok: false, error: firstIssue(parsed.error) };
+  }
+
+  const admin = createAdminClient();
+
+  // Confirm the target row exists before touching auth, so an admin can't
+  // accidentally reset a deleted-profile auth user.
+  const { data: target } = await admin
+    .from("staff_profiles")
+    .select("id, full_name")
+    .eq("id", staffUserId)
+    .maybeSingle();
+  if (!target) {
+    return { ok: false, error: "Staff user not found." };
+  }
+
+  const { error: updateErr } = await admin.auth.admin.updateUserById(
+    staffUserId,
+    { password: parsed.data.new_password },
+  );
+  if (updateErr) {
+    return { ok: false, error: updateErr.message };
+  }
+
+  const { ip, ua } = await ipAndAgent();
+  await audit({
+    actor_id: session.user_id,
+    actor_type: "staff",
+    action: "staff_user.password_reset_by_admin",
+    resource_type: "staff_profile",
+    resource_id: staffUserId,
+    metadata: { target_name: target.full_name },
+    ip_address: ip,
+    user_agent: ua,
+  });
+
+  return {
+    ok: true,
+    message: "Password reset. Share the new password with the user securely.",
+  };
 }

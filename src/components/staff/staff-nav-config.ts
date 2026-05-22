@@ -256,6 +256,11 @@ export const STAFF_NAV: StaffNavSection[] = [
     heading: "Personal",
     items: [
       {
+        href: "/staff/profile",
+        label: "My profile",
+        roles: ["reception", "medtech", "pathologist", "admin", "xray_technician"],
+      },
+      {
         href: "/staff/payslips",
         label: "My payslips",
         roles: ["reception", "medtech", "pathologist", "admin", "xray_technician"],

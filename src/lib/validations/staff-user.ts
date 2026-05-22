@@ -45,5 +45,30 @@ export const StaffUpdateSchema = z.object({
   prc_license_no: optionalLicenseNo,
 });
 
+export const ChangePasswordSchema = z
+  .object({
+    current_password: z.string().min(1, "Current password is required."),
+    new_password: z
+      .string()
+      .min(10, "New password must be at least 10 characters."),
+    confirm_password: z.string().min(1, "Please confirm the new password."),
+  })
+  .refine((d) => d.new_password === d.confirm_password, {
+    message: "Passwords do not match.",
+    path: ["confirm_password"],
+  })
+  .refine((d) => d.new_password !== d.current_password, {
+    message: "New password must differ from current.",
+    path: ["new_password"],
+  });
+
+export const AdminResetPasswordSchema = z.object({
+  new_password: z
+    .string()
+    .min(10, "Password must be at least 10 characters."),
+});
+
 export type StaffCreateInput = z.infer<typeof StaffCreateSchema>;
 export type StaffUpdateInput = z.infer<typeof StaffUpdateSchema>;
+export type ChangePasswordInput = z.infer<typeof ChangePasswordSchema>;
+export type AdminResetPasswordInput = z.infer<typeof AdminResetPasswordSchema>;

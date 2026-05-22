@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { StaffForm } from "../../staff-form";
+import { AdminResetForm } from "./admin-reset-form";
 
 export const metadata = {
   title: "Edit staff user — staff",
@@ -13,8 +14,9 @@ interface Props {
 }
 
 export default async function EditStaffUserPage({ params }: Props) {
-  await requireAdminStaff();
+  const session = await requireAdminStaff();
   const { id } = await params;
+  const isSelf = session.user_id === id;
   const admin = createAdminClient();
 
   const [{ data: profile }, { data: userResp }] = await Promise.all([
@@ -66,6 +68,35 @@ export default async function EditStaffUserPage({ params }: Props) {
             prc_license_no: profile.prc_license_no,
           }}
         />
+      </div>
+
+      <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50/40 p-6">
+        <h2 className="font-[family-name:var(--font-heading)] text-lg font-bold text-amber-900">
+          Reset password
+        </h2>
+        {isSelf ? (
+          <p className="mt-1 text-sm text-amber-900/80">
+            You can&apos;t reset your own password from here — use{" "}
+            <Link
+              href="/staff/profile"
+              className="underline hover:text-[color:var(--color-brand-navy)]"
+            >
+              Personal → My profile
+            </Link>{" "}
+            so the current password check applies.
+          </p>
+        ) : (
+          <>
+            <p className="mt-1 text-sm text-amber-900/80">
+              Force-resets this user&apos;s password. Use only when the user has
+              forgotten it; routine changes should happen via their own{" "}
+              <span className="font-mono">/staff/profile</span> page.
+            </p>
+            <div className="mt-4">
+              <AdminResetForm staffUserId={profile.id} />
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
