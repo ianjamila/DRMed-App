@@ -231,7 +231,7 @@ export function QuoteWorkbench({ services }: Props) {
       </div>
 
       <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
-        <table className="w-full min-w-[640px] text-sm">
+        <table className="w-full text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
               {mode === "builder" ? (

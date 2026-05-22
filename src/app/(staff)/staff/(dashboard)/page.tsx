@@ -82,7 +82,7 @@ export default async function StaffDashboardPage() {
         </h1>
       </header>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
           label="Visits today"
           value={stats.visitsToday}
