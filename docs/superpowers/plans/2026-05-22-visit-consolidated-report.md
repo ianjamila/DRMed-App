@@ -72,15 +72,32 @@ src/lib/results/render-pdf.ts        -- renderResultPdf() — input shape change
 
 ---
 
-## Pre-flight (one-time, user-driven)
+## Pre-flight (one-time, user-driven) — RESOLVED
 
-Before Task 2 (Chemistry seed), the user must provide:
+1. **Prices** — verified 2026-05-22: all chemistry services already exist with prices in the live DB (`FBS_RBS` ₱180, `BUN` ₱195, `CREATININE` ₱195, `BUA_URIC_ACID` ₱195, `TRIGLYCERIDES` ₱340, `CHOLESTEROL` ₱195, `HDL_LDL_VLDL` ₱380, `SGPT_ALT` ₱250, `SGOT_AST` ₱250, `HBA1C` ₱785, `LIPID_PROFILE` ₱875, `LIPID_PROFILE_PACKAGE` ₱875). No INSERTs needed in the seed migration.
+2. **Six signature PNGs** — placed at `scripts/seed/signatures/{rillo,romeral,dylim,tagayuna,mariano,vicencio}.png` (2026-05-22).
+3. **Env-vars** — `CONSULTANT_PATHOLOGIST_STAFF_ID`, `CONSULTANT_RADIOLOGIST_STAFF_ID`, `CONSULTANT_CARDIOLOGIST_STAFF_ID`. Task 3 Step 8 captures the staff_ids after the seed script writes them and the user populates `.env.local` + Vercel envs.
 
-1. **PHP prices** for the three new chemistry services: `BUN`, `BUA` (Blood Uric Acid), `HBA1C`. Migration `0053_chemistry_seed.sql` has placeholder `<TBD>` tokens; replace before running.
-2. **Six signature PNG files** placed at `scripts/seed/signatures/<staff_id>.png` (or the dashboard-uploaded equivalent — see Task 3 Step 4 for resolution).
-3. **Three env-var values** in production + preview: `CONSULTANT_PATHOLOGIST_STAFF_ID`, `CONSULTANT_RADIOLOGIST_STAFF_ID`, `CONSULTANT_CARDIOLOGIST_STAFF_ID`, each set to the matching `staff_profiles.id` after Task 3 finishes.
+## Actual chemistry service inventory (verified against live DB, 2026-05-22)
 
-Task 2 stops if (1) is missing; Task 3 stops if (2) is missing; Task 6 reads (3) at render time.
+| Service code | Maps to template rows | Notes |
+|---|---|---|
+| `FBS_RBS` | FBS | Single service for FBS or RBS; row labelled "FBS". |
+| `BUN` | BUN | |
+| `CREATININE` | Creatinine | Code is `CREATININE`, not `CREA` (which is `is_active=false`). |
+| `BUA_URIC_ACID` | Uric Acid | Code is `BUA_URIC_ACID`, not `BUA`. |
+| `TRIGLYCERIDES` | Triglycerides | Sold individually. |
+| `CHOLESTEROL` | Cholesterol | Sold individually. |
+| `HDL_LDL_VLDL` | HDL, LDL, VLDL | **One service → three rows.** |
+| `SGPT_ALT` | SGPT (ALT) | Code is `SGPT_ALT`, not `SGPT`. |
+| `SGOT_AST` | SGOT (AST) | Code is `SGOT_AST`, not `SGOT`. |
+| `HBA1C` | HBA1C | |
+| `LIPID_PROFILE` (lab_test) | Triglycerides, Cholesterol, HDL, LDL, VLDL | One service → 5 rows. Bundled lipid line. |
+| `LIPID_PROFILE_PACKAGE` (lab_package) | — (decomposes) | Phase 14 fans out at order time into 3 components: CHOLESTEROL, TRIGLYCERIDES, HDL_LDL_VLDL. The package header itself doesn't carry chemistry rows; the components do. |
+
+The 12 active services above all currently have their own active per-service result_template (verified). These templates get `is_active = false` in the migration, replaced by one Chemistry consolidated template.
+
+Deprecated chemistry codes that exist `is_active=false` and must NOT be touched: `FBS`, `CREA`, `SGOT`, `SGPT`, `LIPID`.
 
 ---
 
@@ -472,15 +489,15 @@ EOF
 
 ---
 
-## Task 2 — Chemistry services + consolidated template seed
+## Task 2 — Chemistry consolidated template seed
 
 **Files:**
 - Create: `supabase/migrations/0053_chemistry_seed.sql`
 - Modify: `scripts/smoke-chemistry-consolidated.sql` (append S1)
 
-This task seeds the Chemistry `report_group`, three new chemistry services (BUN, BUA, HBA1C), maps existing chemistry services to the group, deactivates per-service Chemistry-overlapping templates, and inserts the consolidated 13-row template with SI + conventional ranges and gender-specific overrides.
+This task seeds the Chemistry `report_group`, maps all 12 active chemistry services to the group, deactivates per-service Chemistry-overlapping templates, and inserts the consolidated 13-row template with SI + conventional ranges and gender-specific overrides.
 
-**Blocked on user input:** PHP prices for BUN, BUA, HBA1C. The migration uses `<TBD_BUN>`, `<TBD_BUA>`, `<TBD_HBA1C>` placeholder tokens that must be replaced with integer pesos before applying.
+No service inserts needed — all chemistry services already exist in the DB (verified pre-flight).
 
 - [ ] **Step 1: Write the migration file**
 
@@ -492,13 +509,15 @@ Create `supabase/migrations/0053_chemistry_seed.sql`:
 -- =============================================================================
 -- Chemistry consolidated form seed.
 --
--- Inserts the CHEMISTRY report_group, three new services (BUN, BUA, HBA1C),
--- maps existing chemistry services (FBS, CREA, SGPT, SGOT, LIPID) to the
--- group, deactivates the per-service Chemistry-overlapping templates
--- (FBS_RBS, CREATININE, SGPT_ALT, SGOT_AST, LIPID_PROFILE), and inserts the
--- 13-row consolidated template.
---
--- ⚠️  Prices for BUN / BUA / HBA1C are placeholders. Replace before applying.
+-- 1. Insert the CHEMISTRY report_group.
+-- 2. Map 12 active chemistry services to the group:
+--      FBS_RBS, BUN, CREATININE, BUA_URIC_ACID, TRIGLYCERIDES, CHOLESTEROL,
+--      HDL_LDL_VLDL, SGPT_ALT, SGOT_AST, HBA1C, LIPID_PROFILE,
+--      LIPID_PROFILE_PACKAGE.
+-- 3. Deactivate the per-service Chemistry-overlapping templates for those
+--    12 services (replaced by one consolidated template keyed by group).
+-- 4. Insert the 13-row consolidated dual_unit template + 14 param rows
+--    (Creatinine and Uric Acid have gender-specific overrides → 2 rows each).
 -- =============================================================================
 
 \set ON_ERROR_STOP on
@@ -511,47 +530,35 @@ insert into public.report_groups (code, name)
 values ('CHEMISTRY', 'Chemistry')
 on conflict (code) do nothing;
 
--- ----- 2. New chemistry services --------------------------------------------
--- Prices: BUN=<TBD_BUN>, BUA=<TBD_BUA>, HBA1C=<TBD_HBA1C> — replace before
--- applying. Other fields (kind, category) follow the existing chemistry
--- services as a pattern.
-
-insert into public.services (code, name, description, kind, price_php,
-                              report_group_id, is_active, requires_signoff)
-values
-  ('BUN', 'Blood Urea Nitrogen (BUN)',
-   'Kidney-function screening; commonly paired with Creatinine.',
-   'lab_test', <TBD_BUN>::numeric,
-   (select id from public.report_groups where code='CHEMISTRY'),
-   true, false),
-  ('BUA', 'Blood Uric Acid (BUA)',
-   'Uric acid screening; gout and renal risk marker.',
-   'lab_test', <TBD_BUA>::numeric,
-   (select id from public.report_groups where code='CHEMISTRY'),
-   true, false),
-  ('HBA1C', 'Glycated Haemoglobin (HbA1c)',
-   'Three-month average blood glucose; diabetes monitoring.',
-   'lab_test', <TBD_HBA1C>::numeric,
-   (select id from public.report_groups where code='CHEMISTRY'),
-   true, false)
-on conflict (code) do nothing;
-
--- ----- 3. Map existing chemistry services to the group ----------------------
+-- ----- 2. Map active chemistry services to the group ------------------------
+-- All 12 codes verified active in live DB 2026-05-22.
 
 update public.services
    set report_group_id = (select id from public.report_groups where code='CHEMISTRY')
- where code in ('FBS', 'CREA', 'SGPT', 'SGOT', 'LIPID');
+ where code in (
+   'FBS_RBS', 'BUN', 'CREATININE', 'BUA_URIC_ACID',
+   'TRIGLYCERIDES', 'CHOLESTEROL', 'HDL_LDL_VLDL',
+   'SGPT_ALT', 'SGOT_AST', 'HBA1C',
+   'LIPID_PROFILE', 'LIPID_PROFILE_PACKAGE'
+ );
 
--- ----- 4. Deactivate per-service Chemistry-overlapping templates ------------
+-- ----- 3. Deactivate per-service Chemistry-overlapping templates ------------
+-- All 12 active services currently have their own per-service template; those
+-- are replaced by the single consolidated template inserted below.
 
 update public.result_templates
    set is_active = false
  where service_id in (
    select id from public.services
-    where code in ('FBS_RBS', 'CREATININE', 'SGPT_ALT', 'SGOT_AST', 'LIPID_PROFILE')
+    where code in (
+      'FBS_RBS', 'BUN', 'CREATININE', 'BUA_URIC_ACID',
+      'TRIGLYCERIDES', 'CHOLESTEROL', 'HDL_LDL_VLDL',
+      'SGPT_ALT', 'SGOT_AST', 'HBA1C',
+      'LIPID_PROFILE', 'LIPID_PROFILE_PACKAGE'
+    )
  );
 
--- ----- 5. Chemistry consolidated template -----------------------------------
+-- ----- 4. Chemistry consolidated template -----------------------------------
 
 with new_tpl as (
   insert into public.result_templates (service_id, report_group_id, layout,
@@ -668,8 +675,8 @@ begin
   select count(*) into v_svc_cnt
     from public.services
    where report_group_id = v_group_id and is_active;
-  if v_svc_cnt < 8 then
-    raise exception 'S1: expected ≥8 active Chemistry services, got %', v_svc_cnt;
+  if v_svc_cnt < 11 then
+    raise exception 'S1: expected ≥11 active Chemistry services, got %', v_svc_cnt;
   end if;
 
   raise notice 'S1 chemistry seed OK (% params, % services)', v_param_cnt, v_svc_cnt;
@@ -678,15 +685,7 @@ end $$;
 
 (The param count of 14 covers 12 single-gender params + 2 gender-split params for Creatinine and Uric Acid.)
 
-- [ ] **Step 3: User replaces `<TBD_*>` placeholders**
-
-Pause: do not proceed until the user provides prices. The agent should explicitly ask:
-
-> "Migration `0053_chemistry_seed.sql` has `<TBD_BUN>`, `<TBD_BUA>`, `<TBD_HBA1C>` placeholders. What are the PHP prices for these three services? Once you tell me, I'll replace and apply."
-
-After the user answers, search-and-replace the three tokens in the file with the integer pesos provided.
-
-- [ ] **Step 4: Apply migration locally**
+- [ ] **Step 3: Apply migration locally**
 
 ```bash
 supabase db reset
@@ -694,7 +693,7 @@ supabase db reset
 
 Expected: all migrations 0001 through 0053 apply cleanly.
 
-- [ ] **Step 5: Run smoke — expect S0 + S1 to pass**
+- [ ] **Step 4: Run smoke — expect S0 + S1 to pass**
 
 ```bash
 psql "$SUPABASE_DB_URL" -f scripts/smoke-chemistry-consolidated.sql
@@ -703,21 +702,23 @@ psql "$SUPABASE_DB_URL" -f scripts/smoke-chemistry-consolidated.sql
 Expected:
 ```
 NOTICE:  S0 schema sanity OK
-NOTICE:  S1 chemistry seed OK (14 params, 8 services)
+NOTICE:  S1 chemistry seed OK (14 params, 12 services)
 ```
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add supabase/migrations/0053_chemistry_seed.sql scripts/smoke-chemistry-consolidated.sql
 git commit -m "$(cat <<'EOF'
-feat(results): chemistry consolidated template + services seed (12.5 D2)
+feat(results): chemistry consolidated template + group mapping (12.5 D2)
 
 Seeds the CHEMISTRY report_group, the 13-row consolidated template
 with SI + conventional ranges and gender-specific Creatinine/Uric
-Acid overrides, three new services (BUN, BUA, HBA1C), and maps
-existing chemistry services (FBS, CREA, SGPT, SGOT, LIPID) to the
-group. Deactivates per-service Chemistry-overlapping templates.
+Acid overrides, and maps the 12 active chemistry services to the
+group (FBS_RBS, BUN, CREATININE, BUA_URIC_ACID, TRIGLYCERIDES,
+CHOLESTEROL, HDL_LDL_VLDL, SGPT_ALT, SGOT_AST, HBA1C, LIPID_PROFILE,
+LIPID_PROFILE_PACKAGE). Deactivates the 12 per-service templates
+they previously used.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 EOF
@@ -1725,7 +1726,7 @@ async function bootstrap() {
   const { data: services } = await admin
     .from("services")
     .select("id, code")
-    .in("code", ["FBS", "LIPID", "HBA1C"]);
+    .in("code", ["FBS_RBS", "LIPID_PROFILE", "HBA1C"]);
   const trIds: string[] = [];
   for (const svc of services ?? []) {
     const { data: tr } = await admin
@@ -2118,15 +2119,23 @@ interface Props {
 }
 
 // Map service code → which template-param parameter_names it covers.
+// Verified against live DB 2026-05-22; uses actual active service codes.
+// `HDL_LDL_VLDL` is a single service that fans out into three rows.
+// `LIPID_PROFILE` is a single service that fans out into all five lipid rows.
+// `LIPID_PROFILE_PACKAGE` decomposes at order time into CHOLESTEROL +
+//   TRIGLYCERIDES + HDL_LDL_VLDL components, so no direct mapping needed.
 const SERVICE_TO_PARAMS: Record<string, string[]> = {
-  FBS: ["FBS"],
+  FBS_RBS: ["FBS"],
   BUN: ["BUN"],
-  CREA: ["Creatinine"],
-  BUA: ["Uric Acid"],
-  LIPID: ["Triglycerides", "Cholesterol", "HDL", "LDL", "VLDL"],
-  SGPT: ["SGPT (ALT)"],
-  SGOT: ["SGOT (AST)"],
+  CREATININE: ["Creatinine"],
+  BUA_URIC_ACID: ["Uric Acid"],
+  TRIGLYCERIDES: ["Triglycerides"],
+  CHOLESTEROL: ["Cholesterol"],
+  HDL_LDL_VLDL: ["HDL", "LDL", "VLDL"],
+  SGPT_ALT: ["SGPT (ALT)"],
+  SGOT_AST: ["SGOT (AST)"],
   HBA1C: ["HBA1C"],
+  LIPID_PROFILE: ["Triglycerides", "Cholesterol", "HDL", "LDL", "VLDL"],
 };
 
 export function ConsolidatedForm(props: Props) {
@@ -2633,10 +2642,10 @@ begin
   -- Three chemistry test_requests on the visit
   insert into public.test_requests (visit_id, service_id, status, assigned_to)
   select v_visit_id, s.id, 'in_progress', v_admin_id
-    from public.services s where s.code = 'FBS' returning id into v_fbs_id;
+    from public.services s where s.code = 'FBS_RBS' returning id into v_fbs_id;
   insert into public.test_requests (visit_id, service_id, status, assigned_to)
   select v_visit_id, s.id, 'in_progress', v_admin_id
-    from public.services s where s.code = 'LIPID' returning id into v_lipid_id;
+    from public.services s where s.code = 'LIPID_PROFILE' returning id into v_lipid_id;
   insert into public.test_requests (visit_id, service_id, status, assigned_to)
   select v_visit_id, s.id, 'in_progress', v_admin_id
     from public.services s where s.code = 'HBA1C' returning id into v_hba1c_id;
@@ -2720,7 +2729,7 @@ begin
 
   insert into public.test_requests (visit_id, service_id, status)
   select v_visit_id, s.id, 'ready_for_release'
-    from public.services s where s.code = 'FBS' returning id into v_fbs_req;
+    from public.services s where s.code = 'FBS_RBS' returning id into v_fbs_req;
 
   begin
     update public.test_requests set status='released' where id = v_fbs_req;
@@ -2764,10 +2773,10 @@ begin
 
   -- MT A claims FBS, MT B claims Lipid
   insert into public.test_requests (visit_id, service_id, status, assigned_to)
-  select v_visit, s.id, 'in_progress', v_a from public.services s where s.code='FBS'
+  select v_visit, s.id, 'in_progress', v_a from public.services s where s.code='FBS_RBS'
   returning id into v_fbs;
   insert into public.test_requests (visit_id, service_id, status, assigned_to)
-  select v_visit, s.id, 'in_progress', v_b from public.services s where s.code='LIPID'
+  select v_visit, s.id, 'in_progress', v_b from public.services s where s.code='LIPID_PROFILE'
   returning id into v_lipid;
 
   insert into public.results (report_group_id, generation_kind, finalised_at)
