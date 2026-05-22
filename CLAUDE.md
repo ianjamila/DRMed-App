@@ -6,18 +6,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-This repo is currently in the **planning stage** — no source code exists yet. The active artifacts are:
+This repo is **shipped (v1.0.0 in production)**. The full feature scope
+from `IMPLEMENTATION_PLAN.md` is live; later phases (9, 13, 14) extend
+it. Treat `IMPLEMENTATION_PLAN.md` as **historical reference**, not a
+build-from-scratch script — the app exists, touch existing code rather
+than rebuilding sections.
 
-- `README.md` — user-facing setup instructions (assumes the app has been scaffolded)
-- `IMPLEMENTATION_PLAN.md` — the source of truth for what to build, structured as 8 sequential phases
-- `.env.example` — full env-var inventory
-- `Assets/` — design reference screenshots for the three portals
+Key reference artifacts:
 
-**Always read `IMPLEMENTATION_PLAN.md` before starting work.** Execute one phase at a time and stop at each phase's verification checklist before proceeding. Do not skip ahead — later phases assume earlier phases' invariants (RLS policies, audit logging, payment-gating trigger) are already in place.
+- `RELEASE_NOTES.md` — what's actually shipped, per release
+- `IMPLEMENTATION_PLAN.md` — original phase plan (historical; cross-check before relying on it)
+- `README.md` — operational setup
+- `.env.example` — env-var inventory
 
 ## Project at a glance
 
-`drmed.ph` is a unified Next.js 15 + Supabase app serving three surfaces from one codebase and one domain:
+`drmed.ph` is a unified Next.js 16 + Supabase app serving three surfaces from one codebase and one domain:
 
 1. **Marketing site** (`/`) — public, SEO-optimized
 2. **Patient portal** (`/portal/*`) — patients view/download released lab results
@@ -25,21 +29,25 @@ This repo is currently in the **planning stage** — no source code exists yet. 
 
 Compliance target: **Philippine Data Privacy Act (RA 10173)**. Locale: en-PH, Asia/Manila, PHP currency.
 
-## Common commands (post-scaffolding)
+## Common commands
 
 | Command | Purpose |
 |---|---|
-| `npm run dev` | Dev server (Turbopack) |
+| `npm run dev` | Dev server |
 | `npm run build` / `npm run start` | Production build / serve |
 | `npm run lint` | ESLint |
 | `npm run typecheck` | `tsc --noEmit` |
-| `npm run db:types` | Regenerate `src/types/database.ts` from the linked Supabase project — run after every migration |
-| `npm run db:diff` | `supabase db diff -f <name>` — generate a new migration from local schema changes |
+| `npm run db:types` | Regenerate `src/types/database.ts` from the local Supabase project — run after every migration |
+| `npm run db:types:remote` | Same, but against the live DB via `SUPABASE_DB_URL` |
+| `npm run db:diff -- <name>` | Generate a new migration from local schema changes |
 | `npm run db:reset` | Reset local Supabase to migrations (destroys local data) |
 | `supabase db push` | Apply migrations to the linked remote Supabase project |
 | `supabase start` | Run a local Supabase stack for testing migrations |
+| `npm run seed:test` / `seed:services` / `seed:templates` / etc. | Idempotent seed scripts (require `.env.local`) |
+| `npm run smoke:results` | Render-pipeline smoke test for result PDF templates |
 
-There is no test runner specified in the plan yet. If you add one, document the single-test command here.
+There is no unit-test runner — only the smoke scripts above. If adding
+a test framework, document the single-test command here.
 
 ## Architecture — the things that aren't obvious from file structure
 
@@ -89,13 +97,24 @@ All Server Actions return `{ ok: true, data } | { ok: false, error }`. User-faci
 - Do **NOT** hardcode service prices in the frontend — always read from the `services` table.
 - Do **NOT** add a "Backend API Base" field to the staff login. It's a leftover from a scrapped multi-backend design — the plan calls it out explicitly.
 
-## Decisions deferred (revisit before Phase 5)
+## Where things live
 
-- MFA for staff (TOTP via Supabase Auth; required for `admin`, optional for others initially)
-- Pathologist sign-off (`services.requires_signoff` column, default off)
-- PIN expiry policy (60 days default; admin can extend per visit)
-- Patient self-service password reset is **out of scope** — patients must visit reception for a new PIN.
-- PHIC / HMO billing integration is out of scope.
+| Concern | Location |
+|---|---|
+| Staff auth gates (`requireSignedInStaff`, `requireActiveStaff`, `requireAdminStaff`) | `src/lib/auth/require-staff.ts`, `require-admin.ts` |
+| Patient auth gate + PIN handling | `src/lib/auth/require-patient.ts`, `pin.ts`, `patient-session.ts` |
+| Three Supabase clients (browser / server / admin) | `src/lib/supabase/{client,server,admin}.ts` |
+| Audit-log writer — call from every write action | `src/lib/audit/log.ts` (`audit()`) |
+| Server Action helpers (`ipAndAgent`, `firstIssue`) | `src/lib/server/action-helpers.ts` |
+| PG error → user-facing message translator | `src/lib/accounting/pg-errors.ts` (`translatePgError`) |
+| Manila/PHT datetime helpers | `src/lib/dates/manila.ts` (`todayManilaISODate`, etc.) |
+| Rate-limit checker | `src/lib/rate-limit/check.ts` |
+| Migrations (49+ files, sequential numbering) | `supabase/migrations/` |
+
+## Out of scope (by design)
+
+- Patient self-service password reset — patients must visit reception for a new PIN.
+- PHIC / HMO billing integration.
 
 ## Conventions
 
