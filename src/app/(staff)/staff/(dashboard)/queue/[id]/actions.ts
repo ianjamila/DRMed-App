@@ -7,6 +7,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { renderResultPdf } from "@/lib/results/render-pdf";
+import { loadConsultantSignatures, resolvePerformer } from "@/lib/results/signatures";
 import {
   calculateAgeMonths,
   computeFlag,
@@ -495,6 +496,12 @@ export async function finaliseStructuredAction(
   const controlNo = pre?.control_no ?? null;
 
   // 7) Render the PDF (embedding the image when present).
+  const consultants = await loadConsultantSignatures();
+  const performer = await resolvePerformer({
+    service: { code: svc.code, kind: null },
+    finalisedByStaffId: session.user_id,
+  });
+
   const docInput: ResultDocumentInput = {
     template: {
       layout: tplRow.layout as ResultLayout,
@@ -521,6 +528,8 @@ export async function finaliseStructuredAction(
           prc_license_no: medtech.prc_license_no,
         }
       : null,
+    performer,
+    consultantPathologist: consultants.pathologist,
     imageAttachment:
       imageBuffer && imageMime && imageFilename
         ? {
@@ -1342,6 +1351,12 @@ export async function amendStructuredResultAction(
     .single();
 
   // 12) Render the new PDF.
+  const amendConsultants = await loadConsultantSignatures();
+  const amendPerformer = await resolvePerformer({
+    service: { code: svc.code, kind: null },
+    finalisedByStaffId: session.user_id,
+  });
+
   const docInput: ResultDocumentInput = {
     template: {
       layout: tpl.layout as ResultLayout,
@@ -1368,6 +1383,8 @@ export async function amendStructuredResultAction(
           prc_license_no: medtech.prc_license_no,
         }
       : null,
+    performer: amendPerformer,
+    consultantPathologist: amendConsultants.pathologist,
     imageAttachment:
       pdfImageBytes && pdfImageMime && pdfImageFilename
         ? {

@@ -318,7 +318,7 @@ const styles = StyleSheet.create({
   signatureBlock: {
     marginTop: 36,
     flexDirection: "row",
-    justifyContent: "space-between",
+    justifyContent: "space-around",
   },
   signatureCol: {
     flex: 1,
@@ -360,6 +360,13 @@ const styles = StyleSheet.create({
     fontSize: 8,
     color: C.inkSoft,
     textAlign: "center",
+  },
+  signatureImage: {
+    width: 110,
+    height: 32,
+    objectFit: "contain",
+    marginBottom: -4,
+    alignSelf: "center",
   },
 
   pageFooter: {
@@ -543,16 +550,28 @@ function SectionTitle({
 }
 
 function SignatureColumn({
-  name,
-  role,
-  license,
+  data,
+  defaultRole,
 }: {
-  name: string;
-  role: string;
-  license: string;
+  data:
+    | ResultDocumentInput["performer"]
+    | ResultDocumentInput["consultantPathologist"]
+    | null;
+  defaultRole: string;
 }) {
+  const name = data?.full_name ?? "—";
+  const license = data?.prc_license_no
+    ? `PRC License No. ${data.prc_license_no}`
+    : "PRC License No. —";
+  const role = roleLabel(data?.prc_license_kind, defaultRole);
   return (
     <View style={styles.signatureCol}>
+      {data?.png_bytes ? (
+        // eslint-disable-next-line jsx-a11y/alt-text
+        <Image src={data.png_bytes} style={styles.signatureImage} />
+      ) : (
+        <View style={{ height: 32 }} />
+      )}
       <View style={styles.signatureNameRow}>
         <Text style={styles.signatureName}>{name}</Text>
       </View>
@@ -563,37 +582,36 @@ function SignatureColumn({
   );
 }
 
+function roleLabel(
+  kind: string | null | undefined,
+  fallback: string,
+): string {
+  if (kind === "RMT") return "Medical Technologist";
+  if (kind === "RT") return "Radiologic Technologist";
+  if (kind === "MD") return fallback;
+  return fallback;
+}
+
 function SignatureBlock({
-  medtech,
+  performer,
+  consultantPathologist,
 }: {
-  // The "medtech" field is used for backwards compatibility but represents
-  // the staff member who finalised the result — could be a medtech or an
-  // xray_technician. The PRC license kind printed below distinguishes
-  // them (RMT vs RT).
-  medtech: ResultDocumentInput["medtech"];
+  performer: ResultDocumentInput["performer"];
+  consultantPathologist: ResultDocumentInput["consultantPathologist"];
 }) {
-  // Pathologist and QC are visual placeholders until those sign-off roles
-  // ship. The medtech column comes from real data.
-  const medtechName = medtech?.full_name ?? "—";
-  const medtechLicense = medtech
-    ? `PRC License No. ${medtech.prc_license_no ?? "—"}`
-    : "PRC License No. —";
   return (
     <View style={styles.signatureBlock}>
       <SignatureColumn
-        name="—"
-        role="Pathologist"
-        license="PRC License No. —"
+        data={consultantPathologist}
+        defaultRole="Pathologist"
       />
       <SignatureColumn
-        name={medtechName}
-        role="Medical Technologist"
-        license={medtechLicense}
-      />
-      <SignatureColumn
-        name="—"
-        role="Quality Control"
-        license="PRC License No. —"
+        data={performer}
+        defaultRole={
+          performer?.prc_license_kind === "MD"
+            ? "Consultant"
+            : "Medical Technologist"
+        }
       />
     </View>
   );
@@ -1265,7 +1283,10 @@ export function ResultDocument(input: ResultDocumentInput) {
 
         <RemarksBlock notes={input.template.footer_notes} />
 
-        <SignatureBlock medtech={input.medtech} />
+        <SignatureBlock
+          performer={input.performer}
+          consultantPathologist={input.consultantPathologist}
+        />
         <PageFooter />
       </Page>
     </Document>

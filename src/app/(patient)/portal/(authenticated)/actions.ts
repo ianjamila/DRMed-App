@@ -6,6 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { getPatientSession } from "@/lib/auth/patient-session-cookies";
 import { renderResultPdf } from "@/lib/results/render-pdf";
+import { loadConsultantSignatures, resolvePerformer } from "@/lib/results/signatures";
 import {
   normalisePatientSex,
   type ResultDocumentInput,
@@ -226,6 +227,12 @@ export async function getPackagePdfDownloadUrl(
   // 4) Render cover + fetch every component PDF in parallel. Skip
   // components that have no result row (data integrity issue — we audit
   // the skip rather than failing the whole assembly).
+  const coverConsultants = await loadConsultantSignatures();
+  const coverPerformer = await resolvePerformer({
+    service: null,
+    finalisedByStaffId: null,
+  });
+
   const coverInput: ResultDocumentInput = {
     template: {
       layout: "package_summary",
@@ -251,6 +258,8 @@ export async function getPackagePdfDownloadUrl(
       ? new Date(headerRow.package_completed_at)
       : new Date(),
     medtech: null,
+    performer: coverPerformer,
+    consultantPathologist: coverConsultants.pathologist,
     packageSummary: {
       packageCode: headerService?.code ?? "",
       packageName: headerService?.name ?? "",

@@ -10,6 +10,7 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { renderResultPdf } from "@/lib/results/render-pdf";
 import { buildPreviewValues } from "@/lib/results/preview-data";
 import { loadTemplateParams } from "@/lib/results/loaders";
+import { loadConsultantSignatures, resolvePerformer } from "@/lib/results/signatures";
 import type {
   ResultDocumentInput,
   ResultLayout,
@@ -54,6 +55,12 @@ export async function GET(_req: Request, { params }: Props) {
   const params2 = await loadTemplateParams(supabase, template.id);
   const values = buildPreviewValues(params2);
 
+  const consultants = await loadConsultantSignatures();
+  const performer = await resolvePerformer({
+    service: { code: service.code, kind: null },
+    finalisedByStaffId: null,
+  });
+
   const input: ResultDocumentInput = {
     template: {
       layout: template.layout as ResultLayout,
@@ -78,6 +85,8 @@ export async function GET(_req: Request, { params }: Props) {
       prc_license_kind: null,
       prc_license_no: null,
     },
+    performer,
+    consultantPathologist: consultants.pathologist,
     isPreview: true,
   };
 
