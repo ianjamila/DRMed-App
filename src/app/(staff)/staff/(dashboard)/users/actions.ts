@@ -194,3 +194,119 @@ export async function adminResetStaffPasswordAction(
     message: "Password reset. Share the new password with the user securely.",
   };
 }
+
+export type DeleteResult =
+  | { ok: true; redirect_to: string }
+  | { ok: false; error: string };
+
+// Soft-deletes a staff_profile by stamping deleted_at + deleted_by and
+// flipping is_active=false. Row stays so audit logs continue to resolve
+// actor_id → name. The auth.users row is left intact (no auth.admin.delete)
+// because requireSignedInStaff already refuses sessions whose profile is
+// deleted_at IS NOT NULL — that's a tighter, idempotent check than churning
+// auth users (and it preserves the email→user mapping in case of restore).
+export async function softDeleteStaffUserAction(
+  staffUserId: string,
+  formData: FormData,
+): Promise<DeleteResult> {
+  const session = await requireAdminStaff();
+
+  if (session.user_id === staffUserId) {
+    return {
+      ok: false,
+      error: "You cannot delete your own account.",
+    };
+  }
+
+  // Two-step confirmation: client must echo the user's full name back as
+  // proof they read the warning. Mismatch aborts.
+  const confirmedName = (formData.get("confirm_name") ?? "").toString().trim();
+
+  const admin = createAdminClient();
+  const { data: target, error: targetErr } = await admin
+    .from("staff_profiles")
+    .select("id, full_name, role, deleted_at")
+    .eq("id", staffUserId)
+    .maybeSingle();
+  if (targetErr || !target) {
+    return { ok: false, error: "Staff user not found." };
+  }
+  if (target.deleted_at !== null) {
+    return { ok: false, error: "This user is already deleted." };
+  }
+  if (confirmedName !== target.full_name) {
+    return {
+      ok: false,
+      error: `Confirmation name doesn't match. Type "${target.full_name}" exactly to confirm deletion.`,
+    };
+  }
+
+  const { error: updateErr } = await admin
+    .from("staff_profiles")
+    .update({
+      deleted_at: new Date().toISOString(),
+      deleted_by: session.user_id,
+      is_active: false,
+    })
+    .eq("id", staffUserId)
+    .is("deleted_at", null);
+
+  if (updateErr) return { ok: false, error: updateErr.message };
+
+  const { ip, ua } = await ipAndAgent();
+  await audit({
+    actor_id: session.user_id,
+    actor_type: "staff",
+    action: "staff_user.deleted",
+    resource_type: "staff_profile",
+    resource_id: staffUserId,
+    metadata: { target_name: target.full_name, target_role: target.role },
+    ip_address: ip,
+    user_agent: ua,
+  });
+
+  revalidatePath("/staff/users");
+  revalidatePath(`/staff/users/${staffUserId}/edit`);
+  return { ok: true, redirect_to: "/staff/users" };
+}
+
+// Restores a previously soft-deleted staff user. Clears deleted_at +
+// deleted_by but DOES NOT re-activate (admin must flip is_active back to
+// true in the edit form). This forces a deliberate two-step recovery.
+export async function restoreStaffUserAction(
+  staffUserId: string,
+): Promise<{ ok: true; redirect_to: string } | { ok: false; error: string }> {
+  const session = await requireAdminStaff();
+
+  const admin = createAdminClient();
+  const { data: target } = await admin
+    .from("staff_profiles")
+    .select("id, full_name, deleted_at")
+    .eq("id", staffUserId)
+    .maybeSingle();
+  if (!target) return { ok: false, error: "Staff user not found." };
+  if (target.deleted_at === null) {
+    return { ok: false, error: "This user is not deleted." };
+  }
+
+  const { error } = await admin
+    .from("staff_profiles")
+    .update({ deleted_at: null, deleted_by: null })
+    .eq("id", staffUserId);
+  if (error) return { ok: false, error: error.message };
+
+  const { ip, ua } = await ipAndAgent();
+  await audit({
+    actor_id: session.user_id,
+    actor_type: "staff",
+    action: "staff_user.restored",
+    resource_type: "staff_profile",
+    resource_id: staffUserId,
+    metadata: { target_name: target.full_name },
+    ip_address: ip,
+    user_agent: ua,
+  });
+
+  revalidatePath("/staff/users");
+  return { ok: true, redirect_to: `/staff/users/${staffUserId}/edit` };
+}

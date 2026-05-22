@@ -4081,6 +4081,8 @@ export type Database = {
       staff_profiles: {
         Row: {
           created_at: string
+          deleted_at: string | null
+          deleted_by: string | null
           full_name: string
           id: string
           is_active: boolean
@@ -4091,6 +4093,8 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          deleted_at?: string | null
+          deleted_by?: string | null
           full_name: string
           id: string
           is_active?: boolean
@@ -4101,6 +4105,8 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          deleted_at?: string | null
+          deleted_by?: string | null
           full_name?: string
           id?: string
           is_active?: boolean
@@ -4109,7 +4115,15 @@ export type Database = {
           role?: string
           updated_at?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "staff_profiles_deleted_by_fkey"
+            columns: ["deleted_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       subscribers: {
         Row: {

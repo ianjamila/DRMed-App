@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { StaffForm } from "../../staff-form";
 import { AdminResetForm } from "./admin-reset-form";
+import { DeleteForm } from "./delete-form";
 
 export const metadata = {
   title: "Edit staff user — staff",
@@ -22,13 +23,16 @@ export default async function EditStaffUserPage({ params }: Props) {
   const [{ data: profile }, { data: userResp }] = await Promise.all([
     admin
       .from("staff_profiles")
-      .select("id, full_name, role, is_active, prc_license_kind, prc_license_no")
+      .select(
+        "id, full_name, role, is_active, prc_license_kind, prc_license_no, deleted_at",
+      )
       .eq("id", id)
       .maybeSingle(),
     admin.auth.admin.getUserById(id),
   ]);
 
   if (!profile) notFound();
+  const isDeleted = profile.deleted_at !== null;
 
   const role = profile.role as
     | "reception"
@@ -98,6 +102,18 @@ export default async function EditStaffUserPage({ params }: Props) {
           </>
         )}
       </div>
+
+      {/* Danger zone: delete (admin only, never self, never on already-deleted) */}
+      {!isSelf && !isDeleted ? (
+        <div className="mt-6 rounded-xl border-2 border-rose-300 bg-rose-50/30 p-6">
+          <h2 className="font-[family-name:var(--font-heading)] text-lg font-bold text-rose-900">
+            Danger zone
+          </h2>
+          <div className="mt-3">
+            <DeleteForm staffUserId={profile.id} staffName={profile.full_name} />
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

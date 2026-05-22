@@ -33,17 +33,24 @@ export async function requireSignedInStaff(): Promise<StaffSession> {
 
   const { data: profile } = await supabase
     .from("staff_profiles")
-    .select("full_name, role, is_active")
+    .select("full_name, role, is_active, deleted_at")
     .eq("id", user.id)
     .maybeSingle();
 
-  if (!profile || !profile.is_active) {
+  // Deleted users are treated identically to "no profile": the row stays
+  // for audit-log resolution but the session is refused. Inactive users
+  // are also blocked here so a soft-disabled account can't sign in.
+  if (!profile || !profile.is_active || profile.deleted_at !== null) {
     const h = await headers();
     await audit({
       actor_id: user.id,
       actor_type: "staff",
       action: "staff.signin.rejected_inactive",
-      metadata: { email: user.email ?? null, has_profile: !!profile },
+      metadata: {
+        email: user.email ?? null,
+        has_profile: !!profile,
+        is_deleted: !!profile?.deleted_at,
+      },
       ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
       user_agent: h.get("user-agent"),
     });
