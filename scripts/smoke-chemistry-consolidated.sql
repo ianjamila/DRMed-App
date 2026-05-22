@@ -54,4 +54,45 @@ begin
   raise notice 'S0 schema sanity OK';
 end $$;
 
+-- =============================================================================
+-- S1: Chemistry seed sanity
+-- =============================================================================
+do $$
+declare
+  v_group_id   uuid;
+  v_tpl_id     uuid;
+  v_param_cnt  int;
+  v_svc_cnt    int;
+begin
+  select id into v_group_id
+    from public.report_groups
+   where code = 'CHEMISTRY';
+  if v_group_id is null then
+    raise exception 'S1: CHEMISTRY report_group missing';
+  end if;
+
+  select id into v_tpl_id
+    from public.result_templates
+   where report_group_id = v_group_id and is_active;
+  if v_tpl_id is null then
+    raise exception 'S1: active Chemistry template missing';
+  end if;
+
+  select count(*) into v_param_cnt
+    from public.result_template_params
+   where template_id = v_tpl_id;
+  if v_param_cnt <> 14 then
+    raise exception 'S1: expected 14 Chemistry params (12 + 2 gender Creatinine/UricAcid), got %', v_param_cnt;
+  end if;
+
+  select count(*) into v_svc_cnt
+    from public.services
+   where report_group_id = v_group_id and is_active;
+  if v_svc_cnt < 11 then
+    raise exception 'S1: expected ≥11 active Chemistry services, got %', v_svc_cnt;
+  end if;
+
+  raise notice 'S1 chemistry seed OK (% params, % services)', v_param_cnt, v_svc_cnt;
+end $$;
+
 rollback;
