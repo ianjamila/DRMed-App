@@ -12,7 +12,10 @@ import {
 } from "@/components/ui/mobile-drawer";
 import {
   isItemActive,
+  isSubgroupActive,
   visibleNavFor,
+  type StaffNavItem,
+  type StaffNavSubgroup,
   type StaffRole,
 } from "./staff-nav-config";
 
@@ -29,6 +32,79 @@ const ROLE_LABEL: Record<StaffRole, string> = {
   pathologist: "Pathologist",
   admin: "Admin",
 };
+
+function MobileNavLink({
+  item,
+  active,
+  onClick,
+}: {
+  item: StaffNavItem;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <li>
+      <Link
+        href={item.href}
+        onClick={onClick}
+        className={
+          active
+            ? "block rounded-md bg-[color:var(--color-brand-navy)] px-3 py-3 text-sm font-medium text-white"
+            : "block rounded-md px-3 py-3 text-sm font-medium text-[color:var(--color-brand-text-mid)] transition-colors hover:bg-[color:var(--color-brand-bg)] hover:text-[color:var(--color-brand-navy)]"
+        }
+      >
+        {item.label}
+      </Link>
+    </li>
+  );
+}
+
+function MobileSubgroup({
+  group,
+  pathname,
+  onClick,
+}: {
+  group: StaffNavSubgroup;
+  pathname: string;
+  onClick: () => void;
+}) {
+  const containsActive = isSubgroupActive(group, pathname);
+  return (
+    <details
+      key={`${group.heading}:${containsActive ? "open" : "closed"}`}
+      open={containsActive}
+      className="group/mobsub"
+    >
+      <summary className="flex cursor-pointer list-none items-center justify-between rounded-md px-3 py-2 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)] hover:bg-[color:var(--color-brand-bg)] hover:text-[color:var(--color-brand-navy)]">
+        <span>{group.heading}</span>
+        <svg
+          aria-hidden="true"
+          viewBox="0 0 12 12"
+          className="h-3 w-3 transition-transform group-open/mobsub:rotate-90"
+        >
+          <path
+            d="M4 2l4 4-4 4"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            fill="none"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </summary>
+      <ul className="mt-1 flex flex-col gap-0.5 pl-2">
+        {group.items.map((item) => (
+          <MobileNavLink
+            key={item.href}
+            item={item}
+            active={isItemActive(item, pathname)}
+            onClick={onClick}
+          />
+        ))}
+      </ul>
+    </details>
+  );
+}
 
 // Mobile-only hamburger + slide-in drawer for the staff portal. Mirrors
 // the desktop sidebar's nav so reception can navigate from a phone, and
@@ -83,26 +159,29 @@ export function StaffMobileNavTrigger({ role, email, fullName }: Props) {
               <p className="px-3 pb-2 text-[10px] font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                 {section.heading}
               </p>
-              <ul className="flex flex-col gap-0.5">
-                {section.items.map((item) => {
-                  const active = isItemActive(item, pathname);
-                  return (
-                    <li key={item.href}>
-                      <Link
-                        href={item.href}
-                        onClick={close}
-                        className={
-                          active
-                            ? "block rounded-md bg-[color:var(--color-brand-navy)] px-3 py-3 text-sm font-medium text-white"
-                            : "block rounded-md px-3 py-3 text-sm font-medium text-[color:var(--color-brand-text-mid)] transition-colors hover:bg-[color:var(--color-brand-bg)] hover:text-[color:var(--color-brand-navy)]"
-                        }
-                      >
-                        {item.label}
-                      </Link>
-                    </li>
-                  );
-                })}
-              </ul>
+              {section.items ? (
+                <ul className="flex flex-col gap-0.5">
+                  {section.items.map((item) => (
+                    <MobileNavLink
+                      key={item.href}
+                      item={item}
+                      active={isItemActive(item, pathname)}
+                      onClick={close}
+                    />
+                  ))}
+                </ul>
+              ) : (
+                <div className="flex flex-col gap-1">
+                  {section.subgroups.map((group) => (
+                    <MobileSubgroup
+                      key={group.heading}
+                      group={group}
+                      pathname={pathname}
+                      onClick={close}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           ))}
         </nav>

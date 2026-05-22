@@ -14,10 +14,20 @@ export interface StaffNavItem {
   roles: readonly StaffRole[];
 }
 
-export interface StaffNavSection {
+// A subgroup sits inside a section and renders as a collapsible
+// <details>/<summary>. Used to break up the 30+-item Admin section
+// into scan-able buckets (Catalog, Accounting, Payroll, …).
+export interface StaffNavSubgroup {
   heading: string;
   items: StaffNavItem[];
 }
+
+// A section is either flat (items only) or grouped (subgroups only).
+// Mixing both isn't supported — picks one shape per section to keep
+// rendering predictable.
+export type StaffNavSection =
+  | { heading: string; items: StaffNavItem[]; subgroups?: never }
+  | { heading: string; subgroups: StaffNavSubgroup[]; items?: never };
 
 export const STAFF_NAV: StaffNavSection[] = [
   {
@@ -93,162 +103,202 @@ export const STAFF_NAV: StaffNavSection[] = [
   },
   {
     heading: "Admin",
-    items: [
-      { href: "/staff/admin/prices", label: "Prices", roles: ["admin"] },
-      { href: "/staff/services", label: "Services", roles: ["admin"] },
+    subgroups: [
       {
-        href: "/staff/admin/result-templates",
-        label: "Result templates",
-        roles: ["admin"],
+        heading: "Catalog",
+        items: [
+          { href: "/staff/admin/prices", label: "Prices", roles: ["admin"] },
+          { href: "/staff/services", label: "Services", roles: ["admin"] },
+          {
+            href: "/staff/admin/result-templates",
+            label: "Result templates",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/hmo-providers",
+            label: "HMO providers",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/physicians",
+            label: "Physicians",
+            roles: ["admin"],
+          },
+        ],
       },
       {
-        href: "/staff/admin/hmo-providers",
-        label: "HMO providers",
-        roles: ["admin"],
+        heading: "Operations",
+        items: [
+          {
+            href: "/staff/admin/closures",
+            label: "Closures",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/gift-codes",
+            label: "Gift codes",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/newsletter",
+            label: "Newsletter",
+            roles: ["admin"],
+          },
+        ],
       },
       {
-        href: "/staff/admin/gift-codes",
-        label: "Gift codes",
-        roles: ["admin"],
+        heading: "Accounting",
+        items: [
+          {
+            href: "/staff/admin/accounting",
+            label: "Accounting sync",
+            exact: true,
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/accounting/chart-of-accounts",
+            label: "Chart of accounts",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/accounting/periods",
+            label: "Accounting periods",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/accounting/payment-routing",
+            label: "Payment routing",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/accounting/cash-routing",
+            label: "Cash routing",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/accounting/hmo-claims",
+            label: "HMO claims",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/accounting/hmo-history",
+            label: "History import",
+            roles: ["admin"],
+          },
+        ],
       },
       {
-        href: "/staff/admin/newsletter",
-        label: "Newsletter",
-        roles: ["admin"],
+        heading: "Accounts payable",
+        items: [
+          {
+            href: "/staff/admin/accounting/ap",
+            label: "AP dashboard",
+            exact: true,
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/accounting/ap/bills",
+            label: "AP bills",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/accounting/ap/payments",
+            label: "AP payments",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/accounting/ap/vendors",
+            label: "AP vendors",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/accounting/ap/recurring",
+            label: "AP recurring",
+            roles: ["admin"],
+          },
+        ],
       },
       {
-        href: "/staff/admin/physicians",
-        label: "Physicians",
-        roles: ["admin"],
+        heading: "Payroll",
+        items: [
+          {
+            href: "/staff/admin/payroll/employees",
+            label: "Employees",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/payroll/periods",
+            label: "Pay periods",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/payroll/runs",
+            label: "Pay runs",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/payroll/ot-slips",
+            label: "OT slips",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/payroll/holidays",
+            label: "Holidays",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/payroll/rates",
+            label: "Statutory rates",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/payroll/leaves",
+            label: "Leave dashboard",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/payroll/settings",
+            label: "Payroll settings",
+            roles: ["admin"],
+          },
+        ],
       },
       {
-        href: "/staff/admin/closures",
-        label: "Closures",
-        roles: ["admin"],
+        heading: "Reports",
+        items: [
+          {
+            href: "/staff/admin/reports/daily-revenue",
+            label: "Daily revenue",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/reports/staff-advances",
+            label: "Staff advances",
+            roles: ["admin"],
+          },
+        ],
       },
       {
-        href: "/staff/admin/accounting",
-        label: "Accounting sync",
-        exact: true,
-        roles: ["admin"],
+        heading: "Users & audit",
+        items: [
+          { href: "/staff/users", label: "Staff users", roles: ["admin"] },
+          { href: "/staff/audit", label: "Audit log", roles: ["admin"] },
+        ],
       },
       {
-        href: "/staff/admin/accounting/chart-of-accounts",
-        label: "Chart of accounts",
-        roles: ["admin"],
-      },
-      {
-        href: "/staff/admin/accounting/periods",
-        label: "Accounting periods",
-        roles: ["admin"],
-      },
-      {
-        href: "/staff/admin/accounting/payment-routing",
-        label: "Payment routing",
-        roles: ["admin"],
-      },
-      {
-        href: "/staff/admin/accounting/cash-routing",
-        label: "Cash routing",
-        roles: ["admin"],
-      },
-      {
-        href: "/staff/admin/accounting/hmo-claims",
-        label: "HMO claims",
-        roles: ["admin"],
-      },
-      {
-        href: "/staff/admin/accounting/hmo-history",
-        label: "History import",
-        roles: ["admin"],
-      },
-      {
-        href: "/staff/admin/accounting/ap",
-        label: "AP dashboard",
-        exact: true,
-        roles: ["admin"],
-      },
-      {
-        href: "/staff/admin/accounting/ap/bills",
-        label: "AP bills",
-        roles: ["admin"],
-      },
-      {
-        href: "/staff/admin/accounting/ap/payments",
-        label: "AP payments",
-        roles: ["admin"],
-      },
-      {
-        href: "/staff/admin/accounting/ap/vendors",
-        label: "AP vendors",
-        roles: ["admin"],
-      },
-      {
-        href: "/staff/admin/accounting/ap/recurring",
-        label: "AP recurring",
-        roles: ["admin"],
-      },
-      {
-        href: "/staff/admin/reports/daily-revenue",
-        label: "Daily revenue",
-        roles: ["admin"],
-      },
-      {
-        href: "/staff/admin/reports/staff-advances",
-        label: "Staff advances",
-        roles: ["admin"],
-      },
-      {
-        href: "/staff/admin/payroll/employees",
-        label: "Employees",
-        roles: ["admin"],
-      },
-      {
-        href: "/staff/admin/payroll/periods",
-        label: "Pay periods",
-        roles: ["admin"],
-      },
-      {
-        href: "/staff/admin/payroll/runs",
-        label: "Pay runs",
-        roles: ["admin"],
-      },
-      {
-        href: "/staff/admin/payroll/ot-slips",
-        label: "OT slips",
-        roles: ["admin"],
-      },
-      {
-        href: "/staff/admin/payroll/holidays",
-        label: "Holidays",
-        roles: ["admin"],
-      },
-      {
-        href: "/staff/admin/payroll/rates",
-        label: "Statutory rates",
-        roles: ["admin"],
-      },
-      {
-        href: "/staff/admin/payroll/leaves",
-        label: "Leave dashboard",
-        roles: ["admin"],
-      },
-      {
-        href: "/staff/admin/payroll/settings",
-        label: "Payroll settings",
-        roles: ["admin"],
-      },
-      { href: "/staff/users", label: "Staff users", roles: ["admin"] },
-      { href: "/staff/audit", label: "Audit log", roles: ["admin"] },
-      {
-        href: "/staff/admin/import-patients",
-        label: "Import patients",
-        roles: ["admin"],
-      },
-      {
-        href: "/staff/admin/patient-merge",
-        label: "Merge patients",
-        roles: ["admin"],
+        heading: "Patient tools",
+        items: [
+          {
+            href: "/staff/admin/import-patients",
+            label: "Import patients",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/patient-merge",
+            label: "Merge patients",
+            roles: ["admin"],
+          },
+        ],
       },
     ],
   },
@@ -269,14 +319,43 @@ export const STAFF_NAV: StaffNavSection[] = [
   },
 ];
 
+// Filters items inside each section by role, drops empty subgroups, then
+// drops sections that ended up with no visible content. Preserves the
+// flat-vs-grouped shape so the renderer doesn't have to re-detect it.
 export function visibleNavFor(role: StaffRole): StaffNavSection[] {
-  return STAFF_NAV.map((section) => ({
-    ...section,
-    items: section.items.filter((item) => item.roles.includes(role)),
-  })).filter((section) => section.items.length > 0);
+  const filtered: StaffNavSection[] = [];
+  for (const section of STAFF_NAV) {
+    if (section.items) {
+      const items = section.items.filter((i) => i.roles.includes(role));
+      if (items.length > 0) {
+        filtered.push({ heading: section.heading, items });
+      }
+    } else {
+      const subgroups = section.subgroups
+        .map((g) => ({
+          heading: g.heading,
+          items: g.items.filter((i) => i.roles.includes(role)),
+        }))
+        .filter((g) => g.items.length > 0);
+      if (subgroups.length > 0) {
+        filtered.push({ heading: section.heading, subgroups });
+      }
+    }
+  }
+  return filtered;
 }
 
 export function isItemActive(item: StaffNavItem, pathname: string): boolean {
   if (item.exact) return pathname === item.href;
   return pathname === item.href || pathname.startsWith(`${item.href}/`);
+}
+
+// True if any item in the subgroup matches the current path. Drives
+// the auto-expand behavior so the user's current location is always
+// visible without an extra click.
+export function isSubgroupActive(
+  subgroup: StaffNavSubgroup,
+  pathname: string,
+): boolean {
+  return subgroup.items.some((item) => isItemActive(item, pathname));
 }
