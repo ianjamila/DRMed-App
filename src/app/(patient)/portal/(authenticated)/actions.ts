@@ -54,7 +54,7 @@ export async function getPatientResultDownloadUrl(
   if (testRow.status !== "released") {
     return { ok: false, error: "This result hasn't been released yet." };
   }
-  if (!result) {
+  if (!result || !result.storage_path) {
     return { ok: false, error: "No result file on this test." };
   }
 
@@ -208,16 +208,19 @@ export async function getPackagePdfDownloadUrl(
     return { ok: false, error: "No released components to assemble." };
   }
 
-  // 3) Load results.storage_path for each released component.
-  const { data: results } = await admin
-    .from("results")
-    .select("id, test_request_id, storage_path")
+  // 3) Load results.storage_path for each released component via the junction.
+  const { data: junctions } = await admin
+    .from("result_test_requests")
+    .select("test_request_id, results!inner(id, storage_path)")
     .in(
       "test_request_id",
       releasedComponents.map((c) => c.id),
     );
   const resultByTrId = new Map(
-    (results ?? []).map((r) => [r.test_request_id, r]),
+    (junctions ?? []).map((j) => {
+      const r = Array.isArray(j.results) ? j.results[0] : j.results;
+      return [j.test_request_id, r ?? null] as const;
+    }),
   );
 
   // 4) Render cover + fetch every component PDF in parallel. Skip

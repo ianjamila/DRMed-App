@@ -110,17 +110,12 @@ Deprecated chemistry codes that exist `is_active=false` and must NOT be touched:
 
 This task introduces the data model from spec §5 without yet seeding any chemistry rows. After this task, the junction exists, every existing `results` row has a corresponding junction row, the old `results.test_request_id` column is gone, and triggers / RLS walk the new path. Nothing user-visible changes yet.
 
-- [ ] **Step 1: Verify current `staff_profiles.auth_user_id` constraint**
+**Pre-resolved facts** (verified against live DB 2026-05-22, no need to re-check):
+- `staff_profiles` has no `auth_user_id` column; `staff_profiles.id` IS the auth.users.id (FK with on delete cascade). Migration just adds `signature_path` + `signature_uploaded_at`.
+- All `results` rows in the live DB have a non-null `test_request_id`, so the backfill is straightforward.
+- The current result-flip trigger is `public.flip_test_request_on_result` from migration `0008_structured_results_drafts.sql` — replace it in this migration.
 
-Run:
-
-```bash
-psql "$SUPABASE_DB_URL" -c "\d public.staff_profiles" | grep -i auth_user_id
-```
-
-Expected output indicates whether `auth_user_id` is `not null`. If it is, the migration in Step 2 will include `alter column auth_user_id drop not null`. If it's already nullable, drop that line.
-
-- [ ] **Step 2: Write the migration file**
+- [ ] **Step 1: Write the migration file**
 
 Create `supabase/migrations/0051_consolidated_reports_and_signatures.sql`:
 
@@ -139,7 +134,7 @@ Create `supabase/migrations/0051_consolidated_reports_and_signatures.sql`:
 --   4.  result_test_requests junction + indexes
 --   5.  Backfill junction from results.test_request_id
 --   6.  results.report_group_id, results.finalised_by_staff_id, drop test_request_id
---   7.  staff_profiles.signature_path, signature_uploaded_at, nullable auth_user_id
+--   7.  staff_profiles.signature_path, signature_uploaded_at
 --   8.  Update result-flip triggers (0001 + 0008 overrides) to walk junction
 --   9.  Update RLS policies on result_values to walk junction
 --  10.  RLS on result_test_requests + report_groups
@@ -233,14 +228,14 @@ create index idx_results_report_group on public.results(report_group_id)
 create index idx_results_finalised_by on public.results(finalised_by_staff_id);
 
 -- ----- 7. staff_profiles deltas ---------------------------------------------
+-- Note: staff_profiles.id IS auth.users.id (FK on delete cascade). There's no
+-- separate auth_user_id column. Non-login consultants (Mariano, Vicencio,
+-- Tagayuna if needed) get auth.users + staff_profiles rows created in
+-- Task 3's seed-signatures.ts.
 
 alter table public.staff_profiles
   add column signature_path text,
   add column signature_uploaded_at timestamptz;
-
--- If Step 1 confirmed auth_user_id is `not null`, uncomment the next line
--- before applying. If it's already nullable, leave commented.
--- alter table public.staff_profiles alter column auth_user_id drop not null;
 
 -- ----- 8. Update result-flip triggers ---------------------------------------
 
@@ -354,9 +349,9 @@ create policy "result_values: read by owning medtech + pathologist + admin"
   );
 ```
 
-- [ ] **Step 3: Write the failing migration smoke**
+- [ ] **Step 2: Write the failing migration smoke**
 
-Create `scripts/smoke-chemistry-consolidated.sql` with stage S1 only (more stages added in Task 7). For now, the smoke just verifies the schema exists:
+Create `scripts/smoke-chemistry-consolidated.sql` with stage S0 only (more stages added in Task 2 and Task 7). For now, the smoke just verifies the schema exists:
 
 ```sql
 -- =============================================================================
@@ -418,41 +413,31 @@ end $$;
 rollback;
 ```
 
-- [ ] **Step 4: Run smoke against the pre-migration DB — should fail**
+- [ ] **Step 3: Apply the migration to remote Supabase**
+
+Apply via the Supabase MCP `apply_migration` tool (project_id `qhptbmafrosgibooelpp`, name `0051_consolidated_reports_and_signatures`, query = the SQL from Step 1).
+
+Local `supabase db reset` is NOT used here — this project ships migrations directly to remote per CLAUDE.md, and the migration's backfill step depends on real data.
+
+If the migration fails because backfill produces a `null` `test_request_id` row in the junction, investigate: there should be no orphan `results` rows. Fix at the data level, not by relaxing the migration. If the `flip_test_request_on_result` function name doesn't match what's currently installed (e.g., the 0008 override used a different name), update the `create or replace function` line accordingly — the goal is to replace the active trigger function with one that walks the junction.
+
+- [ ] **Step 4: Run smoke against the post-migration DB — should pass**
+
+Use the Supabase MCP `execute_sql` tool to run the smoke. Since `execute_sql` doesn't support multi-statement scripts with `do $$ ... $$` blocks the same way `psql` does, run each S0 assertion as a single statement, OR run the full smoke via a single `do $$ ... raise notice ... end $$;` block as one call.
+
+Expected: `NOTICE: S0 schema sanity OK` (no exception raised).
+
+- [ ] **Step 5: Regenerate types**
 
 ```bash
-psql "$SUPABASE_DB_URL" -f scripts/smoke-chemistry-consolidated.sql
+npm run db:types:remote
 ```
 
-Expected: `S0: report_groups table missing` (or similar). Confirms the smoke catches missing schema.
+This regenerates `src/types/database.ts` from the remote DB. Expected: gains `report_groups` row type, `result_test_requests` row type, `report_group_id` / `finalised_by_staff_id` on `results`, `signature_path` / `signature_uploaded_at` on `staff_profiles`, drops `test_request_id` from `results`.
 
-- [ ] **Step 5: Apply the migration locally**
+If `npm run db:types:remote` requires an env var (`SUPABASE_DB_URL`) that isn't set, fall back to using the Supabase CLI directly: `supabase gen types typescript --project-id qhptbmafrosgibooelpp > src/types/database.ts`.
 
-```bash
-supabase db reset
-```
-
-Expected: All migrations 0001 through 0051 apply cleanly. No errors.
-
-If the migration fails because backfill produces a `null` `test_request_id` row in the junction, investigate: there should be no orphan `results` rows. Fix at the data level, not by relaxing the migration.
-
-- [ ] **Step 6: Run smoke against the post-migration DB — should pass**
-
-```bash
-psql "$SUPABASE_DB_URL" -f scripts/smoke-chemistry-consolidated.sql
-```
-
-Expected: `NOTICE:  S0 schema sanity OK` and clean exit.
-
-- [ ] **Step 7: Regenerate types**
-
-```bash
-npm run db:types
-```
-
-Expected: `src/types/database.ts` gains `report_groups` row type, `result_test_requests` row type, `report_group_id` / `finalised_by_staff_id` on `results` row type, `signature_path` / `signature_uploaded_at` on `staff_profiles` row type, drops `test_request_id` from `results` row type.
-
-- [ ] **Step 8: Find and fix every TypeScript reference to the dropped column**
+- [ ] **Step 6: Find and fix every TypeScript reference to the dropped column**
 
 ```bash
 npm run typecheck 2>&1 | grep "test_request_id"
@@ -465,7 +450,7 @@ Every match must be addressed. The most common patterns:
 
 Re-run `npm run typecheck` until it's clean.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add supabase/migrations/0051_consolidated_reports_and_signatures.sql \

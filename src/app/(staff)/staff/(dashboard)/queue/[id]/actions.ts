@@ -148,11 +148,16 @@ async function prepareStructured(
   }
 
   // Ensure a draft results row exists (one per test_request).
-  const { data: existing } = await admin
-    .from("results")
-    .select("id, generation_kind")
+  const { data: existingLink } = await admin
+    .from("result_test_requests")
+    .select("result_id, results!inner(id, generation_kind)")
     .eq("test_request_id", testRequestId)
     .maybeSingle();
+  const existing = existingLink
+    ? (Array.isArray(existingLink.results)
+        ? existingLink.results[0]
+        : existingLink.results) ?? null
+    : null;
 
   let resultId = existing?.id ?? null;
   let isNewResult = false;
@@ -161,7 +166,6 @@ async function prepareStructured(
     const { data: inserted, error: insErr } = await admin
       .from("results")
       .insert({
-        test_request_id: testRequestId,
         generation_kind: "structured",
         storage_path: null,
         uploaded_by: session.user_id,
@@ -172,6 +176,15 @@ async function prepareStructured(
       return {
         ok: false,
         error: `Could not create result: ${insErr?.message ?? "unknown"}`,
+      };
+    }
+    const { error: jErr } = await admin
+      .from("result_test_requests")
+      .insert({ result_id: inserted.id, test_request_id: testRequestId });
+    if (jErr) {
+      return {
+        ok: false,
+        error: `Could not link result: ${jErr.message}`,
       };
     }
     resultId = inserted.id;
@@ -753,7 +766,6 @@ export async function uploadResultAction(
   const { data: resultRow, error: insertErr } = await admin
     .from("results")
     .insert({
-      test_request_id: testRequest.id,
       storage_path: path,
       file_size_bytes: file.size,
       uploaded_by: session.user_id,
@@ -769,6 +781,14 @@ export async function uploadResultAction(
       ok: false,
       error: insertErr?.message ?? "Could not record the result.",
     };
+  }
+
+  const { error: jErr } = await admin
+    .from("result_test_requests")
+    .insert({ result_id: resultRow.id, test_request_id: testRequest.id });
+  if (jErr) {
+    await admin.storage.from("results").remove([path]);
+    return { ok: false, error: `Could not link result: ${jErr.message}` };
   }
 
   const h = await headers();
@@ -831,13 +851,16 @@ export async function amendResultAction(
   const admin = createAdminClient();
 
   // Load the current result + parent test_request + visit context.
-  const { data: result } = await admin
-    .from("results")
-    .select(
-      "id, storage_path, file_size_bytes, uploaded_by, uploaded_at, notes, amendment_count, test_request_id",
-    )
+  const { data: resultLink } = await admin
+    .from("result_test_requests")
+    .select("result_id, results!inner(id, storage_path, file_size_bytes, uploaded_by, uploaded_at, notes, amendment_count)")
     .eq("test_request_id", testRequestId)
     .maybeSingle();
+  const result = resultLink
+    ? (Array.isArray(resultLink.results)
+        ? resultLink.results[0]
+        : resultLink.results) ?? null
+    : null;
   if (!result || !result.storage_path) {
     return { ok: false, error: "No result on file to amend." };
   }
@@ -1000,15 +1023,22 @@ export async function amendStructuredResultAction(
   // 2) Load the result + parent test_request + visit context. Status must
   //    be past medtech editing AND generation_kind must be 'structured'
   //    (PDF-only results use the legacy amendResultAction path).
-  const { data: result } = await admin
-    .from("results")
+  const { data: resultLink } = await admin
+    .from("result_test_requests")
     .select(
-      `id, storage_path, file_size_bytes, uploaded_by, uploaded_at, notes,
-       amendment_count, test_request_id, generation_kind, finalised_at,
-       image_storage_path, image_filename, image_mime_type, image_size_bytes`,
+      `result_id, results!inner(
+        id, storage_path, file_size_bytes, uploaded_by, uploaded_at, notes,
+        amendment_count, generation_kind, finalised_at,
+        image_storage_path, image_filename, image_mime_type, image_size_bytes
+      )`,
     )
     .eq("test_request_id", testRequestId)
     .maybeSingle();
+  const result = resultLink
+    ? (Array.isArray(resultLink.results)
+        ? resultLink.results[0]
+        : resultLink.results) ?? null
+    : null;
   if (!result || !result.storage_path) {
     return { ok: false, error: "No result on file to amend." };
   }
@@ -1465,11 +1495,16 @@ export async function getResultDownloadUrl(
   const session = await requireActiveStaff();
   const admin = createAdminClient();
 
-  const { data: result } = await admin
-    .from("results")
-    .select("id, storage_path, test_request_id")
+  const { data: resultLink } = await admin
+    .from("result_test_requests")
+    .select("result_id, results!inner(id, storage_path)")
     .eq("test_request_id", testRequestId)
     .maybeSingle();
+  const result = resultLink
+    ? (Array.isArray(resultLink.results)
+        ? resultLink.results[0]
+        : resultLink.results) ?? null
+    : null;
 
   if (!result) return { ok: false, error: "No result file." };
   if (!result.storage_path) {
