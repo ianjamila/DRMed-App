@@ -69,3 +69,9 @@ next-env.d.ts
 
 # Sentry Config File
 .env.sentry-build-plugin
+
+# Signature PNGs (forgeable artifacts — source of truth is the private
+# `signatures` Supabase Storage bucket, populated via scripts/seed-signatures.ts)
+scripts/seed/signatures/*.png
+scripts/seed/signatures/*.jpg
+scripts/seed/signatures/*.jpeg
