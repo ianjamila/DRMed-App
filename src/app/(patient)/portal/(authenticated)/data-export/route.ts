@@ -73,12 +73,14 @@ export async function GET() {
       .order("created_at", { ascending: false })
       .limit(500),
     admin
-      .from("test_requests")
-      .select(
-        "id, services!inner ( code, name ), results!inner ( storage_path )",
-      )
-      .eq("status", "released")
-      .in("visit_id", visitIds.length > 0 ? visitIds : ["00000000-0000-0000-0000-000000000000"]),
+      .from("result_test_requests")
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .select("test_request_id, results!inner(storage_path), test_requests!inner(id, visit_id, status, services!inner(code, name))" as any)
+      .eq("test_requests.status", "released")
+      .in(
+        "test_requests.visit_id",
+        visitIds.length > 0 ? visitIds : ["00000000-0000-0000-0000-000000000000"],
+      ),
   ]);
 
   const zip = new JSZip();
@@ -120,13 +122,26 @@ export async function GET() {
   zip.file("appointments.json", JSON.stringify(appointments ?? [], null, 2));
   zip.file("audit_log.json", JSON.stringify(auditEntries ?? [], null, 2));
 
-  // PDF results.
+  // PDF results — deduplicated by storage_path so consolidated reports
+  // (multiple test_requests pointing to one result) are only bundled once.
   let bundleBytes = 0;
   let truncated = false;
-  for (const tr of releasedResults ?? []) {
-    const result = Array.isArray(tr.results) ? tr.results[0] : tr.results;
-    const svc = Array.isArray(tr.services) ? tr.services[0] : tr.services;
+  const seenPaths = new Set<string>();
+  for (const jRow of releasedResults ?? []) {
+    type JRow = {
+      test_request_id: string;
+      results: { storage_path: string | null } | null;
+      test_requests: { id: string; services: { code: string; name: string } | null } | null;
+    };
+    const j = jRow as unknown as JRow;
+    const result = Array.isArray(j.results) ? j.results[0] : j.results;
+    const tr = Array.isArray(j.test_requests) ? j.test_requests[0] : j.test_requests;
+    const svc = tr
+      ? (Array.isArray(tr.services) ? tr.services[0] : tr.services)
+      : null;
     if (!result?.storage_path || !svc) continue;
+    if (seenPaths.has(result.storage_path)) continue;
+    seenPaths.add(result.storage_path);
     const { data: blob } = await admin.storage
       .from("results")
       .download(result.storage_path);
@@ -137,7 +152,8 @@ export async function GET() {
       break;
     }
     bundleBytes += ab.byteLength;
-    const filename = `${svc.code}-${tr.id.slice(0, 8)}.pdf`;
+    const trId = tr?.id ?? j.test_request_id;
+    const filename = `${svc.code}-${trId.slice(0, 8)}.pdf`;
     zip.file(`results/${filename}`, ab);
   }
   if (truncated) {

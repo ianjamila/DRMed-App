@@ -2,13 +2,17 @@
 
 import { useTransition, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { getPatientResultDownloadUrl } from "./actions";
+import { getPatientResultDownloadUrl, getPatientConsolidatedResultDownloadUrl } from "./actions";
 
 interface Props {
-  testRequestId: string;
+  /** For single-test results (legacy path). Exactly one of testRequestId /
+   *  resultId must be provided. */
+  testRequestId?: string;
+  /** For consolidated group results (Chemistry etc.). */
+  resultId?: string;
 }
 
-export function DownloadButton({ testRequestId }: Props) {
+export function DownloadButton({ testRequestId, resultId }: Props) {
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
@@ -22,12 +26,20 @@ export function DownloadButton({ testRequestId }: Props) {
         onClick={() =>
           start(async () => {
             setError(null);
-            const result = await getPatientResultDownloadUrl(testRequestId);
-            if (!result.ok) {
-              setError(result.error);
+            let downloadResult;
+            if (resultId) {
+              downloadResult = await getPatientConsolidatedResultDownloadUrl(resultId);
+            } else if (testRequestId) {
+              downloadResult = await getPatientResultDownloadUrl(testRequestId);
+            } else {
+              setError("No result identifier provided.");
               return;
             }
-            window.open(result.url, "_blank", "noopener,noreferrer");
+            if (!downloadResult.ok) {
+              setError(downloadResult.error);
+              return;
+            }
+            window.open(downloadResult.url, "_blank", "noopener,noreferrer");
           })
         }
       >
