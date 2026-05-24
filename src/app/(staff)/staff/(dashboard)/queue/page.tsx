@@ -176,7 +176,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   cards.sort((a, b) => a.requestedAt.localeCompare(b.requestedAt));
 
   return (
-    <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
       <RealtimeRefresher
         channelName="queue-page"
         subscriptions={[
