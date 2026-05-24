@@ -316,7 +316,7 @@ const styles = StyleSheet.create({
 
   // ── Signature block ───────────────────────────────────────────────────
   signatureBlock: {
-    marginTop: 36,
+    marginTop: 22,
     flexDirection: "row",
     justifyContent: "space-around",
   },
@@ -382,6 +382,26 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: C.border,
   },
+  endOfReportBlock: {
+    position: "absolute",
+    left: 40,
+    right: 40,
+    bottom: 48,
+    alignItems: "center",
+  },
+  endOfReportBanner: {
+    fontFamily: "Helvetica-Bold",
+    fontSize: 9,
+    color: C.inkSoft,
+    letterSpacing: 2,
+  },
+  endOfReportNote: {
+    marginTop: 3,
+    fontSize: 8,
+    color: C.inkMuted,
+    fontStyle: "italic",
+    textAlign: "center",
+  },
 });
 
 // Column widths (sum should be 1.0 within each table). Kept here for easy
@@ -399,7 +419,9 @@ const COLS = {
     convUnit: 0.1,
     convRange: 0.12,
   },
-  multi: { test: 0.42, result: 0.18, flag: 0.08, unit: 0.12, ref: 0.2 },
+  // Urinalysis / Fecalysis don't show H/L/A abnormal flags by design — the
+  // column is dropped entirely and the freed width is redistributed.
+  multi: { test: 0.46, result: 0.2, unit: 0.14, ref: 0.2 },
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -477,6 +499,9 @@ function PatientInfoGrid({
   // Some fields (CONTACT #, PHYSICIAN, SENIOR/PWD ID) aren't wired up in the
   // ResultDocumentInput type yet — we render the label with an empty value,
   // matching the reference's "CONTACT #:" empty case.
+  //
+  // Layout uses three columns (50%/25%/25%) on every row so the rightmost
+  // column lines up vertically: DATE, CONTACT #, SENIOR / PWD ID.
   return (
     <View style={styles.patientGrid}>
       <View style={styles.patientRow}>
@@ -484,7 +509,8 @@ function PatientInfoGrid({
           <Text style={styles.patientLabel}>CONTROL NO:</Text>
           <Text style={styles.patientValue}>{controlDisplay}</Text>
         </View>
-        <View style={[styles.patientCell, { width: "50%" }]}>
+        <View style={[styles.patientCell, { width: "25%" }]} />
+        <View style={[styles.patientCell, { width: "25%" }]}>
           <Text style={styles.patientLabel}>DATE:</Text>
           <Text style={styles.patientValue}>{dateDisplay}</Text>
         </View>
@@ -542,15 +568,11 @@ function SectionTitle({
   const title = reportGroup
     ? reportGroup.name.toUpperCase()
     : service?.name.toUpperCase() ?? "";
-  const code = reportGroup
-    ? reportGroup.code
-    : service?.code ?? "";
   return (
     <View>
       <View style={[styles.hr, styles.navyRule]} />
       <View style={styles.sectionTitleBand}>
         <Text style={styles.testTitle}>{title}</Text>
-        <Text style={styles.testCode}>{code}</Text>
       </View>
       <View style={[styles.hr, styles.navyRule, { marginTop: 0 }]} />
       {reportGroup && reportGroup.orderedTests.length > 0 ? (
@@ -639,6 +661,20 @@ function PageFooter() {
           `Page ${pageNumber} of ${totalPages}`
         }
       />
+    </View>
+  );
+}
+
+function EndOfReport() {
+  // Absolute-positioned at the bottom of the page where this component renders.
+  // Sits just above the pageFooter (at bottom: 28) so the report's last visual
+  // element is the verification banner.
+  return (
+    <View style={styles.endOfReportBlock}>
+      <Text style={styles.endOfReportBanner}>*** END OF REPORT ***</Text>
+      <Text style={styles.endOfReportNote}>
+        This laboratory report has been electronically verified and released by authorized personnel.
+      </Text>
     </View>
   );
 }
@@ -1062,8 +1098,6 @@ function MultiSectionBody({ params, values, ranges }: BodyContext) {
           <View style={styles.table}>
             {g.rows.map((p) => {
               const v = values[p.id];
-              const flag = v?.flag ?? null;
-              const isAbnormal = !!flag;
               const eff = rangeFor(p, ranges);
               return (
                 <View key={p.id} style={styles.tr}>
@@ -1079,7 +1113,6 @@ function MultiSectionBody({ params, values, ranges }: BodyContext) {
                     style={[
                       styles.td,
                       styles.tdMono,
-                      ...(isAbnormal ? [styles.tdAbnormal] : []),
                       {
                         width: `${COLS.multi.result * 100}%`,
                         textAlign: "right",
@@ -1088,18 +1121,6 @@ function MultiSectionBody({ params, values, ranges }: BodyContext) {
                   >
                     {displayValue(p, v)}
                   </Text>
-                  <View
-                    style={{
-                      width: `${COLS.multi.flag * 100}%`,
-                      alignItems: "center",
-                    }}
-                  >
-                    {flag ? (
-                      <Text style={styles.flagBadge}>{flag}</Text>
-                    ) : (
-                      <Text> </Text>
-                    )}
-                  </View>
                   <Text
                     style={[
                       styles.td,
@@ -1300,6 +1321,7 @@ export function ResultDocument(input: ResultDocumentInput) {
           performer={input.performer}
           consultantPathologist={input.consultantPathologist}
         />
+        <EndOfReport />
         <PageFooter />
       </Page>
     </Document>
