@@ -33,7 +33,10 @@ export default async function ConsolidatedQueuePage({
     .single();
   if (!template) redirect("/staff/queue");
 
-  // Load this visit's test_requests in this group.
+  // Load this visit's test_requests in this group that are still actionable.
+  // Already-released tests stay out of the form — they have their own results
+  // PDF from a previous finalise and shouldn't be re-encoded or re-claimed.
+  const ACTIVE_STATUSES = ["requested", "in_progress", "result_uploaded"];
   const { data: requests } = await supabase
     .from("test_requests")
     .select(
@@ -45,8 +48,25 @@ export default async function ConsolidatedQueuePage({
     `,
     )
     .eq("visit_id", visitId)
-    .eq("services.report_group_id", groupId);
+    .eq("services.report_group_id", groupId)
+    .in("status", ACTIVE_STATUSES);
   if (!requests || requests.length === 0) redirect("/staff/queue");
+
+  // claimedBy resolution: if the signed-in user is the assigned_to on ANY
+  // of the in-scope test_requests, the report is "claimed by me." Otherwise
+  // if some other user is assigned to one, "claimed by another." Otherwise
+  // null = unassigned and claimable.
+  const myStaffId = session.user_id;
+  const distinctAssignees = Array.from(
+    new Set(
+      requests
+        .map((r) => r.assigned_to)
+        .filter((id): id is string => id != null),
+    ),
+  );
+  const claimedBy = distinctAssignees.includes(myStaffId)
+    ? myStaffId
+    : (distinctAssignees[0] ?? null);
 
   return (
     <ConsolidatedForm
@@ -58,8 +78,8 @@ export default async function ConsolidatedQueuePage({
         return svc?.code ?? "";
       })}
       testRequestIds={requests.map((r) => r.id)}
-      claimedBy={requests[0].assigned_to}
-      myStaffId={session.user_id}
+      claimedBy={claimedBy}
+      myStaffId={myStaffId}
     />
   );
 }
