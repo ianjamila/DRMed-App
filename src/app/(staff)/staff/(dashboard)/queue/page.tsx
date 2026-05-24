@@ -310,11 +310,12 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                       <p className="font-semibold text-[color:var(--color-brand-navy)]">
                         {card.label}
                       </p>
-                      <p className="font-mono text-xs text-[color:var(--color-brand-text-soft)]">
-                        {card.groupCode}
-                        {" · "}
-                        {card.orderedTests.map((t) => t.code).join(", ")}
-                      </p>
+                      <div className="flex max-w-md flex-wrap items-baseline gap-x-1.5 gap-y-1 font-mono text-xs text-[color:var(--color-brand-text-soft)]">
+                        <span>{card.groupCode} ·</span>
+                        {card.orderedTests.map((t) => (
+                          <span key={t.code}>{t.code}</span>
+                        ))}
+                      </div>
                     </td>
                     <td className="px-4 py-3">
                       <span
