@@ -82,6 +82,16 @@ See `.env.example` for the full list. You'll need separate values for local dev,
 
 The service-role key (`SUPABASE_SERVICE_ROLE_KEY`) bypasses Row Level Security and must NEVER be exposed to the browser. It is only imported by `src/lib/supabase/admin.ts` and only used in Server Actions, Route Handlers, and Edge Functions.
 
+### Consultant staff IDs (Phase 12.5 — required in production)
+
+These three vars are read by the result PDF renderer to auto-include the relevant consultant's signature on rendered reports. Each value is a `staff_profiles.id` UUID. Look them up via `select id from staff_profiles where prc_license_no = '...'`.
+
+| Variable | Description |
+|---|---|
+| `CONSULTANT_PATHOLOGIST_STAFF_ID` | Auto-included on every structured result PDF as the reviewing consultant pathologist. |
+| `CONSULTANT_RADIOLOGIST_STAFF_ID` | Auto-included on radiology (X-ray / ultrasound) result PDFs. |
+| `CONSULTANT_CARDIOLOGIST_STAFF_ID` | Auto-included on cardiology (ECG) result PDFs. |
+
 ---
 
 ## Project structure

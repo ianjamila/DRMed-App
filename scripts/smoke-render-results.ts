@@ -6,11 +6,15 @@
  *   npm run smoke:results
  */
 import { writeFileSync } from "node:fs";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../src/types/database";
 import { renderResultPdf } from "../src/lib/results/render-pdf";
 import { buildPreviewValues } from "../src/lib/results/preview-data";
 import { loadTemplateParams } from "../src/lib/results/loaders";
+// NOTE: signatures.ts imports createAdminClient which has a `server-only`
+// guard that tsx doesn't satisfy. We replicate the same logic inline here
+// using the script's own admin client to avoid the module boundary error.
+import type { SignatureBlockData } from "../src/lib/results/signatures";
 import type {
   ResultDocumentInput,
   ResultLayout,
@@ -27,9 +31,66 @@ const admin = createClient<Database>(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
+async function loadSignatureForStaff(
+  client: SupabaseClient<Database>,
+  staffId: string,
+): Promise<SignatureBlockData> {
+  const { data, error } = await client
+    .from("staff_profiles")
+    .select("full_name, prc_license_no, prc_license_kind, signature_path")
+    .eq("id", staffId)
+    .single();
+  if (error || !data) {
+    throw new Error(
+      `Failed to load staff_profile ${staffId}: ${error?.message ?? "row not found"}`,
+    );
+  }
+  let png_bytes: Buffer | null = null;
+  if (data.signature_path) {
+    const { data: file, error: dlErr } = await client.storage
+      .from("signatures")
+      .download(data.signature_path);
+    if (dlErr || !file) {
+      throw new Error(
+        `Failed to download signature ${data.signature_path}: ${dlErr?.message ?? "no file"}`,
+      );
+    }
+    png_bytes = Buffer.from(await file.arrayBuffer());
+  }
+  return {
+    full_name: data.full_name,
+    prc_license_no: data.prc_license_no,
+    prc_license_kind: data.prc_license_kind,
+    png_bytes,
+  };
+}
+
+async function loadConsultantSignaturesLocal(): Promise<{
+  pathologist: SignatureBlockData;
+  radiologist: SignatureBlockData;
+  cardiologist: SignatureBlockData;
+}> {
+  const pId = process.env.CONSULTANT_PATHOLOGIST_STAFF_ID;
+  const rId = process.env.CONSULTANT_RADIOLOGIST_STAFF_ID;
+  const cId = process.env.CONSULTANT_CARDIOLOGIST_STAFF_ID;
+  if (!pId || !rId || !cId) {
+    throw new Error(
+      "CONSULTANT_*_STAFF_ID env vars are required for smoke:results",
+    );
+  }
+  return {
+    pathologist: await loadSignatureForStaff(admin, pId),
+    radiologist: await loadSignatureForStaff(admin, rId),
+    cardiologist: await loadSignatureForStaff(admin, cId),
+  };
+}
+
 const SERVICE_CODES = ["CBC_PC", "ROUTINE_PACKAGE", "URINALYSIS"];
 
-async function renderOne(code: string) {
+async function renderOne(
+  code: string,
+  consultants: Awaited<ReturnType<typeof loadConsultantSignaturesLocal>>,
+) {
   const { data: svc } = await admin
     .from("services")
     .select("id, code, name")
@@ -76,6 +137,8 @@ async function renderOne(code: string) {
       prc_license_kind: "RMT",
       prc_license_no: "0000000",
     },
+    performer: consultants.pathologist,
+    consultantPathologist: consultants.pathologist,
     isPreview: true,
   };
 
@@ -85,7 +148,9 @@ async function renderOne(code: string) {
   console.log(`✓ ${code} (${tpl.layout}, ${params.length} params) → ${out} (${pdf.byteLength} bytes)`);
 }
 
-async function renderPackageSummary() {
+async function renderPackageSummary(
+  consultants: Awaited<ReturnType<typeof loadConsultantSignaturesLocal>>,
+) {
   const coverSample: ResultDocumentInput = {
     template: {
       layout: "package_summary",
@@ -109,6 +174,8 @@ async function renderPackageSummary() {
     controlNo: 7777,
     finalisedAt: new Date(),
     medtech: null,
+    performer: null,
+    consultantPathologist: consultants.pathologist,
     packageSummary: {
       packageCode: "EXECUTIVE_PACKAGE_STANDARD",
       packageName: "Executive Package - Standard",
@@ -134,10 +201,11 @@ async function renderPackageSummary() {
 }
 
 async function main() {
+  const consultants = await loadConsultantSignaturesLocal();
   for (const code of SERVICE_CODES) {
-    await renderOne(code);
+    await renderOne(code, consultants);
   }
-  await renderPackageSummary();
+  await renderPackageSummary(consultants);
 }
 
 main().catch((err) => {

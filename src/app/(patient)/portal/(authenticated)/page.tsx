@@ -10,12 +10,21 @@ export const metadata = {
 
 // Standalone (non-package) released result, rendered as a row in the
 // flat list below the package cards.
+//
+// For consolidated (grouped) results, `result_id` is the `results.id`
+// used for downloads; `primary_label` is the group name (e.g. "Chemistry")
+// and `sub_label` lists the individual test names.
 interface ReleasedRow {
-  test_request_id: string;
+  /** Used for the download action — may be a standalone test_request_id
+   *  (single result) or a results.id (consolidated). */
+  result_key: string;
+  /** True when `result_key` is a `results.id` (consolidated path). */
+  is_consolidated: boolean;
   visit_id: string;
   visit_number: string;
-  test_name: string;
-  test_code: string;
+  primary_label: string;
+  sub_label: string | null;
+  test_code: string | null;
   test_date: string;
   released_at: string | null;
   has_result: boolean;
@@ -102,8 +111,7 @@ async function loadResults(patientId: string): Promise<PortalData> {
       `
         id, status, released_at, parent_id, is_package_header, created_at,
         services!test_requests_service_id_fkey ( code, name ),
-        visits!inner ( id, visit_number, visit_date, patient_id ),
-        results ( id )
+        visits!inner ( id, visit_number, visit_date, patient_id )
       `,
     )
     .eq("visits.patient_id", patientId)
@@ -138,6 +146,28 @@ async function loadResults(patientId: string): Promise<PortalData> {
     }
   }
 
+  // Batch-lookup which component test_request_ids have a result (via junction).
+  const allComponentIds = [...componentsByParent.values()]
+    .flat()
+    .map((c) => c.id);
+  const componentResultSet = new Set<string>();
+  if (allComponentIds.length > 0) {
+    const { data: compJunctionsRaw } = await admin
+      .from("result_test_requests")
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .select("test_request_id, results!inner(storage_path)" as any)
+      .in("test_request_id", allComponentIds);
+    type CompJunction = { test_request_id: string; results: { storage_path: string | null } | null };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const compJunctions = (compJunctionsRaw as any as CompJunction[]) ?? [];
+    for (const j of compJunctions) {
+      const r = Array.isArray(j.results) ? j.results[0] : j.results;
+      if (r?.storage_path) {
+        componentResultSet.add(j.test_request_id);
+      }
+    }
+  }
+
   const packages: PackageGroup[] = [];
   for (const h of headerRows) {
     const svc = unwrap(h.services);
@@ -146,13 +176,12 @@ async function loadResults(patientId: string): Promise<PortalData> {
     const rawComps = componentsByParent.get(h.id) ?? [];
     const components: PackageComponentRow[] = rawComps.map((c) => {
       const csvc = unwrap(c.services);
-      const cresult = unwrap(c.results);
       return {
         id: c.id,
         status: c.status,
         test_name: csvc?.name ?? "",
         test_code: csvc?.code ?? "",
-        has_result: Boolean(cresult),
+        has_result: componentResultSet.has(c.id),
       };
     });
     const nonCancelled = components.filter((c) => c.status !== "cancelled");
@@ -177,23 +206,145 @@ async function loadResults(patientId: string): Promise<PortalData> {
     });
   }
 
-  const standalones: ReleasedRow[] = [];
-  for (const r of standaloneReleased) {
-    const svc = unwrap(r.services);
-    const visit = unwrap(r.visits);
-    const result = unwrap(r.results);
-    if (!svc || !visit) continue;
-    standalones.push({
-      test_request_id: r.id,
-      visit_id: visit.id,
-      visit_number: visit.visit_number,
-      test_name: svc.name,
-      test_code: svc.code,
-      test_date: visit.visit_date,
-      released_at: r.released_at,
-      has_result: Boolean(result),
-    });
+  // ------------------------------------------------------------------
+  // Standalones: released test_requests that are not package headers or
+  // package components. We look up results via result_test_requests and
+  // group by result_id so consolidated reports (multiple tests sharing
+  // one result row) appear as a single card.
+  // ------------------------------------------------------------------
+
+  // Derive label for a result row.
+  function labelForResult(
+    reportGroupName: string | null,
+    testNames: string[],
+    singleServiceName: string | null,
+    singleServiceCode: string | null,
+  ): { primary: string; sub: string | null; code: string | null } {
+    if (reportGroupName) {
+      const sub = testNames.filter(Boolean).join(", ");
+      return { primary: reportGroupName, sub: sub || null, code: null };
+    }
+    return {
+      primary: singleServiceName ?? "Result",
+      sub: null,
+      code: singleServiceCode,
+    };
   }
+
+  const standaloneIds = standaloneReleased.map((r) => r.id);
+  // Build a quick lookup: test_request_id → TRRow
+  const trById = new Map(standaloneReleased.map((r) => [r.id, r]));
+
+  const standalones: ReleasedRow[] = [];
+  if (standaloneIds.length > 0) {
+    // Walk result_test_requests to find which results cover these test_requests.
+    const { data: junctionsRaw } = await admin
+      .from("result_test_requests")
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .select("result_id, test_request_id, results!inner(id, storage_path, report_group_id, report_groups(name))" as any)
+      .in("test_request_id", standaloneIds);
+
+    type JRow = {
+      result_id: string;
+      test_request_id: string;
+      results: {
+        id: string;
+        storage_path: string | null;
+        report_group_id: string | null;
+        report_groups: { name: string } | null;
+      } | null;
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const junctions = (junctionsRaw as any as JRow[]) ?? [];
+
+    // Group junction rows by result_id.
+    const byResultId = new Map<string, JRow[]>();
+    for (const j of junctions) {
+      const rid = j.result_id;
+      const arr = byResultId.get(rid) ?? [];
+      arr.push(j);
+      byResultId.set(rid, arr);
+    }
+
+    // Also track which test_request_ids were covered by a result (so we
+    // can surface test_requests with no result row as has_result=false).
+    const coveredTrIds = new Set(junctions.map((j) => j.test_request_id));
+
+    // Build ReleasedRow for each result group.
+    for (const [, jRows] of byResultId) {
+      const firstJ = jRows[0];
+      const result = Array.isArray(firstJ.results)
+        ? firstJ.results[0]
+        : firstJ.results;
+      if (!result) continue;
+
+      // Find one of the linked TRRows to derive visit info.
+      const anyTrRow = trById.get(firstJ.test_request_id);
+      if (!anyTrRow) continue;
+      const visit = unwrap(anyTrRow.visits);
+      if (!visit) continue;
+
+      // Earliest released_at among linked test_requests.
+      const releasedAt =
+        jRows
+          .map((j) => trById.get(j.test_request_id)?.released_at ?? null)
+          .filter((d): d is string => d !== null)
+          .sort()
+          .at(0) ?? null;
+
+      const isConsolidated = Boolean(result.report_group_id);
+      const reportGroupName = result.report_groups?.name ?? null;
+      const testNames = jRows
+        .map((j) => {
+          const tr = trById.get(j.test_request_id);
+          const svc = tr ? unwrap(tr.services) : null;
+          return svc?.name ?? null;
+        })
+        .filter((n): n is string => n !== null);
+
+      const firstSvc = unwrap(anyTrRow.services);
+      const { primary, sub, code } = labelForResult(
+        reportGroupName,
+        testNames,
+        firstSvc?.name ?? null,
+        firstSvc?.code ?? null,
+      );
+
+      standalones.push({
+        result_key: isConsolidated ? result.id : firstJ.test_request_id,
+        is_consolidated: isConsolidated,
+        visit_id: visit.id,
+        visit_number: visit.visit_number,
+        primary_label: primary,
+        sub_label: sub,
+        test_code: code,
+        test_date: visit.visit_date,
+        released_at: releasedAt,
+        has_result: Boolean(result.storage_path),
+      });
+    }
+
+    // Add test_requests with no result row yet (has_result=false).
+    for (const tr of standaloneReleased) {
+      if (coveredTrIds.has(tr.id)) continue;
+      const visit = unwrap(tr.visits);
+      const svc = unwrap(tr.services);
+      if (!visit) continue;
+      standalones.push({
+        result_key: tr.id,
+        is_consolidated: false,
+        visit_id: visit.id,
+        visit_number: visit.visit_number,
+        primary_label: svc?.name ?? "Result",
+        sub_label: null,
+        test_code: svc?.code ?? null,
+        test_date: visit.visit_date,
+        released_at: tr.released_at,
+        has_result: false,
+      });
+    }
+  }
+
   // Newest standalones first to match prior behaviour.
   standalones.sort((a, b) => {
     const ar = a.released_at ?? "";
@@ -273,7 +424,7 @@ export default async function PatientPortalPage() {
             ) : (
               standalones.map((row) => (
                 <tr
-                  key={row.test_request_id}
+                  key={row.result_key}
                   className="hover:bg-[color:var(--color-brand-bg)]"
                 >
                   <td className="px-4 py-3 font-mono text-[color:var(--color-brand-text-mid)]">
@@ -286,11 +437,17 @@ export default async function PatientPortalPage() {
                   </td>
                   <td className="px-4 py-3">
                     <p className="font-semibold text-[color:var(--color-brand-navy)]">
-                      {row.test_name}
+                      {row.primary_label}
                     </p>
-                    <p className="font-mono text-xs text-[color:var(--color-brand-text-soft)]">
-                      {row.test_code}
-                    </p>
+                    {row.sub_label ? (
+                      <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+                        {row.sub_label}
+                      </p>
+                    ) : row.test_code ? (
+                      <p className="font-mono text-xs text-[color:var(--color-brand-text-soft)]">
+                        {row.test_code}
+                      </p>
+                    ) : null}
                   </td>
                   <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
                     {new Date(row.test_date).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })}
@@ -307,7 +464,10 @@ export default async function PatientPortalPage() {
                   </td>
                   <td className="px-4 py-3 text-right">
                     {row.has_result ? (
-                      <DownloadButton testRequestId={row.test_request_id} />
+                      <DownloadButton
+                        testRequestId={row.is_consolidated ? undefined : row.result_key}
+                        resultId={row.is_consolidated ? row.result_key : undefined}
+                      />
                     ) : (
                       <span className="text-xs text-[color:var(--color-brand-text-soft)]">
                         No file

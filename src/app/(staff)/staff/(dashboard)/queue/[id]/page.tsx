@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { ClaimButton } from "../claim-button";
 import { UploadResultForm } from "./upload-form";
@@ -63,6 +63,21 @@ export default async function QueueTestDetailPage({ params }: Props) {
   if (!svc || !visit) notFound();
   const patient = Array.isArray(visit.patients) ? visit.patients[0] : visit.patients;
   if (!patient) notFound();
+
+  // 12.5 T6: If this service belongs to a report_group, redirect to the
+  // consolidated form instead of showing the single-test workflow.
+  {
+    const { data: svcGroup } = await supabase
+      .from("services")
+      .select("report_group_id")
+      .eq("id", svc.id)
+      .single();
+    if (svcGroup?.report_group_id) {
+      redirect(
+        `/staff/queue/consolidated/${visit.id}/${svcGroup.report_group_id}`,
+      );
+    }
+  }
 
   // Phase 14 D3: package headers carry no work. Render a read-only summary
   // panel listing component test_requests instead of the structured form /
@@ -198,7 +213,7 @@ export default async function QueueTestDetailPage({ params }: Props) {
     (!result || result.generation_kind === "uploaded");
 
   return (
-    <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
       <Link
         href="/staff/queue"
         className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
@@ -460,7 +475,7 @@ function PackageHeaderSummary({
   components: PackageComponentSummary[];
 }) {
   return (
-    <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
       <Link
         href="/staff/queue"
         className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"

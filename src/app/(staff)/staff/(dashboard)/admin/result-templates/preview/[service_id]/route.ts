@@ -10,6 +10,7 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { renderResultPdf } from "@/lib/results/render-pdf";
 import { buildPreviewValues } from "@/lib/results/preview-data";
 import { loadTemplateParams } from "@/lib/results/loaders";
+import { loadConsultantSignatures, resolvePerformer } from "@/lib/results/signatures";
 import type {
   ResultDocumentInput,
   ResultLayout,
@@ -41,7 +42,7 @@ export async function GET(_req: Request, { params }: Props) {
 
   const { data: template } = await supabase
     .from("result_templates")
-    .select("id, layout, header_notes, footer_notes")
+    .select("id, layout, header_notes, footer_notes, report_group_id")
     .eq("service_id", service_id)
     .maybeSingle();
   if (!template) {
@@ -50,9 +51,20 @@ export async function GET(_req: Request, { params }: Props) {
       { status: 404 },
     );
   }
+  if (template.report_group_id != null) {
+    throw new Error(
+      `Preview route does not support group-level templates yet. Template ${template.id} is keyed by report_group_id; use the medtech encoding flow to preview.`,
+    );
+  }
 
   const params2 = await loadTemplateParams(supabase, template.id);
   const values = buildPreviewValues(params2);
+
+  const consultants = await loadConsultantSignatures();
+  const performer = await resolvePerformer({
+    service: { code: service.code, kind: null },
+    finalisedByStaffId: null,
+  });
 
   const input: ResultDocumentInput = {
     template: {
@@ -78,6 +90,8 @@ export async function GET(_req: Request, { params }: Props) {
       prc_license_kind: null,
       prc_license_no: null,
     },
+    performer,
+    consultantPathologist: consultants.pathologist,
     isPreview: true,
   };
 

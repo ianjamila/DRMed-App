@@ -6,6 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { getPatientSession } from "@/lib/auth/patient-session-cookies";
 import { renderResultPdf } from "@/lib/results/render-pdf";
+import { loadConsultantSignatures, resolvePerformer } from "@/lib/results/signatures";
 import {
   normalisePatientSex,
   type ResultDocumentInput,
@@ -18,6 +19,106 @@ export type DownloadResult =
 export type PackageDownloadResult =
   | { ok: true; pdfBase64: string; filename: string }
   | { ok: false; error: string };
+
+// Returns a 5-minute signed URL for a consolidated (group) result PDF.
+// Verifies the patient session owns at least one of the linked test_requests.
+// Audit-logs the access for RA 10173 compliance.
+export async function getPatientConsolidatedResultDownloadUrl(
+  resultId: string,
+): Promise<DownloadResult> {
+  const session = await getPatientSession();
+  if (!session) return { ok: false, error: "Session expired. Sign in again." };
+
+  const admin = createAdminClient();
+
+  // Verify the result exists and is linked to at least one released
+  // test_request owned by this patient.
+  const { data: resultRow } = await admin
+    .from("results")
+    .select(
+      `
+        id, storage_path,
+        result_test_requests (
+          test_request_id,
+          test_requests!inner ( id, status, visit_id,
+            visits!inner ( id, patient_id )
+          )
+        )
+      ` as any, // eslint-disable-line @typescript-eslint/no-explicit-any
+    )
+    .eq("id", resultId)
+    .maybeSingle();
+
+  if (!resultRow) {
+    return { ok: false, error: "Result not found." };
+  }
+
+  type RTRItem = {
+    test_request_id: string;
+    test_requests: {
+      id: string;
+      status: string;
+      visit_id: string;
+      visits: { id: string; patient_id: string } | { id: string; patient_id: string }[] | null;
+    } | null;
+  };
+  type ResultRowShape = {
+    id: string;
+    storage_path: string | null;
+    result_test_requests: RTRItem[] | null;
+  };
+  const rRow = resultRow as unknown as ResultRowShape;
+
+  const junctions: RTRItem[] = rRow.result_test_requests ?? [];
+
+  const owned = junctions.some((j) => {
+    const tr = j.test_requests;
+    const visit = tr
+      ? Array.isArray(tr.visits)
+        ? tr.visits[0]
+        : tr.visits
+      : null;
+    return (
+      tr?.status === "released" &&
+      visit?.patient_id === session.patient_id
+    );
+  });
+
+  if (!owned) {
+    return { ok: false, error: "Result not found." };
+  }
+
+  const storagePath = rRow.storage_path;
+  if (!storagePath) {
+    return { ok: false, error: "No result file available." };
+  }
+
+  const { data: signed, error: signErr } = await admin.storage
+    .from("results")
+    .createSignedUrl(storagePath, 60 * 5);
+
+  if (signErr || !signed?.signedUrl) {
+    return { ok: false, error: signErr?.message ?? "Could not sign URL." };
+  }
+
+  const h = await headers();
+  await audit({
+    actor_id: null,
+    actor_type: "patient",
+    patient_id: session.patient_id,
+    action: "result.downloaded",
+    resource_type: "result",
+    resource_id: resultId,
+    metadata: {
+      kind: "consolidated",
+      drm_id: session.drm_id,
+    },
+    ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    user_agent: h.get("user-agent"),
+  });
+
+  return { ok: true, url: signed.signedUrl };
+}
 
 // Returns a 5-minute signed URL for a released test result. Verifies the
 // patient session owns the visit AND the test is in 'released' status.
@@ -37,8 +138,8 @@ export async function getPatientResultDownloadUrl(
       `
         id, status, visit_id,
         visits!inner ( id, patient_id ),
-        results ( id, storage_path )
-      `,
+        result_test_requests ( result_id, results!inner ( id, storage_path ) )
+      ` as any, // eslint-disable-line @typescript-eslint/no-explicit-any
     )
     .eq("id", testRequestId)
     .maybeSingle();
@@ -46,15 +147,35 @@ export async function getPatientResultDownloadUrl(
   if (!testRow) {
     return { ok: false, error: "Result not found." };
   }
-  const visit = Array.isArray(testRow.visits) ? testRow.visits[0] : testRow.visits;
-  const result = Array.isArray(testRow.results) ? testRow.results[0] : testRow.results;
+
+  type TestRowShape = {
+    id: string;
+    status: string;
+    visit_id: string;
+    visits: { id: string; patient_id: string } | { id: string; patient_id: string }[] | null;
+    result_test_requests: { result_id: string; results: { id: string; storage_path: string | null } | null }[] | null;
+  };
+  const tr = testRow as unknown as TestRowShape;
+
+  const visit = Array.isArray(tr.visits) ? tr.visits[0] : tr.visits;
   if (!visit || visit.patient_id !== session.patient_id) {
     return { ok: false, error: "Result not found." };
   }
-  if (testRow.status !== "released") {
+  if (tr.status !== "released") {
     return { ok: false, error: "This result hasn't been released yet." };
   }
-  if (!result) {
+
+  // Resolve the result via result_test_requests junction.
+  type RtrItem = { result_id: string; results: { id: string; storage_path: string | null } | null };
+  const rtrs: RtrItem[] = Array.isArray(tr.result_test_requests)
+    ? (tr.result_test_requests as RtrItem[])
+    : [];
+  const rtr = rtrs[0] ?? null;
+  const result = rtr
+    ? (Array.isArray(rtr.results) ? rtr.results[0] : rtr.results)
+    : null;
+
+  if (!result || !result.storage_path) {
     return { ok: false, error: "No result file on this test." };
   }
 
@@ -208,21 +329,30 @@ export async function getPackagePdfDownloadUrl(
     return { ok: false, error: "No released components to assemble." };
   }
 
-  // 3) Load results.storage_path for each released component.
-  const { data: results } = await admin
-    .from("results")
-    .select("id, test_request_id, storage_path")
+  // 3) Load results.storage_path for each released component via the junction.
+  const { data: junctions } = await admin
+    .from("result_test_requests")
+    .select("test_request_id, results!inner(id, storage_path)")
     .in(
       "test_request_id",
       releasedComponents.map((c) => c.id),
     );
   const resultByTrId = new Map(
-    (results ?? []).map((r) => [r.test_request_id, r]),
+    (junctions ?? []).map((j) => {
+      const r = Array.isArray(j.results) ? j.results[0] : j.results;
+      return [j.test_request_id, r ?? null] as const;
+    }),
   );
 
   // 4) Render cover + fetch every component PDF in parallel. Skip
   // components that have no result row (data integrity issue — we audit
   // the skip rather than failing the whole assembly).
+  const coverConsultants = await loadConsultantSignatures();
+  const coverPerformer = await resolvePerformer({
+    service: null,
+    finalisedByStaffId: null,
+  });
+
   const coverInput: ResultDocumentInput = {
     template: {
       layout: "package_summary",
@@ -248,6 +378,8 @@ export async function getPackagePdfDownloadUrl(
       ? new Date(headerRow.package_completed_at)
       : new Date(),
     medtech: null,
+    performer: coverPerformer,
+    consultantPathologist: coverConsultants.pathologist,
     packageSummary: {
       packageCode: headerService?.code ?? "",
       packageName: headerService?.name ?? "",

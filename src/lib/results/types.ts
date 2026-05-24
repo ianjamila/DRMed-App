@@ -90,7 +90,17 @@ export interface ResultDocumentInput {
   };
   params: TemplateParam[];
   values: Record<string, ParamValue>; // keyed by param.id
-  service: { code: string; name: string };
+  service?: { code: string; name: string };
+  /**
+   * Set when the results row covers multiple test_requests of the same
+   * report_group (e.g. Chemistry). Mutually exclusive with `service`.
+   */
+  reportGroup?: {
+    code: string;     // e.g. 'CHEMISTRY'
+    name: string;     // e.g. 'Chemistry'
+    /** Display chips for the actually-ordered tests on this visit. */
+    orderedTests: Array<{ code: string; name: string }>;
+  };
   patient: {
     drm_id: string;
     last_name: string;
@@ -106,6 +116,34 @@ export interface ResultDocumentInput {
     prc_license_kind: string | null;
     prc_license_no: string | null;
   } | null;
+  /**
+   * Performing professional whose signature appears in the right-hand
+   * column. For lab tests this is the medtech who finalised. For X-ray
+   * and ultrasound this is the consultant radiologist (auto-included
+   * from env). For ECG it's the consultant cardiologist.
+   *
+   * Replaces the legacy `medtech` field for new render paths. The
+   * `medtech` field below is preserved so older callers that haven't
+   * migrated yet still type-check.
+   */
+  performer: {
+    full_name: string;
+    prc_license_no: string | null;
+    prc_license_kind: string | null;
+    png_bytes: Buffer | null;
+  } | null;
+
+  /**
+   * Always rendered in the left-hand column on every DRMed-generated PDF.
+   * Auto-included via CONSULTANT_PATHOLOGIST_STAFF_ID env var.
+   */
+  consultantPathologist: {
+    full_name: string;
+    prc_license_no: string | null;
+    prc_license_kind: string | null;
+    png_bytes: Buffer | null;
+  };
+
   // Optional image attachment for `imaging_report` layouts. Embedded at the
   // bottom of the PDF after Findings + Impression. PDF mime types are listed
   // as a separate-attachment note rather than embedded — see ImagingBody.

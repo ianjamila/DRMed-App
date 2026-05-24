@@ -318,7 +318,7 @@ const styles = StyleSheet.create({
   signatureBlock: {
     marginTop: 36,
     flexDirection: "row",
-    justifyContent: "space-between",
+    justifyContent: "space-around",
   },
   signatureCol: {
     flex: 1,
@@ -360,6 +360,13 @@ const styles = StyleSheet.create({
     fontSize: 8,
     color: C.inkSoft,
     textAlign: "center",
+  },
+  signatureImage: {
+    width: 110,
+    height: 32,
+    objectFit: "contain",
+    marginBottom: -4,
+    alignSelf: "center",
   },
 
   pageFooter: {
@@ -527,32 +534,57 @@ function PatientInfoGrid({
 
 function SectionTitle({
   service,
+  reportGroup,
 }: {
-  service: ResultDocumentInput["service"];
+  service?: ResultDocumentInput["service"];
+  reportGroup?: ResultDocumentInput["reportGroup"];
 }) {
+  const title = reportGroup
+    ? reportGroup.name.toUpperCase()
+    : service?.name.toUpperCase() ?? "";
+  const code = reportGroup
+    ? reportGroup.code
+    : service?.code ?? "";
   return (
     <View>
       <View style={[styles.hr, styles.navyRule]} />
       <View style={styles.sectionTitleBand}>
-        <Text style={styles.testTitle}>{service.name.toUpperCase()}</Text>
-        <Text style={styles.testCode}>{service.code}</Text>
+        <Text style={styles.testTitle}>{title}</Text>
+        <Text style={styles.testCode}>{code}</Text>
       </View>
       <View style={[styles.hr, styles.navyRule, { marginTop: 0 }]} />
+      {reportGroup && reportGroup.orderedTests.length > 0 ? (
+        <Text style={styles.headerNotes}>
+          Ordered: {reportGroup.orderedTests.map((t) => t.name).join(", ")}
+        </Text>
+      ) : null}
     </View>
   );
 }
 
 function SignatureColumn({
-  name,
-  role,
-  license,
+  data,
+  defaultRole,
 }: {
-  name: string;
-  role: string;
-  license: string;
+  data:
+    | ResultDocumentInput["performer"]
+    | ResultDocumentInput["consultantPathologist"]
+    | null;
+  defaultRole: string;
 }) {
+  const name = data?.full_name ?? "—";
+  const license = data?.prc_license_no
+    ? `PRC License No. ${data.prc_license_no}`
+    : "PRC License No. —";
+  const role = roleLabel(data?.prc_license_kind, defaultRole);
   return (
     <View style={styles.signatureCol}>
+      {data?.png_bytes ? (
+        // eslint-disable-next-line jsx-a11y/alt-text
+        <Image src={data.png_bytes} style={styles.signatureImage} />
+      ) : (
+        <View style={{ height: 32 }} />
+      )}
       <View style={styles.signatureNameRow}>
         <Text style={styles.signatureName}>{name}</Text>
       </View>
@@ -563,37 +595,36 @@ function SignatureColumn({
   );
 }
 
+function roleLabel(
+  kind: string | null | undefined,
+  fallback: string,
+): string {
+  if (kind === "RMT") return "Medical Technologist";
+  if (kind === "RT") return "Radiologic Technologist";
+  if (kind === "MD") return fallback;
+  return fallback;
+}
+
 function SignatureBlock({
-  medtech,
+  performer,
+  consultantPathologist,
 }: {
-  // The "medtech" field is used for backwards compatibility but represents
-  // the staff member who finalised the result — could be a medtech or an
-  // xray_technician. The PRC license kind printed below distinguishes
-  // them (RMT vs RT).
-  medtech: ResultDocumentInput["medtech"];
+  performer: ResultDocumentInput["performer"];
+  consultantPathologist: ResultDocumentInput["consultantPathologist"];
 }) {
-  // Pathologist and QC are visual placeholders until those sign-off roles
-  // ship. The medtech column comes from real data.
-  const medtechName = medtech?.full_name ?? "—";
-  const medtechLicense = medtech
-    ? `PRC License No. ${medtech.prc_license_no ?? "—"}`
-    : "PRC License No. —";
   return (
     <View style={styles.signatureBlock}>
       <SignatureColumn
-        name="—"
-        role="Pathologist"
-        license="PRC License No. —"
+        data={consultantPathologist}
+        defaultRole="Pathologist"
       />
       <SignatureColumn
-        name={medtechName}
-        role="Medical Technologist"
-        license={medtechLicense}
-      />
-      <SignatureColumn
-        name="—"
-        role="Quality Control"
-        license="PRC License No. —"
+        data={performer}
+        defaultRole={
+          performer?.prc_license_kind === "MD"
+            ? "Consultant"
+            : "Medical Technologist"
+        }
       />
     </View>
   );
@@ -1217,7 +1248,7 @@ export function ResultDocument(input: ResultDocumentInput) {
 
   return (
     <Document
-      title={`${input.service.name} — ${input.patient.last_name}, ${input.patient.first_name}`}
+      title={`${input.reportGroup?.name ?? input.service?.name ?? "Result"} — ${input.patient.last_name}, ${input.patient.first_name}`}
       author={SITE.name}
     >
       <Page size="A4" style={styles.page}>
@@ -1235,7 +1266,7 @@ export function ResultDocument(input: ResultDocumentInput) {
           finalisedAt={input.finalisedAt}
         />
 
-        <SectionTitle service={input.service} />
+        <SectionTitle service={input.service} reportGroup={input.reportGroup} />
 
         {input.template.header_notes ? (
           <Text style={styles.headerNotes}>{input.template.header_notes}</Text>
@@ -1265,7 +1296,10 @@ export function ResultDocument(input: ResultDocumentInput) {
 
         <RemarksBlock notes={input.template.footer_notes} />
 
-        <SignatureBlock medtech={input.medtech} />
+        <SignatureBlock
+          performer={input.performer}
+          consultantPathologist={input.consultantPathologist}
+        />
         <PageFooter />
       </Page>
     </Document>

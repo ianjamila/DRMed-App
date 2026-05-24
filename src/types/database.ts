@@ -3690,7 +3690,8 @@ export type Database = {
           id: string
           is_active: boolean
           layout: string
-          service_id: string
+          report_group_id: string | null
+          service_id: string | null
           updated_at: string
         }
         Insert: {
@@ -3700,7 +3701,8 @@ export type Database = {
           id?: string
           is_active?: boolean
           layout: string
-          service_id: string
+          report_group_id?: string | null
+          service_id?: string | null
           updated_at?: string
         }
         Update: {
@@ -3710,10 +3712,18 @@ export type Database = {
           id?: string
           is_active?: boolean
           layout?: string
-          service_id?: string
+          report_group_id?: string | null
+          service_id?: string | null
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "result_templates_report_group_id_fkey"
+            columns: ["report_group_id"]
+            isOneToOne: true
+            referencedRelation: "report_groups"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "result_templates_service_id_fkey"
             columns: ["service_id"]
@@ -3795,6 +3805,7 @@ export type Database = {
           created_at: string
           file_size_bytes: number | null
           finalised_at: string | null
+          finalised_by_staff_id: string | null
           generation_kind: string
           id: string
           image_filename: string | null
@@ -3804,8 +3815,8 @@ export type Database = {
           image_uploaded_at: string | null
           image_uploaded_by: string | null
           notes: string | null
+          report_group_id: string | null
           storage_path: string | null
-          test_request_id: string
           updated_at: string
           uploaded_at: string
           uploaded_by: string
@@ -3817,6 +3828,7 @@ export type Database = {
           created_at?: string
           file_size_bytes?: number | null
           finalised_at?: string | null
+          finalised_by_staff_id?: string | null
           generation_kind?: string
           id?: string
           image_filename?: string | null
@@ -3826,8 +3838,8 @@ export type Database = {
           image_uploaded_at?: string | null
           image_uploaded_by?: string | null
           notes?: string | null
+          report_group_id?: string | null
           storage_path?: string | null
-          test_request_id: string
           updated_at?: string
           uploaded_at?: string
           uploaded_by: string
@@ -3839,6 +3851,7 @@ export type Database = {
           created_at?: string
           file_size_bytes?: number | null
           finalised_at?: string | null
+          finalised_by_staff_id?: string | null
           generation_kind?: string
           id?: string
           image_filename?: string | null
@@ -3848,13 +3861,20 @@ export type Database = {
           image_uploaded_at?: string | null
           image_uploaded_by?: string | null
           notes?: string | null
+          report_group_id?: string | null
           storage_path?: string | null
-          test_request_id?: string
           updated_at?: string
           uploaded_at?: string
           uploaded_by?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "results_finalised_by_staff_id_fkey"
+            columns: ["finalised_by_staff_id"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "results_image_uploaded_by_fkey"
             columns: ["image_uploaded_by"]
@@ -3863,20 +3883,70 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "results_test_request_id_fkey"
+            foreignKeyName: "results_report_group_id_fkey"
+            columns: ["report_group_id"]
+            isOneToOne: false
+            referencedRelation: "report_groups"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      result_test_requests: {
+        Row: {
+          created_at: string
+          result_id: string
+          test_request_id: string
+        }
+        Insert: {
+          created_at?: string
+          result_id: string
+          test_request_id: string
+        }
+        Update: {
+          created_at?: string
+          result_id?: string
+          test_request_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "result_test_requests_result_id_fkey"
+            columns: ["result_id"]
+            isOneToOne: false
+            referencedRelation: "results"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "result_test_requests_test_request_id_fkey"
             columns: ["test_request_id"]
             isOneToOne: true
             referencedRelation: "test_requests"
             referencedColumns: ["id"]
           },
-          {
-            foreignKeyName: "results_test_request_id_fkey"
-            columns: ["test_request_id"]
-            isOneToOne: true
-            referencedRelation: "v_hmo_unbilled"
-            referencedColumns: ["test_request_id"]
-          },
         ]
+      }
+      report_groups: {
+        Row: {
+          code: string
+          created_at: string
+          id: string
+          is_active: boolean
+          name: string
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          name: string
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          name?: string
+        }
+        Relationships: []
       }
       service_price_history: {
         Row: {
@@ -3940,6 +4010,7 @@ export type Database = {
           kind: string
           name: string
           price_php: number
+          report_group_id: string | null
           requires_signoff: boolean
           requires_time_slot: boolean
           section: string | null
@@ -3962,6 +4033,7 @@ export type Database = {
           kind?: string
           name: string
           price_php: number
+          report_group_id?: string | null
           requires_signoff?: boolean
           requires_time_slot?: boolean
           section?: string | null
@@ -3984,6 +4056,7 @@ export type Database = {
           kind?: string
           name?: string
           price_php?: number
+          report_group_id?: string | null
           requires_signoff?: boolean
           requires_time_slot?: boolean
           section?: string | null
@@ -3994,6 +4067,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "services_report_group_id_fkey"
+            columns: ["report_group_id"]
+            isOneToOne: false
+            referencedRelation: "report_groups"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "services_specialty_code_fkey"
             columns: ["specialty_code"]
@@ -4089,6 +4169,8 @@ export type Database = {
           prc_license_kind: string | null
           prc_license_no: string | null
           role: string
+          signature_path: string | null
+          signature_uploaded_at: string | null
           updated_at: string
         }
         Insert: {
@@ -4101,6 +4183,8 @@ export type Database = {
           prc_license_kind?: string | null
           prc_license_no?: string | null
           role: string
+          signature_path?: string | null
+          signature_uploaded_at?: string | null
           updated_at?: string
         }
         Update: {
@@ -4113,6 +4197,8 @@ export type Database = {
           prc_license_kind?: string | null
           prc_license_no?: string | null
           role?: string
+          signature_path?: string | null
+          signature_uploaded_at?: string | null
           updated_at?: string
         }
         Relationships: [

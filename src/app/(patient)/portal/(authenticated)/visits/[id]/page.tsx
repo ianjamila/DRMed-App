@@ -29,23 +29,35 @@ export default async function PatientVisitDetailPage({ params }: Props) {
   const patient = await requirePatientProfile();
   const admin = createAdminClient();
 
-  const { data: visit } = await admin
+  const { data: visitRaw } = await admin
     .from("visits")
-    .select(
-      `
-        id, patient_id, visit_number, visit_date, payment_status,
-        test_requests (
-          id, status, released_at,
-          services!inner ( name, code ),
-          results ( id )
-        )
-      `,
-    )
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .select("id, patient_id, visit_number, visit_date, payment_status, test_requests(id, status, released_at, services!inner(name, code), result_test_requests(result_id, results!inner(id, storage_path)))" as any)
     .eq("id", id)
     .eq("patient_id", patient.patient_id)
     .maybeSingle();
 
-  if (!visit) notFound();
+  if (!visitRaw) notFound();
+
+  type TrWithResult = {
+    id: string;
+    status: string;
+    released_at: string | null;
+    services: { name: string; code: string } | { name: string; code: string }[] | null;
+    result_test_requests: {
+      result_id: string;
+      results: { id: string; storage_path: string | null } | null;
+    }[] | null;
+  };
+  type VisitShape = {
+    id: string;
+    patient_id: string;
+    visit_number: string;
+    visit_date: string;
+    payment_status: string;
+    test_requests: TrWithResult[] | null;
+  };
+  const visit = visitRaw as unknown as VisitShape;
 
   // Patients only see released tests per the plan; group counts for context.
   const releasedTests = (visit.test_requests ?? []).filter(
@@ -97,7 +109,11 @@ export default async function PatientVisitDetailPage({ params }: Props) {
             ) : (
               releasedTests.map((t) => {
                 const svc = Array.isArray(t.services) ? t.services[0] : t.services;
-                const result = Array.isArray(t.results) ? t.results[0] : t.results;
+                const rtrs = Array.isArray(t.result_test_requests) ? t.result_test_requests : [];
+                const rtr = rtrs[0] ?? null;
+                const result = rtr
+                  ? (Array.isArray(rtr.results) ? rtr.results[0] : rtr.results)
+                  : null;
                 if (!svc) return null;
                 return (
                   <tr key={t.id}>
@@ -122,7 +138,7 @@ export default async function PatientVisitDetailPage({ params }: Props) {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      {result ? (
+                      {result?.storage_path ? (
                         <DownloadButton testRequestId={t.id} />
                       ) : (
                         <span className="text-xs text-[color:var(--color-brand-text-soft)]">

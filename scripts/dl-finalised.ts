@@ -7,7 +7,8 @@ async function main() {
   const admin = createClient(url, key, { auth: { persistSession: false } });
   const tr = process.argv[2];
   if (!tr) throw new Error("usage: tsx scripts/dl-finalised.ts <test_request_id>");
-  const { data: r } = await admin.from("results").select("storage_path").eq("test_request_id", tr).single();
+  const { data: link } = await admin.from("result_test_requests").select("result_id, results!inner(storage_path)").eq("test_request_id", tr).single();
+  const r = link ? (Array.isArray(link.results) ? link.results[0] : link.results) : null;
   if (!r?.storage_path) throw new Error("no storage_path");
   const { data, error } = await admin.storage.from("results").download(r.storage_path);
   if (error || !data) throw error ?? new Error("no data");

@@ -37,7 +37,7 @@ export default async function ResultTemplatesIndex() {
 
   const tplByService = new Map<string, string>();
   for (const t of templates ?? []) {
-    if (t.is_active) tplByService.set(t.service_id, t.layout);
+    if (t.is_active && t.service_id) tplByService.set(t.service_id, t.layout);
   }
 
   const rows: ServiceRow[] = (services ?? [])
