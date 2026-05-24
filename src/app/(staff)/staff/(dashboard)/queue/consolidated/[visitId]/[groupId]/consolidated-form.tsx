@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { claimConsolidated, finaliseConsolidated } from "./actions";
 import type { ConsolidatedFormTemplate, ConsolidatedFormVisit } from "./page";
+import { normalisePatientSex } from "@/lib/results/types";
 
 interface Props {
   group: { id: string; code: string; name: string };
@@ -42,8 +43,11 @@ export function ConsolidatedForm(props: Props) {
   );
 
   // Filter params by gender for this patient, then sort by sort_order.
+  // patients.sex is stored as 'male'/'female' in the DB; template params use
+  // 'F'/'M'. normalisePatientSex bridges the two shapes.
+  const patientSex = normalisePatientSex(props.visit.patients.sex);
   const params = props.template.result_template_params
-    .filter((p) => !p.gender || p.gender === props.visit.patients.sex)
+    .filter((p) => !p.gender || p.gender === patientSex)
     .sort((a, b) => a.sort_order - b.sort_order);
 
   // Controlled state for each param's SI + conventional values.

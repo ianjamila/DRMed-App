@@ -90,7 +90,9 @@ export interface ConsolidatedFormVisit {
     drm_id: string;
     last_name: string;
     first_name: string;
-    sex: "F" | "M" | null;
+    // patients.sex is stored as 'male'/'female' in the DB. Use the typed
+    // shape here; the client form normalises via normalisePatientSex().
+    sex: string | null;
     birthdate: string | null;
   };
 }
