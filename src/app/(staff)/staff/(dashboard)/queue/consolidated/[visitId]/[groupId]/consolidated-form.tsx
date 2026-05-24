@@ -149,12 +149,17 @@ export function ConsolidatedForm(props: Props) {
         <p className="font-mono text-xs text-[color:var(--color-brand-text-soft)]">
           {props.visit.patients.drm_id} · Visit #{props.visit.visit_number}
         </p>
-        <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
-          Ordered:{" "}
-          <span className="break-words font-mono">
-            {props.orderedServiceCodes.join(", ")}
-          </span>
-        </p>
+        <div className="mt-1 flex flex-wrap items-baseline gap-x-1.5 gap-y-1 text-sm text-[color:var(--color-brand-text-soft)]">
+          <span>Ordered:</span>
+          {props.orderedServiceCodes.map((code) => (
+            <span
+              key={code}
+              className="font-mono text-xs text-[color:var(--color-brand-navy)]"
+            >
+              {code}
+            </span>
+          ))}
+        </div>
       </header>
 
       <section className="mt-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
