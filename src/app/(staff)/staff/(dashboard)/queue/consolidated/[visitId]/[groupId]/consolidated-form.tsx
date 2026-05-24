@@ -131,7 +131,7 @@ export function ConsolidatedForm(props: Props) {
   }
 
   return (
-    <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
       <Link
         href="/staff/queue"
         className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
@@ -151,7 +151,7 @@ export function ConsolidatedForm(props: Props) {
         </p>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
           Ordered:{" "}
-          <span className="font-mono">
+          <span className="break-words font-mono">
             {props.orderedServiceCodes.join(", ")}
           </span>
         </p>
