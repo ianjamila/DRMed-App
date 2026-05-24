@@ -42,13 +42,18 @@ export async function GET(_req: Request, { params }: Props) {
 
   const { data: template } = await supabase
     .from("result_templates")
-    .select("id, layout, header_notes, footer_notes")
+    .select("id, layout, header_notes, footer_notes, report_group_id")
     .eq("service_id", service_id)
     .maybeSingle();
   if (!template) {
     return new NextResponse(
       "No template configured for this service yet.",
       { status: 404 },
+    );
+  }
+  if (template.report_group_id != null) {
+    throw new Error(
+      `Preview route does not support group-level templates yet. Template ${template.id} is keyed by report_group_id; use the medtech encoding flow to preview.`,
     );
   }
 

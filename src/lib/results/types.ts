@@ -90,7 +90,17 @@ export interface ResultDocumentInput {
   };
   params: TemplateParam[];
   values: Record<string, ParamValue>; // keyed by param.id
-  service: { code: string; name: string };
+  service?: { code: string; name: string };
+  /**
+   * Set when the results row covers multiple test_requests of the same
+   * report_group (e.g. Chemistry). Mutually exclusive with `service`.
+   */
+  reportGroup?: {
+    code: string;     // e.g. 'CHEMISTRY'
+    name: string;     // e.g. 'Chemistry'
+    /** Display chips for the actually-ordered tests on this visit. */
+    orderedTests: Array<{ code: string; name: string }>;
+  };
   patient: {
     drm_id: string;
     last_name: string;

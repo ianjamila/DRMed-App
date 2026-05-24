@@ -534,17 +534,30 @@ function PatientInfoGrid({
 
 function SectionTitle({
   service,
+  reportGroup,
 }: {
-  service: ResultDocumentInput["service"];
+  service?: ResultDocumentInput["service"];
+  reportGroup?: ResultDocumentInput["reportGroup"];
 }) {
+  const title = reportGroup
+    ? reportGroup.name.toUpperCase()
+    : service?.name.toUpperCase() ?? "";
+  const code = reportGroup
+    ? reportGroup.code
+    : service?.code ?? "";
   return (
     <View>
       <View style={[styles.hr, styles.navyRule]} />
       <View style={styles.sectionTitleBand}>
-        <Text style={styles.testTitle}>{service.name.toUpperCase()}</Text>
-        <Text style={styles.testCode}>{service.code}</Text>
+        <Text style={styles.testTitle}>{title}</Text>
+        <Text style={styles.testCode}>{code}</Text>
       </View>
       <View style={[styles.hr, styles.navyRule, { marginTop: 0 }]} />
+      {reportGroup && reportGroup.orderedTests.length > 0 ? (
+        <Text style={styles.headerNotes}>
+          Ordered: {reportGroup.orderedTests.map((t) => t.name).join(", ")}
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -1235,7 +1248,7 @@ export function ResultDocument(input: ResultDocumentInput) {
 
   return (
     <Document
-      title={`${input.service.name} — ${input.patient.last_name}, ${input.patient.first_name}`}
+      title={`${input.reportGroup?.name ?? input.service?.name ?? "Result"} — ${input.patient.last_name}, ${input.patient.first_name}`}
       author={SITE.name}
     >
       <Page size="A4" style={styles.page}>
@@ -1253,7 +1266,7 @@ export function ResultDocument(input: ResultDocumentInput) {
           finalisedAt={input.finalisedAt}
         />
 
-        <SectionTitle service={input.service} />
+        <SectionTitle service={input.service} reportGroup={input.reportGroup} />
 
         {input.template.header_notes ? (
           <Text style={styles.headerNotes}>{input.template.header_notes}</Text>
