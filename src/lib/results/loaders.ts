@@ -92,7 +92,11 @@ export async function loadTemplateParams(
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { loadConsultantSignatures, resolvePerformer } from "./signatures";
-import type { ResultDocumentInput, ResultLayout } from "./types";
+import {
+  normalisePatientSex,
+  type ResultDocumentInput,
+  type ResultLayout,
+} from "./types";
 
 // Explicit shape for the deeply-nested junction query. Supabase's TypeScript
 // inference breaks on string-concatenated selects, so we cast to this type.
@@ -261,7 +265,11 @@ export async function loadResultDocumentInput(
       drm_id: patient.drm_id,
       last_name: patient.last_name,
       first_name: patient.first_name,
-      sex: patient.sex as "F" | "M" | null,
+      // patient.sex is stored as 'male'/'female' in the DB; the renderer's
+      // filterParamsForPatient + pickRangeForPatient + sex-label switch all
+      // key off 'F'/'M'. Normalise at this boundary so every downstream
+      // consumer sees the canonical shape.
+      sex: normalisePatientSex(patient.sex),
       birthdate: patient.birthdate,
     },
     visit: { visit_number: visit.visit_number },
