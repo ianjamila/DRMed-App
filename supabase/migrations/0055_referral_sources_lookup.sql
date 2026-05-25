@@ -40,12 +40,13 @@ alter table public.patients
 
 alter table public.patients
   add constraint patients_referral_source_fk
-  foreign key (referral_source) references public.referral_sources(id);
+  foreign key (referral_source) references public.referral_sources(id)
+  on delete restrict;
 
 -- RLS: read-by-anyone (it's a public dropdown source); writes are
 -- service-role only until an admin UI ships.
 alter table public.referral_sources enable row level security;
 
-create policy "referral_sources: read by anyone"
+create policy "referral_sources: public read"
   on public.referral_sources for select to anon, authenticated
   using (true);
