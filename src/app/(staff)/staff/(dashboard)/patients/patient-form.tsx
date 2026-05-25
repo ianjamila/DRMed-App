@@ -34,19 +34,8 @@ interface PatientDefaults {
 
 interface Props {
   initial?: PatientDefaults;
+  referralOptions: { value: string; label: string }[];
 }
-
-const REFERRAL_OPTIONS: { value: string; label: string }[] = [
-  { value: "", label: "—" },
-  { value: "doctor_referral", label: "Doctor referral" },
-  { value: "customer_referral", label: "Customer referral" },
-  { value: "online_facebook", label: "Facebook" },
-  { value: "online_website", label: "Website" },
-  { value: "online_google", label: "Google" },
-  { value: "walk_in", label: "Walk-in" },
-  { value: "tenant_employee_northridge", label: "Northridge tenant / employee" },
-  { value: "other", label: "Other" },
-];
 
 const RELEASE_OPTIONS: { value: string; label: string }[] = [
   { value: "", label: "—" },
@@ -57,7 +46,7 @@ const RELEASE_OPTIONS: { value: string; label: string }[] = [
   { value: "pickup", label: "Pickup at counter" },
 ];
 
-export function PatientForm({ initial }: Props) {
+export function PatientForm({ initial, referralOptions }: Props) {
   const router = useRouter();
   const isEdit = Boolean(initial?.id);
   const action = isEdit
@@ -173,7 +162,7 @@ export function PatientForm({ initial }: Props) {
               onChange={(e) => setReferralSource(e.target.value)}
               className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
             >
-              {REFERRAL_OPTIONS.map((o) => (
+              {referralOptions.map((o) => (
                 <option key={o.value} value={o.value}>
                   {o.label}
                 </option>
