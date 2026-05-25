@@ -23,8 +23,15 @@ export default async function ReceiptPage({ params }: Props) {
     .select(
       `
         id, visit_number, visit_date, total_php,
-        patients!inner ( id, drm_id, first_name, last_name ),
-        test_requests ( id, services ( code, name, price_php ) )
+        patients!inner (
+          id, drm_id, first_name, last_name,
+          senior_pwd_id_kind, senior_pwd_id_number
+        ),
+        test_requests (
+          id,
+          base_price_php, discount_kind, discount_amount_php, final_price_php,
+          services ( code, name, price_php )
+        )
       `,
     )
     .eq("id", id)
@@ -33,6 +40,19 @@ export default async function ReceiptPage({ params }: Props) {
   if (!visit) notFound();
   const patient = Array.isArray(visit.patients) ? visit.patients[0] : visit.patients;
   if (!patient) notFound();
+
+  const lines = (visit.test_requests ?? []).map((tr) => {
+    const svc = Array.isArray(tr.services) ? tr.services[0] : tr.services;
+    const base = tr.base_price_php ?? svc?.price_php ?? 0;
+    const discount = tr.discount_amount_php ?? 0;
+    const final = tr.final_price_php ?? base - discount;
+    return { id: tr.id, svc, base, discount, final, discountKind: tr.discount_kind };
+  });
+
+  const subtotal = lines.reduce((s, l) => s + Number(l.base), 0);
+  const totalDiscount = lines.reduce((s, l) => s + Number(l.discount), 0);
+  const total = lines.reduce((s, l) => s + Number(l.final), 0);
+  const hasSeniorPwdLine = lines.some((l) => l.discountKind === "senior_pwd_20");
 
   // Plain PIN — present only on the redirect from createVisit. The cookie
   // is read here (server component is read-only) and cleared right after
@@ -95,30 +115,47 @@ export default async function ReceiptPage({ params }: Props) {
               <th className="py-3">Code</th>
               <th className="py-3">Service</th>
               <th className="py-3 text-right">Price</th>
+              <th className="py-3 text-right">Discount</th>
+              <th className="py-3 text-right">Net</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
-            {(visit.test_requests ?? []).map((tr, i) => {
-              const svc = Array.isArray(tr.services)
-                ? tr.services[0]
-                : tr.services;
-              if (!svc) return null;
-              return (
-                <tr key={tr.id ?? i}>
-                  <td className="py-3 font-mono">{svc.code}</td>
-                  <td className="py-3">{svc.name}</td>
-                  <td className="py-3 text-right">{formatPhp(svc.price_php)}</td>
-                </tr>
-              );
-            })}
+            {lines.map((l) => (
+              <tr key={l.id}>
+                <td className="py-3 font-mono">{l.svc?.code}</td>
+                <td className="py-3">{l.svc?.name}</td>
+                <td className="py-3 text-right">{formatPhp(l.base)}</td>
+                <td className="py-3 text-right">{l.discount > 0 ? `− ${formatPhp(l.discount)}` : "—"}</td>
+                <td className="py-3 text-right">{formatPhp(l.final)}</td>
+              </tr>
+            ))}
           </tbody>
-          <tfoot>
+          <tfoot className="text-sm">
+            <tr>
+              <td colSpan={4} className="pt-4 text-right text-[color:var(--color-brand-text-soft)]">
+                Subtotal
+              </td>
+              <td className="pt-4 text-right">{formatPhp(subtotal)}</td>
+            </tr>
+            {totalDiscount > 0 && (
+              <tr>
+                <td colSpan={4} className="pt-1 text-right text-[color:var(--color-brand-text-soft)]">
+                  Discount
+                  {hasSeniorPwdLine && patient.senior_pwd_id_number && (
+                    <span className="ml-2 text-xs">
+                      (Senior/PWD ID: {patient.senior_pwd_id_number})
+                    </span>
+                  )}
+                </td>
+                <td className="pt-1 text-right">− {formatPhp(totalDiscount)}</td>
+              </tr>
+            )}
             <tr className="border-t-2 border-[color:var(--color-brand-navy)]">
-              <td colSpan={2} className="py-3 text-right font-bold">
-                Total
+              <td colSpan={4} className="py-3 text-right font-bold">
+                Total Due
               </td>
               <td className="py-3 text-right font-[family-name:var(--font-heading)] text-xl font-extrabold">
-                {formatPhp(visit.total_php)}
+                {formatPhp(total)}
               </td>
             </tr>
           </tfoot>
