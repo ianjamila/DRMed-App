@@ -19,7 +19,8 @@ alter table public.patients
 -- future legacy-imported rows.
 update public.patients
    set birthdate_confirmed = true
- where birthdate is not null;
+ where birthdate is not null
+   and legacy_import_run_id is null;
 
 create table public.legacy_import_runs (
   id              uuid primary key default gen_random_uuid(),
@@ -35,9 +36,15 @@ create table public.legacy_import_runs (
   notes           text
 );
 
+-- ON DELETE RESTRICT is explicit: a legacy_import_runs row cannot be
+-- deleted while patients still reference it. Rollback procedure is
+--   DELETE FROM patients WHERE legacy_import_run_id = $1;
+--   DELETE FROM legacy_import_runs WHERE id = $1;
+-- in that order.
 alter table public.patients
   add constraint patients_legacy_import_run_fk
-  foreign key (legacy_import_run_id) references public.legacy_import_runs(id);
+  foreign key (legacy_import_run_id) references public.legacy_import_runs(id)
+  on delete restrict;
 
 create index idx_patients_legacy_import_run
   on public.patients(legacy_import_run_id)
@@ -53,6 +60,12 @@ create index idx_patients_name_trgm
        || coalesce(last_name,'') || ' '
        || coalesce(middle_name,''))) gin_trgm_ops
   );
+
+comment on index public.idx_patients_name_trgm is
+  'GIN trigram index on lower(first || '' '' || last || '' '' || middle). '
+  'Query MUST use the same expression to hit the index, e.g. '
+  'WHERE lower(coalesce(first_name,'''') || '' '' || coalesce(last_name,'''') || '' '' || coalesce(middle_name,'''')) ILIKE ''%term%''. '
+  'Per-column ILIKE on first_name / last_name will NOT use this index.';
 
 -- RLS: legacy_import_runs is service-role-only (no staff or patient policy).
 alter table public.legacy_import_runs enable row level security;
