@@ -11,8 +11,13 @@
  *   npm run wipe:operational -- --commit --confirm="I-mean-it"  # executes wipe
  *
  * Required env vars:
- *   NEXT_PUBLIC_SUPABASE_URL      — Supabase REST endpoint
+ *   NEXT_PUBLIC_SUPABASE_URL      — Supabase REST endpoint (for row counts)
  *   SUPABASE_SERVICE_ROLE_KEY     — service-role key (bypasses RLS)
+ *   SUPABASE_DB_URL               — direct Postgres connection string for the
+ *                                   TRUNCATE transaction. Format:
+ *                                     postgresql://user:pass@host:port/postgres
+ *                                   For LOCAL stack: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+ *                                   For PROD:        use the Supabase pooler URL with the DB password
  *
  * NOTE: Cannot import from src/lib/supabase/admin.ts because that module
  * imports "server-only" which throws outside the Next.js server context.
@@ -21,14 +26,8 @@
 
 import "dotenv/config";
 import { createClient } from "@supabase/supabase-js";
-import { spawnSync } from "node:child_process";
+import pg from "pg";
 import type { Database } from "../src/types/database";
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-const DOCKER_CONTAINER = "supabase_db_DRMed";
 
 /**
  * Tables to wipe, in children-before-parents order.
@@ -172,8 +171,6 @@ function buildWipeSql(): string {
     (t) => `  TRUNCATE TABLE public.${t} CASCADE;`
   ).join("\n");
 
-  const tablesList = JSON.stringify(WIPE_TABLES);
-
   return `
 BEGIN;
 
@@ -198,48 +195,45 @@ COMMIT;
 }
 
 // ---------------------------------------------------------------------------
-// Execute wipe via docker exec → psql (Option B from the task spec)
-// Reason: exec_sql RPC is not exposed by default in Supabase REST; psql via
-// docker exec is the reliable path for DDL-level statements (TRUNCATE).
+// Execute wipe via direct pg.Client connection to SUPABASE_DB_URL.
+//
+// Earlier version of this script ran psql via `docker exec` against a
+// hardcoded local container, which silently no-op'd when env vars pointed
+// at remote — counts were read against prod but the TRUNCATE landed on
+// local. The pg.Client path uses the same URL pattern the rest of the
+// project uses and works against any reachable Postgres (local stack,
+// pooler, direct connection).
 // ---------------------------------------------------------------------------
 
-function executeWipe(sql: string): void {
-  console.log("\nExecuting wipe transaction via docker exec...");
-  const result = spawnSync(
-    "docker",
-    [
-      "exec",
-      "-i",
-      DOCKER_CONTAINER,
-      "psql",
-      "-U",
-      "postgres",
-      "-d",
-      "postgres",
-      "-v",
-      "ON_ERROR_STOP=1",
-    ],
-    {
-      input: sql,
-      encoding: "utf-8",
-    }
-  );
+function describeTarget(rawUrl: string): string {
+  // Strip the password segment so we can print the target without leaking creds.
+  // postgresql://user:pass@host:port/db → postgresql://user:***@host:port/db
+  return rawUrl.replace(/(:\/\/[^:/@]+:)[^@]+(@)/, "$1***$2");
+}
 
-  if (result.error) {
-    console.error("WIPE FAILED — could not spawn docker:", result.error.message);
+async function executeWipe(sql: string, dbUrl: string): Promise<void> {
+  const client = new pg.Client({ connectionString: dbUrl });
+  try {
+    await client.connect();
+  } catch (err) {
+    console.error("WIPE FAILED — could not connect to SUPABASE_DB_URL:");
+    console.error(err instanceof Error ? err.message : String(err));
+    console.error(`Target: ${describeTarget(dbUrl)}`);
     process.exit(4);
   }
 
-  if (result.status !== 0) {
-    console.error("WIPE FAILED — psql exited with non-zero status:");
-    if (result.stderr) console.error(result.stderr);
-    if (result.stdout) console.error(result.stdout);
+  try {
+    // pg's client.query accepts a multi-statement string and runs it in
+    // an implicit transaction when wrapped in BEGIN/COMMIT (which buildWipeSql does).
+    await client.query(sql);
+    console.log("Wipe transaction committed via pg.Client.");
+  } catch (err) {
+    console.error("WIPE FAILED — psql/pg error:");
+    console.error(err instanceof Error ? err.message : String(err));
+    // pg.Client auto-rolls back the transaction on uncaught error.
     process.exit(4);
-  }
-
-  if (result.stdout) {
-    // Print psql output for transparency (TRUNCATE / INSERT confirmations)
-    console.log(result.stdout);
+  } finally {
+    await client.end();
   }
 }
 
@@ -252,6 +246,21 @@ async function main() {
   console.log("  wipe-operational.ts");
   console.log("  Operational data wipe — " + WIPE_TABLES.length + " tables");
   console.log("=".repeat(60));
+
+  // Fail early if SUPABASE_DB_URL is missing — needed for the commit phase,
+  // and the user should see the target before any work runs.
+  const dbUrl = process.env.SUPABASE_DB_URL;
+  if (!dbUrl) {
+    console.error(
+      "\nERROR: SUPABASE_DB_URL must be set (direct Postgres connection string).\n" +
+        "  For local stack: postgresql://postgres:postgres@127.0.0.1:54322/postgres\n" +
+        "  For prod:        use the Supabase pooler URL (Dashboard → Connect → Pooler / Session, port 5432)\n" +
+        "\n" +
+        "Add it to .env.local then re-run: set -a; source .env.local; set +a; npm run wipe:operational"
+    );
+    process.exit(2);
+  }
+  console.log("Target: " + describeTarget(dbUrl));
 
   const admin = createAdminClient();
 
@@ -298,8 +307,7 @@ async function main() {
     "\n[COMMIT] Both --commit and --confirm=\"I-mean-it\" provided. Executing wipe..."
   );
   const sql = buildWipeSql();
-  executeWipe(sql);
-  console.log("Wipe transaction committed.");
+  await executeWipe(sql, dbUrl);
 
   // Step 4 — Post-commit verification.
   await printRowCounts(admin, "POST-WIPE ROW COUNTS (should all be 0 except audit_log = 1)");
