@@ -23,6 +23,7 @@
     "seed:hmo": "tsx --env-file=.env.local scripts/seed-hmo-providers.ts",
     "seed:physicians": "tsx --env-file=.env.local scripts/seed-physicians.ts",
     "seed:signatures": "tsx --env-file=.env.local scripts/seed-signatures.ts",
+    "smoke:legacy-parsers": "tsx scripts/smoke-legacy-parsers.ts",
     "smoke:results": "tsx --env-file=.env.local scripts/smoke-render-results.ts",
     "smoke:chemistry": "tsx --env-file=.env.local scripts/smoke-chemistry-consolidated.ts"
   },
