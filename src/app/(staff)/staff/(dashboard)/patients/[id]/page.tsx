@@ -45,7 +45,7 @@ export default async function PatientDetailPage({ params }: Props) {
   const { data: patient } = await supabase
     .from("patients")
     .select(
-      "id, drm_id, first_name, last_name, middle_name, birthdate, sex, phone, email, address, pre_registered, created_at, referral_source, referred_by_doctor, preferred_release_medium, senior_pwd_id_kind, senior_pwd_id_number, consent_signed_at, is_repeat_patient",
+      "id, drm_id, first_name, last_name, middle_name, birthdate, birthdate_confirmed, sex, phone, email, address, pre_registered, created_at, referral_source, referred_by_doctor, preferred_release_medium, senior_pwd_id_kind, senior_pwd_id_number, consent_signed_at, is_repeat_patient",
     )
     .eq("id", id)
     .maybeSingle();
@@ -110,6 +110,23 @@ export default async function PatientDetailPage({ params }: Props) {
           value={new Date(patient.created_at).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })}
         />
       </section>
+
+      {(!patient.birthdate || !patient.birthdate_confirmed) && (
+        <div className="mt-3 inline-flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
+          <span aria-hidden>⚠</span>
+          <span>
+            {patient.birthdate
+              ? "DOB not yet confirmed at the counter."
+              : "DOB missing — ask the patient on their next visit."}
+          </span>
+          <Link
+            href={`/staff/patients/${patient.id}/edit`}
+            className="underline decoration-dotted underline-offset-2"
+          >
+            Edit
+          </Link>
+        </div>
+      )}
 
       <section className="mt-6 grid gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5 sm:grid-cols-3">
         <Field

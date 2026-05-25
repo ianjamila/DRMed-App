@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { PatientForm } from "../../patient-form";
+import { listActiveReferralSources } from "@/lib/legacy-import/loaders";
 
 export const metadata = { title: "Edit patient — staff" };
 
@@ -15,14 +16,22 @@ export default async function EditPatientPage({ params }: Props) {
   const { id } = await params;
   const admin = createAdminClient();
 
-  const { data: patient } = await admin
-    .from("patients")
-    .select(
-      "id, drm_id, first_name, last_name, middle_name, birthdate, sex, phone, email, address, referral_source, referred_by_doctor, preferred_release_medium, senior_pwd_id_kind, senior_pwd_id_number, consent_signed_at",
-    )
-    .eq("id", id)
-    .maybeSingle();
+  const [{ data: patient }, sources] = await Promise.all([
+    admin
+      .from("patients")
+      .select(
+        "id, drm_id, first_name, last_name, middle_name, birthdate, sex, phone, email, address, referral_source, referred_by_doctor, preferred_release_medium, senior_pwd_id_kind, senior_pwd_id_number, consent_signed_at",
+      )
+      .eq("id", id)
+      .maybeSingle(),
+    listActiveReferralSources(),
+  ]);
   if (!patient) notFound();
+
+  const referralOptions = [
+    { value: "", label: "—" },
+    ...sources.map((s) => ({ value: s.id, label: s.label })),
+  ];
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8">
@@ -39,7 +48,7 @@ export default async function EditPatientPage({ params }: Props) {
         DRM-ID {patient.drm_id} · birthdate, identity & marketing fields.
       </p>
       <div className="mt-8 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
-        <PatientForm initial={patient} />
+        <PatientForm initial={patient} referralOptions={referralOptions} />
       </div>
     </div>
   );
