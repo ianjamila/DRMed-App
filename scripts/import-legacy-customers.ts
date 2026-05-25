@@ -8,6 +8,8 @@
 
 import { promises as fs } from "node:fs";
 import { parse } from "csv-parse/sync";
+import { createClient } from "@supabase/supabase-js";
+import type { Database } from "../src/types/database";
 
 import { parseName } from "../src/lib/legacy-import/name-parser";
 import { normalizePhone } from "../src/lib/legacy-import/phone-normalizer";
@@ -370,11 +372,84 @@ async function main() {
     process.exit(3);
   }
 
-  // Commit branch implemented in Task 8.
-  console.error(
-    "\nERROR: --commit path not yet implemented (Task 8). Run without --commit for dry-run.\n",
-  );
-  process.exit(99);
+  const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    console.error("ERROR: NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set.");
+    process.exit(2);
+  }
+
+  const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+
+  // 1. Insert the run row.
+  const { data: runRow, error: runErr } = await supabase
+    .from("legacy_import_runs")
+    .insert({
+      source: "google_sheet_CUSTOMER_LIST2",
+      dry_run: false,
+      rows_in: records.length,
+    })
+    .select("id")
+    .single();
+  if (runErr || !runRow) {
+    console.error("ERROR creating legacy_import_runs row:", runErr);
+    process.exit(4);
+  }
+  const runId = runRow.id;
+  console.log(`\nlegacy_import_run_id = ${runId}`);
+
+  // 2. Bulk insert in batches of 500.
+  const BATCH = 500;
+  let inserted = 0;
+  let flagged = 0;
+  for (let i = 0; i < parsed.length; i += BATCH) {
+    const batch = parsed.slice(i, i + BATCH).map((r) => ({
+      first_name: r.first_name ?? "",
+      last_name: r.last_name ?? "",
+      middle_name: r.middle_name,
+      birthdate: r.birthdate,
+      birthdate_confirmed: false,
+      sex: r.sex,
+      phone: r.phone,
+      email: r.email,
+      address: r.address,
+      referral_source: r.referral_source,
+      referred_by_doctor: r.referred_by_doctor,
+      preferred_release_medium: r.preferred_release_medium,
+      senior_pwd_id_kind: r.senior_pwd_id_kind,
+      senior_pwd_id_number: r.senior_pwd_id_number,
+      pre_registered: false,
+      legacy_intake: r.legacy_intake as never,
+      legacy_import_run_id: runId,
+    }));
+    const { error: insErr } = await supabase.from("patients").insert(batch as never);
+    if (insErr) {
+      console.error(`\nERROR inserting batch ${Math.floor(i / BATCH) + 1}:`, insErr);
+      console.error(`Inserted so far: ${inserted}. Rollback: DELETE FROM patients WHERE legacy_import_run_id = '${runId}';`);
+      process.exit(5);
+    }
+    inserted += batch.length;
+    flagged += parsed.slice(i, i + BATCH).filter((r) => r.legacy_intake.import_warnings.length > 0).length;
+    process.stdout.write(`\r  inserted ${inserted}/${parsed.length}`);
+  }
+  process.stdout.write("\n");
+
+  // 3. Stamp the run row as complete.
+  await supabase
+    .from("legacy_import_runs")
+    .update({
+      ended_at: new Date().toISOString(),
+      rows_inserted: inserted,
+      rows_skipped: records.length - parsed.length,
+      rows_flagged: flagged,
+    })
+    .eq("id", runId);
+
+  console.log(`\nImport complete. ${inserted} rows inserted, ${flagged} flagged with warnings.`);
+  console.log(`Rollback command:\n  DELETE FROM patients WHERE legacy_import_run_id = '${runId}';`);
+  console.log();
 }
 
 main().catch((err) => {
