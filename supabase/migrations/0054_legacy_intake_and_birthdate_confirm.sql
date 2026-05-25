@@ -56,3 +56,21 @@ create index idx_patients_name_trgm
 
 -- RLS: legacy_import_runs is service-role-only (no staff or patient policy).
 alter table public.legacy_import_runs enable row level security;
+
+-- =============================================================================
+-- Relax the birthdate CHECK constraint (originally added in 0035) so that
+-- legacy-imported customer rows (which often lack DOB) are accepted without
+-- having to mis-mark them as is_historical=true. is_historical retains its
+-- original semantic ("imported from HMO history, not a live patient
+-- relationship") and is unsuitable for live-but-incomplete customer rows.
+-- =============================================================================
+alter table public.patients
+  drop constraint if exists patients_birthdate_required_when_not_historical;
+
+alter table public.patients
+  add constraint patients_birthdate_required_for_walkins
+  check (
+    is_historical = true
+    or legacy_import_run_id is not null
+    or birthdate is not null
+  );
