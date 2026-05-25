@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { formatPhp } from "@/lib/marketing/format";
+import { formatPhoneLocal } from "@/lib/format/phone";
 import { ReissuePinButton } from "./reissue-pin-button";
 
 export const metadata = {
@@ -102,7 +103,7 @@ export default async function PatientDetailPage({ params }: Props) {
       <section className="mt-6 grid gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5 sm:grid-cols-3">
         <Field label="Birthdate" value={patient.birthdate ?? "—"} />
         <Field label="Sex" value={patient.sex ?? "—"} />
-        <Field label="Phone" value={patient.phone ?? "—"} />
+        <Field label="Phone" value={patient.phone ? formatPhoneLocal(patient.phone) : "—"} />
         <Field label="Email" value={patient.email ?? "—"} />
         <Field label="Address" value={patient.address ?? "—"} />
         <Field
