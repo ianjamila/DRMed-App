@@ -1,0 +1,1229 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Legacy Customer Import & Attribution Capture — DRMed Design Spec</title>
+  <style>
+    :root {
+      --bg:            #fafaf9;
+      --surface:       #ffffff;
+      --surface-2:     #f5f5f4;
+      --border:        #e7e5e4;
+      --border-strong: #d6d3d1;
+      --text:          #1c1917;
+      --text-2:        #44403c;
+      --text-3:        #78716c;
+      --accent:        #1e3a8a;
+      --accent-soft:   #eff6ff;
+      --accent-line:   #3b82f6;
+      --green:         #166534;
+      --green-soft:    #f0fdf4;
+      --green-line:    #22c55e;
+      --amber:         #92400e;
+      --amber-soft:    #fffbeb;
+      --amber-line:    #f59e0b;
+      --rose:          #9f1239;
+      --rose-soft:     #fff1f2;
+      --rose-line:     #f43f5e;
+      --slate-deep:    #0f172a;
+      --slate-soft:    #1e293b;
+      --code-text:     #e2e8f0;
+      --code-comment:  #94a3b8;
+      --code-key:      #93c5fd;
+      --code-str:      #fde68a;
+      --code-num:      #fca5a5;
+      --shadow-sm:     0 1px 2px rgba(0,0,0,.04);
+      --shadow-md:     0 4px 14px rgba(0,0,0,.06);
+      --radius:        10px;
+      --radius-sm:     6px;
+      --pad-page:      72px;
+      --content-max:   780px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      font-size: 15.5px;
+      line-height: 1.65;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      font-feature-settings: 'ss01', 'cv11';
+    }
+
+    /* ---------- layout ---------- */
+    .layout {
+      display: grid;
+      grid-template-columns: 296px 1fr;
+      gap: 0;
+      min-height: 100vh;
+    }
+
+    aside.toc {
+      position: sticky;
+      top: 0;
+      align-self: start;
+      height: 100vh;
+      overflow-y: auto;
+      border-right: 1px solid var(--border);
+      background: var(--surface);
+      padding: 40px 28px 40px 40px;
+    }
+
+    main.content {
+      padding: 64px var(--pad-page) 120px var(--pad-page);
+      max-width: calc(var(--content-max) + var(--pad-page) * 2);
+    }
+
+    /* ---------- TOC ---------- */
+    .brand {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: var(--text-3);
+      margin-bottom: 28px;
+    }
+    .brand .brand-dot {
+      display: inline-block;
+      width: 8px; height: 8px;
+      background: var(--accent);
+      border-radius: 50%;
+      margin-right: 10px;
+      vertical-align: middle;
+    }
+    .toc-label {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: var(--text-3);
+      margin: 0 0 14px 0;
+    }
+    .toc ol {
+      list-style: none;
+      padding: 0;
+      margin: 0 0 28px 0;
+      counter-reset: tocnum;
+    }
+    .toc ol li {
+      counter-increment: tocnum;
+      position: relative;
+      padding: 6px 0 6px 32px;
+      font-size: 13.5px;
+      line-height: 1.5;
+    }
+    .toc ol li::before {
+      content: counter(tocnum, decimal-leading-zero);
+      position: absolute;
+      left: 0;
+      top: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-3);
+      font-variant-numeric: tabular-nums;
+    }
+    .toc a {
+      color: var(--text-2);
+      text-decoration: none;
+      transition: color .15s ease;
+    }
+    .toc a:hover { color: var(--accent); }
+    .toc a.active {
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .toc-divider {
+      height: 1px;
+      background: var(--border);
+      margin: 24px 0;
+    }
+    .toc-meta {
+      font-size: 12px;
+      color: var(--text-3);
+      line-height: 1.7;
+    }
+    .toc-meta dt {
+      font-weight: 600;
+      color: var(--text-2);
+      margin-top: 10px;
+    }
+    .toc-meta dt:first-child { margin-top: 0; }
+    .toc-meta dd { margin: 0; }
+
+    /* ---------- doc header ---------- */
+    .doc-header {
+      padding-bottom: 40px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 56px;
+    }
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 24px;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 11.5px;
+      font-weight: 600;
+      letter-spacing: .04em;
+      border: 1px solid var(--border-strong);
+      background: var(--surface);
+      color: var(--text-2);
+    }
+    .pill.draft { background: var(--amber-soft); color: var(--amber); border-color: rgba(245,158,11,.35); }
+    .pill.accent { background: var(--accent-soft); color: var(--accent); border-color: rgba(59,130,246,.3); }
+    .pill .dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: currentColor;
+      display: inline-block;
+    }
+    h1 {
+      font-size: 38px;
+      line-height: 1.15;
+      letter-spacing: -0.02em;
+      font-weight: 700;
+      margin: 0 0 12px 0;
+      color: var(--text);
+    }
+    .lede {
+      font-size: 17px;
+      line-height: 1.6;
+      color: var(--text-2);
+      max-width: 70ch;
+      margin: 0;
+    }
+
+    /* ---------- sections ---------- */
+    section { scroll-margin-top: 24px; }
+    section + section { margin-top: 64px; }
+    h2 {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin: 0 0 8px 0;
+    }
+    .section-title {
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      line-height: 1.25;
+      margin: 0 0 24px 0;
+      color: var(--text);
+    }
+    h3 {
+      font-size: 16px;
+      font-weight: 600;
+      margin: 32px 0 10px 0;
+      letter-spacing: -0.005em;
+      color: var(--text);
+    }
+    h4 {
+      font-size: 13px;
+      font-weight: 600;
+      margin: 22px 0 8px 0;
+      letter-spacing: .02em;
+      color: var(--text-2);
+      text-transform: uppercase;
+    }
+    p { margin: 0 0 14px 0; max-width: 72ch; }
+    ul, ol { padding-left: 22px; margin: 0 0 18px 0; }
+    li { margin-bottom: 6px; }
+    strong { color: var(--text); font-weight: 600; }
+
+    a { color: var(--accent); text-decoration: none; border-bottom: 1px solid rgba(30,58,138,.25); }
+    a:hover { border-bottom-color: var(--accent); }
+
+    /* ---------- divider ---------- */
+    .divider {
+      height: 1px;
+      background: linear-gradient(to right, var(--border), transparent);
+      margin: 56px 0;
+    }
+
+    /* ---------- callouts ---------- */
+    .callout {
+      border-radius: var(--radius);
+      padding: 18px 22px;
+      margin: 18px 0;
+      border-left: 4px solid var(--border-strong);
+      background: var(--surface-2);
+      box-shadow: var(--shadow-sm);
+    }
+    .callout .label {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .callout .label::before {
+      content: '';
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    .callout p:last-child { margin-bottom: 0; }
+    .callout.decision { background: var(--accent-soft); border-left-color: var(--accent-line); }
+    .callout.decision .label { color: var(--accent); }
+    .callout.goal { background: var(--green-soft); border-left-color: var(--green-line); }
+    .callout.goal .label { color: var(--green); }
+    .callout.risk { background: var(--amber-soft); border-left-color: var(--amber-line); }
+    .callout.risk .label { color: var(--amber); }
+    .callout.deferral { background: var(--rose-soft); border-left-color: var(--rose-line); }
+    .callout.deferral .label { color: var(--rose); }
+
+    /* ---------- code blocks ---------- */
+    pre {
+      background: var(--slate-deep);
+      color: var(--code-text);
+      border-radius: var(--radius);
+      padding: 20px 22px;
+      overflow-x: auto;
+      font-family: 'JetBrains Mono', 'SF Mono', Menlo, Monaco, Consolas, monospace;
+      font-size: 12.5px;
+      line-height: 1.65;
+      margin: 16px 0 22px 0;
+      border: 1px solid var(--slate-soft);
+      box-shadow: var(--shadow-md);
+    }
+    pre .c { color: var(--code-comment); font-style: italic; }
+    pre .k { color: var(--code-key); }
+    pre .s { color: var(--code-str); }
+    pre .n { color: var(--code-num); }
+    code {
+      font-family: 'JetBrains Mono', 'SF Mono', Menlo, Monaco, Consolas, monospace;
+      font-size: .88em;
+      background: var(--surface-2);
+      padding: 1.5px 6px;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+    pre code {
+      background: transparent;
+      border: none;
+      padding: 0;
+      font-size: inherit;
+      color: inherit;
+    }
+
+    /* ---------- tables ---------- */
+    .table-wrap {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      margin: 18px 0 22px 0;
+      box-shadow: var(--shadow-sm);
+      background: var(--surface);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    thead th {
+      text-align: left;
+      padding: 14px 18px;
+      background: var(--surface-2);
+      color: var(--text-2);
+      font-weight: 600;
+      font-size: 11.5px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      border-bottom: 1px solid var(--border);
+    }
+    tbody td {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+      line-height: 1.55;
+    }
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr:hover { background: rgba(245,245,244,.5); }
+    td code { font-size: .85em; }
+
+    /* ---------- decision table ---------- */
+    .decision-grid {
+      display: grid;
+      grid-template-columns: 32px 1fr 1.4fr;
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      margin: 18px 0 22px 0;
+    }
+    .decision-grid > div {
+      background: var(--surface);
+      padding: 14px 18px;
+      font-size: 14px;
+    }
+    .decision-grid > .h {
+      background: var(--surface-2);
+      font-weight: 600;
+      font-size: 11.5px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--text-2);
+    }
+    .decision-grid .num {
+      font-variant-numeric: tabular-nums;
+      color: var(--text-3);
+      font-weight: 600;
+    }
+
+    /* ---------- component cards ---------- */
+    .component {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 28px 32px;
+      margin: 22px 0;
+      box-shadow: var(--shadow-sm);
+    }
+    .component .component-tag {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 6px;
+    }
+    .component .component-title {
+      font-size: 19px;
+      font-weight: 700;
+      margin: 0 0 4px 0;
+      letter-spacing: -0.005em;
+    }
+    .component .component-path {
+      font-family: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+      font-size: 12px;
+      color: var(--text-3);
+      margin-bottom: 18px;
+    }
+
+    /* ---------- architecture diagram ---------- */
+    .arch {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+      margin: 22px 0;
+    }
+    .arch-step {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px;
+      position: relative;
+      box-shadow: var(--shadow-sm);
+    }
+    .arch-step .arch-num {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .14em;
+      color: var(--accent);
+      margin-bottom: 6px;
+    }
+    .arch-step .arch-name {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 6px;
+      letter-spacing: -0.005em;
+    }
+    .arch-step .arch-desc {
+      font-size: 12.5px;
+      color: var(--text-2);
+      line-height: 1.55;
+    }
+    .arch-step::after {
+      content: '→';
+      position: absolute;
+      right: -12px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--border-strong);
+      font-size: 18px;
+      z-index: 1;
+      background: var(--bg);
+      width: 24px;
+      text-align: center;
+    }
+    .arch-step:last-child::after { display: none; }
+    .arch-bottom {
+      grid-column: 1 / -1;
+      margin-top: 14px;
+      background: var(--surface-2);
+      border: 1px dashed var(--border-strong);
+      border-radius: var(--radius);
+      padding: 18px;
+      text-align: center;
+    }
+    .arch-bottom .arch-num { color: var(--text-3); }
+
+    /* ---------- timeline ---------- */
+    .timeline {
+      list-style: none;
+      padding: 0;
+      margin: 18px 0 22px 0;
+      counter-reset: tlnum;
+    }
+    .timeline li {
+      counter-increment: tlnum;
+      position: relative;
+      padding: 14px 0 14px 56px;
+      border-bottom: 1px solid var(--border);
+    }
+    .timeline li:last-child { border-bottom: none; }
+    .timeline li::before {
+      content: counter(tlnum, decimal-leading-zero);
+      position: absolute;
+      left: 0;
+      top: 14px;
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-variant-numeric: tabular-nums;
+    }
+    .timeline .tl-title {
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .timeline .tl-detail {
+      font-size: 13.5px;
+      color: var(--text-2);
+    }
+
+    /* ---------- severity badge ---------- */
+    .sev {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+    .sev.high { background: var(--rose-soft); color: var(--rose); }
+    .sev.med { background: var(--amber-soft); color: var(--amber); }
+    .sev.low { background: var(--green-soft); color: var(--green); }
+
+    /* ---------- decision row ---------- */
+    .data-shape {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin: 18px 0;
+    }
+    .data-shape .stat {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+    }
+    .data-shape .stat .stat-val {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      font-variant-numeric: tabular-nums;
+      color: var(--text);
+    }
+    .data-shape .stat .stat-label {
+      font-size: 12px;
+      color: var(--text-3);
+      font-weight: 500;
+      margin-top: 2px;
+    }
+
+    /* ---------- responsive ---------- */
+    @media (max-width: 1024px) {
+      .layout { grid-template-columns: 1fr; }
+      aside.toc { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--border); padding: 32px; }
+      main.content { padding: 40px 32px 80px 32px; }
+      .arch { grid-template-columns: 1fr; }
+      .arch-step::after { display: none; }
+      :root { --pad-page: 32px; }
+    }
+    @media (max-width: 600px) {
+      h1 { font-size: 28px; }
+      .section-title { font-size: 22px; }
+      .data-shape { grid-template-columns: 1fr; }
+      .decision-grid { grid-template-columns: 1fr; }
+      .decision-grid > div:nth-child(3n+1) { background: var(--surface-2); }
+    }
+
+    /* ---------- print ---------- */
+    @media print {
+      aside.toc { display: none; }
+      .layout { grid-template-columns: 1fr; }
+      main.content { padding: 24px; }
+      pre, .component, .table-wrap, .callout, .arch-step { box-shadow: none; }
+      body { background: white; }
+    }
+  </style>
+</head>
+<body>
+<div class="layout">
+
+  <aside class="toc">
+    <div class="brand"><span class="brand-dot"></span>DRMed · Spec</div>
+    <p class="toc-label">Contents</p>
+    <ol id="toc-list">
+      <li><a href="#summary">Executive summary</a></li>
+      <li><a href="#goals">Goals & non-goals</a></li>
+      <li><a href="#data">Source data shape</a></li>
+      <li><a href="#decisions">Decisions made</a></li>
+      <li><a href="#architecture">Architecture</a></li>
+      <li><a href="#c1">C1 · Schema migration</a></li>
+      <li><a href="#c2">C2 · Operational wipe</a></li>
+      <li><a href="#c3">C3 · Legacy importer</a></li>
+      <li><a href="#c4">C4 · UI surface area</a></li>
+      <li><a href="#sequence">Build sequence</a></li>
+      <li><a href="#risks">Risks & mitigations</a></li>
+      <li><a href="#oos">Out of scope</a></li>
+    </ol>
+    <div class="toc-divider"></div>
+    <dl class="toc-meta">
+      <dt>Date</dt><dd>2026-05-25</dd>
+      <dt>Status</dt><dd>Draft · awaiting partner review</dd>
+      <dt>Driver</dt><dd>Staff-side beta begins 2026-05-26</dd>
+      <dt>Migration</dt><dd>0051_legacy_intake_and_attribution</dd>
+      <dt>Spec source</dt><dd>docs/superpowers/specs/<br>2026-05-25-legacy-customer-import-design.md</dd>
+    </dl>
+  </aside>
+
+  <main class="content">
+
+    <header class="doc-header">
+      <div class="pill-row">
+        <span class="pill draft"><span class="dot"></span>Draft</span>
+        <span class="pill accent">Design Specification</span>
+        <span class="pill">Pre-beta · 2026-05-25</span>
+      </div>
+      <h1>Legacy Customer Import &amp; Attribution Capture</h1>
+      <p class="lede">
+        Wipe operational test data, import ~4,480 historical customers from the live Google Sheet, and extend the schema to stop discarding senior/PWD, referring-physician, referral-source, and result-release-preference data captured at intake. Scoped for staff-side beta on 2026-05-26.
+      </p>
+    </header>
+
+    <section id="summary">
+      <h2>00 · One-page summary</h2>
+      <p class="section-title">Why this exists, in one read</p>
+      <p>
+        Beta begins tomorrow with reception, medtechs, pathologists, and admins walking through real workflows. The current <code>patients</code> table is full of dev noise; the legitimate customer history lives in a Google Sheet of ~4,480 rows that the team has maintained operationally. We need (a) the test data gone, (b) the sheet imported lossless, (c) the schema slightly extended so attribution data that reception <em>has been collecting all along</em> stops being discarded the moment we put it in a database.
+      </p>
+      <div class="callout decision">
+        <div class="label">Recommended path</div>
+        <p>
+          One migration (<code>0051</code>) + two reversible scripts (<code>wipe-operational</code>, <code>import-legacy-customers</code>) + a thin UI surface (4 patient-form fields, 4 card badges, 1 receipt line, 1 visit-creation checkbox). Each script is dry-run by default; the importer produces a pre-flight report you review before committing.
+        </p>
+      </div>
+    </section>
+
+    <div class="divider"></div>
+
+    <section id="goals">
+      <h2>01 · Scope</h2>
+      <p class="section-title">Goals &amp; non-goals</p>
+
+      <h3>Goals</h3>
+      <ol>
+        <li><strong>Wipe</strong> all operational test data — patients, visits, payments, GL bridge, audit_log — without touching reference/config tables.</li>
+        <li><strong>Migrate</strong> the live customer list from <code>CUSTOMER LIST - CUSTOMER LIST2.csv</code> (4,480 rows) into <code>patients</code>, lossless.</li>
+        <li><strong>Extend</strong> the schema so attribution and entitlement data (senior/PWD, referring physician, referral source, result-release preference) stops being thrown away.</li>
+        <li><strong>Ship</strong> enough in-app affordance that reception can use the imported records on day one of beta.</li>
+        <li><strong>Defer</strong> anything requiring external integrations (email/SMS delivery) or larger accounting work to follow-up — capture now, fulfil later.</li>
+      </ol>
+
+      <h3>Non-goals</h3>
+      <ul>
+        <li>Patient-portal login for legacy patients (beta is staff-side only). Legacy rows have no visits and no PINs.</li>
+        <li>The Google OAuth migration discussed earlier — separate project, separate session.</li>
+        <li>Backfilling stub visits to give legacy patients a portal login path.</li>
+        <li>Promoting referring-physician strings into the <code>physicians</code> table (follow-up).</li>
+        <li>BIR-compliant senior/PWD discount ledger view (follow-up; data captured now so the ledger is buildable later).</li>
+      </ul>
+    </section>
+
+    <div class="divider"></div>
+
+    <section id="data">
+      <h2>02 · Inputs</h2>
+      <p class="section-title">What the source data actually looks like</p>
+
+      <div class="data-shape">
+        <div class="stat"><div class="stat-val">4,480</div><div class="stat-label">Rows in CUSTOMER LIST2</div></div>
+        <div class="stat"><div class="stat-val">22</div><div class="stat-label">Columns in source sheet</div></div>
+        <div class="stat"><div class="stat-val">~50%</div><div class="stat-label">Rows missing Date of Birth</div></div>
+        <div class="stat"><div class="stat-val">~5%</div><div class="stat-label">Rows with an email address</div></div>
+      </div>
+
+      <h3>Observations that shape the importer</h3>
+      <ul>
+        <li>The dedicated <strong>Last Name / First Name / M.I.</strong> columns are empty for almost every row. The real name lives in <code>Full Name</code> as <em>"Last, First"</em> (sometimes <em>"Last, First Middle"</em>).</li>
+        <li>The <strong>Age</strong> column is broken — nearly every row reads <code>126</code>. Ignored entirely; not used for backfill.</li>
+        <li><strong>Contact Number</strong> formats vary: <code>09xxxxxxxxx</code>, <code>639xxxxxxxxx</code>, with/without spaces, dashes, and parentheses.</li>
+        <li><strong>Address</strong> is split across three columns (street, barangay, city); each often empty.</li>
+        <li>The <strong>Doctor</strong> column holds the referring physician as free text (e.g. <code>DR. KATHERINE GAYO</code>).</li>
+        <li><strong>How did you know about DR Med?</strong> is inconsistent free text — needs mapping to a controlled vocabulary.</li>
+        <li>Trailing junk rows (<code>, , , , ...</code>) at the end of the sheet — filtered on import.</li>
+      </ul>
+    </section>
+
+    <div class="divider"></div>
+
+    <section id="decisions">
+      <h2>03 · Decisions log</h2>
+      <p class="section-title">Choices locked in during brainstorm</p>
+
+      <div class="decision-grid">
+        <div class="h">#</div>
+        <div class="h">Decision</div>
+        <div class="h">Choice</div>
+
+        <div class="num">01</div>
+        <div>Pre-import cleanup scope</div>
+        <div>Wipe <strong>all operational data</strong>. Nothing is real yet. Preserve reference/config tables and migrations.</div>
+
+        <div class="num">02</div>
+        <div>DOB strategy</div>
+        <div>Make <code>birthdate</code> nullable; add <code>birthdate_confirmed</code> boolean. Lab pipeline already handles null DOB by falling back to unbanded ranges.</div>
+
+        <div class="num">03</div>
+        <div>Beta scope</div>
+        <div><strong>Staff-side only</strong> — reception / medtech / admin walk through real workflows with the legacy list as search target.</div>
+
+        <div class="num">04</div>
+        <div>New columns on <code>patients</code></div>
+        <div>All five: <code>senior_pwd_type</code>, <code>senior_pwd_id</code>, <code>referring_physician</code>, <code>referral_source</code>, <code>result_release_pref</code>, plus <code>legacy_intake</code> JSONB for lossless raw capture.</div>
+      </div>
+    </section>
+
+    <div class="divider"></div>
+
+    <section id="architecture">
+      <h2>04 · Architecture</h2>
+      <p class="section-title">Four streams that compose into tomorrow's artefact</p>
+
+      <div class="arch">
+        <div class="arch-step">
+          <div class="arch-num">C1</div>
+          <div class="arch-name">Schema migration</div>
+          <div class="arch-desc">Add 5 columns + nullable DOB + confirmed flag + discount + provenance table. Patch payment-status trigger.</div>
+        </div>
+        <div class="arch-step">
+          <div class="arch-num">C2</div>
+          <div class="arch-name">Operational wipe</div>
+          <div class="arch-desc">Dry-run by default. Single transaction. Clears operational tables only — reference data preserved.</div>
+        </div>
+        <div class="arch-step">
+          <div class="arch-num">C3</div>
+          <div class="arch-name">Legacy importer</div>
+          <div class="arch-desc">Dry-run produces pre-flight CSV. Commit phase inserts with provenance, enabling per-batch rollback.</div>
+        </div>
+        <div class="arch-bottom">
+          <div class="arch-num">C4 — UI surface area</div>
+          <div class="arch-desc" style="margin-top:6px;">
+            Intake form fields, patient-card badges, visit-creation discount checkbox, receipt discount line. Enables reception to USE the new fields during beta.
+          </div>
+        </div>
+      </div>
+
+      <p>Each stream is independently testable. The wipe and importer require <code>--commit --confirm</code> tokens; default mode is read-only.</p>
+    </section>
+
+    <div class="divider"></div>
+
+    <section id="c1">
+      <h2>05 · Component one</h2>
+      <p class="section-title">Schema migration <code style="font-size:.82em;">0051_legacy_intake_and_attribution.sql</code></p>
+
+      <div class="component">
+        <div class="component-tag">C1.a · patients</div>
+        <div class="component-title">Add attribution columns &amp; loosen DOB</div>
+        <div class="component-path">supabase/migrations/0051_legacy_intake_and_attribution.sql</div>
+
+<pre><span class="c">-- Make birthdate optional; legacy rows often lack it.</span>
+<span class="k">alter table</span> public.patients
+  <span class="k">alter column</span> birthdate <span class="k">drop not null</span>;
+
+<span class="k">alter table</span> public.patients
+  <span class="k">add column</span> birthdate_confirmed <span class="k">boolean not null default</span> <span class="k">false</span>,
+
+  <span class="c">-- Senior Citizens Act (RA 9994) + PWD Magna Carta (RA 10754):</span>
+  <span class="c">-- 20% mandatory discount + VAT exemption. Type + ID number must both</span>
+  <span class="c">-- appear on the receipt for the discount to be legally compliant.</span>
+  <span class="k">add column</span> senior_pwd_type <span class="k">text</span>
+    <span class="k">check</span> (senior_pwd_type <span class="k">in</span> (<span class="s">'senior'</span>, <span class="s">'pwd'</span>)),
+  <span class="k">add column</span> senior_pwd_id <span class="k">text</span>,
+  <span class="k">add constraint</span> senior_pwd_id_required_with_type
+    <span class="k">check</span> ((senior_pwd_type <span class="k">is null</span>) = (senior_pwd_id <span class="k">is null</span>)),
+
+  <span class="c">-- Free-text. Promote frequent strings to physicians table later.</span>
+  <span class="k">add column</span> referring_physician <span class="k">text</span>,
+
+  <span class="c">-- Controlled vocabulary. Unmapped legacy values → 'other'.</span>
+  <span class="k">add column</span> referral_source <span class="k">text</span>
+    <span class="k">check</span> (referral_source <span class="k">in</span> (
+      <span class="s">'doctor_referral'</span>, <span class="s">'walk_in'</span>, <span class="s">'facebook'</span>, <span class="s">'instagram'</span>,
+      <span class="s">'tiktok'</span>, <span class="s">'google_search'</span>, <span class="s">'word_of_mouth'</span>,
+      <span class="s">'returning_patient'</span>, <span class="s">'gift_code'</span>, <span class="s">'other'</span>
+    )),
+
+  <span class="c">-- Captured now; portal/email/sms delivery hooks are follow-ups.</span>
+  <span class="k">add column</span> result_release_pref <span class="k">text not null default</span> <span class="s">'portal_only'</span>
+    <span class="k">check</span> (result_release_pref <span class="k">in</span> (
+      <span class="s">'portal_only'</span>, <span class="s">'portal_and_email'</span>, <span class="s">'print_pickup'</span>, <span class="s">'sms_link'</span>
+    )),
+
+  <span class="c">-- Lossless capture of original sheet row + parse warnings.</span>
+  <span class="k">add column</span> legacy_intake <span class="k">jsonb</span>,
+
+  <span class="c">-- Provenance for rollback-by-batch.</span>
+  <span class="k">add column</span> legacy_import_run_id <span class="k">uuid</span>;</pre>
+      </div>
+
+      <div class="component">
+        <div class="component-tag">C1.b · visits</div>
+        <div class="component-title">Discount column + payment-status trigger update</div>
+        <div class="component-path">extends 0001_init.sql definitions</div>
+
+<pre><span class="k">alter table</span> public.visits
+  <span class="k">add column</span> discount_php   <span class="k">numeric</span>(<span class="n">10</span>,<span class="n">2</span>) <span class="k">not null default</span> <span class="n">0</span>
+    <span class="k">check</span> (discount_php &gt;= <span class="n">0</span>),
+  <span class="k">add column</span> discount_reason <span class="k">text</span>,
+  <span class="k">add constraint</span> visits_discount_le_total
+    <span class="k">check</span> (discount_php &lt;= total_php);</pre>
+
+        <p>
+          <code>total_php</code> remains the <strong>gross</strong> total. <code>discount_php</code> is separate so the receipt can show both lines and accounting can later route the discount to a contra-revenue account. Net amount owed = <code>total_php − discount_php</code>.
+        </p>
+
+        <h4>Payment-status trigger</h4>
+        <p>
+          <code>public.recalc_visit_payment()</code> (defined in <code>0001_init.sql:348</code>) compares <code>paid_php</code> against <code>total_php</code>. Migration 0051 replaces the function body to compare against <code>total_php − discount_php</code>, preserving the <code>waived</code> short-circuit and all other behaviour. Trigger binding unchanged.
+        </p>
+
+<pre><span class="k">create or replace function</span> public.recalc_visit_payment()
+<span class="k">returns trigger language</span> plpgsql <span class="k">as</span> $$
+<span class="k">declare</span>
+  v_net  <span class="k">numeric</span>(<span class="n">10</span>,<span class="n">2</span>);
+  v_paid <span class="k">numeric</span>(<span class="n">10</span>,<span class="n">2</span>);
+<span class="k">begin</span>
+  <span class="k">select</span> total_php - discount_php <span class="k">into</span> v_net
+  <span class="k">from</span> public.visits <span class="k">where</span> id = new.visit_id <span class="k">for update</span>;
+
+  <span class="k">select</span> coalesce(sum(amount_php), <span class="n">0</span>) <span class="k">into</span> v_paid
+  <span class="k">from</span> public.payments <span class="k">where</span> visit_id = new.visit_id;
+  <span class="c">-- ...remainder identical, but v_net replaces v_total</span>
+<span class="k">end</span>;
+$$;</pre>
+      </div>
+
+      <div class="component">
+        <div class="component-tag">C1.c · provenance</div>
+        <div class="component-title">legacy_import_runs + fuzzy name index</div>
+
+<pre><span class="k">create table</span> public.legacy_import_runs (
+  id            <span class="k">uuid primary key default</span> gen_random_uuid(),
+  source        <span class="k">text not null</span>,
+  started_at    <span class="k">timestamptz not null default</span> now(),
+  ended_at      <span class="k">timestamptz</span>,
+  rows_in       <span class="k">int</span>,
+  rows_inserted <span class="k">int</span>,
+  rows_skipped  <span class="k">int</span>,
+  rows_flagged  <span class="k">int</span>,
+  dry_run       <span class="k">boolean not null</span>,
+  run_by        <span class="k">uuid references</span> auth.users(id),
+  notes         <span class="k">text</span>
+);
+
+<span class="c">-- Rollback ergonomic:</span>
+<span class="c">--   DELETE FROM patients WHERE legacy_import_run_id = $1;</span>
+<span class="k">create index</span> idx_patients_legacy_import_run
+  <span class="k">on</span> public.patients(legacy_import_run_id)
+  <span class="k">where</span> legacy_import_run_id <span class="k">is not null</span>;
+
+<span class="c">-- Reception name-search needs to be fuzzy: half the imported rows</span>
+<span class="c">-- have no DOB and no email, so name is the main lookup tool.</span>
+<span class="k">create extension if not exists</span> pg_trgm;
+<span class="k">create index</span> idx_patients_name_trgm
+  <span class="k">on</span> public.patients <span class="k">using gin</span> (
+    (lower(coalesce(first_name,<span class="s">''</span>) || <span class="s">' '</span>
+       || coalesce(last_name,<span class="s">''</span>) || <span class="s">' '</span>
+       || coalesce(middle_name,<span class="s">''</span>))) gin_trgm_ops
+  );</pre>
+      </div>
+
+      <div class="callout goal">
+        <div class="label">Lab pipeline — no code change required</div>
+        <p>
+          Verified during spec self-review: <code>src/lib/results/types.ts:190-243</code> already returns <code>null</code> for <code>ageMonths</code> when <code>birthdateIso</code> is null, and the range-match expression falls back to unbanded ranges. Null DOB is handled gracefully. Optional cosmetic follow-up: result PDF prints "Age: unconfirmed" instead of blank.
+        </p>
+      </div>
+    </section>
+
+    <div class="divider"></div>
+
+    <section id="c2">
+      <h2>06 · Component two</h2>
+      <p class="section-title">Operational wipe <code style="font-size:.82em;">scripts/wipe-operational.ts</code></p>
+
+      <p>Single transactional teardown. Default dry-run; requires <code>--commit --confirm="I-mean-it"</code> to execute.</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Wiped (operational)</th><th>Preserved (reference / config)</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>
+                <code>audit_log</code><br>
+                <code>result_amendments</code> → <code>result_values</code> → <code>results</code><br>
+                <code>structured_results_drafts</code>, <code>imaging_attachments</code><br>
+                <code>test_requests</code>, <code>visit_pins</code><br>
+                <code>payments</code>, <code>appointments</code><br>
+                <code>gift_code_redemptions</code>, <code>eod_cash_reconciliation</code><br>
+                <code>journal_lines</code> → <code>journal_entries</code><br>
+                <code>hmo_ar_subledger</code><br>
+                <code>visits</code>, <code>patients</code><br>
+                <code>inquiries</code>, <code>contact_messages</code>
+              </td>
+              <td>
+                <code>services</code>, service price history<br>
+                <code>physicians</code>, <code>physician_schedules</code><br>
+                <code>result_templates</code>, <code>result_template_params</code>, <code>result_template_param_ranges</code><br>
+                <code>gift_code</code> SKUs (definitions only)<br>
+                <code>gl_accounts</code>, <code>staff_profiles</code><br>
+                <code>vendors</code>, <code>ap_*</code><br>
+                <code>payroll_*</code>, <code>clinic_closures</code><br>
+                RLS policies, migrations, context functions
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Behaviour</h3>
+      <ul>
+        <li>Dry-run prints the row count it <em>would</em> delete from each table.</li>
+        <li><code>--commit</code> requires the confirm token; aborts on bad input.</li>
+        <li>Uses the service-role client (<code>src/lib/supabase/admin.ts</code>).</li>
+        <li>Writes one final <code>audit_log</code> row <em>after</em> the wipe — <code>action='ops.wipe'</code> — so we have a trail of the wipe itself.</li>
+        <li>Exits non-zero on any failure inside the transaction; partial-wipe impossible.</li>
+      </ul>
+    </section>
+
+    <div class="divider"></div>
+
+    <section id="c3">
+      <h2>07 · Component three</h2>
+      <p class="section-title">Legacy importer <code style="font-size:.82em;">scripts/import-legacy-customers.ts</code></p>
+
+      <h3>Pre-flight report (always produced)</h3>
+      <p>Outputs <code>tmp/legacy-import-preflight-&lt;timestamp&gt;.csv</code> plus a human summary to stdout:</p>
+      <ul>
+        <li>Total rows, parseable rows, junk rows skipped, with sample.</li>
+        <li>DOB present rate, phone format distribution, email present rate.</li>
+        <li><strong>Top 30 referring physicians</strong>, frequency-sorted — partner reviews.</li>
+        <li>Within-sheet duplicates by <code>(normalized_last, normalized_first, phone)</code>.</li>
+        <li>Potential matches against existing <code>patients</code>.</li>
+        <li>Per-row parse preview for the first 50 rows.</li>
+      </ul>
+
+      <h3>Row parser</h3>
+      <ol>
+        <li><strong>Skip</strong> rows where <code>Full Name</code> is empty/whitespace or matches <code>/^,\s*$/</code>.</li>
+        <li><strong>Name parse</strong> from <code>Full Name</code>: split on first <code>,</code> → <code>[last, rest]</code>; <code>rest.trim().split(/\s+/)</code> → first token = first_name, remainder joined = middle_name. Title-case each token.</li>
+        <li><strong>DOB parse</strong>: try <code>M/D/YYYY</code>, <code>MM/DD/YYYY</code>, <code>YYYY-MM-DD</code>. Reject Age column entirely.</li>
+        <li><strong>Phone normalize to E.164</strong>: strip non-digits → map <code>09xxxxxxxxx</code> / <code>639xxxxxxxxx</code> / <code>9xxxxxxxxx</code> → <code>+639xxxxxxxxx</code>. Unparseable → NULL + raw kept in <code>legacy_intake</code> + warning.</li>
+        <li><strong>Email</strong>: lowercase + trim; empty → NULL.</li>
+        <li><strong>Address</strong>: join three columns with <code>, </code>, collapse whitespace, trim trailing commas.</li>
+        <li><strong>Sex</strong>: <code>Female/F</code> → <code>female</code>; <code>Male/M</code> → <code>male</code>; else NULL.</li>
+        <li><strong>Senior/PWD</strong>: both type and ID required (CHECK constraint); only-type → warning + NULL both.</li>
+        <li><strong>Referring physician</strong>: free-text copy of <code>Doctor</code> column, trim only.</li>
+        <li><strong>Referral source mapping</strong> — controlled vocabulary; unmapped → <code>other</code> + warning preserving the raw string.</li>
+        <li><strong>Result-release preference</strong>: similar mapping; default <code>portal_only</code>.</li>
+      </ol>
+
+      <h3>Dedup cascade</h3>
+      <p>Within-sheet first (collapse exact dupes, append duplicate row indexes to <code>legacy_intake.duplicate_of</code>). Then against live <code>patients</code>:</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Order</th><th>Key</th><th>Used when</th></tr></thead>
+          <tbody>
+            <tr><td>1</td><td><code>(lower(last_name), lower(first_name), birthdate)</code></td><td>DOB present</td></tr>
+            <tr><td>2</td><td><code>(lower(last_name), lower(first_name), normalized_phone)</code></td><td>Phone present</td></tr>
+            <tr><td>3</td><td><code>(lower(last_name), lower(first_name), lower(email))</code></td><td>Email present</td></tr>
+            <tr><td>4</td><td>Insert; flag as <code>name_only_match_possible</code></td><td>Otherwise</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p><strong>Never auto-merge on weak keys.</strong> Existing migration-0025 merge tool handles dupes manually if needed.</p>
+
+      <h3>Commit phase (<code>--commit</code>)</h3>
+      <ul>
+        <li>Insert <code>legacy_import_runs</code> row with <code>dry_run=false</code>.</li>
+        <li>Bulk insert parsed <code>patients</code> in batches of 500 with <code>legacy_import_run_id</code> set.</li>
+        <li>One <code>audit_log</code> row per insert: <code>action='patient.legacy_import'</code>.</li>
+        <li>Print rollback command: <code>DELETE FROM patients WHERE legacy_import_run_id = '&lt;uuid&gt;';</code></li>
+      </ul>
+
+      <h3>Legacy intake payload</h3>
+<pre><span class="k">{</span>
+  source: <span class="s">'google_sheet_CUSTOMER_LIST2'</span>,
+  imported_at: <span class="s">'2026-05-25T…'</span>,
+  original_row_index: <span class="n">1247</span>,           <span class="c">// CSV line — traces back</span>
+  raw: <span class="k">{</span> <span class="c">/* unmodified row, every column verbatim */</span> <span class="k">}</span>,
+  import_warnings: [
+    <span class="s">'phone_unparseable'</span>,
+    <span class="s">'dob_missing'</span>,
+    <span class="s">'referral_source_unmapped:Walk in (sm na sm bicutan)'</span>
+  ]
+<span class="k">}</span></pre>
+    </section>
+
+    <div class="divider"></div>
+
+    <section id="c4">
+      <h2>08 · Component four</h2>
+      <p class="section-title">UI surface area for beta day one</p>
+
+      <div class="component">
+        <div class="component-tag">C4.a</div>
+        <div class="component-title">Intake form — reception &amp; public</div>
+        <div class="component-path">src/app/(staff)/staff/(dashboard)/patients/patient-form.tsx<br>src/app/(staff)/staff/(dashboard)/patients/actions.ts<br>src/app/(staff)/staff/(dashboard)/patients/[id]/edit-actions.ts<br>src/app/(marketing)/schedule/booking-form.tsx</div>
+        <p>Reception form (shared by <code>/new</code> and <code>/[id]/edit</code>) gains:</p>
+        <ul>
+          <li>Senior/PWD type (radio: None / Senior / PWD) + conditional ID input.</li>
+          <li>Referring physician — free text with autocomplete from <code>distinct(referring_physician) order by count desc limit 100</code>.</li>
+          <li>Referral source — dropdown of 10 controlled values.</li>
+          <li>Result-release preference — dropdown of 4 values (default <code>portal_only</code>).</li>
+          <li>DOB submission sets <code>birthdate_confirmed = true</code>.</li>
+        </ul>
+        <p>Public <code>/schedule</code> booking form gets the referral-source dropdown only.</p>
+      </div>
+
+      <div class="component">
+        <div class="component-tag">C4.b</div>
+        <div class="component-title">Patient card badges</div>
+        <div class="component-path">existing patient summary component</div>
+        <ul>
+          <li><strong>Senior / PWD</strong> badge when <code>senior_pwd_type</code> is set; tooltip shows ID + discount note.</li>
+          <li><strong>Referred by: DR. NAME</strong> when <code>referring_physician</code> is set.</li>
+          <li><strong>Prefers: print pickup / portal+email / sms</strong> when <code>result_release_pref ≠ 'portal_only'</code>.</li>
+          <li><strong>Confirm DOB</strong> when <code>birthdate_confirmed = false</code>. Click opens DOB-edit modal.</li>
+        </ul>
+      </div>
+
+      <div class="component">
+        <div class="component-tag">C4.c</div>
+        <div class="component-title">Visit creation — discount checkbox</div>
+        <div class="component-path">src/app/(staff)/staff/(dashboard)/visits/new/visit-form.tsx</div>
+        <p>If the patient is senior/PWD-eligible, render:</p>
+        <p style="margin-left:18px; color:var(--text-2); font-style:italic;">☑ Apply 20% Senior-PWD discount (pre-checked)</p>
+        <p>When checked, <code>discount_php = 0.20 * subtotal</code> and <code>discount_reason = "Senior-PWD (ID: &lt;id&gt;)"</code>.</p>
+      </div>
+
+      <div class="component">
+        <div class="component-tag">C4.d</div>
+        <div class="component-title">Receipt — discount line</div>
+        <div class="component-path">src/app/(staff)/staff/(dashboard)/visits/[id]/receipt/page.tsx</div>
+        <p>Browser-printed HTML, not a PDF. Add lines between subtotal and total:</p>
+<pre>Subtotal:                      ₱ 1,500.00
+Senior-PWD Discount (20%):   − ₱   300.00
+   (ID: 1234567890)
+─────────────────────────────────────────
+Total Due:                     ₱ 1,200.00</pre>
+        <p>The ID line is mandatory for legal compliance — BIR will ask.</p>
+      </div>
+    </section>
+
+    <div class="divider"></div>
+
+    <section id="sequence">
+      <h2>09 · Execution plan</h2>
+      <p class="section-title">Build sequence</p>
+
+      <ol class="timeline">
+        <li>
+          <div class="tl-title">Migration 0051 + types regen</div>
+          <div class="tl-detail">Schema changes, payment-status trigger update, pg_trgm extension. Run <code>npm run db:types</code>.</div>
+        </li>
+        <li>
+          <div class="tl-title">Operational wipe — dry-run, then commit</div>
+          <div class="tl-detail">Tag a <code>pg_dump</code> snapshot before commit: <code>pre-legacy-import-2026-05-25</code>.</div>
+        </li>
+        <li>
+          <div class="tl-title">Pre-flight import dry-run</div>
+          <div class="tl-detail">Partner reviews the pre-flight report. Make any mapping corrections.</div>
+        </li>
+        <li>
+          <div class="tl-title">Commit import</div>
+          <div class="tl-detail"><code>--commit</code> with a tagged <code>legacy_import_runs</code> row. Rollback is a single <code>DELETE</code>.</div>
+        </li>
+        <li>
+          <div class="tl-title">Intake form updates</div>
+          <div class="tl-detail">Reception form first; public form gets one field.</div>
+        </li>
+        <li>
+          <div class="tl-title">Patient-card badges</div>
+          <div class="tl-detail">Senior/PWD, referring physician, result pref, confirm-DOB.</div>
+        </li>
+        <li>
+          <div class="tl-title">Visit creation discount checkbox + receipt line</div>
+          <div class="tl-detail">Wire the existing visit form to set <code>discount_php</code> and <code>discount_reason</code>.</div>
+        </li>
+        <li>
+          <div class="tl-title">Smoke test</div>
+          <div class="tl-detail">Create a visit for a senior/PWD legacy patient, take payment, release a result. Verify the discount appears on the receipt and age-banded ranges fall back cleanly when DOB unconfirmed.</div>
+        </li>
+        <li>
+          <div class="tl-title">Typecheck, lint, commit</div>
+          <div class="tl-detail">Conventional Commits. Tag a release when staff-side beta is live.</div>
+        </li>
+      </ol>
+    </section>
+
+    <div class="divider"></div>
+
+    <section id="risks">
+      <h2>10 · Risk register</h2>
+      <p class="section-title">Risks &amp; mitigations</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th style="width:90px;">Severity</th><th>Risk</th><th>Mitigation</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="sev high">High</span></td>
+              <td>Wipe deletes something we should have kept</td>
+              <td>Pre-wipe <code>pg_dump</code> tagged <code>pre-legacy-import-2026-05-25</code>. Dry-run shows row counts before commit.</td>
+            </tr>
+            <tr>
+              <td><span class="sev high">High</span></td>
+              <td>Import inserts wrong-parsed rows en masse</td>
+              <td>Pre-flight report reviewed by partner before commit. <code>--dry-run</code> is default; <code>--commit</code> is opt-in with confirm token.</td>
+            </tr>
+            <tr>
+              <td><span class="sev med">Med</span></td>
+              <td>Rollback is hard</td>
+              <td><code>legacy_import_run_id</code> per-row + <code>legacy_import_runs</code> table → one-statement rollback.</td>
+            </tr>
+            <tr>
+              <td><span class="sev med">Med</span></td>
+              <td>Senior/PWD discount logic ships incomplete</td>
+              <td>Scoped: capture data + show on receipt now; GL contra-revenue account + BIR ledger view in follow-up. Books are clean because nothing is posted yet.</td>
+            </tr>
+            <tr>
+              <td><span class="sev low">Low</span></td>
+              <td>Reception finds typos / duplicates in legacy data</td>
+              <td>Existing migration-0025 merge tool handles dupes. Patient-edit page handles typos. Confirm-DOB badge surfaces missing data naturally.</td>
+            </tr>
+            <tr>
+              <td><span class="sev low">Low</span></td>
+              <td>Lab results pipeline breaks on null DOB</td>
+              <td>Already handled — verified at <code>src/lib/results/types.ts:190-243</code>. Range-match falls back to unbanded ranges when DOB is null.</td>
+            </tr>
+            <tr>
+              <td><span class="sev low">Low</span></td>
+              <td><code>pg_trgm</code> extension not available</td>
+              <td>Available by default on Supabase Postgres. Migration uses <code>create extension if not exists</code>.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <div class="divider"></div>
+
+    <section id="oos">
+      <h2>11 · Out of scope</h2>
+      <p class="section-title">Explicit deferrals — captured here so they aren't forgotten</p>
+
+      <div class="callout deferral">
+        <div class="label">Accounting follow-ups</div>
+        <p><strong>Senior/PWD discount GL bridge</strong> — contra-revenue account <code>4900-Discounts-SeniorPWD</code>. Books aren't being posted in beta; safe to follow up after.</p>
+        <p><strong>Senior/PWD BIR audit ledger view</strong> — admin report listing every discounted transaction with ID number for monthly BIR submission.</p>
+      </div>
+
+      <div class="callout deferral">
+        <div class="label">Data-quality tooling</div>
+        <p><strong>Promote referring-physician strings → <code>physicians</code> table</strong> — admin tool to convert frequent free-text values into proper FK relationships. Free-text is fine for first weeks.</p>
+      </div>
+
+      <div class="callout deferral">
+        <div class="label">Delivery integrations</div>
+        <p><strong>Email &amp; SMS result delivery</strong> — <code>result_release_pref</code> is captured now; delivery hooks fire later when SMTP / Semaphore (PH SMS) integrations ship.</p>
+      </div>
+
+      <div class="callout deferral">
+        <div class="label">Analytics</div>
+        <p><strong>Top-referrers admin dashboard chart</strong> — partner-facing analytics. Data captured now (<code>referring_physician</code>, <code>referral_source</code>) makes this a small follow-up.</p>
+      </div>
+
+      <div class="callout deferral">
+        <div class="label">Patient portal</div>
+        <p><strong>Patient-portal access for legacy patients</strong> — no visits and no PINs. Covered by the separate Google-OAuth project paused earlier in this session.</p>
+      </div>
+    </section>
+
+    <div class="divider"></div>
+
+    <footer style="margin-top:48px; padding-top:32px; border-top:1px solid var(--border); font-size:12.5px; color:var(--text-3);">
+      <p style="margin:0;">
+        Source spec: <code>docs/superpowers/specs/2026-05-25-legacy-customer-import-design.md</code><br>
+        Rendered 2026-05-25 · DRMed.ph · Awaiting partner review before plan generation.
+      </p>
+    </footer>
+
+  </main>
+</div>
+
+<script>
+  (function () {
+    const links = Array.from(document.querySelectorAll('#toc-list a'));
+    const sections = links
+      .map(a => document.querySelector(a.getAttribute('href')))
+      .filter(Boolean);
+
+    function onScroll () {
+      const scrollY = window.scrollY + 120;
+      let activeIdx = 0;
+      for (let i = 0; i < sections.length; i++) {
+        if (sections[i].offsetTop <= scrollY) activeIdx = i;
+      }
+      links.forEach((a, i) => a.classList.toggle('active', i === activeIdx));
+    }
+    window.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+  })();
+</script>
+</body>
+</html>
