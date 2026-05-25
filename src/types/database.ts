@@ -2251,6 +2251,48 @@ export type Database = {
           },
         ]
       }
+      legacy_import_runs: {
+        Row: {
+          dry_run: boolean
+          ended_at: string | null
+          id: string
+          notes: string | null
+          rows_flagged: number | null
+          rows_in: number | null
+          rows_inserted: number | null
+          rows_skipped: number | null
+          run_by: string | null
+          source: string
+          started_at: string
+        }
+        Insert: {
+          dry_run: boolean
+          ended_at?: string | null
+          id?: string
+          notes?: string | null
+          rows_flagged?: number | null
+          rows_in?: number | null
+          rows_inserted?: number | null
+          rows_skipped?: number | null
+          run_by?: string | null
+          source: string
+          started_at?: string
+        }
+        Update: {
+          dry_run?: boolean
+          ended_at?: string | null
+          id?: string
+          notes?: string | null
+          rows_flagged?: number | null
+          rows_in?: number | null
+          rows_inserted?: number | null
+          rows_skipped?: number | null
+          run_by?: string | null
+          source?: string
+          started_at?: string
+        }
+        Relationships: []
+      }
       newsletter_campaigns: {
         Row: {
           body_html: string
@@ -2338,6 +2380,7 @@ export type Database = {
         Row: {
           address: string | null
           birthdate: string | null
+          birthdate_confirmed: boolean
           consent_signed_at: string | null
           created_at: string
           created_by: string | null
@@ -2348,6 +2391,8 @@ export type Database = {
           is_historical: boolean
           is_repeat_patient: boolean
           last_name: string
+          legacy_import_run_id: string | null
+          legacy_intake: Json | null
           merged_at: string | null
           merged_into_id: string | null
           middle_name: string | null
@@ -2364,6 +2409,7 @@ export type Database = {
         Insert: {
           address?: string | null
           birthdate?: string | null
+          birthdate_confirmed?: boolean
           consent_signed_at?: string | null
           created_at?: string
           created_by?: string | null
@@ -2374,6 +2420,8 @@ export type Database = {
           is_historical?: boolean
           is_repeat_patient?: boolean
           last_name: string
+          legacy_import_run_id?: string | null
+          legacy_intake?: Json | null
           merged_at?: string | null
           merged_into_id?: string | null
           middle_name?: string | null
@@ -2390,6 +2438,7 @@ export type Database = {
         Update: {
           address?: string | null
           birthdate?: string | null
+          birthdate_confirmed?: boolean
           consent_signed_at?: string | null
           created_at?: string
           created_by?: string | null
@@ -2400,6 +2449,8 @@ export type Database = {
           is_historical?: boolean
           is_repeat_patient?: boolean
           last_name?: string
+          legacy_import_run_id?: string | null
+          legacy_intake?: Json | null
           merged_at?: string | null
           merged_into_id?: string | null
           middle_name?: string | null
@@ -2415,10 +2466,24 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "patients_legacy_import_run_fk"
+            columns: ["legacy_import_run_id"]
+            isOneToOne: false
+            referencedRelation: "legacy_import_runs"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "patients_merged_into_id_fkey"
             columns: ["merged_into_id"]
             isOneToOne: false
             referencedRelation: "patients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "patients_referral_source_fk"
+            columns: ["referral_source"]
+            isOneToOne: false
+            referencedRelation: "referral_sources"
             referencedColumns: ["id"]
           },
         ]
@@ -3458,6 +3523,54 @@ export type Database = {
           },
         ]
       }
+      referral_sources: {
+        Row: {
+          created_at: string
+          id: string
+          is_active: boolean
+          label: string
+          sort_order: number
+        }
+        Insert: {
+          created_at?: string
+          id: string
+          is_active?: boolean
+          label: string
+          sort_order?: number
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          label?: string
+          sort_order?: number
+        }
+        Relationships: []
+      }
+      report_groups: {
+        Row: {
+          code: string
+          created_at: string
+          id: string
+          is_active: boolean
+          name: string
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          name: string
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          name?: string
+        }
+        Relationships: []
+      }
       result_amendments: {
         Row: {
           amended_at: string
@@ -3720,7 +3833,7 @@ export type Database = {
           {
             foreignKeyName: "result_templates_report_group_id_fkey"
             columns: ["report_group_id"]
-            isOneToOne: true
+            isOneToOne: false
             referencedRelation: "report_groups"
             referencedColumns: ["id"]
           },
@@ -3737,6 +3850,46 @@ export type Database = {
             isOneToOne: true
             referencedRelation: "v_daily_revenue_by_service"
             referencedColumns: ["service_id"]
+          },
+        ]
+      }
+      result_test_requests: {
+        Row: {
+          created_at: string
+          result_id: string
+          test_request_id: string
+        }
+        Insert: {
+          created_at?: string
+          result_id: string
+          test_request_id: string
+        }
+        Update: {
+          created_at?: string
+          result_id?: string
+          test_request_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "result_test_requests_result_id_fkey"
+            columns: ["result_id"]
+            isOneToOne: false
+            referencedRelation: "results"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "result_test_requests_test_request_id_fkey"
+            columns: ["test_request_id"]
+            isOneToOne: false
+            referencedRelation: "test_requests"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "result_test_requests_test_request_id_fkey"
+            columns: ["test_request_id"]
+            isOneToOne: false
+            referencedRelation: "v_hmo_unbilled"
+            referencedColumns: ["test_request_id"]
           },
         ]
       }
@@ -3890,63 +4043,6 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
-      }
-      result_test_requests: {
-        Row: {
-          created_at: string
-          result_id: string
-          test_request_id: string
-        }
-        Insert: {
-          created_at?: string
-          result_id: string
-          test_request_id: string
-        }
-        Update: {
-          created_at?: string
-          result_id?: string
-          test_request_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "result_test_requests_result_id_fkey"
-            columns: ["result_id"]
-            isOneToOne: false
-            referencedRelation: "results"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "result_test_requests_test_request_id_fkey"
-            columns: ["test_request_id"]
-            isOneToOne: true
-            referencedRelation: "test_requests"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      report_groups: {
-        Row: {
-          code: string
-          created_at: string
-          id: string
-          is_active: boolean
-          name: string
-        }
-        Insert: {
-          code: string
-          created_at?: string
-          id?: string
-          is_active?: boolean
-          name: string
-        }
-        Update: {
-          code?: string
-          created_at?: string
-          id?: string
-          is_active?: boolean
-          name?: string
-        }
-        Relationships: []
       }
       service_price_history: {
         Row: {
