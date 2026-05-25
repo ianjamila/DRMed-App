@@ -41,6 +41,13 @@ const DOCKER_CONTAINER = "supabase_db_DRMed";
  *   - gift_code_redemptions      → not a table; redemptions are tracked inline in `gift_codes`
  *   - hmo_ar_subledger           → migration file name, not a table (actual tables below)
  *   - eod_cash_reconciliation    → migration file name; actual tables are eod_close_records etc.
+ *
+ * NOT wiped (config / reference tables):
+ *   - report_groups              → admin-managed config (id, code, name, is_active); referenced as
+ *                                  FK target by services.report_group_id and
+ *                                  result_templates.report_group_id. Wiping would break consolidated
+ *                                  report generation for newly-imported patients.
+ *   - cash_shifts                → shift definitions (AM/PM), not per-day transactional data.
  */
 const WIPE_TABLES: string[] = [
   // Audit log first — we will re-insert exactly one ops.wipe row at the end.
@@ -55,6 +62,8 @@ const WIPE_TABLES: string[] = [
   // Core clinical workflow
   "test_requests",
   "visit_pins",
+  // Gift codes: redeemed_visit_id has ON DELETE RESTRICT → must precede both payments and visits.
+  "gift_codes",
   "payments",
   "appointments",
   // HMO AR subledger (tables from migration 0034_hmo_ar_subledger.sql)
@@ -65,8 +74,10 @@ const WIPE_TABLES: string[] = [
   // GL bridge (journal_entries → journal_lines parent → child)
   "journal_lines",
   "journal_entries",
-  // Report grouping (consolidated reports — 0051)
-  "report_groups",
+  // EOD operational transaction data (per-day petty cash adjustments and reconciliation rows).
+  // These may drive JEs, so positioned after journal_entries.
+  "eod_cash_adjustments",
+  "eod_close_records",
   // Top-level operational roots
   "visits",
   "patients",
