@@ -75,3 +75,4 @@ next-env.d.ts
 scripts/seed/signatures/*.png
 scripts/seed/signatures/*.jpg
 scripts/seed/signatures/*.jpeg
+.worktrees/
