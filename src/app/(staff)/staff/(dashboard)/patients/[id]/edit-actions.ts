@@ -48,6 +48,11 @@ export async function updatePatientAction(
 
   const { consent_given_today, ...rest } = parsed.data;
 
+  // Whenever reception submits a non-empty DOB, treat it as confirmed.
+  // Never flip to false here — the legacy importer sets false for imported rows.
+  const birthdateRaw = (formData.get("birthdate") ?? "").toString().trim();
+  const birthdate_confirmed = birthdateRaw !== "" ? true : undefined;
+
   // Use the admin client so RLS doesn't block reception editing patients
   // they didn't create. Authorisation lives at requireActiveStaff above.
   const admin = createAdminClient();
@@ -69,7 +74,11 @@ export async function updatePatientAction(
 
   const { error } = await admin
     .from("patients")
-    .update({ ...rest, consent_signed_at })
+    .update({
+      ...rest,
+      consent_signed_at,
+      ...(birthdate_confirmed !== undefined ? { birthdate_confirmed } : {}),
+    })
     .eq("id", patientId);
 
   if (error) return { ok: false, error: error.message };

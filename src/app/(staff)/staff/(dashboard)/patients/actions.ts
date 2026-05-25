@@ -50,12 +50,17 @@ export async function createPatientAction(
   const consent_signed_at =
     consent_given_today === "yes" ? new Date().toISOString() : null;
 
+  // Any DOB supplied by reception at intake is implicitly confirmed.
+  const birthdateRaw = (formData.get("birthdate") ?? "").toString().trim();
+  const birthdate_confirmed = birthdateRaw !== "";
+
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("patients")
     .insert({
       ...rest,
       consent_signed_at,
+      birthdate_confirmed,
       created_by: session.user_id,
       pre_registered: false,
     })
