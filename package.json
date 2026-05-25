@@ -26,7 +26,8 @@
     "smoke:legacy-parsers": "tsx scripts/smoke-legacy-parsers.ts",
     "smoke:results": "tsx --env-file=.env.local scripts/smoke-render-results.ts",
     "smoke:chemistry": "tsx --env-file=.env.local scripts/smoke-chemistry-consolidated.ts",
-    "wipe:operational": "tsx scripts/wipe-operational.ts"
+    "wipe:operational": "tsx scripts/wipe-operational.ts",
+    "import:legacy": "tsx scripts/import-legacy-customers.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
