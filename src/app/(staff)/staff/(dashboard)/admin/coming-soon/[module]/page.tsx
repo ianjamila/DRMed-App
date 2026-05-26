@@ -24,18 +24,6 @@ const MODULES: Record<string, PlannedModule> = {
       "Receiving + issue movements with audit trail",
     ],
   },
-  "financial-statements": {
-    label: "Financial statements — balance sheet & cash flow",
-    description:
-      "P&L (income statement) shipped today. Balance sheet snapshot and cash flow waterfall are still on the roadmap.",
-    audience: "Admin",
-    highlights: [
-      "Balance sheet snapshot as of a point in time",
-      "Cash flow waterfall (operating / investing / financing)",
-      "Period-over-period comparison",
-      "Drill from line item back to source journal entry",
-    ],
-  },
   "variance-analysis": {
     label: "Budget vs actual / variance analysis",
     description:

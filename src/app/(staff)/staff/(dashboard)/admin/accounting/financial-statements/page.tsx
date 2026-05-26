@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
+import { StatementTabs } from "./_components/statement-tabs";
 
 export const metadata = { title: "Financial statements — staff" };
 export const dynamic = "force-dynamic";
@@ -153,15 +154,16 @@ export default async function FinancialStatementsPage({ searchParams }: SearchPr
           ← Dashboard
         </Link>
         <h1 className="mt-3 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Income statement
+          Financial statements
         </h1>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
-          Computed from posted journal entries with{" "}
+          Income statement computed from posted journal entries with{" "}
           <code>posting_date</code> in <strong>{start}</strong> →{" "}
-          <strong>{end}</strong>. Balance sheet and cash flow are still
-          on the roadmap.
+          <strong>{end}</strong>.
         </p>
       </header>
+
+      <StatementTabs active="income" />
 
       <form
         action=""
