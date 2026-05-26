@@ -438,11 +438,6 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
           teaser="Reagent stock, expiry alerts, reorder thresholds"
           module="inventory"
         />
-        <PlannedCard
-          label="Budget vs actual"
-          teaser="Set budgets and track variance by department"
-          module="variance-analysis"
-        />
         </div>
       </SectionHeading>
     </div>

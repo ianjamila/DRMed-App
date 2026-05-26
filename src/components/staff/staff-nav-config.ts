@@ -191,6 +191,11 @@ export const STAFF_NAV: StaffNavSection[] = [
             roles: ["admin"],
           },
           {
+            href: "/staff/admin/accounting/variance",
+            label: "Budget vs actual",
+            roles: ["admin"],
+          },
+          {
             href: "/staff/admin/accounting/financial-statements",
             label: "Income statement",
             roles: ["admin"],

@@ -24,18 +24,6 @@ const MODULES: Record<string, PlannedModule> = {
       "Receiving + issue movements with audit trail",
     ],
   },
-  "variance-analysis": {
-    label: "Budget vs actual / variance analysis",
-    description:
-      "Set department budgets, track actuals against plan, and decompose variances into drivers with narrative commentary.",
-    audience: "Admin",
-    highlights: [
-      "Per-account or per-cost-centre budgets",
-      "Monthly actual vs budget with variance %",
-      "Waterfall view of variance drivers",
-      "Forecast reforecasting based on YTD trend",
-    ],
-  },
   "tat-analytics": {
     label: "Turnaround analytics",
     description:
