@@ -458,11 +458,6 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
           teaser="Interactive close checklist with audit trail"
           module="close-tracker"
         />
-        <PlannedCard
-          label="Send-out vendor performance"
-          teaser="TAT, cost, SLA, rejection rate per external lab"
-          module="send-out-performance"
-        />
         </div>
       </SectionHeading>
     </div>

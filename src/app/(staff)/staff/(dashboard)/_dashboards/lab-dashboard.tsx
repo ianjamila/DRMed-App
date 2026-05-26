@@ -373,11 +373,6 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
           module="inventory"
         />
         <PlannedCard
-          label="Send-out vendor performance"
-          teaser="TAT, cost, SLA compliance, and rejection rate per external lab"
-          module="send-out-performance"
-        />
-        <PlannedCard
           label="Turnaround analytics"
           teaser="Per-section TAT trends and SLA breaches"
           module="tat-analytics"

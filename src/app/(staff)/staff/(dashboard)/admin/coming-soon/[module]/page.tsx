@@ -72,18 +72,6 @@ const MODULES: Record<string, PlannedModule> = {
       "Audit trail of who signed off on which task",
     ],
   },
-  "send-out-performance": {
-    label: "Send-out vendor performance",
-    description:
-      "Per-vendor turnaround time, cost variance, SLA compliance, and rejection rate — a scorecard for managing external lab partners.",
-    audience: "Lab and Admin",
-    highlights: [
-      "Median + p95 TAT per send-out vendor",
-      "Cost variance vs the locked-in unit cost",
-      "SLA compliance rate per vendor + section",
-      "Rejection / re-do rate trend",
-    ],
-  },
   "tat-analytics": {
     label: "Turnaround analytics",
     description:

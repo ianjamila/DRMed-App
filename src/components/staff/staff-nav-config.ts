@@ -210,6 +210,11 @@ export const STAFF_NAV: StaffNavSection[] = [
             label: "Send-out COGS",
             roles: ["admin"],
           },
+          {
+            href: "/staff/admin/accounting/cogs/send-outs/vendor-performance",
+            label: "Send-out vendor perf.",
+            roles: ["admin"],
+          },
         ],
       },
       {
