@@ -10,9 +10,9 @@ import { ActivityStrip, type ActivityItem } from "./_components/activity-strip";
 import { formatPeso, formatTime, relativeAge } from "./_components/format";
 
 const QUICK_LINKS = [
-  { href: "/staff/visits/new", label: "New visit" },
-  { href: "/staff/appointments", label: "Appointments" },
   { href: "/staff/patients", label: "Patients" },
+  { href: "/staff/visits", label: "Visits" },
+  { href: "/staff/appointments", label: "Appointments" },
   { href: "/staff/quote", label: "Quick quote" },
   { href: "/staff/gift-codes/sell", label: "Sell gift code" },
   { href: "/staff/payments/cash-drawer", label: "Cash drawer" },
