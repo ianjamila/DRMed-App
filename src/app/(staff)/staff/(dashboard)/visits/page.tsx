@@ -19,77 +19,166 @@ const STATUS_BADGE: Record<string, string> = {
   waived: "bg-blue-50 text-blue-700 border-blue-200",
 };
 
+const PAGE_SIZE = 25;
+
 interface SearchProps {
-  searchParams: Promise<{ date?: string }>;
+  searchParams: Promise<{ start?: string; end?: string; page?: string }>;
+}
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+type VisitRow = {
+  id: string;
+  visit_number: string;
+  visit_date: string;
+  payment_status: string;
+  total_php: number;
+  paid_php: number;
+  patients: {
+    id: string;
+    drm_id: string;
+    first_name: string;
+    last_name: string;
+  };
+  test_requests: { id: string }[] | null;
+  payments:
+    | {
+        method: string | null;
+        voided_at: string | null;
+      }[]
+    | null;
+};
+
+function methodsFor(payments: VisitRow["payments"]): string {
+  if (!payments || payments.length === 0) return "—";
+  const methods = new Set<string>();
+  for (const p of payments) {
+    if (p.voided_at !== null) continue;
+    if (p.method) methods.add(p.method);
+  }
+  if (methods.size === 0) return "—";
+  return Array.from(methods).join(", ");
 }
 
 export default async function VisitsIndexPage({ searchParams }: SearchProps) {
   await requireActiveStaff();
   const params = await searchParams;
-  const targetDate =
-    params.date && /^\d{4}-\d{2}-\d{2}$/.test(params.date)
-      ? params.date
-      : todayManilaISODate();
+
+  const start = params.start && DATE_RE.test(params.start) ? params.start : "";
+  const end = params.end && DATE_RE.test(params.end) ? params.end : "";
+  const page = Math.max(1, Number(params.page) || 1);
+  const offset = (page - 1) * PAGE_SIZE;
 
   const supabase = await createClient();
 
-  const { data: visits } = await supabase
+  let query = supabase
     .from("visits")
     .select(
       `
         id, visit_number, visit_date, payment_status, total_php, paid_php,
         patients!inner ( id, drm_id, first_name, last_name ),
-        test_requests ( id )
+        test_requests ( id ),
+        payments ( method, voided_at )
       `,
+      { count: "exact" },
     )
-    .eq("visit_date", targetDate)
+    .order("visit_date", { ascending: false })
     .order("created_at", { ascending: false })
-    .limit(200);
+    .range(offset, offset + PAGE_SIZE - 1);
 
-  const isToday = targetDate === todayManilaISODate();
+  if (start) query = query.gte("visit_date", start);
+  if (end) query = query.lte("visit_date", end);
+
+  const { data: visits, count } = await query.returns<VisitRow[]>();
+
+  const total = count ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+
+  function pageHref(p: number) {
+    const sp = new URLSearchParams();
+    if (start) sp.set("start", start);
+    if (end) sp.set("end", end);
+    if (p > 1) sp.set("page", String(p));
+    const qs = sp.toString();
+    return `/staff/visits${qs ? `?${qs}` : ""}`;
+  }
+
+  const rangeLabel =
+    start && end
+      ? `${start} → ${end}`
+      : start
+        ? `from ${start}`
+        : end
+          ? `up to ${end}`
+          : "all dates";
 
   return (
     <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
-      <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-            Reception
-          </p>
-          <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            Visits {isToday ? "today" : `on ${targetDate}`}
-          </h1>
-          <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
-            {visits?.length ?? 0} visit{visits?.length === 1 ? "" : "s"}{" "}
-            registered.
-          </p>
-        </div>
-        <form className="flex items-center gap-2" action="/staff/visits">
+      <header className="mb-6">
+        <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+          Reception Visits
+        </h1>
+        <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
+          {total} visit{total === 1 ? "" : "s"} · {rangeLabel}
+        </p>
+      </header>
+
+      <form
+        className="mb-6 flex flex-wrap items-end gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4"
+        action="/staff/visits"
+      >
+        <div className="flex flex-col">
           <label
-            htmlFor="date"
-            className="text-sm text-[color:var(--color-brand-text-soft)]"
+            htmlFor="start"
+            className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]"
           >
-            Date
+            Start date
           </label>
           <input
             type="date"
-            id="date"
-            name="date"
-            defaultValue={targetDate}
+            id="start"
+            name="start"
+            defaultValue={start}
             max={todayManilaISODate()}
-            className="rounded-md border border-[color:var(--color-brand-border)] px-2 py-1 text-sm"
+            className="mt-1 rounded-md border border-[color:var(--color-brand-bg-mid)] px-2 py-1.5 text-sm"
           />
-          <button
-            type="submit"
-            className="rounded-md border border-[color:var(--color-brand-cyan)] px-3 py-1 text-sm font-medium text-[color:var(--color-brand-cyan)] transition-colors hover:bg-[color:var(--color-brand-cyan)] hover:text-white"
+        </div>
+        <div className="flex flex-col">
+          <label
+            htmlFor="end"
+            className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]"
           >
-            Go
-          </button>
-        </form>
-      </header>
+            End date
+          </label>
+          <input
+            type="date"
+            id="end"
+            name="end"
+            defaultValue={end}
+            max={todayManilaISODate()}
+            className="mt-1 rounded-md border border-[color:var(--color-brand-bg-mid)] px-2 py-1.5 text-sm"
+          />
+        </div>
+        <button
+          type="submit"
+          className="min-h-11 rounded-md border border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-cyan)] px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-[color:var(--color-brand-cyan-mid)]"
+        >
+          Apply
+        </button>
+        {(start || end) && (
+          <Link
+            href="/staff/visits"
+            className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-4 py-1.5 text-sm text-[color:var(--color-brand-text-soft)] transition-colors hover:border-[color:var(--color-brand-cyan)]"
+          >
+            Clear
+          </Link>
+        )}
+      </form>
 
       {!visits || visits.length === 0 ? (
         <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-8 text-center text-sm text-[color:var(--color-brand-text-soft)]">
-          No visits {isToday ? "today" : `on ${targetDate}`}.
+          No visits in this range.
         </div>
       ) : (
         <>
@@ -98,6 +187,9 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
             <table className="w-full text-sm">
               <thead className="bg-[color:var(--color-brand-bg)] text-[color:var(--color-brand-text-soft)]">
                 <tr>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">
+                    Date
+                  </th>
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">
                     Visit #
                   </th>
@@ -114,26 +206,41 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
                     Paid
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">
+                    Method
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">
                     Status
                   </th>
-                  <th className="px-4 py-3" />
                 </tr>
               </thead>
               <tbody>
                 {visits.map((v) => {
                   const p = v.patients;
                   const testCount = v.test_requests?.length ?? 0;
-                  const status = v.payment_status as string;
+                  const status = v.payment_status;
                   return (
                     <tr
                       key={v.id}
                       className="border-t border-[color:var(--color-brand-bg-mid)]"
                     >
+                      <td className="whitespace-nowrap px-4 py-3 text-[color:var(--color-brand-text-soft)]">
+                        {v.visit_date}
+                      </td>
                       <td className="px-4 py-3 font-mono text-xs">
-                        #{String(v.visit_number).padStart(4, "0")}
+                        <Link
+                          href={`/staff/visits/${v.id}`}
+                          className="text-[color:var(--color-brand-cyan)] hover:underline"
+                        >
+                          #{String(v.visit_number).padStart(4, "0")}
+                        </Link>
                       </td>
                       <td className="px-4 py-3">
-                        {p.last_name}, {p.first_name}{" "}
+                        <Link
+                          href={`/staff/patients/${p.id}`}
+                          className="text-[color:var(--color-brand-navy)] hover:underline"
+                        >
+                          {p.last_name}, {p.first_name}
+                        </Link>{" "}
                         <span className="text-xs text-[color:var(--color-brand-text-soft)]">
                           ({p.drm_id})
                         </span>
@@ -145,20 +252,15 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
                       <td className="px-4 py-3 text-right font-mono">
                         {PHP.format(Number(v.paid_php))}
                       </td>
+                      <td className="px-4 py-3 text-xs text-[color:var(--color-brand-text-soft)]">
+                        {methodsFor(v.payments)}
+                      </td>
                       <td className="px-4 py-3">
                         <span
                           className={`inline-block rounded-full border px-2 py-0.5 text-xs font-medium ${STATUS_BADGE[status] ?? ""}`}
                         >
                           {status}
                         </span>
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <Link
-                          href={`/staff/visits/${v.id}`}
-                          className="text-sm text-[color:var(--color-brand-cyan)] hover:underline"
-                        >
-                          Open →
-                        </Link>
                       </td>
                     </tr>
                   );
@@ -172,28 +274,34 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
             {visits.map((v) => {
               const p = v.patients;
               const testCount = v.test_requests?.length ?? 0;
-              const status = v.payment_status as string;
+              const status = v.payment_status;
               return (
-                <Link
+                <article
                   key={v.id}
-                  href={`/staff/visits/${v.id}`}
-                  className="block rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4"
+                  className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4"
                 >
                   <div className="flex items-center justify-between">
-                    <div className="font-mono text-xs text-[color:var(--color-brand-text-soft)]">
+                    <Link
+                      href={`/staff/visits/${v.id}`}
+                      className="font-mono text-xs text-[color:var(--color-brand-cyan)] hover:underline"
+                    >
                       #{String(v.visit_number).padStart(4, "0")}
-                    </div>
+                    </Link>
                     <span
                       className={`inline-block rounded-full border px-2 py-0.5 text-xs font-medium ${STATUS_BADGE[status] ?? ""}`}
                     >
                       {status}
                     </span>
                   </div>
-                  <div className="mt-1 font-medium">
+                  <Link
+                    href={`/staff/patients/${p.id}`}
+                    className="mt-1 block font-medium text-[color:var(--color-brand-navy)] hover:underline"
+                  >
                     {p.last_name}, {p.first_name}
-                  </div>
+                  </Link>
                   <div className="text-xs text-[color:var(--color-brand-text-soft)]">
-                    {p.drm_id} · {testCount} test{testCount === 1 ? "" : "s"}
+                    {p.drm_id} · {v.visit_date} · {testCount} test
+                    {testCount === 1 ? "" : "s"}
                   </div>
                   <div className="mt-2 flex justify-between text-xs">
                     <span>
@@ -209,10 +317,47 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
                       </span>
                     </span>
                   </div>
-                </Link>
+                  <div className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
+                    {methodsFor(v.payments)}
+                  </div>
+                </article>
               );
             })}
           </div>
+
+          {totalPages > 1 ? (
+            <nav className="mt-6 flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-[color:var(--color-brand-text-soft)]">
+                Page {safePage} of {totalPages}
+              </p>
+              <div className="flex gap-2">
+                {safePage > 1 ? (
+                  <Link
+                    href={pageHref(safePage - 1)}
+                    className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-4 py-1.5 text-sm transition-colors hover:border-[color:var(--color-brand-cyan)]"
+                  >
+                    ← Previous
+                  </Link>
+                ) : (
+                  <span className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-4 py-1.5 text-sm text-[color:var(--color-brand-text-soft)] opacity-50">
+                    ← Previous
+                  </span>
+                )}
+                {safePage < totalPages ? (
+                  <Link
+                    href={pageHref(safePage + 1)}
+                    className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-4 py-1.5 text-sm transition-colors hover:border-[color:var(--color-brand-cyan)]"
+                  >
+                    Next →
+                  </Link>
+                ) : (
+                  <span className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-4 py-1.5 text-sm text-[color:var(--color-brand-text-soft)] opacity-50">
+                    Next →
+                  </span>
+                )}
+              </div>
+            </nav>
+          ) : null}
         </>
       )}
     </div>
