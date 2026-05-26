@@ -186,11 +186,6 @@ export const STAFF_NAV: StaffNavSection[] = [
             roles: ["admin"],
           },
           {
-            href: "/staff/admin/accounting/hmo-history",
-            label: "History import",
-            roles: ["admin"],
-          },
-          {
             href: "/staff/admin/accounting/patient-ar",
             label: "Patient AR aging",
             roles: ["admin"],

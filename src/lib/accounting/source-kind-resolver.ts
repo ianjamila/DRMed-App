@@ -56,12 +56,6 @@ export async function resolveSourceRoute(
         : null;
     }
 
-    case "hmo_history_opening":
-      return {
-        label: "View HMO history run",
-        href: `/staff/admin/accounting/hmo-history/${sourceId}`,
-      };
-
     case "reversal": {
       // For reversal source_kind, source_id is the JE id being reversed.
       return {
