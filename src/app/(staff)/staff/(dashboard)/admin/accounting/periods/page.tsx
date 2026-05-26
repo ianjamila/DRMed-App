@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { todayManilaISO } from "@/lib/marketing/closures";
@@ -97,6 +98,15 @@ export default async function PeriodsPage({
           </button>
         </form>
       </header>
+
+      <div className="mb-6 flex flex-wrap gap-2">
+        <Link
+          href="/staff/admin/accounting/journal/new"
+          className="min-h-11 rounded-md border border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-cyan)] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[color:var(--color-brand-cyan-mid)]"
+        >
+          + New journal entry
+        </Link>
+      </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
         {[1, 2, 3, 4].map((q) => {

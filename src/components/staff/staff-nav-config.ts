@@ -171,6 +171,11 @@ export const STAFF_NAV: StaffNavSection[] = [
             roles: ["admin"],
           },
           {
+            href: "/staff/admin/accounting/journal/new",
+            label: "New journal entry",
+            roles: ["admin"],
+          },
+          {
             href: "/staff/admin/accounting/financial-statements",
             label: "Income statement",
             roles: ["admin"],
