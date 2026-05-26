@@ -67,6 +67,127 @@ export type Database = {
           },
         ]
       }
+      bank_statement_lines: {
+        Row: {
+          amount_php: number
+          created_at: string
+          description: string | null
+          id: string
+          match_method: string | null
+          matched_at: string | null
+          matched_by: string | null
+          matched_je_line_id: string | null
+          reference: string | null
+          statement_id: string
+          transaction_date: string
+        }
+        Insert: {
+          amount_php: number
+          created_at?: string
+          description?: string | null
+          id?: string
+          match_method?: string | null
+          matched_at?: string | null
+          matched_by?: string | null
+          matched_je_line_id?: string | null
+          reference?: string | null
+          statement_id: string
+          transaction_date: string
+        }
+        Update: {
+          amount_php?: number
+          created_at?: string
+          description?: string | null
+          id?: string
+          match_method?: string | null
+          matched_at?: string | null
+          matched_by?: string | null
+          matched_je_line_id?: string | null
+          reference?: string | null
+          statement_id?: string
+          transaction_date?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bank_statement_lines_matched_by_fkey"
+            columns: ["matched_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_statement_lines_matched_je_line_id_fkey"
+            columns: ["matched_je_line_id"]
+            isOneToOne: false
+            referencedRelation: "journal_lines"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_statement_lines_statement_id_fkey"
+            columns: ["statement_id"]
+            isOneToOne: false
+            referencedRelation: "bank_statements"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bank_statements: {
+        Row: {
+          account_id: string
+          created_at: string
+          id: string
+          notes: string | null
+          period_end: string
+          period_start: string
+          raw_filename: string | null
+          statement_label: string
+          updated_at: string
+          uploaded_at: string
+          uploaded_by: string
+        }
+        Insert: {
+          account_id: string
+          created_at?: string
+          id?: string
+          notes?: string | null
+          period_end: string
+          period_start: string
+          raw_filename?: string | null
+          statement_label: string
+          updated_at?: string
+          uploaded_at?: string
+          uploaded_by: string
+        }
+        Update: {
+          account_id?: string
+          created_at?: string
+          id?: string
+          notes?: string | null
+          period_end?: string
+          period_start?: string
+          raw_filename?: string | null
+          statement_label?: string
+          updated_at?: string
+          uploaded_at?: string
+          uploaded_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bank_statements_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "chart_of_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_statements_uploaded_by_fkey"
+            columns: ["uploaded_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       accrual_template_lines: {
         Row: {
           account_id: string

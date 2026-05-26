@@ -36,18 +36,6 @@ const MODULES: Record<string, PlannedModule> = {
       "Forecast reforecasting based on YTD trend",
     ],
   },
-  "bank-reconciliation": {
-    label: "Bank reconciliation",
-    description:
-      "Match bank statement transactions against the GL cash accounts, surface unmatched items, and track running variance to date.",
-    audience: "Admin",
-    highlights: [
-      "Import bank statements (CSV / OFX)",
-      "Auto-match by amount + date with manual override",
-      "Unmatched-items aging list",
-      "Per-account reconciliation status dashboard",
-    ],
-  },
   "tat-analytics": {
     label: "Turnaround analytics",
     description:

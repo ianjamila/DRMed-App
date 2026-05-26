@@ -443,11 +443,6 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
           teaser="Set budgets and track variance by department"
           module="variance-analysis"
         />
-        <PlannedCard
-          label="Bank reconciliation"
-          teaser="Match bank statements to GL with variance tracking"
-          module="bank-reconciliation"
-        />
         </div>
       </SectionHeading>
     </div>

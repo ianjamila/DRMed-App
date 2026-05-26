@@ -186,6 +186,11 @@ export const STAFF_NAV: StaffNavSection[] = [
             roles: ["admin"],
           },
           {
+            href: "/staff/admin/accounting/bank-rec",
+            label: "Bank reconciliation",
+            roles: ["admin"],
+          },
+          {
             href: "/staff/admin/accounting/financial-statements",
             label: "Income statement",
             roles: ["admin"],
