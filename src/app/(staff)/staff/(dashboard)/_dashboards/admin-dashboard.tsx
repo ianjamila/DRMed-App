@@ -439,11 +439,6 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
           module="inventory"
         />
         <PlannedCard
-          label="Financial statements"
-          teaser="P&L, balance sheet, and cash flow from your COA"
-          module="financial-statements"
-        />
-        <PlannedCard
           label="Budget vs actual"
           teaser="Set budgets and track variance by department"
           module="variance-analysis"

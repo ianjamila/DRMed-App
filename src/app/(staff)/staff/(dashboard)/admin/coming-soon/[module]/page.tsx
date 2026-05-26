@@ -25,14 +25,14 @@ const MODULES: Record<string, PlannedModule> = {
     ],
   },
   "financial-statements": {
-    label: "Financial statements",
+    label: "Financial statements — balance sheet & cash flow",
     description:
-      "Profit & loss, balance sheet, and cash flow statements generated directly from the chart of accounts and posted journal entries.",
+      "P&L (income statement) shipped today. Balance sheet snapshot and cash flow waterfall are still on the roadmap.",
     audience: "Admin",
     highlights: [
-      "P&L for any date range with period-over-period comparison",
       "Balance sheet snapshot as of a point in time",
       "Cash flow waterfall (operating / investing / financing)",
+      "Period-over-period comparison",
       "Drill from line item back to source journal entry",
     ],
   },
