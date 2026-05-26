@@ -68,7 +68,7 @@ A Postgres trigger on `test_requests` blocks any transition to `status = 'releas
 
 Other DB-side automation to be aware of:
 - `payments` insert recalculates `visits.paid_php` and `visits.payment_status`.
-- `results` insert auto-flips `test_requests.status` from `in_progress` → `result_uploaded` (or `ready_for_release` when no pathologist sign-off is configured for the service).
+- Linking a result to a test (insert on `result_test_requests`) auto-flips `test_requests.status` from `in_progress` → `result_uploaded` (or `ready_for_release` when no pathologist sign-off is configured). For structured results the same flip also happens when `results.finalised_at` transitions from NULL → not-NULL.
 
 ### Three Supabase clients with strict separation
 

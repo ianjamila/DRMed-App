@@ -737,7 +737,7 @@ export async function uploadResultAction(
     .from("test_requests")
     .select(
       `
-        id, status, visit_id,
+        id, status, visit_id, service_id,
         visits!inner ( id, patient_id )
       `,
     )
@@ -759,6 +759,28 @@ export async function uploadResultAction(
   const path = `${visit.patient_id}/${visit.id}/${testRequest.id}.pdf`;
   const admin = createAdminClient();
 
+  // If a junction already exists (e.g. the first upload's status-flip trigger
+  // failed pre-0059 and left the test stuck at in_progress), replace the
+  // existing uploaded result in place instead of inserting a duplicate —
+  // result_test_requests has a unique constraint on test_request_id.
+  const { data: existingLink } = await admin
+    .from("result_test_requests")
+    .select("result_id, results!inner(id, generation_kind)")
+    .eq("test_request_id", testRequest.id)
+    .maybeSingle();
+  const existingResult = existingLink
+    ? (Array.isArray(existingLink.results)
+        ? existingLink.results[0]
+        : existingLink.results) ?? null
+    : null;
+  if (existingResult && existingResult.generation_kind !== "uploaded") {
+    return {
+      ok: false,
+      error:
+        "This test already has a structured result; use Amend to revise it.",
+    };
+  }
+
   // Upload (overwrite if a previous attempt left a stray file).
   const buffer = Buffer.from(await file.arrayBuffer());
   const { error: uploadErr } = await admin.storage
@@ -771,33 +793,73 @@ export async function uploadResultAction(
     return { ok: false, error: `Upload failed: ${uploadErr.message}` };
   }
 
-  // Insert results row — trigger auto-flips test_requests.status.
-  const { data: resultRow, error: insertErr } = await admin
-    .from("results")
-    .insert({
-      storage_path: path,
-      file_size_bytes: file.size,
-      uploaded_by: session.user_id,
-      notes: notes || null,
-    })
-    .select("id")
-    .single();
+  let resultId: string;
+  if (existingResult) {
+    // Replace-in-place path: update the existing result row. The 0059
+    // junction trigger isn't involved here (junction is unchanged), so
+    // re-advance the test_request status explicitly if it's still stuck.
+    const { error: updateErr } = await admin
+      .from("results")
+      .update({
+        storage_path: path,
+        file_size_bytes: file.size,
+        uploaded_by: session.user_id,
+        uploaded_at: new Date().toISOString(),
+        notes: notes || null,
+      })
+      .eq("id", existingResult.id);
+    if (updateErr) {
+      return { ok: false, error: `Could not update result: ${updateErr.message}` };
+    }
+    resultId = existingResult.id;
 
-  if (insertErr || !resultRow) {
-    // Best-effort cleanup of the storage object so we don't orphan it.
-    await admin.storage.from("results").remove([path]);
-    return {
-      ok: false,
-      error: insertErr?.message ?? "Could not record the result.",
-    };
-  }
+    if (testRequest.status === "in_progress") {
+      const { data: svcRow } = await admin
+        .from("services")
+        .select("requires_signoff")
+        .eq("id", testRequest.service_id)
+        .maybeSingle();
+      const nextStatus = svcRow?.requires_signoff
+        ? "result_uploaded"
+        : "ready_for_release";
+      await admin
+        .from("test_requests")
+        .update({
+          status: nextStatus,
+          completed_at: new Date().toISOString(),
+        })
+        .eq("id", testRequest.id);
+    }
+  } else {
+    // First-time path: insert results then junction. Junction insert fires
+    // trg_rtr_advance_test (migration 0059) to flip test_requests.status.
+    const { data: resultRow, error: insertErr } = await admin
+      .from("results")
+      .insert({
+        storage_path: path,
+        file_size_bytes: file.size,
+        uploaded_by: session.user_id,
+        notes: notes || null,
+      })
+      .select("id")
+      .single();
 
-  const { error: jErr } = await admin
-    .from("result_test_requests")
-    .insert({ result_id: resultRow.id, test_request_id: testRequest.id });
-  if (jErr) {
-    await admin.storage.from("results").remove([path]);
-    return { ok: false, error: `Could not link result: ${jErr.message}` };
+    if (insertErr || !resultRow) {
+      await admin.storage.from("results").remove([path]);
+      return {
+        ok: false,
+        error: insertErr?.message ?? "Could not record the result.",
+      };
+    }
+
+    const { error: jErr } = await admin
+      .from("result_test_requests")
+      .insert({ result_id: resultRow.id, test_request_id: testRequest.id });
+    if (jErr) {
+      await admin.storage.from("results").remove([path]);
+      return { ok: false, error: `Could not link result: ${jErr.message}` };
+    }
+    resultId = resultRow.id;
   }
 
   const h = await headers();
@@ -806,12 +868,13 @@ export async function uploadResultAction(
     actor_type: "staff",
     action: "result.uploaded",
     resource_type: "result",
-    resource_id: resultRow.id,
+    resource_id: resultId,
     metadata: {
       test_request_id: testRequest.id,
       visit_id: visit.id,
       storage_path: path,
       file_size_bytes: file.size,
+      replaced_existing: existingResult ? true : false,
     },
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),
