@@ -55,8 +55,13 @@ export const STAFF_NAV: StaffNavSection[] = [
         roles: ["reception", "admin"],
       },
       {
+        href: "/staff/visits/new",
+        label: "New visit",
+        roles: ["reception", "admin"],
+      },
+      {
         href: "/staff/visits",
-        label: "Visits",
+        label: "Visit archive",
         roles: ["reception", "admin"],
       },
       {
