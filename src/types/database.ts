@@ -1044,6 +1044,38 @@ export type Database = {
           },
         ]
       }
+      dashboard_card_prefs: {
+        Row: {
+          card_id: string
+          role: string
+          updated_at: string
+          updated_by: string | null
+          visible: boolean
+        }
+        Insert: {
+          card_id: string
+          role: string
+          updated_at?: string
+          updated_by?: string | null
+          visible: boolean
+        }
+        Update: {
+          card_id?: string
+          role?: string
+          updated_at?: string
+          updated_by?: string | null
+          visible?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "dashboard_card_prefs_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       doctor_pf_disbursements: {
         Row: {
           batch_number: number

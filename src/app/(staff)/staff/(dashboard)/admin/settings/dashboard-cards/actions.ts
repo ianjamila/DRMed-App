@@ -29,18 +29,16 @@ export async function setCardVisibility(
   }
 
   const admin = createAdminClient();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const client = admin as any;
 
   if (visible) {
-    const { error } = (await client
+    const { error } = await admin
       .from("dashboard_card_prefs")
       .delete()
       .eq("role", role)
-      .eq("card_id", cardId)) as { error: { message?: string } | null };
-    if (error) return { ok: false, error: error.message ?? "Delete failed." };
+      .eq("card_id", cardId);
+    if (error) return { ok: false, error: error.message };
   } else {
-    const { error } = (await client.from("dashboard_card_prefs").upsert(
+    const { error } = await admin.from("dashboard_card_prefs").upsert(
       {
         role,
         card_id: cardId,
@@ -49,8 +47,8 @@ export async function setCardVisibility(
         updated_at: new Date().toISOString(),
       },
       { onConflict: "role,card_id" },
-    )) as { error: { message?: string } | null };
-    if (error) return { ok: false, error: error.message ?? "Upsert failed." };
+    );
+    if (error) return { ok: false, error: error.message };
   }
 
   await audit({

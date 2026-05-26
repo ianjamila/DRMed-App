@@ -33,17 +33,10 @@ export default async function DashboardCardSettingsPage({
     : "admin";
 
   const admin = createAdminClient();
-  let prefRows: PrefRow[] = [];
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const client = admin as any;
-    const { data } = (await client
-      .from("dashboard_card_prefs")
-      .select("role, card_id, visible")) as { data: PrefRow[] | null };
-    prefRows = data ?? [];
-  } catch {
-    // Pre-migration: treat as no overrides.
-  }
+  const { data } = await admin
+    .from("dashboard_card_prefs")
+    .select("role, card_id, visible");
+  const prefRows: PrefRow[] = data ?? [];
 
   // Hidden set per role
   const hiddenByRole: Record<DashboardRole, Set<string>> = {
