@@ -54,7 +54,7 @@ const TEST_STATUS_STYLE: Record<string, string> = {
 };
 
 interface SearchProps {
-  searchParams: Promise<{ filter?: "mine" | "all" }>;
+  searchParams: Promise<{ filter?: "mine" | "all" | "pending_release" }>;
 }
 
 export default async function QueuePage({ searchParams }: SearchProps) {
@@ -83,7 +83,12 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         )
       `,
     )
-    .in("status", ["requested", "in_progress"])
+    .in(
+      "status",
+      filter === "pending_release"
+        ? ["ready_for_release"]
+        : ["requested", "in_progress"],
+    )
     .eq("is_package_header", false)
     .order("requested_at", { ascending: true })
     .limit(100);
@@ -195,6 +200,11 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         </div>
         <nav className="flex gap-2 text-sm">
           <FilterTab href="/staff/queue" label="All" active={filter === "all"} />
+          <FilterTab
+            href="/staff/queue?filter=pending_release"
+            label="Pending release"
+            active={filter === "pending_release"}
+          />
           <FilterTab
             href="/staff/queue?filter=mine"
             label="Mine"

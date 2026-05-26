@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
 
@@ -9,11 +10,12 @@ interface StatCardProps {
   label: string;
   value: number | string;
   hint?: string;
+  href?: string;
 }
 
-function StatCard({ label, value, hint }: StatCardProps) {
-  return (
-    <article className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
+function StatCard({ label, value, hint, href }: StatCardProps) {
+  const body = (
+    <>
       <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
         {label}
       </p>
@@ -25,8 +27,24 @@ function StatCard({ label, value, hint }: StatCardProps) {
           {hint}
         </p>
       ) : null}
-    </article>
+    </>
   );
+
+  const baseClass =
+    "block rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5";
+
+  if (href) {
+    return (
+      <Link
+        href={href}
+        className={`${baseClass} transition-colors hover:border-[color:var(--color-brand-cyan)] hover:shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-brand-cyan)]`}
+      >
+        {body}
+      </Link>
+    );
+  }
+
+  return <article className={baseClass}>{body}</article>;
 }
 
 async function loadStats() {
@@ -87,21 +105,25 @@ export default async function StaffDashboardPage() {
           label="Visits today"
           value={stats.visitsToday}
           hint="Patients registered today"
+          href="/staff/patients"
         />
         <StatCard
           label="Queue size"
           value={stats.queueSize}
           hint="Tests requested or in progress"
+          href="/staff/queue"
         />
         <StatCard
           label="Pending release"
           value={stats.pendingRelease}
           hint="Results ready, awaiting payment + release"
+          href="/staff/queue?filter=pending_release"
         />
         <StatCard
           label="Appointments today"
           value={stats.appointmentsToday}
           hint="Confirmed / arrived"
+          href="/staff/appointments"
         />
       </div>
 
