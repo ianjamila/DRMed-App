@@ -105,7 +105,7 @@ export default async function StaffDashboardPage() {
           label="Visits today"
           value={stats.visitsToday}
           hint="Patients registered today"
-          href="/staff/patients"
+          href="/staff/visits"
         />
         <StatCard
           label="Queue size"
