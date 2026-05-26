@@ -48,18 +48,6 @@ const MODULES: Record<string, PlannedModule> = {
       "Per-account reconciliation status dashboard",
     ],
   },
-  "close-tracker": {
-    label: "Month-end close tracker",
-    description:
-      "Interactive close checklist that sequences tasks, tracks status, and captures sign-off for a clean month-end.",
-    audience: "Admin",
-    highlights: [
-      "Configurable close-task templates",
-      "Per-task owner, due date, and dependency",
-      "Status board for the current close cycle",
-      "Audit trail of who signed off on which task",
-    ],
-  },
   "tat-analytics": {
     label: "Turnaround analytics",
     description:

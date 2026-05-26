@@ -448,11 +448,6 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
           teaser="Match bank statements to GL with variance tracking"
           module="bank-reconciliation"
         />
-        <PlannedCard
-          label="Month-end close tracker"
-          teaser="Interactive close checklist with audit trail"
-          module="close-tracker"
-        />
         </div>
       </SectionHeading>
     </div>
