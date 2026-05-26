@@ -190,6 +190,11 @@ export const STAFF_NAV: StaffNavSection[] = [
             label: "History import",
             roles: ["admin"],
           },
+          {
+            href: "/staff/admin/accounting/patient-ar",
+            label: "Patient AR aging",
+            roles: ["admin"],
+          },
         ],
       },
       {

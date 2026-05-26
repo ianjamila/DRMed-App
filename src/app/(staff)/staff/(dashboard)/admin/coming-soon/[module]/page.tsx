@@ -72,18 +72,6 @@ const MODULES: Record<string, PlannedModule> = {
       "Audit trail of who signed off on which task",
     ],
   },
-  "patient-ar": {
-    label: "Patient AR aging",
-    description:
-      "Non-HMO patient outstanding balances bucketed by age, with per-patient drill-down, payment plan tracking, and dunning workflow.",
-    audience: "Admin",
-    highlights: [
-      "Aging buckets: 0–30 / 31–60 / 61–90 / 90+ days",
-      "Per-patient outstanding total + visit drill-down",
-      "Payment plan tracker for installment patients",
-      "Dunning letter generation",
-    ],
-  },
   "pf-ytd-summary": {
     label: "Doctor PF YTD summary",
     description:

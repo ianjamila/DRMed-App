@@ -22,6 +22,7 @@ const QUICK_LINKS = [
 ];
 
 type BillRow = { outstanding_amount: number | null; due_date: string; status: string };
+type PatientArRow = { total_php: number | null; paid_php: number | null };
 type UnbilledRow = { released_at: string; days_since_release: number; billed_amount_php: number | null };
 type AdvanceRow = { outstanding_balance_php: number | null };
 type PfRow = { pf_php: number };
@@ -50,6 +51,7 @@ async function loadAdminStats() {
     openPeriods,
     draftJeCount,
     bills,
+    patientAr,
     unbilled,
     advances,
     pfPending,
@@ -94,6 +96,12 @@ async function loadAdminStats() {
       .gt("outstanding_amount", 0)
       .neq("status", "voided")
       .returns<BillRow[]>(),
+    admin
+      .from("visits")
+      .select("total_php, paid_php")
+      .in("payment_status", ["unpaid", "partial"])
+      .is("hmo_provider_id", null)
+      .returns<PatientArRow[]>(),
     admin
       .from("v_hmo_unbilled")
       .select("released_at, days_since_release, billed_amount_php")
@@ -150,6 +158,13 @@ async function loadAdminStats() {
   );
   const apOverdue = billRows.filter((b) => b.due_date < today).length;
 
+  const patientArRows = patientAr.data ?? [];
+  const patientArTotal = patientArRows.reduce(
+    (s, v) => s + (Number(v.total_php ?? 0) - Number(v.paid_php ?? 0)),
+    0,
+  );
+  const patientArCount = patientArRows.length;
+
   const unbilledRows = unbilled.data ?? [];
   const unbilledAgedTotal = unbilledRows
     .filter((u) => Number(u.days_since_release ?? 0) >= 90)
@@ -177,6 +192,8 @@ async function loadAdminStats() {
     draftJeCount: draftJeCount.count ?? 0,
     apOutstanding,
     apOverdue,
+    patientArTotal,
+    patientArCount,
     unbilledAgedTotal,
     unbilledAgedCount,
     advancesTotal,
@@ -279,6 +296,13 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
           accent={stats.unbilledAgedCount > 0 ? "warn" : "default"}
         />
         <StatCard
+          label="Patient AR outstanding"
+          value={formatPeso(stats.patientArTotal)}
+          hint={`${stats.patientArCount} non-HMO visit${stats.patientArCount === 1 ? "" : "s"} unpaid / partial`}
+          href="/staff/admin/accounting/patient-ar"
+          accent={stats.patientArCount > 0 ? "warn" : "default"}
+        />
+        <StatCard
           label="Staff advances outstanding"
           value={formatPeso(stats.advancesTotal)}
           hint="Receivable from payroll deductions"
@@ -357,11 +381,6 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
           label="Month-end close tracker"
           teaser="Interactive close checklist with audit trail"
           module="close-tracker"
-        />
-        <PlannedCard
-          label="Patient AR aging"
-          teaser="Non-HMO patient outstanding by age bucket"
-          module="patient-ar"
         />
         <PlannedCard
           label="Doctor PF YTD summary"
