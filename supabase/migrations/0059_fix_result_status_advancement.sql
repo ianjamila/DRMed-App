@@ -89,22 +89,29 @@ create trigger trg_results_advance_test
 
 -- ----- 3. Backfill stuck test_requests --------------------------------------
 -- Any test_request still at in_progress that already has a "complete" result
--- linked should advance now.
+-- linked should advance now. CTE-first because Postgres won't let the target
+-- of an UPDATE be referenced in joins inside the FROM clause.
+with stuck as (
+  select tr.id                                       as test_request_id,
+         coalesce(s.requires_signoff, false)         as requires_signoff
+  from public.test_requests tr
+  join public.result_test_requests rtr on rtr.test_request_id = tr.id
+  join public.results r                on r.id = rtr.result_id
+  join public.services s               on s.id = tr.service_id
+  where tr.status = 'in_progress'
+    and (
+      r.generation_kind = 'uploaded'
+      or (r.generation_kind = 'structured' and r.finalised_at is not null)
+    )
+)
 update public.test_requests tr
-set status = case when coalesce(s.requires_signoff, false)
-                  then 'result_uploaded'
-                  else 'ready_for_release' end,
+set status       = case when stuck.requires_signoff
+                        then 'result_uploaded'
+                        else 'ready_for_release' end,
     completed_at = coalesce(tr.completed_at, now()),
-    updated_at = now()
-from public.result_test_requests rtr
-join public.results r on r.id = rtr.result_id
-join public.services s on s.id = tr.service_id
-where rtr.test_request_id = tr.id
-  and tr.status = 'in_progress'
-  and (
-    r.generation_kind = 'uploaded'
-    or (r.generation_kind = 'structured' and r.finalised_at is not null)
-  );
+    updated_at   = now()
+from stuck
+where stuck.test_request_id = tr.id;
 
 
 -- ----- 4. DB-level send-out guard on result_templates -----------------------
