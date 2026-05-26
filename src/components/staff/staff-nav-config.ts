@@ -201,6 +201,11 @@ export const STAFF_NAV: StaffNavSection[] = [
             roles: ["admin"],
           },
           {
+            href: "/staff/admin/accounting/pf-ytd-summary",
+            label: "Doctor PF YTD",
+            roles: ["admin"],
+          },
+          {
             href: "/staff/admin/accounting/cogs/send-outs",
             label: "Send-out COGS",
             roles: ["admin"],

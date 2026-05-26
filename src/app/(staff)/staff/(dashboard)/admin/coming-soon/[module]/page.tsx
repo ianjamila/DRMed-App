@@ -72,18 +72,6 @@ const MODULES: Record<string, PlannedModule> = {
       "Audit trail of who signed off on which task",
     ],
   },
-  "pf-ytd-summary": {
-    label: "Doctor PF YTD summary",
-    description:
-      "Per-physician year-to-date professional fee earnings: accrued, disbursed, pending HMO settlement, with year-over-year comparison.",
-    audience: "Admin",
-    highlights: [
-      "YTD accrual + disbursement totals per physician",
-      "Breakdown by recognition basis (cash vs HMO-settled)",
-      "Pending-disbursement queue per physician",
-      "YoY comparison and trend",
-    ],
-  },
   "send-out-performance": {
     label: "Send-out vendor performance",
     description:

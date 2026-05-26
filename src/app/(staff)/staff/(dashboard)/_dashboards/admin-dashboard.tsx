@@ -459,11 +459,6 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
           module="close-tracker"
         />
         <PlannedCard
-          label="Doctor PF YTD summary"
-          teaser="Per-physician YTD accrued vs disbursed"
-          module="pf-ytd-summary"
-        />
-        <PlannedCard
           label="Send-out vendor performance"
           teaser="TAT, cost, SLA, rejection rate per external lab"
           module="send-out-performance"
