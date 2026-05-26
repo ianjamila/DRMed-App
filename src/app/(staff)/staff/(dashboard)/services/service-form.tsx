@@ -16,6 +16,11 @@ import {
   type ServiceResult,
 } from "./actions";
 
+export interface VendorLite {
+  id: string;
+  name: string;
+}
+
 const KIND_OPTIONS: { value: string; label: string }[] = [
   { value: "lab_test", label: "Lab test" },
   { value: "lab_package", label: "Lab package" },
@@ -57,10 +62,13 @@ interface ServiceDefaults {
   send_out_lab: string | null;
   is_active: boolean;
   requires_signoff: boolean;
+  send_out_unit_cost_php?: number | null;
+  send_out_vendor_id?: string | null;
 }
 
 interface Props {
   initial?: ServiceDefaults;
+  vendors?: VendorLite[];
 }
 
 function n(v: number | string | null | undefined): number | null {
@@ -69,7 +77,7 @@ function n(v: number | string | null | undefined): number | null {
   return Number.isFinite(x) ? x : null;
 }
 
-export function ServiceForm({ initial }: Props) {
+export function ServiceForm({ initial, vendors = [] }: Props) {
   const router = useRouter();
   const isEdit = Boolean(initial?.id);
 
@@ -275,6 +283,47 @@ export function ServiceForm({ initial }: Props) {
             />
           </div>
         </div>
+
+        {initial?.is_send_out ? (
+          <fieldset className="grid gap-4 rounded-lg border border-amber-200 bg-amber-50/50 p-4 sm:grid-cols-2">
+            <legend className="px-2 text-xs font-bold uppercase tracking-wider text-amber-700">
+              Send-out COGS config
+            </legend>
+            <div className="grid gap-1.5">
+              <Label htmlFor="send_out_unit_cost_php">Unit cost (PHP)</Label>
+              <StableInput
+                id="send_out_unit_cost_php"
+                name="send_out_unit_cost_php"
+                type="number"
+                step="0.01"
+                min="0"
+                required
+                defaultValue={initial?.send_out_unit_cost_php?.toString() ?? ""}
+                placeholder="e.g. 350.00"
+              />
+              <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+                Cost charged by the external lab (e.g., Hi Precision).
+              </p>
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="send_out_vendor_id">Vendor</Label>
+              <StableSelect
+                id="send_out_vendor_id"
+                name="send_out_vendor_id"
+                defaultValue={initial?.send_out_vendor_id ?? ""}
+                required
+                className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+              >
+                <option value="">— Select vendor —</option>
+                {vendors.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.name}
+                  </option>
+                ))}
+              </StableSelect>
+            </div>
+          </fieldset>
+        ) : null}
 
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="flex items-center gap-2 text-sm">

@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { formatPhp } from "@/lib/marketing/format";
-import { ServiceForm } from "../../service-form";
+import { ServiceForm, type VendorLite } from "../../service-form";
 
 export const metadata = {
   title: "Edit service — staff",
@@ -29,16 +29,24 @@ export default async function EditServicePage({ params }: Props) {
   const { data: service } = await supabase
     .from("services")
     .select(
-      "id, code, name, description, price_php, hmo_price_php, senior_discount_php, turnaround_hours, kind, section, is_send_out, send_out_lab, is_active, requires_signoff",
+      "id, code, name, description, price_php, hmo_price_php, senior_discount_php, turnaround_hours, kind, section, is_send_out, send_out_lab, is_active, requires_signoff, send_out_unit_cost_php, send_out_vendor_id",
     )
     .eq("id", id)
     .maybeSingle();
 
   if (!service) notFound();
 
-  // Service-role client so we can join auth.users for the changer's name.
+  // Service-role client for vendor lookup + price history (auth.users join).
   // Read-only here; the page is admin-gated.
   const admin = createAdminClient();
+
+  // Fetch active vendors for the send-out vendor dropdown.
+  const { data: vendors } = await admin
+    .from("vendors")
+    .select("id, name")
+    .eq("is_active", true)
+    .order("name");
+  const vendorList: VendorLite[] = (vendors ?? []).map((v) => ({ id: v.id, name: v.name }));
   const { data: history } = await admin
     .from("service_price_history")
     .select(
@@ -81,7 +89,7 @@ export default async function EditServicePage({ params }: Props) {
       </p>
 
       <div className="mt-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
-        <ServiceForm initial={service} />
+        <ServiceForm initial={service} vendors={vendorList} />
       </div>
 
       <section className="mt-8">

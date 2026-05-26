@@ -55,6 +55,7 @@ const Schema = z.object({
   hmo_authorization_no: optionalText(80),
   receptionist_remarks: optionalText(40),
   notes: z.string().trim().max(2000).optional(),
+  attending_physician_id: optionalUuid,
 });
 
 export type CreateVisitResult =
@@ -75,6 +76,7 @@ export async function createVisitAction(
     hmo_authorization_no: formData.get("hmo_authorization_no"),
     receptionist_remarks: formData.get("receptionist_remarks"),
     notes: formData.get("notes") ?? "",
+    attending_physician_id: formData.get("attending_physician_id"),
   });
 
   if (!parsed.success) {
@@ -148,7 +150,7 @@ export async function createVisitAction(
       doctor_pf_php = Number.isFinite(pfNum) && pfNum >= 0 ? pfNum : pfDefault;
     }
 
-    // Doctor procedure: capture description + post-approval HMO grant.
+    // Doctor procedure: capture description + post-approval HMO grant + clinic fee + doctor PF.
     let procedure_description: string | null = null;
     let hmo_approved_amount_php: number | null = null;
     if (s.kind === "doctor_procedure") {
@@ -158,6 +160,17 @@ export async function createVisitAction(
       const apNum = Number(apRaw);
       hmo_approved_amount_php =
         apRaw !== "" && Number.isFinite(apNum) && apNum >= 0 ? apNum : null;
+      // Procedure lines mirror consult lines: capture clinic_fee + doctor_pf split.
+      // Default clinic_fee=0 for procedures unless the form sends a value.
+      if (clinic_fee_php === null) {
+        const cfRaw = formData.get(`clinic_fee__${service_id}`)?.toString() ?? "";
+        const cfNum = cfRaw === "" ? 0 : Number(cfRaw);
+        clinic_fee_php = Number.isFinite(cfNum) && cfNum >= 0 ? cfNum : 0;
+        const pfRaw = formData.get(`doctor_pf__${service_id}`)?.toString() ?? "";
+        const pfDefault = Math.max(0, final_price_php - clinic_fee_php);
+        const pfNum = pfRaw === "" ? pfDefault : Number(pfRaw);
+        doctor_pf_php = Number.isFinite(pfNum) && pfNum >= 0 ? pfNum : pfDefault;
+      }
     }
 
     return {
@@ -175,7 +188,7 @@ export async function createVisitAction(
 
   const totalPhp = lines.reduce((sum, l) => sum + l.final_price_php, 0);
 
-  // Create the visit, including the HMO authorisation if provided.
+  // Create the visit, including the HMO authorisation and attending physician if provided.
   const { data: visit, error: visitErr } = await supabase
     .from("visits")
     .insert({
@@ -186,6 +199,7 @@ export async function createVisitAction(
       hmo_provider_id: parsed.data.hmo_provider_id,
       hmo_approval_date: parsed.data.hmo_approval_date,
       hmo_authorization_no: parsed.data.hmo_authorization_no,
+      attending_physician_id: parsed.data.attending_physician_id ?? null,
     })
     .select("id, visit_number")
     .single();

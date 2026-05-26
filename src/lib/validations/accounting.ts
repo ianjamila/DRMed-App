@@ -662,3 +662,69 @@ export const recurringTemplateCreateSchema = z.object({
 export const recurringTemplateUpdateSchema = recurringTemplateCreateSchema.extend({
   is_active: z.boolean().optional(),
 });
+
+// =============================================================================
+// 12.5 — COGS + Doctor PF subledger
+// =============================================================================
+
+const phpAmountSchema = z.number().nonnegative().finite();
+
+export const PfDisbursementCreateSchema = z.object({
+  physician_id: z.string().uuid(),
+  posted_date: z.string().refine((d) => /^\d{4}-\d{2}-\d{2}$/.test(d), {
+    message: "Posted date must be YYYY-MM-DD",
+  }),
+  method: z.enum(["cash", "gcash", "bank_transfer"]),
+  total_php: phpAmountSchema,
+  entry_ids: z.array(z.string().uuid()).min(1, "Must select at least one open PF entry"),
+  notes: z.string().max(500).optional(),
+});
+
+export const PfBulkPayoutSchema = z.object({
+  posted_date: z.string().refine((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)),
+  by_physician: z.array(
+    z.object({
+      physician_id: z.string().uuid(),
+      entry_ids: z.array(z.string().uuid()).min(1),
+      total_php: phpAmountSchema,
+    })
+  ).min(1),
+});
+
+export const SendOutTrueupCreateSchema = z.object({
+  vendor_id: z.string().uuid(),
+  bill_id: z.string().uuid().optional(),  // null for manual writeoff
+  period_start_date: z.string().refine((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)),
+  period_end_date: z.string().refine((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)),
+  billed_total_php: phpAmountSchema,
+  notes: z.string().max(500).optional(),
+});
+
+export const CompensationArrangementSchema = z.object({
+  physician_id: z.string().uuid(),
+  compensation_arrangement: z.enum(["pf_split", "rent_paying", "shareholder"]),
+});
+
+export const SendOutConfigSchema = z.object({
+  service_id: z.string().uuid(),
+  send_out_unit_cost_php: phpAmountSchema,
+  send_out_vendor_id: z.string().uuid(),
+});
+
+export const VisitAttendingSchema = z.object({
+  visit_id: z.string().uuid(),
+  attending_physician_id: z.string().uuid().nullable(),
+});
+
+export const TestRequestAttendingSchema = z.object({
+  test_request_id: z.string().uuid(),
+  attending_physician_id: z.string().uuid().nullable(),
+});
+
+export type PfDisbursementCreate = z.infer<typeof PfDisbursementCreateSchema>;
+export type PfBulkPayout = z.infer<typeof PfBulkPayoutSchema>;
+export type SendOutTrueupCreate = z.infer<typeof SendOutTrueupCreateSchema>;
+export type CompensationArrangement = z.infer<typeof CompensationArrangementSchema>;
+export type SendOutConfig = z.infer<typeof SendOutConfigSchema>;
+export type VisitAttending = z.infer<typeof VisitAttendingSchema>;
+export type TestRequestAttending = z.infer<typeof TestRequestAttendingSchema>;

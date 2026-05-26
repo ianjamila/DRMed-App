@@ -188,6 +188,21 @@ export const STAFF_NAV: StaffNavSection[] = [
         ],
       },
       {
+        heading: "Doctor PF",
+        items: [
+          {
+            href: "/staff/admin/accounting/pf-payouts",
+            label: "Doctor PF payouts",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/accounting/cogs/send-outs",
+            label: "Send-out COGS",
+            roles: ["admin"],
+          },
+        ],
+      },
+      {
         heading: "Accounts payable",
         items: [
           {

@@ -33,6 +33,10 @@ const PhysicianFields = {
       return Number.isFinite(n) ? Math.trunc(n) : 0;
     })
     .pipe(z.number().int().min(0).max(9999)),
+  compensation_arrangement: z
+    .union([z.string(), z.null(), z.undefined()])
+    .transform((v) => (v ?? "pf_split").toString().trim() || "pf_split")
+    .pipe(z.enum(["pf_split", "rent_paying", "shareholder"])),
 };
 
 export const PhysicianCreateSchema = z.object(PhysicianFields);

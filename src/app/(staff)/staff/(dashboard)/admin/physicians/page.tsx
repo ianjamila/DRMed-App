@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
+import { RecomputeClinicFeeButton } from "./recompute-clinic-fee-button";
 
 export const metadata = { title: "Physicians — staff" };
 
@@ -50,12 +51,15 @@ export default async function PhysiciansAdminPage() {
             filtered out of the online booking picker.
           </p>
         </div>
-        <Link
-          href="/staff/admin/physicians/new"
-          className="rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
-        >
-          + New physician
-        </Link>
+        <div className="flex flex-wrap items-center gap-3">
+          <RecomputeClinicFeeButton />
+          <Link
+            href="/staff/admin/physicians/new"
+            className="rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
+          >
+            + New physician
+          </Link>
+        </div>
       </header>
 
       <Section

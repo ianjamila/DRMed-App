@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { VisitForm } from "./visit-form";
 
 export const metadata = {
@@ -19,7 +20,8 @@ export default async function NewVisitPage({ searchParams }: Props) {
 
   const supabase = await createClient();
 
-  const [{ data: patient }, { data: services }, { data: hmoProviders }] =
+  const admin = createAdminClient();
+  const [{ data: patient }, { data: services }, { data: hmoProviders }, { data: physicians }] =
     await Promise.all([
       supabase
         .from("patients")
@@ -38,6 +40,11 @@ export default async function NewVisitPage({ searchParams }: Props) {
         .select("id, name")
         .eq("is_active", true)
         .order("name", { ascending: true }),
+      admin
+        .from("physicians")
+        .select("id, full_name, compensation_arrangement, is_active")
+        .eq("is_active", true)
+        .order("full_name", { ascending: true }),
     ]);
 
   if (!patient) {
@@ -74,6 +81,11 @@ export default async function NewVisitPage({ searchParams }: Props) {
               s.senior_discount_php != null ? Number(s.senior_discount_php) : null,
           }))}
           hmoProviders={hmoProviders ?? []}
+          physicians={(physicians ?? []).map((p) => ({
+            id: p.id,
+            full_name: p.full_name,
+            compensation_arrangement: p.compensation_arrangement,
+          }))}
         />
       </div>
     </div>

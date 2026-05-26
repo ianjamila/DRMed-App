@@ -44,10 +44,23 @@ interface HmoProviderLite {
   name: string;
 }
 
+export interface PhysicianLite {
+  id: string;
+  full_name: string;
+  compensation_arrangement: string;
+}
+
 interface Props {
   services: ServiceLite[];
   patient: PatientLite;
   hmoProviders: HmoProviderLite[];
+  physicians?: PhysicianLite[];
+}
+
+/** Derive default clinic_fee from physician compensation arrangement. */
+function defaultClinicFee(arrangement: string | undefined): number {
+  if (arrangement === "rent_paying" || arrangement === "shareholder") return 0;
+  return 100;
 }
 
 // Discount kinds match the test_requests.discount_kind check constraint.
@@ -113,11 +126,12 @@ function discountFor(
   }
 }
 
-export function VisitForm({ services, patient, hmoProviders }: Props) {
+export function VisitForm({ services, patient, hmoProviders, physicians = [] }: Props) {
   const router = useRouter();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [hmoProviderId, setHmoProviderId] = useState<string>("");
   const [lineState, setLineState] = useState<Record<string, LineState>>({});
+  const [attendingPhysicianId, setAttendingPhysicianId] = useState<string>("");
   const [serviceQuery, setServiceQuery] = useState("");
   const deferredQuery = useDeferredValue(serviceQuery);
   // Phase 14: when reception selects a lab_package, fetch its components so
@@ -256,6 +270,39 @@ export function VisitForm({ services, patient, hmoProviders }: Props) {
   return (
     <form action={formAction} className="grid gap-6">
       <input type="hidden" name="patient_id" value={patient.id} />
+
+      {physicians.length > 0 ? (
+        <fieldset className="grid gap-2 rounded-xl border border-[color:var(--color-brand-bg-mid)] p-4">
+          <legend className="px-1 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+            Attending physician
+          </legend>
+          <div className="grid gap-1">
+            <Label htmlFor="attending_physician_id" className="text-sm">
+              Physician (default for all consult / procedure lines)
+            </Label>
+            <select
+              id="attending_physician_id"
+              name="attending_physician_id"
+              value={attendingPhysicianId}
+              onChange={(e) => setAttendingPhysicianId(e.target.value)}
+              className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+            >
+              <option value="">— None —</option>
+              {physicians.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.full_name}
+                  {p.compensation_arrangement !== "pf_split"
+                    ? ` (${p.compensation_arrangement.replace("_", "-")})`
+                    : ""}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+              Required at release time for consults and procedures. Per-line override available below.
+            </p>
+          </div>
+        </fieldset>
+      ) : null}
 
       <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] p-4 text-sm">
         <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
@@ -440,11 +487,13 @@ export function VisitForm({ services, patient, hmoProviders }: Props) {
             {lines.map(({ service: s, base, discount, final, ls }) => {
               const isConsult = s.kind === "doctor_consultation";
               const isProcedure = s.kind === "doctor_procedure";
-              // Default clinic_fee = 100 / doctor_pf = base − 100 the first time
-              // a consultation row is opened; reception can edit either.
-              const clinicFeeDefault = isConsult ? "100" : "";
-              const doctorPfDefault = isConsult
-                ? String(Math.max(0, final - 100))
+              // Auto-default clinic_fee based on selected physician's compensation arrangement.
+              // pf_split → 100; rent_paying / shareholder → 0.
+              const selectedPhysician = physicians.find((p) => p.id === attendingPhysicianId);
+              const cfAuto = (isConsult || isProcedure) ? defaultClinicFee(selectedPhysician?.compensation_arrangement) : 0;
+              const clinicFeeDefault = (isConsult || isProcedure) ? String(cfAuto) : "";
+              const doctorPfDefault = (isConsult || isProcedure)
+                ? String(Math.max(0, final - cfAuto))
                 : "";
               return (
                 <div
@@ -551,8 +600,9 @@ export function VisitForm({ services, patient, hmoProviders }: Props) {
                         />
                       </div>
                       <p className="col-span-12 sm:col-span-6 self-end text-[10px] text-[color:var(--color-brand-text-soft)]">
-                        Defaults: clinic fee ₱100, doctor PF = final − clinic
-                        fee. Both editable.
+                        {selectedPhysician && cfAuto === 0
+                          ? `Defaulted to ₱0 clinic fee (${selectedPhysician.compensation_arrangement.replace("_", "-")} arrangement).`
+                          : "Defaults: clinic fee ₱100, doctor PF = final − clinic fee. Both editable."}
                       </p>
                     </div>
                   ) : null}
@@ -604,6 +654,51 @@ export function VisitForm({ services, patient, hmoProviders }: Props) {
                           className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 font-mono text-xs focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
                         />
                       </div>
+                      <div className="col-span-6 sm:col-span-3">
+                        <Label
+                          htmlFor={`clinic_fee__${s.id}`}
+                          className="text-[10px]"
+                        >
+                          Clinic fee
+                        </Label>
+                        <input
+                          id={`clinic_fee__${s.id}`}
+                          name={`clinic_fee__${s.id}`}
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={ls.clinicFee || clinicFeeDefault}
+                          onChange={(e) =>
+                            updateLine(s.id, { clinicFee: e.target.value })
+                          }
+                          className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 font-mono text-xs focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+                        />
+                      </div>
+                      <div className="col-span-6 sm:col-span-3">
+                        <Label
+                          htmlFor={`doctor_pf__${s.id}`}
+                          className="text-[10px]"
+                        >
+                          Doctor PF
+                        </Label>
+                        <input
+                          id={`doctor_pf__${s.id}`}
+                          name={`doctor_pf__${s.id}`}
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={ls.doctorPf || doctorPfDefault}
+                          onChange={(e) =>
+                            updateLine(s.id, { doctorPf: e.target.value })
+                          }
+                          className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 font-mono text-xs focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+                        />
+                      </div>
+                      {selectedPhysician && (cfAuto === 0) ? (
+                        <p className="col-span-12 self-end text-[10px] text-amber-700">
+                          Defaulted to ₱0 clinic fee ({selectedPhysician.compensation_arrangement.replace("_", "-")} arrangement).
+                        </p>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>

@@ -24,6 +24,7 @@ function readForm(formData: FormData) {
     bio: formData.get("bio"),
     is_active: formData.get("is_active"),
     display_order: formData.get("display_order"),
+    compensation_arrangement: formData.get("compensation_arrangement"),
   };
 }
 

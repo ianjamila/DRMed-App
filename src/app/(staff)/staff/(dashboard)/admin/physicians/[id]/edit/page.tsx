@@ -23,7 +23,7 @@ export default async function EditPhysicianPage({ params }: PageProps) {
   const { data: physician } = await admin
     .from("physicians")
     .select(
-      "id, slug, full_name, specialty, group_label, bio, is_active, display_order, photo_path",
+      "id, slug, full_name, specialty, group_label, bio, is_active, display_order, photo_path, compensation_arrangement",
     )
     .eq("id", id)
     .maybeSingle();

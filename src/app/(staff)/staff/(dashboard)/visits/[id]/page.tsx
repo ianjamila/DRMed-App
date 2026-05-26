@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { formatPhp } from "@/lib/marketing/format";
 import { ReleaseButton } from "./release-button";
 import { VoidPaymentDialog } from "../../payments/[id]/void/void-payment-dialog";
@@ -50,6 +52,8 @@ const DISCOUNT_KIND_LABEL: Record<string, string> = {
 
 export default async function VisitDetailPage({ params }: Props) {
   const { id } = await params;
+  const session = await requireActiveStaff();
+  const isAdmin = session.role === "admin";
   const supabase = await createClient();
 
   const { data: visit } = await supabase
@@ -95,6 +99,32 @@ export default async function VisitDetailPage({ params }: Props) {
       .eq("visit_id", id)
       .order("received_at", { ascending: false }),
   ]);
+
+  // Admin-only: fetch PF entries to render status badges per test_request.
+  const testIds = (tests ?? []).map((t) => t.id);
+  type PfEntry = {
+    id: string;
+    test_request_id: string;
+    recognition_basis: string;
+    recognized_at: string | null;
+    disbursement_id: string | null;
+    voided_at: string | null;
+    pf_php: number;
+  };
+  const pfEntryByTrId = new Map<string, PfEntry>();
+  if (isAdmin && testIds.length > 0) {
+    const adminClient = createAdminClient();
+    const { data: pfEntries } = await adminClient
+      .from("doctor_pf_entries")
+      .select("id, test_request_id, recognition_basis, recognized_at, disbursement_id, voided_at, pf_php")
+      .in("test_request_id", testIds);
+    for (const pfe of pfEntries ?? []) {
+      // Show the most-recent non-clawback entry per test_request for badge display.
+      if (pfe.recognition_basis !== "clawback" && !pfEntryByTrId.has(pfe.test_request_id)) {
+        pfEntryByTrId.set(pfe.test_request_id, pfe as PfEntry);
+      }
+    }
+  }
 
   const isPaid = visit.payment_status === "paid" || visit.payment_status === "waived";
   const balance = Number(visit.total_php) - Number(visit.paid_php);
@@ -380,6 +410,9 @@ export default async function VisitDetailPage({ params }: Props) {
                           PF {formatPhp(Number(t.doctor_pf_php ?? 0))}
                         </p>
                       ) : null}
+                      {isAdmin && pfEntryByTrId.has(t.id) ? (
+                        <PfStatusBadge entry={pfEntryByTrId.get(t.id)!} />
+                      ) : null}
                       {isProcedure && t.procedure_description ? (
                         <p className="mt-1 text-[10px] text-[color:var(--color-brand-text-mid)]">
                           {t.procedure_description}
@@ -595,6 +628,45 @@ function Field({
       </p>
     </div>
   );
+}
+
+interface PfEntryShape {
+  recognition_basis: string;
+  recognized_at: string | null;
+  disbursement_id: string | null;
+  voided_at: string | null;
+}
+
+function PfStatusBadge({ entry }: { entry: PfEntryShape }) {
+  if (entry.voided_at) {
+    return (
+      <span className="mt-1 inline-block rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600">
+        PF voided
+      </span>
+    );
+  }
+  if (entry.recognition_basis === "hmo_at_settlement" && !entry.recognized_at) {
+    return (
+      <span className="mt-1 inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">
+        PF pending HMO settlement
+      </span>
+    );
+  }
+  if (entry.disbursement_id) {
+    return (
+      <span className="mt-1 inline-block rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-800">
+        PF paid
+      </span>
+    );
+  }
+  if (entry.recognized_at) {
+    return (
+      <span className="mt-1 inline-block rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800">
+        PF accrued
+      </span>
+    );
+  }
+  return null;
 }
 
 interface TestActionProps {

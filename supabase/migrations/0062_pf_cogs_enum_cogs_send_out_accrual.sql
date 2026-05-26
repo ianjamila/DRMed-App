@@ -1,0 +1,11 @@
+-- =============================================================================
+-- 0062_pf_cogs_enum_cogs_send_out_accrual.sql
+-- =============================================================================
+-- Reserved enum value. The send-out COGS accrual currently rides on the
+-- existing release JE (source_kind='test_request') rather than emitting its
+-- own JE — keeping it as one transaction simplifies the bridge. This value
+-- is kept reserved for a future change that splits COGS into a separate JE
+-- (e.g., to allow voiding COGS independent of the release reversal). Don't
+-- remove without auditing 0064 §6.1 + §6.7 trigger functions.
+-- =============================================================================
+alter type public.je_source_kind add value if not exists 'cogs_send_out_accrual';

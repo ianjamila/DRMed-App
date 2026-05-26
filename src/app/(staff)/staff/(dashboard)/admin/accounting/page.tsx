@@ -1,4 +1,6 @@
+import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
+import { createAdminClient } from "@/lib/supabase/admin";
 import {
   readAccountingEnv,
   readAllWatermarks,
@@ -16,6 +18,33 @@ export default async function AccountingAdminPage() {
 
   const envMissing = "missing" in env ? env.missing : null;
 
+  // 12.5 banner counts — computed server-side; tables may not exist yet if
+  // migrations haven't been applied; guard with try/catch to avoid breaking
+  // the page pre-migration.
+  let agingCount = 0;
+  let unconfiguredCount = 0;
+  try {
+    const adminClient = createAdminClient();
+    const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+    const [aging, unconfigured] = await Promise.all([
+      adminClient
+        .from("cogs_send_out_entries")
+        .select("id", { count: "exact", head: true })
+        .is("trueup_id", null)
+        .is("voided_at", null)
+        .lt("accrued_at", ninetyDaysAgo),
+      adminClient
+        .from("services")
+        .select("id", { count: "exact", head: true })
+        .eq("is_send_out", true)
+        .or("send_out_unit_cost_php.is.null,send_out_unit_cost_php.eq.0"),
+    ]);
+    agingCount = aging.count ?? 0;
+    unconfiguredCount = unconfigured.count ?? 0;
+  } catch {
+    // Pre-migration: silently skip banners.
+  }
+
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6">
@@ -31,6 +60,26 @@ export default async function AccountingAdminPage() {
           sync now or rewind the watermark for a backfill.
         </p>
       </header>
+
+      {agingCount > 0 ? (
+        <Link
+          href="/staff/admin/accounting/cogs/send-outs?filter=age_90_plus"
+          className="mb-3 block rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 hover:bg-amber-100"
+        >
+          <span className="font-bold">{agingCount} send-out accrual{agingCount === 1 ? "" : "s"} over 90 days unbilled.</span>{" "}
+          Click to review and match to a Hi Precision bill.
+        </Link>
+      ) : null}
+
+      {unconfiguredCount > 0 ? (
+        <Link
+          href="/staff/admin/accounting/cogs/send-outs/unconfigured"
+          className="mb-3 block rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900 hover:bg-red-100"
+        >
+          <span className="font-bold">{unconfiguredCount} send-out service{unconfiguredCount === 1 ? "" : "s"} missing unit cost configuration.</span>{" "}
+          Click to configure unit costs so COGS accrual fires correctly.
+        </Link>
+      ) : null}
 
       {envMissing ? (
         <div className="mb-6 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">

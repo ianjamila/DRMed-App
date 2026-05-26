@@ -726,6 +726,195 @@ export type Database = {
         }
         Relationships: []
       }
+      cogs_send_out_entries: {
+        Row: {
+          accrued_at: string
+          id: string
+          journal_entry_id: string | null
+          service_id: string
+          test_request_id: string
+          trued_up_at: string | null
+          trueup_id: string | null
+          unit_cost_php: number
+          vendor_id: string | null
+          void_reason: string | null
+          voided_at: string | null
+          voided_by: string | null
+        }
+        Insert: {
+          accrued_at?: string
+          id?: string
+          journal_entry_id?: string | null
+          service_id: string
+          test_request_id: string
+          trued_up_at?: string | null
+          trueup_id?: string | null
+          unit_cost_php: number
+          vendor_id?: string | null
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
+        }
+        Update: {
+          accrued_at?: string
+          id?: string
+          journal_entry_id?: string | null
+          service_id?: string
+          test_request_id?: string
+          trued_up_at?: string | null
+          trueup_id?: string | null
+          unit_cost_php?: number
+          vendor_id?: string | null
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cogs_send_out_entries_journal_entry_id_fkey"
+            columns: ["journal_entry_id"]
+            isOneToOne: false
+            referencedRelation: "journal_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cogs_send_out_entries_service_id_fkey"
+            columns: ["service_id"]
+            isOneToOne: false
+            referencedRelation: "services"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cogs_send_out_entries_service_id_fkey"
+            columns: ["service_id"]
+            isOneToOne: false
+            referencedRelation: "v_daily_revenue_by_service"
+            referencedColumns: ["service_id"]
+          },
+          {
+            foreignKeyName: "cogs_send_out_entries_test_request_id_fkey"
+            columns: ["test_request_id"]
+            isOneToOne: false
+            referencedRelation: "test_requests"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cogs_send_out_entries_test_request_id_fkey"
+            columns: ["test_request_id"]
+            isOneToOne: false
+            referencedRelation: "v_hmo_unbilled"
+            referencedColumns: ["test_request_id"]
+          },
+          {
+            foreignKeyName: "cogs_send_out_entries_trueup_id_fkey"
+            columns: ["trueup_id"]
+            isOneToOne: false
+            referencedRelation: "cogs_send_out_trueups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cogs_send_out_entries_vendor_id_fkey"
+            columns: ["vendor_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cogs_send_out_entries_voided_by_fkey"
+            columns: ["voided_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cogs_send_out_trueups: {
+        Row: {
+          accrued_total_php: number
+          bill_id: string | null
+          billed_total_php: number
+          id: string
+          journal_entry_id: string | null
+          matched_at: string
+          matched_by: string
+          period_end_date: string
+          period_start_date: string
+          variance_php: number
+          vendor_id: string
+          void_reason: string | null
+          voided_at: string | null
+          voided_by: string | null
+        }
+        Insert: {
+          accrued_total_php: number
+          bill_id?: string | null
+          billed_total_php: number
+          id?: string
+          journal_entry_id?: string | null
+          matched_at?: string
+          matched_by: string
+          period_end_date: string
+          period_start_date: string
+          variance_php: number
+          vendor_id: string
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
+        }
+        Update: {
+          accrued_total_php?: number
+          bill_id?: string | null
+          billed_total_php?: number
+          id?: string
+          journal_entry_id?: string | null
+          matched_at?: string
+          matched_by?: string
+          period_end_date?: string
+          period_start_date?: string
+          variance_php?: number
+          vendor_id?: string
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cogs_send_out_trueups_bill_id_fkey"
+            columns: ["bill_id"]
+            isOneToOne: false
+            referencedRelation: "bills"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cogs_send_out_trueups_journal_entry_id_fkey"
+            columns: ["journal_entry_id"]
+            isOneToOne: false
+            referencedRelation: "journal_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cogs_send_out_trueups_matched_by_fkey"
+            columns: ["matched_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cogs_send_out_trueups_vendor_id_fkey"
+            columns: ["vendor_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cogs_send_out_trueups_voided_by_fkey"
+            columns: ["voided_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       contact_messages: {
         Row: {
           created_at: string
@@ -852,6 +1041,181 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "v_hmo_unbilled"
             referencedColumns: ["test_request_id"]
+          },
+        ]
+      }
+      doctor_pf_disbursements: {
+        Row: {
+          batch_number: number
+          id: string
+          journal_entry_id: string | null
+          method: string
+          notes: string | null
+          physician_id: string
+          posted_date: string
+          recorded_at: string
+          recorded_by: string
+          total_php: number
+          void_reason: string | null
+          voided_at: string | null
+          voided_by: string | null
+        }
+        Insert: {
+          batch_number: number
+          id?: string
+          journal_entry_id?: string | null
+          method: string
+          notes?: string | null
+          physician_id: string
+          posted_date: string
+          recorded_at?: string
+          recorded_by: string
+          total_php: number
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
+        }
+        Update: {
+          batch_number?: number
+          id?: string
+          journal_entry_id?: string | null
+          method?: string
+          notes?: string | null
+          physician_id?: string
+          posted_date?: string
+          recorded_at?: string
+          recorded_by?: string
+          total_php?: number
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "doctor_pf_disbursements_journal_entry_id_fkey"
+            columns: ["journal_entry_id"]
+            isOneToOne: false
+            referencedRelation: "journal_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "doctor_pf_disbursements_physician_id_fkey"
+            columns: ["physician_id"]
+            isOneToOne: false
+            referencedRelation: "physicians"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "doctor_pf_disbursements_recorded_by_fkey"
+            columns: ["recorded_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "doctor_pf_disbursements_voided_by_fkey"
+            columns: ["voided_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      doctor_pf_entries: {
+        Row: {
+          created_at: string
+          disbursement_id: string | null
+          hmo_allocation_id: string | null
+          id: string
+          journal_entry_id: string | null
+          pf_php: number
+          physician_id: string
+          recognition_basis: string
+          recognized_at: string | null
+          test_request_id: string
+          void_reason: string | null
+          voided_at: string | null
+          voided_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          disbursement_id?: string | null
+          hmo_allocation_id?: string | null
+          id?: string
+          journal_entry_id?: string | null
+          pf_php: number
+          physician_id: string
+          recognition_basis: string
+          recognized_at?: string | null
+          test_request_id: string
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          disbursement_id?: string | null
+          hmo_allocation_id?: string | null
+          id?: string
+          journal_entry_id?: string | null
+          pf_php?: number
+          physician_id?: string
+          recognition_basis?: string
+          recognized_at?: string | null
+          test_request_id?: string
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "doctor_pf_entries_disbursement_id_fkey"
+            columns: ["disbursement_id"]
+            isOneToOne: false
+            referencedRelation: "doctor_pf_disbursements"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "doctor_pf_entries_hmo_allocation_id_fkey"
+            columns: ["hmo_allocation_id"]
+            isOneToOne: false
+            referencedRelation: "hmo_payment_allocations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "doctor_pf_entries_journal_entry_id_fkey"
+            columns: ["journal_entry_id"]
+            isOneToOne: false
+            referencedRelation: "journal_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "doctor_pf_entries_physician_id_fkey"
+            columns: ["physician_id"]
+            isOneToOne: false
+            referencedRelation: "physicians"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "doctor_pf_entries_test_request_id_fkey"
+            columns: ["test_request_id"]
+            isOneToOne: false
+            referencedRelation: "test_requests"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "doctor_pf_entries_test_request_id_fkey"
+            columns: ["test_request_id"]
+            isOneToOne: false
+            referencedRelation: "v_hmo_unbilled"
+            referencedColumns: ["test_request_id"]
+          },
+          {
+            foreignKeyName: "doctor_pf_entries_voided_by_fkey"
+            columns: ["voided_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -3273,6 +3637,21 @@ export type Database = {
         }
         Relationships: []
       }
+      pf_disbursement_year_counters: {
+        Row: {
+          next_n: number
+          year: number
+        }
+        Insert: {
+          next_n?: number
+          year: number
+        }
+        Update: {
+          next_n?: number
+          year?: number
+        }
+        Relationships: []
+      }
       physician_schedule_overrides: {
         Row: {
           created_at: string
@@ -3388,6 +3767,7 @@ export type Database = {
       physicians: {
         Row: {
           bio: string | null
+          compensation_arrangement: string
           created_at: string
           display_order: number
           full_name: string
@@ -3401,6 +3781,7 @@ export type Database = {
         }
         Insert: {
           bio?: string | null
+          compensation_arrangement?: string
           created_at?: string
           display_order?: number
           full_name: string
@@ -3414,6 +3795,7 @@ export type Database = {
         }
         Update: {
           bio?: string | null
+          compensation_arrangement?: string
           created_at?: string
           display_order?: number
           full_name?: string
@@ -4111,6 +4493,8 @@ export type Database = {
           requires_time_slot: boolean
           section: string | null
           send_out_lab: string | null
+          send_out_unit_cost_php: number | null
+          send_out_vendor_id: string | null
           senior_discount_php: number | null
           specialty_code: string | null
           turnaround_hours: number | null
@@ -4134,6 +4518,8 @@ export type Database = {
           requires_time_slot?: boolean
           section?: string | null
           send_out_lab?: string | null
+          send_out_unit_cost_php?: number | null
+          send_out_vendor_id?: string | null
           senior_discount_php?: number | null
           specialty_code?: string | null
           turnaround_hours?: number | null
@@ -4157,6 +4543,8 @@ export type Database = {
           requires_time_slot?: boolean
           section?: string | null
           send_out_lab?: string | null
+          send_out_unit_cost_php?: number | null
+          send_out_vendor_id?: string | null
           senior_discount_php?: number | null
           specialty_code?: string | null
           turnaround_hours?: number | null
@@ -4168,6 +4556,13 @@ export type Database = {
             columns: ["report_group_id"]
             isOneToOne: false
             referencedRelation: "report_groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "services_send_out_vendor_id_fkey"
+            columns: ["send_out_vendor_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
             referencedColumns: ["id"]
           },
           {
@@ -4368,6 +4763,7 @@ export type Database = {
         Row: {
           assigned_medtech_id: string | null
           assigned_to: string | null
+          attending_physician_id: string | null
           base_price_php: number | null
           cancelled_reason: string | null
           clinic_fee_php: number | null
@@ -4407,6 +4803,7 @@ export type Database = {
         Insert: {
           assigned_medtech_id?: string | null
           assigned_to?: string | null
+          attending_physician_id?: string | null
           base_price_php?: number | null
           cancelled_reason?: string | null
           clinic_fee_php?: number | null
@@ -4446,6 +4843,7 @@ export type Database = {
         Update: {
           assigned_medtech_id?: string | null
           assigned_to?: string | null
+          attending_physician_id?: string | null
           base_price_php?: number | null
           cancelled_reason?: string | null
           clinic_fee_php?: number | null
@@ -4488,6 +4886,13 @@ export type Database = {
             columns: ["assigned_medtech_id"]
             isOneToOne: false
             referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "test_requests_attending_physician_id_fkey"
+            columns: ["attending_physician_id"]
+            isOneToOne: false
+            referencedRelation: "physicians"
             referencedColumns: ["id"]
           },
           {
@@ -4643,6 +5048,7 @@ export type Database = {
       }
       visits: {
         Row: {
+          attending_physician_id: string | null
           created_at: string
           created_by: string | null
           hmo_approval_date: string | null
@@ -4660,6 +5066,7 @@ export type Database = {
           visit_number: string
         }
         Insert: {
+          attending_physician_id?: string | null
           created_at?: string
           created_by?: string | null
           hmo_approval_date?: string | null
@@ -4677,6 +5084,7 @@ export type Database = {
           visit_number?: string
         }
         Update: {
+          attending_physician_id?: string | null
           created_at?: string
           created_by?: string | null
           hmo_approval_date?: string | null
@@ -4694,6 +5102,13 @@ export type Database = {
           visit_number?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "visits_attending_physician_id_fkey"
+            columns: ["attending_physician_id"]
+            isOneToOne: false
+            referencedRelation: "physicians"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "visits_hmo_provider_id_fkey"
             columns: ["hmo_provider_id"]
@@ -5021,7 +5436,12 @@ export type Database = {
       has_role: { Args: { roles: string[] }; Returns: boolean }
       is_staff: { Args: never; Returns: boolean }
       je_next_number: { Args: { p_fiscal_year: number }; Returns: string }
+      next_pf_disbursement_batch_number: {
+        Args: { p_year: number }
+        Returns: number
+      }
       period_status_for: { Args: { p_date: string }; Returns: string }
+      recompute_clinic_fee_for_unreleased: { Args: never; Returns: Json }
       recompute_hmo_batch_status: {
         Args: { p_batch_id: string }
         Returns: undefined
@@ -5087,6 +5507,10 @@ export type Database = {
         | "payroll_13th_month_payout"
         | "bill_post"
         | "bill_payment"
+        | "doctor_pf_accrual"
+        | "doctor_pf_disbursement"
+        | "cogs_send_out_accrual"
+        | "cogs_send_out_trueup"
       je_status: "draft" | "posted" | "reversed"
       period_status: "open" | "closed"
     }
@@ -5247,6 +5671,10 @@ export const Constants = {
         "payroll_13th_month_payout",
         "bill_post",
         "bill_payment",
+        "doctor_pf_accrual",
+        "doctor_pf_disbursement",
+        "cogs_send_out_accrual",
+        "cogs_send_out_trueup",
       ],
       je_status: ["draft", "posted", "reversed"],
       period_status: ["open", "closed"],

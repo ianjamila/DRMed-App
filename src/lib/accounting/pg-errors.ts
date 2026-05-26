@@ -95,6 +95,9 @@ export function translatePgError(err: PgError): string {
       return err.message ?? "All allocated bills must be from the same vendor as the payment.";
     case "P0033":
       return err.message ?? "Cannot allocate to a draft or voided bill.";
+    // 12.5 — COGS + Doctor PF subledger
+    case "P0034":
+      return "An attending physician is required for consults and procedures. Please select a physician on the visit before releasing this test.";
     default:
       return err.message ?? "Database error. Please try again.";
   }
