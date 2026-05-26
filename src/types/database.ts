@@ -67,6 +67,92 @@ export type Database = {
           },
         ]
       }
+      accrual_template_lines: {
+        Row: {
+          account_id: string
+          credit_php: number
+          debit_php: number
+          description: string | null
+          id: string
+          line_order: number
+          template_id: string
+        }
+        Insert: {
+          account_id: string
+          credit_php?: number
+          debit_php?: number
+          description?: string | null
+          id?: string
+          line_order?: number
+          template_id: string
+        }
+        Update: {
+          account_id?: string
+          credit_php?: number
+          debit_php?: number
+          description?: string | null
+          id?: string
+          line_order?: number
+          template_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "accrual_template_lines_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "chart_of_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "accrual_template_lines_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "accrual_templates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      accrual_templates: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          description: string | null
+          frequency: string
+          id: string
+          is_active: boolean
+          name: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          frequency?: string
+          id?: string
+          is_active?: boolean
+          name: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          frequency?: string
+          id?: string
+          is_active?: boolean
+          name?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "accrual_templates_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       accounting_settings: {
         Row: {
           description: string | null

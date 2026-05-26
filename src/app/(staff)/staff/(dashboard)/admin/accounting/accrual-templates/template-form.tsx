@@ -2,7 +2,10 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { createJournalEntryAction } from "./actions";
+import {
+  createAccrualTemplate,
+  updateAccrualTemplate,
+} from "./actions";
 
 interface AccountOption {
   id: string;
@@ -13,7 +16,7 @@ interface AccountOption {
 
 interface LineDraft {
   account_id: string;
-  debit_php: string; // string in form, parsed before submit
+  debit_php: string;
   credit_php: string;
   description: string;
 }
@@ -27,45 +30,75 @@ function blankLine(): LineDraft {
   return { account_id: "", debit_php: "", credit_php: "", description: "" };
 }
 
-export interface InitialLine {
-  account_id: string;
-  debit_php: number;
-  credit_php: number;
-  description: string;
+function typeLabel(t: string): string {
+  switch (t) {
+    case "asset":
+      return "Assets (1xxx)";
+    case "liability":
+      return "Liabilities (2xxx)";
+    case "equity":
+      return "Equity (3xxx)";
+    case "revenue":
+      return "Revenue (4xxx)";
+    case "contra_revenue":
+      return "Contra revenue (49xx)";
+    case "expense":
+      return "Expenses (5xxx-7xxx)";
+    case "memo":
+      return "Memo / suspense";
+    default:
+      return t;
+  }
 }
 
-export function ManualJeForm({
+const FREQUENCIES = [
+  { value: "monthly", label: "Monthly" },
+  { value: "quarterly", label: "Quarterly" },
+  { value: "annual", label: "Annual" },
+  { value: "on_demand", label: "On-demand only" },
+] as const;
+
+interface InitialTemplate {
+  id: string;
+  name: string;
+  description: string | null;
+  frequency: string;
+  is_active: boolean;
+  lines: {
+    account_id: string;
+    debit_php: number;
+    credit_php: number;
+    description: string | null;
+  }[];
+}
+
+export function AccrualTemplateForm({
   accounts,
-  defaultDate,
-  today,
-  initialDescription,
-  initialLines,
+  initial,
 }: {
   accounts: AccountOption[];
-  defaultDate: string;
-  today: string;
-  initialDescription?: string;
-  initialLines?: InitialLine[];
+  initial?: InitialTemplate;
 }) {
   const router = useRouter();
-  const [postingDate, setPostingDate] = useState(defaultDate);
-  const [description, setDescription] = useState(initialDescription ?? "");
-  const [notes, setNotes] = useState("");
+  const isEdit = !!initial;
+
+  const [name, setName] = useState(initial?.name ?? "");
+  const [description, setDescription] = useState(initial?.description ?? "");
+  const [frequency, setFrequency] = useState(initial?.frequency ?? "monthly");
+  const [isActive, setIsActive] = useState(initial?.is_active ?? true);
   const [lines, setLines] = useState<LineDraft[]>(
-    initialLines && initialLines.length >= 2
-      ? initialLines.map((l) => ({
+    initial && initial.lines.length > 0
+      ? initial.lines.map((l) => ({
           account_id: l.account_id,
           debit_php: l.debit_php > 0 ? String(l.debit_php) : "",
           credit_php: l.credit_php > 0 ? String(l.credit_php) : "",
-          description: l.description,
+          description: l.description ?? "",
         }))
       : [blankLine(), blankLine()],
   );
-  const [submitMode, setSubmitMode] = useState<"draft" | "posted">("posted");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  // Group accounts by type for picker readability.
   const accountsByType = useMemo(() => {
     const groups: Record<string, AccountOption[]> = {};
     for (const a of accounts) {
@@ -98,7 +131,9 @@ export function ManualJeForm({
   }
 
   function removeLine(i: number) {
-    setLines((prev) => (prev.length <= 2 ? prev : prev.filter((_, idx) => idx !== i)));
+    setLines((prev) =>
+      prev.length <= 2 ? prev : prev.filter((_, idx) => idx !== i),
+    );
   }
 
   function onSubmit(e: React.FormEvent) {
@@ -106,10 +141,10 @@ export function ManualJeForm({
     setError(null);
 
     const payload = {
-      posting_date: postingDate,
-      description,
-      notes: notes.trim() ? notes : null,
-      status: submitMode,
+      name: name.trim(),
+      description: description.trim() ? description : null,
+      frequency: frequency as "monthly" | "quarterly" | "annual" | "on_demand",
+      is_active: isActive,
       lines: lines.map((l) => ({
         account_id: l.account_id,
         debit_php: Number(l.debit_php) || 0,
@@ -119,28 +154,26 @@ export function ManualJeForm({
     };
 
     startTransition(async () => {
-      const result = await createJournalEntryAction(payload);
+      const result = isEdit
+        ? await updateAccrualTemplate(initial!.id, payload)
+        : await createAccrualTemplate(payload);
       if (!result.ok) {
         setError(result.error);
         return;
       }
-      router.push(`/staff/admin/accounting/journal/${result.id}`);
+      router.push("/staff/admin/accounting/accrual-templates");
     });
   }
 
   const canSubmit =
     !pending &&
-    postingDate.length === 10 &&
-    description.trim().length >= 3 &&
+    name.trim().length >= 1 &&
     lines.length >= 2 &&
     lines.every(
       (l) =>
         l.account_id &&
-        ((Number(l.debit_php) > 0 && !(Number(l.credit_php) > 0)) ||
-          (Number(l.credit_php) > 0 && !(Number(l.debit_php) > 0))),
-    ) &&
-    totals.balanced &&
-    totals.debit > 0;
+        !(Number(l.debit_php) > 0 && Number(l.credit_php) > 0),
+    );
 
   return (
     <form
@@ -150,46 +183,57 @@ export function ManualJeForm({
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="flex flex-col gap-1">
           <span className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-            Posting date
+            Name
           </span>
           <input
-            type="date"
-            value={postingDate}
-            onChange={(e) => setPostingDate(e.target.value)}
-            max={today}
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
             required
+            maxLength={120}
+            placeholder="e.g. Monthly depreciation accrual"
             className="rounded-md border border-[color:var(--color-brand-bg-mid)] px-3 py-2 text-sm"
           />
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-            Description
+            Frequency
           </span>
-          <input
-            type="text"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="e.g. Quarter-end depreciation accrual"
-            required
-            minLength={3}
-            maxLength={500}
+          <select
+            value={frequency}
+            onChange={(e) => setFrequency(e.target.value)}
             className="rounded-md border border-[color:var(--color-brand-bg-mid)] px-3 py-2 text-sm"
-          />
+          >
+            {FREQUENCIES.map((f) => (
+              <option key={f.value} value={f.value}>
+                {f.label}
+              </option>
+            ))}
+          </select>
         </label>
       </div>
 
       <label className="flex flex-col gap-1">
         <span className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-          Notes (optional)
+          Description (optional)
         </span>
         <textarea
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
           rows={2}
           maxLength={2000}
-          placeholder="Anything an auditor would need to know."
+          placeholder="Why this accrual exists, what it's for, who reviews it."
           className="rounded-md border border-[color:var(--color-brand-bg-mid)] px-3 py-2 text-sm"
         />
+      </label>
+
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={isActive}
+          onChange={(e) => setIsActive(e.target.checked)}
+        />
+        Active (uncheck to retire without deleting history)
       </label>
 
       <div>
@@ -219,7 +263,10 @@ export function ManualJeForm({
             </thead>
             <tbody>
               {lines.map((line, i) => (
-                <tr key={i} className="border-t border-[color:var(--color-brand-bg-mid)]">
+                <tr
+                  key={i}
+                  className="border-t border-[color:var(--color-brand-bg-mid)]"
+                >
                   <td className="px-3 py-2">
                     <select
                       value={line.account_id}
@@ -310,13 +357,14 @@ export function ManualJeForm({
                 <td colSpan={2} className="px-3 py-2 text-xs">
                   {totals.balanced && totals.debit > 0 ? (
                     <span className="text-emerald-700">Balanced ✓</span>
-                  ) : totals.debit === 0 ? (
+                  ) : totals.debit === 0 && totals.credit === 0 ? (
                     <span className="text-[color:var(--color-brand-text-soft)]">
-                      Enter at least one amount
+                      Amounts can be filled in at apply time
                     </span>
                   ) : (
-                    <span className="text-red-700">
-                      Off by {PHP.format(Math.abs(totals.debit - totals.credit))}
+                    <span className="text-amber-700">
+                      Off by {PHP.format(Math.abs(totals.debit - totals.credit))}{" "}
+                      — admin can fix at apply time
                     </span>
                   )}
                 </td>
@@ -324,33 +372,12 @@ export function ManualJeForm({
             </tfoot>
           </table>
         </div>
+        <p className="mt-2 text-xs text-[color:var(--color-brand-text-soft)]">
+          Saving an unbalanced template is allowed — admin can adjust amounts
+          when the template is applied. The strict balance check fires on the
+          journal entry form, not here.
+        </p>
       </div>
-
-      <fieldset className="flex flex-wrap gap-4">
-        <legend className="mb-2 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-          Submit as
-        </legend>
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="radio"
-            name="submit_mode"
-            value="posted"
-            checked={submitMode === "posted"}
-            onChange={() => setSubmitMode("posted")}
-          />
-          Post immediately
-        </label>
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="radio"
-            name="submit_mode"
-            value="draft"
-            checked={submitMode === "draft"}
-            onChange={() => setSubmitMode("draft")}
-          />
-          Save as draft
-        </label>
-      </fieldset>
 
       {error ? (
         <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
@@ -358,11 +385,7 @@ export function ManualJeForm({
         </div>
       ) : null}
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-xs text-[color:var(--color-brand-text-soft)]">
-          Postings into closed accounting periods are rejected by the
-          server.
-        </p>
+      <div className="flex flex-wrap items-center justify-end gap-3">
         <button
           type="submit"
           disabled={!canSubmit}
@@ -370,32 +393,11 @@ export function ManualJeForm({
         >
           {pending
             ? "Saving…"
-            : submitMode === "posted"
-              ? "Post journal entry"
-              : "Save as draft"}
+            : isEdit
+              ? "Save changes"
+              : "Create template"}
         </button>
       </div>
     </form>
   );
-}
-
-function typeLabel(t: string): string {
-  switch (t) {
-    case "asset":
-      return "Assets (1xxx)";
-    case "liability":
-      return "Liabilities (2xxx)";
-    case "equity":
-      return "Equity (3xxx)";
-    case "revenue":
-      return "Revenue (4xxx)";
-    case "contra_revenue":
-      return "Contra revenue (49xx)";
-    case "expense":
-      return "Expenses (5xxx-7xxx)";
-    case "memo":
-      return "Memo / suspense";
-    default:
-      return t;
-  }
 }
