@@ -2,6 +2,7 @@ import type { StaffSession } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
 import { sectionsForRole, type ServiceSection } from "@/lib/auth/role-sections";
 import { todayManilaISODate } from "@/lib/dates/manila";
+import { loadHiddenCardIds } from "@/lib/dashboards/card-prefs";
 import { DashboardHeader } from "./_components/dashboard-header";
 import { SectionHeading } from "./_components/section-heading";
 import { StatCard } from "./_components/stat-card";
@@ -27,6 +28,9 @@ const ROLE_LABEL: Record<Role, string> = {
   admin: "Admin",
   reception: "Reception",
 };
+
+const SKIP_COUNT = Promise.resolve({ count: 0, data: null });
+const SKIP_DATA = Promise.resolve({ data: null });
 
 function buildQuickLinks(role: Role): QuickLink[] {
   const links: QuickLink[] = [
@@ -87,7 +91,11 @@ function pluckService<T extends { name: string }>(v: T | T[] | null): string {
   return row?.name ?? "—";
 }
 
-async function loadLabStats(role: Role, userId: string) {
+async function loadLabStats(
+  role: Role,
+  userId: string,
+  show: (id: string) => boolean,
+) {
   const supabase = await createClient();
   const today = todayManilaISODate();
   const startOfTodayUtc = new Date(`${today}T00:00:00+08:00`).toISOString();
@@ -95,58 +103,54 @@ async function loadLabStats(role: Role, userId: string) {
   const sections = sectionsForRole(role);
   const dayAgoIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
-  const usesSectionFilter = sections !== null && sections.length > 0;
-
-  // Build per-section filter only for medtech/xray. Pathologist/admin pass
-  // through unfiltered (sections === null).
   const sectionList = (sections ?? []) as ServiceSection[];
 
   const myUnclaimedPromise =
-    role === "medtech" || role === "xray_technician"
+    show("lab.my_unclaimed") && (role === "medtech" || role === "xray_technician")
       ? supabase
           .from("test_requests")
           .select("id, services!inner(section)", { count: "exact", head: true })
           .in("status", ["requested", "in_progress"])
           .is("assigned_to", null)
           .in("services.section", sectionList)
-      : Promise.resolve({ count: 0, data: null });
+      : SKIP_COUNT;
 
   const myClaimedPromise =
-    role === "medtech" || role === "xray_technician"
+    show("lab.my_claimed") && (role === "medtech" || role === "xray_technician")
       ? supabase
           .from("test_requests")
           .select("id", { count: "exact", head: true })
           .eq("assigned_to", userId)
           .in("status", ["requested", "in_progress"])
-      : Promise.resolve({ count: 0, data: null });
+      : SKIP_COUNT;
 
   const readyForSignoffPromise =
-    role === "pathologist" || role === "admin"
+    show("lab.ready_for_signoff") && role === "pathologist"
       ? supabase
           .from("test_requests")
           .select("id", { count: "exact", head: true })
           .eq("status", "ready_for_release")
-      : Promise.resolve({ count: 0, data: null });
+      : SKIP_COUNT;
 
   const criticalAlertsPromise =
-    role === "pathologist" || role === "admin"
+    show("lab.critical_alerts") && role === "pathologist"
       ? supabase
           .from("critical_alerts")
           .select("id", { count: "exact", head: true })
           .is("acknowledged_at", null)
-      : Promise.resolve({ count: 0, data: null });
+      : SKIP_COUNT;
 
   const sendOutAwaitingPromise =
-    role === "medtech"
+    show("lab.send_out_awaiting") && role === "medtech"
       ? supabase
           .from("test_requests")
           .select("id, services!inner(is_send_out)", { count: "exact", head: true })
           .in("status", ["requested", "in_progress"])
           .eq("services.is_send_out", true)
-      : Promise.resolve({ count: 0, data: null });
+      : SKIP_COUNT;
 
-  const releasedTodayMinePromise =
-    role === "medtech" || role === "xray_technician" || role === "pathologist"
+  const releasedTodayPromise =
+    show("lab.released_today")
       ? supabase
           .from("test_requests")
           .select("id", { count: "exact", head: true })
@@ -154,21 +158,11 @@ async function loadLabStats(role: Role, userId: string) {
           .eq("assigned_to", userId)
           .gte("released_at", startOfTodayUtc)
           .lt("released_at", startOfTomorrowUtc)
-      : Promise.resolve({ count: 0, data: null });
+      : SKIP_COUNT;
 
-  const releasedTodayAllPromise =
-    role === "admin"
-      ? supabase
-          .from("test_requests")
-          .select("id", { count: "exact", head: true })
-          .eq("status", "released")
-          .gte("released_at", startOfTodayUtc)
-          .lt("released_at", startOfTomorrowUtc)
-      : Promise.resolve({ count: 0, data: null });
-
-  // Activity strip: oldest unclaimed in my sections (medtech/xray)
   const oldestUnclaimedPromise =
-    role === "medtech" || role === "xray_technician"
+    show("lab.strip_oldest_unclaimed") &&
+    (role === "medtech" || role === "xray_technician")
       ? supabase
           .from("test_requests")
           .select(
@@ -180,11 +174,11 @@ async function loadLabStats(role: Role, userId: string) {
           .order("requested_at", { ascending: true })
           .limit(5)
           .returns<QueueRow[]>()
-      : Promise.resolve({ data: null });
+      : SKIP_DATA;
 
-  // Activity strip: recently flagged abnormal (medtech)
   const recentCriticalsPromise =
-    role === "medtech" || role === "pathologist" || role === "admin"
+    show("lab.strip_recent_criticals") &&
+    (role === "medtech" || role === "pathologist")
       ? supabase
           .from("critical_alerts")
           .select("id, direction, created_at, test_request_id, parameter_name")
@@ -192,21 +186,18 @@ async function loadLabStats(role: Role, userId: string) {
           .order("created_at", { ascending: false })
           .limit(5)
           .returns<CriticalRow[]>()
-      : Promise.resolve({ data: null });
+      : SKIP_DATA;
 
-  // Activity strip: pending sign-off (pathologist/admin)
   const pendingSignoffPromise =
-    role === "pathologist" || role === "admin"
+    show("lab.strip_pending_signoff") && role === "pathologist"
       ? supabase
           .from("test_requests")
-          .select(
-            "id, patients ( first_name, last_name ), services ( name )",
-          )
+          .select("id, patients ( first_name, last_name ), services ( name )")
           .eq("status", "ready_for_release")
           .order("requested_at", { ascending: true })
           .limit(5)
           .returns<SignoffRow[]>()
-      : Promise.resolve({ data: null });
+      : SKIP_DATA;
 
   const [
     myUnclaimed,
@@ -214,8 +205,7 @@ async function loadLabStats(role: Role, userId: string) {
     readyForSignoff,
     criticalAlerts,
     sendOutAwaiting,
-    releasedTodayMine,
-    releasedTodayAll,
+    releasedToday,
     oldestUnclaimed,
     recentCriticals,
     pendingSignoff,
@@ -225,8 +215,7 @@ async function loadLabStats(role: Role, userId: string) {
     readyForSignoffPromise,
     criticalAlertsPromise,
     sendOutAwaitingPromise,
-    releasedTodayMinePromise,
-    releasedTodayAllPromise,
+    releasedTodayPromise,
     oldestUnclaimedPromise,
     recentCriticalsPromise,
     pendingSignoffPromise,
@@ -238,18 +227,18 @@ async function loadLabStats(role: Role, userId: string) {
     readyForSignoff: readyForSignoff.count ?? 0,
     criticalAlerts: criticalAlerts.count ?? 0,
     sendOutAwaiting: sendOutAwaiting.count ?? 0,
-    releasedToday:
-      role === "admin" ? (releasedTodayAll.count ?? 0) : (releasedTodayMine.count ?? 0),
-    oldestUnclaimed: oldestUnclaimed.data ?? [],
-    recentCriticals: recentCriticals.data ?? [],
-    pendingSignoff: pendingSignoff.data ?? [],
-    usesSectionFilter,
+    releasedToday: releasedToday.count ?? 0,
+    oldestUnclaimed: (oldestUnclaimed.data ?? []) as QueueRow[],
+    recentCriticals: (recentCriticals.data ?? []) as CriticalRow[],
+    pendingSignoff: (pendingSignoff.data ?? []) as SignoffRow[],
   };
 }
 
 export async function LabDashboard({ session }: { session: StaffSession }) {
   const role = session.role;
-  const stats = await loadLabStats(role, session.user_id);
+  const hidden = await loadHiddenCardIds(role);
+  const show = (id: string) => !hidden.has(id);
+  const stats = await loadLabStats(role, session.user_id, show);
 
   const oldestItems: ActivityItem[] = stats.oldestUnclaimed.map((r) => ({
     primary: pluckService(r.services),
@@ -272,7 +261,7 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
   }));
 
   const showMyQueue = role === "medtech" || role === "xray_technician";
-  const showSignoff = role === "pathologist" || role === "admin";
+  const showSignoff = role === "pathologist";
 
   return (
     <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
@@ -284,56 +273,58 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
 
       <SectionHeading title="My queue" />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {showMyQueue ? (
-          <>
-            <StatCard
-              label="Unclaimed in my sections"
-              value={stats.myUnclaimed}
-              hint="Requested or in progress, unassigned"
-              href="/staff/queue"
-              accent={stats.myUnclaimed > 0 ? "warn" : "default"}
-            />
-            <StatCard
-              label="Claimed by me"
-              value={stats.myClaimed}
-              hint="Assigned to me, in progress"
-              href="/staff/queue?filter=mine"
-            />
-          </>
-        ) : null}
-        {showSignoff ? (
-          <>
-            <StatCard
-              label="Ready for sign-off"
-              value={stats.readyForSignoff}
-              hint="Awaiting pathologist release"
-              href="/staff/signoff"
-              accent={stats.readyForSignoff > 0 ? "warn" : "default"}
-            />
-            <StatCard
-              label="Critical alerts unacked"
-              value={stats.criticalAlerts}
-              hint="Patient safety priority"
-              href="/staff/queue"
-              accent={stats.criticalAlerts > 0 ? "warn" : "default"}
-            />
-          </>
-        ) : null}
-        {role === "medtech" ? (
+        {showMyQueue && show("lab.my_unclaimed") && (
+          <StatCard
+            label="Unclaimed in my sections"
+            value={stats.myUnclaimed}
+            hint="Requested or in progress, unassigned"
+            href="/staff/queue"
+            accent={stats.myUnclaimed > 0 ? "warn" : "default"}
+          />
+        )}
+        {showMyQueue && show("lab.my_claimed") && (
+          <StatCard
+            label="Claimed by me"
+            value={stats.myClaimed}
+            hint="Assigned to me, in progress"
+            href="/staff/queue?filter=mine"
+          />
+        )}
+        {showSignoff && show("lab.ready_for_signoff") && (
+          <StatCard
+            label="Ready for sign-off"
+            value={stats.readyForSignoff}
+            hint="Awaiting pathologist release"
+            href="/staff/signoff"
+            accent={stats.readyForSignoff > 0 ? "warn" : "default"}
+          />
+        )}
+        {showSignoff && show("lab.critical_alerts") && (
+          <StatCard
+            label="Critical alerts unacked"
+            value={stats.criticalAlerts}
+            hint="Patient safety priority"
+            href="/staff/queue"
+            accent={stats.criticalAlerts > 0 ? "warn" : "default"}
+          />
+        )}
+        {role === "medtech" && show("lab.send_out_awaiting") && (
           <StatCard
             label="Send-out awaiting result"
             value={stats.sendOutAwaiting}
             hint="External labs still processing"
             href="/staff/queue"
           />
-        ) : null}
-        <StatCard
-          label={role === "admin" ? "Released today" : "Released today (mine)"}
-          value={stats.releasedToday}
-          hint="Tests fully released"
-          href="/staff/queue?filter=released_today"
-          accent="good"
-        />
+        )}
+        {show("lab.released_today") && (
+          <StatCard
+            label="Released today (mine)"
+            value={stats.releasedToday}
+            hint="Tests fully released"
+            href="/staff/queue?filter=released_today"
+            accent="good"
+          />
+        )}
       </div>
 
       <SectionHeading title="Quicklinks" />
@@ -341,28 +332,30 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
 
       <SectionHeading title="What needs attention" />
       <div className="grid gap-4 lg:grid-cols-2">
-        {showMyQueue ? (
+        {showMyQueue && show("lab.strip_oldest_unclaimed") && (
           <ActivityStrip
             title="Oldest unclaimed"
             items={oldestItems}
             emptyMessage="Nothing waiting in your queue."
             viewAllHref="/staff/queue"
           />
-        ) : null}
-        {showSignoff ? (
+        )}
+        {showSignoff && show("lab.strip_pending_signoff") && (
           <ActivityStrip
             title="Pending sign-off"
             items={signoffItems}
             emptyMessage="Sign-off queue is empty."
             viewAllHref="/staff/signoff"
           />
-        ) : null}
-        <ActivityStrip
-          title="Recent critical alerts"
-          items={criticalItems}
-          emptyMessage="No critical alerts in last 24h."
-          viewAllHref="/staff/queue"
-        />
+        )}
+        {(role === "medtech" || role === "pathologist") && show("lab.strip_recent_criticals") && (
+          <ActivityStrip
+            title="Recent critical alerts"
+            items={criticalItems}
+            emptyMessage="No critical alerts in last 24h."
+            viewAllHref="/staff/queue"
+          />
+        )}
       </div>
 
       <SectionHeading

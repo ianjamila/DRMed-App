@@ -308,6 +308,11 @@ export const STAFF_NAV: StaffNavSection[] = [
         items: [
           { href: "/staff/users", label: "Staff users", roles: ["admin"] },
           { href: "/staff/audit", label: "Audit log", roles: ["admin"] },
+          {
+            href: "/staff/admin/settings/dashboard-cards",
+            label: "Dashboard settings",
+            roles: ["admin"],
+          },
         ],
       },
       {
