@@ -267,8 +267,8 @@ export async function ReceptionDashboard({
         title="Today at the front desk"
       />
 
-      <SectionHeading title="Today's snapshot" />
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <SectionHeading title="Today's snapshot">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {show("reception.visits_today") && (
           <StatCard
             label="Visits today"
@@ -327,13 +327,15 @@ export async function ReceptionDashboard({
             href="/staff/payments/cash-drawer"
           />
         )}
-      </div>
+        </div>
+      </SectionHeading>
 
-      <SectionHeading title="Quicklinks" />
-      <QuickLinks items={QUICK_LINKS} />
+      <SectionHeading title="Quicklinks">
+        <QuickLinks items={QUICK_LINKS} />
+      </SectionHeading>
 
-      <SectionHeading title="What needs attention" />
-      <div className="grid gap-4 lg:grid-cols-3">
+      <SectionHeading title="What needs attention">
+        <div className="grid gap-4 lg:grid-cols-3">
         {show("reception.strip_appointments") && (
           <ActivityStrip
             title="Next appointments"
@@ -358,7 +360,8 @@ export async function ReceptionDashboard({
             viewAllHref="/staff/inquiries"
           />
         )}
-      </div>
+        </div>
+      </SectionHeading>
     </div>
   );
 }

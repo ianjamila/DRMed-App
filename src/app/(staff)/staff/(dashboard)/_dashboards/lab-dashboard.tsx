@@ -271,8 +271,8 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
         title={ROLE_TITLE[role]}
       />
 
-      <SectionHeading title="My queue" />
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <SectionHeading title="My queue">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {showMyQueue && show("lab.my_unclaimed") && (
           <StatCard
             label="Unclaimed in my sections"
@@ -325,13 +325,15 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
             accent="good"
           />
         )}
-      </div>
+        </div>
+      </SectionHeading>
 
-      <SectionHeading title="Quicklinks" />
-      <QuickLinks items={buildQuickLinks(role)} />
+      <SectionHeading title="Quicklinks">
+        <QuickLinks items={buildQuickLinks(role)} />
+      </SectionHeading>
 
-      <SectionHeading title="What needs attention" />
-      <div className="grid gap-4 lg:grid-cols-2">
+      <SectionHeading title="What needs attention">
+        <div className="grid gap-4 lg:grid-cols-2">
         {showMyQueue && show("lab.strip_oldest_unclaimed") && (
           <ActivityStrip
             title="Oldest unclaimed"
@@ -356,13 +358,15 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
             viewAllHref="/staff/queue"
           />
         )}
-      </div>
+        </div>
+      </SectionHeading>
 
       <SectionHeading
         title="Coming soon"
         subtitle="Modules on the roadmap for lab operations"
-      />
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        defaultOpen={false}
+      >
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <PlannedCard
           label="Reagent inventory"
           teaser="Stock levels, expiry alerts, reorder thresholds by section"
@@ -378,7 +382,8 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
           teaser="Per-section TAT trends and SLA breaches"
           module="tat-analytics"
         />
-      </div>
+        </div>
+      </SectionHeading>
     </div>
   );
 }

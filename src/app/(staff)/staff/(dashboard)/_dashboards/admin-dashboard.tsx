@@ -268,8 +268,8 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
         title="Clinic command centre"
       />
 
-      <SectionHeading title="Operations" />
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <SectionHeading title="Operations">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {show("admin.revenue_today") && (
           <StatCard
             label="Revenue today"
@@ -303,10 +303,11 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
             href="/staff/queue?filter=released_today"
           />
         )}
-      </div>
+        </div>
+      </SectionHeading>
 
-      <SectionHeading title="Money" />
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      <SectionHeading title="Money">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {show("admin.past_due_periods") && (
           <StatCard
             label="Past-due open periods"
@@ -376,10 +377,11 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
             href="/staff/admin/accounting/pf-payouts"
           />
         )}
-      </div>
+        </div>
+      </SectionHeading>
 
-      <SectionHeading title="People" />
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <SectionHeading title="People">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {show("admin.active_employees") && (
           <StatCard
             label="Active employees"
@@ -397,13 +399,15 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
             accent={stats.payrollRunsInProgress > 0 ? "warn" : "default"}
           />
         )}
-      </div>
+        </div>
+      </SectionHeading>
 
-      <SectionHeading title="Quicklinks" />
-      <QuickLinks items={QUICK_LINKS} />
+      <SectionHeading title="Quicklinks">
+        <QuickLinks items={QUICK_LINKS} />
+      </SectionHeading>
 
-      <SectionHeading title="What needs attention" />
-      <div className="grid gap-4 lg:grid-cols-2">
+      <SectionHeading title="What needs attention">
+        <div className="grid gap-4 lg:grid-cols-2">
         {show("admin.strip_audit") && (
           <ActivityStrip
             title="Recent audit anomalies"
@@ -420,13 +424,15 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
             viewAllHref="/staff/admin/accounting/periods"
           />
         )}
-      </div>
+        </div>
+      </SectionHeading>
 
       <SectionHeading
         title="Coming soon"
         subtitle="Roadmap modules — not yet live"
-      />
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        defaultOpen={false}
+      >
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <PlannedCard
           label="Inventory"
           teaser="Reagent stock, expiry alerts, reorder thresholds"
@@ -462,7 +468,8 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
           teaser="TAT, cost, SLA, rejection rate per external lab"
           module="send-out-performance"
         />
-      </div>
+        </div>
+      </SectionHeading>
     </div>
   );
 }
