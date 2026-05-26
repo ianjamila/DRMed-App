@@ -290,7 +290,7 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
               label="Unclaimed in my sections"
               value={stats.myUnclaimed}
               hint="Requested or in progress, unassigned"
-              href="/staff/queue?filter=unclaimed"
+              href="/staff/queue"
               accent={stats.myUnclaimed > 0 ? "warn" : "default"}
             />
             <StatCard
@@ -314,7 +314,7 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
               label="Critical alerts unacked"
               value={stats.criticalAlerts}
               hint="Patient safety priority"
-              href="/staff/queue?filter=critical"
+              href="/staff/queue"
               accent={stats.criticalAlerts > 0 ? "warn" : "default"}
             />
           </>
@@ -324,7 +324,7 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
             label="Send-out awaiting result"
             value={stats.sendOutAwaiting}
             hint="External labs still processing"
-            href="/staff/queue?filter=send_out"
+            href="/staff/queue"
           />
         ) : null}
         <StatCard
@@ -361,7 +361,7 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
           title="Recent critical alerts"
           items={criticalItems}
           emptyMessage="No critical alerts in last 24h."
-          viewAllHref="/staff/queue?filter=critical"
+          viewAllHref="/staff/queue"
         />
       </div>
 

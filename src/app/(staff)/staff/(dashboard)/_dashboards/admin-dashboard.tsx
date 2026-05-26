@@ -15,8 +15,8 @@ const QUICK_LINKS = [
   { href: "/staff/admin/accounting/ap", label: "AP dashboard" },
   { href: "/staff/admin/accounting/hmo-claims", label: "HMO claims" },
   { href: "/staff/admin/payroll/runs", label: "Pay runs" },
-  { href: "/staff/admin/accounting/journal", label: "Journal" },
   { href: "/staff/admin/accounting/periods", label: "Periods" },
+  { href: "/staff/admin/accounting/chart-of-accounts", label: "Chart of accounts" },
   { href: "/staff/audit", label: "Audit log" },
   { href: "/staff/users", label: "Staff users" },
 ];
@@ -82,7 +82,8 @@ async function loadAdminStats() {
     admin
       .from("accounting_periods")
       .select("id", { count: "exact", head: true })
-      .eq("status", "open"),
+      .eq("status", "open")
+      .lte("period_end", today),
     admin
       .from("journal_entries")
       .select("id", { count: "exact", head: true })
@@ -201,7 +202,7 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
     primary: d.entry_number,
     secondary: `Posting date ${d.posting_date}`,
     meta: relativeAge(d.created_at),
-    href: "/staff/admin/accounting/journal",
+    href: `/staff/admin/accounting/journal/${d.id}`,
   }));
 
   return (
@@ -244,16 +245,17 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
       <SectionHeading title="Money" />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <StatCard
-          label="Open accounting periods"
+          label="Past-due open periods"
           value={stats.openPeriods}
-          hint="Periods awaiting close"
+          hint="Months ended but still open"
           href="/staff/admin/accounting/periods"
+          accent={stats.openPeriods > 0 ? "warn" : "default"}
         />
         <StatCard
           label="Draft journal entries"
           value={stats.draftJeCount}
           hint="Awaiting posting"
-          href="/staff/admin/accounting/journal"
+          href="/staff/admin/accounting/periods"
           accent={stats.draftJeCount > 0 ? "warn" : "default"}
         />
         <StatCard
@@ -322,7 +324,7 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
           title="Stale draft journals (7d+)"
           items={draftItems}
           emptyMessage="No drafts older than a week."
-          viewAllHref="/staff/admin/accounting/journal"
+          viewAllHref="/staff/admin/accounting/periods"
         />
       </div>
 
