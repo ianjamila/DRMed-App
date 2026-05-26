@@ -21,5 +21,9 @@ export default async function StaffDashboardPage() {
       return <LabDashboard session={session} />;
     case "admin":
       return <AdminDashboard session={session} />;
+    default:
+      // Future-proof: any new role added in the DB before the frontend is
+      // updated falls back to the admin shell rather than rendering blank.
+      return <AdminDashboard session={session} />;
   }
 }

@@ -116,10 +116,7 @@ async function loadReceptionStats() {
     supabase
       .from("appointments")
       .select("id", { count: "exact", head: true })
-      .is("scheduled_at", null)
-      .eq("status", "confirmed")
-      .gte("created_at", startOfTodayUtc)
-      .lt("created_at", startOfTomorrowUtc),
+      .eq("status", "arrived"),
     supabase
       .from("inquiries")
       .select("id", { count: "exact", head: true })
@@ -143,7 +140,7 @@ async function loadReceptionStats() {
     supabase
       .from("visits")
       .select(
-        "id, visit_number, total_php, paid_php, patients!inner ( first_name, last_name )",
+        "id, visit_number, total_php, paid_php, patients ( first_name, last_name )",
       )
       .eq("visit_date", today)
       .in("payment_status", ["unpaid", "partial"])
@@ -204,7 +201,7 @@ export async function ReceptionDashboard({
   });
 
   const unpaidItems: ActivityItem[] = stats.unpaidVisits.map((v) => {
-    const name = pluckPatientName(v.patients) ?? "—";
+    const name = pluckPatientName(v.patients) ?? "Walk-in";
     const balance =
       Number(v.total_php ?? 0) - Number(v.paid_php ?? 0);
     return {
@@ -265,7 +262,7 @@ export async function ReceptionDashboard({
         <StatCard
           label="Walk-ins waiting"
           value={stats.walkInsWaiting}
-          hint="Confirmed without scheduled time"
+          hint="Arrived, awaiting registration"
           href="/staff/appointments"
         />
         <StatCard

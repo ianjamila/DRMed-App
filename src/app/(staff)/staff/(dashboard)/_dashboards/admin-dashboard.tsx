@@ -336,34 +336,42 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
         <PlannedCard
           label="Inventory"
           teaser="Reagent stock, expiry alerts, reorder thresholds"
+          module="inventory"
         />
         <PlannedCard
           label="Financial statements"
           teaser="P&L, balance sheet, and cash flow from your COA"
+          module="financial-statements"
         />
         <PlannedCard
           label="Budget vs actual"
           teaser="Set budgets and track variance by department"
+          module="variance-analysis"
         />
         <PlannedCard
           label="Bank reconciliation"
           teaser="Match bank statements to GL with variance tracking"
+          module="bank-reconciliation"
         />
         <PlannedCard
           label="Month-end close tracker"
           teaser="Interactive close checklist with audit trail"
+          module="close-tracker"
         />
         <PlannedCard
           label="Patient AR aging"
           teaser="Non-HMO patient outstanding by age bucket"
+          module="patient-ar"
         />
         <PlannedCard
           label="Doctor PF YTD summary"
           teaser="Per-physician YTD accrued vs disbursed"
+          module="pf-ytd-summary"
         />
         <PlannedCard
           label="Send-out vendor performance"
           teaser="TAT, cost, SLA, rejection rate per external lab"
+          module="send-out-performance"
         />
       </div>
     </div>

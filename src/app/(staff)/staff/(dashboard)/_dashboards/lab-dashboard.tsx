@@ -141,7 +141,7 @@ async function loadLabStats(role: Role, userId: string) {
       ? supabase
           .from("test_requests")
           .select("id, services!inner(is_send_out)", { count: "exact", head: true })
-          .in("status", ["in_progress", "result_uploaded"])
+          .in("status", ["requested", "in_progress"])
           .eq("services.is_send_out", true)
       : Promise.resolve({ count: 0, data: null });
 
@@ -373,14 +373,17 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
         <PlannedCard
           label="Reagent inventory"
           teaser="Stock levels, expiry alerts, reorder thresholds by section"
+          module="inventory"
         />
         <PlannedCard
           label="Send-out vendor performance"
           teaser="TAT, cost, SLA compliance, and rejection rate per external lab"
+          module="send-out-performance"
         />
         <PlannedCard
           label="Turnaround analytics"
           teaser="Per-section TAT trends and SLA breaches"
+          module="tat-analytics"
         />
       </div>
     </div>
