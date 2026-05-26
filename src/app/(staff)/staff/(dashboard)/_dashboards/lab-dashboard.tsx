@@ -372,11 +372,6 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
           teaser="Stock levels, expiry alerts, reorder thresholds by section"
           module="inventory"
         />
-        <PlannedCard
-          label="Turnaround analytics"
-          teaser="Per-section TAT trends and SLA breaches"
-          module="tat-analytics"
-        />
         </div>
       </SectionHeading>
     </div>

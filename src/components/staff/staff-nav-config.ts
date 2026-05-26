@@ -346,6 +346,11 @@ export const STAFF_NAV: StaffNavSection[] = [
             label: "Staff advances",
             roles: ["admin"],
           },
+          {
+            href: "/staff/admin/reports/lab-tat",
+            label: "Lab TAT",
+            roles: ["admin"],
+          },
         ],
       },
       {

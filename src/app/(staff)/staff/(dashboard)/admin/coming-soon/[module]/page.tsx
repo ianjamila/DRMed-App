@@ -24,18 +24,6 @@ const MODULES: Record<string, PlannedModule> = {
       "Receiving + issue movements with audit trail",
     ],
   },
-  "tat-analytics": {
-    label: "Turnaround analytics",
-    description:
-      "Per-section turnaround-time analytics with SLA-breach surfacing and historical trends.",
-    audience: "Lab and Admin",
-    highlights: [
-      "Median TAT per section + per test",
-      "SLA-breach list (current + last 30 days)",
-      "Trend chart over rolling 90 days",
-      "Drill from outlier to the specific test request",
-    ],
-  },
 };
 
 interface PageProps {
