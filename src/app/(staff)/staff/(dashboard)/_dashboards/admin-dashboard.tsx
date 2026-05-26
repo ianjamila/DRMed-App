@@ -322,7 +322,7 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
             label="Draft journal entries"
             value={stats.draftJeCount}
             hint="Awaiting posting"
-            href="/staff/admin/accounting/periods"
+            href="/staff/admin/accounting/journal?status=draft"
             accent={stats.draftJeCount > 0 ? "warn" : "default"}
           />
         )}
@@ -421,7 +421,7 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
             title="Stale draft journals (7d+)"
             items={draftItems}
             emptyMessage="No drafts older than a week."
-            viewAllHref="/staff/admin/accounting/periods"
+            viewAllHref="/staff/admin/accounting/journal?status=draft"
           />
         )}
         </div>
