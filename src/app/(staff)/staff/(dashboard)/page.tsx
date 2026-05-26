@@ -51,10 +51,14 @@ async function loadStats() {
   const supabase = await createClient();
   const today = new Date().toISOString().slice(0, 10);
 
+  const startOfTodayIso = `${today}T00:00:00.000Z`;
+  const endOfTodayIso = `${today}T23:59:59.999Z`;
+
   const [
     { count: visitsToday },
     { count: queueSize },
     { count: pendingRelease },
+    { count: releasedToday },
     { count: appointmentsToday },
   ] = await Promise.all([
     supabase
@@ -70,10 +74,16 @@ async function loadStats() {
       .select("id", { count: "exact", head: true })
       .eq("status", "ready_for_release"),
     supabase
+      .from("test_requests")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "released")
+      .gte("released_at", startOfTodayIso)
+      .lt("released_at", endOfTodayIso),
+    supabase
       .from("appointments")
       .select("id", { count: "exact", head: true })
-      .gte("scheduled_at", `${today}T00:00:00.000Z`)
-      .lt("scheduled_at", `${today}T23:59:59.999Z`)
+      .gte("scheduled_at", startOfTodayIso)
+      .lt("scheduled_at", endOfTodayIso)
       .in("status", ["confirmed", "arrived"]),
   ]);
 
@@ -81,6 +91,7 @@ async function loadStats() {
     visitsToday: visitsToday ?? 0,
     queueSize: queueSize ?? 0,
     pendingRelease: pendingRelease ?? 0,
+    releasedToday: releasedToday ?? 0,
     appointmentsToday: appointmentsToday ?? 0,
   };
 }
@@ -100,7 +111,7 @@ export default async function StaffDashboardPage() {
         </h1>
       </header>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <StatCard
           label="Visits today"
           value={stats.visitsToday}
@@ -118,6 +129,12 @@ export default async function StaffDashboardPage() {
           value={stats.pendingRelease}
           hint="Results ready, awaiting payment + release"
           href="/staff/queue?filter=pending_release"
+        />
+        <StatCard
+          label="Released today"
+          value={stats.releasedToday}
+          hint="Tests released to patients today"
+          href="/staff/queue?filter=released_today"
         />
         <StatCard
           label="Appointments today"

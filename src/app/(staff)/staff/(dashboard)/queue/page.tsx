@@ -54,7 +54,9 @@ const TEST_STATUS_STYLE: Record<string, string> = {
 };
 
 interface SearchProps {
-  searchParams: Promise<{ filter?: "mine" | "all" | "pending_release" }>;
+  searchParams: Promise<{
+    filter?: "mine" | "all" | "pending_release" | "released_today";
+  }>;
 }
 
 export default async function QueuePage({ searchParams }: SearchProps) {
@@ -87,11 +89,23 @@ export default async function QueuePage({ searchParams }: SearchProps) {
       "status",
       filter === "pending_release"
         ? ["ready_for_release"]
-        : ["requested", "in_progress"],
+        : filter === "released_today"
+          ? ["released"]
+          : ["requested", "in_progress"],
     )
     .eq("is_package_header", false)
-    .order("requested_at", { ascending: true })
-    .limit(100);
+    .order(
+      filter === "released_today" ? "released_at" : "requested_at",
+      { ascending: filter !== "released_today" },
+    )
+    .limit(filter === "released_today" ? 200 : 100);
+
+  if (filter === "released_today") {
+    const today = new Date();
+    const startOfDayLocal = new Date(today);
+    startOfDayLocal.setHours(0, 0, 0, 0);
+    query = query.gte("released_at", startOfDayLocal.toISOString());
+  }
 
   if (allowedSections !== null && allowedSections.length > 0) {
     query = query.in("services.section", allowedSections);
@@ -204,6 +218,11 @@ export default async function QueuePage({ searchParams }: SearchProps) {
             href="/staff/queue?filter=pending_release"
             label="Pending release"
             active={filter === "pending_release"}
+          />
+          <FilterTab
+            href="/staff/queue?filter=released_today"
+            label="Released today"
+            active={filter === "released_today"}
           />
           <FilterTab
             href="/staff/queue?filter=mine"
