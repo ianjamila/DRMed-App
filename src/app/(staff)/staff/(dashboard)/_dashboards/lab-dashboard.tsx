@@ -367,11 +367,6 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
         defaultOpen={false}
       >
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        <PlannedCard
-          label="Reagent inventory"
-          teaser="Stock levels, expiry alerts, reorder thresholds by section"
-          module="inventory"
-        />
         </div>
       </SectionHeading>
     </div>

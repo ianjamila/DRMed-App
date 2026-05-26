@@ -102,7 +102,11 @@ const ROLES = [
         "Admin",
       ],
       "/staff/visits": ["Reception Visits", "Date"],
-      "/staff/admin/coming-soon/inventory": ["Inventory", "Planned"],
+      "/staff/admin/inventory": ["Inventory"],
+      "/staff/admin/reports/lab-tat": ["Lab TAT analytics"],
+      "/staff/admin/accounting/bank-rec": ["Bank reconciliation"],
+      "/staff/admin/accounting/variance": ["Budget vs actual"],
+      "/staff/admin/accounting/financial-statements": ["Financial statements"],
     },
   },
 ];

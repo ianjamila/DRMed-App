@@ -2459,6 +2459,126 @@ export type Database = {
         }
         Relationships: []
       }
+      inventory_items: {
+        Row: {
+          code: string | null
+          created_at: string
+          created_by: string | null
+          expiry_tracking: boolean
+          id: string
+          is_active: boolean
+          name: string
+          notes: string | null
+          reorder_threshold: number
+          section: string | null
+          unit: string
+          updated_at: string
+          vendor_id: string | null
+        }
+        Insert: {
+          code?: string | null
+          created_at?: string
+          created_by?: string | null
+          expiry_tracking?: boolean
+          id?: string
+          is_active?: boolean
+          name: string
+          notes?: string | null
+          reorder_threshold?: number
+          section?: string | null
+          unit?: string
+          updated_at?: string
+          vendor_id?: string | null
+        }
+        Update: {
+          code?: string | null
+          created_at?: string
+          created_by?: string | null
+          expiry_tracking?: boolean
+          id?: string
+          is_active?: boolean
+          name?: string
+          notes?: string | null
+          reorder_threshold?: number
+          section?: string | null
+          unit?: string
+          updated_at?: string
+          vendor_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "inventory_items_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "inventory_items_vendor_id_fkey"
+            columns: ["vendor_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      inventory_movements: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          expiry_date: string | null
+          id: string
+          item_id: string
+          lot_number: string | null
+          movement_type: string
+          notes: string | null
+          quantity: number
+          reference: string | null
+          unit_cost_php: number | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          expiry_date?: string | null
+          id?: string
+          item_id: string
+          lot_number?: string | null
+          movement_type: string
+          notes?: string | null
+          quantity: number
+          reference?: string | null
+          unit_cost_php?: number | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          expiry_date?: string | null
+          id?: string
+          item_id?: string
+          lot_number?: string | null
+          movement_type?: string
+          notes?: string | null
+          quantity?: number
+          reference?: string | null
+          unit_cost_php?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "inventory_movements_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "inventory_movements_item_id_fkey"
+            columns: ["item_id"]
+            isOneToOne: false
+            referencedRelation: "inventory_items"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       journal_entries: {
         Row: {
           created_at: string
@@ -5094,6 +5214,22 @@ export type Database = {
       }
     }
     Views: {
+      v_inventory_balances: {
+        Row: {
+          code: string | null
+          expiry_tracking: boolean | null
+          is_active: boolean | null
+          item_id: string | null
+          name: string | null
+          next_expiry: string | null
+          on_hand: number | null
+          reorder_threshold: number | null
+          section: string | null
+          stock_status: string | null
+          unit: string | null
+        }
+        Relationships: []
+      }
       v_daily_revenue_by_service: {
         Row: {
           business_date: string | null

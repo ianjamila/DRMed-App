@@ -149,6 +149,11 @@ export const STAFF_NAV: StaffNavSection[] = [
             label: "Newsletter",
             roles: ["admin"],
           },
+          {
+            href: "/staff/admin/inventory",
+            label: "Inventory",
+            roles: ["admin", "medtech", "xray_technician"],
+          },
         ],
       },
       {

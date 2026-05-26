@@ -433,11 +433,6 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
         defaultOpen={false}
       >
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <PlannedCard
-          label="Inventory"
-          teaser="Reagent stock, expiry alerts, reorder thresholds"
-          module="inventory"
-        />
         </div>
       </SectionHeading>
     </div>

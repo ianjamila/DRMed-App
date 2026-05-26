@@ -12,18 +12,6 @@ interface PlannedModule {
 }
 
 const MODULES: Record<string, PlannedModule> = {
-  inventory: {
-    label: "Inventory",
-    description:
-      "Reagent stock, expiry tracking, reorder thresholds, and critical-supply alerts across lab sections and front-desk consumables.",
-    audience: "Lab and Admin",
-    highlights: [
-      "Per-section reagent stock balances",
-      "Expiry-soon list (configurable days-out)",
-      "Reorder thresholds with low-stock alerts",
-      "Receiving + issue movements with audit trail",
-    ],
-  },
 };
 
 interface PageProps {
