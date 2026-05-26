@@ -29,6 +29,23 @@ export async function finaliseConsolidatedReport(
   const session = await requireActiveStaff();
   const admin = createAdminClient();
 
+  // Idempotency guard: if any of these test_requests are already linked to a
+  // result, a fresh consolidated finalise will trip
+  // uq_result_test_requests_test_request on the junction insert and leave an
+  // orphan `results` row behind. Surface a clearer message and bail before
+  // inserting anything.
+  const { data: alreadyLinked } = await admin
+    .from("result_test_requests")
+    .select("test_request_id")
+    .in("test_request_id", input.testRequestIds);
+  if (alreadyLinked && alreadyLinked.length > 0) {
+    return {
+      ok: false,
+      error:
+        "These tests already have a result on file. Refresh to see current state — release happens from the visit page once payment is recorded.",
+    };
+  }
+
   // 1) Insert results row (structured + group-keyed). control_no defaults
   // are set by an existing sequence trigger (Phase 13). We insert with
   // finalised_at set so the advance_test_on_result_upload trigger fires
@@ -82,12 +99,26 @@ export async function finaliseConsolidatedReport(
 
   // 4) Release every linked test_request. The payment-gating trigger fires
   // here and will block the transition to 'released' if visits.payment_status
-  // is not 'paid'.
+  // is not 'paid' (or 'waived'). That block is a legitimate state — the
+  // result is still finalised and the 0059 junction-insert trigger has
+  // already advanced status to ready_for_release; reception will release
+  // from the visit page once payment is recorded. Treat the gate as a soft
+  // outcome (releaseDeferred) rather than a hard failure so the medtech's
+  // work isn't wasted and a retry doesn't produce orphan result rows.
   const { error: relErr } = await admin
     .from("test_requests")
     .update({ status: "released" })
     .in("id", input.testRequestIds);
-  if (relErr) return { ok: false, error: translatePgError(relErr) };
+  let releaseDeferred = false;
+  if (relErr) {
+    const isPaymentGate =
+      (relErr as { code?: string }).code === "23514" &&
+      /payment_status/i.test(relErr.message ?? "");
+    if (!isPaymentGate) {
+      return { ok: false, error: translatePgError(relErr) };
+    }
+    releaseDeferred = true;
+  }
 
   // 5) Render the consolidated PDF and upload to the results bucket.
   const docInput = await loadResultDocumentInput(resultsRow.id);
@@ -123,24 +154,27 @@ export async function finaliseConsolidatedReport(
       report_group_id: input.groupId,
       visit_id: input.visitId,
       pdf_size_bytes: pdfBuf.byteLength,
+      release_deferred: releaseDeferred,
     },
     ip_address: ip,
     user_agent: ua,
   });
-  await audit({
-    actor_id: session.user_id,
-    actor_type: "staff",
-    action: "result.released",
-    resource_type: "result",
-    resource_id: resultsRow.id,
-    metadata: {
-      test_request_ids: input.testRequestIds,
-      report_group_id: input.groupId,
-      visit_id: input.visitId,
-    },
-    ip_address: ip,
-    user_agent: ua,
-  });
+  if (!releaseDeferred) {
+    await audit({
+      actor_id: session.user_id,
+      actor_type: "staff",
+      action: "result.released",
+      resource_type: "result",
+      resource_id: resultsRow.id,
+      metadata: {
+        test_request_ids: input.testRequestIds,
+        report_group_id: input.groupId,
+        visit_id: input.visitId,
+      },
+      ip_address: ip,
+      user_agent: ua,
+    });
+  }
 
   return { ok: true, data: { result_id: resultsRow.id } };
 }
