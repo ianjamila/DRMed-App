@@ -7,10 +7,30 @@ export type Json =
   | Json[]
 
 export type Database = {
-  // Allows to automatically instantiate createClient with right options
-  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
-  __InternalSupabase: {
-    PostgrestVersion: "14.5"
+  graphql_public: {
+    Tables: {
+      [_ in never]: never
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      graphql: {
+        Args: {
+          extensions?: Json
+          operationName?: string
+          query?: string
+          variables?: Json
+        }
+        Returns: Json
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
   }
   public: {
     Tables: {
@@ -67,169 +87,41 @@ export type Database = {
           },
         ]
       }
-      budgets: {
+      accounting_settings: {
         Row: {
-          account_id: string
-          annual_amount_php: number
-          created_at: string
-          created_by: string | null
-          fiscal_year: number
-          id: string
-          notes: string | null
-          updated_at: string
-        }
-        Insert: {
-          account_id: string
-          annual_amount_php: number
-          created_at?: string
-          created_by?: string | null
-          fiscal_year: number
-          id?: string
-          notes?: string | null
-          updated_at?: string
-        }
-        Update: {
-          account_id?: string
-          annual_amount_php?: number
-          created_at?: string
-          created_by?: string | null
-          fiscal_year?: number
-          id?: string
-          notes?: string | null
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "budgets_account_id_fkey"
-            columns: ["account_id"]
-            isOneToOne: false
-            referencedRelation: "chart_of_accounts"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "budgets_created_by_fkey"
-            columns: ["created_by"]
-            isOneToOne: false
-            referencedRelation: "staff_profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      bank_statement_lines: {
-        Row: {
-          amount_php: number
-          created_at: string
           description: string | null
           id: string
-          match_method: string | null
-          matched_at: string | null
-          matched_by: string | null
-          matched_je_line_id: string | null
-          reference: string | null
-          statement_id: string
-          transaction_date: string
-        }
-        Insert: {
-          amount_php: number
-          created_at?: string
-          description?: string | null
-          id?: string
-          match_method?: string | null
-          matched_at?: string | null
-          matched_by?: string | null
-          matched_je_line_id?: string | null
-          reference?: string | null
-          statement_id: string
-          transaction_date: string
-        }
-        Update: {
-          amount_php?: number
-          created_at?: string
-          description?: string | null
-          id?: string
-          match_method?: string | null
-          matched_at?: string | null
-          matched_by?: string | null
-          matched_je_line_id?: string | null
-          reference?: string | null
-          statement_id?: string
-          transaction_date?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "bank_statement_lines_matched_by_fkey"
-            columns: ["matched_by"]
-            isOneToOne: false
-            referencedRelation: "staff_profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "bank_statement_lines_matched_je_line_id_fkey"
-            columns: ["matched_je_line_id"]
-            isOneToOne: false
-            referencedRelation: "journal_lines"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "bank_statement_lines_statement_id_fkey"
-            columns: ["statement_id"]
-            isOneToOne: false
-            referencedRelation: "bank_statements"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      bank_statements: {
-        Row: {
-          account_id: string
-          created_at: string
-          id: string
-          notes: string | null
-          period_end: string
-          period_start: string
-          raw_filename: string | null
-          statement_label: string
+          key: string
           updated_at: string
-          uploaded_at: string
-          uploaded_by: string
+          updated_by: string | null
+          value_jsonb: Json | null
+          value_php: number | null
+          value_text: string | null
         }
         Insert: {
-          account_id: string
-          created_at?: string
+          description?: string | null
           id?: string
-          notes?: string | null
-          period_end: string
-          period_start: string
-          raw_filename?: string | null
-          statement_label: string
+          key: string
           updated_at?: string
-          uploaded_at?: string
-          uploaded_by: string
+          updated_by?: string | null
+          value_jsonb?: Json | null
+          value_php?: number | null
+          value_text?: string | null
         }
         Update: {
-          account_id?: string
-          created_at?: string
+          description?: string | null
           id?: string
-          notes?: string | null
-          period_end?: string
-          period_start?: string
-          raw_filename?: string | null
-          statement_label?: string
+          key?: string
           updated_at?: string
-          uploaded_at?: string
-          uploaded_by?: string
+          updated_by?: string | null
+          value_jsonb?: Json | null
+          value_php?: number | null
+          value_text?: string | null
         }
         Relationships: [
           {
-            foreignKeyName: "bank_statements_account_id_fkey"
-            columns: ["account_id"]
-            isOneToOne: false
-            referencedRelation: "chart_of_accounts"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "bank_statements_uploaded_by_fkey"
-            columns: ["uploaded_by"]
+            foreignKeyName: "accounting_settings_updated_by_fkey"
+            columns: ["updated_by"]
             isOneToOne: false
             referencedRelation: "staff_profiles"
             referencedColumns: ["id"]
@@ -316,47 +208,6 @@ export type Database = {
           {
             foreignKeyName: "accrual_templates_created_by_fkey"
             columns: ["created_by"]
-            isOneToOne: false
-            referencedRelation: "staff_profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      accounting_settings: {
-        Row: {
-          description: string | null
-          id: string
-          key: string
-          updated_at: string
-          updated_by: string | null
-          value_jsonb: Json | null
-          value_php: number | null
-          value_text: string | null
-        }
-        Insert: {
-          description?: string | null
-          id?: string
-          key: string
-          updated_at?: string
-          updated_by?: string | null
-          value_jsonb?: Json | null
-          value_php?: number | null
-          value_text?: string | null
-        }
-        Update: {
-          description?: string | null
-          id?: string
-          key?: string
-          updated_at?: string
-          updated_by?: string | null
-          value_jsonb?: Json | null
-          value_php?: number | null
-          value_text?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "accounting_settings_updated_by_fkey"
-            columns: ["updated_by"]
             isOneToOne: false
             referencedRelation: "staff_profiles"
             referencedColumns: ["id"]
@@ -486,6 +337,127 @@ export type Database = {
             columns: ["patient_id"]
             isOneToOne: false
             referencedRelation: "patients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bank_statement_lines: {
+        Row: {
+          amount_php: number
+          created_at: string
+          description: string | null
+          id: string
+          match_method: string | null
+          matched_at: string | null
+          matched_by: string | null
+          matched_je_line_id: string | null
+          reference: string | null
+          statement_id: string
+          transaction_date: string
+        }
+        Insert: {
+          amount_php: number
+          created_at?: string
+          description?: string | null
+          id?: string
+          match_method?: string | null
+          matched_at?: string | null
+          matched_by?: string | null
+          matched_je_line_id?: string | null
+          reference?: string | null
+          statement_id: string
+          transaction_date: string
+        }
+        Update: {
+          amount_php?: number
+          created_at?: string
+          description?: string | null
+          id?: string
+          match_method?: string | null
+          matched_at?: string | null
+          matched_by?: string | null
+          matched_je_line_id?: string | null
+          reference?: string | null
+          statement_id?: string
+          transaction_date?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bank_statement_lines_matched_by_fkey"
+            columns: ["matched_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_statement_lines_matched_je_line_id_fkey"
+            columns: ["matched_je_line_id"]
+            isOneToOne: false
+            referencedRelation: "journal_lines"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_statement_lines_statement_id_fkey"
+            columns: ["statement_id"]
+            isOneToOne: false
+            referencedRelation: "bank_statements"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bank_statements: {
+        Row: {
+          account_id: string
+          created_at: string
+          id: string
+          notes: string | null
+          period_end: string
+          period_start: string
+          raw_filename: string | null
+          statement_label: string
+          updated_at: string
+          uploaded_at: string
+          uploaded_by: string
+        }
+        Insert: {
+          account_id: string
+          created_at?: string
+          id?: string
+          notes?: string | null
+          period_end: string
+          period_start: string
+          raw_filename?: string | null
+          statement_label: string
+          updated_at?: string
+          uploaded_at?: string
+          uploaded_by: string
+        }
+        Update: {
+          account_id?: string
+          created_at?: string
+          id?: string
+          notes?: string | null
+          period_end?: string
+          period_start?: string
+          raw_filename?: string | null
+          statement_label?: string
+          updated_at?: string
+          uploaded_at?: string
+          uploaded_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bank_statements_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "chart_of_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_statements_uploaded_by_fkey"
+            columns: ["uploaded_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -825,6 +797,54 @@ export type Database = {
           },
         ]
       }
+      budgets: {
+        Row: {
+          account_id: string
+          annual_amount_php: number
+          created_at: string
+          created_by: string | null
+          fiscal_year: number
+          id: string
+          notes: string | null
+          updated_at: string
+        }
+        Insert: {
+          account_id: string
+          annual_amount_php: number
+          created_at?: string
+          created_by?: string | null
+          fiscal_year: number
+          id?: string
+          notes?: string | null
+          updated_at?: string
+        }
+        Update: {
+          account_id?: string
+          annual_amount_php?: number
+          created_at?: string
+          created_by?: string | null
+          fiscal_year?: number
+          id?: string
+          notes?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "budgets_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "chart_of_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "budgets_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       cash_adjustment_account_map: {
         Row: {
           account_id: string
@@ -900,6 +920,7 @@ export type Database = {
           description: string | null
           id: string
           is_active: boolean
+          is_settlement_destination: boolean
           name: string
           normal_balance: Database["public"]["Enums"]["account_normal_balance"]
           parent_id: string | null
@@ -912,6 +933,7 @@ export type Database = {
           description?: string | null
           id?: string
           is_active?: boolean
+          is_settlement_destination?: boolean
           name: string
           normal_balance: Database["public"]["Enums"]["account_normal_balance"]
           parent_id?: string | null
@@ -924,6 +946,7 @@ export type Database = {
           description?: string | null
           id?: string
           is_active?: boolean
+          is_settlement_destination?: boolean
           name?: string
           normal_balance?: Database["public"]["Enums"]["account_normal_balance"]
           parent_id?: string | null
@@ -1032,13 +1055,6 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "test_requests"
             referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "cogs_send_out_entries_test_request_id_fkey"
-            columns: ["test_request_id"]
-            isOneToOne: false
-            referencedRelation: "v_hmo_unbilled"
-            referencedColumns: ["test_request_id"]
           },
           {
             foreignKeyName: "cogs_send_out_entries_trueup_id_fkey"
@@ -1270,13 +1286,6 @@ export type Database = {
             referencedRelation: "test_requests"
             referencedColumns: ["id"]
           },
-          {
-            foreignKeyName: "critical_alerts_test_request_id_fkey"
-            columns: ["test_request_id"]
-            isOneToOne: false
-            referencedRelation: "v_hmo_unbilled"
-            referencedColumns: ["test_request_id"]
-          },
         ]
       }
       dashboard_card_prefs: {
@@ -1469,13 +1478,6 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "test_requests"
             referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "doctor_pf_entries_test_request_id_fkey"
-            columns: ["test_request_id"]
-            isOneToOne: false
-            referencedRelation: "v_hmo_unbilled"
-            referencedColumns: ["test_request_id"]
           },
           {
             foreignKeyName: "doctor_pf_entries_voided_by_fkey"
@@ -2036,10 +2038,201 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "gift_codes_redeemed_payment_id_fkey"
+            columns: ["redeemed_payment_id"]
+            isOneToOne: false
+            referencedRelation: "v_historical_payments"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "gift_codes_redeemed_visit_id_fkey"
             columns: ["redeemed_visit_id"]
             isOneToOne: false
             referencedRelation: "visits"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      historic_hmo_claims: {
+        Row: {
+          base_amount_php: number
+          billed_by_staff_id: string | null
+          billed_recorded_at: string | null
+          claim_date: string
+          date_paid: string | null
+          date_submitted: string | null
+          deadline_date: string | null
+          final_amount_php: number
+          hmo_provider: string
+          id: string
+          imported_at: string
+          journal_entry_id: string | null
+          notes: string | null
+          or_number: string | null
+          paid_payment_method: string | null
+          paid_recorded_at: string | null
+          paid_recorded_by_staff_id: string | null
+          patient_name: string
+          service_description: string | null
+          source_row: number
+          source_tab: string
+          status: string
+          write_off_reason: string | null
+          wrote_off_at: string | null
+          wrote_off_by_staff_id: string | null
+          wrote_off_journal_entry_id: string | null
+        }
+        Insert: {
+          base_amount_php: number
+          billed_by_staff_id?: string | null
+          billed_recorded_at?: string | null
+          claim_date: string
+          date_paid?: string | null
+          date_submitted?: string | null
+          deadline_date?: string | null
+          final_amount_php: number
+          hmo_provider: string
+          id?: string
+          imported_at?: string
+          journal_entry_id?: string | null
+          notes?: string | null
+          or_number?: string | null
+          paid_payment_method?: string | null
+          paid_recorded_at?: string | null
+          paid_recorded_by_staff_id?: string | null
+          patient_name: string
+          service_description?: string | null
+          source_row: number
+          source_tab: string
+          status: string
+          write_off_reason?: string | null
+          wrote_off_at?: string | null
+          wrote_off_by_staff_id?: string | null
+          wrote_off_journal_entry_id?: string | null
+        }
+        Update: {
+          base_amount_php?: number
+          billed_by_staff_id?: string | null
+          billed_recorded_at?: string | null
+          claim_date?: string
+          date_paid?: string | null
+          date_submitted?: string | null
+          deadline_date?: string | null
+          final_amount_php?: number
+          hmo_provider?: string
+          id?: string
+          imported_at?: string
+          journal_entry_id?: string | null
+          notes?: string | null
+          or_number?: string | null
+          paid_payment_method?: string | null
+          paid_recorded_at?: string | null
+          paid_recorded_by_staff_id?: string | null
+          patient_name?: string
+          service_description?: string | null
+          source_row?: number
+          source_tab?: string
+          status?: string
+          write_off_reason?: string | null
+          wrote_off_at?: string | null
+          wrote_off_by_staff_id?: string | null
+          wrote_off_journal_entry_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "historic_hmo_claims_billed_by_staff_id_fkey"
+            columns: ["billed_by_staff_id"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "historic_hmo_claims_journal_entry_id_fkey"
+            columns: ["journal_entry_id"]
+            isOneToOne: false
+            referencedRelation: "journal_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "historic_hmo_claims_paid_recorded_by_staff_id_fkey"
+            columns: ["paid_recorded_by_staff_id"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "historic_hmo_claims_wrote_off_by_staff_id_fkey"
+            columns: ["wrote_off_by_staff_id"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "historic_hmo_claims_wrote_off_journal_entry_id_fkey"
+            columns: ["wrote_off_journal_entry_id"]
+            isOneToOne: false
+            referencedRelation: "journal_entries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      hmo_aging_snapshots: {
+        Row: {
+          bucket: string
+          id: string
+          item_count: number
+          kind: string
+          provider_id: string | null
+          provider_name: string
+          recorded_at: string
+          recorded_by: string | null
+          snapshot_date: string
+          total_php: number
+        }
+        Insert: {
+          bucket: string
+          id?: string
+          item_count: number
+          kind: string
+          provider_id?: string | null
+          provider_name: string
+          recorded_at?: string
+          recorded_by?: string | null
+          snapshot_date: string
+          total_php: number
+        }
+        Update: {
+          bucket?: string
+          id?: string
+          item_count?: number
+          kind?: string
+          provider_id?: string | null
+          provider_name?: string
+          recorded_at?: string
+          recorded_by?: string | null
+          snapshot_date?: string
+          total_php?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "hmo_aging_snapshots_provider_id_fkey"
+            columns: ["provider_id"]
+            isOneToOne: false
+            referencedRelation: "hmo_providers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "hmo_aging_snapshots_provider_id_fkey"
+            columns: ["provider_id"]
+            isOneToOne: false
+            referencedRelation: "v_hmo_provider_summary"
+            referencedColumns: ["provider_id"]
+          },
+          {
+            foreignKeyName: "hmo_aging_snapshots_recorded_by_fkey"
+            columns: ["recorded_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -2185,13 +2378,6 @@ export type Database = {
             referencedRelation: "test_requests"
             referencedColumns: ["id"]
           },
-          {
-            foreignKeyName: "hmo_claim_items_test_request_id_fkey"
-            columns: ["test_request_id"]
-            isOneToOne: false
-            referencedRelation: "v_hmo_unbilled"
-            referencedColumns: ["test_request_id"]
-          },
         ]
       }
       hmo_claim_resolutions: {
@@ -2238,13 +2424,6 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "hmo_claim_items"
             referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "hmo_claim_resolutions_item_id_fkey"
-            columns: ["item_id"]
-            isOneToOne: false
-            referencedRelation: "v_hmo_stuck"
-            referencedColumns: ["item_id"]
           },
           {
             foreignKeyName: "hmo_claim_resolutions_resolved_by_fkey"
@@ -2302,17 +2481,17 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "hmo_payment_allocations_item_id_fkey"
-            columns: ["item_id"]
+            foreignKeyName: "hmo_payment_allocations_payment_id_fkey"
+            columns: ["payment_id"]
             isOneToOne: false
-            referencedRelation: "v_hmo_stuck"
-            referencedColumns: ["item_id"]
+            referencedRelation: "payments"
+            referencedColumns: ["id"]
           },
           {
             foreignKeyName: "hmo_payment_allocations_payment_id_fkey"
             columns: ["payment_id"]
             isOneToOne: false
-            referencedRelation: "payments"
+            referencedRelation: "v_historical_payments"
             referencedColumns: ["id"]
           },
           {
@@ -2444,21 +2623,6 @@ export type Database = {
           },
         ]
       }
-      je_year_counters: {
-        Row: {
-          fiscal_year: number
-          next_n: number
-        }
-        Insert: {
-          fiscal_year: number
-          next_n?: number
-        }
-        Update: {
-          fiscal_year?: number
-          next_n?: number
-        }
-        Relationships: []
-      }
       inventory_items: {
         Row: {
           code: string | null
@@ -2577,7 +2741,29 @@ export type Database = {
             referencedRelation: "inventory_items"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "inventory_movements_item_id_fkey"
+            columns: ["item_id"]
+            isOneToOne: false
+            referencedRelation: "v_inventory_balances"
+            referencedColumns: ["item_id"]
+          },
         ]
+      }
+      je_year_counters: {
+        Row: {
+          fiscal_year: number
+          next_n: number
+        }
+        Insert: {
+          fiscal_year: number
+          next_n?: number
+        }
+        Update: {
+          fiscal_year?: number
+          next_n?: number
+        }
+        Relationships: []
       }
       journal_entries: {
         Row: {
@@ -4112,13 +4298,6 @@ export type Database = {
             referencedRelation: "test_requests"
             referencedColumns: ["id"]
           },
-          {
-            foreignKeyName: "result_amendments_test_request_id_fkey"
-            columns: ["test_request_id"]
-            isOneToOne: false
-            referencedRelation: "v_hmo_unbilled"
-            referencedColumns: ["test_request_id"]
-          },
         ]
       }
       result_template_param_ranges: {
@@ -4351,13 +4530,6 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "test_requests"
             referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "result_test_requests_test_request_id_fkey"
-            columns: ["test_request_id"]
-            isOneToOne: false
-            referencedRelation: "v_hmo_unbilled"
-            referencedColumns: ["test_request_id"]
           },
         ]
       }
@@ -5000,13 +5172,6 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "test_requests_parent_id_fkey"
-            columns: ["parent_id"]
-            isOneToOne: false
-            referencedRelation: "v_hmo_unbilled"
-            referencedColumns: ["test_request_id"]
-          },
-          {
             foreignKeyName: "test_requests_service_id_fkey"
             columns: ["service_id"]
             isOneToOne: false
@@ -5214,22 +5379,6 @@ export type Database = {
       }
     }
     Views: {
-      v_inventory_balances: {
-        Row: {
-          code: string | null
-          expiry_tracking: boolean | null
-          is_active: boolean | null
-          item_id: string | null
-          name: string | null
-          next_expiry: string | null
-          on_hand: number | null
-          reorder_threshold: number | null
-          section: string | null
-          stock_status: string | null
-          unit: string | null
-        }
-        Relationships: []
-      }
       v_daily_revenue_by_service: {
         Row: {
           business_date: string | null
@@ -5243,10 +5392,71 @@ export type Database = {
         }
         Relationships: []
       }
+      v_historical_payments: {
+        Row: {
+          amount_php: number | null
+          created_at: string | null
+          id: string | null
+          method: string | null
+          notes: string | null
+          received_at: string | null
+          received_by: string | null
+          reference_number: string | null
+          visit_id: string | null
+          void_reason: string | null
+          voided_at: string | null
+          voided_by: string | null
+        }
+        Insert: {
+          amount_php?: number | null
+          created_at?: string | null
+          id?: string | null
+          method?: string | null
+          notes?: string | null
+          received_at?: string | null
+          received_by?: string | null
+          reference_number?: string | null
+          visit_id?: string | null
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
+        }
+        Update: {
+          amount_php?: number | null
+          created_at?: string | null
+          id?: string | null
+          method?: string | null
+          notes?: string | null
+          received_at?: string | null
+          received_by?: string | null
+          reference_number?: string | null
+          visit_id?: string | null
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payments_visit_id_fkey"
+            columns: ["visit_id"]
+            isOneToOne: false
+            referencedRelation: "visits"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payments_voided_by_fkey"
+            columns: ["voided_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       v_hmo_ar_aging: {
         Row: {
           bucket: string | null
           item_count: number | null
+          kind: string | null
           provider_id: string | null
           provider_name: string | null
           total_php: number | null
@@ -5299,70 +5509,50 @@ export type Database = {
         Row: {
           batch_id: string | null
           days_since_submission: number | null
+          is_historic: boolean | null
           item_id: string | null
+          kind: string | null
+          patient_name: string | null
           provider_id: string | null
           provider_name: string | null
+          service_description: string | null
           submitted_at: string | null
           unresolved_balance_php: number | null
         }
-        Relationships: [
-          {
-            foreignKeyName: "hmo_claim_batches_provider_id_fkey"
-            columns: ["provider_id"]
-            isOneToOne: false
-            referencedRelation: "hmo_providers"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "hmo_claim_batches_provider_id_fkey"
-            columns: ["provider_id"]
-            isOneToOne: false
-            referencedRelation: "v_hmo_provider_summary"
-            referencedColumns: ["provider_id"]
-          },
-          {
-            foreignKeyName: "hmo_claim_items_batch_id_fkey"
-            columns: ["batch_id"]
-            isOneToOne: false
-            referencedRelation: "hmo_claim_batches"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
       v_hmo_unbilled: {
         Row: {
           billed_amount_php: number | null
           days_since_release: number | null
+          is_historic: boolean | null
+          kind: string | null
           past_threshold: boolean | null
+          patient_name: string | null
           provider_id: string | null
           provider_name: string | null
           released_at: string | null
+          service_description: string | null
           test_request_id: string | null
           visit_id: string | null
         }
-        Relationships: [
-          {
-            foreignKeyName: "test_requests_visit_id_fkey"
-            columns: ["visit_id"]
-            isOneToOne: false
-            referencedRelation: "visits"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "visits_hmo_provider_id_fkey"
-            columns: ["provider_id"]
-            isOneToOne: false
-            referencedRelation: "hmo_providers"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "visits_hmo_provider_id_fkey"
-            columns: ["provider_id"]
-            isOneToOne: false
-            referencedRelation: "v_hmo_provider_summary"
-            referencedColumns: ["provider_id"]
-          },
-        ]
+        Relationships: []
+      }
+      v_inventory_balances: {
+        Row: {
+          code: string | null
+          expiry_tracking: boolean | null
+          is_active: boolean | null
+          item_id: string | null
+          name: string | null
+          next_expiry: string | null
+          on_hand: number | null
+          reorder_threshold: number | null
+          section: string | null
+          stock_status: string | null
+          unit: string | null
+        }
+        Relationships: []
       }
       v_staff_advances_outstanding: {
         Row: {
@@ -5536,6 +5726,7 @@ export type Database = {
         | "opening_balance"
         | "reversal"
         | "hmo_claim_resolution"
+        | "hmo_history_opening"
         | "cash_adjustment"
         | "eod_close"
         | "payroll_13th_month_payout"
@@ -5545,6 +5736,7 @@ export type Database = {
         | "doctor_pf_disbursement"
         | "cogs_send_out_accrual"
         | "cogs_send_out_trueup"
+        | "history_import"
       je_status: "draft" | "posted" | "reversed"
       period_status: "open" | "closed"
     }
@@ -5672,6 +5864,9 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
+  graphql_public: {
+    Enums: {},
+  },
   public: {
     Enums: {
       account_normal_balance: ["debit", "credit"],
@@ -5696,6 +5891,7 @@ export const Constants = {
         "opening_balance",
         "reversal",
         "hmo_claim_resolution",
+        "hmo_history_opening",
         "cash_adjustment",
         "eod_close",
         "payroll_13th_month_payout",
@@ -5705,9 +5901,11 @@ export const Constants = {
         "doctor_pf_disbursement",
         "cogs_send_out_accrual",
         "cogs_send_out_trueup",
+        "history_import",
       ],
       je_status: ["draft", "posted", "reversed"],
       period_status: ["open", "closed"],
     },
   },
 } as const
+

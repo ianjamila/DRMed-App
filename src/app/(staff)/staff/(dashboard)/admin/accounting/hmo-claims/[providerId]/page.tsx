@@ -16,7 +16,15 @@ export default async function ProviderDetailPage({
   await requireAdminStaff();
   const admin = createAdminClient();
 
-  const [providerQ, summaryQ, batchesQ, unbilledQ, agingQ] = await Promise.all([
+  // Pre-fetch provider name for case-insensitive joins to historic_hmo_claims.
+  const { data: providerForName } = await admin
+    .from("hmo_providers")
+    .select("name")
+    .eq("id", providerId)
+    .maybeSingle();
+  const providerName = providerForName?.name ?? null;
+
+  const [providerQ, summaryQ, batchesQ, unbilledQ, agingQ, staffQ, billedQ, paidQ, writtenOffQ, paymentMethodsQ] = await Promise.all([
     admin
       .from("hmo_providers")
       .select("*")
@@ -43,6 +51,44 @@ export default async function ProviderDetailPage({
       .from("v_hmo_ar_aging")
       .select("*")
       .eq("provider_id", providerId),
+    admin
+      .from("staff_profiles")
+      .select("id, full_name")
+      .eq("is_active", true)
+      .is("deleted_at", null)
+      .order("full_name"),
+    providerName
+      ? admin
+          .from("historic_hmo_claims" as never)
+          .select("id, patient_name, claim_date, service_description, base_amount_php, final_amount_php, status, date_submitted, deadline_date, billed_by_staff_id, source_tab, source_row")
+          .ilike("hmo_provider", providerName)
+          .in("status", ["pending", "overdue"])
+          .not("date_submitted", "is", null)
+          .order("claim_date", { ascending: false })
+      : Promise.resolve({ data: [] as unknown[] }),
+    providerName
+      ? admin
+          .from("historic_hmo_claims" as never)
+          .select("id, patient_name, claim_date, service_description, base_amount_php, final_amount_php, date_paid, or_number, paid_payment_method, journal_entry_id, source_tab, source_row")
+          .ilike("hmo_provider", providerName)
+          .eq("status", "paid")
+          .order("date_paid", { ascending: false, nullsFirst: false })
+          .limit(2000)
+      : Promise.resolve({ data: [] as unknown[] }),
+    providerName
+      ? admin
+          .from("historic_hmo_claims" as never)
+          .select("id, patient_name, claim_date, service_description, final_amount_php, wrote_off_at, write_off_reason, wrote_off_journal_entry_id, source_tab, source_row")
+          .ilike("hmo_provider", providerName)
+          .eq("status", "written_off")
+          .order("wrote_off_at", { ascending: false })
+      : Promise.resolve({ data: [] as unknown[] }),
+    admin
+      .from("chart_of_accounts")
+      .select("code, name")
+      .eq("is_active", true)
+      .eq("is_settlement_destination", true)
+      .order("code"),
   ]);
 
   if (!providerQ.data) notFound();
@@ -89,6 +135,11 @@ export default async function ProviderDetailPage({
         batches={batchesQ.data ?? []}
         unbilled={unbilledQ.data ?? []}
         aging={agingQ.data ?? []}
+        staff={staffQ.data ?? []}
+        paymentMethods={paymentMethodsQ.data ?? []}
+        billed={(billedQ.data ?? []) as never}
+        paid={(paidQ.data ?? []) as never}
+        writtenOff={(writtenOffQ.data ?? []) as never}
       />
     </div>
   );

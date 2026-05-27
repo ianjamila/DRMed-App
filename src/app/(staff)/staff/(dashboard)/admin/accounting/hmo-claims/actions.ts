@@ -2,6 +2,7 @@
 
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { audit } from "@/lib/audit/log";
@@ -48,14 +49,16 @@ export async function createClaimBatchAction(
   const admin = createAdminClient();
 
   // Load test_requests + verify each is released-with-HMO + matches provider + unbatched.
+  // services.kind required so we can enforce single-kind batches (lab vs doctor).
   const { data: trs, error: trErr } = await admin
     .from("test_requests")
-    .select("id, visit_id, hmo_approved_amount_php, status, visits!inner(hmo_provider_id)")
+    .select("id, visit_id, hmo_approved_amount_php, status, visits!inner(hmo_provider_id), services!inner(kind)")
     .in("id", parsed.data.test_request_ids);
   if (trErr) return { ok: false, error: translatePgError(trErr) };
   if (!trs || trs.length !== parsed.data.test_request_ids.length) {
     return { ok: false, error: "One or more test requests not found." };
   }
+  const kinds = new Set<"lab" | "doctor">();
   for (const tr of trs) {
     if (tr.status !== "released") return { ok: false, error: "All items must be released." };
     if (
@@ -67,6 +70,11 @@ export async function createClaimBatchAction(
     if (!tr.hmo_approved_amount_php || Number(tr.hmo_approved_amount_php) <= 0) {
       return { ok: false, error: "Items must have hmo_approved_amount_php > 0." };
     }
+    const serviceKind = (tr as unknown as { services: { kind: string } }).services.kind;
+    kinds.add(["doctor_consultation", "doctor_procedure"].includes(serviceKind) ? "doctor" : "lab");
+  }
+  if (kinds.size > 1) {
+    return { ok: false, error: "All items in a batch must be the same kind (lab tests OR doctor consults, not mixed)." };
   }
 
   // Insert batch
@@ -129,12 +137,13 @@ export async function addItemsToBatchAction(input: unknown): Promise<ActionResul
 
   const { data: trs, error: trErr } = await admin
     .from("test_requests")
-    .select("id, hmo_approved_amount_php, status, visits!inner(hmo_provider_id)")
+    .select("id, hmo_approved_amount_php, status, visits!inner(hmo_provider_id), services!inner(kind)")
     .in("id", parsed.data.test_request_ids);
   if (trErr) return { ok: false, error: translatePgError(trErr) };
   if (!trs || trs.length !== parsed.data.test_request_ids.length) {
     return { ok: false, error: "Test requests not found." };
   }
+  const kinds = new Set<"lab" | "doctor">();
   for (const tr of trs) {
     if (tr.status !== "released") return { ok: false, error: "All items must be released." };
     if (
@@ -142,6 +151,28 @@ export async function addItemsToBatchAction(input: unknown): Promise<ActionResul
       batch.provider_id
     ) {
       return { ok: false, error: "All items must belong to the batch's provider." };
+    }
+    const serviceKind = (tr as unknown as { services: { kind: string } }).services.kind;
+    kinds.add(["doctor_consultation", "doctor_procedure"].includes(serviceKind) ? "doctor" : "lab");
+  }
+  if (kinds.size > 1) {
+    return { ok: false, error: "All items in a batch must be the same kind (lab tests OR doctor consults, not mixed)." };
+  }
+  // Match the existing batch's kind: look at one existing item.
+  const { data: existingItem } = await admin
+    .from("hmo_claim_items")
+    .select("test_request_id, test_requests!inner(services!inner(kind))")
+    .eq("batch_id", parsed.data.batch_id)
+    .limit(1)
+    .maybeSingle();
+  if (existingItem) {
+    const existingKindRaw = (existingItem as unknown as { test_requests: { services: { kind: string } } })
+      .test_requests.services.kind;
+    const existingKind = ["doctor_consultation", "doctor_procedure"].includes(existingKindRaw)
+      ? "doctor"
+      : "lab";
+    if (!kinds.has(existingKind)) {
+      return { ok: false, error: `Existing batch contains ${existingKind} items; new items must be the same kind.` };
     }
   }
 
@@ -737,4 +768,492 @@ export async function allocateExistingPaymentAction(input: unknown): Promise<Act
 
   revalidatePath(`/staff/visits/${payment.visit_id}`);
   return { ok: true };
+}
+
+// ============================================================
+// 12.B — Mark historic HMO claims as billed
+// ============================================================
+
+const MarkHistoricBilledSchema = z.object({
+  claim_ids: z.array(z.string().uuid()).min(1).max(500),
+  date_submitted: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick a date."),
+  billed_by_staff_id: z.string().uuid(),
+});
+
+export async function markHistoricClaimsBilledAction(
+  input: unknown,
+): Promise<ActionResult<{ updated: number }>> {
+  const session = await requireAdminStaff();
+  const parsed = MarkHistoricBilledSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+
+  const admin = createAdminClient();
+
+  // Verify the staff_profiles row exists + is active.
+  const { data: staff } = await admin
+    .from("staff_profiles")
+    .select("id, full_name, is_active")
+    .eq("id", parsed.data.billed_by_staff_id)
+    .maybeSingle();
+  if (!staff || !staff.is_active) {
+    return { ok: false, error: "Selected staff member is not active." };
+  }
+
+  const recordedAt = new Date().toISOString();
+
+  const { data: updated, error } = await admin
+    .from("historic_hmo_claims" as never)
+    .update({
+      date_submitted: parsed.data.date_submitted,
+      billed_by_staff_id: parsed.data.billed_by_staff_id,
+      billed_recorded_at: recordedAt,
+    } as never)
+    .in("id", parsed.data.claim_ids)
+    .is("date_submitted", null)
+    .select("id");
+
+  if (error) {
+    return { ok: false, error: translatePgError(error) };
+  }
+  const updatedCount = Array.isArray(updated) ? updated.length : 0;
+  if (updatedCount === 0) {
+    return {
+      ok: false,
+      error: "No rows updated — possibly all selected claims were already marked billed.",
+    };
+  }
+
+  const meta = await auditMeta();
+  await audit({
+    actor_id: session.user_id,
+    actor_type: "staff",
+    action: "historic_hmo.marked_billed",
+    resource_type: "historic_hmo_claim",
+    resource_id: parsed.data.claim_ids[0],
+    metadata: {
+      claim_count: updatedCount,
+      date_submitted: parsed.data.date_submitted,
+      billed_by_staff_id: parsed.data.billed_by_staff_id,
+      billed_by_name: staff.full_name,
+      claim_ids: parsed.data.claim_ids,
+    },
+    ...meta,
+  });
+
+  revalidatePath(BASE_PATH);
+  return { ok: true, data: { updated: updatedCount } };
+}
+
+// ----------------------------------------------------------------
+// Unmark historic claim (reverse of markBilled)
+// ----------------------------------------------------------------
+
+const UnmarkHistoricBilledSchema = z.object({
+  claim_ids: z.array(z.string().uuid()).min(1).max(500),
+});
+
+export async function unmarkHistoricClaimsBilledAction(
+  input: unknown,
+): Promise<ActionResult<{ updated: number }>> {
+  const session = await requireAdminStaff();
+  const parsed = UnmarkHistoricBilledSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+  const admin = createAdminClient();
+  const { data: updated, error } = await admin
+    .from("historic_hmo_claims" as never)
+    .update({
+      date_submitted: null,
+      billed_by_staff_id: null,
+      billed_recorded_at: null,
+    } as never)
+    .in("id", parsed.data.claim_ids)
+    .not("date_submitted", "is", null)
+    .select("id");
+  if (error) return { ok: false, error: translatePgError(error) };
+  const updatedCount = Array.isArray(updated) ? updated.length : 0;
+  const meta = await auditMeta();
+  await audit({
+    actor_id: session.user_id,
+    actor_type: "staff",
+    action: "historic_hmo.unmarked_billed",
+    resource_type: "historic_hmo_claim",
+    resource_id: parsed.data.claim_ids[0],
+    metadata: { claim_count: updatedCount, claim_ids: parsed.data.claim_ids },
+    ...meta,
+  });
+  revalidatePath(BASE_PATH);
+  return { ok: true, data: { updated: updatedCount } };
+}
+
+// ----------------------------------------------------------------
+// Mark historic claims as PAID + post settlement JE per claim
+// ----------------------------------------------------------------
+
+const MarkHistoricPaidSchema = z.object({
+  claim_ids: z.array(z.string().uuid()).min(1).max(500),
+  date_paid: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick a date paid."),
+  // CoA code of the cash/bank account that received the settlement.
+  // The list of valid codes is admin-managed via chart_of_accounts.is_settlement_destination.
+  payment_method: z.string().min(1).max(20),
+  or_number: z.string().max(50).optional().nullable(),
+  paid_recorded_by_staff_id: z.string().uuid(),
+});
+
+export async function markHistoricClaimsPaidAction(
+  input: unknown,
+): Promise<ActionResult<{ updated: number }>> {
+  const session = await requireAdminStaff();
+  const parsed = MarkHistoricPaidSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+
+  const admin = createAdminClient();
+
+  const { data: staff } = await admin
+    .from("staff_profiles")
+    .select("id, full_name, is_active")
+    .eq("id", parsed.data.paid_recorded_by_staff_id)
+    .maybeSingle();
+  if (!staff || !staff.is_active) {
+    return { ok: false, error: "Selected staff member is not active." };
+  }
+
+  // Validate the payment method against settlement-destination accounts.
+  const { data: accts } = await admin
+    .from("chart_of_accounts")
+    .select("id, code, name, is_settlement_destination, is_active");
+  const codeToAcct = new Map(
+    (accts ?? []).map((a) => [a.code, a]),
+  );
+  const drAcct = codeToAcct.get(parsed.data.payment_method);
+  if (!drAcct) {
+    return { ok: false, error: `Payment method code "${parsed.data.payment_method}" not found in Chart of Accounts.` };
+  }
+  if (!drAcct.is_active) {
+    return { ok: false, error: `Payment method "${drAcct.name}" is inactive.` };
+  }
+  if (!drAcct.is_settlement_destination) {
+    return { ok: false, error: `Account ${drAcct.code} ${drAcct.name} is not enabled as a payment method. Toggle it on in Chart of Accounts.` };
+  }
+  const drCashId = drAcct.id;
+  const crArHmoId = codeToAcct.get("1110")?.id;
+  if (!crArHmoId) {
+    return { ok: false, error: "CoA mapping missing for 1110 AR-HMO." };
+  }
+
+  // Fetch the claims so we know amounts + provider info for the JEs.
+  type ClaimRow = {
+    id: string;
+    final_amount_php: number;
+    status: string;
+    hmo_provider: string;
+    patient_name: string;
+    service_description: string | null;
+  };
+  const { data: claims, error: claimsErr } = await admin
+    .from("historic_hmo_claims" as never)
+    .select("id, final_amount_php, status, hmo_provider, patient_name, service_description")
+    .in("id", parsed.data.claim_ids)
+    .returns<ClaimRow[]>();
+  if (claimsErr || !claims) {
+    return { ok: false, error: translatePgError(claimsErr ?? { message: "fetch failed" }) };
+  }
+  const eligible = claims.filter((c) => c.status === "pending" || c.status === "overdue");
+  if (eligible.length === 0) {
+    return { ok: false, error: "No eligible claims (must be pending or overdue)." };
+  }
+
+  const runStamp = new Date().toISOString();
+  let posted = 0, failed = 0;
+  for (const c of eligible) {
+    const fy = Number(parsed.data.date_paid.slice(0, 4));
+    const { data: nextNum, error: numErr } = await admin.rpc("je_next_number", { p_fiscal_year: fy });
+    if (numErr || !nextNum) { failed++; continue; }
+
+    const amt = Math.round(Number(c.final_amount_php) * 100) / 100;
+    const desc = `[history] HMO settlement: ${c.hmo_provider} / ${c.patient_name}`.slice(0, 500);
+    const notes = `imported_at=${runStamp} | xlsx HMO SETTLEMENT claim_id=${c.id} | service=${c.service_description ?? "?"} | method=${parsed.data.payment_method}${parsed.data.or_number ? ` | OR=${parsed.data.or_number}` : ""}`.slice(0, 2000);
+
+    const { data: je, error: jeErr } = await admin
+      .from("journal_entries")
+      .insert({
+        entry_number: nextNum,
+        posting_date: parsed.data.date_paid,
+        description: desc,
+        notes,
+        status: "draft",
+        source_kind: "history_import" as never,
+        source_id: null,
+      })
+      .select("id")
+      .single();
+    if (jeErr || !je) { failed++; continue; }
+
+    const lineDesc = `Settle HMO ${c.hmo_provider}: ${c.patient_name}`.slice(0, 500);
+    const { error: lErr } = await admin.from("journal_lines").insert([
+      { entry_id: je.id, account_id: drCashId, debit_php: amt, credit_php: 0, description: lineDesc, line_order: 1 },
+      { entry_id: je.id, account_id: crArHmoId, debit_php: 0, credit_php: amt, description: lineDesc, line_order: 2 },
+    ]);
+    if (lErr) {
+      await admin.from("journal_entries").delete().eq("id", je.id);
+      failed++; continue;
+    }
+    const { error: pErr } = await admin
+      .from("journal_entries")
+      .update({ status: "posted", posted_at: new Date().toISOString() })
+      .eq("id", je.id);
+    if (pErr) { failed++; continue; }
+
+    const { error: updErr } = await admin
+      .from("historic_hmo_claims" as never)
+      .update({
+        status: "paid",
+        date_paid: parsed.data.date_paid,
+        or_number: parsed.data.or_number ?? null,
+        paid_payment_method: parsed.data.payment_method,
+        paid_recorded_by_staff_id: parsed.data.paid_recorded_by_staff_id,
+        paid_recorded_at: runStamp,
+        journal_entry_id: je.id,
+      } as never)
+      .eq("id", c.id);
+    if (updErr) { failed++; continue; }
+    posted++;
+  }
+
+  const meta = await auditMeta();
+  await audit({
+    actor_id: session.user_id,
+    actor_type: "staff",
+    action: "historic_hmo.marked_paid",
+    resource_type: "historic_hmo_claim",
+    resource_id: eligible[0]?.id ?? null,
+    metadata: {
+      claim_count: posted,
+      failed,
+      date_paid: parsed.data.date_paid,
+      payment_method: parsed.data.payment_method,
+      paid_by_name: staff.full_name,
+      claim_ids: parsed.data.claim_ids,
+    },
+    ...meta,
+  });
+
+  revalidatePath(BASE_PATH);
+  return { ok: true, data: { updated: posted } };
+}
+
+// ----------------------------------------------------------------
+// Write off historic claims (DR 6920 Bad Debt / CR 1110 AR-HMO)
+// ----------------------------------------------------------------
+
+const WriteOffHistoricSchema = z.object({
+  claim_ids: z.array(z.string().uuid()).min(1).max(500),
+  reason: z.string().min(3).max(500),
+  wrote_off_by_staff_id: z.string().uuid(),
+  write_off_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick a write-off posting date."),
+});
+
+export async function writeOffHistoricClaimsAction(
+  input: unknown,
+): Promise<ActionResult<{ updated: number }>> {
+  const session = await requireAdminStaff();
+  const parsed = WriteOffHistoricSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+
+  const admin = createAdminClient();
+
+  const { data: staff } = await admin
+    .from("staff_profiles")
+    .select("id, full_name, is_active")
+    .eq("id", parsed.data.wrote_off_by_staff_id)
+    .maybeSingle();
+  if (!staff || !staff.is_active) {
+    return { ok: false, error: "Selected staff member is not active." };
+  }
+
+  type ClaimRow = {
+    id: string;
+    final_amount_php: number;
+    status: string;
+    hmo_provider: string;
+    patient_name: string;
+    service_description: string | null;
+  };
+  const { data: claims, error: cErr } = await admin
+    .from("historic_hmo_claims" as never)
+    .select("id, final_amount_php, status, hmo_provider, patient_name, service_description")
+    .in("id", parsed.data.claim_ids)
+    .returns<ClaimRow[]>();
+  if (cErr || !claims) {
+    return { ok: false, error: translatePgError(cErr ?? { message: "fetch failed" }) };
+  }
+  const eligible = claims.filter((c) => c.status === "pending" || c.status === "overdue");
+  if (eligible.length === 0) {
+    return { ok: false, error: "No eligible claims (must be pending or overdue)." };
+  }
+
+  const { data: accts } = await admin.from("chart_of_accounts").select("id, code");
+  const codeToId = new Map((accts ?? []).map((a) => [a.code, a.id]));
+  const drBadDebtId = codeToId.get("6920");
+  const crArHmoId = codeToId.get("1110");
+  if (!drBadDebtId || !crArHmoId) {
+    return { ok: false, error: "CoA mapping missing for 6920 / 1110." };
+  }
+
+  const runStamp = new Date().toISOString();
+  let posted = 0, failed = 0;
+  for (const c of eligible) {
+    const fy = Number(parsed.data.write_off_date.slice(0, 4));
+    const { data: nextNum, error: numErr } = await admin.rpc("je_next_number", { p_fiscal_year: fy });
+    if (numErr || !nextNum) { failed++; continue; }
+
+    const amt = Math.round(Number(c.final_amount_php) * 100) / 100;
+    const desc = `[history] HMO write-off: ${c.hmo_provider} / ${c.patient_name}`.slice(0, 500);
+    const notes = `imported_at=${runStamp} | xlsx HMO WRITE-OFF claim_id=${c.id} | reason=${parsed.data.reason}`.slice(0, 2000);
+
+    const { data: je, error: jeErr } = await admin
+      .from("journal_entries")
+      .insert({
+        entry_number: nextNum,
+        posting_date: parsed.data.write_off_date,
+        description: desc,
+        notes,
+        status: "draft",
+        source_kind: "history_import" as never,
+        source_id: null,
+      })
+      .select("id")
+      .single();
+    if (jeErr || !je) { failed++; continue; }
+
+    const lineDesc = `Write off ${c.hmo_provider}: ${c.patient_name}`.slice(0, 500);
+    const { error: lErr } = await admin.from("journal_lines").insert([
+      { entry_id: je.id, account_id: drBadDebtId, debit_php: amt, credit_php: 0, description: lineDesc, line_order: 1 },
+      { entry_id: je.id, account_id: crArHmoId, debit_php: 0, credit_php: amt, description: lineDesc, line_order: 2 },
+    ]);
+    if (lErr) {
+      await admin.from("journal_entries").delete().eq("id", je.id);
+      failed++; continue;
+    }
+    const { error: pErr } = await admin
+      .from("journal_entries")
+      .update({ status: "posted", posted_at: new Date().toISOString() })
+      .eq("id", je.id);
+    if (pErr) { failed++; continue; }
+
+    const { error: updErr } = await admin
+      .from("historic_hmo_claims" as never)
+      .update({
+        status: "written_off",
+        wrote_off_by_staff_id: parsed.data.wrote_off_by_staff_id,
+        wrote_off_at: runStamp,
+        wrote_off_journal_entry_id: je.id,
+        write_off_reason: parsed.data.reason,
+      } as never)
+      .eq("id", c.id);
+    if (updErr) { failed++; continue; }
+    posted++;
+  }
+
+  const meta = await auditMeta();
+  await audit({
+    actor_id: session.user_id,
+    actor_type: "staff",
+    action: "historic_hmo.written_off",
+    resource_type: "historic_hmo_claim",
+    resource_id: eligible[0]?.id ?? null,
+    metadata: {
+      claim_count: posted,
+      failed,
+      reason: parsed.data.reason,
+      claim_ids: parsed.data.claim_ids,
+    },
+    ...meta,
+  });
+
+  revalidatePath(BASE_PATH);
+  return { ok: true, data: { updated: posted } };
+}
+
+// ----------------------------------------------------------------
+// Aging snapshot (point-in-time roll-up)
+// ----------------------------------------------------------------
+
+const AgingSnapshotSchema = z.object({
+  snapshot_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick a snapshot date."),
+});
+
+export async function snapshotHmoAgingAction(
+  input: unknown,
+): Promise<ActionResult<{ rows: number }>> {
+  const session = await requireAdminStaff();
+  const parsed = AgingSnapshotSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+
+  const admin = createAdminClient();
+
+  type AgingRow = {
+    provider_id: string | null;
+    provider_name: string | null;
+    bucket: string | null;
+    kind: string | null;
+    total_php: number | null;
+    item_count: number | null;
+  };
+  const { data, error } = await admin
+    .from("v_hmo_ar_aging")
+    .select("provider_id, provider_name, bucket, kind, total_php, item_count")
+    .returns<AgingRow[]>();
+  if (error || !data) {
+    return { ok: false, error: translatePgError(error ?? { message: "fetch failed" }) };
+  }
+
+  const rows = data
+    .filter((r) => r.provider_id && r.provider_name && r.bucket && r.kind)
+    .map((r) => ({
+      snapshot_date: parsed.data.snapshot_date,
+      provider_id: r.provider_id!,
+      provider_name: r.provider_name!,
+      bucket: r.bucket!,
+      kind: r.kind!,
+      total_php: Number(r.total_php ?? 0),
+      item_count: Number(r.item_count ?? 0),
+      recorded_by: session.user_id,
+    }));
+
+  if (rows.length === 0) {
+    return { ok: false, error: "No aging data to snapshot." };
+  }
+
+  const { error: insErr, count } = await admin
+    .from("hmo_aging_snapshots" as never)
+    .upsert(rows as never, {
+      onConflict: "snapshot_date,provider_id,bucket,kind",
+      ignoreDuplicates: false,
+      count: "exact",
+    });
+  if (insErr) return { ok: false, error: translatePgError(insErr) };
+
+  const meta = await auditMeta();
+  await audit({
+    actor_id: session.user_id,
+    actor_type: "staff",
+    action: "hmo_aging.snapshot",
+    resource_type: "hmo_aging_snapshots",
+    resource_id: null,
+    metadata: { snapshot_date: parsed.data.snapshot_date, rows: count ?? rows.length },
+    ...meta,
+  });
+
+  revalidatePath(BASE_PATH);
+  return { ok: true, data: { rows: count ?? rows.length } };
 }

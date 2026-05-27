@@ -10,7 +10,10 @@ export default async function HmoClaimsIndexPage() {
   const admin = createAdminClient();
 
   const [summary, unbilled, stuck, aging] = await Promise.all([
-    admin.from("v_hmo_provider_summary").select("*").order("provider_name"),
+    admin
+      .from("v_hmo_provider_summary")
+      .select("*")
+      .order("total_unresolved_ar_php", { ascending: false, nullsFirst: false }),
     admin
       .from("v_hmo_unbilled")
       .select("*")

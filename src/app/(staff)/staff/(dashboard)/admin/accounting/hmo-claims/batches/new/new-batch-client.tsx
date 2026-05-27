@@ -19,6 +19,9 @@ type UnbilledRow = {
   billed_amount_php: number;
   days_since_release: number;
   past_threshold: boolean;
+  kind: "lab" | "doctor";
+  patient_name: string | null;
+  service_description: string | null;
 };
 
 export function NewBatchClient({
@@ -104,6 +107,15 @@ export function NewBatchClient({
     .filter((r) => selected.has(r.test_request_id))
     .reduce((a, r) => a + Number(r.billed_amount_php), 0);
 
+  // Determine the "locked" kind: the kind of the first selected item.
+  // Once one is selected, other-kind items can't be selected.
+  const selectedKind: "lab" | "doctor" | null = (() => {
+    for (const r of unbilled) {
+      if (selected.has(r.test_request_id)) return r.kind;
+    }
+    return null;
+  })();
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -142,16 +154,36 @@ export function NewBatchClient({
       </label>
 
       {unbilled.length === 0 ? (
-        <p className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4 text-sm text-[color:var(--color-brand-text-soft)]">
-          No unbilled items for this provider.
-        </p>
+        <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-[color:var(--color-brand-navy)]">
+          <p className="font-semibold">No live unbilled items for this provider.</p>
+          <p className="mt-2 text-xs text-[color:var(--color-brand-text-soft)]">
+            The New Batch flow only handles claims from live operations
+            (lab/consult visits released through the app). Historic claims from
+            the xlsx tracker do <strong>not</strong> appear here — they are
+            already in their final state per the spreadsheet.
+          </p>
+          <p className="mt-3 text-xs">
+            To work the historic backlog, go to the{" "}
+            <a
+              href={`/staff/admin/accounting/hmo-claims/${providerId}`}
+              className="font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
+            >
+              provider page
+            </a>{" "}
+            and use the <strong>Unbilled</strong> tab — every historic row has
+            Mark billed / Mark paid / Write off actions.
+          </p>
+        </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
           <table className="w-full min-w-[480px] text-sm">
             <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
               <tr>
                 <th className="px-4 py-3"></th>
+                <th className="px-4 py-3">Kind</th>
                 <th className="px-4 py-3">Released</th>
+                <th className="px-4 py-3">Patient</th>
+                <th className="px-4 py-3">Service</th>
                 <th className="px-4 py-3 text-right">Age (days)</th>
                 <th className="px-4 py-3 text-right">Amount</th>
               </tr>
@@ -159,11 +191,13 @@ export function NewBatchClient({
             <tbody>
               {unbilled.map((r) => {
                 const isChecked = selected.has(r.test_request_id);
+                const isLocked = selectedKind !== null && r.kind !== selectedKind && !isChecked;
                 return (
                   <tr
                     key={r.test_request_id}
                     className={
                       "border-t border-[color:var(--color-brand-bg-mid)] " +
+                      (isLocked ? "opacity-40 " : "") +
                       (r.past_threshold ? "bg-amber-50" : "")
                     }
                   >
@@ -172,14 +206,30 @@ export function NewBatchClient({
                         <input
                           type="checkbox"
                           checked={isChecked}
+                          disabled={isLocked}
                           onChange={() => toggle(r.test_request_id)}
                           aria-label={`Select item ${r.test_request_id}`}
+                          title={isLocked ? `Batch already contains ${selectedKind} items — cannot mix kinds` : undefined}
                           className="h-5 w-5"
                         />
                       </label>
                     </td>
                     <td className="px-4 py-3 text-xs">
+                      <span
+                        className={
+                          "rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider " +
+                          (r.kind === "doctor" ? "bg-indigo-100 text-indigo-800" : "bg-sky-100 text-sky-800")
+                        }
+                      >
+                        {r.kind}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-xs">
                       {new Date(r.released_at).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })}
+                    </td>
+                    <td className="px-4 py-3 text-xs">{r.patient_name ?? "—"}</td>
+                    <td className="px-4 py-3 text-xs text-[color:var(--color-brand-text-soft)]">
+                      {r.service_description ?? "—"}
                     </td>
                     <td className="px-4 py-3 text-right font-mono text-xs">
                       {r.days_since_release}

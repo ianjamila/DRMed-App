@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import type { Database } from "@/types/database";
+import { SingleClaimActions } from "../_components/single-claim-actions";
 
 type SummaryRow =
   Database["public"]["Views"]["v_hmo_provider_summary"]["Row"];
@@ -13,6 +14,9 @@ type BatchRow = Pick<
   Database["public"]["Tables"]["hmo_claim_batches"]["Row"],
   "id" | "status" | "reference_no" | "submitted_at" | "voided_at" | "created_at"
 >;
+
+type StaffPick = { id: string; full_name: string };
+type PaymentMethod = { code: string; name: string };
 
 const PHP = new Intl.NumberFormat("en-PH", {
   style: "currency",
@@ -35,14 +39,25 @@ export function ProviderDetailClient({
   batches,
   unbilled,
   aging,
+  staff,
+  paymentMethods,
 }: {
   providerId: string;
   summary: SummaryRow | null;
   batches: BatchRow[];
   unbilled: UnbilledRow[];
   aging: AgingRow[];
+  staff?: StaffPick[];
+  paymentMethods?: PaymentMethod[];
+  // Tabs for billed / paid / written_off are loaded but rendered separately;
+  // unused in this minimal restore. Future iteration re-adds those tabs.
+  billed?: unknown;
+  paid?: unknown;
+  writtenOff?: unknown;
 }) {
   const [tab, setTab] = useState<Tab>("batches");
+  const staffList: StaffPick[] = staff ?? [];
+  const paymentMethodList: PaymentMethod[] = paymentMethods ?? [];
 
   return (
     <div className="space-y-4">
@@ -70,7 +85,7 @@ export function ProviderDetailClient({
       </nav>
       {tab === "batches" && <BatchesTab batches={batches} />}
       {tab === "unbilled" && (
-        <UnbilledTab providerId={providerId} rows={unbilled} />
+        <UnbilledTab providerId={providerId} rows={unbilled} staff={staffList} paymentMethods={paymentMethodList} />
       )}
       {tab === "aging" && <AgingTab rows={aging} />}
     </div>
@@ -236,15 +251,20 @@ function BatchesTab({ batches }: { batches: BatchRow[] }) {
 function UnbilledTab({
   providerId,
   rows,
+  staff,
+  paymentMethods,
 }: {
   providerId: string;
   rows: UnbilledRow[];
+  staff: StaffPick[];
+  paymentMethods: PaymentMethod[];
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const selectableIds = useMemo(
     () =>
       rows
+        .filter((r) => !r.is_historic)
         .map((r) => r.test_request_id)
         .filter((id): id is string => Boolean(id)),
     [rows],
@@ -304,14 +324,18 @@ function UnbilledTab({
                 </label>
               </th>
               <th className="px-4 py-3">Released</th>
+              <th className="px-4 py-3">Patient</th>
+              <th className="px-4 py-3">Service</th>
               <th className="px-4 py-3 text-right">Age (days)</th>
               <th className="px-4 py-3 text-right">Amount</th>
+              <th className="px-4 py-3"></th>
             </tr>
           </thead>
           <tbody>
             {rows.map((r) => {
               const id = r.test_request_id;
               const isSelected = id ? selected.has(id) : false;
+              const isHistoric = Boolean(r.is_historic);
               return (
                 <tr
                   key={id ?? `${r.visit_id}-${r.released_at}`}
@@ -324,10 +348,11 @@ function UnbilledTab({
                     <label className="inline-flex min-h-[44px] items-center">
                       <input
                         type="checkbox"
-                        disabled={!id}
+                        disabled={!id || isHistoric}
                         checked={isSelected}
-                        onChange={() => id && toggle(id)}
+                        onChange={() => id && !isHistoric && toggle(id)}
                         aria-label={`Select item ${id ?? ""}`}
+                        title={isHistoric ? "Historic claims use the per-row actions" : undefined}
                         className="h-4 w-4"
                       />
                     </label>
@@ -336,12 +361,52 @@ function UnbilledTab({
                     {r.released_at
                       ? new Date(r.released_at).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })
                       : "—"}
+                    {isHistoric && (
+                      <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800">
+                        Historic
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-xs">
+                    {isHistoric && id ? (
+                      <Link
+                        href={`/staff/admin/accounting/hmo-claims/${providerId}/historic/${id}`}
+                        className="font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
+                      >
+                        {r.patient_name ?? "(unknown)"}
+                      </Link>
+                    ) : r.visit_id ? (
+                      <Link
+                        href={`/staff/visits/${r.visit_id}`}
+                        className="text-[color:var(--color-brand-cyan)] hover:underline"
+                      >
+                        {r.patient_name ?? "(unknown)"}
+                      </Link>
+                    ) : (
+                      r.patient_name ?? "—"
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-xs text-[color:var(--color-brand-text-soft)]">
+                    {r.service_description ?? "—"}
                   </td>
                   <td className="px-4 py-3 text-right font-mono text-xs">
                     {r.days_since_release ?? "—"}
                   </td>
                   <td className="px-4 py-3 text-right font-semibold">
                     {PHP.format(r.billed_amount_php ?? 0)}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    {isHistoric && id ? (
+                      <SingleClaimActions
+                        claimId={id}
+                        status="pending"
+                        hasSubmissionDate={false}
+                        finalAmount={Number(r.billed_amount_php ?? 0)}
+                        staff={staff}
+                        paymentMethods={paymentMethods}
+                        size="compact"
+                      />
+                    ) : null}
                   </td>
                 </tr>
               );

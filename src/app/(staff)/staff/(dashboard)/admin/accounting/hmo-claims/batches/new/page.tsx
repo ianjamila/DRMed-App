@@ -49,9 +49,10 @@ export default async function NewBatchPage({
   const { data: unbilled } = await admin
     .from("v_hmo_unbilled")
     .select(
-      "test_request_id, released_at, billed_amount_php, days_since_release, past_threshold",
+      "test_request_id, released_at, billed_amount_php, days_since_release, past_threshold, kind, patient_name, service_description",
     )
     .eq("provider_id", initialProviderId)
+    .eq("is_historic", false) // historic claims can't be batched
     .order("days_since_release", { ascending: false });
 
   const preselectedIds = (params.trIds ?? "")
@@ -69,6 +70,9 @@ export default async function NewBatchPage({
       billed_amount_php: Number(r.billed_amount_php ?? 0),
       days_since_release: Number(r.days_since_release ?? 0),
       past_threshold: Boolean(r.past_threshold),
+      kind: ((r.kind ?? "lab") === "doctor" ? "doctor" : "lab") as "lab" | "doctor",
+      patient_name: r.patient_name ?? null,
+      service_description: r.service_description ?? null,
     }));
 
   const eyebrow = addToBatchId
