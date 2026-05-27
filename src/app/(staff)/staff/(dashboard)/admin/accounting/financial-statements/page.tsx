@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { paginatedFetch } from "@/lib/supabase/paginated-fetch";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { StatementTabs } from "./_components/statement-tabs";
+import { PeriodPresets, priorYearRange } from "./_components/period-presets";
 
 export const metadata = { title: "Financial statements — staff" };
 export const dynamic = "force-dynamic";
@@ -81,28 +83,49 @@ export default async function FinancialStatementsPage({ searchParams }: SearchPr
 
   const admin = createAdminClient();
 
-  const { data: lines } = await admin
-    .from("journal_lines")
-    .select(
-      `
-      debit_php, credit_php,
-      journal_entries!inner ( posting_date, status ),
-      chart_of_accounts!inner ( id, code, name, type, normal_balance )
-    `,
-    )
-    .eq("journal_entries.status", "posted")
-    .gte("journal_entries.posting_date", start)
-    .lte("journal_entries.posting_date", end)
-    .in("chart_of_accounts.type", [
-      "revenue",
-      "contra_revenue",
-      "expense",
-    ])
-    .returns<LineRow[]>();
+  // Same period one year earlier — for YoY comparison.
+  const prior = priorYearRange(start, end);
+
+  const [lines, priorLines] = await Promise.all([
+    paginatedFetch<LineRow>((from, to) =>
+      admin
+        .from("journal_lines")
+        .select(
+          `
+          debit_php, credit_php,
+          journal_entries!inner ( posting_date, status ),
+          chart_of_accounts!inner ( id, code, name, type, normal_balance )
+        `,
+        )
+        .eq("journal_entries.status", "posted")
+        .gte("journal_entries.posting_date", start)
+        .lte("journal_entries.posting_date", end)
+        .in("chart_of_accounts.type", ["revenue", "contra_revenue", "expense"])
+        .range(from, to)
+        .returns<LineRow[]>(),
+    ),
+    paginatedFetch<LineRow>((from, to) =>
+      admin
+        .from("journal_lines")
+        .select(
+          `
+          debit_php, credit_php,
+          journal_entries!inner ( posting_date, status ),
+          chart_of_accounts!inner ( id, code, name, type, normal_balance )
+        `,
+        )
+        .eq("journal_entries.status", "posted")
+        .gte("journal_entries.posting_date", prior.start)
+        .lte("journal_entries.posting_date", prior.end)
+        .in("chart_of_accounts.type", ["revenue", "contra_revenue", "expense"])
+        .range(from, to)
+        .returns<LineRow[]>(),
+    ),
+  ]);
 
   const balances = new Map<string, AccountBalance>();
 
-  for (const row of lines ?? []) {
+  for (const row of lines) {
     const acct = row.chart_of_accounts;
     if (!acct) continue;
     const sign = plnaturalSign(acct.type);
@@ -144,6 +167,26 @@ export default async function FinancialStatementsPage({ searchParams }: SearchPr
   const totalExpense = subtotal("expense");
   const netIncome = netRevenue - totalExpense;
 
+  // Prior-year totals (one rollup; we don't need per-account granularity).
+  let priorRevenue = 0, priorContra = 0, priorExpense = 0;
+  for (const row of priorLines) {
+    const a = row.chart_of_accounts;
+    if (!a) continue;
+    const signed = balanceFor(row, a.normal_balance);
+    if (a.type === "revenue") priorRevenue += signed;
+    else if (a.type === "contra_revenue") priorContra += signed;
+    else if (a.type === "expense") priorExpense += signed;
+  }
+  const priorNetRevenue = priorRevenue - priorContra;
+  const priorNetIncome = priorNetRevenue - priorExpense;
+
+  function pctChange(current: number, prior: number): string {
+    if (prior === 0) return current === 0 ? "—" : "n/a";
+    const pct = ((current - prior) / Math.abs(prior)) * 100;
+    const sign = pct >= 0 ? "+" : "";
+    return `${sign}${pct.toFixed(1)}%`;
+  }
+
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6">
@@ -164,6 +207,13 @@ export default async function FinancialStatementsPage({ searchParams }: SearchPr
       </header>
 
       <StatementTabs active="income" />
+
+      <PeriodPresets
+        pathname="/staff/admin/accounting/financial-statements"
+        start={start}
+        end={end}
+        todayISO={todayISO}
+      />
 
       <form
         action=""
@@ -208,6 +258,61 @@ export default async function FinancialStatementsPage({ searchParams }: SearchPr
           Recalculate
         </button>
       </form>
+
+      <section className="mb-6 overflow-hidden rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+        <div className="border-b border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] px-4 py-2">
+          <h2 className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+            Year-on-year summary
+          </h2>
+          <p className="text-[10px] text-[color:var(--color-brand-text-soft)]">
+            Compared to same period one year earlier ({prior.start} → {prior.end})
+          </p>
+        </div>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] text-left text-xs uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+              <th className="px-4 py-2">Metric</th>
+              <th className="px-4 py-2 text-right">Current</th>
+              <th className="px-4 py-2 text-right">Prior year</th>
+              <th className="px-4 py-2 text-right">Δ</th>
+              <th className="px-4 py-2 text-right">% change</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr className="border-b border-[color:var(--color-brand-bg-mid)]">
+              <td className="px-4 py-3 font-semibold">Net revenue</td>
+              <td className="px-4 py-3 text-right font-mono">{PHP.format(netRevenue)}</td>
+              <td className="px-4 py-3 text-right font-mono text-[color:var(--color-brand-text-soft)]">{PHP.format(priorNetRevenue)}</td>
+              <td className="px-4 py-3 text-right font-mono">{PHP.format(netRevenue - priorNetRevenue)}</td>
+              <td className={
+                "px-4 py-3 text-right font-mono font-semibold " +
+                ((netRevenue - priorNetRevenue) >= 0 ? "text-emerald-700" : "text-red-700")
+              }>{pctChange(netRevenue, priorNetRevenue)}</td>
+            </tr>
+            <tr className="border-b border-[color:var(--color-brand-bg-mid)]">
+              <td className="px-4 py-3 font-semibold">Operating expenses</td>
+              <td className="px-4 py-3 text-right font-mono">{PHP.format(totalExpense)}</td>
+              <td className="px-4 py-3 text-right font-mono text-[color:var(--color-brand-text-soft)]">{PHP.format(priorExpense)}</td>
+              <td className="px-4 py-3 text-right font-mono">{PHP.format(totalExpense - priorExpense)}</td>
+              <td className={
+                "px-4 py-3 text-right font-mono font-semibold " +
+                // Higher expenses is bad
+                ((totalExpense - priorExpense) <= 0 ? "text-emerald-700" : "text-red-700")
+              }>{pctChange(totalExpense, priorExpense)}</td>
+            </tr>
+            <tr>
+              <td className="px-4 py-3 font-semibold text-[color:var(--color-brand-navy)]">Net income</td>
+              <td className="px-4 py-3 text-right font-mono font-bold">{PHP.format(netIncome)}</td>
+              <td className="px-4 py-3 text-right font-mono text-[color:var(--color-brand-text-soft)]">{PHP.format(priorNetIncome)}</td>
+              <td className="px-4 py-3 text-right font-mono">{PHP.format(netIncome - priorNetIncome)}</td>
+              <td className={
+                "px-4 py-3 text-right font-mono font-bold " +
+                ((netIncome - priorNetIncome) >= 0 ? "text-emerald-700" : "text-red-700")
+              }>{pctChange(netIncome, priorNetIncome)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
 
       <section className="overflow-hidden rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
         {balances.size === 0 ? (

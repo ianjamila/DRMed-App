@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { paginatedFetch } from "@/lib/supabase/paginated-fetch";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { StatementTabs } from "../_components/statement-tabs";
 
@@ -60,23 +61,26 @@ export default async function BalanceSheetPage({ searchParams }: SearchProps) {
   const admin = createAdminClient();
 
   // ---- 1) Account balances for asset / liability / equity through asOf ----
-  const { data: balanceLines } = await admin
-    .from("journal_lines")
-    .select(
-      `
-      debit_php, credit_php,
-      journal_entries!inner ( posting_date, status ),
-      chart_of_accounts!inner ( id, code, name, type, normal_balance )
-    `,
-    )
-    .eq("journal_entries.status", "posted")
-    .lte("journal_entries.posting_date", asOf)
-    .in("chart_of_accounts.type", ["asset", "liability", "equity"])
-    .returns<LineRow[]>();
+  const balanceLines = await paginatedFetch<LineRow>((from, to) =>
+    admin
+      .from("journal_lines")
+      .select(
+        `
+        debit_php, credit_php,
+        journal_entries!inner ( posting_date, status ),
+        chart_of_accounts!inner ( id, code, name, type, normal_balance )
+      `,
+      )
+      .eq("journal_entries.status", "posted")
+      .lte("journal_entries.posting_date", asOf)
+      .in("chart_of_accounts.type", ["asset", "liability", "equity"])
+      .range(from, to)
+      .returns<LineRow[]>(),
+  );
 
   const balances = new Map<string, AccountBalance>();
 
-  for (const row of balanceLines ?? []) {
+  for (const row of balanceLines) {
     const acct = row.chart_of_accounts;
     if (!acct) continue;
     const delta = balanceFor(row, acct.normal_balance);
@@ -96,28 +100,30 @@ export default async function BalanceSheetPage({ searchParams }: SearchProps) {
   // The income statement isn't closed-out on a recurring basis (no period-
   // close JEs that flip P&L to RE), so revenue/expense are still open. We
   // compute the implied closing balance here as "computed retained earnings".
-  const { data: pnlLines } = await admin
-    .from("journal_lines")
-    .select(
-      `
-      debit_php, credit_php,
-      journal_entries!inner ( posting_date, status ),
-      chart_of_accounts!inner ( normal_balance, type )
-    `,
-    )
-    .eq("journal_entries.status", "posted")
-    .lte("journal_entries.posting_date", asOf)
-    .in("chart_of_accounts.type", ["revenue", "contra_revenue", "expense"])
-    .returns<
-      {
-        debit_php: number;
-        credit_php: number;
-        chart_of_accounts: { normal_balance: string; type: string } | null;
-      }[]
-    >();
+  interface PnlRow {
+    debit_php: number;
+    credit_php: number;
+    chart_of_accounts: { normal_balance: string; type: string } | null;
+  }
+  const pnlLines = await paginatedFetch<PnlRow>((from, to) =>
+    admin
+      .from("journal_lines")
+      .select(
+        `
+        debit_php, credit_php,
+        journal_entries!inner ( posting_date, status ),
+        chart_of_accounts!inner ( normal_balance, type )
+      `,
+      )
+      .eq("journal_entries.status", "posted")
+      .lte("journal_entries.posting_date", asOf)
+      .in("chart_of_accounts.type", ["revenue", "contra_revenue", "expense"])
+      .range(from, to)
+      .returns<PnlRow[]>(),
+  );
 
   let netIncomeToDate = 0;
-  for (const row of pnlLines ?? []) {
+  for (const row of pnlLines) {
     const acct = row.chart_of_accounts;
     if (!acct) continue;
     const signed = balanceFor(row, acct.normal_balance);
@@ -161,6 +167,8 @@ export default async function BalanceSheetPage({ searchParams }: SearchProps) {
       </header>
 
       <StatementTabs active="balance" />
+
+      <BalanceSheetAsOfPresets asOf={asOf} todayISO={todayISO} />
 
       <form
         action=""
@@ -352,5 +360,53 @@ function TotalRow({
         {PHP.format(amount)}
       </td>
     </tr>
+  );
+}
+
+function BalanceSheetAsOfPresets({ asOf, todayISO }: { asOf: string; todayISO: string }) {
+  const today = new Date(`${todayISO}T00:00:00+08:00`);
+  const y = today.getUTCFullYear();
+  const m = today.getUTCMonth();
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  const endOfPrevMonth = new Date(Date.UTC(y, m, 0));
+  const endOfPrevQuarter = (() => {
+    const qStartMonth = Math.floor(m / 3) * 3; // 0, 3, 6, 9
+    return new Date(Date.UTC(y, qStartMonth, 0));
+  })();
+  const endOfLastYear = new Date(Date.UTC(y - 1, 11, 31));
+  const endOfTwoYearsAgo = new Date(Date.UTC(y - 2, 11, 31));
+
+  const presets = [
+    { key: "today", label: "Today", date: todayISO },
+    { key: "prev-month", label: "End of last month", date: iso(endOfPrevMonth) },
+    { key: "prev-q", label: "End of last quarter", date: iso(endOfPrevQuarter) },
+    { key: "prev-year", label: `End of ${y - 1}`, date: iso(endOfLastYear) },
+    { key: "two-years", label: `End of ${y - 2}`, date: iso(endOfTwoYearsAgo) },
+  ];
+
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-2">
+      <span className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+        Quick dates
+      </span>
+      {presets.map((p) => {
+        const active = p.date === asOf;
+        return (
+          <Link
+            key={p.key}
+            href={`/staff/admin/accounting/financial-statements/balance-sheet?as_of=${p.date}`}
+            className={
+              "min-h-[36px] rounded-full px-3 py-1.5 text-xs font-bold uppercase tracking-wider " +
+              (active
+                ? "bg-[color:var(--color-brand-navy)] text-white"
+                : "border border-[color:var(--color-brand-bg-mid)] bg-white text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-bg)]")
+            }
+          >
+            {p.label}
+          </Link>
+        );
+      })}
+      <span className="text-[10px] text-[color:var(--color-brand-text-soft)]">or pick custom below</span>
+    </div>
   );
 }

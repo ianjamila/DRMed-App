@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { paginatedFetch } from "@/lib/supabase/paginated-fetch";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { StatementTabs } from "../_components/statement-tabs";
+import { PeriodPresets } from "../_components/period-presets";
 
 export const metadata = { title: "Cash flow — staff" };
 export const dynamic = "force-dynamic";
@@ -107,22 +109,25 @@ export default async function CashFlowPage({ searchParams }: SearchProps) {
   dayBefore.setDate(dayBefore.getDate() - 1);
   const beginningDate = dayBefore.toISOString().slice(0, 10);
 
-  const { data: beginningLines } = await admin
-    .from("journal_lines")
-    .select(
-      `
-      debit_php, credit_php,
-      journal_entries!inner ( posting_date, status, source_kind, description ),
-      chart_of_accounts!inner ( id, code, name )
-    `,
-    )
-    .eq("journal_entries.status", "posted")
-    .lte("journal_entries.posting_date", beginningDate)
-    .in("account_id", cashAccountIds)
-    .returns<LineRow[]>();
+  const beginningLines = await paginatedFetch<LineRow>((from, to) =>
+    admin
+      .from("journal_lines")
+      .select(
+        `
+        debit_php, credit_php,
+        journal_entries!inner ( posting_date, status, source_kind, description ),
+        chart_of_accounts!inner ( id, code, name )
+      `,
+      )
+      .eq("journal_entries.status", "posted")
+      .lte("journal_entries.posting_date", beginningDate)
+      .in("account_id", cashAccountIds)
+      .range(from, to)
+      .returns<LineRow[]>(),
+  );
 
   const beginningByAccount = new Map<string, number>();
-  for (const row of beginningLines ?? []) {
+  for (const row of beginningLines) {
     const acct = row.chart_of_accounts;
     if (!acct) continue;
     const delta = Number(row.debit_php ?? 0) - Number(row.credit_php ?? 0);
@@ -134,26 +139,29 @@ export default async function CashFlowPage({ searchParams }: SearchProps) {
   );
 
   // ---- Period movements (debits = inflow, credits = outflow) -------------
-  const { data: periodLines } = await admin
-    .from("journal_lines")
-    .select(
-      `
-      debit_php, credit_php,
-      journal_entries!inner ( posting_date, status, source_kind, description ),
-      chart_of_accounts!inner ( id, code, name )
-    `,
-    )
-    .eq("journal_entries.status", "posted")
-    .gte("journal_entries.posting_date", start)
-    .lte("journal_entries.posting_date", end)
-    .in("account_id", cashAccountIds)
-    .returns<LineRow[]>();
+  const periodLines = await paginatedFetch<LineRow>((from, to) =>
+    admin
+      .from("journal_lines")
+      .select(
+        `
+        debit_php, credit_php,
+        journal_entries!inner ( posting_date, status, source_kind, description ),
+        chart_of_accounts!inner ( id, code, name )
+      `,
+      )
+      .eq("journal_entries.status", "posted")
+      .gte("journal_entries.posting_date", start)
+      .lte("journal_entries.posting_date", end)
+      .in("account_id", cashAccountIds)
+      .range(from, to)
+      .returns<LineRow[]>(),
+  );
 
   // Aggregate by source_kind for the waterfall.
   const buckets = new Map<string, MovementBucket>();
   const closingByAccount = new Map<string, number>(beginningByAccount);
 
-  for (const row of periodLines ?? []) {
+  for (const row of periodLines) {
     const sk = row.journal_entries?.source_kind ?? "manual";
     const acct = row.chart_of_accounts;
     if (!acct) continue;
@@ -209,6 +217,13 @@ export default async function CashFlowPage({ searchParams }: SearchProps) {
       </header>
 
       <StatementTabs active="cashflow" />
+
+      <PeriodPresets
+        pathname="/staff/admin/accounting/financial-statements/cash-flow"
+        start={start}
+        end={end}
+        todayISO={todayManilaISODate()}
+      />
 
       <form
         action=""
