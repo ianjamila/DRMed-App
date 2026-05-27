@@ -1,7 +1,13 @@
 "use client";
 
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { StatusBadge } from "@/lib/ui/status-badge";
+import {
+  postJournalEntryAction,
+  deleteDraftJournalEntryAction,
+} from "@/lib/actions/accounting/journal-entries";
 
 const PHP = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
 
@@ -39,9 +45,41 @@ function pluckOne<T>(v: T | T[] | null): T | null {
 }
 
 export function JournalDetailClient({ je }: { je: Je }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [err, setErr] = useState<string | null>(null);
+
   const sortedLines = [...je.journal_lines].sort((a, b) => a.line_order - b.line_order);
   const totalDebit = sortedLines.reduce((s, l) => s + Number(l.debit_php), 0);
   const totalCredit = sortedLines.reduce((s, l) => s + Number(l.credit_php), 0);
+  const balanced = Math.abs(totalDebit - totalCredit) < 0.005;
+  const isDraft = je.status === "draft";
+
+  function handlePost() {
+    if (!balanced) {
+      setErr("Cannot post: debits and credits do not balance.");
+      return;
+    }
+    setErr(null);
+    startTransition(async () => {
+      const r = await postJournalEntryAction(je.id);
+      if (!r.ok) setErr(r.error);
+      else router.refresh();
+    });
+  }
+
+  function handleDelete() {
+    const ok = window.confirm(
+      `Delete draft ${je.entry_number ?? "journal entry"}? This cannot be undone.`,
+    );
+    if (!ok) return;
+    setErr(null);
+    startTransition(async () => {
+      const r = await deleteDraftJournalEntryAction(je.id);
+      if (!r.ok) setErr(r.error);
+      else router.push("/staff/admin/accounting/journal");
+    });
+  }
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8 space-y-6">
@@ -49,9 +87,31 @@ export function JournalDetailClient({ je }: { je: Je }) {
         <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
           Phase 12 · Admin · Journal
         </p>
-        <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          {je.entry_number ?? "JE"}
-        </h1>
+        <div className="mt-1 flex flex-wrap items-start justify-between gap-2">
+          <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+            {je.entry_number ?? "JE"}
+          </h1>
+          {isDraft && (
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={handlePost}
+                disabled={pending || !balanced}
+                className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-4 text-sm font-bold uppercase tracking-wider text-white hover:bg-[color:var(--color-brand-cyan)] disabled:opacity-50"
+              >
+                {pending ? "Working…" : "Post"}
+              </button>
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={pending}
+                className="min-h-[44px] rounded-md border border-red-300 bg-white px-4 text-sm font-bold uppercase tracking-wider text-red-700 hover:bg-red-50 disabled:opacity-50"
+              >
+                Delete
+              </button>
+            </div>
+          )}
+        </div>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
           Posting date: <span className="font-mono">{je.posting_date}</span>
           {" · "}
@@ -62,6 +122,11 @@ export function JournalDetailClient({ je }: { je: Je }) {
         {je.description && (
           <p className="mt-2 text-sm text-[color:var(--color-brand-text-soft)]">
             {je.description}
+          </p>
+        )}
+        {err && (
+          <p className="mt-3 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900" role="alert">
+            {err}
           </p>
         )}
       </header>

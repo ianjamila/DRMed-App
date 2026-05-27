@@ -3,6 +3,9 @@
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { resolveSourceRoute } from "@/lib/accounting/source-kind-resolver";
+import { audit } from "@/lib/audit/log";
+import { translatePgError } from "@/lib/accounting/pg-errors";
+import { revalidatePath } from "next/cache";
 
 type ActionResult<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -91,4 +94,97 @@ export async function getJournalEntryAction(id: string): Promise<
       source_link: sourceLink,
     },
   };
+}
+
+/**
+ * Flip a draft JE to posted. The je_lines_balance_check trigger validates
+ * DR=CR at status-flip time, so an unbalanced draft will be rejected with
+ * a P0001 error here (rather than silently posting bad lines).
+ */
+export async function postJournalEntryAction(
+  id: string,
+): Promise<ActionResult<{ id: string }>> {
+  const profile = await requireAdminStaff();
+  const admin = createAdminClient();
+
+  const { data: je } = await admin
+    .from("journal_entries")
+    .select("status")
+    .eq("id", id)
+    .maybeSingle();
+  if (!je) return { ok: false, error: "JE not found" };
+  if (je.status !== "draft") {
+    return { ok: false, error: "Only draft journal entries can be posted" };
+  }
+
+  const { data: updated, error } = await admin
+    .from("journal_entries")
+    .update({ status: "posted" })
+    .eq("id", id)
+    .eq("status", "draft")
+    .select("id");
+
+  if (error) return { ok: false, error: translatePgError(error) };
+  if (!updated || updated.length === 0) {
+    return { ok: false, error: "JE could not be posted — it may have changed status" };
+  }
+
+  await audit({
+    actor_id: profile.user_id,
+    actor_type: "staff",
+    action: "journal_entry.posted",
+    resource_type: "journal_entry",
+    resource_id: id,
+  });
+
+  revalidatePath(`/staff/admin/accounting/journal/${id}`);
+  revalidatePath("/staff/admin/accounting/journal");
+  return { ok: true, data: { id } };
+}
+
+/**
+ * Delete a draft JE and all its lines. Posted JEs cannot be deleted (use
+ * reversal instead). Lines are deleted first to avoid the balance-check
+ * trigger firing on the last line.
+ */
+export async function deleteDraftJournalEntryAction(
+  id: string,
+): Promise<ActionResult<{ id: string }>> {
+  const profile = await requireAdminStaff();
+  const admin = createAdminClient();
+
+  const { data: je } = await admin
+    .from("journal_entries")
+    .select("status, entry_number")
+    .eq("id", id)
+    .maybeSingle();
+  if (!je) return { ok: false, error: "JE not found" };
+  if (je.status !== "draft") {
+    return { ok: false, error: "Only draft journal entries can be deleted" };
+  }
+
+  const { error: linesErr } = await admin
+    .from("journal_lines")
+    .delete()
+    .eq("entry_id", id);
+  if (linesErr) return { ok: false, error: translatePgError(linesErr) };
+
+  const { error: jeErr } = await admin
+    .from("journal_entries")
+    .delete()
+    .eq("id", id)
+    .eq("status", "draft");
+  if (jeErr) return { ok: false, error: translatePgError(jeErr) };
+
+  await audit({
+    actor_id: profile.user_id,
+    actor_type: "staff",
+    action: "journal_entry.deleted",
+    resource_type: "journal_entry",
+    resource_id: id,
+    metadata: { entry_number: je.entry_number },
+  });
+
+  revalidatePath("/staff/admin/accounting/journal");
+  return { ok: true, data: { id } };
 }
