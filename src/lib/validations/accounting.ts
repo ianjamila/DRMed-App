@@ -28,6 +28,7 @@ export const AccountCreateSchema = z.object({
   parent_id: z.string().uuid().nullable().optional(),
   normal_balance: accountNormalBalanceSchema,
   description: z.string().trim().max(500).nullable().optional(),
+  is_settlement_destination: z.coerce.boolean().optional(),
 });
 
 export const AccountUpdateSchema = AccountCreateSchema.omit({ code: true }).extend({

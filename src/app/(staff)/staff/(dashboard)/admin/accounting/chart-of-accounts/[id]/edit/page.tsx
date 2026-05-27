@@ -18,7 +18,7 @@ export default async function EditAccountPage({
 
   const { data: account } = await admin
     .from("chart_of_accounts")
-    .select("id, code, name, type, parent_id, description, is_active")
+    .select("id, code, name, type, parent_id, description, is_active, is_settlement_destination")
     .eq("id", id)
     .maybeSingle();
   if (!account) notFound();

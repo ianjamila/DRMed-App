@@ -23,6 +23,7 @@ function readForm(formData: FormData) {
     parent_id: formData.get("parent_id") || null,
     description: formData.get("description") || null,
     is_active: formData.get("is_active"),
+    is_settlement_destination: formData.get("is_settlement_destination") === "true",
   };
 }
 
@@ -39,6 +40,7 @@ export async function createAccountAction(
     parent_id: raw.parent_id,
     description: raw.description,
     normal_balance: deriveNormalBalance(String(raw.type ?? "")),
+    is_settlement_destination: raw.is_settlement_destination,
   });
   if (!parsed.success) {
     return {
@@ -92,6 +94,7 @@ export async function updateAccountAction(
     description: raw.description,
     normal_balance: deriveNormalBalance(String(raw.type ?? "")),
     is_active: raw.is_active,
+    is_settlement_destination: raw.is_settlement_destination,
   });
   if (!parsed.success) {
     return {

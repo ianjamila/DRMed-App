@@ -13,6 +13,7 @@ interface AccountDefaults {
   parent_id: string | null;
   description: string | null;
   is_active: boolean;
+  is_settlement_destination?: boolean;
 }
 
 interface ParentOption {
@@ -123,6 +124,21 @@ export function AccountForm({
           </div>
         </Field>
       ) : null}
+
+      <Field
+        label="Settlement destination"
+        hint="When enabled, this account appears in the HMO Mark-as-paid dropdown as a payment method. Use for cash/bank/wallet accounts that receive HMO settlements."
+      >
+        <div className="inline-flex min-h-[44px] items-center gap-2">
+          <input
+            type="checkbox"
+            name="is_settlement_destination"
+            defaultChecked={defaults.is_settlement_destination ?? false}
+            value="true"
+          />
+          <span className="text-sm">Show this account as a payment method when recording HMO settlements</span>
+        </div>
+      </Field>
 
       <div className="flex items-center gap-2 pt-2">
         <button
