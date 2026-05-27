@@ -23,17 +23,33 @@ function NavLink({
   item: StaffNavItem;
   active: boolean;
 }) {
+  const hasDescription = Boolean(item.description);
   return (
     <Link
       href={item.href}
+      // Native browser tooltip on hover. Cheap, accessible, works on touch.
+      title={item.description ?? undefined}
       className={cn(
-        "block rounded-md px-3 py-2 text-sm font-medium transition-colors",
+        "group/navlink relative flex items-center justify-between gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
         active
           ? "bg-[color:var(--color-brand-navy)] text-white"
           : "text-[color:var(--color-brand-text-mid)] hover:bg-[color:var(--color-brand-bg)] hover:text-[color:var(--color-brand-navy)]",
       )}
     >
-      {item.label}
+      <span className="truncate">{item.label}</span>
+      {hasDescription ? (
+        <span
+          aria-hidden="true"
+          className={cn(
+            "ml-2 inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full text-[9px] font-bold leading-none",
+            active
+              ? "bg-white/25 text-white"
+              : "bg-[color:var(--color-brand-bg-mid)] text-[color:var(--color-brand-text-soft)]",
+          )}
+        >
+          i
+        </span>
+      ) : null}
     </Link>
   );
 }

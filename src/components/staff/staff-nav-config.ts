@@ -8,6 +8,11 @@ export type StaffRole = StaffSession["role"];
 export interface StaffNavItem {
   href: string;
   label: string;
+  // Plain-English description shown as a hover tooltip + small info icon. Use
+  // it for any item whose name involves jargon (accounting terms, abbreviations,
+  // domain shorthand). Skip for items whose label is already self-explanatory
+  // (e.g. "Patients", "Appointments", "My profile").
+  description?: string;
   // The current path is "active" if it equals href OR starts with `${href}/`.
   // Override with a custom matcher when needed (e.g. /staff is too broad).
   exact?: boolean;
@@ -16,7 +21,7 @@ export interface StaffNavItem {
 
 // A subgroup sits inside a section and renders as a collapsible
 // <details>/<summary>. Used to break up the 30+-item Admin section
-// into scan-able buckets (Catalog, Accounting, Payroll, …).
+// into scan-able buckets ordered roughly by daily use → setup.
 export interface StaffNavSubgroup {
   heading: string;
   items: StaffNavItem[];
@@ -47,46 +52,55 @@ export const STAFF_NAV: StaffNavSection[] = [
       {
         href: "/staff/appointments",
         label: "Appointments",
+        description: "Today's scheduled patients and walk-in slots. Mark patients arrived to start their visit, or reschedule no-shows. View other days using the date picker.",
         roles: ["reception", "admin"],
       },
       {
         href: "/staff/patients",
         label: "Patients",
+        description: "Search the patient database by name, contact number, or DRM ID. Open a patient to see their full visit history, attached IDs, contact info, and previous test results.",
         roles: ["reception", "admin"],
       },
       {
         href: "/staff/visits/new",
         label: "New visit",
+        description: "Start a new visit when a patient arrives at the clinic. Pick the patient (or register a new one), select services they need, then route them to lab/imaging/consult.",
         roles: ["reception", "admin"],
       },
       {
         href: "/staff/visits",
         label: "Visit archive",
+        description: "Searchable archive of every visit ever. Filter by date, patient, status, or payment status. Click a visit to see what services were done, what was paid, and download result PDFs.",
         roles: ["reception", "admin"],
       },
       {
         href: "/staff/quote",
         label: "Quick quote",
+        description: "Build a price quote without creating a visit. Useful for phone inquiries: 'How much for a CBC + Urinalysis + Lipid panel?' Generates a shareable quote with HMO or cash pricing.",
         roles: ["reception", "medtech", "admin"],
       },
       {
         href: "/staff/inquiries",
         label: "Inquiries",
+        description: "Inquiries that came in through the website chat or Messenger but haven't been converted into a real appointment yet. Follow up here to book them or close the thread.",
         roles: ["reception", "admin"],
       },
       {
         href: "/staff/gift-codes/sell",
         label: "Sell gift code",
+        description: "Sell a prepaid gift code to a customer — they pay now, the recipient redeems later for services. Generates a printable code with QR + expiration date.",
         roles: ["reception", "admin"],
       },
       {
         href: "/staff/payments/cash-drawer",
         label: "Cash drawer",
+        description: "Your active shift workspace. Record the starting cash float when you open up, see every payment collected during the shift, and track the running total in the till.",
         roles: ["reception", "admin"],
       },
       {
         href: "/staff/payments/eod",
         label: "End of day",
+        description: "Close out at the end of your shift: count the physical cash in the drawer, compare it to what the system says you should have, and explain any over/short. Locks the day once balanced.",
         roles: ["reception", "admin"],
       },
     ],
@@ -97,11 +111,13 @@ export const STAFF_NAV: StaffNavSection[] = [
       {
         href: "/staff/queue",
         label: "Queue",
+        description: "The medtech / radtech / sonographer work queue. Shows every test that's been ordered, grouped by status: waiting (sample not yet collected), in-progress (running), sign-off pending, or released. Click a row to enter results.",
         roles: ["medtech", "pathologist", "admin", "xray_technician"],
       },
       {
         href: "/staff/signoff",
         label: "Sign-off",
+        description: "Pathologist review queue — tests that the medtech finished but need the pathologist's final review and signature before the patient gets the result. The pathologist's e-signature is embedded on the PDF on release.",
         roles: ["pathologist", "admin"],
       },
     ],
@@ -110,23 +126,210 @@ export const STAFF_NAV: StaffNavSection[] = [
     heading: "Admin",
     subgroups: [
       {
-        heading: "Catalog",
+        heading: "Money in & out",
         items: [
-          { href: "/staff/admin/prices", label: "Prices", roles: ["admin"] },
-          { href: "/staff/services", label: "Services", roles: ["admin"] },
           {
-            href: "/staff/admin/result-templates",
-            label: "Result templates",
+            href: "/staff/admin/accounting/hmo-claims",
+            label: "HMO claims",
+            description: "Where you manage the entire HMO billing cycle: which patient visits still need to be invoiced, which invoices are awaiting payment, which HMOs are slow payers, and which to write off. Drill into a provider (e.g., Maxicare) to see every claim and its status.",
             roles: ["admin"],
           },
           {
-            href: "/staff/admin/hmo-providers",
-            label: "HMO providers",
+            href: "/staff/admin/accounting/patient-ar",
+            label: "Patient receivables (aging)",
+            description: "Cash patients who walked out with an unpaid balance (rare, but happens with employer-paid pre-employment exams, etc.). Grouped by how overdue they are: 0-30 days, 31-60, 61-90, 90+. The 90+ bucket is where you start collection follow-up.",
             roles: ["admin"],
           },
           {
-            href: "/staff/admin/physicians",
-            label: "Physicians",
+            href: "/staff/admin/accounting/ap",
+            label: "Bills overview",
+            description: "Quick dashboard of everything the clinic owes vendors. Shows total outstanding, what's due in the next 7 days, what's already overdue, and aging buckets (0-30, 31-60, etc.). Start here when paying bills — it tells you what's urgent.",
+            exact: true,
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/accounting/ap/bills",
+            label: "Vendor bills",
+            description: "Every invoice the clinic has received — rent, MERALCO, lab reagents, Hi Precision send-out invoices, legal fees, etc. Each bill tracks: vendor, amount, due date, paid status, attached PDF (if uploaded). Create a new bill here when an invoice arrives.",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/accounting/ap/payments",
+            label: "Bill payments",
+            description: "The other side of vendor bills — every payment the clinic has made (cheque #1234 to landlord, BPI transfer to Hi Precision, etc.). One payment can settle multiple bills. Use to record a new payment or void a wrong one.",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/accounting/ap/vendors",
+            label: "Vendors",
+            description: "Master list of every supplier, contractor, or service provider the clinic pays. Each vendor has a TIN, default expense category, and withholding-tax rate (for BIR 1601-E). Add a vendor before you can create a bill for them.",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/accounting/ap/recurring",
+            label: "Recurring bills",
+            description: "Set up monthly bills that arrive on a predictable schedule (rent every 1st of the month, internet every 5th, etc.). The system auto-creates a draft bill each cycle — you just review the amount and post. Saves data entry on routine bills.",
+            roles: ["admin"],
+          },
+        ],
+      },
+      {
+        heading: "Doctor PF & payroll",
+        items: [
+          {
+            href: "/staff/admin/accounting/pf-payouts",
+            label: "Doctor PF payouts",
+            description: "Manages the professional fees the clinic owes each doctor (their cut of consultations they performed). Shows: Open (accrued but not yet paid), Pending HMO (waiting on HMO settlement before paying the doc), and History. Click a doctor to cut a payout — the system books the JE and prints a payout slip.",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/accounting/pf-ytd-summary",
+            label: "Doctor PF year-to-date",
+            description: "Per-doctor scoreboard: total PF earned this year so far, total already paid out, and how much is still owed. Useful for year-end tax reporting (BIR 2316 for employed doctors, 2307 for PF-paid doctors) and answering 'how much do we still owe Dr. X?'.",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/accounting/cogs/send-outs",
+            label: "Lab send-out costs",
+            description: "When the clinic doesn't run a test in-house and sends the sample to Hi Precision (or another lab) the cost is tracked here. Two tabs: Accrued (we billed the patient but haven't received the Hi Precision invoice yet) and True-ups (matching our estimate to the actual bill once it arrives).",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/accounting/cogs/send-outs/vendor-performance",
+            label: "Send-out vendor scorecard",
+            description: "Performance metrics by send-out lab: average cost per test, turnaround time, accuracy of cost estimates. Use this when deciding whether to switch send-out providers or renegotiate rates with your current one.",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/payroll/runs",
+            label: "Pay runs",
+            description: "The actual payroll computation for a given period — gross pay, overtime, deductions (SSS, PhilHealth, Pag-IBIG, withholding tax, loans), and net pay per employee. Reviewing the output and clicking 'Finalize' generates payslips and books the JE.",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/payroll/periods",
+            label: "Pay periods",
+            description: "The semi-monthly pay cycles (1st-15th, 16th-end). Each period progresses through stages: open → cutoff → paid → locked. Lock a period after paying out so nobody adjusts past payroll by accident.",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/payroll/employees",
+            label: "Employees",
+            description: "Every paid employee (receptionists, medtechs, etc. — NOT the PF-paid doctors). Each profile has base salary, SSS/PhilHealth/Pag-IBIG ID numbers, tax info, and benefits. Add a new hire here before their first payroll.",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/payroll/ot-slips",
+            label: "Overtime slips",
+            description: "Overtime hours submitted by employees that need admin approval before the next pay run. Approve here and the OT amount automatically flows into the payroll computation.",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/payroll/leaves",
+            label: "Leaves",
+            description: "Tracks each employee's leave balance (vacation, sick, parental) and pending applications. Approve or reject leave requests here. Approved leave days affect pay computation automatically.",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/payroll/holidays",
+            label: "Holidays",
+            description: "Mark which Philippine holidays apply this year, and whether each is a regular holiday (200% pay if worked) or special non-working (130% pay if worked). The payroll engine uses this to compute holiday pay automatically.",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/payroll/rates",
+            label: "Statutory rates",
+            description: "The current government contribution tables — SSS, PhilHealth, Pag-IBIG, and BIR withholding tax brackets. Update these when the government issues new rate schedules (usually January 1).",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/payroll/settings",
+            label: "Payroll settings",
+            description: "Global payroll configuration — pay cycle dates (e.g., pay on the 5th and 20th), minimum wage compliance threshold, default tax status, and 13th-month bonus settings.",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/reports/staff-advances",
+            label: "Staff advances",
+            description: "When staff borrow against future salary (cash advances, loans), the unpaid balance shows here. The next payroll auto-deducts toward repayment. Use to see who still owes what.",
+            roles: ["admin"],
+          },
+        ],
+      },
+      {
+        heading: "Books & reports",
+        items: [
+          {
+            href: "/staff/admin/accounting/journal",
+            label: "Journal entries",
+            description: "The full transaction log of the clinic — every revenue, expense, payment, and adjustment ever booked. Each entry has matching debits and credits that must balance. Use the search to find a specific entry or filter by source (sale, payment, manual correction, etc.).",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/accounting/journal/new",
+            label: "Manual journal entry",
+            description: "Hand-post an accounting entry yourself. Use this for corrections, opening balances, or one-off items the system didn't auto-book (e.g., recording an owner's capital injection, or correcting a miscategorized expense). Every entry must balance: total debits = total credits.",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/accounting/financial-statements",
+            label: "Income statement (P&L)",
+            description: "Profit & Loss report for any date range you pick. Shows total revenue (what you earned) minus total expenses (what you spent) = net income (your profit or loss). Pick last month to see how you did, or YTD for the year so far.",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/accounting/financial-statements/balance-sheet",
+            label: "Balance sheet",
+            description: "A snapshot of the clinic's financial position on any date you pick. Shows what you OWN (cash, AR, equipment), what you OWE (vendor bills, doctor PFs, taxes), and the owner's equity. Asset total must equal Liabilities + Equity — if it doesn't, the books are out of balance.",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/accounting/financial-statements/cash-flow",
+            label: "Cash flow",
+            description: "Tracks how cash physically moved during a date range — what came in (sales, HMO settlements) vs. what went out (rent, salaries, supplies). Different from the income statement because it ignores non-cash items and shows the actual bank/cash balance change.",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/accounting/variance",
+            label: "Budget vs actual",
+            description: "Set a monthly budget for each expense category (e.g., 'Salaries: ₱400K, Rent: ₱270K') then compare it to what actually happened. Highlights where you went over or under budget so you can investigate. Useful for spotting unusual spending early.",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/accounting/bank-rec",
+            label: "Bank reconciliation",
+            description: "Cross-check the system's record of your bank account against the real bank statement. Upload the bank's CSV here — the system matches each transaction to a journal entry and flags anything that doesn't match (missing deposits, bank fees you forgot to book, etc.). Do this monthly to catch errors.",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/accounting/periods",
+            label: "Monthly periods",
+            description: "Monthly accounting windows (Jan 2026, Feb 2026, etc.). After you finish closing the books for a month, lock it here so no one accidentally posts new entries into a finished period. The bookkeeper does this monthly, usually 15 days after month-end.",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/accounting/accrual-templates",
+            label: "Recurring monthly entries",
+            description: "For expenses that happen every month on a predictable schedule (rent, internet, insurance), set up a template here once. The system auto-posts a draft entry on the chosen day each month — you just review and post. Saves repetitive typing.",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/reports/daily-revenue",
+            label: "Daily revenue",
+            description: "How much the clinic billed each day, broken down by service type (lab vs. consult vs. imaging) and payment method (cash, GCash, HMO, etc.). Use to spot trends or compare days/weeks.",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/reports/lab-tat",
+            label: "Lab turnaround time",
+            description: "Measures how long tests take to complete — from sample collection to result release. Broken down by test type. Use to spot bottlenecks (e.g., 'why are FBSs taking 3 hours when they should take 1?').",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/accounting",
+            label: "External sync status",
+            description: "Status board for the daily export that pushes accounting data out to Google Sheets (where your external bookkeeper or auditor can pull it). Check here if the bookkeeper says they didn't get today's data — you can re-run a failed sync from this page.",
+            exact: true,
             roles: ["admin"],
           },
         ],
@@ -137,250 +340,113 @@ export const STAFF_NAV: StaffNavSection[] = [
           {
             href: "/staff/admin/closures",
             label: "Closures",
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/gift-codes",
-            label: "Gift codes",
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/newsletter",
-            label: "Newsletter",
+            description: "Block specific dates from online booking — public holidays, staff retreats, equipment maintenance days. Patients trying to book those dates on the website will see them as unavailable.",
             roles: ["admin"],
           },
           {
             href: "/staff/admin/inventory",
             label: "Inventory",
+            description: "Stock levels for consumables used in the lab and imaging — reagents, blood collection tubes, X-ray film, swabs, etc. Set a reorder threshold per item and the system warns you when you're running low.",
             roles: ["admin", "medtech", "xray_technician"],
+          },
+          {
+            href: "/staff/admin/gift-codes",
+            label: "Gift codes",
+            description: "Every prepaid gift code ever sold (active, redeemed, expired), with the buyer and recipient details. Use to look up a specific code if a customer can't find theirs, or to track total outstanding gift-code liability.",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/newsletter",
+            label: "Newsletter",
+            description: "Send email blasts to past patients (e.g., flu vaccine season reminder, new service announcement). Tracks who opened and clicked.",
+            roles: ["admin"],
           },
         ],
       },
       {
-        heading: "Accounting",
+        heading: "Catalog & setup",
         items: [
           {
-            href: "/staff/admin/accounting",
-            label: "Accounting sync",
-            exact: true,
+            href: "/staff/admin/prices",
+            label: "Prices",
+            description: "Set how much each test, package, vaccine, or imaging service costs. Update prices here when you raise rates or run a promo — the booking app and reception both pull from this list automatically.",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/services",
+            label: "Services",
+            description: "The master catalog of everything the clinic offers — every lab test, package, consult, vaccine, and imaging study. For each one you set the regular price, HMO-discounted price, whether it's done in-house or sent to another lab (send-out), and which section handles it (chemistry, hematology, etc.).",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/result-templates",
+            label: "Result templates",
+            description: "The blueprints behind every lab result PDF. For each test, you set up the parameters (e.g., for a CBC: WBC, RBC, hemoglobin) and the normal/abnormal reference ranges by age and sex. Edit a template here when a manufacturer changes the reference range or you add a new test.",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/hmo-providers",
+            label: "HMO providers",
+            description: "The list of HMO companies the clinic accepts (Maxicare, Intellicare, Etiqa, Cocolife, etc.) with their billing thresholds and contact info. Add a new provider here when you start accepting a new HMO.",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/physicians",
+            label: "Physicians",
+            description: "Every doctor who works at the clinic — for consultations, procedures, or signing off lab results. Tracks their PRC license, signature image (for results), and how they get paid: PF split (the doctor takes a cut of each consult), rent-paying (they pay the clinic, keep the rest), or shareholder.",
             roles: ["admin"],
           },
           {
             href: "/staff/admin/accounting/chart-of-accounts",
             label: "Chart of accounts",
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/accounting/periods",
-            label: "Accounting periods",
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/accounting/journal",
-            label: "Journal entries",
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/accounting/journal/new",
-            label: "New journal entry",
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/accounting/accrual-templates",
-            label: "Accrual templates",
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/accounting/bank-rec",
-            label: "Bank reconciliation",
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/accounting/variance",
-            label: "Budget vs actual",
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/accounting/financial-statements",
-            label: "Income statement",
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/accounting/financial-statements/balance-sheet",
-            label: "Balance sheet",
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/accounting/financial-statements/cash-flow",
-            label: "Cash flow",
+            description: "Master list of every 'bucket' your money lives in: Cash on Hand, BPI, BDO, GCash, Accounts Receivable, Revenue, Rent expense, etc. Each bucket has a 4-digit code. Add a new account when you open a new bank, start using a new wallet (Maya), or need to track a new kind of expense.",
             roles: ["admin"],
           },
           {
             href: "/staff/admin/accounting/payment-routing",
             label: "Payment routing",
+            description: "The rules that tell the system 'when reception accepts payment via X, book it to account Y.' For example: GCash payments → 1030 GCash Wallet, Cheques → 1020 BPI, Cash → 1010 Cash on Hand. Edit if you switch banks or add a new payment method.",
             roles: ["admin"],
           },
           {
             href: "/staff/admin/accounting/cash-routing",
             label: "Cash routing",
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/accounting/hmo-claims",
-            label: "HMO claims",
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/accounting/patient-ar",
-            label: "Patient AR aging",
+            description: "Tracks the journey of physical cash from the moment a patient pays at reception, through the end-of-day count, to the bank deposit. Helps make sure no cash 'disappears' between collection and deposit.",
             roles: ["admin"],
           },
         ],
       },
       {
-        heading: "Doctor PF",
+        heading: "Admin tools",
         items: [
           {
-            href: "/staff/admin/accounting/pf-payouts",
-            label: "Doctor PF payouts",
+            href: "/staff/users",
+            label: "Staff users",
+            description: "Create new staff logins, change roles (reception/medtech/pathologist/admin/xray), reset passwords, and deactivate former employees. Each user maps to one role with specific page access.",
             roles: ["admin"],
           },
           {
-            href: "/staff/admin/accounting/pf-ytd-summary",
-            label: "Doctor PF YTD",
+            href: "/staff/audit",
+            label: "Audit log",
+            description: "Searchable record of every meaningful action in the system — who logged in, who released a result, who voided a payment, who marked a claim paid. Filter by user, action type, or date. Essential for compliance reviews.",
             roles: ["admin"],
           },
-          {
-            href: "/staff/admin/accounting/cogs/send-outs",
-            label: "Send-out COGS",
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/accounting/cogs/send-outs/vendor-performance",
-            label: "Send-out vendor perf.",
-            roles: ["admin"],
-          },
-        ],
-      },
-      {
-        heading: "Accounts payable",
-        items: [
-          {
-            href: "/staff/admin/accounting/ap",
-            label: "AP dashboard",
-            exact: true,
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/accounting/ap/bills",
-            label: "AP bills",
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/accounting/ap/payments",
-            label: "AP payments",
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/accounting/ap/vendors",
-            label: "AP vendors",
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/accounting/ap/recurring",
-            label: "AP recurring",
-            roles: ["admin"],
-          },
-        ],
-      },
-      {
-        heading: "Payroll",
-        items: [
-          {
-            href: "/staff/admin/payroll/employees",
-            label: "Employees",
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/payroll/periods",
-            label: "Pay periods",
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/payroll/runs",
-            label: "Pay runs",
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/payroll/ot-slips",
-            label: "OT slips",
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/payroll/holidays",
-            label: "Holidays",
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/payroll/rates",
-            label: "Statutory rates",
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/payroll/leaves",
-            label: "Leave dashboard",
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/payroll/settings",
-            label: "Payroll settings",
-            roles: ["admin"],
-          },
-        ],
-      },
-      {
-        heading: "Reports",
-        items: [
-          {
-            href: "/staff/admin/reports/daily-revenue",
-            label: "Daily revenue",
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/reports/staff-advances",
-            label: "Staff advances",
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/reports/lab-tat",
-            label: "Lab TAT",
-            roles: ["admin"],
-          },
-        ],
-      },
-      {
-        heading: "Users & audit",
-        items: [
-          { href: "/staff/users", label: "Staff users", roles: ["admin"] },
-          { href: "/staff/audit", label: "Audit log", roles: ["admin"] },
           {
             href: "/staff/admin/settings/dashboard-cards",
             label: "Dashboard settings",
+            description: "Pick which summary cards (today's revenue, pending releases, low inventory, etc.) appear on each role's home dashboard. Different roles see different cards by default.",
             roles: ["admin"],
           },
-        ],
-      },
-      {
-        heading: "Patient tools",
-        items: [
           {
             href: "/staff/admin/import-patients",
             label: "Import patients",
+            description: "Bulk-import patients from a CSV file — used during initial setup or when migrating from another system. Reads name, DOB, phone, email columns and creates one patient record per row.",
             roles: ["admin"],
           },
           {
             href: "/staff/admin/patient-merge",
-            label: "Merge patients",
+            label: "Merge duplicate patients",
+            description: "When the same person was accidentally registered twice (different spellings, different contact numbers), combine the two records into one. Visit history from both gets merged onto the surviving record.",
             roles: ["admin"],
           },
         ],
@@ -398,6 +464,7 @@ export const STAFF_NAV: StaffNavSection[] = [
       {
         href: "/staff/payslips",
         label: "My payslips",
+        description: "Your own payslip history.",
         roles: ["reception", "medtech", "pathologist", "admin", "xray_technician"],
       },
     ],

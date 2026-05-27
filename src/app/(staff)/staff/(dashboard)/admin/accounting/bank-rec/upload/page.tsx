@@ -31,11 +31,12 @@ export default async function UploadBankStatementPage() {
         Upload bank statement
       </h1>
       <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
-        Paste the statement as CSV. Required header columns: <code>date</code>{" "}
-        (or <code>transaction_date</code>) and <code>amount</code> (or{" "}
-        <code>amount_php</code>). Optional: <code>description</code>,{" "}
-        <code>reference</code>. Positive amounts = inflow (deposit); negative
-        amounts = outflow (withdrawal/fee).
+        Download your monthly bank statement from BPI / BDO online banking
+        (or any other bank), open it in Excel, and save as CSV. Then paste the
+        contents below — the system will try to match each line to a journal
+        entry you already booked. Lines that don&apos;t match (bank fees,
+        missed entries) get flagged so you can clean them up. Read the field
+        guide further down on this page if you&apos;re unsure how to format the CSV.
       </p>
 
       <div className="mt-6">
@@ -47,7 +48,28 @@ export default async function UploadBankStatementPage() {
 
       <details className="mt-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4">
         <summary className="cursor-pointer text-sm font-medium text-[color:var(--color-brand-navy)]">
-          Example CSV
+          CSV field guide (click to expand)
+        </summary>
+        <div className="mt-3 space-y-2 text-xs text-[color:var(--color-brand-text)]">
+          <p><strong>Required columns (must be in the header row):</strong></p>
+          <ul className="ml-5 list-disc space-y-1">
+            <li><code>date</code> — the transaction date (also accepted: <code>transaction_date</code>).</li>
+            <li><code>amount</code> — the peso amount, signed: <strong>positive</strong> if money came IN (deposit), <strong>negative</strong> if money went OUT (withdrawal, bank fee). Also accepted: <code>amount_php</code>.</li>
+          </ul>
+          <p className="pt-2"><strong>Optional but helpful columns:</strong></p>
+          <ul className="ml-5 list-disc space-y-1">
+            <li><code>description</code> — what the bank labeled the transaction (e.g., "POS purchase", "Salary loan repay").</li>
+            <li><code>reference</code> — the bank&apos;s reference number for the transaction.</li>
+          </ul>
+          <p className="pt-2 text-[color:var(--color-brand-text-soft)]">
+            Tip: in Excel, when saving as CSV, pick &quot;CSV (Comma delimited)&quot; — not &quot;CSV UTF-8&quot; — to avoid character issues.
+          </p>
+        </div>
+      </details>
+
+      <details className="mt-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4">
+        <summary className="cursor-pointer text-sm font-medium text-[color:var(--color-brand-navy)]">
+          Example CSV (click to expand)
         </summary>
         <pre className="mt-3 overflow-x-auto rounded-md bg-[color:var(--color-brand-bg)] p-3 text-xs">
 {`date,description,reference,amount
