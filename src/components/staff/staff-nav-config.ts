@@ -137,17 +137,11 @@ export const STAFF_NAV: StaffNavSection[] = [
         ],
       },
       {
-        heading: "Money in & out",
+        heading: "Expenses",
         items: [
           {
-            href: "/staff/admin/accounting/patient-ar",
-            label: "Patient receivables (aging)",
-            description: "Cash patients who walked out with an unpaid balance (rare, but happens with employer-paid pre-employment exams, etc.). Grouped by how overdue they are: 0-30 days, 31-60, 61-90, 90+. The 90+ bucket is where you start collection follow-up.",
-            roles: ["admin"],
-          },
-          {
             href: "/staff/admin/accounting/ap",
-            label: "Bills",
+            label: "Expenses",
             description: "Everything expense-related in one place. Tabs inside: Quick expense (already-paid same-day expenses — cash, GCash, owner OOP), Overview (what's outstanding), Vendor bills (invoices with due dates), Bill payments (the outflows), Vendors (master list), Recurring (monthly auto-bills).",
             roles: ["admin"],
           },
