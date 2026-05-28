@@ -411,9 +411,12 @@ export default async function VisitDetailPage({ params }: Props) {
                     className="hover:bg-[color:var(--color-brand-bg)]"
                   >
                     <td className="px-4 py-3">
-                      <p className="text-[color:var(--color-brand-navy)]">
+                      <Link
+                        href={`/staff/queue/${t.id}`}
+                        className="text-[color:var(--color-brand-navy)] hover:text-[color:var(--color-brand-cyan)] hover:underline"
+                      >
                         {svc.name}
-                      </p>
+                      </Link>
                       <p className="font-mono text-[10px] text-[color:var(--color-brand-text-soft)]">
                         {svc.code}
                         {isConsult ? (
