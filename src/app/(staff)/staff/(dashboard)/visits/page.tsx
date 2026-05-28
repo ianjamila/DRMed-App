@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
 import { todayManilaISODate } from "@/lib/dates/manila";
+import { VisitsTabs } from "./_components/visits-tabs";
 
 export const metadata = {
   title: "Visits — staff",
@@ -115,14 +116,16 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
 
   return (
     <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
-      <header className="mb-6">
+      <header className="mb-4">
         <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Reception Visits
+          Visits
         </h1>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
           {total} visit{total === 1 ? "" : "s"} · {rangeLabel}
         </p>
       </header>
+
+      <div className="mb-6"><VisitsTabs /></div>
 
       <form
         className="mb-6 flex flex-wrap items-end gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4"

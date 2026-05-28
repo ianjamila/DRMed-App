@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { VisitForm } from "./visit-form";
 import { PatientsSearchInput } from "../../patients/search-input";
+import { VisitsTabs } from "../_components/visits-tabs";
 
 export const metadata = {
   title: "New visit — staff",
@@ -124,13 +125,10 @@ async function PatientPicker({ query }: { query: string }) {
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8">
-      <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
+      <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-            Reception
-          </p>
-          <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            New visit
+          <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+            Visits
           </h1>
           <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
             Pick the patient this visit is for, or register a new one.
@@ -143,6 +141,8 @@ async function PatientPicker({ query }: { query: string }) {
           + New patient
         </Link>
       </header>
+
+      <div className="mb-6"><VisitsTabs /></div>
 
       <div className="mb-4">
         <PatientsSearchInput initialQuery={query} />

@@ -64,15 +64,9 @@ export const STAFF_NAV: StaffNavSection[] = [
         roles: ["reception", "admin"],
       },
       {
-        href: "/staff/visits/new",
-        label: "New visit",
-        description: "Start a new visit when a patient arrives at the clinic. Pick the patient (or register a new one), select services they need, then route them to lab/imaging/consult.",
-        roles: ["reception", "admin"],
-      },
-      {
         href: "/staff/visits",
-        label: "Visit archive",
-        description: "Searchable archive of every visit ever. Filter by date, patient, status, or payment status. Click a visit to see what services were done, what was paid, and download result PDFs.",
+        label: "Visits",
+        description: "Today's and historic patient visits. The Archive tab is a searchable list of every visit ever (filter by date / patient / status). The New visit tab starts a new one — pick the patient (or register new), pick services, route to lab/imaging/consult.",
         roles: ["reception", "admin"],
       },
       {
