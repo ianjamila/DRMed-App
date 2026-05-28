@@ -4,6 +4,11 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import type { Database } from "@/types/database";
 import { SingleClaimActions } from "../_components/single-claim-actions";
+import {
+  MarkHistoricBilledModal,
+  MarkHistoricPaidModal,
+  WriteOffHistoricModal,
+} from "../_components/historic-claim-modals";
 
 type SummaryRow =
   Database["public"]["Views"]["v_hmo_provider_summary"]["Row"];
@@ -260,11 +265,20 @@ function UnbilledTab({
   paymentMethods: PaymentMethod[];
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkModal, setBulkModal] = useState<null | "billed" | "paid" | "writeoff">(null);
+
+  // Map id → row so we can derive live vs historic + sum amounts.
+  const rowsById = useMemo(() => {
+    const m = new Map<string, UnbilledRow>();
+    for (const r of rows) {
+      if (r.test_request_id) m.set(r.test_request_id, r);
+    }
+    return m;
+  }, [rows]);
 
   const selectableIds = useMemo(
     () =>
       rows
-        .filter((r) => !r.is_historic)
         .map((r) => r.test_request_id)
         .filter((id): id is string => Boolean(id)),
     [rows],
@@ -287,15 +301,32 @@ function UnbilledTab({
     }
   }
 
-  const selectedTotal = useMemo(() => {
+  // Split selection into live vs historic so we can route to the right
+  // action surface.
+  const { liveIds, historicIds, selectedTotal, historicTotal } = useMemo(() => {
+    let liveList: string[] = [];
+    let historicList: string[] = [];
     let total = 0;
-    for (const r of rows) {
-      if (r.test_request_id && selected.has(r.test_request_id)) {
-        total += r.billed_amount_php ?? 0;
+    let hTotal = 0;
+    for (const id of selected) {
+      const r = rowsById.get(id);
+      if (!r) continue;
+      const amt = Number(r.billed_amount_php ?? 0);
+      total += amt;
+      if (r.is_historic) {
+        historicList.push(id);
+        hTotal += amt;
+      } else {
+        liveList.push(id);
       }
     }
-    return total;
-  }, [rows, selected]);
+    return {
+      liveIds: liveList,
+      historicIds: historicList,
+      selectedTotal: total,
+      historicTotal: hTotal,
+    };
+  }, [selected, rowsById]);
 
   if (rows.length === 0) {
     return <EmptyState message="No unbilled items." />;
@@ -303,8 +334,8 @@ function UnbilledTab({
 
   const allSelected =
     selectableIds.length > 0 && selected.size === selectableIds.length;
-  const trIds = Array.from(selected).join(",");
-  const newBatchHref = `/staff/admin/accounting/hmo-claims/batches/new?providerId=${providerId}&trIds=${trIds}`;
+  const newBatchHref = `/staff/admin/accounting/hmo-claims/batches/new?providerId=${providerId}&trIds=${liveIds.join(",")}`;
+  const isMixed = liveIds.length > 0 && historicIds.length > 0;
 
   return (
     <div className="space-y-3">
@@ -328,7 +359,7 @@ function UnbilledTab({
               <th className="px-4 py-3">Service</th>
               <th className="px-4 py-3 text-right">Age (days)</th>
               <th className="px-4 py-3 text-right">Amount</th>
-              <th className="px-4 py-3"></th>
+              <th className="px-4 py-3 text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -348,11 +379,10 @@ function UnbilledTab({
                     <label className="inline-flex min-h-[44px] items-center">
                       <input
                         type="checkbox"
-                        disabled={!id || isHistoric}
+                        disabled={!id}
                         checked={isSelected}
-                        onChange={() => id && !isHistoric && toggle(id)}
+                        onChange={() => id && toggle(id)}
                         aria-label={`Select item ${id ?? ""}`}
-                        title={isHistoric ? "Historic claims use the per-row actions" : undefined}
                         className="h-4 w-4"
                       />
                     </label>
@@ -423,25 +453,93 @@ function UnbilledTab({
           <span className="font-semibold text-[color:var(--color-brand-navy)]">
             {PHP.format(selectedTotal)}
           </span>
+          {historicIds.length > 0 && liveIds.length === 0 ? (
+            <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800">
+              Historic
+            </span>
+          ) : null}
         </div>
-        {selected.size > 0 ? (
-          <Link
-            href={newBatchHref}
-            className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-xs font-bold uppercase tracking-wider text-white"
-          >
-            Add {selected.size} item{selected.size === 1 ? "" : "s"} to new
-            batch
-          </Link>
-        ) : (
+        {selected.size === 0 ? (
           <button
             type="button"
             disabled
             className="min-h-[44px] rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-2 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]"
           >
-            Select items to start a batch
+            Select items to start
           </button>
+        ) : isMixed ? (
+          <p className="max-w-md text-xs text-amber-900">
+            Mixed selection — pick only live items (to batch) <em>or</em> only
+            historic items (to mark billed/paid/written-off).
+          </p>
+        ) : liveIds.length > 0 ? (
+          <Link
+            href={newBatchHref}
+            className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-xs font-bold uppercase tracking-wider text-white"
+          >
+            Add {liveIds.length} item{liveIds.length === 1 ? "" : "s"} to new
+            batch
+          </Link>
+        ) : (
+          <div className="flex flex-nowrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setBulkModal("billed")}
+              className="min-h-[44px] whitespace-nowrap rounded-md bg-[color:var(--color-brand-navy)] px-3 py-2 text-xs font-bold uppercase tracking-wider text-white"
+            >
+              Mark billed ({historicIds.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setBulkModal("paid")}
+              className="min-h-[44px] whitespace-nowrap rounded-md border border-emerald-600 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wider text-emerald-700 hover:bg-emerald-600 hover:text-white"
+            >
+              Mark paid
+            </button>
+            <button
+              type="button"
+              onClick={() => setBulkModal("writeoff")}
+              className="min-h-[44px] whitespace-nowrap rounded-md border border-red-600 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wider text-red-700 hover:bg-red-600 hover:text-white"
+            >
+              Write off
+            </button>
+          </div>
         )}
       </div>
+      {bulkModal === "billed" && (
+        <MarkHistoricBilledModal
+          claimIds={historicIds}
+          totalAmount={historicTotal}
+          staff={staff}
+          onClose={() => {
+            setBulkModal(null);
+            setSelected(new Set());
+          }}
+        />
+      )}
+      {bulkModal === "paid" && (
+        <MarkHistoricPaidModal
+          claimIds={historicIds}
+          totalAmount={historicTotal}
+          staff={staff}
+          paymentMethods={paymentMethods}
+          onClose={() => {
+            setBulkModal(null);
+            setSelected(new Set());
+          }}
+        />
+      )}
+      {bulkModal === "writeoff" && (
+        <WriteOffHistoricModal
+          claimIds={historicIds}
+          totalAmount={historicTotal}
+          staff={staff}
+          onClose={() => {
+            setBulkModal(null);
+            setSelected(new Set());
+          }}
+        />
+      )}
     </div>
   );
 }

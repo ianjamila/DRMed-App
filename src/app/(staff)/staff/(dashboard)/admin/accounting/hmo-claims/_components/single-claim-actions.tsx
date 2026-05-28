@@ -43,12 +43,12 @@ export function SingleClaimActions({
 
   const sizeCls =
     size === "compact"
-      ? "min-h-[32px] px-2 py-1 text-[10px]"
-      : "min-h-[44px] px-4 py-2 text-xs";
+      ? "min-h-[28px] whitespace-nowrap px-2 py-0.5 text-[10px]"
+      : "min-h-[36px] whitespace-nowrap px-2.5 py-1 text-[11px]";
 
   return (
     <>
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-nowrap items-center justify-end gap-1.5">
         {!hasSubmissionDate && (
           <button
             type="button"

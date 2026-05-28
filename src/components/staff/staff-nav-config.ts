@@ -126,7 +126,7 @@ export const STAFF_NAV: StaffNavSection[] = [
     heading: "Admin",
     subgroups: [
       {
-        heading: "Money in & out",
+        heading: "HMO",
         items: [
           {
             href: "/staff/admin/accounting/hmo-claims",
@@ -134,6 +134,11 @@ export const STAFF_NAV: StaffNavSection[] = [
             description: "Where you manage the entire HMO billing cycle: which patient visits still need to be invoiced, which invoices are awaiting payment, which HMOs are slow payers, and which to write off. Drill into a provider (e.g., Maxicare) to see every claim and its status.",
             roles: ["admin"],
           },
+        ],
+      },
+      {
+        heading: "Money in & out",
+        items: [
           {
             href: "/staff/admin/accounting/patient-ar",
             label: "Patient receivables (aging)",
