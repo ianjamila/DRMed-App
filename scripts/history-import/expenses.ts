@@ -14,9 +14,10 @@
  *       CLINIC GCASH / GCASH      → 1030
  *       CHEQUE                    → 1020 (BPI per user decision)
  *       IAN / FREYA (shareholder) → 2500 Due to Shareholders (added in 0075)
- *       (blank), year < 2026      → 1010 (hybrid C: pre-2026 = paid out of cash)
- *       (blank), year ≥ 2026      → AP open — NOT handled by this script;
- *                                    --year=2026 will error until extended.
+ *       (blank)                   → 1010 (corrected 2026-05-27: all blank-MOP
+ *                                    rows were paid same-day from clinic cash,
+ *                                    regardless of year — earlier Hybrid C
+ *                                    routing 2026 to AP was wrong)
  *
  * Idempotency: each row's JE notes encode `xlsx EXPENSES r{n}`. Before insert
  * we fetch the existing notes-set and skip rows already present.
@@ -109,47 +110,29 @@ function normaliseMop(raw: string | null | undefined): string {
 
 interface CreditTarget {
   coaCode: string;
-  needsApBill: boolean;
 }
 
-// Categories that are inherently NOT vendor-AP (payroll-style cash payouts).
-// Used to route blank-MOP rows: if the category is payroll-style, assume the
-// row was paid in cash even if MOP was blank.
-const PAYROLL_STYLE_CATEGORIES = new Set<string>([
-  "Salaries & Wages",
-  "Doctors Payroll",
-  "Benefits",
-  "Past HMO of Doctors",
-]);
-
-function mopToCredit(
-  mop: string | null | undefined,
-  year: number,
-  category: string,
-): CreditTarget {
+function mopToCredit(mop: string | null | undefined): CreditTarget {
   const m = normaliseMop(mop);
   switch (m) {
     case "CLINIC CASH":
-      return { coaCode: "1010", needsApBill: false };
+      return { coaCode: "1010" };
     case "CLINIC GCASH":
     case "GCASH":
-      return { coaCode: "1030", needsApBill: false };
+      return { coaCode: "1030" };
     case "CHEQUE":
-      return { coaCode: "1020", needsApBill: false };
+      return { coaCode: "1020" };
     case "IAN":
     case "FREYA":
-      return { coaCode: "2500", needsApBill: false };
+      return { coaCode: "2500" };
     case "(blank)":
-      // Updated 2026-05-27 (late): partner confirmed ALL blank-MOP rows
-      // (regardless of year or category) were paid same-day from clinic cash.
-      // The earlier Hybrid C policy that routed 2026 vendor rows to AP-open
-      // was wrong — those 75 bills were created then deleted. Now: all
-      // blank-MOP → CR 1010 Cash on Hand.
-      return { coaCode: "1010", needsApBill: false };
+      // Partner confirmed (2026-05-27): all blank-MOP rows were paid
+      // same-day from clinic cash, regardless of year or category.
+      return { coaCode: "1010" };
     default:
       // "10k gcash, rest cash" mixed-split, "NOT YET GIVEN, FOR LAST PAY NA",
       // and any other weirdness — park to Suspense + flag.
-      return { coaCode: "9999", needsApBill: false };
+      return { coaCode: "9999" };
   }
 }
 
@@ -315,16 +298,7 @@ function buildProposed(rows: RawRow[], year: number): ProposedJE[] {
       continue;
     }
 
-    const cr = mopToCredit(r.mop, year, r.category);
-    if (cr.needsApBill) {
-      out.push({
-        ...base,
-        lines: [],
-        skip_reason:
-          "blank MOP in year ≥ 2026 — requires AP-bill creation (not handled by --commit yet)",
-      });
-      continue;
-    }
+    const cr = mopToCredit(r.mop);
 
     const warnings: string[] = [];
     if (drCode === "9999")

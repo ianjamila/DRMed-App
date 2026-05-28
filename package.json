@@ -29,7 +29,6 @@
     "wipe:operational": "tsx scripts/wipe-operational.ts",
     "import:legacy": "tsx scripts/import-legacy-customers.ts",
     "import:history:expenses": "tsx --env-file=.env.local scripts/history-import/expenses.ts",
-    "import:history:expenses-ap": "tsx --env-file=.env.local scripts/history-import/expenses-ap.ts",
     "import:history:veritas-pay": "tsx --env-file=.env.local scripts/history-import/veritas-pay.ts",
     "import:history:doctor-cons": "tsx --env-file=.env.local scripts/history-import/doctor-consultations.ts",
     "import:history:lab-services": "tsx --env-file=.env.local scripts/history-import/lab-services.ts"
