@@ -159,7 +159,7 @@ export function StaffMobileNavTrigger({ role, email, fullName }: Props) {
               <p className="px-3 pb-2 text-[10px] font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                 {section.heading}
               </p>
-              {section.items ? (
+              {section.items && section.items.length > 0 ? (
                 <ul className="flex flex-col gap-0.5">
                   {section.items.map((item) => (
                     <MobileNavLink
@@ -170,8 +170,9 @@ export function StaffMobileNavTrigger({ role, email, fullName }: Props) {
                     />
                   ))}
                 </ul>
-              ) : (
-                <div className="flex flex-col gap-1">
+              ) : null}
+              {section.subgroups && section.subgroups.length > 0 ? (
+                <div className={`flex flex-col gap-1 ${section.items && section.items.length > 0 ? "mt-2" : ""}`}>
                   {section.subgroups.map((group) => (
                     <MobileSubgroup
                       key={group.heading}
@@ -181,7 +182,7 @@ export function StaffMobileNavTrigger({ role, email, fullName }: Props) {
                     />
                   ))}
                 </div>
-              )}
+              ) : null}
             </div>
           ))}
         </nav>

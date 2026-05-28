@@ -27,12 +27,14 @@ export interface StaffNavSubgroup {
   items: StaffNavItem[];
 }
 
-// A section is either flat (items only) or grouped (subgroups only).
-// Mixing both isn't supported — picks one shape per section to keep
-// rendering predictable.
-export type StaffNavSection =
-  | { heading: string; items: StaffNavItem[]; subgroups?: never }
-  | { heading: string; subgroups: StaffNavSubgroup[]; items?: never };
+// A section can have flat items, collapsible subgroups, or both. Flat
+// items render first (no chevron), then subgroups follow. At least one
+// of items / subgroups must be present.
+export type StaffNavSection = {
+  heading: string;
+  items?: StaffNavItem[];
+  subgroups?: StaffNavSubgroup[];
+};
 
 export const STAFF_NAV: StaffNavSection[] = [
   {
@@ -123,7 +125,7 @@ export const STAFF_NAV: StaffNavSection[] = [
     ],
   },
   {
-    heading: "HMO",
+    heading: "Admin",
     items: [
       {
         href: "/staff/admin/accounting/hmo-claims",
@@ -131,11 +133,6 @@ export const STAFF_NAV: StaffNavSection[] = [
         description: "Where you manage the entire HMO billing cycle: which patient visits still need to be invoiced, which invoices are awaiting payment, which HMOs are slow payers, and which to write off. Drill into a provider (e.g., Maxicare) to see every claim and its status.",
         roles: ["admin"],
       },
-    ],
-  },
-  {
-    heading: "Expenses",
-    items: [
       {
         href: "/staff/admin/accounting/ap",
         label: "Expenses",
@@ -143,9 +140,6 @@ export const STAFF_NAV: StaffNavSection[] = [
         roles: ["admin"],
       },
     ],
-  },
-  {
-    heading: "Admin",
     subgroups: [
       {
         heading: "Doctor PF & payroll",
@@ -445,28 +439,30 @@ export const STAFF_NAV: StaffNavSection[] = [
   },
 ];
 
-// Filters items inside each section by role, drops empty subgroups, then
-// drops sections that ended up with no visible content. Preserves the
-// flat-vs-grouped shape so the renderer doesn't have to re-detect it.
+// Filters items + subgroups inside each section by role, drops empty
+// subgroups, then drops sections that ended up with no visible content.
+// A section may carry items, subgroups, or both — preserves whichever
+// has content for the renderer.
 export function visibleNavFor(role: StaffRole): StaffNavSection[] {
   const filtered: StaffNavSection[] = [];
   for (const section of STAFF_NAV) {
-    if (section.items) {
-      const items = section.items.filter((i) => i.roles.includes(role));
-      if (items.length > 0) {
-        filtered.push({ heading: section.heading, items });
-      }
-    } else {
-      const subgroups = section.subgroups
-        .map((g) => ({
-          heading: g.heading,
-          items: g.items.filter((i) => i.roles.includes(role)),
-        }))
-        .filter((g) => g.items.length > 0);
-      if (subgroups.length > 0) {
-        filtered.push({ heading: section.heading, subgroups });
-      }
-    }
+    const items = section.items
+      ? section.items.filter((i) => i.roles.includes(role))
+      : [];
+    const subgroups = section.subgroups
+      ? section.subgroups
+          .map((g) => ({
+            heading: g.heading,
+            items: g.items.filter((i) => i.roles.includes(role)),
+          }))
+          .filter((g) => g.items.length > 0)
+      : [];
+    if (items.length === 0 && subgroups.length === 0) continue;
+    filtered.push({
+      heading: section.heading,
+      ...(items.length > 0 ? { items } : {}),
+      ...(subgroups.length > 0 ? { subgroups } : {}),
+    });
   }
   return filtered;
 }
