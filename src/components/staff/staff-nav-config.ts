@@ -116,10 +116,10 @@ export const STAFF_NAV: StaffNavSection[] = [
         roles: ["medtech", "pathologist", "admin", "xray_technician"],
       },
       {
-        href: "/staff/signoff",
-        label: "Sign-off",
-        description: "Pathologist review queue — tests that the medtech finished but need the pathologist's final review and signature before the patient gets the result. The pathologist's e-signature is embedded on the PDF on release.",
-        roles: ["pathologist", "admin"],
+        href: "/staff/results",
+        label: "All results",
+        description: "Archive of every test request ever created — searchable by patient name, DRM-ID, or service. Filter by status (released / ready / in progress / cancelled) and date range. Click a row to open the underlying visit.",
+        roles: ["medtech", "pathologist", "admin", "xray_technician"],
       },
     ],
   },
@@ -414,6 +414,23 @@ export const STAFF_NAV: StaffNavSection[] = [
             href: "/staff/admin/patient-merge",
             label: "Merge duplicate patients",
             description: "When the same person was accidentally registered twice (different spellings, different contact numbers), combine the two records into one. Visit history from both gets merged onto the surviving record.",
+            roles: ["admin"],
+          },
+        ],
+      },
+      {
+        heading: "Hidden tabs",
+        items: [
+          {
+            href: "/staff/signoff",
+            label: "Sign-off",
+            description: "Pathologist review queue — tests that the medtech finished but need the pathologist's final review and signature before release. Hidden from the main Lab section because pathologist review isn't yet part of the live workflow; surface here for testing or when the role goes active.",
+            roles: ["pathologist", "admin"],
+          },
+          {
+            href: "/staff/admin/accounting/patient-ar",
+            label: "Patient receivables (aging)",
+            description: "Cash patients with unpaid balances. Hidden from the main Admin section because the clinic uses all-or-nothing payments (no partial / no HMO co-pay) so this list is almost always empty. Re-surface if partial payments or co-pay are introduced.",
             roles: ["admin"],
           },
         ],
