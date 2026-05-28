@@ -123,30 +123,30 @@ export const STAFF_NAV: StaffNavSection[] = [
     ],
   },
   {
+    heading: "HMO",
+    items: [
+      {
+        href: "/staff/admin/accounting/hmo-claims",
+        label: "HMO claims",
+        description: "Where you manage the entire HMO billing cycle: which patient visits still need to be invoiced, which invoices are awaiting payment, which HMOs are slow payers, and which to write off. Drill into a provider (e.g., Maxicare) to see every claim and its status.",
+        roles: ["admin"],
+      },
+    ],
+  },
+  {
+    heading: "Expenses",
+    items: [
+      {
+        href: "/staff/admin/accounting/ap",
+        label: "Expenses",
+        description: "Everything expense-related in one place. Tabs inside: Quick expense (already-paid same-day expenses — cash, GCash, owner OOP), Overview (what's outstanding), Vendor bills (invoices with due dates), Bill payments (the outflows), Vendors (master list), Recurring (monthly auto-bills).",
+        roles: ["admin"],
+      },
+    ],
+  },
+  {
     heading: "Admin",
     subgroups: [
-      {
-        heading: "HMO",
-        items: [
-          {
-            href: "/staff/admin/accounting/hmo-claims",
-            label: "HMO claims",
-            description: "Where you manage the entire HMO billing cycle: which patient visits still need to be invoiced, which invoices are awaiting payment, which HMOs are slow payers, and which to write off. Drill into a provider (e.g., Maxicare) to see every claim and its status.",
-            roles: ["admin"],
-          },
-        ],
-      },
-      {
-        heading: "Expenses",
-        items: [
-          {
-            href: "/staff/admin/accounting/ap",
-            label: "Expenses",
-            description: "Everything expense-related in one place. Tabs inside: Quick expense (already-paid same-day expenses — cash, GCash, owner OOP), Overview (what's outstanding), Vendor bills (invoices with due dates), Bill payments (the outflows), Vendors (master list), Recurring (monthly auto-bills).",
-            roles: ["admin"],
-          },
-        ],
-      },
       {
         heading: "Doctor PF & payroll",
         items: [
