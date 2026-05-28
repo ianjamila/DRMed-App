@@ -2,8 +2,9 @@ import Link from "next/link";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
+import { sectionsForRole } from "@/lib/auth/role-sections";
 
-export const metadata = { title: "All results — staff" };
+export const metadata = { title: "Results — staff" };
 export const dynamic = "force-dynamic";
 
 const PAGE_SIZE = 50;
@@ -59,11 +60,12 @@ interface ResultRow {
     visit_number: string;
     patients: { first_name: string; last_name: string; drm_id: string } | null;
   } | null;
-  services: { code: string; name: string; kind: string } | null;
+  services: { code: string; name: string; kind: string; section: string | null } | null;
 }
 
 export default async function AllResultsPage({ searchParams }: SearchProps) {
-  await requireActiveStaff();
+  const staff = await requireActiveStaff();
+  const allowedSections = sectionsForRole(staff.role); // null = unrestricted
   const sp = await searchParams;
 
   const status: StatusFilter = STATUSES.includes(sp.status as StatusFilter)
@@ -84,7 +86,7 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
       `
         id, status, released_at, completed_at, requested_at,
         visits!inner ( id, visit_number, patients!inner ( first_name, last_name, drm_id ) ),
-        services!inner ( code, name, kind )
+        services!inner ( code, name, kind, section )
       `,
       { count: "exact" },
     )
@@ -97,8 +99,37 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
   if (start) query = query.gte("requested_at", `${start}T00:00:00`);
   if (end) query = query.lte("requested_at", `${end}T23:59:59`);
 
+  // Section gate per role: admin + pathologist see everything (null), medtech
+  // sees lab-bench sections, xray sees imaging sections, reception sees nothing.
+  if (allowedSections !== null) {
+    if (allowedSections.length === 0) {
+      // Force empty result set without breaking the query shape.
+      query = query.eq("id", "00000000-0000-0000-0000-000000000000");
+    } else {
+      query = query.in("services.section", allowedSections);
+    }
+  }
+
   const { data, count } = await query.returns<ResultRow[]>();
   const rows = data ?? [];
+
+  // Pull which test_requests have a stored PDF — junction → results.storage_path.
+  // One query for the visible page, keyed by test_request_id.
+  const trIds = rows.map((r) => r.id);
+  const hasPdfByTrId = new Map<string, boolean>();
+  if (trIds.length > 0) {
+    const { data: links } = await admin
+      .from("result_test_requests")
+      .select("test_request_id, results!inner ( storage_path )")
+      .in("test_request_id", trIds);
+    for (const link of links ?? []) {
+      const result = (link as { results: { storage_path: string | null } | { storage_path: string | null }[] | null }).results;
+      const resolved = Array.isArray(result) ? result[0] : result;
+      if (resolved?.storage_path) {
+        hasPdfByTrId.set(link.test_request_id as string, true);
+      }
+    }
+  }
 
   // Optional client-side filter when q is set. Server-side ilike across a join
   // is awkward in PostgREST, so post-filter the page rows here.
@@ -138,7 +169,7 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
     <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6">
         <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          All results
+          Results
         </h1>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
           Archive of every test request — created, in progress, ready for
@@ -244,11 +275,12 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
                   <th className="px-4 py-3">Requested</th>
                   <th className="px-4 py-3">Completed</th>
                   <th className="px-4 py-3">Released</th>
+                  <th className="px-4 py-3">PDF</th>
                   <th className="px-4 py-3 text-right">Visit</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
-                {groupByVisit(filtered).map((g) => {
+                {groupByVisit(filtered, hasPdfByTrId).map((g) => {
                   const pat = g.patient;
                   const patientLabel = pat
                     ? `${pat.last_name}, ${pat.first_name}`
@@ -306,6 +338,30 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
                       </td>
                       <td className="px-4 py-3 text-xs text-[color:var(--color-brand-text-soft)]">
                         {g.releasedAt ? formatDateTime(g.releasedAt) : "—"}
+                      </td>
+                      <td className="px-4 py-3 text-xs">
+                        <div className="flex flex-col gap-0.5">
+                          {g.tests.map((t) =>
+                            t.hasPdf ? (
+                              <a
+                                key={t.id}
+                                href={`/staff/results/${t.id}/pdf`}
+                                target="_blank"
+                                rel="noopener"
+                                className="font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
+                              >
+                                {t.code} PDF →
+                              </a>
+                            ) : (
+                              <span
+                                key={t.id}
+                                className="text-[color:var(--color-brand-text-soft)]"
+                              >
+                                {t.code} —
+                              </span>
+                            ),
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-right text-xs">
                         <Link
@@ -369,13 +425,13 @@ interface VisitGroup {
   visitId: string;
   visitNumber: string;
   patient: { first_name: string; last_name: string; drm_id: string } | null;
-  tests: { id: string; status: string; code: string; name: string }[];
+  tests: { id: string; status: string; code: string; name: string; hasPdf: boolean }[];
   requestedAt: string;
   completedAt: string | null;
   releasedAt: string | null;
 }
 
-function groupByVisit(rows: ResultRow[]): VisitGroup[] {
+function groupByVisit(rows: ResultRow[], hasPdfByTrId: Map<string, boolean>): VisitGroup[] {
   const groups = new Map<string, VisitGroup>();
   for (const r of rows) {
     const visit = r.visits;
@@ -386,6 +442,7 @@ function groupByVisit(rows: ResultRow[]): VisitGroup[] {
       status: r.status,
       code: r.services?.code ?? "—",
       name: r.services?.name ?? "",
+      hasPdf: hasPdfByTrId.get(r.id) === true,
     };
     if (existing) {
       existing.tests.push(test);

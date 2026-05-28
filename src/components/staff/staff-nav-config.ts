@@ -117,8 +117,8 @@ export const STAFF_NAV: StaffNavSection[] = [
       },
       {
         href: "/staff/results",
-        label: "All results",
-        description: "Archive of every test request ever created — searchable by patient name, DRM-ID, or service. Filter by status (released / ready / in progress / cancelled) and date range. Click a row to open the underlying visit.",
+        label: "Results",
+        description: "Archive of every result ever created or released — searchable by patient name, DRM-ID, or service. Filter by status (released / ready / in progress / cancelled) and date range. View the released PDF inline for review. Per partner policy, admins + medtechs can see all results.",
         roles: ["medtech", "pathologist", "admin", "xray_technician"],
       },
     ],

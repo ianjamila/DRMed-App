@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { formatPhp } from "@/lib/marketing/format";
+import { sectionsForRole } from "@/lib/auth/role-sections";
 import { ReleaseButton } from "./release-button";
 import { VoidPaymentDialog } from "../../payments/[id]/void/void-payment-dialog";
 
@@ -131,11 +132,33 @@ export default async function VisitDetailPage({ params }: Props) {
   const activePayments = (payments ?? []).filter((p) => !p.voided_at);
   const voidedPayments = (payments ?? []).filter((p) => p.voided_at);
 
+  // Section gate: hide tests outside this role's sections (medtech sees
+  // lab bench, xray sees imaging, reception sees none, admin + pathologist
+  // see everything). Package headers are visible if ANY of their
+  // components are accessible — we don't want a half-visible package.
+  const allowedSections = sectionsForRole(session.role); // null = unrestricted
+  const rawRows = tests ?? [];
+  const isVisible = (r: { services: { section?: string | null } | { section?: string | null }[] | null }) => {
+    if (allowedSections === null) return true;
+    if (allowedSections.length === 0) return false;
+    const svc = Array.isArray(r.services) ? r.services[0] : r.services;
+    const sect = svc?.section ?? null;
+    return sect != null && allowedSections.includes(sect as never);
+  };
+  // First pass: mark which parent_ids have at least one visible component.
+  const visibleParents = new Set<string>();
+  for (const r of rawRows) {
+    if (r.parent_id && isVisible(r)) visibleParents.add(r.parent_id);
+  }
+  const allRows = rawRows.filter((r) => {
+    if (r.is_package_header) return visibleParents.has(r.id);
+    return isVisible(r);
+  });
+
   // Group test_requests by package: headers first (as cards with their
   // components indented beneath), then standalones below in the existing
   // detail table. Bridge guard in 14.1 ensures ₱0 package components don't
   // appear in standalone billing rows.
-  const allRows = tests ?? [];
   type TestRow = (typeof allRows)[number];
   const packageHeaders: TestRow[] = [];
   const componentsByParent = new Map<string, TestRow[]>();
