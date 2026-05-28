@@ -301,16 +301,12 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
                       <td className="px-4 py-3 text-xs">
                         <div className="flex flex-col gap-0.5">
                           {g.tests.map((t) => (
-                            <Link
-                              key={t.id}
-                              href={`/staff/queue/${t.id}`}
-                              className="text-[color:var(--color-brand-cyan)] hover:underline"
-                            >
+                            <div key={t.id}>
                               <span className="font-mono text-[color:var(--color-brand-text-soft)]">
                                 {t.code}
                               </span>{" "}
                               {t.name}
-                            </Link>
+                            </div>
                           ))}
                         </div>
                       </td>
