@@ -257,6 +257,8 @@ async function createVisitAndTests(
           generation_kind: "uploaded",
           storage_path: storagePath,
           file_size_bytes: pdfBytes.byteLength,
+          uploaded_by: adminId,
+          uploaded_at: released_at,
           finalised_at: released_at,
           finalised_by_staff_id: adminId,
           notes: `Seed placeholder PDF for ${t.code}.`,
