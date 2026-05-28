@@ -9,7 +9,7 @@ export default async function HmoClaimsIndexPage() {
   await requireAdminStaff();
   const admin = createAdminClient();
 
-  const [summary, unbilled, stuck, aging] = await Promise.all([
+  const [summary, unbilled, stuck, aging, staff, paymentMethods] = await Promise.all([
     admin
       .from("v_hmo_provider_summary")
       .select("*")
@@ -23,6 +23,18 @@ export default async function HmoClaimsIndexPage() {
       .select("*")
       .order("days_since_submission", { ascending: false }),
     admin.from("v_hmo_ar_aging").select("*"),
+    admin
+      .from("staff_profiles")
+      .select("id, full_name")
+      .eq("is_active", true)
+      .is("deleted_at", null)
+      .order("full_name"),
+    admin
+      .from("chart_of_accounts")
+      .select("code, name")
+      .eq("is_active", true)
+      .eq("is_settlement_destination", true)
+      .order("code"),
   ]);
 
   return (
@@ -44,6 +56,8 @@ export default async function HmoClaimsIndexPage() {
         unbilled={unbilled.data ?? []}
         stuck={stuck.data ?? []}
         aging={aging.data ?? []}
+        staff={staff.data ?? []}
+        paymentMethods={paymentMethods.data ?? []}
       />
     </div>
   );

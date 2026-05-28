@@ -4,6 +4,12 @@ import { Fragment, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import type { Database } from "@/types/database";
 import { snapshotHmoAgingAction } from "./actions";
+import {
+  MarkHistoricPaidModal,
+  WriteOffHistoricModal,
+  type StaffPick,
+  type PaymentMethod,
+} from "./_components/historic-claim-modals";
 
 type SummaryRow =
   Database["public"]["Views"]["v_hmo_provider_summary"]["Row"];
@@ -18,12 +24,12 @@ const PHP = new Intl.NumberFormat("en-PH", {
 
 const BUCKETS = ["0-30", "31-60", "61-90", "91-180", "180+"] as const;
 
-type View = "by_provider" | "all_unbilled" | "all_stuck" | "aging_matrix";
+type View = "by_provider" | "all_unbilled" | "all_aging" | "aging_matrix";
 
 const VIEW_LABELS: Record<View, string> = {
   by_provider: "By provider",
   all_unbilled: "All unbilled",
-  all_stuck: "All stuck",
+  all_aging: "All aging",
   aging_matrix: "Aging matrix",
 };
 
@@ -45,11 +51,15 @@ export function HmoClaimsClient({
   unbilled,
   stuck,
   aging,
+  staff,
+  paymentMethods,
 }: {
   summary: SummaryRow[];
   unbilled: UnbilledRow[];
   stuck: StuckRow[];
   aging: AgingRow[];
+  staff: StaffPick[];
+  paymentMethods: PaymentMethod[];
 }) {
   const [view, setView] = useState<View>("by_provider");
   const [kind, setKind] = useState<Kind>("all");
@@ -88,7 +98,7 @@ export function HmoClaimsClient({
         />
       )}
       {view === "all_unbilled" && <AllUnbilled rows={fUnbilled} />}
-      {view === "all_stuck" && <AllStuck rows={fStuck} />}
+      {view === "all_aging" && <AllAging rows={fStuck} staff={staff} paymentMethods={paymentMethods} />}
       {view === "aging_matrix" && <AgingMatrix rows={fAging} />}
     </div>
   );
@@ -645,9 +655,25 @@ function AllUnbilled({ rows }: { rows: UnbilledRow[] }) {
   );
 }
 
-function AllStuck({ rows }: { rows: StuckRow[] }) {
+function AllAging({
+  rows,
+  staff,
+  paymentMethods,
+}: {
+  rows: StuckRow[];
+  staff: StaffPick[];
+  paymentMethods: PaymentMethod[];
+}) {
   const [filter, setFilter] = useState("");
   const [page, setPage] = useState(0);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkModal, setBulkModal] = useState<null | "paid" | "writeoff">(null);
+  const [rowModal, setRowModal] = useState<null | {
+    kind: "paid" | "writeoff";
+    claimId: string;
+    amount: number;
+  }>(null);
+
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
     if (!q) return rows;
@@ -662,6 +688,50 @@ function AllStuck({ rows }: { rows: StuckRow[] }) {
   const pageRows = filtered.slice(page * TOP_PAGE_SIZE, (page + 1) * TOP_PAGE_SIZE);
   const today = new Date().toISOString().slice(0, 10);
 
+  // For bulk-select: only historic rows can be acted on in bulk (live rows
+  // resolve via their batch).
+  const historicIdsOnPage = useMemo(
+    () =>
+      pageRows
+        .filter((r) => r.is_historic && r.item_id)
+        .map((r) => r.item_id as string),
+    [pageRows],
+  );
+  const selectedHistoricTotal = useMemo(() => {
+    let t = 0;
+    for (const r of rows) {
+      if (r.is_historic && r.item_id && selected.has(r.item_id)) {
+        t += Number(r.unresolved_balance_php ?? 0);
+      }
+    }
+    return t;
+  }, [rows, selected]);
+  const selectedHistoricIds = Array.from(selected);
+
+  function toggle(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAllOnPage() {
+    setSelected((prev) => {
+      const allOnPageSelected =
+        historicIdsOnPage.length > 0 &&
+        historicIdsOnPage.every((id) => prev.has(id));
+      const next = new Set(prev);
+      if (allOnPageSelected) {
+        for (const id of historicIdsOnPage) next.delete(id);
+      } else {
+        for (const id of historicIdsOnPage) next.add(id);
+      }
+      return next;
+    });
+  }
+
   function exportCsv() {
     exportRowsCsv(
       filtered.map((r) => ({
@@ -674,13 +744,18 @@ function AllStuck({ rows }: { rows: StuckRow[] }) {
         service: r.service_description ?? "",
         unresolved_php: r.unresolved_balance_php ?? 0,
       })),
-      `hmo-all-stuck-${today}.csv`,
+      `hmo-all-aging-${today}.csv`,
     );
   }
 
   if (rows.length === 0) {
-    return <EmptyState message="Nothing stuck." />;
+    return <EmptyState message="Nothing aging." />;
   }
+
+  const allOnPageSelected =
+    historicIdsOnPage.length > 0 &&
+    historicIdsOnPage.every((id) => selected.has(id));
+
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-3">
@@ -706,9 +781,21 @@ function AllStuck({ rows }: { rows: StuckRow[] }) {
         </div>
       </div>
       <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
-        <table className="w-full min-w-[900px] text-sm">
+        <table className="w-full min-w-[960px] text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
+              <th className="px-4 py-3">
+                <label className="inline-flex min-h-[44px] items-center" title="Select all historic rows on this page">
+                  <input
+                    type="checkbox"
+                    checked={allOnPageSelected}
+                    onChange={toggleAllOnPage}
+                    disabled={historicIdsOnPage.length === 0}
+                    aria-label="Select all historic aging rows on this page"
+                    className="h-4 w-4"
+                  />
+                </label>
+              </th>
               <th className="px-4 py-3">Provider</th>
               <th className="px-4 py-3">Submitted</th>
               <th className="px-4 py-3">Kind</th>
@@ -716,78 +803,149 @@ function AllStuck({ rows }: { rows: StuckRow[] }) {
               <th className="px-4 py-3">Service</th>
               <th className="px-4 py-3 text-right">Days late</th>
               <th className="px-4 py-3 text-right">Unresolved</th>
-              <th className="px-4 py-3"></th>
+              <th className="px-4 py-3 text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {pageRows.map((r) => (
-              <tr
-                key={r.item_id ?? `${r.batch_id}-${r.submitted_at}`}
-                className="border-t border-[color:var(--color-brand-bg-mid)] bg-red-50"
-              >
-                <td className="px-4 py-3">
-                  {r.provider_name ?? "—"}
-                  {r.is_historic && (
-                    <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800">
-                      Historic
+            {pageRows.map((r) => {
+              const id = r.item_id as string | null;
+              const isHistoric = Boolean(r.is_historic);
+              const isSelected = id ? selected.has(id) : false;
+              return (
+                <tr
+                  key={id ?? `${r.batch_id}-${r.submitted_at}`}
+                  className="border-t border-[color:var(--color-brand-bg-mid)] bg-red-50"
+                >
+                  <td className="px-4 py-3">
+                    <label className="inline-flex min-h-[44px] items-center">
+                      <input
+                        type="checkbox"
+                        disabled={!isHistoric || !id}
+                        checked={isSelected}
+                        onChange={() => id && isHistoric && toggle(id)}
+                        aria-label={`Select ${r.patient_name ?? id ?? ""}`}
+                        title={!isHistoric ? "Live rows resolve via their batch" : undefined}
+                        className="h-4 w-4"
+                      />
+                    </label>
+                  </td>
+                  <td className="px-4 py-3">
+                    {r.provider_name ?? "—"}
+                    {isHistoric && (
+                      <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800">
+                        Historic
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-xs">
+                    {r.submitted_at
+                      ? new Date(r.submitted_at).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })
+                      : "—"}
+                  </td>
+                  <td className="px-4 py-3 text-xs">
+                    <span
+                      className={
+                        "rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider " +
+                        (r.kind === "doctor" ? "bg-indigo-100 text-indigo-800" : "bg-sky-100 text-sky-800")
+                      }
+                    >
+                      {r.kind ?? "lab"}
                     </span>
-                  )}
-                </td>
-                <td className="px-4 py-3 text-xs">
-                  {r.submitted_at
-                    ? new Date(r.submitted_at).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })
-                    : "—"}
-                </td>
-                <td className="px-4 py-3 text-xs">
-                  <span
-                    className={
-                      "rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider " +
-                      (r.kind === "doctor" ? "bg-indigo-100 text-indigo-800" : "bg-sky-100 text-sky-800")
-                    }
-                  >
-                    {r.kind ?? "lab"}
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-xs">
-                  {r.is_historic && r.item_id && r.provider_id ? (
-                    <Link href={`/staff/admin/accounting/hmo-claims/${r.provider_id}/historic/${r.item_id}`} className="text-[color:var(--color-brand-cyan)] hover:underline">
-                      {r.patient_name ?? "(unknown)"}
-                    </Link>
-                  ) : (
-                    r.patient_name ?? "—"
-                  )}
-                </td>
-                <td className="px-4 py-3 text-xs text-[color:var(--color-brand-text-soft)]">
-                  {r.service_description ?? "—"}
-                </td>
-                <td className="px-4 py-3 text-right font-mono text-xs text-red-700">
-                  {r.days_since_submission ?? "—"}
-                </td>
-                <td className="px-4 py-3 text-right font-semibold">
-                  {PHP.format(r.unresolved_balance_php ?? 0)}
-                </td>
-                <td className="px-4 py-3 text-right">
-                  {r.batch_id ? (
-                    <Link
-                      href={`/staff/admin/accounting/hmo-claims/batches/${r.batch_id}`}
-                      className="text-xs font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
-                    >
-                      Open batch
-                    </Link>
-                  ) : r.provider_id ? (
-                    <Link
-                      href={`/staff/admin/accounting/hmo-claims/${r.provider_id}`}
-                      className="text-xs font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
-                    >
-                      Open
-                    </Link>
-                  ) : null}
-                </td>
-              </tr>
-            ))}
+                  </td>
+                  <td className="px-4 py-3 text-xs">
+                    {isHistoric && id && r.provider_id ? (
+                      <Link href={`/staff/admin/accounting/hmo-claims/${r.provider_id}/historic/${id}`} className="text-[color:var(--color-brand-cyan)] hover:underline">
+                        {r.patient_name ?? "(unknown)"}
+                      </Link>
+                    ) : (
+                      r.patient_name ?? "—"
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-xs text-[color:var(--color-brand-text-soft)]">
+                    {r.service_description ?? "—"}
+                  </td>
+                  <td className="px-4 py-3 text-right font-mono text-xs text-red-700">
+                    {r.days_since_submission ?? "—"}
+                  </td>
+                  <td className="px-4 py-3 text-right font-semibold">
+                    {PHP.format(r.unresolved_balance_php ?? 0)}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    {isHistoric && id ? (
+                      <div className="flex flex-nowrap items-center justify-end gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setRowModal({ kind: "paid", claimId: id, amount: Number(r.unresolved_balance_php ?? 0) })}
+                          className="min-h-[28px] whitespace-nowrap rounded-md border border-emerald-600 bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-700 hover:bg-emerald-600 hover:text-white"
+                        >
+                          Mark paid
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setRowModal({ kind: "writeoff", claimId: id, amount: Number(r.unresolved_balance_php ?? 0) })}
+                          className="min-h-[28px] whitespace-nowrap rounded-md border border-red-600 bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-red-700 hover:bg-red-600 hover:text-white"
+                        >
+                          Write off
+                        </button>
+                      </div>
+                    ) : r.batch_id ? (
+                      <Link
+                        href={`/staff/admin/accounting/hmo-claims/batches/${r.batch_id}`}
+                        className="text-xs font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
+                      >
+                        Open batch
+                      </Link>
+                    ) : r.provider_id ? (
+                      <Link
+                        href={`/staff/admin/accounting/hmo-claims/${r.provider_id}`}
+                        className="text-xs font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
+                      >
+                        Open
+                      </Link>
+                    ) : null}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
+      {selected.size > 0 && (
+        <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-3 shadow-sm">
+          <div className="text-xs text-[color:var(--color-brand-text-soft)]">
+            <span className="font-semibold text-[color:var(--color-brand-navy)]">
+              {selected.size}
+            </span>{" "}
+            historic claims selected · total{" "}
+            <span className="font-semibold text-[color:var(--color-brand-navy)]">
+              {PHP.format(selectedHistoricTotal)}
+            </span>
+          </div>
+          <div className="flex flex-nowrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setBulkModal("paid")}
+              className="min-h-[44px] whitespace-nowrap rounded-md border border-emerald-600 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wider text-emerald-700 hover:bg-emerald-600 hover:text-white"
+            >
+              Mark paid ({selected.size})
+            </button>
+            <button
+              type="button"
+              onClick={() => setBulkModal("writeoff")}
+              className="min-h-[44px] whitespace-nowrap rounded-md border border-red-600 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wider text-red-700 hover:bg-red-600 hover:text-white"
+            >
+              Write off
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelected(new Set())}
+              className="min-h-[44px] whitespace-nowrap rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-xs font-semibold text-[color:var(--color-brand-text-soft)]"
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+      )}
       {totalPages > 1 && (
         <div className="flex items-center justify-between rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-3 text-xs">
           <span>Page {page + 1} of {totalPages}</span>
@@ -796,6 +954,40 @@ function AllStuck({ rows }: { rows: StuckRow[] }) {
             <button type="button" disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)} className="rounded border px-3 py-1 disabled:opacity-40">Next</button>
           </div>
         </div>
+      )}
+      {bulkModal === "paid" && (
+        <MarkHistoricPaidModal
+          claimIds={selectedHistoricIds}
+          totalAmount={selectedHistoricTotal}
+          staff={staff}
+          paymentMethods={paymentMethods}
+          onClose={() => { setBulkModal(null); setSelected(new Set()); }}
+        />
+      )}
+      {bulkModal === "writeoff" && (
+        <WriteOffHistoricModal
+          claimIds={selectedHistoricIds}
+          totalAmount={selectedHistoricTotal}
+          staff={staff}
+          onClose={() => { setBulkModal(null); setSelected(new Set()); }}
+        />
+      )}
+      {rowModal?.kind === "paid" && (
+        <MarkHistoricPaidModal
+          claimIds={[rowModal.claimId]}
+          totalAmount={rowModal.amount}
+          staff={staff}
+          paymentMethods={paymentMethods}
+          onClose={() => setRowModal(null)}
+        />
+      )}
+      {rowModal?.kind === "writeoff" && (
+        <WriteOffHistoricModal
+          claimIds={[rowModal.claimId]}
+          totalAmount={rowModal.amount}
+          staff={staff}
+          onClose={() => setRowModal(null)}
+        />
       )}
     </div>
   );
