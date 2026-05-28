@@ -101,6 +101,25 @@ export default async function VisitDetailPage({ params }: Props) {
       .order("received_at", { ascending: false }),
   ]);
 
+  // Which test_requests have a released PDF in storage. Single query keyed
+  // by test_request_id so the TestAction component can render a "View PDF"
+  // link without each row firing its own join.
+  const allTestIds = (tests ?? []).map((t) => t.id);
+  const hasPdfByTrId = new Map<string, boolean>();
+  if (allTestIds.length > 0) {
+    const { data: pdfLinks } = await supabase
+      .from("result_test_requests")
+      .select("test_request_id, results!inner ( storage_path )")
+      .in("test_request_id", allTestIds);
+    for (const link of pdfLinks ?? []) {
+      const r = (link as { results: { storage_path: string | null } | { storage_path: string | null }[] | null }).results;
+      const resolved = Array.isArray(r) ? r[0] : r;
+      if (resolved?.storage_path) {
+        hasPdfByTrId.set(link.test_request_id as string, true);
+      }
+    }
+  }
+
   // Admin-only: fetch PF entries to render status badges per test_request.
   const testIds = (tests ?? []).map((t) => t.id);
   type PfEntry = {
@@ -358,6 +377,16 @@ export default async function VisitDetailPage({ params }: Props) {
                               >
                                 {c.status.replace(/_/g, " ")}
                               </span>
+                              {c.status === "released" && hasPdfByTrId.get(c.id) ? (
+                                <a
+                                  href={`/staff/results/${c.id}/pdf`}
+                                  target="_blank"
+                                  rel="noopener"
+                                  className="font-bold text-[color:var(--color-brand-cyan)] hover:underline"
+                                >
+                                  PDF →
+                                </a>
+                              ) : null}
                             </span>
                           </li>
                         );
@@ -494,6 +523,7 @@ export default async function VisitDetailPage({ params }: Props) {
                         testRequestId={t.id}
                         visitId={visit.id}
                         paid={isPaid}
+                        hasPdf={hasPdfByTrId.get(t.id) === true}
                         preferredMedium={
                           (patient.preferred_release_medium ?? null) as
                             | "physical"
@@ -701,6 +731,7 @@ interface TestActionProps {
   visitId: string;
   paid: boolean;
   preferredMedium: "physical" | "email" | "viber" | "gcash" | "pickup" | null;
+  hasPdf?: boolean;
 }
 
 // Renders a context-appropriate cell for the Action column on the visit
@@ -712,6 +743,7 @@ function TestAction({
   visitId,
   paid,
   preferredMedium,
+  hasPdf,
 }: TestActionProps) {
   if (status === "ready_for_release") {
     return (
@@ -751,9 +783,21 @@ function TestAction({
 
   if (status === "released") {
     return (
-      <span className="text-xs font-semibold text-emerald-700">
-        Released ✓
-      </span>
+      <div className="flex flex-col items-end gap-0.5">
+        <span className="text-xs font-semibold text-emerald-700">
+          Released ✓
+        </span>
+        {hasPdf ? (
+          <a
+            href={`/staff/results/${testRequestId}/pdf`}
+            target="_blank"
+            rel="noopener"
+            className="text-xs font-bold text-[color:var(--color-brand-cyan)] hover:underline"
+          >
+            View PDF →
+          </a>
+        ) : null}
+      </div>
     );
   }
 
