@@ -22,15 +22,15 @@ const STATUS_LABEL: Record<StatusFilter, string> = {
 // Status values come from test_requests.status. Map filter → underlying values.
 const STATUS_FILTER_TO_DB: Record<Exclude<StatusFilter, "all">, string[]> = {
   released: ["released"],
-  ready: ["completed", "signed_off"],
+  ready: ["result_uploaded", "ready_for_release"],
   in_progress: ["requested", "in_progress"],
   cancelled: ["cancelled"],
 };
 
 const STATUS_BADGE: Record<string, string> = {
   released: "bg-emerald-50 text-emerald-700 border-emerald-200",
-  completed: "bg-sky-50 text-sky-700 border-sky-200",
-  signed_off: "bg-sky-50 text-sky-700 border-sky-200",
+  result_uploaded: "bg-sky-50 text-sky-700 border-sky-200",
+  ready_for_release: "bg-sky-50 text-sky-700 border-sky-200",
   in_progress: "bg-amber-50 text-amber-700 border-amber-200",
   requested: "bg-slate-50 text-slate-700 border-slate-200",
   cancelled: "bg-red-50 text-red-700 border-red-200",
