@@ -16,6 +16,10 @@ export interface StaffNavItem {
   // The current path is "active" if it equals href OR starts with `${href}/`.
   // Override with a custom matcher when needed (e.g. /staff is too broad).
   exact?: boolean;
+  // Extra prefix that also marks this item active. Use when href points at a
+  // sub-route (e.g. /staff/visits/new) but the item should still light up on
+  // sibling routes (/staff/visits archive, /staff/visits/[id] detail).
+  activePrefix?: string;
   roles: readonly StaffRole[];
 }
 
@@ -64,9 +68,10 @@ export const STAFF_NAV: StaffNavSection[] = [
         roles: ["reception", "admin"],
       },
       {
-        href: "/staff/visits",
+        href: "/staff/visits/new",
         label: "Visits",
-        description: "Today's and historic patient visits. The Archive tab is a searchable list of every visit ever (filter by date / patient / status). The New visit tab starts a new one — pick the patient (or register new), pick services, route to lab/imaging/consult.",
+        activePrefix: "/staff/visits",
+        description: "Today's and historic patient visits. Lands on the New visit tab (pick patient → pick services → route to lab/imaging/consult). Switch to Archive to search every visit ever (filter by date / patient / status).",
         roles: ["reception", "admin"],
       },
       {
@@ -463,7 +468,14 @@ export function visibleNavFor(role: StaffRole): StaffNavSection[] {
 
 export function isItemActive(item: StaffNavItem, pathname: string): boolean {
   if (item.exact) return pathname === item.href;
-  return pathname === item.href || pathname.startsWith(`${item.href}/`);
+  if (pathname === item.href || pathname.startsWith(`${item.href}/`)) return true;
+  if (item.activePrefix) {
+    return (
+      pathname === item.activePrefix ||
+      pathname.startsWith(`${item.activePrefix}/`)
+    );
+  }
+  return false;
 }
 
 // True if any item in the subgroup matches the current path. Drives

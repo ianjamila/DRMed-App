@@ -5,8 +5,8 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 
 const TABS: { href: string; label: string }[] = [
-  { href: "/staff/visits", label: "Archive" },
   { href: "/staff/visits/new", label: "New visit" },
+  { href: "/staff/visits", label: "Archive" },
 ];
 
 function isActive(tabHref: string, pathname: string): boolean {
