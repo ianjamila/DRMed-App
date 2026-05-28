@@ -69,6 +69,13 @@ export function HmoClaimsClient({
 
   return (
     <div className="space-y-4">
+      <ConsolidatedTotals
+        summary={summary}
+        unbilled={fUnbilled}
+        stuck={fStuck}
+        aging={fAging}
+        kind={kind}
+      />
       <KindToggle kind={kind} onChange={setKind} />
       <ViewToggle view={view} onChange={setView} />
       {view === "by_provider" && (
@@ -83,6 +90,150 @@ export function HmoClaimsClient({
       {view === "all_unbilled" && <AllUnbilled rows={fUnbilled} />}
       {view === "all_stuck" && <AllStuck rows={fStuck} />}
       {view === "aging_matrix" && <AgingMatrix rows={fAging} />}
+    </div>
+  );
+}
+
+function ConsolidatedTotals({
+  summary,
+  unbilled,
+  stuck,
+  aging,
+  kind,
+}: {
+  summary: SummaryRow[];
+  unbilled: UnbilledRow[];
+  stuck: StuckRow[];
+  aging: AgingRow[];
+  kind: Kind;
+}) {
+  const totals = useMemo(() => {
+    if (kind === "all") {
+      // Use the pre-aggregated server totals (already include live + historic).
+      let unresolved = 0;
+      let unbilledTotal = 0;
+      let stuckTotal = 0;
+      let providers = 0;
+      let oldestIso: string | null = null;
+      for (const r of summary) {
+        providers += 1;
+        unresolved += Number(r.total_unresolved_ar_php ?? 0);
+        unbilledTotal += Number(r.total_unbilled_php ?? 0);
+        stuckTotal += Number(r.total_stuck_php ?? 0);
+        const o = r.oldest_open_released_at;
+        if (o && (!oldestIso || o < oldestIso)) oldestIso = o as string;
+      }
+      return {
+        providers,
+        unresolved,
+        unbilledTotal,
+        unbilledCount: unbilled.length,
+        stuckTotal,
+        stuckCount: stuck.length,
+        oldestIso,
+      };
+    }
+    // Kind-filtered: derive from the kind-filtered detail arrays.
+    let unbilledTotal = 0;
+    for (const r of unbilled) unbilledTotal += Number(r.billed_amount_php ?? 0);
+    let stuckTotal = 0;
+    for (const r of stuck) stuckTotal += Number(r.unresolved_balance_php ?? 0);
+    let unresolved = 0;
+    for (const r of aging) unresolved += Number(r.total_php ?? 0);
+    const providerIds = new Set<string>();
+    for (const r of unbilled) if (r.provider_id) providerIds.add(r.provider_id as string);
+    for (const r of stuck) if (r.provider_id) providerIds.add(r.provider_id as string);
+    for (const r of aging) if (r.provider_id) providerIds.add(r.provider_id as string);
+    let oldestIso: string | null = null;
+    for (const r of unbilled) {
+      const o = r.released_at ?? null;
+      if (o && (!oldestIso || o < oldestIso)) oldestIso = o as string;
+    }
+    return {
+      providers: providerIds.size,
+      unresolved,
+      unbilledTotal,
+      unbilledCount: unbilled.length,
+      stuckTotal,
+      stuckCount: stuck.length,
+      oldestIso,
+    };
+  }, [summary, unbilled, stuck, aging, kind]);
+
+  const oldestLabel = totals.oldestIso
+    ? new Date(totals.oldestIso).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })
+    : "—";
+  const oldestAgeDays = totals.oldestIso
+    ? Math.max(0, Math.floor((Date.now() - new Date(totals.oldestIso).getTime()) / 86400000))
+    : null;
+
+  return (
+    <section
+      aria-label="Consolidated HMO totals"
+      className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-navy)] p-4 text-white shadow-sm"
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="font-[family-name:var(--font-heading)] text-lg font-bold">
+          All HMOs combined
+        </h2>
+        <p className="text-xs text-white/70">
+          {totals.providers} provider{totals.providers === 1 ? "" : "s"}
+          {kind !== "all" ? ` · ${KIND_LABELS[kind].toLowerCase()} only` : null}
+        </p>
+      </div>
+      <dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Metric
+          label="Unresolved AR"
+          value={PHP.format(totals.unresolved)}
+        />
+        <Metric
+          label="Unbilled"
+          value={PHP.format(totals.unbilledTotal)}
+          sub={`${totals.unbilledCount} item${totals.unbilledCount === 1 ? "" : "s"}`}
+        />
+        <Metric
+          label="Stuck"
+          value={PHP.format(totals.stuckTotal)}
+          sub={`${totals.stuckCount} item${totals.stuckCount === 1 ? "" : "s"}`}
+          tone={totals.stuckTotal > 0 ? "warn" : undefined}
+        />
+        <Metric
+          label="Oldest open"
+          value={oldestLabel}
+          sub={oldestAgeDays != null ? `${oldestAgeDays} days ago` : undefined}
+        />
+      </dl>
+    </section>
+  );
+}
+
+function Metric({
+  label,
+  value,
+  sub,
+  tone,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  tone?: "warn";
+}) {
+  return (
+    <div>
+      <dt className="text-[10px] font-bold uppercase tracking-wider text-white/60">
+        {label}
+      </dt>
+      <dd
+        className={
+          "mt-1 font-mono text-base font-semibold tabular-nums " +
+          (tone === "warn" ? "text-amber-300" : "text-white")
+        }
+      >
+        {value}
+      </dd>
+      {sub ? (
+        <dd className="mt-0.5 text-[10px] text-white/60">{sub}</dd>
+      ) : null}
     </div>
   );
 }
