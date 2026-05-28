@@ -108,7 +108,7 @@ function SummaryStrip({ summary }: { summary: SummaryRow }) {
       value: PHP.format(summary.total_unbilled_php ?? 0),
     },
     {
-      label: "Stuck",
+      label: "Aging",
       value: PHP.format(summary.total_stuck_php ?? 0),
       tone: (summary.total_stuck_php ?? 0) > 0 ? "danger" : undefined,
     },

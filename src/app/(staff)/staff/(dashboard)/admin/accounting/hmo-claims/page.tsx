@@ -47,7 +47,7 @@ export default async function HmoClaimsIndexPage() {
           HMO claims
         </h1>
         <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
-          Per-provider HMO accounts receivable with unbilled / stuck-claim
+          Per-provider HMO accounts receivable with unbilled / aging
           detection. Drill into a provider to manage their claim batches.
         </p>
       </header>
