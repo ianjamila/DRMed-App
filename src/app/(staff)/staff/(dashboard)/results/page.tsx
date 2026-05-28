@@ -239,7 +239,7 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
               <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                 <tr>
                   <th className="px-4 py-3">Patient</th>
-                  <th className="px-4 py-3">Service</th>
+                  <th className="px-4 py-3">Tests</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Requested</th>
                   <th className="px-4 py-3">Completed</th>
@@ -248,13 +248,14 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
-                {filtered.map((r) => {
-                  const pat = r.visits?.patients;
+                {groupByVisit(filtered).map((g) => {
+                  const pat = g.patient;
                   const patientLabel = pat
                     ? `${pat.last_name}, ${pat.first_name}`
                     : "—";
+                  const statusSummary = summarizeStatuses(g.tests.map((t) => t.status));
                   return (
-                    <tr key={r.id} className="hover:bg-[color:var(--color-brand-bg)]">
+                    <tr key={g.visitId} className="hover:bg-[color:var(--color-brand-bg)]">
                       <td className="px-4 py-3">
                         <div className="font-semibold text-[color:var(--color-brand-navy)]">
                           {patientLabel}
@@ -266,40 +267,53 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
                         ) : null}
                       </td>
                       <td className="px-4 py-3 text-xs">
-                        <span className="font-mono text-[color:var(--color-brand-text-soft)]">
-                          {r.services?.code ?? "—"}
-                        </span>{" "}
-                        {r.services?.name ?? ""}
+                        <div className="flex flex-col gap-0.5">
+                          {g.tests.map((t) => (
+                            <div key={t.id}>
+                              <span className="font-mono text-[color:var(--color-brand-text-soft)]">
+                                {t.code}
+                              </span>{" "}
+                              {t.name}
+                            </div>
+                          ))}
+                        </div>
                       </td>
                       <td className="px-4 py-3">
-                        <span
-                          className={`inline-block rounded-full border px-2 py-0.5 text-xs font-medium ${STATUS_BADGE[r.status] ?? "bg-slate-50 text-slate-700 border-slate-200"}`}
-                        >
-                          {r.status}
-                        </span>
+                        {statusSummary.kind === "uniform" ? (
+                          <span
+                            className={`inline-block rounded-full border px-2 py-0.5 text-xs font-medium ${STATUS_BADGE[statusSummary.status] ?? "bg-slate-50 text-slate-700 border-slate-200"}`}
+                          >
+                            {statusSummary.status}
+                          </span>
+                        ) : (
+                          <div className="flex flex-col gap-0.5">
+                            {statusSummary.entries.map((e) => (
+                              <span
+                                key={e.status}
+                                className={`inline-block rounded-full border px-2 py-0.5 text-[10px] font-medium ${STATUS_BADGE[e.status] ?? "bg-slate-50 text-slate-700 border-slate-200"}`}
+                              >
+                                {e.status} × {e.count}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-xs text-[color:var(--color-brand-text-soft)]">
-                        {new Date(r.requested_at).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })}
+                        {formatDateTime(g.requestedAt)}
                       </td>
                       <td className="px-4 py-3 text-xs text-[color:var(--color-brand-text-soft)]">
-                        {r.completed_at
-                          ? new Date(r.completed_at).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })
-                          : "—"}
+                        {g.completedAt ? formatDateTime(g.completedAt) : "—"}
                       </td>
                       <td className="px-4 py-3 text-xs text-[color:var(--color-brand-text-soft)]">
-                        {r.released_at
-                          ? new Date(r.released_at).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })
-                          : "—"}
+                        {g.releasedAt ? formatDateTime(g.releasedAt) : "—"}
                       </td>
                       <td className="px-4 py-3 text-right text-xs">
-                        {r.visits?.id ? (
-                          <Link
-                            href={`/staff/visits/${r.visits.id}`}
-                            className="font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
-                          >
-                            {r.visits.visit_number}
-                          </Link>
-                        ) : "—"}
+                        <Link
+                          href={`/staff/visits/${g.visitId}`}
+                          className="font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
+                        >
+                          {g.visitNumber}
+                        </Link>
                       </td>
                     </tr>
                   );
@@ -345,4 +359,85 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
       ) : null}
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+interface VisitGroup {
+  visitId: string;
+  visitNumber: string;
+  patient: { first_name: string; last_name: string; drm_id: string } | null;
+  tests: { id: string; status: string; code: string; name: string }[];
+  requestedAt: string;
+  completedAt: string | null;
+  releasedAt: string | null;
+}
+
+function groupByVisit(rows: ResultRow[]): VisitGroup[] {
+  const groups = new Map<string, VisitGroup>();
+  for (const r of rows) {
+    const visit = r.visits;
+    if (!visit) continue;
+    const existing = groups.get(visit.id);
+    const test = {
+      id: r.id,
+      status: r.status,
+      code: r.services?.code ?? "—",
+      name: r.services?.name ?? "",
+    };
+    if (existing) {
+      existing.tests.push(test);
+      // earliest requested, latest completed/released across the visit
+      if (r.requested_at < existing.requestedAt) existing.requestedAt = r.requested_at;
+      if (r.completed_at && (!existing.completedAt || r.completed_at > existing.completedAt)) {
+        existing.completedAt = r.completed_at;
+      }
+      if (r.released_at && (!existing.releasedAt || r.released_at > existing.releasedAt)) {
+        existing.releasedAt = r.released_at;
+      }
+    } else {
+      groups.set(visit.id, {
+        visitId: visit.id,
+        visitNumber: visit.visit_number,
+        patient: visit.patients,
+        tests: [test],
+        requestedAt: r.requested_at,
+        completedAt: r.completed_at,
+        releasedAt: r.released_at,
+      });
+    }
+  }
+  // newest first by requested_at
+  return Array.from(groups.values()).sort((a, b) =>
+    a.requestedAt < b.requestedAt ? 1 : -1,
+  );
+}
+
+type StatusSummary =
+  | { kind: "uniform"; status: string }
+  | { kind: "mixed"; entries: { status: string; count: number }[] };
+
+function summarizeStatuses(statuses: string[]): StatusSummary {
+  const counts = new Map<string, number>();
+  for (const s of statuses) counts.set(s, (counts.get(s) ?? 0) + 1);
+  if (counts.size === 1) {
+    return { kind: "uniform", status: statuses[0] };
+  }
+  // Most-progressed first so the user reads the headline status at a glance.
+  const order = ["released", "ready_for_release", "result_uploaded", "in_progress", "requested", "cancelled"];
+  const entries = Array.from(counts.entries())
+    .map(([status, count]) => ({ status, count }))
+    .sort((a, b) => order.indexOf(a.status) - order.indexOf(b.status));
+  return { kind: "mixed", entries };
+}
+
+function formatDateTime(iso: string): string {
+  // e.g. "5/28/2026, 11:42 AM"
+  return new Date(iso).toLocaleString("en-PH", {
+    timeZone: "Asia/Manila",
+    dateStyle: "short",
+    timeStyle: "short",
+  });
 }
