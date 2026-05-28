@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { listRecurringTemplatesAction } from "@/lib/actions/accounting/recurring-templates";
 import { listVendorsAction } from "@/lib/actions/accounting/vendors";
 import { RecurringClient } from "./recurring-client";
+import { BillsTabs } from "../_components/bills-tabs";
 
 export const metadata = { title: "Recurring bills — AP — DRMed" };
 export const dynamic = "force-dynamic";
@@ -41,6 +42,8 @@ export default async function RecurringPage() {
           </p>
         </div>
       </header>
+
+      <div className="mb-6"><BillsTabs /></div>
 
       {templates.ok ? (
         <RecurringClient

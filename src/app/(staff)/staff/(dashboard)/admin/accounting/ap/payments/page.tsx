@@ -2,6 +2,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { listBillPaymentsAction } from "@/lib/actions/accounting/bill-payments";
 import { listVendorsAction } from "@/lib/actions/accounting/vendors";
 import { PaymentsIndexClient } from "./payments-index-client";
+import { BillsTabs } from "../_components/bills-tabs";
 import Link from "next/link";
 
 export const metadata = { title: "Payments — AP — DRMed" };
@@ -35,7 +36,7 @@ export default async function PaymentsIndexPage({
             Phase 12.4 · Admin · AP
           </p>
           <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            Payments
+            Bill payments
           </h1>
           <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
             Outflows to vendors. Each payment may settle multiple bills via
@@ -49,6 +50,8 @@ export default async function PaymentsIndexPage({
           + New payment
         </Link>
       </header>
+
+      <div className="mb-6"><BillsTabs /></div>
 
       {payments.ok ? (
         <PaymentsIndexClient

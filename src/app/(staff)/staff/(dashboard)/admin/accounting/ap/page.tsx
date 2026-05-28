@@ -1,6 +1,7 @@
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { getAPDashboardAction } from "@/lib/actions/accounting/ap-dashboard";
 import { APDashboardClient } from "./ap-dashboard-client";
+import { BillsTabs } from "./_components/bills-tabs";
 
 export const metadata = { title: "Accounts Payable — DRMed" };
 export const dynamic = "force-dynamic";
@@ -16,7 +17,7 @@ export default async function APDashboardPage() {
           Phase 12.4 · Admin · AP
         </p>
         <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Accounts Payable
+          Bills overview
         </h1>
         <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
           Operating-expense AP at a glance: outstanding by aging bucket,
@@ -24,6 +25,8 @@ export default async function APDashboardPage() {
           WT-Expanded month-to-date.
         </p>
       </header>
+
+      <BillsTabs />
 
       {r.ok ? (
         <APDashboardClient data={r.data} />

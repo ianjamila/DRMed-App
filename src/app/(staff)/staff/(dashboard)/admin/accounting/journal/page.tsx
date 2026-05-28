@@ -24,8 +24,29 @@ const STATUS_BADGE: Record<string, string> = {
   reversed: "bg-slate-100 text-slate-700 border-slate-200",
 };
 
+const SOURCE_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "All sources" },
+  { value: "manual", label: "Manual / Quick expense" },
+  { value: "payment", label: "Patient payment" },
+  { value: "bill_post", label: "AP bill posted" },
+  { value: "bill_payment", label: "AP bill payment" },
+  { value: "test_request", label: "Lab service" },
+  { value: "history_import", label: "History import (12.B)" },
+  { value: "reversal", label: "Reversal" },
+  { value: "doctor_pf_disbursement", label: "Doctor PF payout" },
+  { value: "cogs_send_out", label: "COGS send-out" },
+];
+
 interface SearchProps {
-  searchParams: Promise<{ status?: string; page?: string; start?: string; end?: string }>;
+  searchParams: Promise<{
+    status?: string;
+    page?: string;
+    start?: string;
+    end?: string;
+    source?: string;
+    account?: string;
+    q?: string;
+  }>;
 }
 
 interface JeRow {
@@ -38,7 +59,20 @@ interface JeRow {
   created_at: string;
 }
 
+interface LineRow {
+  entry_id: string;
+  debit_php: number;
+  credit_php: number;
+  account_id: string;
+  chart_of_accounts: { code: string; name: string } | null;
+}
+
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+const PHP = new Intl.NumberFormat("en-PH", {
+  style: "currency",
+  currency: "PHP",
+});
 
 export default async function JournalListPage({ searchParams }: SearchProps) {
   await requireAdminStaff();
@@ -52,8 +86,42 @@ export default async function JournalListPage({ searchParams }: SearchProps) {
   const todayISO = todayManilaISODate();
   const start = sp.start && DATE_RE.test(sp.start) ? sp.start : "";
   const end = sp.end && DATE_RE.test(sp.end) ? sp.end : "";
+  const source = sp.source?.trim() ?? "";
+  const accountCode = sp.account?.trim() ?? "";
+  const q = sp.q?.trim() ?? "";
 
   const admin = createAdminClient();
+
+  // CoA list for the Account filter dropdown.
+  const { data: coaList } = await admin
+    .from("chart_of_accounts")
+    .select("code, name, type")
+    .eq("is_active", true)
+    .order("code");
+
+  // If filtering by account, first find the entry_ids that touch it.
+  let entryIdFilter: string[] | null = null;
+  if (accountCode) {
+    const target = (coaList ?? []).find((c) => c.code === accountCode);
+    if (target) {
+      const { data: lineHits } = await admin
+        .from("journal_lines")
+        .select("entry_id, account_id, chart_of_accounts!account_id ( code )")
+        .eq("chart_of_accounts.code", accountCode)
+        .limit(5000);
+      entryIdFilter = Array.from(
+        new Set(
+          (lineHits ?? [])
+            .filter((l) => {
+              const coa = l.chart_of_accounts as { code: string } | { code: string }[] | null;
+              const code = Array.isArray(coa) ? coa[0]?.code : coa?.code;
+              return code === accountCode;
+            })
+            .map((l) => l.entry_id as string),
+        ),
+      );
+    }
+  }
 
   let query = admin
     .from("journal_entries")
@@ -67,6 +135,15 @@ export default async function JournalListPage({ searchParams }: SearchProps) {
   if (status !== "all") query = query.eq("status", status);
   if (start) query = query.gte("posting_date", start);
   if (end) query = query.lte("posting_date", end);
+  if (source) query = query.eq("source_kind", source as never);
+  if (q) query = query.ilike("description", `%${q}%`);
+  if (entryIdFilter) {
+    if (entryIdFilter.length === 0) {
+      query = query.eq("id", "00000000-0000-0000-0000-000000000000");
+    } else {
+      query = query.in("id", entryIdFilter);
+    }
+  }
 
   const { data, count } = await query.returns<JeRow[]>();
   const rows = data ?? [];
@@ -74,24 +151,58 @@ export default async function JournalListPage({ searchParams }: SearchProps) {
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
 
-  function pageHref(p: number) {
+  // Pull primary DR line per JE (largest debit, with CoA code/name) for the
+  // Type + Amount columns.
+  let primaryByEntry: Map<string, { code: string; name: string; amount: number }> = new Map();
+  if (rows.length > 0) {
+    const { data: lines } = await admin
+      .from("journal_lines")
+      .select("entry_id, debit_php, credit_php, account_id, chart_of_accounts!account_id ( code, name )")
+      .in("entry_id", rows.map((r) => r.id))
+      .returns<LineRow[]>();
+
+    for (const line of lines ?? []) {
+      const coa = (Array.isArray(line.chart_of_accounts)
+        ? line.chart_of_accounts[0]
+        : line.chart_of_accounts) ?? null;
+      const debit = Number(line.debit_php);
+      if (!coa || debit <= 0) continue;
+      const prev = primaryByEntry.get(line.entry_id);
+      if (!prev || debit > prev.amount) {
+        primaryByEntry.set(line.entry_id, {
+          code: coa.code,
+          name: coa.name,
+          amount: debit,
+        });
+      }
+    }
+  }
+
+  function buildHref(overrides: Record<string, string | null>): string {
     const params = new URLSearchParams();
-    if (status !== "draft") params.set("status", status);
-    if (start) params.set("start", start);
-    if (end) params.set("end", end);
-    if (p > 1) params.set("page", String(p));
+    const base: Record<string, string> = {
+      status: status === "draft" ? "" : status,
+      start,
+      end,
+      source,
+      account: accountCode,
+      q,
+    };
+    for (const [k, v] of Object.entries({ ...base, ...overrides })) {
+      if (v) params.set(k, v);
+    }
     const qs = params.toString();
     return `/staff/admin/accounting/journal${qs ? `?${qs}` : ""}`;
   }
 
-  function statusHref(s: StatusFilter) {
-    const params = new URLSearchParams();
-    if (s !== "draft") params.set("status", s);
-    if (start) params.set("start", start);
-    if (end) params.set("end", end);
-    const qs = params.toString();
-    return `/staff/admin/accounting/journal${qs ? `?${qs}` : ""}`;
-  }
+  const expenseAccounts = (coaList ?? []).filter(
+    (c) => c.type === "expense" || c.type === "contra_expense",
+  );
+  const otherAccounts = (coaList ?? []).filter(
+    (c) => c.type !== "expense" && c.type !== "contra_expense",
+  );
+
+  const hasFilters = Boolean(start || end || source || accountCode || q);
 
   return (
     <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
@@ -110,9 +221,7 @@ export default async function JournalListPage({ searchParams }: SearchProps) {
             <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
               {total} entr{total === 1 ? "y" : "ies"} ·{" "}
               {STATUS_LABEL[status].toLowerCase()}
-              {start || end
-                ? ` · ${start || "…"} → ${end || "…"}`
-                : null}
+              {hasFilters ? " · filtered" : null}
             </p>
           </div>
           <Link
@@ -130,7 +239,7 @@ export default async function JournalListPage({ searchParams }: SearchProps) {
           return (
             <Link
               key={s}
-              href={statusHref(s)}
+              href={buildHref({ status: s === "draft" ? "" : s })}
               className={`min-h-11 rounded-full border px-4 py-2 text-sm font-medium transition-colors ${
                 active
                   ? "border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-cyan)] text-white"
@@ -144,16 +253,16 @@ export default async function JournalListPage({ searchParams }: SearchProps) {
       </nav>
 
       <form
-        className="mb-6 flex flex-wrap items-end gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4"
+        className="mb-6 grid grid-cols-1 gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4 sm:grid-cols-2 lg:grid-cols-6"
         action="/staff/admin/accounting/journal"
       >
-        <input type="hidden" name="status" value={status} />
+        <input type="hidden" name="status" value={status === "draft" ? "" : status} />
         <div className="flex flex-col">
           <label
             htmlFor="start"
             className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]"
           >
-            Posting date from
+            Date from
           </label>
           <input
             type="date"
@@ -180,20 +289,88 @@ export default async function JournalListPage({ searchParams }: SearchProps) {
             className="mt-1 rounded-md border border-[color:var(--color-brand-bg-mid)] px-2 py-1.5 text-sm"
           />
         </div>
-        <button
-          type="submit"
-          className="min-h-11 rounded-md border border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-cyan)] px-4 py-1.5 text-sm font-medium text-white hover:bg-[color:var(--color-brand-cyan-mid)]"
-        >
-          Apply
-        </button>
-        {start || end ? (
-          <Link
-            href={statusHref(status)}
-            className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-4 py-1.5 text-sm text-[color:var(--color-brand-text-soft)] transition-colors hover:border-[color:var(--color-brand-cyan)]"
+        <div className="flex flex-col">
+          <label
+            htmlFor="source"
+            className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]"
           >
-            Clear
-          </Link>
-        ) : null}
+            Source
+          </label>
+          <select
+            id="source"
+            name="source"
+            defaultValue={source}
+            className="mt-1 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1.5 text-sm"
+          >
+            {SOURCE_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="flex flex-col">
+          <label
+            htmlFor="account"
+            className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]"
+          >
+            Account
+          </label>
+          <select
+            id="account"
+            name="account"
+            defaultValue={accountCode}
+            className="mt-1 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1.5 text-sm"
+          >
+            <option value="">All accounts</option>
+            <optgroup label="Expense">
+              {expenseAccounts.map((c) => (
+                <option key={c.code} value={c.code}>
+                  {c.code} · {c.name}
+                </option>
+              ))}
+            </optgroup>
+            <optgroup label="Other">
+              {otherAccounts.map((c) => (
+                <option key={c.code} value={c.code}>
+                  {c.code} · {c.name}
+                </option>
+              ))}
+            </optgroup>
+          </select>
+        </div>
+        <div className="flex flex-col sm:col-span-2">
+          <label
+            htmlFor="q"
+            className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]"
+          >
+            Description contains
+          </label>
+          <input
+            type="text"
+            id="q"
+            name="q"
+            defaultValue={q}
+            placeholder="e.g. MERALCO, Hi Precision, rent"
+            className="mt-1 rounded-md border border-[color:var(--color-brand-bg-mid)] px-2 py-1.5 text-sm"
+          />
+        </div>
+        <div className="col-span-full flex flex-wrap gap-2">
+          <button
+            type="submit"
+            className="min-h-11 rounded-md border border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-cyan)] px-4 py-1.5 text-sm font-medium text-white hover:bg-[color:var(--color-brand-cyan-mid)]"
+          >
+            Apply
+          </button>
+          {hasFilters ? (
+            <Link
+              href={buildHref({ start: "", end: "", source: "", account: "", q: "" })}
+              className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-4 py-1.5 text-sm text-[color:var(--color-brand-text-soft)] transition-colors hover:border-[color:var(--color-brand-cyan)]"
+            >
+              Clear filters
+            </Link>
+          ) : null}
+        </div>
       </form>
 
       <section className="overflow-hidden rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
@@ -203,48 +380,66 @@ export default async function JournalListPage({ searchParams }: SearchProps) {
           </p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-sm">
+            <table className="w-full min-w-[860px] text-sm">
               <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                 <tr>
                   <th className="px-4 py-3">Entry #</th>
-                  <th className="px-4 py-3">Posting date</th>
+                  <th className="px-4 py-3">Date</th>
                   <th className="px-4 py-3">Description</th>
+                  <th className="px-4 py-3">Type (DR)</th>
+                  <th className="px-4 py-3 text-right">Amount</th>
                   <th className="px-4 py-3">Source</th>
                   <th className="px-4 py-3">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
-                {rows.map((je) => (
-                  <tr
-                    key={je.id}
-                    className="hover:bg-[color:var(--color-brand-bg)]"
-                  >
-                    <td className="px-4 py-3 font-mono text-xs">
-                      <Link
-                        href={`/staff/admin/accounting/journal/${je.id}`}
-                        className="text-[color:var(--color-brand-cyan)] hover:underline"
-                      >
-                        {je.entry_number}
-                      </Link>
-                    </td>
-                    <td className="px-4 py-3 text-[color:var(--color-brand-text-soft)]">
-                      {je.posting_date}
-                    </td>
-                    <td className="px-4 py-3 text-[color:var(--color-brand-text)]">
-                      {je.description}
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs text-[color:var(--color-brand-text-soft)]">
-                      {je.source_kind}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`inline-block rounded-full border px-2 py-0.5 text-xs font-medium ${STATUS_BADGE[je.status] ?? ""}`}
-                      >
-                        {je.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
+                {rows.map((je) => {
+                  const primary = primaryByEntry.get(je.id);
+                  return (
+                    <tr
+                      key={je.id}
+                      className="hover:bg-[color:var(--color-brand-bg)]"
+                    >
+                      <td className="px-4 py-3 font-mono text-xs">
+                        <Link
+                          href={`/staff/admin/accounting/journal/${je.id}`}
+                          className="text-[color:var(--color-brand-cyan)] hover:underline"
+                        >
+                          {je.entry_number}
+                        </Link>
+                      </td>
+                      <td className="px-4 py-3 text-[color:var(--color-brand-text-soft)]">
+                        {je.posting_date}
+                      </td>
+                      <td className="px-4 py-3 text-[color:var(--color-brand-text)]">
+                        {je.description}
+                      </td>
+                      <td className="px-4 py-3 text-xs">
+                        {primary ? (
+                          <span>
+                            <span className="font-mono text-[color:var(--color-brand-text-soft)]">{primary.code}</span>
+                            <span className="ml-1">{primary.name}</span>
+                          </span>
+                        ) : (
+                          <span className="text-[color:var(--color-brand-text-soft)]">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono tabular-nums">
+                        {primary ? PHP.format(primary.amount) : "—"}
+                      </td>
+                      <td className="px-4 py-3 font-mono text-xs text-[color:var(--color-brand-text-soft)]">
+                        {je.source_kind}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={`inline-block rounded-full border px-2 py-0.5 text-xs font-medium ${STATUS_BADGE[je.status] ?? ""}`}
+                        >
+                          {je.status}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -259,7 +454,7 @@ export default async function JournalListPage({ searchParams }: SearchProps) {
           <div className="flex gap-2">
             {safePage > 1 ? (
               <Link
-                href={pageHref(safePage - 1)}
+                href={buildHref({ page: String(safePage - 1) })}
                 className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-4 py-1.5 text-sm transition-colors hover:border-[color:var(--color-brand-cyan)]"
               >
                 ← Previous
@@ -271,7 +466,7 @@ export default async function JournalListPage({ searchParams }: SearchProps) {
             )}
             {safePage < totalPages ? (
               <Link
-                href={pageHref(safePage + 1)}
+                href={buildHref({ page: String(safePage + 1) })}
                 className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-4 py-1.5 text-sm transition-colors hover:border-[color:var(--color-brand-cyan)]"
               >
                 Next →

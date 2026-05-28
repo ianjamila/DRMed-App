@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { listVendorsAction } from "@/lib/actions/accounting/vendors";
 import { VendorsIndexClient } from "./vendors-index-client";
+import { BillsTabs } from "../_components/bills-tabs";
 
 export const metadata = { title: "Vendors — AP — DRMed" };
 export const dynamic = "force-dynamic";
@@ -33,6 +34,8 @@ export default async function VendorsIndexPage() {
           + New vendor
         </Link>
       </header>
+
+      <div className="mb-6"><BillsTabs /></div>
 
       {result.ok ? (
         <VendorsIndexClient initialVendors={result.data} />

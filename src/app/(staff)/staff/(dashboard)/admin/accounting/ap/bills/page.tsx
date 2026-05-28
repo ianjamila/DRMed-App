@@ -2,6 +2,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { listBillsAction } from "@/lib/actions/accounting/bills";
 import { listVendorsAction } from "@/lib/actions/accounting/vendors";
 import { BillsIndexClient } from "./bills-index-client";
+import { BillsTabs } from "../_components/bills-tabs";
 import Link from "next/link";
 
 export const metadata = { title: "Bills — AP — DRMed" };
@@ -36,12 +37,11 @@ export default async function BillsIndexPage({
             Phase 12.4 · Admin · AP
           </p>
           <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            Bills
+            Vendor bills
           </h1>
           <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
-            Vendor invoices. Drafts can be edited or deleted; posted bills can
-            only be voided. WT classification is captured at the bill header
-            and frozen on post.
+            Invoices with a due date. For expenses already paid (cash, GCash,
+            owner OOP), use <strong>Quick expense</strong> instead.
           </p>
         </div>
         <Link
@@ -51,6 +51,8 @@ export default async function BillsIndexPage({
           + New bill
         </Link>
       </header>
+
+      <div className="mb-6"><BillsTabs /></div>
 
       {bills.ok ? (
         <BillsIndexClient
