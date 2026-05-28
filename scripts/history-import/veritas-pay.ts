@@ -6,17 +6,22 @@
  *
  * Each VERITAS PAY row is a settlement statement: on Settlement Date, the
  * payment processor deposits Net Settlement = Total Volume − Merchant Fee
- * into the clinic's BPI account, against HMO claims processed in the
- * Period Covered.
+ * into the clinic's BPI account, against CUSTOMER card-terminal receipts
+ * collected during the Period Covered. (NOT HMO claims — the original
+ * script misclassified these as AR-HMO; corrected 2026-05-28.)
  *
  * Per row JE (one per settlement):
  *   DR 1020  Cash in Bank — BPI            (Net Settlement)
  *   DR 6610  Legal & Regulatory             (Merchant Fees = Volume − Net)
- *   CR 1110  Accounts Receivable — HMO     (Total Volume)
+ *   CR 1010  Cash on Hand                   (Total Volume)
  *
- * NOTE: until DOCTOR CONSULTATION + LAB SERVICE imports land, the CR 1110
- * will pile up as a NEGATIVE AR balance. That's expected and resolves when
- * the revenue-side history is posted.
+ * Why CR 1010: the customer-side card transactions were already booked to
+ * 1010 Cash on Hand by the lab-services + doctor-consultations scripts at
+ * service-release time (their cash-channel default routes card MOPs to
+ * 1010). Veritas then sweeps that cash to the bank a few days later, less
+ * a merchant fee. If for any row the original receipt was NOT actually
+ * captured in 1010, partner can reclassify the contra-leg via the JE
+ * editor (CR 1010 → CR 9999, then reclassify out of suspense).
  *
  * source_kind='history_import'; notes='xlsx VERITAS PAY r{N} | SOA={SOA}';
  * idempotent via notes-row marker, per-year fetch.
@@ -170,7 +175,7 @@ function summarise(year: number, rows: RawRow[], skipped: { row_number: number; 
   console.log(`\n=== VERITAS PAY dry-run (year ${year}) ===`);
   console.log(`Rows postable:   ${rows.length}`);
   console.log(`Rows skipped:    ${skipped.length}`);
-  console.log(`Total Volume ₱:  ${sumVol.toFixed(2)} → CR 1110 AR HMO`);
+  console.log(`Total Volume ₱:  ${sumVol.toFixed(2)} → CR 1010 Cash on Hand`);
   console.log(`Net Settlement ₱: ${sumNet.toFixed(2)} → DR 1020 BPI`);
   console.log(`Merchant Fees ₱: ${sumFees.toFixed(2)} → DR 6610 Legal & Reg`);
   if (skipped.length > 0) {
@@ -221,7 +226,7 @@ async function commit(year: number, rows: RawRow[]): Promise<void> {
   const { data: accounts, error: aErr } = await admin.from("chart_of_accounts").select("id, code");
   if (aErr || !accounts) { console.error("ERROR fetching CoA:", aErr); process.exit(3); }
   const codeToId = new Map(accounts.map((a) => [a.code, a.id]));
-  for (const c of ["1020", "1110", "6610"]) {
+  for (const c of ["1010", "1020", "6610"]) {
     if (!codeToId.has(c)) { console.error(`ERROR: CoA missing ${c}`); process.exit(3); }
   }
 
@@ -247,7 +252,7 @@ async function commit(year: number, rows: RawRow[]): Promise<void> {
 
   const drBpiId = codeToId.get("1020")!;
   const drFeesId = codeToId.get("6610")!;
-  const crArId = codeToId.get("1110")!;
+  const crCashId = codeToId.get("1010")!;
 
   const runStamp = new Date().toISOString();
   let posted = 0, already = 0, failed = 0;
@@ -288,7 +293,7 @@ async function commit(year: number, rows: RawRow[]): Promise<void> {
     if (fee > 0) {
       lines.push({ entry_id: je.id, account_id: drFeesId, debit_php: fee, credit_php: 0, description: `Veritas Pay merchant fee (${r.soa_no})`, line_order: 2 });
     }
-    lines.push({ entry_id: je.id, account_id: crArId, debit_php: 0, credit_php: crTotal, description: lineDesc, line_order: lines.length + 1 });
+    lines.push({ entry_id: je.id, account_id: crCashId, debit_php: 0, credit_php: crTotal, description: lineDesc, line_order: lines.length + 1 });
 
     const { error: lErr } = await admin.from("journal_lines").insert(lines);
     if (lErr) {
