@@ -30,7 +30,7 @@ rediscovering a surface from scratch:
 - **drmed-result-templates** — lab result templates, structured result entry, the PDF render pipeline, sign-off / release.
 - **drmed-rls-and-auth** — staff vs patient auth, RLS, audit logging, MFA, signed URLs, RA 10173 — the most compliance-sensitive surface.
 - **drmed-staff-ui** — staff-portal "chrome": sidebar nav config, the shared `SectionTabs`, dashboard cards.
-- **drmed-booking-and-intake** — appointments/booking/registration: `lib/appointments/*`, `lib/patients/resolve`, public `/schedule`, staff "+ New appointment", `/register` self-reg + QR. *(being built in a parallel session)*
+- **drmed-booking-and-intake** — appointments/booking/registration: the shared booking core (`lib/appointments/{timing,create}`, `lib/patients/resolve`), public `/schedule`, staff "+ New appointment" slide-over, `/register` self-reg + reception QR poster.
 
 ## Project at a glance
 
