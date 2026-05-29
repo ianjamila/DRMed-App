@@ -21,9 +21,16 @@ export function translatePgError(err: PgError): string {
       }
       return "That value already exists. Pick a different one.";
     }
-    case "23514":
-      // check_violation — most likely the normal_balance / type mismatch.
+    case "23514": {
+      const m = err.message ?? "";
+      if (/consent/i.test(m)) {
+        return "Patient data-privacy consent is not on file — capture consent before releasing.";
+      }
+      if (/payment_status/i.test(m)) {
+        return "Visit must be paid before results can be released.";
+      }
       return "Invalid value: that combination is not allowed by the schema.";
+    }
     case "23503":
       // foreign_key_violation — caller referenced a row that doesn't exist or is locked from deletion.
       return err.message ?? "Referenced record was not found.";

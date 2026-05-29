@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { notifyResultReleased } from "@/lib/notifications/notify-released";
+import { translatePgError } from "@/lib/accounting/pg-errors";
 
 export type ReleaseMedium =
   | "physical"
@@ -52,8 +53,9 @@ export async function releaseTestAction(
     .eq("visit_id", visitId);
 
   if (error) {
-    // The payment-gating trigger raises check_violation when the visit isn't paid.
-    return { ok: false, error: error.message };
+    // The payment-gating and consent-gating triggers raise check_violation
+    // (23514). translatePgError turns both into friendly, gate-specific text.
+    return { ok: false, error: translatePgError(error) };
   }
 
   const h = await headers();
