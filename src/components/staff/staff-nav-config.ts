@@ -138,38 +138,43 @@ export const STAFF_NAV: StaffNavSection[] = [
         description: "Everything expense-related in one place. Tabs inside: Quick expense (already-paid same-day expenses — cash, GCash, owner OOP), Overview (what's outstanding), Vendor bills (invoices with due dates), Bill payments (the outflows), Vendors (master list), Recurring (monthly auto-bills).",
         roles: ["admin"],
       },
+      {
+        href: "/staff/admin/accounting/cogs/send-outs",
+        label: "Outside-lab costs",
+        description: "Costs for tests the clinic doesn't run in-house and sends to another lab (e.g. Hi Precision). Two tabs: Accrued (you billed the patient but the other lab's invoice isn't in yet) and True-ups (matching your estimate to the real bill once it arrives).",
+        roles: ["admin"],
+      },
+      {
+        href: "/staff/admin/accounting/cogs/send-outs/vendor-performance",
+        label: "Outside-lab performance",
+        description: "How each outside lab is doing: average cost per test, turnaround time, and how close your cost estimates were. Use it when deciding whether to switch outside labs or renegotiate rates.",
+        roles: ["admin"],
+      },
     ],
     subgroups: [
       {
-        heading: "Doctor PF & payroll",
+        heading: "Pay doctors",
         items: [
           {
             href: "/staff/admin/accounting/pf-payouts",
-            label: "Doctor PF payouts",
-            description: "Manages the professional fees the clinic owes each doctor (their cut of consultations they performed). Shows: Open (accrued but not yet paid), Pending HMO (waiting on HMO settlement before paying the doc), and History. Click a doctor to cut a payout — the system books the JE and prints a payout slip.",
+            label: "Pay doctors",
+            description: "Pay each doctor their share of the consults they did (their professional fee). Ready to pay = ready now; Waiting on insurance = held until the HMO pays the clinic; Already paid = past payouts. Pick a doctor, send them the amount by GCash or cash, then record it here.",
             roles: ["admin"],
           },
           {
             href: "/staff/admin/accounting/pf-ytd-summary",
-            label: "Doctor PF year-to-date",
-            description: "Per-doctor scoreboard: total PF earned this year so far, total already paid out, and how much is still owed. Useful for year-end tax reporting (BIR 2316 for employed doctors, 2307 for PF-paid doctors) and answering 'how much do we still owe Dr. X?'.",
+            label: "Doctor pay (this year)",
+            description: "Per-doctor scoreboard for the year: how much each doctor earned, how much you've already paid out, and how much is still owed. Handy for year-end tax forms (BIR 2316 / 2307) and answering 'how much do we still owe Dr. X?'.",
             roles: ["admin"],
           },
-          {
-            href: "/staff/admin/accounting/cogs/send-outs",
-            label: "Lab send-out costs",
-            description: "When the clinic doesn't run a test in-house and sends the sample to Hi Precision (or another lab) the cost is tracked here. Two tabs: Accrued (we billed the patient but haven't received the Hi Precision invoice yet) and True-ups (matching our estimate to the actual bill once it arrives).",
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/accounting/cogs/send-outs/vendor-performance",
-            label: "Send-out vendor scorecard",
-            description: "Performance metrics by send-out lab: average cost per test, turnaround time, accuracy of cost estimates. Use this when deciding whether to switch send-out providers or renegotiate rates with your current one.",
-            roles: ["admin"],
-          },
+        ],
+      },
+      {
+        heading: "Payroll",
+        items: [
           {
             href: "/staff/admin/payroll/runs",
-            label: "Pay runs",
+            label: "Run payroll",
             description: "The actual payroll computation for a given period — gross pay, overtime, deductions (SSS, PhilHealth, Pag-IBIG, withholding tax, loans), and net pay per employee. Reviewing the output and clicking 'Finalize' generates payslips and books the JE.",
             roles: ["admin"],
           },
@@ -205,7 +210,7 @@ export const STAFF_NAV: StaffNavSection[] = [
           },
           {
             href: "/staff/admin/payroll/rates",
-            label: "Statutory rates",
+            label: "Government rates (SSS, PhilHealth, Pag-IBIG, tax)",
             description: "The current government contribution tables — SSS, PhilHealth, Pag-IBIG, and BIR withholding tax brackets. Update these when the government issues new rate schedules (usually January 1).",
             roles: ["admin"],
           },
@@ -217,7 +222,7 @@ export const STAFF_NAV: StaffNavSection[] = [
           },
           {
             href: "/staff/admin/reports/staff-advances",
-            label: "Staff advances",
+            label: "Staff cash advances",
             description: "When staff borrow against future salary (cash advances, loans), the unpaid balance shows here. The next payroll auto-deducts toward repayment. Use to see who still owes what.",
             roles: ["admin"],
           },

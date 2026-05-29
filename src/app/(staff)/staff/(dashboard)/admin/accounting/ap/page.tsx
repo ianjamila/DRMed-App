@@ -20,8 +20,8 @@ export default async function APDashboardPage() {
         </h1>
         <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
           Operating-expense AP at a glance: outstanding by aging bucket,
-          draft-rot detector, upcoming recurring runs, top vendors,
-          WT-Expanded month-to-date.
+          draft-rot detector, upcoming recurring runs, top vendors, and
+          withholding tax so far this month.
         </p>
       </header>
 

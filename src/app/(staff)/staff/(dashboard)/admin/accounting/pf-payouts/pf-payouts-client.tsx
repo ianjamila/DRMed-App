@@ -109,9 +109,9 @@ export function PfPayoutsClient({
   const [tab, setTab] = useState<Tab>("open");
 
   const tabs: { key: Tab; label: string; count: number }[] = [
-    { key: "open", label: "Open", count: openEntries.length },
-    { key: "pending_hmo", label: "Pending HMO", count: pendingHmo.length },
-    { key: "history", label: "History (90d)", count: history.length },
+    { key: "open", label: "Ready to pay", count: openEntries.length },
+    { key: "pending_hmo", label: "Waiting on insurance", count: pendingHmo.length },
+    { key: "history", label: "Already paid", count: history.length },
   ];
 
   return (
@@ -200,7 +200,7 @@ function OpenTab({ entries }: { entries: OpenEntry[] }) {
             onClick={() => setShowBulk(true)}
             className="rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-semibold text-white hover:bg-[color:var(--color-brand-cyan)] transition-colors"
           >
-            Pay all doctors (cash)
+            Pay everyone (cash only)
           </button>
         </div>
       )}
@@ -235,7 +235,7 @@ function OpenTab({ entries }: { entries: OpenEntry[] }) {
                         onClick={() => setPayBatchPid(pid)}
                         className="text-[color:var(--color-brand-cyan)] hover:underline font-medium text-sm"
                       >
-                        Pay batch
+                        Pay this doctor
                       </button>
                     </td>
                   </tr>
@@ -264,7 +264,7 @@ function OpenTab({ entries }: { entries: OpenEntry[] }) {
                   onClick={() => setPayBatchPid(pid)}
                   className="w-full rounded-md border border-[color:var(--color-brand-cyan)] px-3 py-1.5 text-sm font-medium text-[color:var(--color-brand-cyan)] hover:bg-[color:var(--color-brand-cyan)] hover:text-white transition-colors"
                 >
-                  Pay batch
+                  Pay this doctor
                 </button>
               </div>
             ))}
@@ -374,7 +374,7 @@ function PayBatchDialog({
         <div className="mt-4 space-y-4">
           <div>
             <p className="text-sm text-[color:var(--color-brand-text-soft)] mb-1">
-              {group.entries.length} PF entries will be cleared.
+              {group.entries.length} unpaid item{group.entries.length === 1 ? "" : "s"} for this doctor will be marked paid.
             </p>
           </div>
 
@@ -411,7 +411,7 @@ function PayBatchDialog({
               disabled={submitting}
               className="px-4 py-2 text-sm font-semibold rounded-md bg-[color:var(--color-brand-navy)] text-white hover:bg-[color:var(--color-brand-cyan)] transition-colors disabled:opacity-60"
             >
-              {submitting ? "Posting…" : "Confirm payment"}
+              {submitting ? "Saving…" : "Confirm payment"}
             </button>
           </div>
         </div>
@@ -460,12 +460,13 @@ function BulkPayoutDialog({
     <Dialog open onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Pay all doctors (cash)</DialogTitle>
+          <DialogTitle>Pay everyone (cash only)</DialogTitle>
         </DialogHeader>
 
         <div className="mt-4 space-y-4">
           <p className="text-sm text-[color:var(--color-brand-text-soft)]">
-            One cash disbursement will be recorded per doctor.
+            One cash payment will be recorded per doctor. (For GCash, pay each
+            doctor individually instead.)
           </p>
 
           <div className="max-h-64 overflow-y-auto divide-y divide-[color:var(--color-brand-border)] rounded-md border border-[color:var(--color-brand-border)]">
@@ -517,7 +518,7 @@ function PendingHmoTab({ entries, nowIso }: { entries: PendingHmoEntry[]; nowIso
   if (entries.length === 0) {
     return (
       <div className="rounded-md border border-[color:var(--color-brand-border)] bg-[color:var(--color-brand-bg)] p-8 text-center text-sm text-[color:var(--color-brand-text-soft)]">
-        No PFs awaiting HMO settlement.
+        Nothing waiting on insurance right now.
       </div>
     );
   }
@@ -551,7 +552,7 @@ function PendingHmoTab({ entries, nowIso }: { entries: PendingHmoEntry[]; nowIso
             <span className="text-sm font-mono">
               {PHP.format(g.total)}{" "}
               <span className="text-[color:var(--color-brand-text-soft)] font-sans font-normal">
-                ({g.entries.length} entries)
+                ({g.entries.length} item{g.entries.length === 1 ? "" : "s"})
               </span>
             </span>
           </div>
@@ -561,9 +562,9 @@ function PendingHmoTab({ entries, nowIso }: { entries: PendingHmoEntry[]; nowIso
             <table className="w-full text-xs">
               <thead className="border-b border-[color:var(--color-brand-border)] text-[color:var(--color-brand-text-soft)]">
                 <tr>
-                  <th className="px-4 py-2 text-left font-medium">Test request</th>
-                  <th className="px-4 py-2 text-right font-medium">PF PHP</th>
-                  <th className="px-4 py-2 text-right font-medium">Age</th>
+                  <th className="px-4 py-2 text-left font-medium">Reference</th>
+                  <th className="px-4 py-2 text-right font-medium">Fee (₱)</th>
+                  <th className="px-4 py-2 text-right font-medium">Days waiting</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[color:var(--color-brand-border)]">
@@ -602,7 +603,7 @@ function HistoryTab({ disbursements }: { disbursements: HistoryDisbursement[] })
   if (disbursements.length === 0) {
     return (
       <div className="rounded-md border border-[color:var(--color-brand-border)] bg-[color:var(--color-brand-bg)] p-8 text-center text-sm text-[color:var(--color-brand-text-soft)]">
-        No disbursements in the last 90 days.
+        No payments in the last 90 days.
       </div>
     );
   }
@@ -612,10 +613,10 @@ function HistoryTab({ disbursements }: { disbursements: HistoryDisbursement[] })
       <table className="w-full text-sm md:min-w-[640px]">
         <thead className="bg-[color:var(--color-brand-bg)] text-[color:var(--color-brand-text-soft)]">
           <tr>
-            <th className="px-4 py-3 text-left font-medium">Batch</th>
+            <th className="px-4 py-3 text-left font-medium">Reference no.</th>
             <th className="px-4 py-3 text-left font-medium">Date</th>
             <th className="px-4 py-3 text-left font-medium">Doctor</th>
-            <th className="px-4 py-3 text-left font-medium">Method</th>
+            <th className="px-4 py-3 text-left font-medium">Paid by</th>
             <th className="px-4 py-3 text-right font-medium">Total</th>
             <th className="px-4 py-3 text-right font-medium"></th>
           </tr>

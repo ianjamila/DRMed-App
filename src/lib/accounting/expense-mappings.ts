@@ -78,6 +78,6 @@ export const MOP_OPTIONS: { value: Mop; label: string; hint: string }[] = [
   { value: "CHEQUE", label: "Cheque (BPI)", hint: "Cheque drawn from BPI account" },
   { value: "BPI", label: "BPI transfer", hint: "Direct transfer from BPI" },
   { value: "BDO", label: "BDO transfer", hint: "Direct transfer from BDO" },
-  { value: "IAN", label: "Ian's pocket", hint: "Owner Ian paid OOP — recorded as Due to Shareholders" },
-  { value: "FREYA", label: "Freya's pocket", hint: "Owner Freya paid OOP — recorded as Due to Shareholders" },
+  { value: "IAN", label: "Ian's pocket", hint: "Owner Ian paid from personal money — recorded as Due to Shareholders" },
+  { value: "FREYA", label: "Freya's pocket", hint: "Owner Freya paid from personal money — recorded as Due to Shareholders" },
 ];

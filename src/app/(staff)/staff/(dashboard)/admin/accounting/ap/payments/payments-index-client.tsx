@@ -35,6 +35,14 @@ type Filter = {
 
 const METHODS = ["cash", "bank_transfer", "gcash", "cheque"] as const;
 
+const METHOD_LABEL: Record<string, string> = {
+  cash: "Cash",
+  bank_transfer: "Bank transfer",
+  gcash: "GCash",
+  cheque: "Cheque",
+};
+const methodLabel = (m: string) => METHOD_LABEL[m] ?? m;
+
 export function PaymentsIndexClient({
   initialPayments,
   vendors,
@@ -89,7 +97,7 @@ export function PaymentsIndexClient({
           <option value="">All methods</option>
           {METHODS.map((m) => (
             <option key={m} value={m}>
-              {m}
+              {methodLabel(m)}
             </option>
           ))}
         </select>
@@ -152,7 +160,7 @@ export function PaymentsIndexClient({
                 </td>
                 <td className="px-3 py-2">{p.vendor_name ?? "—"}</td>
                 <td className="px-3 py-2 text-xs">{p.payment_date}</td>
-                <td className="px-3 py-2 text-xs">{p.method}</td>
+                <td className="px-3 py-2 text-xs">{methodLabel(p.method)}</td>
                 <td className="px-3 py-2 text-xs">
                   {p.cheque_number ?? p.reference ?? "—"}
                 </td>
