@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { peekVisitPinFlash } from "@/lib/auth/visit-pin-flash";
 import { formatPhp } from "@/lib/marketing/format";
 import { CONTACT, SITE } from "@/lib/marketing/site";
+import { getPatientConsentState } from "@/lib/consent/gate";
 import { PrintButton } from "./print-button";
 
 export const metadata = {
@@ -40,6 +41,8 @@ export default async function ReceiptPage({ params }: Props) {
   if (!visit) notFound();
   const patient = Array.isArray(visit.patients) ? visit.patients[0] : visit.patients;
   if (!patient) notFound();
+
+  const consent = await getPatientConsentState(patient.id);
 
   const lines = (visit.test_requests ?? []).map((tr) => {
     const svc = Array.isArray(tr.services) ? tr.services[0] : tr.services;
@@ -96,6 +99,9 @@ export default async function ReceiptPage({ params }: Props) {
             </p>
             <p className="font-mono text-xs text-[color:var(--color-brand-text-soft)]">
               {patient.drm_id}
+            </p>
+            <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+              Data privacy consent: {consent.current ? "on file" : "not on file"}
             </p>
           </div>
           <div className="sm:text-right">
