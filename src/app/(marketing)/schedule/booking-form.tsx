@@ -313,6 +313,10 @@ export function BookingForm({
               Save this. After your visit, your Secure PIN is printed on the
               receipt — both are required to access results online.
             </p>
+            <p className="mt-2 text-xs text-[color:var(--color-brand-text-soft)]">
+              Next visit, choose &ldquo;Yes, I have a DRM-ID&rdquo; above to skip
+              re-entering your details.
+            </p>
           </div>
         )}
       </div>
