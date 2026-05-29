@@ -153,7 +153,7 @@ export default async function JournalListPage({ searchParams }: SearchProps) {
 
   // Pull primary DR line per JE (largest debit, with CoA code/name) for the
   // Type + Amount columns.
-  let primaryByEntry: Map<string, { code: string; name: string; amount: number }> = new Map();
+  const primaryByEntry: Map<string, { code: string; name: string; amount: number }> = new Map();
   if (rows.length > 0) {
     const { data: lines } = await admin
       .from("journal_lines")

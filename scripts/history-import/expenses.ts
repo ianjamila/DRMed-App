@@ -338,9 +338,7 @@ function summarise(year: number, proposed: ProposedJE[]): void {
   let total = 0;
   for (const p of postable) {
     const dr = p.lines.find((l) => l.debit_php > 0);
-    const cat = p.description;
     if (!dr) continue;
-    const cur = byCat.get(`${dr.account_code} ← ${cat.split(":")[0].replace("[history] ", "")}`) ?? { n: 0, total: 0 };
     const key = dr.account_code;
     const prev = byCat.get(key) ?? { n: 0, total: 0 };
     prev.n += 1;

@@ -174,8 +174,10 @@ function ConsolidatedTotals({
   const oldestLabel = totals.oldestIso
     ? new Date(totals.oldestIso).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })
     : "—";
+  // eslint-disable-next-line react-hooks/purity -- age reflects the current time; client-only display, stable within a day.
+  const nowMs = Date.now();
   const oldestAgeDays = totals.oldestIso
-    ? Math.max(0, Math.floor((Date.now() - new Date(totals.oldestIso).getTime()) / 86400000))
+    ? Math.max(0, Math.floor((nowMs - new Date(totals.oldestIso).getTime()) / 86400000))
     : null;
 
   return (

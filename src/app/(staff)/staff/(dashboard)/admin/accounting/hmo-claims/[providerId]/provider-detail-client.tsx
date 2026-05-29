@@ -304,8 +304,8 @@ function UnbilledTab({
   // Split selection into live vs historic so we can route to the right
   // action surface.
   const { liveIds, historicIds, selectedTotal, historicTotal } = useMemo(() => {
-    let liveList: string[] = [];
-    let historicList: string[] = [];
+    const liveList: string[] = [];
+    const historicList: string[] = [];
     let total = 0;
     let hTotal = 0;
     for (const id of selected) {

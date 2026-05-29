@@ -251,7 +251,7 @@ export function MarkHistoricPaidModal({
           >
             Chart of Accounts
           </a>
-          {" "}and enable "Settlement destination" on the account.
+          {" "}and enable &quot;Settlement destination&quot; on the account.
         </p>
       </label>
       <label className="block text-sm">
