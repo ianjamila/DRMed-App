@@ -37,6 +37,14 @@ export function isValidSlot(slot: ManilaSlot): boolean {
   return true;
 }
 
+// Minutes-since-midnight for an "HH:MM" or "HH:MM:SS" string. Lives here (not
+// in physicians/availability.ts) so timing.ts can stay dependency-light and
+// vitest-importable without pulling availability internals.
+export function minutesOfDayHHMM(t: string): number {
+  const [h, m] = t.split(":");
+  return Number(h) * 60 + Number(m);
+}
+
 export const BOOKING_BRANCHES = [
   "diagnostic_package",
   "lab_request",
