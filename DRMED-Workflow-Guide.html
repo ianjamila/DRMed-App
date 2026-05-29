@@ -1,0 +1,852 @@
+<!doctype html>
+<html lang="en-PH">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DRMED · Clinic Workflow Guide — from patient to doctor payment</title>
+<style>
+  :root{
+    --navy:#284570; --navy-deep:#1a2537;
+    --cyan:#06aef1; --cyan-mid:#3eafe3; --cyan-light:#7fbeff;
+    --steel:#4682b4;
+    --bg:#f0f6fc; --bg-mid:#e3eef9;
+    --text:#1a2537; --text-mid:#374151; --text-soft:#6b7280;
+    --white:#fff;
+    /* role colours */
+    --reception:#06aef1; --lab:#0ea5a3; --doctor:#8b5cf6; --admin:#284570; --patient:#f59e0b;
+    --radius:16px;
+    --shadow:0 14px 40px rgba(40,69,112,.10);
+    --shadow-sm:0 6px 18px rgba(40,69,112,.08);
+    --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:var(--font); line-height:1.6; font-size:16px;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--cyan-mid); text-decoration:none;}
+  a:hover{text-decoration:underline;}
+
+  /* ---------- Hero ---------- */
+  .hero{
+    background:
+      radial-gradient(1200px 400px at 85% -10%, rgba(6,174,241,.35), transparent 60%),
+      linear-gradient(135deg,#284570 0%, #1a2537 100%);
+    color:#fff; padding:64px 32px 72px;
+  }
+  .hero__inner{max-width:1180px; margin:0 auto;}
+  .brand{font-size:15px; font-weight:700; letter-spacing:.5px; opacity:.95;}
+  .brand .dot{color:var(--cyan);}
+  .hero h1{
+    margin:18px 0 10px; font-size:clamp(30px,4.4vw,52px); line-height:1.08;
+    font-weight:800; letter-spacing:-.02em;
+  }
+  .hero p.sub{font-size:clamp(16px,1.6vw,20px); max-width:760px; color:#dbe9f7; margin:0;}
+  .hero__meta{
+    margin-top:28px; display:flex; flex-wrap:wrap; gap:10px;
+  }
+  .chip{
+    display:inline-flex; align-items:center; gap:8px;
+    background:rgba(255,255,255,.10); border:1px solid rgba(255,255,255,.18);
+    padding:7px 13px; border-radius:999px; font-size:13px; font-weight:600; color:#eaf4fd;
+    backdrop-filter:blur(6px);
+  }
+  .chip .swatch{width:9px;height:9px;border-radius:50%;}
+
+  /* ---------- Layout ---------- */
+  .layout{
+    max-width:1180px; margin:0 auto; padding:0 32px;
+    display:grid; grid-template-columns:248px minmax(0,1fr); gap:56px;
+  }
+  /* ---------- Sticky TOC ---------- */
+  .toc{
+    position:sticky; top:24px; align-self:start;
+    margin-top:-36px;
+  }
+  .toc__card{
+    background:#fff; border:1px solid var(--bg-mid); border-radius:var(--radius);
+    box-shadow:var(--shadow-sm); padding:18px 16px;
+  }
+  .toc__title{font-size:11px; font-weight:800; letter-spacing:.12em; text-transform:uppercase; color:var(--text-soft); margin:2px 6px 12px;}
+  .toc a{
+    display:block; color:var(--text-mid); font-size:13.5px; font-weight:500;
+    padding:7px 10px; border-radius:9px; border-left:3px solid transparent; line-height:1.35;
+  }
+  .toc a:hover{background:var(--bg); text-decoration:none; color:var(--navy);}
+  .toc a.active{background:var(--bg-mid); color:var(--navy); font-weight:700; border-left-color:var(--cyan);}
+  .toc .toc__step{font-variant-numeric:tabular-nums; color:var(--cyan-mid); font-weight:800; margin-right:6px;}
+
+  /* ---------- Content ---------- */
+  main{padding:56px 0 96px; min-width:0;}
+  section{margin-bottom:64px; scroll-margin-top:24px;}
+  .eyebrow{
+    display:inline-flex; align-items:center; gap:9px;
+    font-size:12px; font-weight:800; letter-spacing:.1em; text-transform:uppercase;
+    color:var(--cyan-mid); margin-bottom:10px;
+  }
+  h2{font-size:clamp(24px,3vw,32px); line-height:1.15; font-weight:800; letter-spacing:-.015em; margin:0 0 14px; color:var(--navy);}
+  h3{font-size:20px; font-weight:750; margin:30px 0 10px; color:var(--navy);}
+  p{margin:0 0 14px; color:var(--text-mid);}
+  .lead{font-size:18px; color:var(--text-mid);}
+  .divider{height:1px; background:linear-gradient(90deg,var(--bg-mid),transparent); border:0; margin:0 0 40px;}
+
+  /* role badge */
+  .rolebadge{
+    display:inline-flex; align-items:center; gap:7px; font-size:12px; font-weight:800;
+    text-transform:uppercase; letter-spacing:.06em; padding:5px 11px; border-radius:999px;
+    color:#fff;
+  }
+  .r-reception{background:var(--reception);} .r-lab{background:var(--lab);}
+  .r-doctor{background:var(--doctor);} .r-admin{background:var(--admin);} .r-patient{background:var(--patient);}
+
+  /* ---------- Step header ---------- */
+  .step{display:flex; align-items:center; gap:16px; margin-bottom:8px;}
+  .step__num{
+    flex:0 0 auto; width:46px; height:46px; border-radius:13px; display:grid; place-items:center;
+    font-weight:800; font-size:19px; color:#fff;
+    background:linear-gradient(135deg,var(--cyan),var(--steel)); box-shadow:var(--shadow-sm);
+  }
+  .step__roles{display:flex; gap:6px; flex-wrap:wrap;}
+
+  /* ---------- Callouts ---------- */
+  .callout{
+    border-radius:13px; padding:15px 18px 15px 16px; margin:18px 0; display:flex; gap:13px;
+    border:1px solid var(--bg-mid); background:#fff; box-shadow:var(--shadow-sm);
+    border-left-width:5px;
+  }
+  .callout .ic{flex:0 0 auto; width:24px;height:24px;border-radius:50%; display:grid; place-items:center; color:#fff; font-weight:800; font-size:14px; margin-top:1px;}
+  .callout p{margin:0; font-size:14.5px; color:var(--text-mid);}
+  .callout strong{color:var(--navy);}
+  .c-tip{border-left-color:var(--cyan);} .c-tip .ic{background:var(--cyan);}
+  .c-important{border-left-color:#e11d48; background:#fff5f7;} .c-important .ic{background:#e11d48;}
+  .c-note{border-left-color:var(--steel);} .c-note .ic{background:var(--steel);}
+  .c-money{border-left-color:#0ea5a3; background:#f0fdfa;} .c-money .ic{background:#0ea5a3;}
+
+  /* ---------- Plain step list ---------- */
+  ol.plain{counter-reset:s; list-style:none; padding:0; margin:16px 0;}
+  ol.plain li{
+    position:relative; padding:10px 0 10px 40px; border-bottom:1px dashed var(--bg-mid); color:var(--text-mid);
+  }
+  ol.plain li:last-child{border-bottom:0;}
+  ol.plain li::before{
+    counter-increment:s; content:counter(s);
+    position:absolute; left:0; top:9px; width:26px; height:26px; border-radius:8px;
+    background:var(--bg-mid); color:var(--navy); font-weight:800; font-size:13px; display:grid; place-items:center;
+  }
+  ol.plain li b{color:var(--navy);}
+
+  /* ---------- Screen mockup ---------- */
+  .screen{
+    border:1px solid var(--bg-mid); border-radius:14px; overflow:hidden; background:#fff;
+    box-shadow:var(--shadow); margin:20px 0 4px;
+  }
+  .screen__bar{display:flex; align-items:center; gap:10px; padding:11px 15px; background:#f7fafd; border-bottom:1px solid var(--bg-mid);}
+  .screen__dots{display:flex; gap:6px;}
+  .screen__dots i{width:11px;height:11px;border-radius:50%; display:block;}
+  .screen__dots i:nth-child(1){background:#ff5f57;} .screen__dots i:nth-child(2){background:#febc2e;} .screen__dots i:nth-child(3){background:#28c840;}
+  .screen__url{flex:1; text-align:center; font-size:12px; color:var(--text-soft); font-weight:600;}
+  .screen__body{padding:20px 22px; background:linear-gradient(180deg,#fff, #fcfdff);}
+  .screen__cap{font-size:12.5px; color:var(--text-soft); margin:6px 2px 0; font-style:italic;}
+
+  .m-eyebrow{font-size:11px; font-weight:800; letter-spacing:.09em; text-transform:uppercase; color:var(--cyan-mid);}
+  .m-h{font-size:22px; font-weight:800; color:var(--navy); margin:3px 0 14px; letter-spacing:-.01em;}
+  .m-tabs{display:flex; gap:6px; border-bottom:1px solid var(--bg-mid); padding-bottom:12px; margin-bottom:16px; flex-wrap:wrap;}
+  .m-tab{font-size:13px; font-weight:700; padding:7px 12px; border-radius:8px; color:var(--text-mid); background:transparent;}
+  .m-tab.on{background:var(--navy); color:#fff;}
+  .m-grid{display:grid; gap:12px;}
+  .m-2{grid-template-columns:1fr 1fr;} .m-3{grid-template-columns:repeat(3,1fr);}
+  .m-field{border:1px solid var(--bg-mid); border-radius:10px; padding:9px 12px; background:#fff;}
+  .m-field .lab{font-size:10.5px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:var(--text-soft);}
+  .m-field .val{font-size:14px; color:var(--text); margin-top:3px;}
+  .m-field .ph{font-size:14px; color:var(--text-soft); margin-top:3px;}
+  .m-card{border:1px solid var(--bg-mid); border-radius:12px; padding:14px 16px; background:#fff; position:relative; overflow:hidden;}
+  .m-card::before{content:""; position:absolute; left:0; top:0; height:100%; width:4px; background:var(--cyan);}
+  .m-card.warn::before{background:#f59e0b;}
+  .m-card .ck{font-size:10.5px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:var(--text-soft);}
+  .m-card .cv{font-size:22px; font-weight:800; color:var(--navy); margin-top:5px; font-variant-numeric:tabular-nums;}
+  .m-card .ch{font-size:12px; color:var(--text-soft); margin-top:3px;}
+  table.m{width:100%; border-collapse:collapse; font-size:13.5px;}
+  table.m th{text-align:left; font-size:10.5px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:var(--text-soft); padding:8px 10px; border-bottom:1px solid var(--bg-mid);}
+  table.m td{padding:10px; border-bottom:1px solid var(--bg-mid); color:var(--text-mid);}
+  table.m tr:last-child td{border-bottom:0;}
+  .m-btn{display:inline-block; background:var(--cyan); color:#fff; font-weight:700; font-size:13px; padding:8px 15px; border-radius:9px;}
+  .m-btn.navy{background:var(--navy);}
+  .m-btn.ghost{background:#fff; color:var(--navy); border:1px solid var(--bg-mid);}
+  .m-pill{display:inline-block; font-size:11px; font-weight:800; padding:3px 9px; border-radius:999px;}
+  .pill-paid{background:#dcfce7; color:#15803d;} .pill-unpaid{background:#fee2e2; color:#b91c1c;}
+  .pill-wait{background:#fef3c7; color:#b45309;} .pill-ready{background:#cffafe; color:#0e7490;}
+  .mono{font-variant-numeric:tabular-nums; font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
+  .right{text-align:right;}
+
+  /* ---------- Flow diagram ---------- */
+  .flow{display:flex; align-items:stretch; gap:0; flex-wrap:wrap; margin:8px 0 6px;}
+  .flow__node{
+    flex:1 1 150px; background:#fff; border:1px solid var(--bg-mid); border-radius:13px; padding:14px 14px;
+    box-shadow:var(--shadow-sm); position:relative; min-width:140px;
+  }
+  .flow__node .t{font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; margin-bottom:4px;}
+  .flow__node .d{font-size:13px; color:var(--text-mid);}
+  .flow__arrow{display:grid; place-items:center; color:var(--cyan-mid); font-size:24px; font-weight:800; padding:0 6px;}
+  @media (max-width:760px){ .flow__arrow{transform:rotate(90deg);} }
+
+  /* ---------- Role cards ---------- */
+  .roles{display:grid; grid-template-columns:repeat(2,1fr); gap:16px; margin-top:8px;}
+  .rolecard{background:#fff; border:1px solid var(--bg-mid); border-radius:14px; padding:18px 18px 16px; box-shadow:var(--shadow-sm); border-top:4px solid var(--cyan);}
+  .rolecard.lab{border-top-color:var(--lab);} .rolecard.doctor{border-top-color:var(--doctor);} .rolecard.admin{border-top-color:var(--admin);}
+  .rolecard h4{margin:0 0 4px; font-size:17px; color:var(--navy);}
+  .rolecard .who{font-size:12.5px; color:var(--text-soft); margin-bottom:10px;}
+  .rolecard ul{margin:0; padding-left:18px; color:var(--text-mid); font-size:14px;}
+  .rolecard li{margin-bottom:5px;}
+
+  /* glossary */
+  .gloss{display:grid; gap:0; background:#fff; border:1px solid var(--bg-mid); border-radius:14px; overflow:hidden; box-shadow:var(--shadow-sm);}
+  .gloss dl{display:grid; grid-template-columns:200px 1fr; margin:0;}
+  .gloss dt{padding:14px 18px; font-weight:800; color:var(--navy); border-bottom:1px solid var(--bg-mid); background:#fafcff; font-size:14.5px;}
+  .gloss dd{padding:14px 18px; margin:0; color:var(--text-mid); border-bottom:1px solid var(--bg-mid); font-size:14.5px;}
+  .gloss dl:last-child dt, .gloss dl:last-child dd{border-bottom:0;}
+  @media (max-width:620px){ .gloss dl{grid-template-columns:1fr;} .gloss dt{border-bottom:0; padding-bottom:0; background:#fff;} }
+
+  footer{border-top:1px solid var(--bg-mid); padding:30px 0 60px; color:var(--text-soft); font-size:13px;}
+
+  @media (max-width:980px){
+    .layout{grid-template-columns:1fr; gap:0;}
+    .toc{position:static; margin-top:24px;} .toc__card{margin-bottom:8px;}
+    main{padding-top:28px;}
+    .roles{grid-template-columns:1fr;}
+  }
+</style>
+</head>
+<body>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <div class="hero__inner">
+    <div class="brand">drmed<span class="dot">.ph</span> &nbsp;·&nbsp; Staff Operations</div>
+    <h1>Clinic Workflow Guide</h1>
+    <p class="sub">A plain-English walkthrough of how one patient moves through DRMED — from the moment they arrive, to the result being released, to the doctor getting paid. Written for Reception, Lab, Doctors, and Admin.</p>
+    <div class="hero__meta">
+      <span class="chip"><span class="swatch" style="background:var(--reception)"></span>Reception</span>
+      <span class="chip"><span class="swatch" style="background:var(--lab)"></span>Lab</span>
+      <span class="chip"><span class="swatch" style="background:var(--doctor)"></span>Doctor</span>
+      <span class="chip"><span class="swatch" style="background:var(--admin)"></span>Admin</span>
+      <span class="chip"><span class="swatch" style="background:var(--patient)"></span>Patient</span>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+
+  <!-- ===================== TOC ===================== -->
+  <aside class="toc">
+    <nav class="toc__card">
+      <div class="toc__title">On this page</div>
+      <a href="#overview">The big picture</a>
+      <a href="#roles">Who does what</a>
+      <a href="#s1"><span class="toc__step">1</span>Patient arrives</a>
+      <a href="#s2"><span class="toc__step">2</span>Create the visit</a>
+      <a href="#s3"><span class="toc__step">3</span>Collect payment &amp; print receipt</a>
+      <a href="#s4"><span class="toc__step">4</span>Lab does the work</a>
+      <a href="#s5"><span class="toc__step">5</span>Pathologist check</a>
+      <a href="#s6"><span class="toc__step">6</span>Release the result</a>
+      <a href="#s7"><span class="toc__step">7</span>Patient gets the result</a>
+      <a href="#s8"><span class="toc__step">8</span>Doctor's fee builds up</a>
+      <a href="#s9"><span class="toc__step">9</span>Pay the doctor</a>
+      <a href="#s10"><span class="toc__step">10</span>Close the day</a>
+      <a href="#hmo">Admin · Insurance (HMO) billing</a>
+      <a href="#daily">Daily checklists</a>
+      <a href="#glossary">Plain-word glossary</a>
+    </nav>
+  </aside>
+
+  <!-- ===================== MAIN ===================== -->
+  <main>
+
+    <!-- OVERVIEW -->
+    <section id="overview">
+      <div class="eyebrow">● Start here</div>
+      <h2>The big picture</h2>
+      <p class="lead">Every patient follows the same simple path. Four teams each own one part of it, and the app passes the work from one team to the next automatically — nobody has to chase anybody.</p>
+
+      <div class="flow">
+        <div class="flow__node" style="border-top:4px solid var(--patient)"><div class="t" style="color:var(--patient)">Patient</div><div class="d">Walks in, books, or self-registers by QR.</div></div>
+        <div class="flow__arrow">→</div>
+        <div class="flow__node" style="border-top:4px solid var(--reception)"><div class="t" style="color:var(--reception)">Reception</div><div class="d">Books the visit &amp; collects payment.</div></div>
+        <div class="flow__arrow">→</div>
+        <div class="flow__node" style="border-top:4px solid var(--lab)"><div class="t" style="color:var(--lab)">Lab</div><div class="d">Runs the tests &amp; enters results.</div></div>
+        <div class="flow__arrow">→</div>
+        <div class="flow__node" style="border-top:4px solid var(--patient)"><div class="t" style="color:var(--patient)">Patient</div><div class="d">Views the result online.</div></div>
+        <div class="flow__arrow">→</div>
+        <div class="flow__node" style="border-top:4px solid var(--admin)"><div class="t" style="color:var(--admin)">Admin</div><div class="d">Pays the doctor their fee.</div></div>
+      </div>
+
+      <div class="callout c-important">
+        <span class="ic">!</span>
+        <p><strong>The one golden rule:</strong> a result can only be released to a patient once the visit is <strong>paid</strong>. The app enforces this automatically — there's no way to release an unpaid result by accident.</p>
+      </div>
+    </section>
+
+    <hr class="divider" />
+
+    <!-- ROLES -->
+    <section id="roles">
+      <div class="eyebrow">● The teams</div>
+      <h2>Who does what</h2>
+      <p>Each role only needs to worry about their own part. Here's the short version.</p>
+      <div class="roles">
+        <div class="rolecard">
+          <h4>Reception</h4>
+          <div class="who">Front desk</div>
+          <ul>
+            <li>Register the patient &amp; book the visit</li>
+            <li>Pick the tests / services</li>
+            <li>Collect payment, print the receipt</li>
+            <li>Count the cash drawer, close the day</li>
+          </ul>
+        </div>
+        <div class="rolecard lab">
+          <h4>Lab</h4>
+          <div class="who">Medtech · X-ray · Sonographer</div>
+          <ul>
+            <li>Pick up the test from the queue</li>
+            <li>Run it and enter the result</li>
+            <li>Finalise so it's ready</li>
+            <li>Release it to the patient</li>
+          </ul>
+        </div>
+        <div class="rolecard doctor">
+          <h4>Doctor</h4>
+          <div class="who">Consulting physician</div>
+          <ul>
+            <li>See the patient / do the consult</li>
+            <li>Sign off results (pathologist), if needed</li>
+            <li>Their fee is tracked automatically</li>
+            <li>Gets paid by Admin (GCash / cash)</li>
+          </ul>
+        </div>
+        <div class="rolecard admin">
+          <h4>Admin</h4>
+          <div class="who">Owner · Manager · Bookkeeper</div>
+          <ul>
+            <li>Oversee everything from the dashboard</li>
+            <li>Handle insurance (HMO) billing</li>
+            <li>Pay the doctors their fees</li>
+            <li>Keep the books &amp; reports</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <hr class="divider" />
+
+    <!-- STEP 1 -->
+    <section id="s1">
+      <div class="step">
+        <div class="step__num">1</div>
+        <div>
+          <div class="step__roles"><span class="rolebadge r-patient">Patient</span><span class="rolebadge r-reception">Reception</span></div>
+        </div>
+      </div>
+      <h2>The patient arrives</h2>
+      <p>There are <b>two ways</b> a patient gets into the system — they can scan the clinic's <b>QR code</b> and register themselves, or <b>reception types in</b> their details. Either way it's the exact same patient record.</p>
+
+      <div class="roles" style="margin:10px 0 20px">
+        <div class="rolecard" style="border-top-color:var(--patient)">
+          <h4>① Patient self-registers · QR code</h4>
+          <div class="who">Patient · before they reach the desk</div>
+          <ul>
+            <li>Patient scans the clinic's <b>QR code</b> (on a poster, or a link you send them).</li>
+            <li>They fill in their own name, birthday, and contact number on their phone.</li>
+            <li>Their details are already waiting when they reach reception — just pull them up and confirm.</li>
+          </ul>
+        </div>
+        <div class="rolecard">
+          <h4>② Reception encodes</h4>
+          <div class="who">Front desk</div>
+          <ul>
+            <li>Open <b>Patients</b> and search by name or contact number.</li>
+            <li>New patient? Click <b>add a new patient</b> and type their name, birthday, and contact.</li>
+            <li>Best for walk-ins who didn't scan the QR ahead of time.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="callout c-tip"><span class="ic">★</span><p><strong>Both lead to the same place.</strong> Whether the patient registered themselves by QR or reception typed it in, the record is identical — so reception can always add or correct details at the counter. The QR just saves time and typing at the desk.</p></div>
+
+      <p>However they registered, if they had an appointment, open <b>Appointments</b> and mark them <b>arrived</b> to begin the visit.</p>
+
+      <div class="screen">
+        <div class="screen__bar"><div class="screen__dots"><i></i><i></i><i></i></div><div class="screen__url">drmed.ph/staff/patients</div></div>
+        <div class="screen__body">
+          <div class="m-eyebrow">Reception · Patients</div>
+          <div class="m-h">Find a patient</div>
+          <div class="m-field" style="margin-bottom:14px"><div class="ph">🔍&nbsp; Search by name, contact number, or patient ID…</div></div>
+          <table class="m">
+            <thead><tr><th>Name</th><th>Patient ID</th><th>Contact</th><th>How added</th></tr></thead>
+            <tbody>
+              <tr><td><b>Santos, Maria</b></td><td class="mono">DRM-004821</td><td>0917 555 0142</td><td><span class="m-pill pill-ready">Self · QR</span></td></tr>
+              <tr><td>Dela Cruz, Juan</td><td class="mono">DRM-004790</td><td>0998 555 0188</td><td><span class="m-pill" style="background:var(--bg-mid);color:var(--navy)">Reception</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <p class="screen__cap">Reception pulls up a QR self-registration or adds a walk-in — same list either way. Saved once, reused next time.</p>
+    </section>
+
+    <hr class="divider" />
+
+    <!-- STEP 2 -->
+    <section id="s2">
+      <div class="step"><div class="step__num">2</div><div class="step__roles"><span class="rolebadge r-reception">Reception</span></div></div>
+      <h2>Create the visit</h2>
+      <p>A "visit" is the patient's order for today. Reception picks the patient, then picks what they're getting — lab tests, an X-ray or ultrasound, and/or a doctor's consult.</p>
+      <ol class="plain">
+        <li>Go to <b>Visits → New visit</b> and choose the patient.</li>
+        <li>Add services from <b>either tab</b>: <b>Lab &amp; Services</b> for tests &amp; imaging, <b>Doctor</b> for a consult. Pick one, the other, or both.</li>
+        <li>On the <b>Doctor</b> tab, choose the <b>attending doctor</b>.</li>
+        <li>Everything lands on <b>one visit, one receipt, one total</b>. Save when done.</li>
+      </ol>
+      <div class="screen">
+        <div class="screen__bar"><div class="screen__dots"><i></i><i></i><i></i></div><div class="screen__url">drmed.ph/staff/visits/new</div></div>
+        <div class="screen__body">
+          <div class="m-eyebrow">Reception · Visits</div>
+          <div class="m-h">New visit</div>
+          <div class="m-tabs"><span class="m-tab on">New visit</span><span class="m-tab">Archive</span></div>
+          <div class="m-field" style="margin-bottom:14px"><div class="lab">Patient</div><div class="val">Santos, Maria · <span class="mono">DRM-004821</span></div></div>
+
+          <div style="font-size:13px;font-weight:800;color:var(--navy)">Select services</div>
+          <div style="font-size:12.5px;color:var(--text-soft);margin:3px 0 11px">Pick from either tab — lab tests, a doctor consult, or both. It all goes on one visit, one receipt, one total.</div>
+
+          <!-- category toggle: counts on BOTH tabs show you can pick from each -->
+          <div style="display:inline-flex;gap:5px;background:var(--bg);border:1px solid var(--bg-mid);border-radius:11px;padding:4px;margin-bottom:14px">
+            <span class="m-tab on">Lab &amp; Services · 2</span>
+            <span class="m-tab" style="color:var(--doctor)">Doctor · 1</span>
+          </div>
+
+          <!-- combined running selection, grouped so the split is obvious -->
+          <div style="border:1px solid var(--bg-mid);border-radius:12px;overflow:hidden">
+            <div style="padding:9px 14px;background:#fafcff;border-bottom:1px solid var(--bg-mid);font-size:10.5px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--text-soft)">This visit so far</div>
+            <table class="m">
+              <tbody>
+                <tr><td colspan="2" style="background:var(--bg);font-size:10.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--lab);padding:7px 10px">🧪 Lab &amp; tests</td></tr>
+                <tr><td>Complete blood count (CBC)</td><td class="right mono">₱350.00</td></tr>
+                <tr><td>Lipid profile</td><td class="right mono">₱850.00</td></tr>
+                <tr><td colspan="2" style="background:var(--bg);font-size:10.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--doctor);padding:7px 10px">🩺 Doctor</td></tr>
+                <tr><td>Consultation — Dr. Reyes</td><td class="right mono">₱600.00</td></tr>
+                <tr><td style="font-weight:800;color:var(--navy)">Total</td><td class="right mono" style="font-weight:800;color:var(--navy)">₱1,800.00</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div style="margin-top:14px"><span class="m-btn navy">Save visit</span></div>
+        </div>
+      </div>
+      <p class="screen__cap">Lab tests and doctor consults sit on separate tabs, but everything you pick — one or both — combines into a single visit and receipt.</p>
+      <div class="callout c-tip"><span class="ic">★</span><p><strong>Lab, consult, or both — not either/or.</strong> The two tabs just keep the list tidy. Each tab shows a count of what you've picked (e.g. "Lab &amp; Services · 2", "Doctor · 1"), and they all add up to the same visit, receipt, and total.</p></div>
+      <div class="callout c-note"><span class="ic">i</span><p>Prices always come from the clinic's price list, so they're consistent across every receptionist and every day.</p></div>
+    </section>
+
+    <hr class="divider" />
+
+    <!-- STEP 3 -->
+    <section id="s3">
+      <div class="step"><div class="step__num">3</div><div class="step__roles"><span class="rolebadge r-reception">Reception</span><span class="rolebadge r-patient">Patient</span></div></div>
+      <h2>Collect payment &amp; print the receipt</h2>
+      <p>Reception takes payment (cash, GCash, Maya, card, bank transfer, or through the patient's HMO/insurance) and records it. The receipt is printed with two important things the patient will use later.</p>
+      <ol class="plain">
+        <li>On the visit, click <b>record payment</b> and choose how they paid.</li>
+        <li>The visit flips to <b>Paid</b>.</li>
+        <li>Print the receipt. It shows the patient's <b>Patient ID</b> and a one-time <b>PIN</b>.</li>
+        <li>Tell the patient to keep these — they'll use them to view results online.</li>
+      </ol>
+      <div class="screen">
+        <div class="screen__bar"><div class="screen__dots"><i></i><i></i><i></i></div><div class="screen__url">drmed.ph/staff/visits/0f9c…</div></div>
+        <div class="screen__body">
+          <div class="m-eyebrow">Reception · Visit · Receipt</div>
+          <div class="m-h">Payment received <span class="m-pill pill-paid" style="vertical-align:middle">Paid</span></div>
+          <div class="m-grid m-2">
+            <div class="m-field"><div class="lab">Amount paid</div><div class="val mono">₱1,800.00 · GCash</div></div>
+            <div class="m-field"><div class="lab">Patient</div><div class="val">Santos, Maria</div></div>
+          </div>
+          <div class="m-card" style="margin-top:14px">
+            <div class="ck">Give these to the patient</div>
+            <div style="display:flex; gap:30px; margin-top:8px; flex-wrap:wrap">
+              <div><div class="ch">Patient ID</div><div class="cv mono" style="font-size:20px">DRM-004821</div></div>
+              <div><div class="ch">One-time PIN</div><div class="cv mono" style="font-size:20px">7K4P-92QX</div></div>
+            </div>
+          </div>
+          <div style="margin-top:14px"><span class="m-btn">🖨 Print receipt</span></div>
+        </div>
+      </div>
+      <p class="screen__cap">The receipt carries the Patient ID + PIN. That pair lets the patient open their results online later.</p>
+      <div class="callout c-important"><span class="ic">!</span><p><strong>The PIN is shown only once</strong>, on this receipt. It's never stored in a readable form, so it can't leak. If a patient loses it, they come back to reception for a new one.</p></div>
+      <div class="callout c-money"><span class="ic">₱</span><p><strong>Why payment matters here:</strong> the lab can do the work anytime, but the result will not release to the patient until this visit is marked <strong>Paid</strong>. Collecting now keeps everything moving.</p></div>
+    </section>
+
+    <hr class="divider" />
+
+    <!-- STEP 4 -->
+    <section id="s4">
+      <div class="step"><div class="step__num">4</div><div class="step__roles"><span class="rolebadge r-lab">Lab</span></div></div>
+      <h2>The lab does the work</h2>
+      <p>Every test ordered shows up in the <b>Queue</b>. The medtech, X-ray tech, or sonographer picks it up, runs it, and enters the result.</p>
+      <ol class="plain">
+        <li>Open <b>Queue</b>. Tests are grouped: waiting, in progress, and done.</li>
+        <li>Click a test to claim it and start working.</li>
+        <li>Enter the results into the form (or attach the report).</li>
+        <li>Click <b>finalise</b> when the result is complete and correct.</li>
+      </ol>
+      <div class="screen">
+        <div class="screen__bar"><div class="screen__dots"><i></i><i></i><i></i></div><div class="screen__url">drmed.ph/staff/queue</div></div>
+        <div class="screen__body">
+          <div class="m-eyebrow">Lab · Queue</div>
+          <div class="m-h">Work queue</div>
+          <div class="m-tabs"><span class="m-tab on">Waiting (4)</span><span class="m-tab">In progress (2)</span><span class="m-tab">Ready (1)</span><span class="m-tab">Released today (9)</span></div>
+          <table class="m">
+            <thead><tr><th>Patient</th><th>Test</th><th>Ordered</th><th class="right">Status</th></tr></thead>
+            <tbody>
+              <tr><td>Santos, Maria</td><td>Complete blood count</td><td>9:42 AM</td><td class="right"><span class="m-pill pill-wait">Waiting</span></td></tr>
+              <tr><td>Santos, Maria</td><td>Lipid profile</td><td>9:42 AM</td><td class="right"><span class="m-pill pill-wait">Waiting</span></td></tr>
+              <tr><td>Dela Cruz, Juan</td><td>Chest X-ray</td><td>9:15 AM</td><td class="right"><span class="m-pill pill-ready">In progress</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <p class="screen__cap">The queue is the lab's to-do list. Each tech only sees the tests for their own section.</p>
+      <div class="callout c-tip"><span class="ic">★</span><p><strong>Tip:</strong> a finalised result isn't visible to the patient yet — it still has to be released (Step 6). This gives the team a chance to double-check before it goes out.</p></div>
+    </section>
+
+    <hr class="divider" />
+
+    <!-- STEP 5 -->
+    <section id="s5">
+      <div class="step"><div class="step__num">5</div><div class="step__roles"><span class="rolebadge r-doctor">Doctor</span><span class="rolebadge r-lab">Lab</span></div></div>
+      <h2>Pathologist check (only some tests)</h2>
+      <p>Certain results need a pathologist to review and sign before they go out. If a test is set up that way, it waits in the sign-off list until the doctor approves it.</p>
+      <ol class="plain">
+        <li>The pathologist opens <b>Sign-off</b> and reviews each finalised result.</li>
+        <li>They approve and sign — their signature is added to the report.</li>
+        <li>The result becomes ready to release.</li>
+      </ol>
+      <div class="callout c-note"><span class="ic">i</span><p>Most routine tests don't need this step — they're ready to release as soon as the lab finalises them. Sign-off only applies to the tests configured to require it.</p></div>
+    </section>
+
+    <hr class="divider" />
+
+    <!-- STEP 6 -->
+    <section id="s6">
+      <div class="step"><div class="step__num">6</div><div class="step__roles"><span class="rolebadge r-lab">Lab</span></div></div>
+      <h2>Release the result</h2>
+      <p>Releasing is the moment the result becomes available to the patient. The app checks two things first, automatically.</p>
+      <div class="flow" style="margin-bottom:18px">
+        <div class="flow__node"><div class="t" style="color:var(--lab)">Finalised?</div><div class="d">The result is complete (and signed, if required).</div></div>
+        <div class="flow__arrow">+</div>
+        <div class="flow__node"><div class="t" style="color:#0ea5a3">Paid?</div><div class="d">The visit is marked Paid.</div></div>
+        <div class="flow__arrow">→</div>
+        <div class="flow__node" style="border-top:4px solid var(--cyan)"><div class="t" style="color:var(--cyan)">Release ✓</div><div class="d">Patient can now see it.</div></div>
+      </div>
+      <div class="callout c-important"><span class="ic">!</span><p><strong>If the visit isn't paid, the Release button is blocked.</strong> The system simply won't let an unpaid result go out — this protects the clinic and is not something staff can override.</p></div>
+    </section>
+
+    <hr class="divider" />
+
+    <!-- STEP 7 -->
+    <section id="s7">
+      <div class="step"><div class="step__num">7</div><div class="step__roles"><span class="rolebadge r-patient">Patient</span></div></div>
+      <h2>The patient gets the result</h2>
+      <p>Once released, the patient can view and download their result themselves — no need to come back to the clinic for a copy.</p>
+      <ol class="plain">
+        <li>The patient goes to the patient portal and enters their <b>Patient ID</b> and <b>PIN</b> (from the receipt).</li>
+        <li>They see their released results and can download the PDF.</li>
+      </ol>
+      <div class="screen">
+        <div class="screen__bar"><div class="screen__dots"><i></i><i></i><i></i></div><div class="screen__url">drmed.ph/portal</div></div>
+        <div class="screen__body">
+          <div class="m-eyebrow">Patient portal</div>
+          <div class="m-h">My results</div>
+          <table class="m">
+            <thead><tr><th>Date</th><th>Result</th><th class="right">Action</th></tr></thead>
+            <tbody>
+              <tr><td>30 May 2026</td><td>Complete blood count (CBC)</td><td class="right"><span class="m-btn ghost">Download PDF</span></td></tr>
+              <tr><td>30 May 2026</td><td>Lipid profile</td><td class="right"><span class="m-btn ghost">Download PDF</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <p class="screen__cap">The patient logs in with the Patient ID + PIN from their receipt and downloads results on their own.</p>
+      <div class="callout c-note"><span class="ic">i</span><p>Patients never get a clinic login or direct file access. Each download is a private, short-lived link, and every view is logged — important for the privacy law (RA 10173).</p></div>
+    </section>
+
+    <hr class="divider" />
+
+    <!-- STEP 8 -->
+    <section id="s8">
+      <div class="step"><div class="step__num">8</div><div class="step__roles"><span class="rolebadge r-doctor">Doctor</span></div></div>
+      <h2>The doctor's fee builds up</h2>
+      <p>When a doctor did a consult, their share (their <b>professional fee</b>) is worked out and tracked automatically — nobody has to compute it. Where it goes depends on how the patient paid.</p>
+      <div class="flow" style="margin-bottom:18px">
+        <div class="flow__node" style="border-top:4px solid #0ea5a3"><div class="t" style="color:#0ea5a3">Cash patient</div><div class="d">Doctor's fee is <b>ready to pay</b> right away.</div></div>
+        <div class="flow__arrow">|</div>
+        <div class="flow__node" style="border-top:4px solid var(--patient)"><div class="t" style="color:var(--patient)">Insurance (HMO) patient</div><div class="d"><b>Held</b> until the HMO pays the clinic, then it becomes ready to pay.</div></div>
+      </div>
+      <div class="callout c-money"><span class="ic">₱</span><p><strong>Why insurance ones wait:</strong> the clinic hasn't received that money yet — the HMO pays later. Holding the doctor's fee until then means the clinic never pays out money it hasn't collected.</p></div>
+    </section>
+
+    <hr class="divider" />
+
+    <!-- STEP 9 -->
+    <section id="s9">
+      <div class="step"><div class="step__num">9</div><div class="step__roles"><span class="rolebadge r-admin">Admin</span></div></div>
+      <h2>Pay the doctor</h2>
+      <p>At the end of the day, Admin (or reception, depending on your setup) opens <b>Pay doctors</b> and settles up. The amounts are already worked out — you just send the money the way you normally do and tick it off.</p>
+      <ol class="plain">
+        <li>Open <b>Pay doctors</b> and stay on the <b>Ready to pay</b> tab.</li>
+        <li>Send each doctor their total by <b>GCash</b> or cash — exactly as you do now.</li>
+        <li>Click <b>Pay this doctor</b>, choose how you paid, and confirm.</li>
+        <li>Done — they move to <b>Already paid</b>. Leave <b>Waiting on insurance</b> alone; those release on their own.</li>
+      </ol>
+      <div class="screen">
+        <div class="screen__bar"><div class="screen__dots"><i></i><i></i><i></i></div><div class="screen__url">drmed.ph/staff/…/pay-doctors</div></div>
+        <div class="screen__body">
+          <div class="m-eyebrow">Admin · Pay doctors</div>
+          <div class="m-h">Pay doctors</div>
+          <div class="m-tabs"><span class="m-tab on">Ready to pay (3)</span><span class="m-tab">Waiting on insurance (2)</span><span class="m-tab">Already paid</span></div>
+          <table class="m">
+            <thead><tr><th>Doctor</th><th class="right">You owe</th><th class="right">Action</th></tr></thead>
+            <tbody>
+              <tr><td><b>Dr. Reyes</b></td><td class="right mono">₱2,400.00</td><td class="right"><span class="m-btn">Pay this doctor</span></td></tr>
+              <tr><td><b>Dr. Lim</b></td><td class="right mono">₱1,800.00</td><td class="right"><span class="m-btn">Pay this doctor</span></td></tr>
+              <tr><td><b>Dr. Tan</b></td><td class="right mono">₱900.00</td><td class="right"><span class="m-btn">Pay this doctor</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <p class="screen__cap">Each doctor's total is already correct. Send the GCash, click "Pay this doctor", pick GCash, confirm.</p>
+      <div class="callout c-tip"><span class="ic">★</span><p><strong>Tip:</strong> the button only <strong>records</strong> the payment so the books stay right — it does not send money. You still send the GCash from your phone, the same as always. There's also a printable one-page guide on that screen ("Print quick guide") to keep at the desk.</p></div>
+    </section>
+
+    <hr class="divider" />
+
+    <!-- STEP 10 -->
+    <section id="s10">
+      <div class="step"><div class="step__num">10</div><div class="step__roles"><span class="rolebadge r-reception">Reception</span><span class="rolebadge r-admin">Admin</span></div></div>
+      <h2>Close the day</h2>
+      <p>At the end of the shift, reception counts the physical cash and closes out. The app compares what you counted to what it expects, and admin can see the full picture in reports.</p>
+      <ol class="plain">
+        <li>Open <b>Cash drawer</b> to see the running total: starting cash, money received, money paid out.</li>
+        <li>Click <b>Count &amp; close day</b>, enter the cash you actually counted, and the app shows any difference (over/short).</li>
+        <li>Admin reviews the day in the dashboard and reports.</li>
+      </ol>
+      <div class="screen">
+        <div class="screen__bar"><div class="screen__dots"><i></i><i></i><i></i></div><div class="screen__url">drmed.ph/staff/…/cash-drawer</div></div>
+        <div class="screen__body">
+          <div class="m-eyebrow">Reception · Cash drawer</div>
+          <div class="m-h">Cash drawer</div>
+          <div class="m-tabs"><span class="m-tab on">Cash drawer</span><span class="m-tab">End of day</span></div>
+          <table class="m">
+            <tbody>
+              <tr><td>Starting cash</td><td class="right mono">₱2,000.00</td></tr>
+              <tr><td>Cash received today</td><td class="right mono">₱14,350.00</td></tr>
+              <tr><td>Cash paid out</td><td class="right mono">−₱5,100.00</td></tr>
+              <tr><td style="font-weight:800;color:var(--navy)">Cash you should have now</td><td class="right mono" style="font-weight:800;color:var(--navy)">₱11,250.00</td></tr>
+            </tbody>
+          </table>
+          <div style="margin-top:14px"><span class="m-btn navy">Count &amp; close day →</span></div>
+        </div>
+      </div>
+      <p class="screen__cap">Plain words throughout: "starting cash", "cash received", "cash you should have now" — no accounting jargon.</p>
+    </section>
+
+    <hr class="divider" />
+
+    <!-- HMO DEEP-DIVE -->
+    <section id="hmo">
+      <div class="eyebrow">● Admin deep-dive</div>
+      <div style="margin-bottom:8px"><span class="rolebadge r-admin">Admin</span></div>
+      <h2>Insurance (HMO) billing &amp; tracking</h2>
+      <p class="lead">When a patient is covered by an HMO, the clinic isn't paid at the counter — the insurer pays later. This is how Admin bills each HMO and keeps track of the money owed until it lands.</p>
+
+      <div class="callout c-important"><span class="ic">!</span><p><strong>An HMO visit is "paid" enough to release results — but the money isn't in yet.</strong> Choosing the HMO on the visit lets the patient get their results, but the clinic is now <em>owed</em> that amount by the insurer. Admin's job is to collect it.</p></div>
+
+      <h3>The HMO money journey</h3>
+      <div class="flow">
+        <div class="flow__node" style="border-top:4px solid var(--patient)"><div class="t" style="color:var(--patient)">HMO visit</div><div class="d">Reception picks the insurer + approval / authorisation no.</div></div>
+        <div class="flow__arrow">→</div>
+        <div class="flow__node" style="border-top:4px solid #f59e0b"><div class="t" style="color:#f59e0b">Unbilled</div><div class="d">Results released; the clinic now needs to invoice the HMO.</div></div>
+        <div class="flow__arrow">→</div>
+        <div class="flow__node" style="border-top:4px solid var(--admin)"><div class="t" style="color:var(--admin)">Billed</div><div class="d">Admin sends the claim to the HMO.</div></div>
+        <div class="flow__arrow">→</div>
+        <div class="flow__node" style="border-top:4px solid #0ea5a3"><div class="t" style="color:#0ea5a3">HMO pays</div><div class="d">Admin records the payment; income is realised.</div></div>
+        <div class="flow__arrow">→</div>
+        <div class="flow__node" style="border-top:4px solid var(--cyan)"><div class="t" style="color:var(--cyan)">Settled ✓</div><div class="d">Claim closed; the doctor's fee becomes ready to pay.</div></div>
+      </div>
+
+      <h3>What Admin does, step by step</h3>
+      <ol class="plain">
+        <li><b>Spot the unbilled ones.</b> Once results are released, the visit appears under <b>All unbilled</b> — amounts the clinic can invoice but hasn't yet.</li>
+        <li><b>Bill the HMO.</b> Group the released tests into a claim and <b>submit</b> it — recording the date and how you sent it (email, courier, the HMO's online portal, etc.).</li>
+        <li><b>Chase the slow ones.</b> Claims that sit past that insurer's agreed terms show up under <b>All aging</b> and the <b>Aging matrix</b>, flagged red. Follow these up.</li>
+        <li><b>Record the payment.</b> When the HMO pays, enter the payment and how much went to each item. The amount owed drops and the income is recognised.</li>
+        <li><b>Handle short-pays &amp; denials.</b> If the HMO pays less than billed, or rejects an item, decide the leftover: <b>bill the patient</b> the difference, or <b>write it off</b>.</li>
+      </ol>
+
+      <div class="screen">
+        <div class="screen__bar"><div class="screen__dots"><i></i><i></i><i></i></div><div class="screen__url">drmed.ph/staff/…/hmo-claims</div></div>
+        <div class="screen__body">
+          <div class="m-eyebrow">Admin · HMO claims</div>
+          <div class="m-h">Insurance claims</div>
+          <div class="m-tabs"><span class="m-tab on">By insurer</span><span class="m-tab">All unbilled</span><span class="m-tab">All aging</span><span class="m-tab">Aging matrix</span></div>
+          <table class="m">
+            <thead><tr><th>Insurer</th><th class="right">Owed now</th><th class="right">Open claims</th><th class="right">Oldest</th></tr></thead>
+            <tbody>
+              <tr><td><b>Maxicare</b></td><td class="right mono">₱48,200.00</td><td class="right">12</td><td class="right" style="color:#b91c1c;font-weight:700">112 days</td></tr>
+              <tr><td><b>Intellicare</b></td><td class="right mono">₱15,750.00</td><td class="right">5</td><td class="right">38 days</td></tr>
+              <tr><td><b>Cocolife</b></td><td class="right mono">₱6,300.00</td><td class="right">3</td><td class="right">8 days</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <p class="screen__cap">Each insurer at a glance — how much they owe, how many open claims, and how long the oldest has been waiting. Click one to see every claim.</p>
+
+      <h3>Tracking who's slow to pay</h3>
+      <p>The <b>Aging matrix</b> groups what's owed by how long it's been waiting, per insurer — so a slow payer is obvious at a glance. The further right a number sits, the more overdue it is.</p>
+      <div class="screen">
+        <div class="screen__bar"><div class="screen__dots"><i></i><i></i><i></i></div><div class="screen__url">drmed.ph/staff/…/hmo-claims · Aging matrix</div></div>
+        <div class="screen__body">
+          <div class="m-eyebrow">Admin · HMO claims · Aging matrix</div>
+          <div class="m-h">How long they've owed</div>
+          <table class="m">
+            <thead><tr><th>Insurer</th><th class="right">0–30 days</th><th class="right">31–60</th><th class="right">61–90</th><th class="right" style="color:#b91c1c">91–180</th><th class="right" style="color:#7f1d1d">180+</th></tr></thead>
+            <tbody>
+              <tr><td><b>Maxicare</b></td><td class="right mono">₱12,000</td><td class="right mono" style="color:#b45309">₱18,000</td><td class="right mono" style="color:#c2410c">₱12,200</td><td class="right mono" style="color:#b91c1c;font-weight:700">₱6,000</td><td class="right mono" style="color:var(--text-soft)">—</td></tr>
+              <tr><td><b>Intellicare</b></td><td class="right mono">₱10,500</td><td class="right mono" style="color:#b45309">₱5,250</td><td class="right mono" style="color:var(--text-soft)">—</td><td class="right mono" style="color:var(--text-soft)">—</td><td class="right mono" style="color:var(--text-soft)">—</td></tr>
+              <tr><td><b>Cocolife</b></td><td class="right mono">₱6,300</td><td class="right mono" style="color:var(--text-soft)">—</td><td class="right mono" style="color:var(--text-soft)">—</td><td class="right mono" style="color:var(--text-soft)">—</td><td class="right mono" style="color:var(--text-soft)">—</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <p class="screen__cap">Anything in the 91–180 or 180+ columns needs a phone call — that money has been waiting too long.</p>
+
+      <div class="callout c-money"><span class="ic">₱</span><p><strong>Short-pay or denial:</strong> if an HMO covers only part — say ₱1,000 of a ₱1,500 claim — Admin splits the leftover ₱500: either add it to the <strong>patient's bill</strong>, or <strong>write it off</strong> as a loss. A claim is only "done" once every peso is accounted for.</p></div>
+      <div class="callout c-note"><span class="ic">i</span><p><strong>The doctor's fee waits for the HMO.</strong> On an insurance visit, the doctor's fee stays under <strong>Waiting on insurance</strong> (Step 8) until the HMO settles — then it moves to <strong>Ready to pay</strong>. This stops the clinic from paying out money it hasn't collected.</p></div>
+      <div class="callout c-tip"><span class="ic">★</span><p><strong>Daily nudge:</strong> the dashboard shows an <strong>"HMO unbilled aged 90+"</strong> total — claims left un-invoiced for over 90 days. If that figure climbs, open <strong>All unbilled</strong> and get them billed.</p></div>
+
+      <h3>Set up your insurers once</h3>
+      <p>Under <b>HMO providers</b>, each insurer is configured a single time. The <b>payment terms</b> you set are what decide when a claim starts showing as overdue.</p>
+      <div class="screen">
+        <div class="screen__bar"><div class="screen__dots"><i></i><i></i><i></i></div><div class="screen__url">drmed.ph/staff/admin/hmo-providers</div></div>
+        <div class="screen__body">
+          <div class="m-eyebrow">Admin · HMO providers</div>
+          <div class="m-h">Insurers</div>
+          <table class="m">
+            <thead><tr><th>Insurer</th><th>Payment terms</th><th>Billing contact</th></tr></thead>
+            <tbody>
+              <tr><td><b>Maxicare</b></td><td>30-day terms</td><td>Ana Cruz · 0917 555 0101</td></tr>
+              <tr><td><b>Intellicare</b></td><td>45-day terms</td><td>Mark Lim · 0998 555 0233</td></tr>
+              <tr><td><b>Cocolife</b></td><td>30-day terms</td><td>—</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <p class="screen__cap">Name, payment terms, and a billing contact per insurer. Set this once and the aging clock follows each insurer's own terms.</p>
+    </section>
+
+    <hr class="divider" />
+
+    <!-- DAILY CHECKLISTS -->
+    <section id="daily">
+      <div class="eyebrow">● Quick reference</div>
+      <h2>Daily checklists</h2>
+      <p>Print these and stick them by each station. One short list per role.</p>
+      <div class="roles">
+        <div class="rolecard">
+          <h4>Reception — every day</h4>
+          <div class="who">Front desk</div>
+          <ul>
+            <li>Pull up QR self-registrations · add any walk-ins</li>
+            <li>Mark appointments as arrived</li>
+            <li>New visit → pick patient → add services</li>
+            <li>Record payment → print receipt (Patient ID + PIN)</li>
+            <li>Remind patient: keep the receipt to view results online</li>
+            <li>End of shift: count cash drawer → Count &amp; close day</li>
+          </ul>
+        </div>
+        <div class="rolecard lab">
+          <h4>Lab — every day</h4>
+          <div class="who">Medtech · X-ray · Sonographer</div>
+          <ul>
+            <li>Work the Queue: claim → run → enter result</li>
+            <li>Finalise each result when complete</li>
+            <li>Release once finalised &amp; paid</li>
+            <li>Hand anything needing a doctor's signature to sign-off</li>
+          </ul>
+        </div>
+        <div class="rolecard doctor">
+          <h4>Doctor</h4>
+          <div class="who">Consulting physician</div>
+          <ul>
+            <li>See patients / do consults as usual</li>
+            <li>Pathologist: clear the sign-off list</li>
+            <li>Your fees are tracked for you — nothing to file</li>
+            <li>Get paid by Admin (GCash / cash)</li>
+          </ul>
+        </div>
+        <div class="rolecard admin">
+          <h4>Admin — every day</h4>
+          <div class="who">Owner · Manager · Bookkeeper</div>
+          <ul>
+            <li>Check the dashboard (the "Doctors to pay" card flags what's due)</li>
+            <li>Pay doctors → Ready to pay → send &amp; record</li>
+            <li>Handle insurance (HMO) claims as they settle</li>
+            <li>Review revenue, cash, and the books</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <hr class="divider" />
+
+    <!-- GLOSSARY -->
+    <section id="glossary">
+      <div class="eyebrow">● Just in case</div>
+      <h2>Plain-word glossary</h2>
+      <p>We kept jargon out of the app. Here are the few words you'll still see, in plain terms.</p>
+      <div class="gloss">
+        <dl><dt>Visit</dt><dd>One patient's order for the day — the tests, imaging, or consult they're getting, plus the payment.</dd></dl>
+        <dl><dt>Patient ID</dt><dd>The patient's permanent code (e.g. DRM-004821). Printed on the receipt; used to log in online.</dd></dl>
+        <dl><dt>QR registration</dt><dd>A code patients can scan to fill in their own details before reaching the desk. Optional — reception can always type the details in instead. Same record either way.</dd></dl>
+        <dl><dt>PIN</dt><dd>A one-time code on the receipt that lets the patient open their results online. Shown once; reception issues a new one if lost.</dd></dl>
+        <dl><dt>Release</dt><dd>Making a finished result available to the patient. Only possible once the visit is paid.</dd></dl>
+        <dl><dt>HMO</dt><dd>The patient's health insurance. The clinic bills them and gets paid later, instead of the patient paying in full.</dd></dl>
+        <dl><dt>Professional fee (doctor's fee)</dt><dd>The doctor's share of a consult. Worked out and tracked by the app; paid out by Admin.</dd></dl>
+        <dl><dt>Cash drawer</dt><dd>The reception till. The app tracks starting cash, what came in, and what went out, so the day balances.</dd></dl>
+      </div>
+    </section>
+
+    <footer>
+      DRMED Clinic Workflow Guide · Prepared for the DRMED team · May 2026 ·
+      <span style="color:var(--text-soft)">Screens shown are clean mock-ups of the live app for clarity.</span>
+    </footer>
+
+  </main>
+</div>
+
+<script>
+  // Sticky TOC scroll-spy (highlights the section you're reading)
+  (function(){
+    var links = Array.prototype.slice.call(document.querySelectorAll('.toc a'));
+    var map = {};
+    links.forEach(function(a){ var id=a.getAttribute('href').slice(1); var el=document.getElementById(id); if(el) map[id]=a; });
+    var ids = Object.keys(map);
+    function onScroll(){
+      var pos = window.scrollY + 120, current = ids[0];
+      ids.forEach(function(id){ var el=document.getElementById(id); if(el && el.offsetTop <= pos) current=id; });
+      links.forEach(function(a){ a.classList.remove('active'); });
+      if(map[current]) map[current].classList.add('active');
+    }
+    window.addEventListener('scroll', onScroll, {passive:true});
+    onScroll();
+  })();
+</script>
+</body>
+</html>

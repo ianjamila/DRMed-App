@@ -19,6 +19,19 @@ Key reference artifacts:
 - `README.md` — operational setup
 - `.env.example` — env-var inventory
 
+## Domain skills — consult these before re-exploring
+
+There are `drmed-*` Agent skills that already map the tricky subsystems. They
+auto-trigger on relevant keywords, but check the matching one first rather than
+rediscovering a surface from scratch:
+
+- **drmed-migrations** — schema changes, Supabase migrations, RLS policy + audit-row + payment-gating checklist, the migration workflow.
+- **drmed-payments** — payments, the payment-gating trigger, visit payment status, refunds/voids, cash drawer + EOD, HMO billing, the accounting GL bridge.
+- **drmed-result-templates** — lab result templates, structured result entry, the PDF render pipeline, sign-off / release.
+- **drmed-rls-and-auth** — staff vs patient auth, RLS, audit logging, MFA, signed URLs, RA 10173 — the most compliance-sensitive surface.
+- **drmed-staff-ui** — staff-portal "chrome": sidebar nav config, the shared `SectionTabs`, dashboard cards.
+- **drmed-booking-and-intake** — appointments/booking/registration: `lib/appointments/*`, `lib/patients/resolve`, public `/schedule`, staff "+ New appointment", `/register` self-reg + QR. *(being built in a parallel session)*
+
 ## Project at a glance
 
 `drmed.ph` is a unified Next.js 16 + Supabase app serving three surfaces from one codebase and one domain:
@@ -114,7 +127,7 @@ All Server Actions return `{ ok: true, data } | { ok: false, error }`. User-faci
 | PG error → user-facing message translator | `src/lib/accounting/pg-errors.ts` (`translatePgError`) |
 | Manila/PHT datetime helpers | `src/lib/dates/manila.ts` (`todayManilaISODate`, etc.) |
 | Rate-limit checker | `src/lib/rate-limit/check.ts` |
-| Migrations (49+ files, sequential numbering) | `supabase/migrations/` |
+| Migrations (sequential numbering, ~0089 and counting) | `supabase/migrations/` |
 
 ## Out of scope (by design)
 
@@ -126,6 +139,7 @@ All Server Actions return `{ ok: true, data } | { ok: false, error }`. User-faci
 - **TypeScript strict mode on.** No `any` without a comment explaining why.
 - **Naming:** routes kebab-case, DB columns snake_case, TS variables camelCase, types/components PascalCase, route files kebab-case, component files PascalCase.
 - **Commits:** Conventional Commits (`feat:`, `fix:`, `chore:`, `docs:`). Each phase ends with a tagged release (`v0.1.0` after Phase 1, etc.).
+- **Plain language by audience.** Reception-facing pages (cash drawer, pay doctors, new visit) use everyday words — humanize raw enum codes shown to users (`petty_cash` → "Petty cash") and avoid accounting jargon (Opening float → "Starting cash", Variance → "Difference"). Bookkeeper/accounting pages (journal, AP, financial statements) keep load-bearing terms (debit/credit, BIR codes, "Pending HMO settlement") and add a plain hint rather than renaming — renaming would be wrong. When unsure which audience a screen serves, ask. (See the `drmed-staff-ui` skill.)
 
 ## Schema changes — order of operations
 
