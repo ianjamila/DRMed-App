@@ -4,6 +4,9 @@ import { createClient } from "@/lib/supabase/server";
 import { formatPhp } from "@/lib/marketing/format";
 import { formatPhoneLocal } from "@/lib/format/phone";
 import { ReissuePinButton } from "./reissue-pin-button";
+import { requireActiveStaff } from "@/lib/auth/require-staff";
+import { getPatientConsentState } from "@/lib/consent/gate";
+import { ConsentPanel } from "./consent/consent-panel";
 
 export const metadata = {
   title: "Patient — staff",
@@ -41,6 +44,8 @@ const RELEASE_LABEL: Record<string, string> = {
 
 export default async function PatientDetailPage({ params }: Props) {
   const { id } = await params;
+  const session = await requireActiveStaff();
+  const isAdmin = session.role === "admin";
   const supabase = await createClient();
 
   const { data: patient } = await supabase
@@ -52,6 +57,8 @@ export default async function PatientDetailPage({ params }: Props) {
     .maybeSingle();
 
   if (!patient) notFound();
+
+  const consent = await getPatientConsentState(id);
 
   const { data: visits } = await supabase
     .from("visits")
@@ -164,19 +171,20 @@ export default async function PatientDetailPage({ params }: Props) {
           }
         />
         <Field
-          label="RA 10173 consent"
-          value={
-            patient.consent_signed_at
-              ? `Signed ${new Date(patient.consent_signed_at).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })}`
-              : "Not on file"
-          }
-          highlight={!patient.consent_signed_at}
-        />
-        <Field
           label="Visit history"
           value={patient.is_repeat_patient ? "Returning patient" : "First-timer"}
         />
       </section>
+
+      <div className="mt-3">
+        <ConsentPanel
+          patientId={id}
+          current={consent.current}
+          signedAt={consent.signedAt}
+          noticeVersion={consent.noticeVersion}
+          isAdmin={isAdmin}
+        />
+      </div>
 
       <section className="mt-8">
         <h2 className="font-[family-name:var(--font-heading)] text-xl font-extrabold text-[color:var(--color-brand-navy)]">

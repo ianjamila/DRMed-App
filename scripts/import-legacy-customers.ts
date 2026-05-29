@@ -115,7 +115,12 @@ function parseRow(
   const warnings: ImportWarning[] = [];
 
   const name = parseName(fullName, lastName, firstName, raw["M.I."]);
-  if (name.unparseable) warnings.push("name_unparseable");
+  // A row whose name fields parse to nothing (e.g. Full Name = ",  ", which
+  // survives the empty-name check above because ",  ".trim() === ",") is junk —
+  // skip it rather than inserting a nameless patient.
+  if (name.unparseable) {
+    return { parsed: null, reason_skipped: "name_unparseable" };
+  }
 
   const dob = parseBirthdate(normalizeDobRaw(raw["Date of Birth"]));
   if (dob.unparseable) warnings.push("dob_unparseable");

@@ -110,14 +110,19 @@ export async function finaliseConsolidatedReport(
     .update({ status: "released" })
     .in("id", input.testRequestIds);
   let releaseDeferred = false;
+  let deferredReason: "payment" | "consent" | null = null;
   if (relErr) {
-    const isPaymentGate =
-      (relErr as { code?: string }).code === "23514" &&
-      /payment_status/i.test(relErr.message ?? "");
-    if (!isPaymentGate) {
+    const code = (relErr as { code?: string }).code;
+    const msg = relErr.message ?? "";
+    if (code === "23514" && /payment_status/i.test(msg)) {
+      releaseDeferred = true;
+      deferredReason = "payment";
+    } else if (code === "23514" && /consent/i.test(msg)) {
+      releaseDeferred = true;
+      deferredReason = "consent";
+    } else {
       return { ok: false, error: translatePgError(relErr) };
     }
-    releaseDeferred = true;
   }
 
   // 5) Render the consolidated PDF and upload to the results bucket.
@@ -155,6 +160,7 @@ export async function finaliseConsolidatedReport(
       visit_id: input.visitId,
       pdf_size_bytes: pdfBuf.byteLength,
       release_deferred: releaseDeferred,
+      deferred_reason: deferredReason,
     },
     ip_address: ip,
     user_agent: ua,

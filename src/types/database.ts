@@ -1166,6 +1166,24 @@ export type Database = {
           },
         ]
       }
+      consent_settings: {
+        Row: {
+          gate_required: boolean
+          id: boolean
+          updated_at: string
+        }
+        Insert: {
+          gate_required?: boolean
+          id?: boolean
+          updated_at?: string
+        }
+        Update: {
+          gate_required?: boolean
+          id?: boolean
+          updated_at?: string
+        }
+        Relationships: []
+      }
       contact_messages: {
         Row: {
           created_at: string
@@ -3015,12 +3033,88 @@ export type Database = {
           },
         ]
       }
+      patient_consents: {
+        Row: {
+          actor_kind: string
+          artifact_path: string | null
+          created_at: string
+          created_by: string | null
+          event_type: string
+          id: string
+          ip: string | null
+          method: string | null
+          notice_version: string | null
+          patient_id: string
+          reason: string | null
+          seq: number
+          signatory: string | null
+          signatory_name: string | null
+          signatory_relationship: string | null
+          user_agent: string | null
+        }
+        Insert: {
+          actor_kind: string
+          artifact_path?: string | null
+          created_at?: string
+          created_by?: string | null
+          event_type: string
+          id?: string
+          ip?: string | null
+          method?: string | null
+          notice_version?: string | null
+          patient_id: string
+          reason?: string | null
+          seq?: never
+          signatory?: string | null
+          signatory_name?: string | null
+          signatory_relationship?: string | null
+          user_agent?: string | null
+        }
+        Update: {
+          actor_kind?: string
+          artifact_path?: string | null
+          created_at?: string
+          created_by?: string | null
+          event_type?: string
+          id?: string
+          ip?: string | null
+          method?: string | null
+          notice_version?: string | null
+          patient_id?: string
+          reason?: string | null
+          seq?: never
+          signatory?: string | null
+          signatory_name?: string | null
+          signatory_relationship?: string | null
+          user_agent?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "patient_consents_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "patient_consents_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "patients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       patients: {
         Row: {
           address: string | null
           birthdate: string | null
           birthdate_confirmed: boolean
+          consent_current: boolean
+          consent_method: string | null
+          consent_notice_version: string | null
           consent_signed_at: string | null
+          consent_withdrawn_at: string | null
           created_at: string
           created_by: string | null
           drm_id: string
@@ -3048,7 +3142,11 @@ export type Database = {
           address?: string | null
           birthdate?: string | null
           birthdate_confirmed?: boolean
+          consent_current?: boolean
+          consent_method?: string | null
+          consent_notice_version?: string | null
           consent_signed_at?: string | null
+          consent_withdrawn_at?: string | null
           created_at?: string
           created_by?: string | null
           drm_id?: string
@@ -3076,7 +3174,11 @@ export type Database = {
           address?: string | null
           birthdate?: string | null
           birthdate_confirmed?: boolean
+          consent_current?: boolean
+          consent_method?: string | null
+          consent_notice_version?: string | null
           consent_signed_at?: string | null
+          consent_withdrawn_at?: string | null
           created_at?: string
           created_by?: string | null
           drm_id?: string

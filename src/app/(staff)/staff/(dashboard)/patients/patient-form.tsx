@@ -70,6 +70,7 @@ export function PatientForm({ initial, referralOptions }: Props) {
   const [seniorPwdKind, setSeniorPwdKind] = useState<string>(
     initial?.senior_pwd_id_kind ?? "",
   );
+  const [consentSignatory, setConsentSignatory] = useState<string>("self");
 
   const consentAlreadySigned = !!initial?.consent_signed_at;
 
@@ -247,17 +248,45 @@ export function PatientForm({ initial, referralOptions }: Props) {
             {new Date(initial!.consent_signed_at!).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })})
           </p>
         ) : (
-          <label className="flex items-start gap-2 text-sm">
-            <input
-              type="checkbox"
-              name="consent_given_today"
-              className="mt-1"
-            />
-            <span>
-              Patient has signed the printed registration & consent form today.
-              Required before reception can release any results.
-            </span>
-          </label>
+          <>
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                name="consent_given_today"
+                className="mt-1"
+              />
+              <span>
+                Patient has signed the printed registration & consent form today.
+                Required before reception can release any results.
+              </span>
+            </label>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="grid gap-1.5">
+                <Label htmlFor="consent_signatory">Signed by</Label>
+                <select
+                  id="consent_signatory"
+                  name="consent_signatory"
+                  value={consentSignatory}
+                  onChange={(e) => setConsentSignatory(e.target.value)}
+                  className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+                >
+                  <option value="self">Patient signed</option>
+                  <option value="guardian">Guardian signed</option>
+                  <option value="representative">Representative signed</option>
+                </select>
+              </div>
+              <Field
+                label="Signatory name (if not patient)"
+                name="consent_signatory_name"
+                placeholder="Full name"
+              />
+              <Field
+                label="Relationship"
+                name="consent_signatory_relationship"
+                placeholder="e.g. Mother"
+              />
+            </div>
+          </>
         )}
       </fieldset>
 

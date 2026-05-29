@@ -7,6 +7,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { PatientUpdateSchema } from "@/lib/validations/patient";
+import { recordConsentGrantAction } from "@/lib/actions/consent/grant";
 
 export type PatientUpdateResult =
   | { ok: true; patient_id: string }
@@ -28,6 +29,10 @@ function readForm(formData: FormData) {
     senior_pwd_id_kind: formData.get("senior_pwd_id_kind") ?? "",
     senior_pwd_id_number: formData.get("senior_pwd_id_number") ?? "",
     consent_given_today: formData.get("consent_given_today"),
+    // Signatory fields are read raw from FormData (not part of the Zod schema).
+    consent_signatory: (formData.get("consent_signatory") ?? "self").toString(),
+    consent_signatory_name: (formData.get("consent_signatory_name") ?? "").toString(),
+    consent_signatory_relationship: (formData.get("consent_signatory_relationship") ?? "").toString(),
   };
 }
 
@@ -47,6 +52,20 @@ export async function updatePatientAction(
   }
 
   const { consent_given_today, ...rest } = parsed.data;
+  const consentGivenToday = consent_given_today === "yes";
+
+  // Signatory fields are read raw (not in the Zod schema).
+  const consentSignatory = (
+    ["self", "guardian", "representative"].includes(
+      formData.get("consent_signatory")?.toString() ?? "",
+    )
+      ? formData.get("consent_signatory")!.toString()
+      : "self"
+  ) as "self" | "guardian" | "representative";
+  const consentSignatoryName =
+    formData.get("consent_signatory_name")?.toString().trim() || undefined;
+  const consentSignatoryRelationship =
+    formData.get("consent_signatory_relationship")?.toString().trim() || undefined;
 
   // Whenever reception submits a non-empty DOB, treat it as confirmed.
   // Never flip to false here — the legacy importer sets false for imported rows.
@@ -57,26 +76,33 @@ export async function updatePatientAction(
   // they didn't create. Authorisation lives at requireActiveStaff above.
   const admin = createAdminClient();
 
-  // Look at the current consent_signed_at: only stamp it now if it isn't
-  // already set. Editing the form should never CLEAR an existing signed
-  // consent — that's a deliberate one-way ratchet for RA 10173 compliance.
-  const { data: existing } = await admin
-    .from("patients")
-    .select("consent_signed_at")
-    .eq("id", patientId)
-    .maybeSingle();
+  // Check whether the patient already has current consent. If they do, skip
+  // recording a new grant to avoid duplicates. The DB trigger owns
+  // consent_signed_at and consent_current — do NOT write those columns here.
+  let consentSignedNow = false;
+  if (consentGivenToday) {
+    const { data: existing } = await admin
+      .from("patients")
+      .select("consent_current")
+      .eq("id", patientId)
+      .maybeSingle();
 
-  const consent_signed_at = existing?.consent_signed_at
-    ? existing.consent_signed_at
-    : consent_given_today === "yes"
-      ? new Date().toISOString()
-      : null;
+    if (!existing?.consent_current) {
+      await recordConsentGrantAction({
+        patientId,
+        method: "paper_wet_signature",
+        signatory: consentSignatory,
+        signatoryName: consentSignatoryName,
+        signatoryRelationship: consentSignatoryRelationship,
+      });
+      consentSignedNow = true;
+    }
+  }
 
   const { error } = await admin
     .from("patients")
     .update({
       ...rest,
-      consent_signed_at,
       ...(birthdate_confirmed !== undefined ? { birthdate_confirmed } : {}),
     })
     .eq("id", patientId);
@@ -92,7 +118,7 @@ export async function updatePatientAction(
     resource_type: "patient",
     resource_id: patientId,
     metadata: {
-      consent_signed_now: !existing?.consent_signed_at && !!consent_signed_at,
+      consent_signed_now: consentSignedNow,
     },
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),
