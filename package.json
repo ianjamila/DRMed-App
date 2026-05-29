@@ -8,6 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "db:types": "supabase gen types typescript --local > src/types/database.ts",
     "db:types:local": "supabase gen types typescript --local > src/types/database.ts",
     "db:types:remote": "test -n \"$SUPABASE_DB_URL\" || { echo 'SUPABASE_DB_URL not set — copy the Supabase project connection string into .env.local then re-run with: set -a; source .env.local; set +a; npm run db:types:remote'; exit 1; } && supabase gen types typescript --db-url \"$SUPABASE_DB_URL\" > src/types/database.ts",
@@ -79,6 +81,7 @@
     "supabase": "^2.100.1",
     "tailwindcss": "^4",
     "tsx": "^4.22.3",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.4"
   }
 }
