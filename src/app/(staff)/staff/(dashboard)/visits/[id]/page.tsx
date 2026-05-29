@@ -7,6 +7,7 @@ import { formatPhp } from "@/lib/marketing/format";
 import { sectionsForRole } from "@/lib/auth/role-sections";
 import { ReleaseButton } from "./release-button";
 import { VoidPaymentDialog } from "../../payments/[id]/void/void-payment-dialog";
+import { isConsentGateRequired, getPatientConsentState } from "@/lib/consent/gate";
 
 export const metadata = {
   title: "Visit — staff",
@@ -77,6 +78,15 @@ export default async function VisitDetailPage({ params }: Props) {
   const hmo = Array.isArray(visit.hmo_providers)
     ? visit.hmo_providers[0]
     : visit.hmo_providers;
+
+  // Consent release-gate state for this patient. When the gate is on and
+  // consent is missing, the Release button is hard-disabled (the DB trigger
+  // would reject the release anyway). When off, missing consent only shows a
+  // soft amber warning.
+  const [gateRequired, consent] = await Promise.all([
+    isConsentGateRequired(),
+    getPatientConsentState(patient.id),
+  ]);
 
   const [{ data: tests }, { data: payments }] = await Promise.all([
     supabase
@@ -523,6 +533,8 @@ export default async function VisitDetailPage({ params }: Props) {
                         testRequestId={t.id}
                         visitId={visit.id}
                         paid={isPaid}
+                        consentOnFile={consent.current}
+                        gateRequired={gateRequired}
                         hasPdf={hasPdfByTrId.get(t.id) === true}
                         preferredMedium={
                           (patient.preferred_release_medium ?? null) as
@@ -731,6 +743,8 @@ interface TestActionProps {
   visitId: string;
   paid: boolean;
   preferredMedium: "physical" | "email" | "viber" | "gcash" | "pickup" | null;
+  consentOnFile: boolean;
+  gateRequired: boolean;
   hasPdf?: boolean;
 }
 
@@ -743,6 +757,8 @@ function TestAction({
   visitId,
   paid,
   preferredMedium,
+  consentOnFile,
+  gateRequired,
   hasPdf,
 }: TestActionProps) {
   if (status === "ready_for_release") {
@@ -752,6 +768,8 @@ function TestAction({
         visitId={visitId}
         paid={paid}
         preferredMedium={preferredMedium}
+        consentOnFile={consentOnFile}
+        gateRequired={gateRequired}
       />
     );
   }
