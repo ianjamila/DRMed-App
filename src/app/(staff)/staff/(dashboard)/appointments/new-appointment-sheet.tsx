@@ -271,6 +271,11 @@ export function NewAppointmentSheet({
                         >
                           <span className="font-semibold">
                             {p.last_name}, {p.first_name}
+                            {p.pre_registered ? (
+                              <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-900">
+                                Pre-reg
+                              </span>
+                            ) : null}
                           </span>
                           <span className="font-mono text-xs text-muted-foreground">
                             {p.drm_id} · {p.phone ?? p.email ?? "—"}
