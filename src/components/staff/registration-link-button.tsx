@@ -33,6 +33,14 @@ export function RegistrationLinkButton({ url }: { url: string }) {
           <Button type="button" size="sm" variant="outline" onClick={copy} className="w-full">
             {copied ? "Copied!" : "Copy link"}
           </Button>
+          <a
+            href="/register-poster"
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs font-semibold text-[color:var(--color-brand-cyan)] underline"
+          >
+            Open printable poster →
+          </a>
         </div>
       )}
     </div>
