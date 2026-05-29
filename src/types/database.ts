@@ -3046,6 +3046,7 @@ export type Database = {
           notice_version: string | null
           patient_id: string
           reason: string | null
+          seq: number
           signatory: string | null
           signatory_name: string | null
           signatory_relationship: string | null
@@ -3063,6 +3064,7 @@ export type Database = {
           notice_version?: string | null
           patient_id: string
           reason?: string | null
+          seq?: never
           signatory?: string | null
           signatory_name?: string | null
           signatory_relationship?: string | null
@@ -3080,6 +3082,7 @@ export type Database = {
           notice_version?: string | null
           patient_id?: string
           reason?: string | null
+          seq?: never
           signatory?: string | null
           signatory_name?: string | null
           signatory_relationship?: string | null
