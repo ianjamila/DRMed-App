@@ -405,6 +405,12 @@ export const STAFF_NAV: StaffNavSection[] = [
             roles: ["admin"],
           },
           {
+            href: "/staff/admin/settings/consent-gate",
+            label: "Consent gate",
+            description: "Turn the RA 10173 data-privacy consent requirement on or off. When ON, lab results can't be released for a patient without consent on file. Ships OFF — flip it on once reception is briefed.",
+            roles: ["admin"],
+          },
+          {
             href: "/staff/admin/import-patients",
             label: "Import patients",
             description: "Bulk-import patients from a CSV file — used during initial setup or when migrating from another system. Reads name, DOB, phone, email columns and creates one patient record per row.",
