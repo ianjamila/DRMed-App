@@ -17,7 +17,14 @@ export function SignaturePad({
   function pos(e: React.PointerEvent<HTMLCanvasElement>) {
     const c = canvasRef.current!;
     const r = c.getBoundingClientRect();
-    return { x: e.clientX - r.left, y: e.clientY - r.top };
+    // The canvas is displayed via `w-full`, so its on-screen size (r.width/
+    // r.height) differs from its fixed drawing buffer (c.width/c.height).
+    // Scale the pointer coords into buffer space so the stroke lands under the
+    // pen regardless of how wide the canvas renders.
+    return {
+      x: (e.clientX - r.left) * (c.width / r.width),
+      y: (e.clientY - r.top) * (c.height / r.height),
+    };
   }
   function down(e: React.PointerEvent<HTMLCanvasElement>) {
     drawing.current = true;
