@@ -58,7 +58,7 @@ export default async function UploadBankStatementPage() {
           </ul>
           <p className="pt-2"><strong>Optional but helpful columns:</strong></p>
           <ul className="ml-5 list-disc space-y-1">
-            <li><code>description</code> — what the bank labeled the transaction (e.g., "POS purchase", "Salary loan repay").</li>
+            <li><code>description</code> — what the bank labeled the transaction (e.g., &quot;POS purchase&quot;, &quot;Salary loan repay&quot;).</li>
             <li><code>reference</code> — the bank&apos;s reference number for the transaction.</li>
           </ul>
           <p className="pt-2 text-[color:var(--color-brand-text-soft)]">
