@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { RealtimeRefresher } from "@/components/staff/realtime-refresher";
 import { TransitionButtons } from "./transition-buttons";
+import { NewAppointmentSheet, type ServiceOption, type PhysicianOption } from "./new-appointment-sheet";
 
 export const metadata = {
   title: "Appointments — staff",
@@ -200,6 +202,18 @@ export default async function AppointmentsPage() {
     loadPendingCallback(),
   ]);
 
+  const supabase = await createClient();
+  const [{ data: serviceRows }, { data: physicianRows }] = await Promise.all([
+    supabase.from("services").select("id, name, kind, requires_time_slot").eq("is_active", true).order("name", { ascending: true }),
+    supabase.from("physicians").select("id, full_name").eq("is_active", true).order("full_name", { ascending: true }),
+  ]);
+  const services: ServiceOption[] = serviceRows ?? [];
+  const physicians: PhysicianOption[] = physicianRows ?? [];
+
+  const host = (await headers()).get("host") ?? "drmed.ph";
+  const proto = host.startsWith("localhost") ? "http" : "https";
+  const selfBookUrl = `${proto}://${host}/schedule?src=staff_qr`;
+
   const todayRows = [...todayScheduled, ...todayWalkIns];
 
   return (
@@ -211,15 +225,18 @@ export default async function AppointmentsPage() {
           { table: "appointments", event: "UPDATE" },
         ]}
       />
-      <header className="mb-6">
-        <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Appointments
-        </h1>
-        <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
-          Public bookings from /schedule plus staff-created appointments.
-          Multi-service requests are grouped — one card with all picked
-          tests, single set of action buttons.
-        </p>
+      <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+            Appointments
+          </h1>
+          <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
+            Public bookings from /schedule plus staff-created appointments.
+            Multi-service requests are grouped — one card with all picked
+            tests, single set of action buttons.
+          </p>
+        </div>
+        <NewAppointmentSheet services={services} physicians={physicians} selfBookUrl={selfBookUrl} />
       </header>
 
       <Section
