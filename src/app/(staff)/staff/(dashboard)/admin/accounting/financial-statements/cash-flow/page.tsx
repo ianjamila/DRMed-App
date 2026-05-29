@@ -14,6 +14,9 @@ const PHP = new Intl.NumberFormat("en-PH", {
   currency: "PHP",
 });
 
+// Tint negative amounts red (positives keep the default colour passed in).
+const negRed = (n: number) => (n < 0 ? "text-red-600" : "");
+
 interface SearchProps {
   searchParams: Promise<{ start?: string; end?: string }>;
 }
@@ -216,7 +219,7 @@ export default async function CashFlowPage({ searchParams }: SearchProps) {
         </p>
       </header>
 
-      <StatementTabs active="cashflow" />
+      <StatementTabs />
 
       <PeriodPresets
         pathname="/staff/admin/accounting/financial-statements/cash-flow"
@@ -274,6 +277,7 @@ export default async function CashFlowPage({ searchParams }: SearchProps) {
           label="Beginning balance"
           value={PHP.format(beginningTotal)}
           hint={`as of ${beginningDate}`}
+          valueNegative={beginningTotal < 0}
         />
         <SummaryTile
           label="Period inflows"
@@ -292,6 +296,8 @@ export default async function CashFlowPage({ searchParams }: SearchProps) {
           value={PHP.format(closingTotal)}
           hint={`Δ ${PHP.format(netMovement)}`}
           tone={netMovement < 0 ? "warn" : "ok"}
+          valueNegative={closingTotal < 0}
+          hintNegative={netMovement < 0}
         />
       </div>
 
@@ -320,7 +326,7 @@ export default async function CashFlowPage({ searchParams }: SearchProps) {
             <tr className="bg-[color:var(--color-brand-bg)]/40 font-semibold">
               <td className="px-4 py-3">Beginning cash balance</td>
               <td colSpan={2} />
-              <td className="px-4 py-3 text-right font-mono">
+              <td className={`px-4 py-3 text-right font-mono ${negRed(beginningTotal)}`}>
                 {PHP.format(beginningTotal)}
               </td>
               <td />
@@ -365,7 +371,7 @@ export default async function CashFlowPage({ searchParams }: SearchProps) {
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-2 text-right font-mono">
+                  <td className={`px-4 py-2 text-right font-mono ${negRed(b.net)}`}>
                     {PHP.format(b.net)}
                   </td>
                   <td className="px-4 py-2 text-right font-mono text-[color:var(--color-brand-text-soft)]">
@@ -384,7 +390,7 @@ export default async function CashFlowPage({ searchParams }: SearchProps) {
               <td className="px-4 py-3 text-right font-mono text-red-700">
                 −{PHP.format(totalOutflow)}
               </td>
-              <td className="px-4 py-3 text-right font-mono">
+              <td className={`px-4 py-3 text-right font-mono ${negRed(netMovement)}`}>
                 {PHP.format(netMovement)}
               </td>
               <td />
@@ -394,7 +400,7 @@ export default async function CashFlowPage({ searchParams }: SearchProps) {
                 Ending cash balance
               </td>
               <td colSpan={2} />
-              <td className="px-4 py-3 text-right font-mono text-[color:var(--color-brand-navy)]">
+              <td className={`px-4 py-3 text-right font-mono ${closingTotal < 0 ? "text-red-600" : "text-[color:var(--color-brand-navy)]"}`}>
                 {PHP.format(closingTotal)}
               </td>
               <td />
@@ -436,11 +442,16 @@ function SummaryTile({
   value,
   hint,
   tone = "ok",
+  valueNegative = false,
+  hintNegative = false,
 }: {
   label: string;
   value: string;
   hint?: string;
   tone?: "ok" | "warn";
+  // Tint the main figure / the hint red when the underlying amount is negative.
+  valueNegative?: boolean;
+  hintNegative?: boolean;
 }) {
   const accent =
     tone === "warn"
@@ -453,11 +464,21 @@ function SummaryTile({
       <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
         {label}
       </p>
-      <p className="mt-2 font-[family-name:var(--font-heading)] text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
+      <p
+        className={`mt-2 whitespace-nowrap font-[family-name:var(--font-heading)] text-2xl font-extrabold ${
+          valueNegative ? "text-red-600" : "text-[color:var(--color-brand-navy)]"
+        }`}
+      >
         {value}
       </p>
       {hint ? (
-        <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
+        <p
+          className={`mt-1 whitespace-nowrap text-xs ${
+            hintNegative
+              ? "font-semibold text-red-600"
+              : "text-[color:var(--color-brand-text-soft)]"
+          }`}
+        >
           {hint}
         </p>
       ) : null}

@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { recordCashAdjustmentAction, voidCashAdjustmentAction }
   from "./actions";
+import { PaymentsTabs } from "../_components/payments-tabs";
 import type { Database } from "@/types/database";
 
 type Adjustment = Database["public"]["Tables"]["eod_cash_adjustments"]["Row"];
@@ -28,6 +29,18 @@ const friendlyManilaDate = (isoDate: string) => {
   }).format(d);
   return `${weekday}, ${longDate}`;
 };
+
+// Plain-English labels for the stored `kind` codes, so reception never sees
+// raw values like "petty_cash" or "float_topup".
+const KIND_LABEL: Record<string, string> = {
+  petty_cash: "Petty cash",
+  salary_advance: "Salary advance",
+  courier: "Courier / delivery",
+  other_payout: "Other",
+  float_topup: "Cash added to drawer",
+  float_pullout: "Cash removed from drawer",
+};
+const kindLabel = (k: string) => KIND_LABEL[k] ?? k;
 
 export function CashDrawerClient(props: {
   sessionUserId: string;
@@ -54,7 +67,7 @@ export function CashDrawerClient(props: {
   const closed = !!s.closed;
 
   const handleVoid = (id: string) => {
-    const reason = window.prompt("Reason for voiding this adjustment?");
+    const reason = window.prompt("Why are you removing this entry?");
     if (!reason) return;
     start(async () => {
       const r = await voidCashAdjustmentAction(id, reason);
@@ -65,6 +78,7 @@ export function CashDrawerClient(props: {
 
   return (
     <main className="mx-auto max-w-3xl px-4 py-6 sm:px-6">
+      <PaymentsTabs />
       <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h1 className="font-[family-name:var(--font-heading)] text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
           Cash drawer
@@ -101,19 +115,19 @@ export function CashDrawerClient(props: {
 
       <section className="rounded-lg border bg-white p-4 shadow-sm">
         <div className="flex justify-between border-b py-2">
-          <strong className="text-[color:var(--color-brand-navy)]">Opening float</strong>
+          <strong className="text-[color:var(--color-brand-navy)]">Starting cash</strong>
           <span className="font-mono">{PESO(Number(s.opening_float_php ?? 0))}</span>
         </div>
         <div className="flex justify-between border-b py-2">
-          <strong className="text-[color:var(--color-brand-navy)]">Cash in (payments today)</strong>
+          <strong className="text-[color:var(--color-brand-navy)]">Cash received today</strong>
           <span className="font-mono">{PESO(Number(s.cash_payments_php ?? 0))}</span>
         </div>
         <div className="flex justify-between border-b py-2">
-          <strong className="text-[color:var(--color-brand-navy)]">Cash out</strong>
+          <strong className="text-[color:var(--color-brand-navy)]">Cash paid out</strong>
           <span className="font-mono">−{PESO(Number(s.cash_payouts_php ?? 0))}</span>
         </div>
         <div className="flex justify-between pt-3 text-lg">
-          <strong className="text-[color:var(--color-brand-navy)]">Expected cash now</strong>
+          <strong className="text-[color:var(--color-brand-navy)]">Cash you should have now</strong>
           <span className="font-mono font-bold text-[color:var(--color-brand-navy)]">
             {PESO(Number(s.expected_cash_php ?? 0))}
           </span>
@@ -126,27 +140,27 @@ export function CashDrawerClient(props: {
           onClick={() => setOpenModal("payout")}
           className="min-h-[44px] rounded border bg-white px-4 py-2 text-sm font-medium text-[color:var(--color-brand-navy)] disabled:opacity-50"
         >
-          + Add payout
+          + Pay out cash
         </button>
         <button
           disabled={closed || pending}
           onClick={() => setOpenModal("topup")}
           className="min-h-[44px] rounded border bg-white px-4 py-2 text-sm font-medium text-[color:var(--color-brand-navy)] disabled:opacity-50"
         >
-          + Top up float
+          + Add cash to drawer
         </button>
         <button
           disabled={closed || pending}
           onClick={() => setOpenModal("pullout")}
           className="min-h-[44px] rounded border bg-white px-4 py-2 text-sm font-medium text-[color:var(--color-brand-navy)] disabled:opacity-50"
         >
-          + Pull out float
+          + Remove cash from drawer
         </button>
         <a
           href={`/staff/payments/eod?date=${props.businessDate}&shift=${props.currentShiftId}`}
           className="ml-auto min-h-[44px] rounded bg-[color:var(--color-brand-cyan)] px-4 py-2 text-sm font-semibold text-white"
         >
-          {closed ? "View close →" : "Close day →"}
+          {closed ? "View day summary →" : "Count & close day →"}
         </a>
       </div>
 
@@ -155,20 +169,20 @@ export function CashDrawerClient(props: {
           <thead>
             <tr className="bg-[color:var(--color-bg-mid)] text-left">
               <th className="px-3 py-2">Time</th>
-              <th className="px-3 py-2">Kind</th>
+              <th className="px-3 py-2">Type</th>
               <th className="px-3 py-2">Amount</th>
-              <th className="px-3 py-2">Payee / notes</th>
+              <th className="px-3 py-2">Paid to / notes</th>
               <th className="px-3 py-2"></th>
             </tr>
           </thead>
           <tbody>
             {props.rows.length === 0 && (
-              <tr><td colSpan={5} className="px-3 py-4 text-center text-[color:var(--color-brand-text-soft)]">No cash flow recorded yet today.</td></tr>
+              <tr><td colSpan={5} className="px-3 py-4 text-center text-[color:var(--color-brand-text-soft)]">No cash added or paid out yet today.</td></tr>
             )}
             {props.rows.map((r) => (
               <tr key={r.id} className={r.voided_at ? "opacity-50" : ""}>
                 <td className="px-3 py-2 whitespace-nowrap">{new Date(r.recorded_at).toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Manila" })}</td>
-                <td className="px-3 py-2">{r.kind}</td>
+                <td className="px-3 py-2">{kindLabel(r.kind)}</td>
                 <td className="px-3 py-2 font-mono">{PESO(Number(r.amount_php))}</td>
                 <td className="px-3 py-2">{r.payee ?? r.notes ?? "—"}</td>
                 <td className="px-3 py-2">
@@ -221,6 +235,14 @@ function AdjustmentModal(props: {
 
   const payoutKinds = ["petty_cash", "salary_advance", "courier", "other_payout"];
 
+  // The "contra" account means different things per action; label it plainly.
+  const contraLabel =
+    props.mode === "topup"
+      ? "Where did the cash come from?"
+      : props.mode === "pullout"
+        ? "Where is the cash going?"
+        : "Expense account";
+
   const onSubmit = () => {
     setErr(null);
     start(async () => {
@@ -243,23 +265,23 @@ function AdjustmentModal(props: {
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 p-4">
       <div className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl">
         <h2 className="font-[family-name:var(--font-heading)] text-lg font-bold text-[color:var(--color-brand-navy)]">
-          {props.mode === "payout" ? "Add payout" : props.mode === "topup" ? "Top up float" : "Pull out float"}
+          {props.mode === "payout" ? "Pay out cash" : props.mode === "topup" ? "Add cash to drawer" : "Remove cash from drawer"}
         </h2>
         {props.mode === "payout" && (
           <label className="mt-3 block text-sm">
-            Kind
+            What is this for?
             <select value={kind} onChange={(e) => setKind(e.target.value)} className="mt-1 block w-full rounded border px-2 py-2">
-              {payoutKinds.map((k) => <option key={k} value={k}>{k}</option>)}
+              {payoutKinds.map((k) => <option key={k} value={k}>{kindLabel(k)}</option>)}
             </select>
           </label>
         )}
         <label className="mt-3 block text-sm">
-          Amount (PHP)
+          Amount (₱)
           <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" className="mt-1 block w-full rounded border px-2 py-2" />
         </label>
         {kind === "salary_advance" && (
           <label className="mt-3 block text-sm">
-            Staff (payee)
+            Staff member
             <select value={staffId} onChange={(e) => setStaffId(e.target.value)} className="mt-1 block w-full rounded border px-2 py-2">
               <option value="">— pick —</option>
               {props.staff.map((s) => <option key={s.id} value={s.id}>{s.full_name} ({s.role})</option>)}
@@ -268,7 +290,7 @@ function AdjustmentModal(props: {
         )}
         {kind !== "salary_advance" && kind !== "courier" && (
           <label className="mt-3 block text-sm">
-            Contra account
+            {contraLabel}
             <select value={contraId} onChange={(e) => setContraId(e.target.value)} className="mt-1 block w-full rounded border px-2 py-2">
               <option value="">— pick —</option>
               {props.accounts.map((a) => <option key={a.id} value={a.id}>{a.code} {a.name}</option>)}
@@ -276,11 +298,11 @@ function AdjustmentModal(props: {
           </label>
         )}
         <label className="mt-3 block text-sm">
-          Payee (optional free text)
+          Paid to (optional)
           <input value={payee} onChange={(e) => setPayee(e.target.value)} className="mt-1 block w-full rounded border px-2 py-2" />
         </label>
         <label className="mt-3 block text-sm">
-          Notes
+          Notes (optional)
           <input value={notes} onChange={(e) => setNotes(e.target.value)} className="mt-1 block w-full rounded border px-2 py-2" />
         </label>
         {err && <p className="mt-3 text-sm text-red-600">{err}</p>}

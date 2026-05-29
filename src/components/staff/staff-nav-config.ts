@@ -95,13 +95,10 @@ export const STAFF_NAV: StaffNavSection[] = [
       {
         href: "/staff/payments/cash-drawer",
         label: "Cash drawer",
-        description: "Your active shift workspace. Record the starting cash float when you open up, see every payment collected during the shift, and track the running total in the till.",
-        roles: ["reception", "admin"],
-      },
-      {
-        href: "/staff/payments/eod",
-        label: "End of day",
-        description: "Close out at the end of your shift: count the physical cash in the drawer, compare it to what the system says you should have, and explain any over/short. Locks the day once balanced.",
+        // Lands on the Cash drawer tab; End of day is the second tab on the
+        // same page. activePrefix keeps this item lit on the eod route too.
+        activePrefix: "/staff/payments/eod",
+        description: "Your shift cash workspace, in two tabs. Cash drawer: record the opening float, see every payment collected, and track the running till total. End of day: count the physical cash, compare to what the system expects, explain any over/short, and lock the day.",
         roles: ["reception", "admin"],
       },
     ],
@@ -133,8 +130,11 @@ export const STAFF_NAV: StaffNavSection[] = [
         roles: ["admin"],
       },
       {
-        href: "/staff/admin/accounting/ap",
+        // Lands on the Quick expense tab (the most-used action); activePrefix
+        // keeps "Expenses" highlighted across the other AP tabs too.
+        href: "/staff/admin/accounting/ap/quick-expense",
         label: "Expenses",
+        activePrefix: "/staff/admin/accounting/ap",
         description: "Everything expense-related in one place. Tabs inside: Quick expense (already-paid same-day expenses — cash, GCash, owner OOP), Overview (what's outstanding), Vendor bills (invoices with due dates), Bill payments (the outflows), Vendors (master list), Recurring (monthly auto-bills).",
         roles: ["admin"],
       },
@@ -228,32 +228,19 @@ export const STAFF_NAV: StaffNavSection[] = [
         items: [
           {
             href: "/staff/admin/accounting/journal",
+            // The list page's "+ New journal entry" button reaches /journal/new,
+            // so the manual-entry route no longer needs its own sidebar item.
             label: "Journal entries",
-            description: "The full transaction log of the clinic — every revenue, expense, payment, and adjustment ever booked. Each entry has matching debits and credits that must balance. Use the search to find a specific entry or filter by source (sale, payment, manual correction, etc.).",
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/accounting/journal/new",
-            label: "Manual journal entry",
-            description: "Hand-post an accounting entry yourself. Use this for corrections, opening balances, or one-off items the system didn't auto-book (e.g., recording an owner's capital injection, or correcting a miscategorized expense). Every entry must balance: total debits = total credits.",
+            description: "The full transaction log of the clinic — every revenue, expense, payment, and adjustment ever booked. Each entry has matching debits and credits that must balance. Search or filter by source to find an entry, or click + New journal entry to hand-post a correction, opening balance, or one-off the system didn't auto-book.",
             roles: ["admin"],
           },
           {
             href: "/staff/admin/accounting/financial-statements",
-            label: "Income statement (P&L)",
-            description: "Profit & Loss report for any date range you pick. Shows total revenue (what you earned) minus total expenses (what you spent) = net income (your profit or loss). Pick last month to see how you did, or YTD for the year so far.",
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/accounting/financial-statements/balance-sheet",
-            label: "Balance sheet",
-            description: "A snapshot of the clinic's financial position on any date you pick. Shows what you OWN (cash, AR, equipment), what you OWE (vendor bills, doctor PFs, taxes), and the owner's equity. Asset total must equal Liabilities + Equity — if it doesn't, the books are out of balance.",
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/accounting/financial-statements/cash-flow",
-            label: "Cash flow",
-            description: "Tracks how cash physically moved during a date range — what came in (sales, HMO settlements) vs. what went out (rent, salaries, supplies). Different from the income statement because it ignores non-cash items and shows the actual bank/cash balance change.",
+            label: "Financial statements",
+            // One tabbed page: Income statement (P&L) / Balance sheet / Cash
+            // flow. href is the bare route (Income statement); the default
+            // prefix match keeps it lit on the balance-sheet & cash-flow tabs.
+            description: "The three core reports on one page, as tabs: Income statement (P&L) — revenue minus expenses for a date range; Balance sheet — what you own, owe, and the owner's equity on a date; Cash flow — how cash actually moved. Pick a date range and switch tabs.",
             roles: ["admin"],
           },
           {

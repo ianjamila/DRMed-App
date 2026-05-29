@@ -166,7 +166,7 @@ export default async function BalanceSheetPage({ searchParams }: SearchProps) {
         </p>
       </header>
 
-      <StatementTabs active="balance" />
+      <StatementTabs />
 
       <BalanceSheetAsOfPresets asOf={asOf} todayISO={todayISO} />
 
