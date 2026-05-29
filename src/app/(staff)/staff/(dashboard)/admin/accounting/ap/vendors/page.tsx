@@ -2,7 +2,6 @@ import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { listVendorsAction } from "@/lib/actions/accounting/vendors";
 import { VendorsIndexClient } from "./vendors-index-client";
-import { BillsTabs } from "../_components/bills-tabs";
 
 export const metadata = { title: "Vendors — AP — DRMed" };
 export const dynamic = "force-dynamic";
@@ -12,7 +11,7 @@ export default async function VendorsIndexPage() {
   const result = await listVendorsAction();
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
+    <div>
       <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
@@ -34,8 +33,6 @@ export default async function VendorsIndexPage() {
           + New vendor
         </Link>
       </header>
-
-      <div className="mb-6"><BillsTabs /></div>
 
       {result.ok ? (
         <VendorsIndexClient initialVendors={result.data} />

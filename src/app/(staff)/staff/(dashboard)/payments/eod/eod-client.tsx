@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { closeEodAction } from "../cash-drawer/actions";
 import { reopenEodCloseAction } from "@/app/(staff)/staff/(dashboard)/admin/accounting/cash-routing/actions";
+import { PaymentsTabs } from "../_components/payments-tabs";
 
 const PESO = (n: number) =>
   new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format(n);
@@ -73,7 +74,7 @@ export function EodClient(props: {
 
   const onReopen = () => {
     if (!closed) return;
-    const reopen = window.prompt("Reason for reopening this day?");
+    const reopen = window.prompt("Why are you re-opening this day?");
     if (!reopen) return;
     start(async () => {
       const r = await reopenEodCloseAction(closed.id, reopen);
@@ -84,41 +85,42 @@ export function EodClient(props: {
 
   return (
     <main className="mx-auto max-w-2xl px-4 py-6 sm:px-6">
+      <PaymentsTabs />
       <h1 className="font-[family-name:var(--font-heading)] text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
-        End-of-day close · {formatBusinessDate(props.businessDate)}
+        Close &amp; count cash · {formatBusinessDate(props.businessDate)}
       </h1>
 
       {closed ? (
         <section className="mt-5 rounded-lg border bg-green-50 p-4">
           <p className="text-sm font-semibold text-green-800">
-            ✓ Closed at {new Date(closed.closed_at).toLocaleString("en-PH", { timeZone: "Asia/Manila" })}
+            ✓ Day closed at {new Date(closed.closed_at).toLocaleString("en-PH", { timeZone: "Asia/Manila" })}
           </p>
           <dl className="mt-3 grid grid-cols-2 gap-2 text-sm">
-            <dt>Expected</dt><dd className="font-mono text-right">{PESO(closed.expected_cash_php)}</dd>
-            <dt>Counted</dt><dd className="font-mono text-right">{PESO(closed.counted_cash_php)}</dd>
-            <dt>Variance</dt><dd className="font-mono text-right">{PESO(closed.variance_php)}</dd>
+            <dt>Cash you should have</dt><dd className="font-mono text-right">{PESO(closed.expected_cash_php)}</dd>
+            <dt>Cash counted</dt><dd className="font-mono text-right">{PESO(closed.counted_cash_php)}</dd>
+            <dt>Difference (over / short)</dt><dd className="font-mono text-right">{PESO(closed.variance_php)}</dd>
           </dl>
           {closed.variance_reason && (
             <p className="mt-2 text-sm italic text-[color:var(--color-brand-text-soft)]">&ldquo;{closed.variance_reason}&rdquo;</p>
           )}
           {props.isAdmin && (
             <button onClick={onReopen} disabled={pending} className="mt-4 min-h-[44px] rounded border px-4 py-2 text-sm">
-              Reopen day
+              Re-open this day
             </button>
           )}
         </section>
       ) : (
         <section className="mt-5 rounded-lg border bg-white p-4 shadow-sm">
           <div className="flex justify-between text-sm">
-            <strong>Expected cash</strong>
+            <strong>Cash you should have</strong>
             <span className="font-mono text-lg">{PESO(expected)}</span>
           </div>
           <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
-            = opening {PESO(Number(s.opening_float_php ?? 0))} + cash in {PESO(Number(s.cash_payments_php ?? 0))} − cash out {PESO(Number(s.cash_payouts_php ?? 0))}
+            = starting cash {PESO(Number(s.opening_float_php ?? 0))} + cash received {PESO(Number(s.cash_payments_php ?? 0))} − cash paid out {PESO(Number(s.cash_payouts_php ?? 0))}
           </p>
 
           <label className="mt-4 block text-sm">
-            Counted cash (PHP)
+            Cash you actually counted (₱)
             <input
               value={counted}
               onChange={(e) => setCounted(e.target.value)}
@@ -128,7 +130,7 @@ export function EodClient(props: {
           </label>
 
           <div className="mt-3 flex justify-between text-sm">
-            <strong>Variance</strong>
+            <strong>Difference (over / short)</strong>
             <span className={"font-mono " + (variance < 0 ? "text-red-600" : variance > 0 ? "text-amber-600" : "")}>
               {PESO(variance)}
             </span>
@@ -136,7 +138,7 @@ export function EodClient(props: {
 
           {variance !== 0 && (
             <label className="mt-3 block text-sm">
-              Reason (required when variance ≠ 0)
+              Reason for the difference (required)
               <input value={reason} onChange={(e) => setReason(e.target.value)} className="mt-1 block w-full rounded border px-2 py-2" />
             </label>
           )}
@@ -144,7 +146,7 @@ export function EodClient(props: {
           {err && <p className="mt-3 text-sm text-red-600">{err}</p>}
 
           <div className="mt-5 flex flex-wrap gap-2">
-            <a href={`/staff/payments/cash-drawer?date=${props.businessDate}&shift=${props.shiftId}`} className="min-h-[44px] rounded border px-4 py-2 text-sm">Back to drawer</a>
+            <a href={`/staff/payments/cash-drawer?date=${props.businessDate}&shift=${props.shiftId}`} className="min-h-[44px] rounded border px-4 py-2 text-sm">Back to cash drawer</a>
             <button
               onClick={onClose}
               disabled={pending || !counted || (variance !== 0 && !reason)}

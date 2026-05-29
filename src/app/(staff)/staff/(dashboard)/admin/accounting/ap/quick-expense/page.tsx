@@ -1,6 +1,5 @@
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
-import { BillsTabs } from "../_components/bills-tabs";
 import { QuickExpenseForm } from "./quick-expense-form";
 
 export const metadata = { title: "Quick expense — DRMed" };
@@ -11,7 +10,7 @@ export default async function QuickExpensePage() {
   const today = todayManilaISODate();
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8 space-y-6">
+    <div className="max-w-3xl space-y-6">
       <header>
         <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
           Admin · Bills
@@ -26,8 +25,6 @@ export default async function QuickExpensePage() {
           <strong>Vendor bills</strong> instead.
         </p>
       </header>
-
-      <BillsTabs />
 
       <QuickExpenseForm defaultDate={today} />
     </div>

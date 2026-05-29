@@ -2,6 +2,10 @@ import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
+import {
+  sectionTabsNavClass,
+  sectionTabClass,
+} from "@/components/staff/section-tabs-style";
 
 export const metadata = { title: "Patient AR aging — staff" };
 export const dynamic = "force-dynamic";
@@ -156,18 +160,15 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
         </p>
       </header>
 
-      <nav className="mb-6 flex flex-wrap gap-2">
+      <nav className={sectionTabsNavClass} aria-label="Receivables scope">
         {TABS.map((s) => {
           const active = scope === s;
           return (
             <Link
               key={s}
               href={tabHref(s)}
-              className={`min-h-11 rounded-full border px-4 py-2 text-sm font-medium transition-colors ${
-                active
-                  ? "border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-cyan)] text-white"
-                  : "border-[color:var(--color-brand-bg-mid)] bg-white text-[color:var(--color-brand-navy)] hover:border-[color:var(--color-brand-cyan)]"
-              }`}
+              className={sectionTabClass(active)}
+              aria-current={active ? "page" : undefined}
             >
               {SCOPE_LABEL[s]}
             </Link>

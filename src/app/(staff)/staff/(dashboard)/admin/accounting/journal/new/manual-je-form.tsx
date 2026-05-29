@@ -160,6 +160,9 @@ export function ManualJeForm({
             required
             className="rounded-md border border-[color:var(--color-brand-bg-mid)] px-3 py-2 text-sm"
           />
+          <span className="text-xs font-normal normal-case text-[color:var(--color-brand-text-soft)]">
+            The date this entry lands in the books.
+          </span>
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
@@ -205,6 +208,12 @@ export function ManualJeForm({
             + Add line
           </button>
         </div>
+
+        <p className="mb-2 text-xs text-[color:var(--color-brand-text-soft)]">
+          Each line puts an amount in either the <strong>Debit</strong> or the{" "}
+          <strong>Credit</strong> column. An entry must balance — the Debit and
+          Credit totals have to match — before it can be posted.
+        </p>
 
         <div className="overflow-x-auto rounded-lg border border-[color:var(--color-brand-bg-mid)]">
           <table className="w-full min-w-[720px] text-sm">
@@ -350,6 +359,11 @@ export function ManualJeForm({
           />
           Save as draft
         </label>
+        <p className="basis-full text-xs font-normal normal-case text-[color:var(--color-brand-text-soft)]">
+          <strong>Post immediately</strong> books it now and it shows in
+          reports. <strong>Save as draft</strong> holds it — nothing hits the
+          books until you post it later.
+        </p>
       </fieldset>
 
       {error ? (

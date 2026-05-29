@@ -2,7 +2,6 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { listBillsAction } from "@/lib/actions/accounting/bills";
 import { listVendorsAction } from "@/lib/actions/accounting/vendors";
 import { BillsIndexClient } from "./bills-index-client";
-import { BillsTabs } from "../_components/bills-tabs";
 import Link from "next/link";
 
 export const metadata = { title: "Bills — AP — DRMed" };
@@ -30,7 +29,7 @@ export default async function BillsIndexPage({
   ]);
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
+    <div>
       <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
@@ -51,8 +50,6 @@ export default async function BillsIndexPage({
           + New bill
         </Link>
       </header>
-
-      <div className="mb-6"><BillsTabs /></div>
 
       {bills.ok ? (
         <BillsIndexClient

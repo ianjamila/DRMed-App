@@ -206,7 +206,7 @@ export default async function FinancialStatementsPage({ searchParams }: SearchPr
         </p>
       </header>
 
-      <StatementTabs active="income" />
+      <StatementTabs />
 
       <PeriodPresets
         pathname="/staff/admin/accounting/financial-statements"
