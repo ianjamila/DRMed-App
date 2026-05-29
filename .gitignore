@@ -81,3 +81,7 @@ scripts/seed/signatures/*.jpeg
 tmp/
 
 backups/
+
+# local consent UI-walkthrough artifacts
+consent-0*.png
+.playwright-mcp/
