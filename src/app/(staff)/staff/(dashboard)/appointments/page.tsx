@@ -6,6 +6,7 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { RealtimeRefresher } from "@/components/staff/realtime-refresher";
 import { TransitionButtons } from "./transition-buttons";
 import { NewAppointmentSheet, type ServiceOption, type PhysicianOption } from "./new-appointment-sheet";
+import { RegistrationLinkButton } from "@/components/staff/registration-link-button";
 
 export const metadata = {
   title: "Appointments — staff",
@@ -213,6 +214,7 @@ export default async function AppointmentsPage() {
   const host = (await headers()).get("host") ?? "drmed.ph";
   const proto = host.startsWith("localhost") ? "http" : "https";
   const selfBookUrl = `${proto}://${host}/schedule?src=staff_qr`;
+  const registerUrl = `${proto}://${host}/register?src=staff_qr`;
 
   const todayRows = [...todayScheduled, ...todayWalkIns];
 
@@ -236,7 +238,10 @@ export default async function AppointmentsPage() {
             tests, single set of action buttons.
           </p>
         </div>
-        <NewAppointmentSheet services={services} physicians={physicians} selfBookUrl={selfBookUrl} />
+        <div className="flex flex-wrap items-center gap-2">
+          <RegistrationLinkButton url={registerUrl} />
+          <NewAppointmentSheet services={services} physicians={physicians} selfBookUrl={selfBookUrl} />
+        </div>
       </header>
 
       <Section
