@@ -163,8 +163,9 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [] }: 
   >(createVisitAction, null);
 
   // Show selected services unconditionally + matches for the query, scoped to
-  // the active tab. When the query is empty, show the first 60 of the tab's
-  // catalog. Selected rows (within this tab) always appear at the top.
+  // the active tab. When the query is empty, show the whole tab's catalog —
+  // the list lives in a fixed-height scroll box below, so even a 380-item
+  // catalog never lengthens the page. Selected rows always appear at the top.
   const visibleServices = useMemo(() => {
     const q = deferredQuery.trim().toLowerCase();
     const inTab = services.filter((s) => tabOf(s.kind) === activeTab);
@@ -174,9 +175,7 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [] }: 
         if (`${s.name} ${s.code}`.toLowerCase().includes(q)) matchIds.add(s.id);
       }
     } else {
-      for (let i = 0; i < Math.min(inTab.length, 60); i++) {
-        matchIds.add(inTab[i]!.id);
-      }
+      for (const s of inTab) matchIds.add(s.id);
     }
     // Always include currently-selected (in this tab) so they don't disappear
     // when the user types a query that doesn't match them.
@@ -503,7 +502,8 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [] }: 
           </p>
         ) : null}
 
-        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        <div className="mt-3 max-h-96 overflow-y-auto rounded-lg border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] p-2">
+          <div className="grid gap-2 sm:grid-cols-2">
           {visibleServices.length === 0 && !showCrossTabHint ? (
             <p className="col-span-full rounded-lg border border-dashed border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-6 text-center text-sm text-[color:var(--color-brand-text-soft)]">
               No services match.
@@ -582,6 +582,7 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [] }: 
               </div>
             );
           })}
+          </div>
         </div>
       </div>
 
