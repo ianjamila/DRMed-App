@@ -47,6 +47,7 @@ interface HmoProviderLite {
 export interface PhysicianLite {
   id: string;
   full_name: string;
+  specialty: string;
   compensation_arrangement: string;
 }
 
@@ -92,6 +93,20 @@ const DISCOUNT_OPTIONS: { value: DiscountKind; label: string }[] = [
   { value: "custom", label: "Custom amount (₱)" },
 ];
 
+type ServiceTab = "doctor" | "lab";
+
+const DOCTOR_KINDS = new Set(["doctor_consultation", "doctor_procedure"]);
+
+const TAB_LABEL: Record<ServiceTab, string> = {
+  doctor: "Doctor",
+  lab: "Lab & Services",
+};
+
+/** Which picker tab a service belongs to. Unknown kinds fall to Lab & Services. */
+function tabOf(kind: string): ServiceTab {
+  return DOCTOR_KINDS.has(kind) ? "doctor" : "lab";
+}
+
 function basePriceFor(s: ServiceLite, hmoSelected: boolean): number {
   if (hmoSelected && s.hmo_price_php != null) return s.hmo_price_php;
   return s.price_php;
@@ -133,6 +148,7 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [] }: 
   const [lineState, setLineState] = useState<Record<string, LineState>>({});
   const [attendingPhysicianId, setAttendingPhysicianId] = useState<string>("");
   const [serviceQuery, setServiceQuery] = useState("");
+  const [activeTab, setActiveTab] = useState<ServiceTab>("lab");
   const deferredQuery = useDeferredValue(serviceQuery);
   // Phase 14: when reception selects a lab_package, fetch its components so
   // the package row can render an indented "Includes:" list inline. Keyed by
@@ -146,41 +162,76 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [] }: 
     FormData
   >(createVisitAction, null);
 
-  // Show selected services unconditionally + matches for the query.
-  // When the query is empty, show the first 60 of the catalog and let the
-  // search narrow further. Selected rows always appear at the top.
+  // Show selected services unconditionally + matches for the query, scoped to
+  // the active tab. When the query is empty, show the first 60 of the tab's
+  // catalog. Selected rows (within this tab) always appear at the top.
   const visibleServices = useMemo(() => {
     const q = deferredQuery.trim().toLowerCase();
+    const inTab = services.filter((s) => tabOf(s.kind) === activeTab);
     const matchIds = new Set<string>();
     if (q) {
-      for (const s of services) {
+      for (const s of inTab) {
         if (`${s.name} ${s.code}`.toLowerCase().includes(q)) matchIds.add(s.id);
       }
     } else {
-      for (let i = 0; i < Math.min(services.length, 60); i++) {
-        matchIds.add(services[i]!.id);
+      for (let i = 0; i < Math.min(inTab.length, 60); i++) {
+        matchIds.add(inTab[i]!.id);
       }
     }
-    // Always include currently-selected so they don't disappear when the
-    // user types a query that doesn't match them.
+    // Always include currently-selected (in this tab) so they don't disappear
+    // when the user types a query that doesn't match them.
     const seen = new Set<string>();
     const out: ServiceLite[] = [];
-    for (const s of services) {
+    for (const s of inTab) {
       if (selected.has(s.id) && !seen.has(s.id)) {
         out.push(s);
         seen.add(s.id);
       }
     }
-    for (const s of services) {
+    for (const s of inTab) {
       if (matchIds.has(s.id) && !seen.has(s.id)) {
         out.push(s);
         seen.add(s.id);
       }
     }
     return out;
-  }, [services, deferredQuery, selected]);
+  }, [services, deferredQuery, selected, activeTab]);
 
   const hmoSelected = hmoProviderId !== "";
+
+  // Per-tab selected counts for the tab labels (e.g. "Doctor · 2").
+  const doctorSelectedCount = useMemo(
+    () =>
+      services.filter((s) => tabOf(s.kind) === "doctor" && selected.has(s.id))
+        .length,
+    [services, selected],
+  );
+  const labSelectedCount = useMemo(
+    () =>
+      services.filter((s) => tabOf(s.kind) === "lab" && selected.has(s.id))
+        .length,
+    [services, selected],
+  );
+
+  // Cross-tab search hint: when the query matches nothing in the active tab
+  // but does match in the other tab, point reception to where the match is.
+  const otherTab: ServiceTab = activeTab === "doctor" ? "lab" : "doctor";
+  const { activeTabMatchCount, otherTabMatchCount } = useMemo(() => {
+    const q = deferredQuery.trim().toLowerCase();
+    if (!q) return { activeTabMatchCount: 0, otherTabMatchCount: 0 };
+    let active = 0;
+    let other = 0;
+    for (const s of services) {
+      if (!`${s.name} ${s.code}`.toLowerCase().includes(q)) continue;
+      if (tabOf(s.kind) === activeTab) active += 1;
+      else other += 1;
+    }
+    return { activeTabMatchCount: active, otherTabMatchCount: other };
+  }, [services, deferredQuery, activeTab]);
+  const showCrossTabHint =
+    deferredQuery.trim() !== "" &&
+    activeTabMatchCount === 0 &&
+    otherTabMatchCount > 0;
 
   // Load components for any selected lab_package we haven't fetched yet.
   // Runs whenever the selection changes; lazy + cached so re-selecting the
@@ -270,39 +321,20 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [] }: 
   return (
     <form action={formAction} className="grid gap-6">
       <input type="hidden" name="patient_id" value={patient.id} />
-
-      {physicians.length > 0 ? (
-        <fieldset className="grid gap-2 rounded-xl border border-[color:var(--color-brand-bg-mid)] p-4">
-          <legend className="px-1 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-            Attending physician
-          </legend>
-          <div className="grid gap-1">
-            <Label htmlFor="attending_physician_id" className="text-sm">
-              Physician (default for all consult / procedure lines)
-            </Label>
-            <select
-              id="attending_physician_id"
-              name="attending_physician_id"
-              value={attendingPhysicianId}
-              onChange={(e) => setAttendingPhysicianId(e.target.value)}
-              className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
-            >
-              <option value="">— None —</option>
-              {physicians.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.full_name}
-                  {p.compensation_arrangement !== "pf_split"
-                    ? ` (${p.compensation_arrangement.replace("_", "-")})`
-                    : ""}
-                </option>
-              ))}
-            </select>
-            <p className="text-xs text-[color:var(--color-brand-text-soft)]">
-              Required at release time for consults and procedures. Per-line override available below.
-            </p>
-          </div>
-        </fieldset>
-      ) : null}
+      {/* State-driven submission: selections from BOTH tabs submit even when
+          their tab isn't active. The visible checkboxes are nameless toggles
+          bound to `selected`; these hidden inputs are the form's source of
+          truth for service_ids. */}
+      {[...selected].map((id) => (
+        <input key={id} type="hidden" name="service_ids" value={id} />
+      ))}
+      {/* Attending physician: the visible <select> lives on the Doctor tab,
+          but its value must submit regardless of the active tab. */}
+      <input
+        type="hidden"
+        name="attending_physician_id"
+        value={attendingPhysicianId}
+      />
 
       <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] p-4 text-sm">
         <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
@@ -377,19 +409,102 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [] }: 
           </p>
         </div>
         <p className="mt-0.5 text-xs text-[color:var(--color-brand-text-soft)]">
-          Pick services first; per-line discounts appear once selected.
-          Selected services stay visible even when filtered.
+          Pick from either tab — every selection is part of this one visit,
+          receipt, and total. Selected services stay visible even when filtered.
         </p>
+
+        {/* Category tabs. Counts reflect selections in each tab; the active
+            tab scopes the search + list below, but selections persist across
+            both tabs. */}
+        <div
+          role="tablist"
+          aria-label="Service category"
+          className="mt-2 flex gap-1 rounded-lg border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] p-1"
+        >
+          {(["doctor", "lab"] as ServiceTab[]).map((t) => {
+            const isActive = activeTab === t;
+            const count = t === "doctor" ? doctorSelectedCount : labSelectedCount;
+            return (
+              <button
+                key={t}
+                type="button"
+                role="tab"
+                aria-selected={isActive}
+                onClick={() => setActiveTab(t)}
+                className={`min-h-11 flex-1 rounded-md px-3 py-2 text-sm font-semibold transition-colors ${
+                  isActive
+                    ? "bg-white text-[color:var(--color-brand-navy)] shadow-sm"
+                    : "text-[color:var(--color-brand-text-soft)] hover:text-[color:var(--color-brand-navy)]"
+                }`}
+              >
+                {TAB_LABEL[t]}
+                {count > 0 ? ` · ${count}` : ""}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Doctor tab only: attending physician default for consult/procedure
+            lines. Value submits via the hidden input at the top of the form. */}
+        {activeTab === "doctor" && physicians.length > 0 ? (
+          <fieldset className="mt-3 grid gap-2 rounded-xl border border-[color:var(--color-brand-bg-mid)] p-4">
+            <legend className="px-1 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+              Attending physician
+            </legend>
+            <div className="grid gap-1">
+              <Label htmlFor="attending_physician_id" className="text-sm">
+                Physician (default for all consult / procedure lines)
+              </Label>
+              <select
+                id="attending_physician_id"
+                value={attendingPhysicianId}
+                onChange={(e) => setAttendingPhysicianId(e.target.value)}
+                className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+              >
+                <option value="">— None —</option>
+                {physicians.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.full_name}
+                    {p.specialty ? ` — ${p.specialty}` : ""}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+                Required at release time for consults and procedures. Per-line override available below.
+              </p>
+            </div>
+          </fieldset>
+        ) : null}
+
         <Input
           type="search"
           value={serviceQuery}
           onChange={(e) => setServiceQuery(e.target.value)}
-          placeholder="Search by name or code (CBC, lipid, ultrasound…)"
-          className="mt-2"
+          placeholder={
+            activeTab === "doctor"
+              ? "Search consults & procedures by name or code…"
+              : "Search labs & services by name or code (CBC, lipid, ultrasound…)"
+          }
+          className="mt-3"
           autoComplete="off"
         />
+
+        {showCrossTabHint ? (
+          <p className="mt-2 rounded-lg border border-dashed border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] px-3 py-2 text-xs text-[color:var(--color-brand-text-soft)]">
+            No matches in {TAB_LABEL[activeTab]} for “{deferredQuery.trim()}” —{" "}
+            <button
+              type="button"
+              onClick={() => setActiveTab(otherTab)}
+              className="font-semibold text-[color:var(--color-brand-cyan)] underline underline-offset-2"
+            >
+              {otherTabMatchCount} match{otherTabMatchCount === 1 ? "" : "es"} under{" "}
+              {TAB_LABEL[otherTab]}
+            </button>
+          </p>
+        ) : null}
+
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
-          {visibleServices.length === 0 ? (
+          {visibleServices.length === 0 && !showCrossTabHint ? (
             <p className="col-span-full rounded-lg border border-dashed border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-6 text-center text-sm text-[color:var(--color-brand-text-soft)]">
               No services match.
             </p>
@@ -417,7 +532,6 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [] }: 
                 >
                   <input
                     type="checkbox"
-                    name="service_ids"
                     value={s.id}
                     checked={checked}
                     onChange={() => toggle(s.id)}

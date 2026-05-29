@@ -47,7 +47,7 @@ export default async function NewVisitPage({ searchParams }: Props) {
         .order("name", { ascending: true }),
       admin
         .from("physicians")
-        .select("id, full_name, compensation_arrangement, is_active")
+        .select("id, full_name, specialty, compensation_arrangement, is_active")
         .eq("is_active", true)
         .order("full_name", { ascending: true }),
     ]);
@@ -89,6 +89,7 @@ export default async function NewVisitPage({ searchParams }: Props) {
           physicians={(physicians ?? []).map((p) => ({
             id: p.id,
             full_name: p.full_name,
+            specialty: p.specialty,
             compensation_arrangement: p.compensation_arrangement,
           }))}
         />
