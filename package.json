@@ -58,6 +58,7 @@
     "papaparse": "^5.5.3",
     "pdf-lib": "^1.17.1",
     "pg": "^8.21.0",
+    "qrcode.react": "^4.2.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-hook-form": "^7.74.0",
