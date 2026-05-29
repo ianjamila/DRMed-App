@@ -37,6 +37,8 @@ Compliance target: **Philippine Data Privacy Act (RA 10173)**. Locale: en-PH, As
 | `npm run build` / `npm run start` | Production build / serve |
 | `npm run lint` | ESLint |
 | `npm run typecheck` | `tsc --noEmit` |
+| `npm test` | Run vitest unit tests once |
+| `npm run test:watch` | Vitest in watch mode |
 | `npm run db:types` | Regenerate `src/types/database.ts` from the local Supabase project — run after every migration |
 | `npm run db:types:remote` | Same, but against the live DB via `SUPABASE_DB_URL` |
 | `npm run db:diff -- <name>` | Generate a new migration from local schema changes |
@@ -46,8 +48,11 @@ Compliance target: **Philippine Data Privacy Act (RA 10173)**. Locale: en-PH, As
 | `npm run seed:test` / `seed:services` / `seed:templates` / etc. | Idempotent seed scripts (require `.env.local`) |
 | `npm run smoke:results` | Render-pipeline smoke test for result PDF templates |
 
-There is no unit-test runner — only the smoke scripts above. If adding
-a test framework, document the single-test command here.
+Unit tests run on **vitest** (`npm test` / `npm run test:watch`). Single
+file: `npx vitest run src/lib/appointments/timing.test.ts`. Single test by
+name: `npx vitest run -t "reuses an existing patient"`. Coverage is the pure
+logic only (no DB / no RSC) — modules under test must not `import "server-only"`.
+The smoke scripts above still cover the render pipeline + integration paths.
 
 ## Architecture — the things that aren't obvious from file structure
 

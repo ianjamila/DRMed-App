@@ -1,9 +1,15 @@
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { StaffShell } from "@/components/staff/staff-shell";
+import { Toaster } from "@/components/ui/sonner";
 
 export default async function StaffDashboardLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   const session = await requireActiveStaff();
-  return <StaffShell session={session}>{children}</StaffShell>;
+  return (
+    <>
+      <StaffShell session={session}>{children}</StaffShell>
+      <Toaster position="top-right" richColors />
+    </>
+  );
 }

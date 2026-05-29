@@ -37,6 +37,14 @@ export function isValidSlot(slot: ManilaSlot): boolean {
   return true;
 }
 
+// Minutes-since-midnight for an "HH:MM" or "HH:MM:SS" string. Lives here (not
+// in physicians/availability.ts) so timing.ts can stay dependency-light and
+// vitest-importable without pulling availability internals.
+export function minutesOfDayHHMM(t: string): number {
+  const [h, m] = t.split(":");
+  return Number(h) * 60 + Number(m);
+}
+
 export const BOOKING_BRANCHES = [
   "diagnostic_package",
   "lab_request",
@@ -44,6 +52,15 @@ export const BOOKING_BRANCHES = [
   "home_service",
 ] as const;
 export type BookingBranch = (typeof BOOKING_BRANCHES)[number];
+
+// Allowed `services.kind` per booking branch. Single source of truth shared by
+// the public action, the staff action, and the staff slide-over (client-safe).
+export const KINDS_PER_BRANCH: Record<BookingBranch, ReadonlyArray<string>> = {
+  diagnostic_package: ["lab_package"],
+  lab_request: ["lab_test"],
+  doctor_appointment: ["doctor_consultation"],
+  home_service: ["lab_test", "lab_package"],
+};
 
 const PatientFields = {
   first_name: z.string().trim().min(1, "First name is required.").max(80),
