@@ -70,6 +70,8 @@ const SOURCE_KIND_LABEL: Record<string, string> = {
   doctor_pf_disbursement: "Doctor PF disbursements",
   cogs_send_out_accrual: "Send-out COGS accrual (non-cash)",
   cogs_send_out_trueup: "Send-out true-up",
+  hmo_history_opening: "HMO opening balances (history)",
+  history_import: "Historical import",
 };
 
 export default async function CashFlowPage({ searchParams }: SearchProps) {

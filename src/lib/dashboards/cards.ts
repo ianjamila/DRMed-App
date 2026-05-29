@@ -53,6 +53,7 @@ export const DASHBOARD_CARDS: readonly CardDef[] = [
   { id: "admin.hmo_unbilled_aged",    label: "HMO unbilled aged 90+",    roles: ["admin"], group: "money", sensitive: true },
   { id: "admin.patient_ar",           label: "Patient AR outstanding",   roles: ["admin"], group: "money", sensitive: true },
   { id: "admin.advances_outstanding", label: "Staff advances outstanding", roles: ["admin"], group: "money", sensitive: true },
+  { id: "admin.pf_to_pay",            label: "Doctors to pay",           roles: ["admin"], group: "money", sensitive: true },
   { id: "admin.pf_pending",           label: "Doctor PF pending",        roles: ["admin"], group: "money", sensitive: true },
 
   // ---- Admin: People ------------------------------------------------------

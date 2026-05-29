@@ -1,8 +1,9 @@
+import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { PfPayoutsClient } from "./pf-payouts-client";
 
-export const metadata = { title: "Doctor PF Payouts — DRMed" };
+export const metadata = { title: "Pay doctors — DRMed" };
 export const dynamic = "force-dynamic";
 
 export default async function PfPayoutsPage() {
@@ -57,17 +58,49 @@ export default async function PfPayoutsPage() {
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6">
         <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-          Phase 12.5 · Admin · Accounting
+          Admin · Pay doctors
         </p>
         <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Doctor PF Payouts
+          Pay doctors
         </h1>
         <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
-          End-of-day batch payouts for physician professional fees. Open tab
-          shows accrued PFs awaiting disbursement; Pending HMO shows PFs
-          deferred to HMO settlement.
+          Pay each doctor their share of the consults they did. The app already
+          worked out the amounts — send each doctor their total by GCash or cash
+          the way you normally do, then record it here. &ldquo;Waiting on
+          insurance&rdquo; amounts stay held until the HMO pays the clinic.
         </p>
       </header>
+
+      <section className="mb-6 rounded-lg border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] p-4">
+        <div className="flex items-start justify-between gap-3">
+          <h2 className="text-sm font-bold text-[color:var(--color-brand-navy)]">
+            How this works
+          </h2>
+          <Link
+            href="/staff/admin/accounting/pf-payouts/guide"
+            className="shrink-0 text-xs font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
+          >
+            Print quick guide →
+          </Link>
+        </div>
+        <ol className="mt-2 space-y-1 text-sm text-[color:var(--color-brand-text-soft)]">
+          <li>
+            <strong className="text-[color:var(--color-brand-navy)]">1.</strong>{" "}
+            Send the doctor their amount by GCash or cash, the way you normally do.
+          </li>
+          <li>
+            <strong className="text-[color:var(--color-brand-navy)]">2.</strong>{" "}
+            Click <strong>Pay this doctor</strong>, pick how you paid, then Confirm.
+          </li>
+          <li>
+            <strong className="text-[color:var(--color-brand-navy)]">3.</strong>{" "}
+            <strong>Waiting on insurance</strong>{" "}
+            means don&apos;t pay yet — it moves to{" "}
+            <strong>Ready to pay</strong> once the HMO pays the clinic.
+          </li>
+        </ol>
+      </section>
+
       <PfPayoutsClient
         openEntries={openEntries ?? []}
         pendingHmo={pendingHmo ?? []}

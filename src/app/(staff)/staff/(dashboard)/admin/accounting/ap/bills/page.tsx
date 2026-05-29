@@ -39,8 +39,8 @@ export default async function BillsIndexPage({
             Vendor bills
           </h1>
           <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
-            Invoices with a due date. For expenses already paid (cash, GCash,
-            owner OOP), use <strong>Quick expense</strong> instead.
+            Invoices with a due date. For expenses already paid (cash, GCash, or
+            the owner&apos;s own pocket), use <strong>Quick expense</strong> instead.
           </p>
         </div>
         <Link

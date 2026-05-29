@@ -3,7 +3,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
 
-export const metadata = { title: "Doctor PF YTD summary — staff" };
+export const metadata = { title: "Doctor pay (this year) — staff" };
 export const dynamic = "force-dynamic";
 
 const PHP = new Intl.NumberFormat("en-PH", {
@@ -195,10 +195,10 @@ export default async function PfYtdSummaryPage({ searchParams }: SearchProps) {
         <div className="mt-3 flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-              Doctor PF YTD summary
+              Doctor pay (this year)
             </h1>
             <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
-              Year-to-date professional fee earnings per physician for{" "}
+              How much each doctor earned, was paid, and is still owed in{" "}
               <span className="font-semibold text-[color:var(--color-brand-navy)]">
                 {year}
               </span>
@@ -236,19 +236,19 @@ export default async function PfYtdSummaryPage({ searchParams }: SearchProps) {
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <SummaryTile
-          label="Accrued YTD"
+          label="Earned this year"
           value={PHP.format(totals.accruedYtd)}
-          hint="Sum of non-voided PF entries"
+          hint="All fees from this year's consults"
         />
         <SummaryTile
-          label="Recognized YTD"
+          label="Earned & confirmed"
           value={PHP.format(totals.recognizedYtd)}
-          hint="Cash + HMO-settled"
+          hint="Cash patients + insurance already paid"
         />
         <SummaryTile
-          label="Disbursed YTD"
+          label="Paid out"
           value={PHP.format(totals.disbursedYtd)}
-          hint="Sum of disbursement totals"
+          hint="Total sent to doctors so far"
         />
         <SummaryTile
           label="Pending HMO settlement"
@@ -257,9 +257,9 @@ export default async function PfYtdSummaryPage({ searchParams }: SearchProps) {
           tone={totals.pendingHmoSettlement > 0 ? "warn" : "ok"}
         />
         <SummaryTile
-          label="Open balance"
+          label="Still owed"
           value={PHP.format(totals.openBalance)}
-          hint="Recognized − disbursed (clinic owes doctors)"
+          hint="Confirmed earnings not yet paid out"
           tone={totals.openBalance > 0 ? "warn" : "ok"}
         />
       </div>
@@ -267,20 +267,20 @@ export default async function PfYtdSummaryPage({ searchParams }: SearchProps) {
       <section className="overflow-hidden rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
         {rows.length === 0 ? (
           <p className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]">
-            No PF activity in {year}.
+            No doctor pay activity in {year}.
           </p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[960px] text-sm">
               <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                 <tr>
-                  <th className="px-4 py-3">Physician</th>
-                  <th className="px-4 py-3 text-right">Accrued YTD</th>
-                  <th className="px-4 py-3 text-right">Recognized cash</th>
-                  <th className="px-4 py-3 text-right">Recognized HMO</th>
+                  <th className="px-4 py-3">Doctor</th>
+                  <th className="px-4 py-3 text-right">Earned</th>
+                  <th className="px-4 py-3 text-right">Earned (cash)</th>
+                  <th className="px-4 py-3 text-right">Earned (insurance)</th>
                   <th className="px-4 py-3 text-right">Pending HMO</th>
-                  <th className="px-4 py-3 text-right">Disbursed</th>
-                  <th className="px-4 py-3 text-right">Open balance</th>
+                  <th className="px-4 py-3 text-right">Paid out</th>
+                  <th className="px-4 py-3 text-right">Still owed</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
@@ -365,11 +365,10 @@ export default async function PfYtdSummaryPage({ searchParams }: SearchProps) {
       </section>
 
       <p className="mt-4 text-xs text-[color:var(--color-brand-text-soft)]">
-        Numbers reflect non-voided PF entries created in {year} and
-        non-voided disbursements posted in {year}. Open balance = recognized
-        cash + recognized HMO − disbursed. Negative open balance means a
-        physician was disbursed more than was recognized in-period (e.g.
-        prior-year carryover).
+        Covers fees from consults in {year} and payouts made in {year}. Still
+        owed = confirmed earnings (cash + paid insurance) − paid out. A negative
+        amount means a doctor was paid more than confirmed-earned this year
+        (e.g. carried over from last year).
       </p>
     </div>
   );

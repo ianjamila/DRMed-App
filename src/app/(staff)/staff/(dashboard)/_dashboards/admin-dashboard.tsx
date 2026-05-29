@@ -31,6 +31,7 @@ type PatientArRow = { total_php: number | null; paid_php: number | null };
 type UnbilledRow = { released_at: string; days_since_release: number; billed_amount_php: number | null };
 type AdvanceRow = { outstanding_balance_php: number | null };
 type PfRow = { pf_php: number };
+type PfToPayRow = { pf_php: number; physician_id: string };
 type AuditRow = {
   id: string;
   action: string;
@@ -60,6 +61,7 @@ async function loadAdminStats(show: (id: string) => boolean) {
     unbilled,
     advances,
     pfPending,
+    doctorsToPay,
     activeEmployees,
     payrollRunsInProgress,
     recentAudit,
@@ -145,6 +147,15 @@ async function loadAdminStats(show: (id: string) => boolean) {
           .is("voided_at", null)
           .returns<PfRow[]>()
       : SKIP_DATA,
+    show("admin.pf_to_pay")
+      ? admin
+          .from("doctor_pf_entries")
+          .select("pf_php, physician_id")
+          .is("disbursement_id", null)
+          .not("recognized_at", "is", null)
+          .is("voided_at", null)
+          .returns<PfToPayRow[]>()
+      : SKIP_DATA,
     show("admin.active_employees")
       ? admin
           .from("employees")
@@ -219,6 +230,21 @@ async function loadAdminStats(show: (id: string) => boolean) {
     0,
   );
 
+  // "Ready to pay" PF, grouped per doctor: total owed + how many doctors have
+  // a positive balance (matches the Pay doctors page's Ready-to-pay tab).
+  const toPayByDoctor = new Map<string, number>();
+  for (const r of (doctorsToPay.data ?? []) as PfToPayRow[]) {
+    toPayByDoctor.set(
+      r.physician_id,
+      (toPayByDoctor.get(r.physician_id) ?? 0) + Number(r.pf_php ?? 0),
+    );
+  }
+  const positiveDoctorTotals = Array.from(toPayByDoctor.values()).filter(
+    (v) => v > 0,
+  );
+  const doctorsToPayCount = positiveDoctorTotals.length;
+  const doctorsToPayTotal = positiveDoctorTotals.reduce((s, v) => s + v, 0);
+
   return {
     visitsToday: visitsToday.count ?? 0,
     queueTotal: queueTotal.count ?? 0,
@@ -234,6 +260,8 @@ async function loadAdminStats(show: (id: string) => boolean) {
     unbilledAgedCount,
     advancesTotal,
     pfPendingTotal,
+    doctorsToPayTotal,
+    doctorsToPayCount,
     activeEmployees: activeEmployees.count ?? 0,
     payrollRunsInProgress: payrollRunsInProgress.count ?? 0,
     recentAudit: (recentAudit.data ?? []) as AuditRow[],
@@ -367,6 +395,19 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
             value={formatPeso(stats.advancesTotal)}
             hint="Receivable from payroll deductions"
             href="/staff/admin/reports/staff-advances"
+          />
+        )}
+        {show("admin.pf_to_pay") && (
+          <StatCard
+            label="Doctors to pay"
+            value={stats.doctorsToPayCount === 0 ? "—" : formatPeso(stats.doctorsToPayTotal)}
+            hint={
+              stats.doctorsToPayCount === 0
+                ? "All caught up"
+                : `${stats.doctorsToPayCount} doctor${stats.doctorsToPayCount === 1 ? "" : "s"} ready to pay`
+            }
+            href="/staff/admin/accounting/pf-payouts"
+            accent={stats.doctorsToPayCount > 0 ? "warn" : "default"}
           />
         )}
         {show("admin.pf_pending") && (
