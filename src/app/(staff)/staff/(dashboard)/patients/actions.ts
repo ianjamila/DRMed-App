@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { PatientCreateSchema } from "@/lib/validations/patient";
+import { recordConsentGrantAction } from "@/lib/actions/consent/grant";
 
 export type PatientCreateResult =
   | { ok: true; patient_id: string }
@@ -28,6 +29,10 @@ function readForm(formData: FormData) {
     senior_pwd_id_kind: formData.get("senior_pwd_id_kind") ?? "",
     senior_pwd_id_number: formData.get("senior_pwd_id_number") ?? "",
     consent_given_today: formData.get("consent_given_today"),
+    // Signatory fields are read raw from FormData (not part of the Zod schema).
+    consent_signatory: (formData.get("consent_signatory") ?? "self").toString(),
+    consent_signatory_name: (formData.get("consent_signatory_name") ?? "").toString(),
+    consent_signatory_relationship: (formData.get("consent_signatory_relationship") ?? "").toString(),
   };
 }
 
@@ -45,10 +50,22 @@ export async function createPatientAction(
     };
   }
 
-  // consent_given_today is a UI-only signal; translate to the actual column.
+  // consent_given_today is a UI-only signal; the DB trigger owns consent_signed_at.
   const { consent_given_today, ...rest } = parsed.data;
-  const consent_signed_at =
-    consent_given_today === "yes" ? new Date().toISOString() : null;
+  const consentGivenToday = consent_given_today === "yes";
+
+  // Signatory fields are read raw (not in the Zod schema).
+  const consentSignatory = (
+    ["self", "guardian", "representative"].includes(
+      formData.get("consent_signatory")?.toString() ?? "",
+    )
+      ? formData.get("consent_signatory")!.toString()
+      : "self"
+  ) as "self" | "guardian" | "representative";
+  const consentSignatoryName =
+    formData.get("consent_signatory_name")?.toString().trim() || undefined;
+  const consentSignatoryRelationship =
+    formData.get("consent_signatory_relationship")?.toString().trim() || undefined;
 
   // Any DOB supplied by reception at intake is implicitly confirmed.
   const birthdateRaw = (formData.get("birthdate") ?? "").toString().trim();
@@ -59,7 +76,6 @@ export async function createPatientAction(
     .from("patients")
     .insert({
       ...rest,
-      consent_signed_at,
       birthdate_confirmed,
       created_by: session.user_id,
       pre_registered: false,
@@ -74,6 +90,20 @@ export async function createPatientAction(
     };
   }
 
+  // Record consent grant; the AFTER-INSERT trigger sets patients.consent_signed_at
+  // and patients.consent_current — application code must NOT write those columns.
+  if (consentGivenToday) {
+    await recordConsentGrantAction({
+      patientId: data.id,
+      method: "paper_wet_signature",
+      signatory: consentSignatory,
+      signatoryName: consentSignatoryName,
+      signatoryRelationship: consentSignatoryRelationship,
+    });
+    // Patient is already created; a grant failure is not fatal — consent can
+    // be captured later via the patient detail page.
+  }
+
   const h = await headers();
   await audit({
     actor_id: session.user_id,
@@ -85,7 +115,7 @@ export async function createPatientAction(
     metadata: {
       drm_id: data.drm_id,
       created_by_role: session.role,
-      consent_signed: !!consent_signed_at,
+      consent_signed: consentGivenToday,
     },
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),
