@@ -9,7 +9,8 @@ export type RateLimitBucket =
   | "patient_lookup"
   | "staff_login"
   | "newsletter_resubscribe"
-  | "appointment_cancel";
+  | "appointment_cancel"
+  | "patient_registration";
 
 export interface RateLimitConfig {
   bucket: RateLimitBucket;
@@ -98,4 +99,7 @@ export const RATE_LIMITS: Record<
   // re-clicking an unsubscribe / cancel link won't trigger.
   newsletter_resubscribe: { windowSec: 60 * 60, max: 20 },
   appointment_cancel: { windowSec: 60 * 60, max: 20 },
+  // Public self-registration. A write that creates a patient row + emails a
+  // DRM-ID; 5/hour per IP matches contact_form / newsletter_signup.
+  patient_registration: { windowSec: 60 * 60, max: 5 },
 };
