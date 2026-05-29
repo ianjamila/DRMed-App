@@ -25,6 +25,7 @@ export interface PatientSearchRow {
   phone: string | null;
   email: string | null;
   birthdate: string | null;
+  pre_registered: boolean;
 }
 
 export interface UpcomingApptRow {
@@ -150,7 +151,7 @@ export async function searchPatientsAction(q: string): Promise<{ ok: true; data:
   const like = `%${term.replace(/[%_,]/g, "")}%`;
   const { data, error } = await supabase
     .from("patients")
-    .select("id, drm_id, first_name, last_name, phone, email, birthdate")
+    .select("id, drm_id, first_name, last_name, phone, email, birthdate, pre_registered")
     .or([`drm_id.ilike.${like}`, `first_name.ilike.${like}`, `last_name.ilike.${like}`, `phone.ilike.${like}`, `email.ilike.${like}`].join(","))
     .order("created_at", { ascending: false })
     .limit(25);

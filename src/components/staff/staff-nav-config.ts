@@ -68,6 +68,12 @@ export const STAFF_NAV: StaffNavSection[] = [
         roles: ["reception", "admin"],
       },
       {
+        href: "/staff/registration",
+        label: "Registration link",
+        description: "Share the public pre-registration page with patients — show the QR to scan, copy the link to text them, or print a desk poster. Registration is optional; it just saves counter time on arrival.",
+        roles: ["reception", "admin"],
+      },
+      {
         href: "/staff/visits/new",
         label: "Visits",
         activePrefix: "/staff/visits",

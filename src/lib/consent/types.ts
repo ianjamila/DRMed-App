@@ -2,7 +2,8 @@
 export type ConsentMethod =
   | "paper_wet_signature"
   | "onscreen_signature"
-  | "portal_acceptance";
+  | "portal_acceptance"
+  | "self_registration";
 
 export type ConsentSignatory = "self" | "guardian" | "representative";
 

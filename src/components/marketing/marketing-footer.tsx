@@ -90,6 +90,11 @@ export function MarketingFooter() {
               </Link>
             </li>
             <li>
+              <Link href="/register" className="text-white/80 hover:text-white">
+                Pre-register
+              </Link>
+            </li>
+            <li>
               <Link href="/about" className="text-white/80 hover:text-white">
                 About
               </Link>

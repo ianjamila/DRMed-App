@@ -164,6 +164,16 @@ export default async function SchedulePage() {
             </a>
             .
           </p>
+          <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
+            Just want a DRM-ID without booking?{" "}
+            <a
+              href="/register"
+              className="font-bold text-[color:var(--color-brand-cyan)] hover:underline"
+            >
+              Pre-register here
+            </a>
+            {" "}— it&apos;s optional, but it saves time at the counter.
+          </p>
 
           <div className="mt-8">
             <BookingForm
