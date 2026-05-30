@@ -366,6 +366,7 @@ export async function createVisitAction(
         total_php: visitLines.reduce((s, l) => s + l.final_price_php, 0),
         service_count: visitLines.length,
         visit_group_id: groupId,
+        hmo_provider_id: c.hmo.hmo_provider_id,
         discounted_lines: visitLines.filter((l) => l.discount_amount_php > 0).length,
       },
       ip_address: ip,
@@ -440,6 +441,7 @@ interface OneVisitInput {
 interface OneVisitResult {
   visitId: string;
   visitNumber: string;
+  hmo: VisitHmo;
   decompositions: PackageDecomposition[];
   headerIdsForAudit: Array<string | null>;
 }
@@ -597,6 +599,7 @@ async function createOneVisit(
   return {
     visitId: visit.id,
     visitNumber: visit.visit_number,
+    hmo: input.hmo,
     decompositions,
     headerIdsForAudit,
   };
