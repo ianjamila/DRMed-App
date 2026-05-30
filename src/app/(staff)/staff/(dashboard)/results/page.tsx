@@ -3,6 +3,7 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { sectionsForRole } from "@/lib/auth/role-sections";
+import { matchesAllTokens } from "@/lib/patients/search";
 
 export const metadata = { title: "Results — staff" };
 export const dynamic = "force-dynamic";
@@ -132,15 +133,15 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
   }
 
   // Optional client-side filter when q is set. Server-side ilike across a join
-  // is awkward in PostgREST, so post-filter the page rows here.
+  // is awkward in PostgREST, so post-filter the page rows here. Token-based:
+  // every word must appear somewhere (name / DRM-ID / service), in any order.
   const filtered = q
     ? rows.filter((r) => {
         const pat = r.visits?.patients;
-        const name = pat ? `${pat.first_name} ${pat.last_name}`.toLowerCase() : "";
-        const drm = pat?.drm_id?.toLowerCase() ?? "";
-        const svc = `${r.services?.code ?? ""} ${r.services?.name ?? ""}`.toLowerCase();
-        const ql = q.toLowerCase();
-        return name.includes(ql) || drm.includes(ql) || svc.includes(ql);
+        const name = pat ? `${pat.first_name} ${pat.last_name}` : "";
+        const drm = pat?.drm_id ?? "";
+        const svc = `${r.services?.code ?? ""} ${r.services?.name ?? ""}`;
+        return matchesAllTokens(`${name} ${drm} ${svc}`, q);
       })
     : rows;
 

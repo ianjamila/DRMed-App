@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { patientSearchOrClauses } from "@/lib/patients/search";
 import { VisitForm } from "./visit-form";
 import { PatientsSearchInput } from "../../patients/search-input";
 import { VisitsTabs } from "../_components/visits-tabs";
@@ -107,18 +108,10 @@ async function PatientPicker({ query }: { query: string }) {
     .order("created_at", { ascending: false })
     .limit(PICKER_LIMIT);
 
-  const trimmed = query.trim();
-  if (trimmed) {
-    const like = `%${trimmed.replace(/[%_]/g, (c) => `\\${c}`)}%`;
-    q = q.or(
-      [
-        `drm_id.ilike.${like}`,
-        `first_name.ilike.${like}`,
-        `last_name.ilike.${like}`,
-        `phone.ilike.${like}`,
-        `email.ilike.${like}`,
-      ].join(","),
-    );
+  // Token-based: every word must match some field (any order), so "Jamila, Ian"
+  // finds a patient stored as first_name="Ian", last_name="Jamila".
+  for (const clause of patientSearchOrClauses(query)) {
+    q = q.or(clause);
   }
 
   const { data: patients } = await q;
@@ -152,7 +145,7 @@ async function PatientPicker({ query }: { query: string }) {
       <div className="overflow-hidden rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
         {rows.length === 0 ? (
           <p className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]">
-            {trimmed
+            {query.trim()
               ? "No patients match. Try a different search or register a new patient."
               : "Start typing to search by DRM-ID, name, or phone."}
           </p>

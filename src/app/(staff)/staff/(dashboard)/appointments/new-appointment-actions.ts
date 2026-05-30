@@ -10,6 +10,7 @@ import { StaffBookingSchema, type StaffBookingInput } from "@/lib/validations/st
 import { createAppointmentGroup, type PatientResolution } from "@/lib/appointments/create";
 import type { BookingConflict } from "@/lib/appointments/timing";
 import { resolvePatient } from "@/lib/patients/resolve";
+import { patientSearchOrClauses } from "@/lib/patients/search";
 import { notifyAppointmentBooked } from "@/lib/notifications/notify-appointment-booked";
 
 export type StaffAppointmentResult =
@@ -148,13 +149,17 @@ export async function searchPatientsAction(q: string): Promise<{ ok: true; data:
   const term = q.trim();
   if (term.length < 2) return { ok: true, data: [] };
   const supabase = await createClient();
-  const like = `%${term.replace(/[%_,]/g, "")}%`;
-  const { data, error } = await supabase
+  // Token-based: every word must match some field (any order), so "Jamila, Ian"
+  // finds a patient stored as first_name="Ian", last_name="Jamila".
+  let query = supabase
     .from("patients")
     .select("id, drm_id, first_name, last_name, phone, email, birthdate, pre_registered")
-    .or([`drm_id.ilike.${like}`, `first_name.ilike.${like}`, `last_name.ilike.${like}`, `phone.ilike.${like}`, `email.ilike.${like}`].join(","))
     .order("created_at", { ascending: false })
     .limit(25);
+  for (const clause of patientSearchOrClauses(term)) {
+    query = query.or(clause);
+  }
+  const { data, error } = await query;
   if (error) return { ok: false, error: error.message };
   return { ok: true, data: data ?? [] };
 }

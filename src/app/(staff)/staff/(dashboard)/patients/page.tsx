@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { formatPhoneLocal } from "@/lib/format/phone";
+import { patientSearchOrClauses } from "@/lib/patients/search";
 import { PatientsSearchInput } from "./search-input";
 
 export const metadata = {
@@ -27,18 +28,10 @@ async function search(query: string | undefined, page: number) {
     .order("created_at", { ascending: false })
     .range(from, to);
 
-  if (query && query.trim()) {
-    const term = query.trim();
-    const like = `%${term.replace(/[%_]/g, (c) => `\\${c}`)}%`;
-    q = q.or(
-      [
-        `drm_id.ilike.${like}`,
-        `first_name.ilike.${like}`,
-        `last_name.ilike.${like}`,
-        `phone.ilike.${like}`,
-        `email.ilike.${like}`,
-      ].join(","),
-    );
+  // Token-based: every word must match some field (any order), so "Jamila, Ian"
+  // finds a patient stored as first_name="Ian", last_name="Jamila".
+  for (const clause of patientSearchOrClauses(query)) {
+    q = q.or(clause);
   }
 
   const { data, error, count } = await q;
