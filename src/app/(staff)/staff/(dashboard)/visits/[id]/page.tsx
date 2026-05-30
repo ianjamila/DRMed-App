@@ -6,6 +6,7 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { formatPhp } from "@/lib/marketing/format";
 import { sectionsForRole } from "@/lib/auth/role-sections";
 import { ReleaseButton } from "./release-button";
+import { MarkDoneButton } from "./mark-done-button";
 import { VoidPaymentDialog } from "../../payments/[id]/void/void-payment-dialog";
 import { isConsentGateRequired, getPatientConsentState } from "@/lib/consent/gate";
 
@@ -566,6 +567,7 @@ export default async function VisitDetailPage({ params }: Props) {
                         consentOnFile={consent.current}
                         gateRequired={gateRequired}
                         hasPdf={hasPdfByTrId.get(t.id) === true}
+                        kind={svc.kind}
                         preferredMedium={
                           (patient.preferred_release_medium ?? null) as
                             | "physical"
@@ -776,6 +778,7 @@ interface TestActionProps {
   consentOnFile: boolean;
   gateRequired: boolean;
   hasPdf?: boolean;
+  kind: string;
 }
 
 // Renders a context-appropriate cell for the Action column on the visit
@@ -790,6 +793,7 @@ function TestAction({
   consentOnFile,
   gateRequired,
   hasPdf,
+  kind,
 }: TestActionProps) {
   if (status === "ready_for_release") {
     return (
@@ -805,6 +809,9 @@ function TestAction({
   }
 
   if (status === "requested" || status === "in_progress") {
+    if (kind === "doctor_consultation") {
+      return <MarkDoneButton testRequestId={testRequestId} visitId={visitId} paid={paid} />;
+    }
     const hint = status === "requested" ? "Awaiting claim" : "Awaiting result";
     return (
       <div className="flex flex-col items-end gap-0.5">
