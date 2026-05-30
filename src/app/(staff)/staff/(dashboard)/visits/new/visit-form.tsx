@@ -16,6 +16,7 @@ import {
   StableTextarea,
 } from "@/components/forms/stable-fields";
 import { formatPhp } from "@/lib/marketing/format";
+import { defaultClinicFee } from "@/lib/visits/consultation-fee";
 import {
   createVisitAction,
   getPackageComponentsAction,
@@ -58,12 +59,6 @@ interface Props {
   physicians?: PhysicianLite[];
 }
 
-/** Derive default clinic_fee from physician compensation arrangement. */
-function defaultClinicFee(arrangement: string | undefined): number {
-  if (arrangement === "rent_paying" || arrangement === "shareholder") return 0;
-  return 100;
-}
-
 // Discount kinds match the test_requests.discount_kind check constraint.
 type DiscountKind =
   | ""
@@ -82,6 +77,7 @@ interface LineState {
   // Doctor procedure lines:
   procedureDescription: string;
   hmoApprovedAmount: string;
+  consultFee: string; // manual consultation fee (doctor_consultation only)
 }
 
 const DISCOUNT_OPTIONS: { value: DiscountKind; label: string }[] = [
@@ -293,6 +289,7 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [] }: 
         doctorPf: "",
         procedureDescription: "",
         hmoApprovedAmount: "",
+        consultFee: "",
       }
     );
   }
@@ -307,7 +304,13 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [] }: 
       .filter((s) => selected.has(s.id))
       .map((s) => {
         const ls = getLine(s.id);
-        const base = basePriceFor(s, hmoSelected);
+        const base =
+          s.kind === "doctor_consultation"
+            ? (() => {
+                const n = Number(ls.consultFee);
+                return Number.isFinite(n) && n >= 0 ? n : 0;
+              })()
+            : basePriceFor(s, hmoSelected);
         const discount = discountFor(s, base, ls.discountKind, ls.customDiscount);
         const final = Math.max(0, base - discount);
         return { service: s, base, discount, final, ls };
@@ -511,6 +514,7 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [] }: 
           ) : null}
           {visibleServices.map((s) => {
             const checked = selected.has(s.id);
+            const isConsultPick = s.kind === "doctor_consultation";
             const display = basePriceFor(s, hmoSelected);
             const isPackage = s.kind === "lab_package";
             const components = isPackage ? packageComponents[s.id] : undefined;
@@ -546,12 +550,20 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [] }: 
                     </span>
                   </span>
                   <span className="font-semibold text-[color:var(--color-brand-cyan)]">
-                    {formatPhp(display)}
-                    {hmoSelected && s.hmo_price_php != null ? (
-                      <span className="ml-1 text-[10px] uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-                        hmo
+                    {isConsultPick ? (
+                      <span className="text-xs text-[color:var(--color-brand-text-soft)]">
+                        priced at counter
                       </span>
-                    ) : null}
+                    ) : (
+                      <>
+                        {formatPhp(display)}
+                        {hmoSelected && s.hmo_price_php != null ? (
+                          <span className="ml-1 text-[10px] uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+                            hmo
+                          </span>
+                        ) : null}
+                      </>
+                    )}
                   </span>
                 </label>
                 {checked && isPackage ? (
@@ -674,6 +686,27 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [] }: 
 
                   {isConsult ? (
                     <div className="mt-2 grid grid-cols-12 gap-2 rounded-md bg-[color:var(--color-brand-bg)] px-2 py-2">
+                      <div className="col-span-12 sm:col-span-4">
+                        <Label
+                          htmlFor={`consult_fee__${s.id}`}
+                          className="text-[10px]"
+                        >
+                          Consultation fee (₱)
+                        </Label>
+                        <input
+                          id={`consult_fee__${s.id}`}
+                          name={`consult_fee__${s.id}`}
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={ls.consultFee}
+                          onChange={(e) =>
+                            updateLine(s.id, { consultFee: e.target.value })
+                          }
+                          placeholder="amount"
+                          className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 font-mono text-xs focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+                        />
+                      </div>
                       <div className="col-span-6 sm:col-span-3">
                         <Label
                           htmlFor={`clinic_fee__${s.id}`}
