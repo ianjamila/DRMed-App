@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { MovementForm } from "./movement-form";
+import { Panel } from "@/components/ui/panel";
 
 export const metadata = { title: "Inventory item — staff" };
 export const dynamic = "force-dynamic";
@@ -195,7 +196,7 @@ export default async function InventoryItemPage({ params }: PageProps) {
         <h2 className="mb-3 font-heading text-xl font-bold text-[color:var(--color-brand-navy)]">
           Movement history
         </h2>
-        <div className="overflow-hidden rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+        <Panel className="overflow-hidden">
           {(movements ?? []).length === 0 ? (
             <p className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]">
               No movements yet. Record a receive to set the opening balance.
@@ -261,7 +262,7 @@ export default async function InventoryItemPage({ params }: PageProps) {
               </table>
             </div>
           )}
-        </div>
+        </Panel>
       </section>
     </div>
   );

@@ -10,6 +10,7 @@ import { MarkDoneButton } from "./mark-done-button";
 import { VoidPaymentDialog } from "../../payments/[id]/void/void-payment-dialog";
 import { isConsentGateRequired, getPatientConsentState } from "@/lib/consent/gate";
 import { paymentStatusLabel } from "@/lib/ui/payment-status";
+import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
   title: "Visit — staff",
@@ -347,9 +348,9 @@ export default async function VisitDetailPage({ params }: Props) {
                   : Number(svc.price_php);
               const components = componentsByParent.get(h.id) ?? [];
               return (
-                <div
+                <Panel
                   key={h.id}
-                  className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5"
+                  className="p-5"
                 >
                   <Link
                     href={`/staff/queue/${h.id}`}
@@ -435,13 +436,13 @@ export default async function VisitDetailPage({ params }: Props) {
                       })
                     )}
                   </ul>
-                </div>
+                </Panel>
               );
             })}
           </div>
         ) : null}
 
-        <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+        <Panel className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
               <tr>
@@ -597,7 +598,7 @@ export default async function VisitDetailPage({ params }: Props) {
               ) : null}
             </tbody>
           </table>
-        </div>
+        </Panel>
         {!isPaid ? (
           <p className="mt-3 text-xs text-[color:var(--color-brand-text-soft)]">
             ℹ️ Releases are blocked until visit payment status is paid or
@@ -611,7 +612,7 @@ export default async function VisitDetailPage({ params }: Props) {
         <h2 className="mb-3 font-heading text-xl font-extrabold text-[color:var(--color-brand-navy)]">
           Payments
         </h2>
-        <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+        <Panel className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
               <tr>
@@ -657,7 +658,7 @@ export default async function VisitDetailPage({ params }: Props) {
               ) : null}
             </tbody>
           </table>
-        </div>
+        </Panel>
 
         {voidedPayments.length > 0 ? (
           <details className="mt-4 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] px-4 py-3">

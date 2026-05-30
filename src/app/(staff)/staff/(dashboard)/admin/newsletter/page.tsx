@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
+import { Panel } from "@/components/ui/panel";
 
 export const metadata = { title: "Newsletter — staff" };
 
@@ -151,7 +152,7 @@ export default async function NewsletterAdminPage({ searchParams }: PageProps) {
             No subscribers in this view.
           </p>
         ) : (
-          <div className="mt-3 overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+          <Panel className="mt-3 overflow-x-auto">
             <table className="w-full min-w-[720px] text-sm">
               <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                 <tr>
@@ -198,7 +199,7 @@ export default async function NewsletterAdminPage({ searchParams }: PageProps) {
                 })}
               </tbody>
             </table>
-          </div>
+          </Panel>
         )}
         {totalPages > 1 ? (
           <div className="mt-3 flex items-center justify-between text-xs text-[color:var(--color-brand-text-soft)]">
@@ -299,13 +300,13 @@ function sourceLabel(source: string): string {
 
 function Stat({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-4">
+    <Panel className="px-4 py-4">
       <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
         {label}
       </p>
       <p className="mt-1 text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
         {value}
       </p>
-    </div>
+    </Panel>
   );
 }

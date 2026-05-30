@@ -20,6 +20,7 @@ import {
   type BookingResult,
   type LookupPatientResult,
 } from "./actions";
+import { Panel } from "@/components/ui/panel";
 
 export type ServiceKind =
   | "lab_test"
@@ -715,7 +716,7 @@ export function BookingForm({
         />
       </div>
 
-      <div className="grid gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4 text-sm">
+      <Panel className="grid gap-3 p-4 text-sm">
         {isPortalContext ? null : (
         <label className="flex items-start gap-2">
           <input
@@ -761,7 +762,7 @@ export function BookingForm({
             announcements. One-click unsubscribe in every email.
           </span>
         </label>
-      </div>
+      </Panel>
 
       {branch !== "doctor_appointment"
         ? Array.from(selectedServiceIds).map((id) => (

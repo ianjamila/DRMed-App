@@ -1,5 +1,6 @@
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { ChangePasswordForm } from "./change-password-form";
+import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
   title: "My profile — staff",
@@ -25,7 +26,7 @@ export default async function ProfilePage() {
         Account settings for your own staff login.
       </p>
 
-      <div className="mt-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
+      <Panel className="mt-6 p-6">
         <h2 className="font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">
           Account
         </h2>
@@ -58,9 +59,9 @@ export default async function ProfilePage() {
         <p className="mt-3 text-xs text-[color:var(--color-brand-text-soft)]">
           To change your name, role, or PRC license, ask an Admin.
         </p>
-      </div>
+      </Panel>
 
-      <div className="mt-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
+      <Panel className="mt-6 p-6">
         <h2 className="font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">
           Change password
         </h2>
@@ -71,7 +72,7 @@ export default async function ProfilePage() {
         <div className="mt-4">
           <ChangePasswordForm />
         </div>
-      </div>
+      </Panel>
     </div>
   );
 }

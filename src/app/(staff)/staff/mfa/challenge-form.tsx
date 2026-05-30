@@ -8,6 +8,7 @@ import {
   submitChallengeAction,
   type ActionResult,
 } from "./actions";
+import { Panel } from "@/components/ui/panel";
 
 export function ChallengeForm() {
   const [state, formAction, pending] = useActionState<
@@ -16,7 +17,7 @@ export function ChallengeForm() {
   >(submitChallengeAction, null);
 
   return (
-    <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
+    <Panel className="p-5">
       <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
         Enter your authenticator code
       </h2>
@@ -50,6 +51,6 @@ export function ChallengeForm() {
           {pending ? "Verifying…" : "Verify"}
         </Button>
       </form>
-    </div>
+    </Panel>
   );
 }

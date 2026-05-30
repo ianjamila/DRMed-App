@@ -3,6 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { toggleAccountActiveAction } from "./actions";
+import { Panel } from "@/components/ui/panel";
 
 interface CoaRow {
   id: string;
@@ -85,7 +86,7 @@ export function CoaListClient({ rows }: { rows: CoaRow[] }) {
             <h2 className="mb-2 font-heading text-sm font-extrabold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
               {group.label} ({group.rows.length})
             </h2>
-            <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+            <Panel className="overflow-x-auto">
               <table className="w-full min-w-[640px] text-sm">
                 <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                   <tr>
@@ -102,7 +103,7 @@ export function CoaListClient({ rows }: { rows: CoaRow[] }) {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </Panel>
           </section>
         ))
       )}

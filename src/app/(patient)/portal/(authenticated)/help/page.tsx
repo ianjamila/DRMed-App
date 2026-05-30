@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { CONTACT } from "@/lib/marketing/site";
+import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
   title: "Help — drmed.ph",
@@ -65,7 +66,7 @@ export default function PatientHelpPage() {
         .
       </Section>
 
-      <div className="mt-10 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5 text-sm">
+      <Panel className="mt-10 p-5 text-sm">
         <p className="font-bold text-[color:var(--color-brand-navy)]">
           Still stuck?
         </p>
@@ -93,7 +94,7 @@ export default function PatientHelpPage() {
           </a>
           .
         </p>
-      </div>
+      </Panel>
     </div>
   );
 }

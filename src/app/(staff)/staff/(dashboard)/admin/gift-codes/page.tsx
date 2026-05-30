@@ -9,6 +9,7 @@ import {
   STATUS_LABELS,
   type GiftCodeStatus,
 } from "@/lib/gift-codes/labels";
+import { Panel } from "@/components/ui/panel";
 
 export const metadata = { title: "Gift codes — staff" };
 
@@ -175,7 +176,7 @@ export default async function GiftCodesAdminPage({ searchParams }: PageProps) {
         </div>
       ) : null}
 
-      <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+      <Panel className="overflow-x-auto">
         <table className="w-full min-w-[760px] text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
@@ -238,7 +239,7 @@ export default async function GiftCodesAdminPage({ searchParams }: PageProps) {
             )}
           </tbody>
         </table>
-      </div>
+      </Panel>
 
       {codes.length === 100 ? (
         <p className="mt-4 text-xs text-[color:var(--color-brand-text-soft)]">

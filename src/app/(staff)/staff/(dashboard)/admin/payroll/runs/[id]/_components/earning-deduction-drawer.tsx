@@ -15,6 +15,7 @@ import {
   removeEarningLineAction,
   removeDeductionLineAction,
 } from "../../actions";
+import { Panel } from "@/components/ui/panel";
 
 // =============================================================================
 // Component
@@ -85,7 +86,7 @@ export function EarningDeductionDrawer({
 
   if (variant === "inline") {
     return (
-      <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white shadow-sm">
+      <Panel className="shadow-sm">
         <div className="flex items-center justify-between border-b border-[color:var(--color-brand-bg-mid)] px-4 py-3">
           <div>
             <h3 className="font-heading text-base font-extrabold text-[color:var(--color-brand-navy)]">
@@ -104,7 +105,7 @@ export function EarningDeductionDrawer({
           </button>
         </div>
         {body}
-      </div>
+      </Panel>
     );
   }
 

@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { getServiceByCode } from "@/lib/marketing/services";
 import { formatPhp } from "@/lib/marketing/format";
+import { Panel } from "@/components/ui/panel";
 
 interface ServicePageProps {
   params: Promise<{ code: string }>;
@@ -55,7 +56,7 @@ export default async function ServiceDetailPage({ params }: ServicePageProps) {
       </header>
 
       <dl className="mt-8 grid gap-4 sm:grid-cols-3">
-        <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
+        <Panel className="p-5">
           <dt className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
             Price
           </dt>
@@ -68,8 +69,8 @@ export default async function ServiceDetailPage({ params }: ServicePageProps) {
               </span>
             )}
           </dd>
-        </div>
-        <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
+        </Panel>
+        <Panel className="p-5">
           <dt className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
             Turnaround
           </dt>
@@ -78,15 +79,15 @@ export default async function ServiceDetailPage({ params }: ServicePageProps) {
               ? `${service.turnaround_hours} hours`
               : "Inquire"}
           </dd>
-        </div>
-        <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
+        </Panel>
+        <Panel className="p-5">
           <dt className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
             Code
           </dt>
           <dd className="mt-2 font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
             {service.code}
           </dd>
-        </div>
+        </Panel>
       </dl>
 
       {service.description ? (

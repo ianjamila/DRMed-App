@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requirePatientProfile } from "@/lib/auth/require-patient";
 import { DownloadButton } from "../../download-button";
+import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
   title: "Visit — drmed.ph",
@@ -86,7 +87,7 @@ export default async function PatientVisitDetailPage({ params }: Props) {
         </h1>
       </header>
 
-      <div className="mt-6 overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+      <Panel className="mt-6 overflow-x-auto">
         <table className="w-full min-w-[560px] text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
@@ -152,7 +153,7 @@ export default async function PatientVisitDetailPage({ params }: Props) {
             )}
           </tbody>
         </table>
-      </div>
+      </Panel>
 
       {pendingCount > 0 ? (
         <p className="mt-4 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white p-4 text-sm text-[color:var(--color-brand-text-mid)]">

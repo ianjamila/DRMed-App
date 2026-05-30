@@ -11,6 +11,7 @@ import {
   type BulkRescheduleResult,
   type ClosureResult,
 } from "./actions";
+import { Panel } from "@/components/ui/panel";
 
 export interface ClosureRow {
   closed_on: string;
@@ -95,7 +96,7 @@ function ClosuresTable({ closures }: { closures: ClosureRow[] }) {
         Past closures are hidden. The public slot picker only ever reads the
         next 60 days.
       </p>
-      <div className="mt-3 overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+      <Panel className="mt-3 overflow-x-auto">
         <table className="w-full min-w-[560px] text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
@@ -121,7 +122,7 @@ function ClosuresTable({ closures }: { closures: ClosureRow[] }) {
             )}
           </tbody>
         </table>
-      </div>
+      </Panel>
     </section>
   );
 }

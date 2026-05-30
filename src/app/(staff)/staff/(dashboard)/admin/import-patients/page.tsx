@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { ImportPatientsForm } from "./import-form";
+import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
   title: "Import patients — staff",
@@ -26,9 +27,9 @@ export default async function ImportPatientsPage() {
         listed below with the reason — fix and re-paste those rows separately.
       </p>
 
-      <div className="mt-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
+      <Panel className="mt-6 p-6">
         <ImportPatientsForm />
-      </div>
+      </Panel>
 
       <div className="mt-6 rounded-xl border border-dashed border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] p-5 text-sm text-[color:var(--color-brand-text-mid)]">
         <p className="font-bold text-[color:var(--color-brand-navy)]">

@@ -1,4 +1,5 @@
 import { Skeleton } from "@/components/ui/skeleton";
+import { Panel } from "@/components/ui/panel";
 
 export default function Loading() {
   return (
@@ -31,7 +32,7 @@ export default function Loading() {
       {/* Tests section */}
       <section className="mt-8">
         <Skeleton className="h-6 w-16 mb-3" />
-        <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+        <Panel className="overflow-x-auto">
           <table className="w-full min-w-[720px] text-sm">
             <thead className="bg-[color:var(--color-brand-bg)]">
               <tr>
@@ -68,13 +69,13 @@ export default function Loading() {
               ))}
             </tbody>
           </table>
-        </div>
+        </Panel>
       </section>
 
       {/* Payments section */}
       <section className="mt-8">
         <Skeleton className="h-6 w-24 mb-3" />
-        <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+        <Panel className="overflow-x-auto">
           <table className="w-full min-w-[640px] text-sm">
             <thead className="bg-[color:var(--color-brand-bg)]">
               <tr>
@@ -107,7 +108,7 @@ export default function Loading() {
               ))}
             </tbody>
           </table>
-        </div>
+        </Panel>
       </section>
 
       {/* Back button */}

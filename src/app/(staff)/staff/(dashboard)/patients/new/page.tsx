@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { PatientForm } from "../patient-form";
 import { listActiveReferralSources } from "@/lib/legacy-import/loaders";
+import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
   title: "New patient — staff",
@@ -27,9 +28,9 @@ export default async function NewPatientPage() {
       <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
         DRM-ID is auto-generated on save. After creation you can start a visit.
       </p>
-      <div className="mt-8 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
+      <Panel className="mt-8 p-6">
         <PatientForm referralOptions={referralOptions} />
-      </div>
+      </Panel>
     </div>
   );
 }

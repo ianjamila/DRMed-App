@@ -8,6 +8,7 @@ import {
   type InquiryChannel,
   type InquiryStatus,
 } from "@/lib/inquiries/labels";
+import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
   title: "Inquiries — staff",
@@ -162,7 +163,7 @@ export default async function InquiriesPage({ searchParams }: PageProps) {
         </Button>
       </form>
 
-      <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+      <Panel className="overflow-x-auto">
         <table className="w-full min-w-[900px] text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
@@ -236,7 +237,7 @@ export default async function InquiriesPage({ searchParams }: PageProps) {
             )}
           </tbody>
         </table>
-      </div>
+      </Panel>
 
       {inquiries.length === 50 ? (
         <p className="mt-4 text-xs text-[color:var(--color-brand-text-soft)]">

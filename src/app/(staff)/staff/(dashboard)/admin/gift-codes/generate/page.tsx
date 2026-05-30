@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { GenerateBatchForm } from "./generate-form";
+import { Panel } from "@/components/ui/panel";
 
 export const metadata = { title: "Generate gift codes — staff" };
 
@@ -30,9 +31,9 @@ export default async function GenerateBatchPage() {
         </p>
       </header>
 
-      <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
+      <Panel className="p-6">
         <GenerateBatchForm />
-      </div>
+      </Panel>
     </div>
   );
 }

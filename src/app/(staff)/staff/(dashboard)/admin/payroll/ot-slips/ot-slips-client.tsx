@@ -16,6 +16,7 @@ import {
   rejectOtSlipAction,
   voidOtSlipAction,
 } from "../config/actions";
+import { Panel } from "@/components/ui/panel";
 
 // =============================================================================
 // Prop shapes
@@ -271,7 +272,7 @@ export function OtSlipsClient({
       </div>
 
       {/* Desktop table */}
-      <div className="hidden overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white md:block">
+      <Panel className="hidden overflow-x-auto md:block">
         <table className="w-full min-w-[1080px] text-sm">
           <thead className="bg-[color:var(--color-bg-mid)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
@@ -357,7 +358,7 @@ export function OtSlipsClient({
             )}
           </tbody>
         </table>
-      </div>
+      </Panel>
 
       {/* Mobile cards */}
       <div className="space-y-3 md:hidden">
@@ -367,9 +368,9 @@ export function OtSlipsClient({
           </p>
         ) : (
           slips.map((s) => (
-            <div
+            <Panel
               key={s.id}
-              className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4 shadow-sm"
+              className="p-4 shadow-sm"
             >
               <div className="flex items-start justify-between gap-3">
                 <div>
@@ -406,7 +407,7 @@ export function OtSlipsClient({
                   }
                 />
               </div>
-            </div>
+            </Panel>
           ))
         )}
       </div>

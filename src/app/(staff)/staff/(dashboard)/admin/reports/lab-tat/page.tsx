@@ -3,6 +3,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { ALL_SECTIONS } from "@/lib/auth/role-sections";
+import { Panel } from "@/components/ui/panel";
 
 export const metadata = { title: "Lab TAT analytics — staff" };
 export const dynamic = "force-dynamic";
@@ -400,7 +401,7 @@ export default async function LabTatPage({ searchParams }: SearchProps) {
           <h2 className="mb-3 font-heading text-xl font-bold text-[color:var(--color-brand-navy)]">
             SLA breach detail (top 20)
           </h2>
-          <div className="overflow-hidden rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+          <Panel className="overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full min-w-[800px] text-sm">
                 <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
@@ -444,7 +445,7 @@ export default async function LabTatPage({ searchParams }: SearchProps) {
                 </tbody>
               </table>
             </div>
-          </div>
+          </Panel>
         </section>
       ) : null}
     </div>

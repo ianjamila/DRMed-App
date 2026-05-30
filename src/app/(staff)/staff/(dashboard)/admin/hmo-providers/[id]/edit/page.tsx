@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { HmoProviderForm } from "../../hmo-provider-form";
+import { Panel } from "@/components/ui/panel";
 
 export const metadata = { title: "Edit HMO provider — staff" };
 
@@ -38,9 +39,9 @@ export default async function EditHmoProviderPage({ params }: Props) {
       <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
         {p.name}
       </p>
-      <div className="mt-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
+      <Panel className="mt-6 p-6">
         <HmoProviderForm initial={p} />
-      </div>
+      </Panel>
     </div>
   );
 }

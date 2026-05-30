@@ -8,6 +8,7 @@ import {
   type ServiceSection,
 } from "@/lib/auth/role-sections";
 import type { StaffSession } from "@/lib/auth/require-staff";
+import { Panel } from "@/components/ui/panel";
 
 interface NotificationItem {
   id: string;
@@ -277,8 +278,8 @@ export function NotificationBell({ role }: Props) {
       </button>
 
       {open ? (
-        <div
-          className="absolute right-0 top-11 z-50 w-80 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-2 shadow-lg md:left-0 md:right-auto"
+        <Panel
+          className="absolute right-0 top-11 z-50 w-80 p-2 shadow-lg md:left-0 md:right-auto"
           role="menu"
         >
           <div className="flex items-baseline justify-between px-2 pb-2 pt-1">
@@ -339,7 +340,7 @@ export function NotificationBell({ role }: Props) {
               })}
             </ul>
           )}
-        </div>
+        </Panel>
       ) : null}
     </div>
   );

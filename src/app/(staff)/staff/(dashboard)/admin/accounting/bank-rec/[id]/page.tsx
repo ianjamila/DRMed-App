@@ -4,6 +4,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { RerunMatchButton } from "./rerun-match-button";
 import { ManualMatchClient } from "./manual-match-client";
+import { Panel } from "@/components/ui/panel";
 
 export const metadata = { title: "Bank statement — staff" };
 export const dynamic = "force-dynamic";
@@ -288,7 +289,7 @@ export default async function BankStatementDetailPage({ params }: PageProps) {
         <h2 className="mb-3 font-heading text-xl font-bold text-[color:var(--color-brand-navy)]">
           Matched ({matched.length})
         </h2>
-        <div className="overflow-hidden rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+        <Panel className="overflow-hidden">
           {matched.length === 0 ? (
             <p className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]">
               Nothing matched yet.
@@ -349,7 +350,7 @@ export default async function BankStatementDetailPage({ params }: PageProps) {
               </tbody>
             </table>
           )}
-        </div>
+        </Panel>
       </section>
     </div>
   );

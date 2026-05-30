@@ -12,6 +12,7 @@ import {
   type StaffPick,
   type PaymentMethod,
 } from "./_components/historic-claim-modals";
+import { Panel } from "@/components/ui/panel";
 
 type SummaryRow =
   Database["public"]["Views"]["v_hmo_provider_summary"]["Row"];
@@ -626,7 +627,7 @@ function AllUnbilled({
           </span>
         </div>
       </div>
-      <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+      <Panel className="overflow-x-auto">
         <table className="w-full min-w-[1000px] text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
@@ -762,9 +763,9 @@ function AllUnbilled({
             })}
           </tbody>
         </table>
-      </div>
+      </Panel>
       {selected.size > 0 && (
-        <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-3 shadow-sm">
+        <Panel className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 p-3 shadow-sm">
           <div className="text-xs text-[color:var(--color-brand-text-soft)]">
             <span className="font-semibold text-[color:var(--color-brand-navy)]">
               {selected.size}
@@ -808,16 +809,16 @@ function AllUnbilled({
               Clear
             </button>
           </div>
-        </div>
+        </Panel>
       )}
       {totalPages > 1 && (
-        <div className="flex items-center justify-between rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-3 text-xs">
+        <Panel className="flex items-center justify-between p-3 text-xs">
           <span>Page {page + 1} of {totalPages}</span>
           <div className="flex gap-2">
             <button type="button" disabled={page === 0} onClick={() => setPage((p) => p - 1)} className="rounded border px-3 py-1 disabled:opacity-40">Prev</button>
             <button type="button" disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)} className="rounded border px-3 py-1 disabled:opacity-40">Next</button>
           </div>
-        </div>
+        </Panel>
       )}
       {bulkModal === "billed" && (
         <MarkHistoricBilledModal
@@ -998,7 +999,7 @@ function AllAging({
           </span>
         </div>
       </div>
-      <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+      <Panel className="overflow-x-auto">
         <table className="w-full min-w-[960px] text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
@@ -1131,9 +1132,9 @@ function AllAging({
             })}
           </tbody>
         </table>
-      </div>
+      </Panel>
       {selected.size > 0 && (
-        <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-3 shadow-sm">
+        <Panel className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 p-3 shadow-sm">
           <div className="text-xs text-[color:var(--color-brand-text-soft)]">
             <span className="font-semibold text-[color:var(--color-brand-navy)]">
               {selected.size}
@@ -1166,16 +1167,16 @@ function AllAging({
               Clear
             </button>
           </div>
-        </div>
+        </Panel>
       )}
       {totalPages > 1 && (
-        <div className="flex items-center justify-between rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-3 text-xs">
+        <Panel className="flex items-center justify-between p-3 text-xs">
           <span>Page {page + 1} of {totalPages}</span>
           <div className="flex gap-2">
             <button type="button" disabled={page === 0} onClick={() => setPage((p) => p - 1)} className="rounded border px-3 py-1 disabled:opacity-40">Prev</button>
             <button type="button" disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)} className="rounded border px-3 py-1 disabled:opacity-40">Next</button>
           </div>
-        </div>
+        </Panel>
       )}
       {bulkModal === "paid" && (
         <MarkHistoricPaidModal
@@ -1250,7 +1251,7 @@ function AgingMatrix({ rows }: { rows: AgingRow[] }) {
 
   return (
     <>
-      <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-3 text-xs">
+      <Panel className="mb-3 flex flex-wrap items-center gap-2 p-3 text-xs">
         <span className="font-semibold text-[color:var(--color-brand-navy)]">Snapshot aging as of</span>
         <input
           type="date"
@@ -1271,9 +1272,9 @@ function AgingMatrix({ rows }: { rows: AgingRow[] }) {
           View past snapshots →
         </Link>
         {snapResult && <span className="text-[color:var(--color-brand-text-soft)]">{snapResult}</span>}
-      </div>
+      </Panel>
       {/* Desktop: matrix table */}
-      <div className="hidden overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white md:block">
+      <Panel className="hidden overflow-x-auto md:block">
         <table className="w-full min-w-[720px] text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
@@ -1326,7 +1327,7 @@ function AgingMatrix({ rows }: { rows: AgingRow[] }) {
             })}
           </tbody>
         </table>
-      </div>
+      </Panel>
 
       {/* Mobile: per-provider accordions */}
       <div className="space-y-2 md:hidden">
