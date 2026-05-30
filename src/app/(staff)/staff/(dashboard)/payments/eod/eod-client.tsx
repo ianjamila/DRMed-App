@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { closeEodAction } from "../cash-drawer/actions";
 import { reopenEodCloseAction } from "@/app/(staff)/staff/(dashboard)/admin/accounting/cash-routing/actions";
 import { PaymentsTabs } from "../_components/payments-tabs";
@@ -91,24 +92,26 @@ export function EodClient(props: {
       </h1>
 
       {closed ? (
-        <section className="mt-5 rounded-lg border bg-green-50 p-4">
-          <p className="text-sm font-semibold text-green-800">
+        <Alert variant="success" className="mt-5">
+          <AlertTitle>
             ✓ Day closed at {new Date(closed.closed_at).toLocaleString("en-PH", { timeZone: "Asia/Manila" })}
-          </p>
-          <dl className="mt-3 grid grid-cols-2 gap-2 text-sm">
-            <dt>Cash you should have</dt><dd className="font-mono text-right">{PESO(closed.expected_cash_php)}</dd>
-            <dt>Cash counted</dt><dd className="font-mono text-right">{PESO(closed.counted_cash_php)}</dd>
-            <dt>Difference (over / short)</dt><dd className="font-mono text-right">{PESO(closed.variance_php)}</dd>
-          </dl>
-          {closed.variance_reason && (
-            <p className="mt-2 text-sm italic text-[color:var(--color-brand-text-soft)]">&ldquo;{closed.variance_reason}&rdquo;</p>
-          )}
-          {props.isAdmin && (
-            <button onClick={onReopen} disabled={pending} className="mt-4 min-h-[44px] rounded border px-4 py-2 text-sm">
-              Re-open this day
-            </button>
-          )}
-        </section>
+          </AlertTitle>
+          <AlertDescription>
+            <dl className="mt-3 grid grid-cols-2 gap-2 text-sm">
+              <dt>Cash you should have</dt><dd className="font-mono text-right">{PESO(closed.expected_cash_php)}</dd>
+              <dt>Cash counted</dt><dd className="font-mono text-right">{PESO(closed.counted_cash_php)}</dd>
+              <dt>Difference (over / short)</dt><dd className="font-mono text-right">{PESO(closed.variance_php)}</dd>
+            </dl>
+            {closed.variance_reason && (
+              <p className="mt-2 text-sm italic text-[color:var(--color-brand-text-soft)]">&ldquo;{closed.variance_reason}&rdquo;</p>
+            )}
+            {props.isAdmin && (
+              <button onClick={onReopen} disabled={pending} className="mt-4 min-h-[44px] rounded border px-4 py-2 text-sm">
+                Re-open this day
+              </button>
+            )}
+          </AlertDescription>
+        </Alert>
       ) : (
         <section className="mt-5 rounded-lg border bg-white p-4 shadow-sm">
           <div className="flex justify-between text-sm">
