@@ -432,7 +432,7 @@ export default async function JournalListPage({ searchParams }: SearchProps) {
                       </td>
                       <td className="px-4 py-3">
                         <span
-                          className={`inline-block rounded-full border px-2 py-0.5 text-xs font-medium ${STATUS_BADGE[je.status] ?? ""}`}
+                          className={`inline-block rounded-md px-2 py-0.5 text-xs font-semibold ${STATUS_BADGE[je.status] ?? ""}`}
                         >
                           {je.status}
                         </span>

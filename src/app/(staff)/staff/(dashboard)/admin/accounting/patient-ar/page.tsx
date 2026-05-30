@@ -225,7 +225,7 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
                       </td>
                       <td className="whitespace-nowrap px-4 py-3">
                         <span
-                          className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${ageBadge(days)}`}
+                          className={`inline-block rounded-md px-2 py-0.5 text-xs font-semibold ${ageBadge(days)}`}
                         >
                           {days}d
                         </span>
@@ -265,7 +265,7 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
                       </td>
                       <td className="px-4 py-3">
                         <span
-                          className={`inline-block rounded-full border px-2 py-0.5 text-xs font-medium ${statusBadge(v.payment_status)}`}
+                          className={`inline-block rounded-md px-2 py-0.5 text-xs font-semibold ${statusBadge(v.payment_status)}`}
                         >
                           {paymentStatusLabel(v.payment_status)}
                         </span>

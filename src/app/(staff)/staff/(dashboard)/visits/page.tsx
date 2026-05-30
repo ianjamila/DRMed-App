@@ -261,7 +261,7 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
                       </td>
                       <td className="px-4 py-3">
                         <span
-                          className={`inline-block rounded-full border px-2 py-0.5 text-xs font-medium ${STATUS_BADGE[status] ?? ""}`}
+                          className={`inline-block rounded-md px-2 py-0.5 text-xs font-semibold ${STATUS_BADGE[status] ?? ""}`}
                         >
                           {paymentStatusLabel(status)}
                         </span>
@@ -292,7 +292,7 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
                       #{String(v.visit_number).padStart(4, "0")}
                     </Link>
                     <span
-                      className={`inline-block rounded-full border px-2 py-0.5 text-xs font-medium ${STATUS_BADGE[status] ?? ""}`}
+                      className={`inline-block rounded-md px-2 py-0.5 text-xs font-semibold ${STATUS_BADGE[status] ?? ""}`}
                     >
                       {status}
                     </span>

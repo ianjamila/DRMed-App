@@ -309,7 +309,7 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
                       <td className="px-4 py-3">
                         {statusSummary.kind === "uniform" ? (
                           <span
-                            className={`inline-block rounded-full border px-2 py-0.5 text-xs font-medium ${STATUS_BADGE[statusSummary.status] ?? "bg-slate-50 text-slate-700 border-slate-200"}`}
+                            className={`inline-block rounded-md px-2 py-0.5 text-xs font-semibold ${STATUS_BADGE[statusSummary.status] ?? "bg-slate-50 text-slate-700 border-slate-200"}`}
                           >
                             {statusSummary.status}
                           </span>
@@ -318,7 +318,7 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
                             {statusSummary.entries.map((e) => (
                               <span
                                 key={e.status}
-                                className={`inline-block rounded-full border px-2 py-0.5 text-[10px] font-medium ${STATUS_BADGE[e.status] ?? "bg-slate-50 text-slate-700 border-slate-200"}`}
+                                className={`inline-block rounded-md px-2 py-0.5 text-[10px] font-semibold ${STATUS_BADGE[e.status] ?? "bg-slate-50 text-slate-700 border-slate-200"}`}
                               >
                                 {e.status} × {e.count}
                               </span>
