@@ -5412,6 +5412,7 @@ export type Database = {
           total_php: number
           updated_at: string
           visit_date: string
+          visit_group_id: string | null
           visit_number: string
         }
         Insert: {
@@ -5429,6 +5430,7 @@ export type Database = {
           total_php?: number
           updated_at?: string
           visit_date?: string
+          visit_group_id?: string | null
           visit_number?: string
         }
         Update: {
@@ -5446,6 +5448,7 @@ export type Database = {
           total_php?: number
           updated_at?: string
           visit_date?: string
+          visit_group_id?: string | null
           visit_number?: string
         }
         Relationships: [

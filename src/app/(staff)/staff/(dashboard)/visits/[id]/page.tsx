@@ -6,6 +6,7 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { formatPhp } from "@/lib/marketing/format";
 import { sectionsForRole } from "@/lib/auth/role-sections";
 import { ReleaseButton } from "./release-button";
+import { MarkDoneButton } from "./mark-done-button";
 import { VoidPaymentDialog } from "../../payments/[id]/void/void-payment-dialog";
 import { isConsentGateRequired, getPatientConsentState } from "@/lib/consent/gate";
 
@@ -64,6 +65,7 @@ export default async function VisitDetailPage({ params }: Props) {
       `
         id, visit_number, visit_date, payment_status,
         total_php, paid_php, notes, created_at,
+        visit_group_id,
         hmo_provider_id, hmo_approval_date, hmo_authorization_no,
         patients!inner ( id, drm_id, first_name, last_name, preferred_release_medium ),
         hmo_providers ( id, name )
@@ -73,6 +75,24 @@ export default async function VisitDetailPage({ params }: Props) {
     .maybeSingle();
 
   if (!visit) notFound();
+
+  let sibling: { id: string; visit_number: string; is_doctor: boolean } | null = null;
+  if (visit.visit_group_id) {
+    const { data: sibs } = await supabase
+      .from("visits")
+      .select("id, visit_number, test_requests ( services ( kind ) )")
+      .eq("visit_group_id", visit.visit_group_id)
+      .neq("id", visit.id);
+    const s = sibs?.[0];
+    if (s) {
+      const isDoctor = (s.test_requests ?? []).some((tr) => {
+        const svc = Array.isArray(tr.services) ? tr.services[0] : tr.services;
+        return svc != null && (svc.kind === "doctor_consultation" || svc.kind === "doctor_procedure");
+      });
+      sibling = { id: s.id, visit_number: s.visit_number, is_doctor: isDoctor };
+    }
+  }
+
   const patient = Array.isArray(visit.patients) ? visit.patients[0] : visit.patients;
   if (!patient) notFound();
   const hmo = Array.isArray(visit.hmo_providers)
@@ -221,6 +241,17 @@ export default async function VisitDetailPage({ params }: Props) {
             Visit #{visit.visit_number} ·{" "}
             {new Date(visit.visit_date).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })}
           </p>
+          {sibling ? (
+            <p className="mt-2 rounded-lg border border-dashed border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-bg)] px-3 py-2 text-xs text-[color:var(--color-brand-navy)]">
+              Part of the same patient visit as{" "}
+              <Link
+                href={`/staff/visits/${sibling.id}`}
+                className="font-bold text-[color:var(--color-brand-cyan)] hover:underline"
+              >
+                #{sibling.visit_number} — {sibling.is_doctor ? "Doctor / PF" : "Lab & Services"} →
+              </Link>
+            </p>
+          ) : null}
           <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
             {patient.last_name}, {patient.first_name}
           </h1>
@@ -536,6 +567,7 @@ export default async function VisitDetailPage({ params }: Props) {
                         consentOnFile={consent.current}
                         gateRequired={gateRequired}
                         hasPdf={hasPdfByTrId.get(t.id) === true}
+                        kind={svc.kind}
                         preferredMedium={
                           (patient.preferred_release_medium ?? null) as
                             | "physical"
@@ -746,6 +778,7 @@ interface TestActionProps {
   consentOnFile: boolean;
   gateRequired: boolean;
   hasPdf?: boolean;
+  kind: string;
 }
 
 // Renders a context-appropriate cell for the Action column on the visit
@@ -760,6 +793,7 @@ function TestAction({
   consentOnFile,
   gateRequired,
   hasPdf,
+  kind,
 }: TestActionProps) {
   if (status === "ready_for_release") {
     return (
@@ -775,6 +809,9 @@ function TestAction({
   }
 
   if (status === "requested" || status === "in_progress") {
+    if (kind === "doctor_consultation") {
+      return <MarkDoneButton testRequestId={testRequestId} visitId={visitId} paid={paid} />;
+    }
     const hint = status === "requested" ? "Awaiting claim" : "Awaiting result";
     return (
       <div className="flex flex-col items-end gap-0.5">

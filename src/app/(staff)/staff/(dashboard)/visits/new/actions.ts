@@ -10,6 +10,8 @@ import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { generatePin, hashPin } from "@/lib/auth/pin";
 import { setVisitPinFlash } from "@/lib/auth/visit-pin-flash";
+import { splitDoctorFee } from "@/lib/visits/consultation-fee";
+import { isDoctorKind, partitionByCategory } from "@/lib/visits/order-lines";
 import type { Database } from "@/types/database";
 
 const DiscountKindEnum = z.enum([
@@ -50,9 +52,13 @@ const Schema = z.object({
   service_ids: z
     .array(z.string().uuid())
     .min(1, "Select at least one service."),
-  hmo_provider_id: optionalUuid,
-  hmo_approval_date: optionalDate,
-  hmo_authorization_no: optionalText(80),
+  // Per-section HMO: doctor lines and lab lines each carry their own provider.
+  doctor_hmo_provider_id: optionalUuid,
+  doctor_hmo_approval_date: optionalDate,
+  doctor_hmo_authorization_no: optionalText(80),
+  lab_hmo_provider_id: optionalUuid,
+  lab_hmo_approval_date: optionalDate,
+  lab_hmo_authorization_no: optionalText(80),
   receptionist_remarks: optionalText(40),
   notes: z.string().trim().max(2000).optional(),
   attending_physician_id: optionalUuid,
@@ -71,9 +77,12 @@ export async function createVisitAction(
   const parsed = Schema.safeParse({
     patient_id: formData.get("patient_id"),
     service_ids: formData.getAll("service_ids"),
-    hmo_provider_id: formData.get("hmo_provider_id"),
-    hmo_approval_date: formData.get("hmo_approval_date"),
-    hmo_authorization_no: formData.get("hmo_authorization_no"),
+    doctor_hmo_provider_id: formData.get("doctor_hmo_provider_id"),
+    doctor_hmo_approval_date: formData.get("doctor_hmo_approval_date"),
+    doctor_hmo_authorization_no: formData.get("doctor_hmo_authorization_no"),
+    lab_hmo_provider_id: formData.get("lab_hmo_provider_id"),
+    lab_hmo_approval_date: formData.get("lab_hmo_approval_date"),
+    lab_hmo_authorization_no: formData.get("lab_hmo_authorization_no"),
     receptionist_remarks: formData.get("receptionist_remarks"),
     notes: formData.get("notes") ?? "",
     attending_physician_id: formData.get("attending_physician_id"),
@@ -97,9 +106,23 @@ export async function createVisitAction(
     return { ok: false, error: "One or more services could not be found." };
   }
 
+  // The doctor-fee split depends on the attending physician's compensation
+  // arrangement (rent_paying / shareholder → clinic keeps ₱0; pf_split → ₱100).
+  let attendingArrangement: string | null = null;
+  if (parsed.data.attending_physician_id) {
+    const physAdmin = createAdminClient();
+    const { data: phys } = await physAdmin
+      .from("physicians")
+      .select("compensation_arrangement")
+      .eq("id", parsed.data.attending_physician_id)
+      .maybeSingle();
+    attendingArrangement = phys?.compensation_arrangement ?? null;
+  }
+
   // Snapshot pricing per line — same arithmetic as the client form so the
   // server is the source of truth even if the client sent stale values.
-  const hmoSelected = parsed.data.hmo_provider_id !== null;
+  const doctorHmoSelected = parsed.data.doctor_hmo_provider_id !== null;
+  const labHmoSelected = parsed.data.lab_hmo_provider_id !== null;
   const lines = parsed.data.service_ids.map((service_id) => {
     const s = services.find((x) => x.id === service_id)!;
     const cashPrice = Number(s.price_php);
@@ -107,7 +130,21 @@ export async function createVisitAction(
     const seniorPesoOff =
       s.senior_discount_php != null ? Number(s.senior_discount_php) : null;
 
-    const base = hmoSelected && hmoPrice != null ? hmoPrice : cashPrice;
+    // doctor_consultation: price is typed at the counter, not from the catalog.
+    const consultFeeRaw =
+      s.kind === "doctor_consultation"
+        ? formData.get(`consult_fee__${service_id}`)?.toString() ?? ""
+        : "";
+    const consultFee = Number(consultFeeRaw);
+    const lineHmoSelected = isDoctorKind(s.kind) ? doctorHmoSelected : labHmoSelected;
+    const base =
+      s.kind === "doctor_consultation"
+        ? Number.isFinite(consultFee) && consultFee >= 0
+          ? consultFee
+          : 0
+        : lineHmoSelected && hmoPrice != null
+          ? hmoPrice
+          : cashPrice;
 
     const rawKind = formData.get(`discount_kind__${service_id}`)?.toString() ?? "";
     const parsedKind = DiscountKindEnum.safeParse(rawKind);
@@ -135,19 +172,20 @@ export async function createVisitAction(
 
     const final_price_php = Math.max(0, base - discount_amount_php);
 
-    // Doctor consultation: capture clinic_fee + doctor_pf split. Default to
-    // clinic_fee=100 and doctor_pf=final-100 when reception leaves the
-    // inputs empty.
+    // Doctor consultation: capture clinic_fee + doctor_pf split. The split is
+    // centralized in splitDoctorFee, which defaults clinic_fee from the
+    // physician's arrangement and PF to the remainder when inputs are empty.
     let clinic_fee_php: number | null = null;
     let doctor_pf_php: number | null = null;
     if (s.kind === "doctor_consultation") {
-      const cfRaw = formData.get(`clinic_fee__${service_id}`)?.toString() ?? "";
-      const cfNum = cfRaw === "" ? 100 : Number(cfRaw);
-      clinic_fee_php = Number.isFinite(cfNum) && cfNum >= 0 ? cfNum : 100;
-      const pfRaw = formData.get(`doctor_pf__${service_id}`)?.toString() ?? "";
-      const pfDefault = Math.max(0, final_price_php - clinic_fee_php);
-      const pfNum = pfRaw === "" ? pfDefault : Number(pfRaw);
-      doctor_pf_php = Number.isFinite(pfNum) && pfNum >= 0 ? pfNum : pfDefault;
+      const split = splitDoctorFee({
+        finalPrice: final_price_php,
+        arrangement: attendingArrangement,
+        clinicFeeRaw: formData.get(`clinic_fee__${service_id}`)?.toString() ?? "",
+        doctorPfRaw: formData.get(`doctor_pf__${service_id}`)?.toString() ?? "",
+      });
+      clinic_fee_php = split.clinic_fee_php;
+      doctor_pf_php = split.doctor_pf_php;
     }
 
     // Doctor procedure: capture description + post-approval HMO grant + clinic fee + doctor PF.
@@ -163,18 +201,23 @@ export async function createVisitAction(
       // Procedure lines mirror consult lines: capture clinic_fee + doctor_pf split.
       // Default clinic_fee=0 for procedures unless the form sends a value.
       if (clinic_fee_php === null) {
+        // Procedures default clinic fee to 0 unless reception types one; PF is
+        // the remainder. (defaultClinicFee handles rent/shareholder = 0 too.)
         const cfRaw = formData.get(`clinic_fee__${service_id}`)?.toString() ?? "";
-        const cfNum = cfRaw === "" ? 0 : Number(cfRaw);
-        clinic_fee_php = Number.isFinite(cfNum) && cfNum >= 0 ? cfNum : 0;
-        const pfRaw = formData.get(`doctor_pf__${service_id}`)?.toString() ?? "";
-        const pfDefault = Math.max(0, final_price_php - clinic_fee_php);
-        const pfNum = pfRaw === "" ? pfDefault : Number(pfRaw);
-        doctor_pf_php = Number.isFinite(pfNum) && pfNum >= 0 ? pfNum : pfDefault;
+        const split = splitDoctorFee({
+          finalPrice: final_price_php,
+          arrangement: attendingArrangement,
+          clinicFeeRaw: cfRaw.trim() === "" ? "0" : cfRaw,
+          doctorPfRaw: formData.get(`doctor_pf__${service_id}`)?.toString() ?? "",
+        });
+        clinic_fee_php = split.clinic_fee_php;
+        doctor_pf_php = split.doctor_pf_php;
       }
     }
 
     return {
       service_id,
+      kind: s.kind,
       base_price_php: base,
       discount_kind,
       discount_amount_php,
@@ -186,89 +229,298 @@ export async function createVisitAction(
     };
   });
 
-  const totalPhp = lines.reduce((sum, l) => sum + l.final_price_php, 0);
+  // A consultation must have a positive (manual) fee and an attending physician
+  // — release later requires the physician (P0034), and a ₱0 consult is a slip.
+  const hasConsult = lines.some(
+    (l) => services.find((s) => s.id === l.service_id)?.kind === "doctor_consultation",
+  );
+  if (hasConsult) {
+    if (!parsed.data.attending_physician_id) {
+      return { ok: false, error: "Select an attending physician for the consultation." };
+    }
+    const badConsult = lines.some(
+      (l) =>
+        services.find((s) => s.id === l.service_id)?.kind === "doctor_consultation" &&
+        !(l.final_price_php > 0),
+    );
+    if (badConsult) {
+      return { ok: false, error: "Enter a consultation fee greater than ₱0." };
+    }
+  }
 
-  // Create the visit, including the HMO authorisation and attending physician if provided.
+  // Partition the order into the two billing categories.
+  const { doctor: doctorLines, lab: labLines } = partitionByCategory(
+    lines,
+    (l) => l.kind,
+  );
+  const split = doctorLines.length > 0 && labLines.length > 0;
+
+  const doctorHmo: VisitHmo = {
+    hmo_provider_id: parsed.data.doctor_hmo_provider_id,
+    hmo_approval_date: parsed.data.doctor_hmo_approval_date,
+    hmo_authorization_no: parsed.data.doctor_hmo_authorization_no,
+  };
+  const labHmo: VisitHmo = {
+    hmo_provider_id: parsed.data.lab_hmo_provider_id,
+    hmo_approval_date: parsed.data.lab_hmo_approval_date,
+    hmo_authorization_no: parsed.data.lab_hmo_authorization_no,
+  };
+
+  const servicesForDecomp = services.map((s) => ({
+    id: s.id,
+    kind: s.kind,
+    code: s.code,
+    name: s.name,
+  }));
+
+  // crypto.randomUUID is available in the Node runtime.
+  const groupId = split ? crypto.randomUUID() : null;
+
+  const created: OneVisitResult[] = [];
+  try {
+    if (split) {
+      created.push(
+        await createOneVisit(supabase, {
+          patientId: parsed.data.patient_id,
+          createdBy: session.user_id,
+          lines: doctorLines,
+          services: servicesForDecomp,
+          hmo: doctorHmo,
+          attendingPhysicianId: parsed.data.attending_physician_id ?? null,
+          receptionistRemarks: parsed.data.receptionist_remarks,
+          notes: parsed.data.notes ?? null,
+          visitGroupId: groupId,
+        }),
+      );
+      created.push(
+        await createOneVisit(supabase, {
+          patientId: parsed.data.patient_id,
+          createdBy: session.user_id,
+          lines: labLines,
+          services: servicesForDecomp,
+          hmo: labHmo,
+          attendingPhysicianId: null,
+          receptionistRemarks: parsed.data.receptionist_remarks,
+          notes: parsed.data.notes ?? null,
+          visitGroupId: groupId,
+        }),
+      );
+    } else {
+      const onlyDoctor = doctorLines.length > 0;
+      created.push(
+        await createOneVisit(supabase, {
+          patientId: parsed.data.patient_id,
+          createdBy: session.user_id,
+          lines: lines,
+          services: servicesForDecomp,
+          hmo: onlyDoctor ? doctorHmo : labHmo,
+          attendingPhysicianId: onlyDoctor
+            ? parsed.data.attending_physician_id ?? null
+            : null,
+          receptionistRemarks: parsed.data.receptionist_remarks,
+          notes: parsed.data.notes ?? null,
+          visitGroupId: null,
+        }),
+      );
+    }
+  } catch (err) {
+    for (const c of created) await deleteVisitCascade(supabase, c.visitId);
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Could not create visit.",
+    };
+  }
+
+  // One shared PIN across all created visits (portal is per-patient; login
+  // matches the latest pin row). Same hash + expiry on every visit_pins row.
+  const plainPin = generatePin();
+  const pinHash = await hashPin(plainPin);
+  const admin = createAdminClient();
+  const { error: pinErr } = await admin
+    .from("visit_pins")
+    .insert(created.map((c) => ({ visit_id: c.visitId, pin_hash: pinHash })));
+  if (pinErr) {
+    for (const c of created) await deleteVisitCascade(supabase, c.visitId);
+    return { ok: false, error: `Visit created but PIN failed: ${pinErr.message}` };
+  }
+
+  const h = await headers();
+  const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+  const ua = h.get("user-agent");
+
+  for (const c of created) {
+    const visitLines = split
+      ? c.visitId === created[0]!.visitId
+        ? doctorLines
+        : labLines
+      : lines;
+    await audit({
+      actor_id: session.user_id,
+      actor_type: "staff",
+      patient_id: parsed.data.patient_id,
+      action: "visit.created",
+      resource_type: "visit",
+      resource_id: c.visitId,
+      metadata: {
+        visit_number: c.visitNumber,
+        total_php: visitLines.reduce((s, l) => s + l.final_price_php, 0),
+        service_count: visitLines.length,
+        visit_group_id: groupId,
+        hmo_provider_id: c.hmo.hmo_provider_id,
+        discounted_lines: visitLines.filter((l) => l.discount_amount_php > 0).length,
+      },
+      ip_address: ip,
+      user_agent: ua,
+    });
+
+    for (let i = 0; i < c.decompositions.length; i++) {
+      const d = c.decompositions[i]!;
+      const pkgService = services.find((s) => s.id === d.headerLine.service_id);
+      await audit({
+        actor_id: session.user_id,
+        actor_type: "staff",
+        patient_id: parsed.data.patient_id,
+        action: "package.decomposed",
+        resource_type: "test_request",
+        resource_id: c.headerIdsForAudit[i] ?? null,
+        metadata: {
+          visit_id: c.visitId,
+          package_service_id: d.headerLine.service_id,
+          package_code: pkgService?.code ?? null,
+          package_name: pkgService?.name ?? null,
+          component_count: d.componentServiceIds.length,
+          component_service_ids: d.componentServiceIds,
+        },
+        ip_address: ip,
+        user_agent: ua,
+      });
+    }
+  }
+
+  if (split && groupId) {
+    await setVisitPinFlash({ group_id: groupId, pin: plainPin });
+    redirect(`/staff/visits/group/${groupId}/receipt`);
+  } else {
+    await setVisitPinFlash({ visit_id: created[0]!.visitId, pin: plainPin });
+    redirect(`/staff/visits/${created[0]!.visitId}/receipt`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Split-visit orchestration helpers.
+
+interface VisitHmo {
+  hmo_provider_id: string | null;
+  hmo_approval_date: string | null;
+  hmo_authorization_no: string | null;
+}
+
+interface OneVisitInput {
+  patientId: string;
+  createdBy: string;
+  lines: Array<{
+    service_id: string;
+    kind: string;
+    base_price_php: number;
+    discount_kind: string | null;
+    discount_amount_php: number;
+    final_price_php: number;
+    clinic_fee_php: number | null;
+    doctor_pf_php: number | null;
+    procedure_description: string | null;
+    hmo_approved_amount_php: number | null;
+  }>;
+  services: Array<{ id: string; kind: string; code: string; name: string }>;
+  hmo: VisitHmo;
+  attendingPhysicianId: string | null;
+  receptionistRemarks: string | null;
+  notes: string | null;
+  visitGroupId: string | null;
+}
+
+interface OneVisitResult {
+  visitId: string;
+  visitNumber: string;
+  hmo: VisitHmo;
+  decompositions: PackageDecomposition[];
+  headerIdsForAudit: Array<string | null>;
+}
+
+// Creates a single visit and all its test_requests (incl. package
+// decomposition). Throws Error on any failure; the caller rolls back.
+async function createOneVisit(
+  supabase: SupabaseClient<Database>,
+  input: OneVisitInput,
+): Promise<OneVisitResult> {
+  const totalPhp = input.lines.reduce((sum, l) => sum + l.final_price_php, 0);
+
   const { data: visit, error: visitErr } = await supabase
     .from("visits")
     .insert({
-      patient_id: parsed.data.patient_id,
+      patient_id: input.patientId,
       total_php: totalPhp,
-      notes: parsed.data.notes ?? null,
-      created_by: session.user_id,
-      hmo_provider_id: parsed.data.hmo_provider_id,
-      hmo_approval_date: parsed.data.hmo_approval_date,
-      hmo_authorization_no: parsed.data.hmo_authorization_no,
-      attending_physician_id: parsed.data.attending_physician_id ?? null,
+      notes: input.notes,
+      created_by: input.createdBy,
+      hmo_provider_id: input.hmo.hmo_provider_id,
+      hmo_approval_date: input.hmo.hmo_approval_date,
+      hmo_authorization_no: input.hmo.hmo_authorization_no,
+      attending_physician_id: input.attendingPhysicianId,
+      visit_group_id: input.visitGroupId,
     })
     .select("id, visit_number")
     .single();
-
   if (visitErr || !visit) {
-    return { ok: false, error: visitErr?.message ?? "Could not create visit." };
+    throw new Error(visitErr?.message ?? "Could not create visit.");
   }
 
-  // Phase 14: lab_package services decompose into a billing header +
-  // N component test_requests. Load each package's components from
-  // package_components and build header/component rows. Non-package
-  // lines insert as single rows (existing behaviour).
   const decompositionResult = await loadPackageDecompositionsForLines(
     supabase,
-    lines,
-    services,
+    input.lines,
+    input.services,
   );
   if (!decompositionResult.ok) {
-    return { ok: false, error: decompositionResult.error };
+    await deleteVisitCascade(supabase, visit.id);
+    throw new Error(decompositionResult.error);
   }
   const decompositions = decompositionResult.decompositions;
-  const packageServiceIds = new Set(
-    decompositions.map((d) => d.headerLine.service_id),
-  );
+  const packageServiceIds = new Set(decompositions.map((d) => d.headerLine.service_id));
 
-  // Header rows: one per package line, carries full pricing + HMO metadata.
-  // The fn_header_auto_promote trigger flips status from in_progress to
-  // ready_for_release on insert.
-  const headerRows = lines
+  const headerRows = input.lines
     .filter((l) => packageServiceIds.has(l.service_id))
     .map((l) => ({
       visit_id: visit.id,
       service_id: l.service_id,
-      requested_by: session.user_id,
+      requested_by: input.createdBy,
       base_price_php: l.base_price_php,
       discount_kind: l.discount_kind,
       discount_amount_php: l.discount_amount_php,
       final_price_php: l.final_price_php,
-      hmo_provider_id: parsed.data.hmo_provider_id,
-      hmo_approval_date: parsed.data.hmo_approval_date,
-      hmo_authorization_no: parsed.data.hmo_authorization_no,
-      receptionist_remarks: parsed.data.receptionist_remarks,
+      hmo_provider_id: input.hmo.hmo_provider_id,
+      hmo_approval_date: input.hmo.hmo_approval_date,
+      hmo_authorization_no: input.hmo.hmo_authorization_no,
+      receptionist_remarks: input.receptionistRemarks,
       clinic_fee_php: l.clinic_fee_php,
       doctor_pf_php: l.doctor_pf_php,
       procedure_description: l.procedure_description,
       hmo_approved_amount_php: l.hmo_approved_amount_php,
       is_package_header: true as const,
-      // Headers carry no work — the 0040 fn_header_auto_promote trigger
-      // flips this to 'ready_for_release' on insert so the row stays out
-      // of every queue and waits for the 12.2 payment-gating trigger to
-      // release it when the visit is paid.
       status: "in_progress" as const,
     }));
 
-  // Standalone rows: existing non-package services (unchanged shape).
-  const standaloneRows = lines
+  const standaloneRows = input.lines
     .filter((l) => !packageServiceIds.has(l.service_id))
     .map((l) => ({
       visit_id: visit.id,
       service_id: l.service_id,
-      requested_by: session.user_id,
+      requested_by: input.createdBy,
       base_price_php: l.base_price_php,
       discount_kind: l.discount_kind,
       discount_amount_php: l.discount_amount_php,
       final_price_php: l.final_price_php,
-      hmo_provider_id: parsed.data.hmo_provider_id,
-      hmo_approval_date: parsed.data.hmo_approval_date,
-      hmo_authorization_no: parsed.data.hmo_authorization_no,
-      receptionist_remarks: parsed.data.receptionist_remarks,
+      hmo_provider_id: input.hmo.hmo_provider_id,
+      hmo_approval_date: input.hmo.hmo_approval_date,
+      hmo_authorization_no: input.hmo.hmo_authorization_no,
+      receptionist_remarks: input.receptionistRemarks,
       clinic_fee_php: l.clinic_fee_php,
       doctor_pf_php: l.doctor_pf_php,
       procedure_description: l.procedure_description,
@@ -276,7 +528,6 @@ export async function createVisitAction(
       is_package_header: false as const,
     }));
 
-  // Insert headers first (we need their ids to populate parent_id on components).
   const headerRowsBySvcId = new Map<string, string[]>();
   if (headerRows.length > 0) {
     const headerInserts = await supabase
@@ -284,14 +535,9 @@ export async function createVisitAction(
       .insert(headerRows)
       .select("id, service_id");
     if (headerInserts.error || !headerInserts.data) {
-      return {
-        ok: false,
-        error: `Failed to create package header rows: ${headerInserts.error?.message}`,
-      };
+      await deleteVisitCascade(supabase, visit.id);
+      throw new Error(`Failed to create package header rows: ${headerInserts.error?.message}`);
     }
-    // service_id may repeat across multiple package lines, but the same
-    // package can be ordered twice — keep one queue per service id and pop
-    // a fresh header per decomposition entry.
     for (const row of headerInserts.data) {
       const arr = headerRowsBySvcId.get(row.service_id) ?? [];
       arr.push(row.id);
@@ -299,11 +545,9 @@ export async function createVisitAction(
     }
   }
 
-  // Build component rows, attaching each to the correct header by service_id.
-  // If a package is ordered N times in the same visit, round-robin the
-  // component rows to each header (one batch of components per header).
-  // Track which header was used by each decomposition for the audit row.
   const headerIdsForAudit: Array<string | null> = [];
+  // Same explicit shape the original action used, so the mixed
+  // [...standaloneRows, ...componentRows] insert keeps type-checking.
   const componentRows: Array<{
     visit_id: string;
     service_id: string;
@@ -321,10 +565,8 @@ export async function createVisitAction(
     const headerIdQueue = headerRowsBySvcId.get(d.headerLine.service_id) ?? [];
     const headerId = headerIdQueue.shift();
     if (!headerId) {
-      return {
-        ok: false,
-        error: `Internal error: missing header row for service ${d.headerLine.service_id}`,
-      };
+      await deleteVisitCascade(supabase, visit.id);
+      throw new Error(`Internal error: missing header row for service ${d.headerLine.service_id}`);
     }
     headerRowsBySvcId.set(d.headerLine.service_id, headerIdQueue);
     headerIdsForAudit.push(headerId);
@@ -332,96 +574,45 @@ export async function createVisitAction(
       componentRows.push({
         visit_id: visit.id,
         service_id: componentServiceId,
-        requested_by: session.user_id,
+        requested_by: input.createdBy,
         base_price_php: 0,
         discount_amount_php: 0,
         final_price_php: 0,
-        hmo_provider_id: parsed.data.hmo_provider_id,
-        hmo_approval_date: parsed.data.hmo_approval_date,
-        hmo_authorization_no: parsed.data.hmo_authorization_no,
+        hmo_provider_id: input.hmo.hmo_provider_id,
+        hmo_approval_date: input.hmo.hmo_approval_date,
+        hmo_authorization_no: input.hmo.hmo_authorization_no,
         parent_id: headerId,
         is_package_header: false,
       });
     }
   }
 
-  // Standalone + component inserts in one batch.
   const allLeafRows = [...standaloneRows, ...componentRows];
   if (allLeafRows.length > 0) {
-    const { error: leafErr } = await supabase
-      .from("test_requests")
-      .insert(allLeafRows);
+    const { error: leafErr } = await supabase.from("test_requests").insert(allLeafRows);
     if (leafErr) {
-      return {
-        ok: false,
-        error: `Visit created but tests failed: ${leafErr.message}`,
-      };
+      await deleteVisitCascade(supabase, visit.id);
+      throw new Error(`Visit created but tests failed: ${leafErr.message}`);
     }
   }
 
-  // PIN: generate plain → hash → store. We use the admin client because RLS on
-  // visit_pins is reception/admin write only; the SSR client also satisfies
-  // that, but admin is explicit about not leaking the hash through caching.
-  const plainPin = generatePin();
-  const pinHash = await hashPin(plainPin);
-  const admin = createAdminClient();
-  const { error: pinErr } = await admin
-    .from("visit_pins")
-    .insert({ visit_id: visit.id, pin_hash: pinHash });
-  if (pinErr) {
-    return { ok: false, error: `Visit created but PIN failed: ${pinErr.message}` };
-  }
+  return {
+    visitId: visit.id,
+    visitNumber: visit.visit_number,
+    hmo: input.hmo,
+    decompositions,
+    headerIdsForAudit,
+  };
+}
 
-  const h = await headers();
-  const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
-  const ua = h.get("user-agent");
-  await audit({
-    actor_id: session.user_id,
-    actor_type: "staff",
-    patient_id: parsed.data.patient_id,
-    action: "visit.created",
-    resource_type: "visit",
-    resource_id: visit.id,
-    metadata: {
-      visit_number: visit.visit_number,
-      total_php: totalPhp,
-      service_count: parsed.data.service_ids.length,
-      hmo_provider_id: parsed.data.hmo_provider_id,
-      discounted_lines: lines.filter((l) => l.discount_amount_php > 0).length,
-    },
-    ip_address: ip,
-    user_agent: ua,
-  });
-
-  // One audit row per package decomposition. Components codes are emitted
-  // as service ids; admin can join them back to services for display.
-  for (let i = 0; i < decompositions.length; i++) {
-    const d = decompositions[i]!;
-    const pkgService = services.find((s) => s.id === d.headerLine.service_id);
-    await audit({
-      actor_id: session.user_id,
-      actor_type: "staff",
-      patient_id: parsed.data.patient_id,
-      action: "package.decomposed",
-      resource_type: "test_request",
-      resource_id: headerIdsForAudit[i] ?? null,
-      metadata: {
-        visit_id: visit.id,
-        package_service_id: d.headerLine.service_id,
-        package_code: pkgService?.code ?? null,
-        package_name: pkgService?.name ?? null,
-        component_count: d.componentServiceIds.length,
-        component_service_ids: d.componentServiceIds,
-      },
-      ip_address: ip,
-      user_agent: ua,
-    });
-  }
-
-  // Stash plain PIN in HttpOnly flash cookie consumed by the receipt page.
-  await setVisitPinFlash({ visit_id: visit.id, pin: plainPin });
-
-  redirect(`/staff/visits/${visit.id}/receipt`);
+// Best-effort cleanup. test_requests.visit_id has NO on-delete-cascade, so
+// delete the lines first; visit_pins DOES cascade with the visit.
+async function deleteVisitCascade(
+  supabase: SupabaseClient<Database>,
+  visitId: string,
+): Promise<void> {
+  await supabase.from("test_requests").delete().eq("visit_id", visitId);
+  await supabase.from("visits").delete().eq("id", visitId);
 }
 
 // ---------------------------------------------------------------------------

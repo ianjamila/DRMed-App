@@ -23,7 +23,7 @@ export default async function ReceiptPage({ params }: Props) {
     .from("visits")
     .select(
       `
-        id, visit_number, visit_date, total_php,
+        id, visit_number, visit_date, total_php, visit_group_id,
         patients!inner (
           id, drm_id, first_name, last_name,
           senior_pwd_id_kind, senior_pwd_id_number
@@ -71,11 +71,23 @@ export default async function ReceiptPage({ params }: Props) {
         >
           ← Visit
         </Link>
-        <PrintButton hasFlash={Boolean(plainPin)} />
+        <div className="flex items-center gap-3">
+          {visit.visit_group_id ? (
+            <Link
+              href={`/staff/visits/group/${visit.visit_group_id}/receipt`}
+              className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
+            >
+              Print combined receipt →
+            </Link>
+          ) : null}
+          <PrintButton hasFlash={Boolean(plainPin)} />
+        </div>
       </div>
 
       <article className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-8 print:border-0 print:p-0">
         <header className="border-b border-[color:var(--color-brand-bg-mid)] pb-4">
+          {/* eslint-disable-next-line @next/next/no-img-element -- plain img prints reliably */}
+          <img src="/logo.png" alt="DRMed" className="mb-2 h-14 w-auto" />
           <p className="font-[family-name:var(--font-heading)] text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
             {SITE.name}
           </p>
@@ -106,10 +118,9 @@ export default async function ReceiptPage({ params }: Props) {
           </div>
           <div className="sm:text-right">
             <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-              Visit
+              Date
             </p>
-            <p className="mt-0.5 font-semibold">#{visit.visit_number}</p>
-            <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+            <p className="mt-0.5 font-semibold">
               {new Date(visit.visit_date).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })}
             </p>
           </div>

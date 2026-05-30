@@ -16,6 +16,7 @@ import {
   StableTextarea,
 } from "@/components/forms/stable-fields";
 import { formatPhp } from "@/lib/marketing/format";
+import { defaultClinicFee } from "@/lib/visits/consultation-fee";
 import {
   createVisitAction,
   getPackageComponentsAction,
@@ -58,12 +59,6 @@ interface Props {
   physicians?: PhysicianLite[];
 }
 
-/** Derive default clinic_fee from physician compensation arrangement. */
-function defaultClinicFee(arrangement: string | undefined): number {
-  if (arrangement === "rent_paying" || arrangement === "shareholder") return 0;
-  return 100;
-}
-
 // Discount kinds match the test_requests.discount_kind check constraint.
 type DiscountKind =
   | ""
@@ -82,6 +77,7 @@ interface LineState {
   // Doctor procedure lines:
   procedureDescription: string;
   hmoApprovedAmount: string;
+  consultFee: string; // manual consultation fee (doctor_consultation only)
 }
 
 const DISCOUNT_OPTIONS: { value: DiscountKind; label: string }[] = [
@@ -144,7 +140,8 @@ function discountFor(
 export function VisitForm({ services, patient, hmoProviders, physicians = [] }: Props) {
   const router = useRouter();
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [hmoProviderId, setHmoProviderId] = useState<string>("");
+  const [doctorHmoProviderId, setDoctorHmoProviderId] = useState<string>("");
+  const [labHmoProviderId, setLabHmoProviderId] = useState<string>("");
   const [lineState, setLineState] = useState<Record<string, LineState>>({});
   const [attendingPhysicianId, setAttendingPhysicianId] = useState<string>("");
   const [serviceQuery, setServiceQuery] = useState("");
@@ -196,7 +193,11 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [] }: 
     return out;
   }, [services, deferredQuery, selected, activeTab]);
 
-  const hmoSelected = hmoProviderId !== "";
+  const doctorHmoSelected = doctorHmoProviderId !== "";
+  const labHmoSelected = labHmoProviderId !== "";
+  // Per-line HMO flag: doctor lines use the doctor HMO, lab lines the lab HMO.
+  const hmoSelectedFor = (kind: string) =>
+    DOCTOR_KINDS.has(kind) ? doctorHmoSelected : labHmoSelected;
 
   // Per-tab selected counts for the tab labels (e.g. "Doctor · 2").
   const doctorSelectedCount = useMemo(
@@ -293,6 +294,7 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [] }: 
         doctorPf: "",
         procedureDescription: "",
         hmoApprovedAmount: "",
+        consultFee: "",
       }
     );
   }
@@ -307,13 +309,19 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [] }: 
       .filter((s) => selected.has(s.id))
       .map((s) => {
         const ls = getLine(s.id);
-        const base = basePriceFor(s, hmoSelected);
+        const base =
+          s.kind === "doctor_consultation"
+            ? (() => {
+                const n = Number(ls.consultFee);
+                return Number.isFinite(n) && n >= 0 ? n : 0;
+              })()
+            : basePriceFor(s, hmoSelectedFor(s.kind));
         const discount = discountFor(s, base, ls.discountKind, ls.customDiscount);
         const final = Math.max(0, base - discount);
         return { service: s, base, discount, final, ls };
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [services, selected, hmoSelected, lineState]);
+  }, [services, selected, doctorHmoSelected, labHmoSelected, lineState]);
 
   const total = lines.reduce((sum, l) => sum + l.final, 0);
 
@@ -347,56 +355,20 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [] }: 
         </p>
       </div>
 
-      <fieldset className="grid gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] p-4">
-        <legend className="px-1 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-          HMO authorisation (optional)
-        </legend>
-        <p className="text-xs text-[color:var(--color-brand-text-soft)]">
-          Selecting a provider switches each service to its HMO price (when
-          set on the service) and stamps the authorisation onto every test
-          request created on this visit.
-        </p>
-        <div className="grid gap-3 sm:grid-cols-3">
-          <div className="grid gap-1 sm:col-span-3">
-            <Label htmlFor="hmo_provider_id">Provider</Label>
-            <select
-              id="hmo_provider_id"
-              name="hmo_provider_id"
-              value={hmoProviderId}
-              onChange={(e) => setHmoProviderId(e.target.value)}
-              className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
-            >
-              <option value="">— Cash / no HMO —</option>
-              {hmoProviders.map((h) => (
-                <option key={h.id} value={h.id}>
-                  {h.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          {hmoSelected ? (
-            <>
-              <div className="grid gap-1">
-                <Label htmlFor="hmo_approval_date">Approval date</Label>
-                <StableInput
-                  id="hmo_approval_date"
-                  name="hmo_approval_date"
-                  type="date"
-                />
-              </div>
-              <div className="grid gap-1 sm:col-span-2">
-                <Label htmlFor="hmo_authorization_no">Authorization no.</Label>
-                <StableInput
-                  id="hmo_authorization_no"
-                  name="hmo_authorization_no"
-                  maxLength={80}
-                  placeholder="e.g. ABC-123456"
-                />
-              </div>
-            </>
-          ) : null}
-        </div>
-      </fieldset>
+      <HmoSection
+        legend="Lab & Services HMO (optional)"
+        prefix="lab"
+        providers={hmoProviders}
+        value={labHmoProviderId}
+        onChange={setLabHmoProviderId}
+      />
+      <HmoSection
+        legend="Doctor / PF HMO (optional)"
+        prefix="doctor"
+        providers={hmoProviders}
+        value={doctorHmoProviderId}
+        onChange={setDoctorHmoProviderId}
+      />
 
       <div>
         <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -408,8 +380,8 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [] }: 
           </p>
         </div>
         <p className="mt-0.5 text-xs text-[color:var(--color-brand-text-soft)]">
-          Pick from either tab — every selection is part of this one visit,
-          receipt, and total. Selected services stay visible even when filtered.
+          Pick from either tab — Doctor and Lab &amp; Services items are billed on
+          separate receipts. Selected services stay visible even when filtered.
         </p>
 
         {/* Category tabs. Counts reflect selections in each tab; the active
@@ -511,7 +483,9 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [] }: 
           ) : null}
           {visibleServices.map((s) => {
             const checked = selected.has(s.id);
-            const display = basePriceFor(s, hmoSelected);
+            const isConsultPick = s.kind === "doctor_consultation";
+            const lineHmoSelected = hmoSelectedFor(s.kind);
+            const display = basePriceFor(s, lineHmoSelected);
             const isPackage = s.kind === "lab_package";
             const components = isPackage ? packageComponents[s.id] : undefined;
             return (
@@ -546,12 +520,20 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [] }: 
                     </span>
                   </span>
                   <span className="font-semibold text-[color:var(--color-brand-cyan)]">
-                    {formatPhp(display)}
-                    {hmoSelected && s.hmo_price_php != null ? (
-                      <span className="ml-1 text-[10px] uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-                        hmo
+                    {isConsultPick ? (
+                      <span className="text-xs text-[color:var(--color-brand-text-soft)]">
+                        priced at counter
                       </span>
-                    ) : null}
+                    ) : (
+                      <>
+                        {formatPhp(display)}
+                        {lineHmoSelected && s.hmo_price_php != null ? (
+                          <span className="ml-1 text-[10px] uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+                            hmo
+                          </span>
+                        ) : null}
+                      </>
+                    )}
                   </span>
                 </label>
                 {checked && isPackage ? (
@@ -674,6 +656,27 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [] }: 
 
                   {isConsult ? (
                     <div className="mt-2 grid grid-cols-12 gap-2 rounded-md bg-[color:var(--color-brand-bg)] px-2 py-2">
+                      <div className="col-span-12 sm:col-span-4">
+                        <Label
+                          htmlFor={`consult_fee__${s.id}`}
+                          className="text-[10px]"
+                        >
+                          Consultation fee (₱)
+                        </Label>
+                        <input
+                          id={`consult_fee__${s.id}`}
+                          name={`consult_fee__${s.id}`}
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={ls.consultFee}
+                          onChange={(e) =>
+                            updateLine(s.id, { consultFee: e.target.value })
+                          }
+                          placeholder="amount"
+                          className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 font-mono text-xs focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+                        />
+                      </div>
                       <div className="col-span-6 sm:col-span-3">
                         <Label
                           htmlFor={`clinic_fee__${s.id}`}
@@ -863,6 +866,14 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [] }: 
         </p>
       ) : null}
 
+      {doctorSelectedCount > 0 && labSelectedCount > 0 ? (
+        <p className="rounded-lg border border-dashed border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-bg)] px-3 py-2 text-xs text-[color:var(--color-brand-navy)]">
+          This order has both Doctor and Lab &amp; Services items — it will create{" "}
+          <strong>two visits and two receipts</strong> (one for the doctor&apos;s
+          professional fee, one for lab &amp; services).
+        </p>
+      ) : null}
+
       <div className="flex gap-3">
         <Button
           type="submit"
@@ -886,5 +897,68 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [] }: 
         printable receipt. The patient uses it to access lab results online.
       </p>
     </form>
+  );
+}
+
+function HmoSection({
+  legend,
+  prefix,
+  providers,
+  value,
+  onChange,
+}: {
+  legend: string;
+  prefix: "doctor" | "lab";
+  providers: { id: string; name: string }[];
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const selected = value !== "";
+  return (
+    <fieldset className="grid gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] p-4">
+      <legend className="px-1 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+        {legend}
+      </legend>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-1 sm:col-span-3">
+          <Label htmlFor={`${prefix}_hmo_provider_id`}>Provider</Label>
+          <select
+            id={`${prefix}_hmo_provider_id`}
+            name={`${prefix}_hmo_provider_id`}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+          >
+            <option value="">— Cash / no HMO —</option>
+            {providers.map((h) => (
+              <option key={h.id} value={h.id}>
+                {h.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        {selected ? (
+          <>
+            <div className="grid gap-1">
+              <Label htmlFor={`${prefix}_hmo_approval_date`}>Approval date</Label>
+              <StableInput
+                id={`${prefix}_hmo_approval_date`}
+                name={`${prefix}_hmo_approval_date`}
+                type="date"
+              />
+            </div>
+            <div className="grid gap-1 sm:col-span-2">
+              <Label htmlFor={`${prefix}_hmo_authorization_no`}>Authorization no.</Label>
+              <StableInput
+                id={`${prefix}_hmo_authorization_no`}
+                name={`${prefix}_hmo_authorization_no`}
+                maxLength={80}
+                placeholder="e.g. ABC-123456"
+              />
+            </div>
+          </>
+        ) : null}
+      </div>
+    </fieldset>
   );
 }

@@ -11,7 +11,10 @@ import { cookies } from "next/headers";
 const COOKIE_NAME = "drmed_visit_pin_flash";
 
 interface FlashPayload {
-  visit_id: string;
+  // For a standalone visit, visit_id is set. For a split encounter, group_id
+  // is set (the combined receipt is keyed by visit_group_id).
+  visit_id?: string;
+  group_id?: string;
   pin: string;
 }
 
@@ -36,6 +39,23 @@ export async function peekVisitPinFlash(
   try {
     const parsed = JSON.parse(raw) as FlashPayload;
     if (parsed.visit_id !== visitId) return null;
+    return parsed.pin;
+  } catch {
+    return null;
+  }
+}
+
+// Read-only — safe in Server Components. Matches a split-encounter flash by
+// its visit_group_id.
+export async function peekVisitGroupPinFlash(
+  groupId: string,
+): Promise<string | null> {
+  const c = await cookies();
+  const raw = c.get(COOKIE_NAME)?.value;
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as FlashPayload;
+    if (parsed.group_id !== groupId) return null;
     return parsed.pin;
   } catch {
     return null;

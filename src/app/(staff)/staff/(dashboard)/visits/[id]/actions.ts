@@ -81,3 +81,58 @@ export async function releaseTestAction(
   revalidatePath(`/staff/visits/${visitId}`);
   return { ok: true };
 }
+
+export async function markConsultationDoneAction(
+  testRequestId: string,
+  visitId: string,
+): Promise<ReleaseResult> {
+  const session = await requireActiveStaff();
+  const supabase = await createClient();
+
+  // This action is only for consultation lines — releasing fires PF accrual.
+  // Guard server-side so a future/mis-wired caller can't release another kind.
+  const { data: tr } = await supabase
+    .from("test_requests")
+    .select("services ( kind )")
+    .eq("id", testRequestId)
+    .eq("visit_id", visitId)
+    .maybeSingle();
+  const svc = Array.isArray(tr?.services) ? tr?.services[0] : tr?.services;
+  if (!tr || svc?.kind !== "doctor_consultation") {
+    return { ok: false, error: "This action is only for consultations." };
+  }
+
+  const now = new Date().toISOString();
+
+  const { error } = await supabase
+    .from("test_requests")
+    .update({
+      status: "released",
+      released_at: now,
+      released_by: session.user_id,
+      release_medium: "other",
+    })
+    .eq("id", testRequestId)
+    .eq("visit_id", visitId);
+
+  if (error) {
+    // Payment gate (visit not paid) or P0034 (consult has no attending
+    // physician) → friendly text.
+    return { ok: false, error: translatePgError(error) };
+  }
+
+  const h = await headers();
+  await audit({
+    actor_id: session.user_id,
+    actor_type: "staff",
+    action: "consultation.completed",
+    resource_type: "test_request",
+    resource_id: testRequestId,
+    metadata: { visit_id: visitId },
+    ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    user_agent: h.get("user-agent"),
+  });
+
+  revalidatePath(`/staff/visits/${visitId}`);
+  return { ok: true };
+}
