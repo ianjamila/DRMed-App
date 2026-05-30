@@ -4,6 +4,7 @@ import { useCallback, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { formatPhp } from "@/lib/marketing/format";
+import { Panel } from "@/components/ui/panel";
 
 export interface RunListRow {
   id: string;
@@ -137,7 +138,7 @@ export function RunsClient({
       </div>
 
       {/* Desktop table */}
-      <div className="hidden overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white md:block">
+      <Panel className="hidden overflow-x-auto md:block">
         <table className="w-full min-w-[960px] text-sm">
           <thead className="bg-[color:var(--color-bg-mid)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
@@ -207,7 +208,7 @@ export function RunsClient({
             )}
           </tbody>
         </table>
-      </div>
+      </Panel>
 
       {/* Mobile stacked cards */}
       <div className="space-y-3 md:hidden">

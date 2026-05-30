@@ -21,6 +21,7 @@ import {
   type StructuredResult,
   type StructuredValueInput,
 } from "./actions";
+import { Panel } from "@/components/ui/panel";
 
 interface Props {
   testRequestId: string;
@@ -384,11 +385,11 @@ function SimpleOrMultiSectionBody({
 }: BodyProps & { layout: "simple" | "multi_section" }) {
   if (layout === "simple") {
     return (
-      <div className="overflow-hidden rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+      <Panel className="overflow-hidden">
         {props.params.map((p) => (
           <SingleRow key={p.id} p={p} {...props} />
         ))}
-      </div>
+      </Panel>
     );
   }
 
@@ -412,9 +413,9 @@ function SimpleOrMultiSectionBody({
   return (
     <div className="grid gap-4">
       {groups.map((g, i) => (
-        <div
+        <Panel
           key={i}
-          className="overflow-hidden rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white"
+          className="overflow-hidden"
         >
           {g.title ? (
             <div className="bg-[color:var(--color-brand-navy)] px-4 py-2 text-xs font-bold uppercase tracking-wider text-white">
@@ -424,7 +425,7 @@ function SimpleOrMultiSectionBody({
           {g.rows.map((p) => (
             <SingleRow key={p.id} p={p} {...props} />
           ))}
-        </div>
+        </Panel>
       ))}
     </div>
   );
@@ -576,7 +577,7 @@ function DualUnitBody({
   onSetValue,
 }: BodyProps) {
   return (
-    <div className="overflow-hidden rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+    <Panel className="overflow-hidden">
       <div className="grid grid-cols-12 gap-3 bg-[color:var(--color-brand-navy)] px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-white">
         <div className="col-span-3">Test</div>
         <div className="col-span-3">SI</div>
@@ -742,7 +743,7 @@ function DualUnitBody({
           </div>
         );
       })}
-    </div>
+    </Panel>
   );
 }
 
@@ -772,9 +773,9 @@ function ImagingBody({
         if (p.is_section_header) return null;
         const v = values[p.id] ?? emptyValue();
         return (
-          <div
+          <Panel
             key={p.id}
-            className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4"
+            className="p-4"
           >
             <div className="mb-2 flex items-center justify-between">
               <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)]">
@@ -809,11 +810,11 @@ function ImagingBody({
               placeholder={p.placeholder ?? ""}
               className="w-full resize-y rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 font-mono text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
             />
-          </div>
+          </Panel>
         );
       })}
 
-      <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4">
+      <Panel className="p-4">
         <div className="mb-2 flex items-center justify-between">
           <label
             htmlFor="imaging-image"
@@ -846,7 +847,7 @@ function ImagingBody({
           JPEG, PNG, WebP, or PDF — up to 25 MB. The image embeds in the
           released PDF; PDFs are listed as separate attachments.
         </p>
-      </div>
+      </Panel>
     </div>
   );
 }

@@ -10,6 +10,7 @@ import {
   createPeriodAction,
   createRunAction,
 } from "../runs/actions";
+import { Panel } from "@/components/ui/panel";
 
 export interface PeriodRow {
   id: string;
@@ -124,7 +125,7 @@ export function PeriodsClient({
       </div>
 
       {/* Desktop table */}
-      <div className="hidden overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white md:block">
+      <Panel className="hidden overflow-x-auto md:block">
         <table className="w-full min-w-[760px] text-sm">
           <thead className="bg-[color:var(--color-bg-mid)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
@@ -207,7 +208,7 @@ export function PeriodsClient({
             )}
           </tbody>
         </table>
-      </div>
+      </Panel>
 
       {/* Mobile stacked cards */}
       <div className="space-y-3 md:hidden">
@@ -221,9 +222,9 @@ export function PeriodsClient({
             const canClose =
               p.status === "open" && run?.status === "finalised";
             return (
-              <div
+              <Panel
                 key={p.id}
-                className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4 shadow-sm"
+                className="p-4 shadow-sm"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="font-semibold text-[color:var(--color-brand-navy)]">
@@ -277,7 +278,7 @@ export function PeriodsClient({
                     </button>
                   </div>
                 ) : null}
-              </div>
+              </Panel>
             );
           })
         )}

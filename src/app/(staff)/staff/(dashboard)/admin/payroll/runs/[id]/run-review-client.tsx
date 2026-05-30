@@ -24,6 +24,7 @@ import {
   markEmployeePaidAction,
   voidEmployeePayoutAction,
 } from "../actions";
+import { Panel } from "@/components/ui/panel";
 
 // =============================================================================
 // Prop shapes (mirror page.tsx)
@@ -608,9 +609,9 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
             </p>
           ) : null}
           {employeeRuns.map((er) => (
-            <div
+            <Panel
               key={er.id}
-              className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4 shadow-sm"
+              className="p-4 shadow-sm"
             >
               <button
                 type="button"
@@ -665,7 +666,7 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
                   <PayoutCell employeeRun={er} />
                 </div>
               ) : null}
-            </div>
+            </Panel>
           ))}
         </div>
       </section>
@@ -998,7 +999,7 @@ function KpiBox({
   emphasis?: boolean;
 }) {
   return (
-    <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-4">
+    <Panel className="px-4 py-4">
       <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
         {label}
       </p>
@@ -1009,7 +1010,7 @@ function KpiBox({
       >
         {value}
       </p>
-    </div>
+    </Panel>
   );
 }
 

@@ -1,4 +1,5 @@
 import { Skeleton } from "@/components/ui/skeleton";
+import { Panel } from "@/components/ui/panel";
 
 export default function Loading() {
   return (
@@ -27,7 +28,7 @@ export default function Loading() {
       </div>
 
       {/* Patient picker list */}
-      <div className="overflow-hidden rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white divide-y divide-[color:var(--color-brand-bg-mid)]">
+      <Panel className="overflow-hidden divide-y divide-[color:var(--color-brand-bg-mid)]">
         {Array.from({ length: 6 }).map((_, i) => (
           <div key={i} className="flex items-center justify-between px-4 py-3">
             <div className="flex flex-col gap-1.5">
@@ -37,7 +38,7 @@ export default function Loading() {
             <Skeleton className="h-8 w-28 rounded-md" />
           </div>
         ))}
-      </div>
+      </Panel>
     </div>
   );
 }

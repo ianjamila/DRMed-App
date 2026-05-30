@@ -14,6 +14,7 @@ import { formatPhp } from "@/lib/marketing/format";
 import { useFocusTrap } from "@/lib/a11y/use-focus-trap";
 import { PAYMENT_LABEL, ROLE_LABEL, SCHEDULE_LABEL } from "@/lib/payroll/labels";
 import { createEmployeeAction } from "./actions";
+import { Panel } from "@/components/ui/panel";
 
 export interface EmployeeListRow {
   id: string;
@@ -128,7 +129,7 @@ export function EmployeesClient({ employees, eligibleStaff }: Props) {
       </div>
 
       {/* Desktop table */}
-      <div className="hidden overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white md:block">
+      <Panel className="hidden overflow-x-auto md:block">
         <table className="w-full min-w-[900px] text-sm">
           <thead className="bg-[color:var(--color-bg-mid)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
@@ -207,7 +208,7 @@ export function EmployeesClient({ employees, eligibleStaff }: Props) {
             )}
           </tbody>
         </table>
-      </div>
+      </Panel>
 
       {/* Mobile stacked cards */}
       <div className="space-y-3 md:hidden">

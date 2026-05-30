@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { HmoProviderForm } from "../hmo-provider-form";
+import { Panel } from "@/components/ui/panel";
 
 export const metadata = { title: "New HMO provider — staff" };
 
@@ -17,9 +18,9 @@ export default async function NewHmoProviderPage() {
       <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
         New HMO provider
       </h1>
-      <div className="mt-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
+      <Panel className="mt-6 p-6">
         <HmoProviderForm />
-      </div>
+      </Panel>
     </div>
   );
 }

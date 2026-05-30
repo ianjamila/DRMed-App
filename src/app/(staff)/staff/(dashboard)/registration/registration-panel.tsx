@@ -3,6 +3,7 @@
 import * as React from "react";
 import { QrCode } from "@/components/ui/qr-code";
 import { Button } from "@/components/ui/button";
+import { Panel } from "@/components/ui/panel";
 
 // Inline registration resources for the dedicated staff page: the QR shown
 // directly (not behind a popover like the appointments-header button), the
@@ -21,7 +22,7 @@ export function RegistrationPanel({ url }: { url: string }) {
   }
 
   return (
-    <div className="flex w-full max-w-md flex-col items-center gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6 text-center">
+    <Panel className="flex w-full max-w-md flex-col items-center gap-3 p-6 text-center">
       <QrCode value={url} size={220} />
       <span className="font-mono text-xs break-all text-[color:var(--color-brand-text-soft)]">{url}</span>
       <div className="flex w-full flex-col gap-2 sm:flex-row">
@@ -37,6 +38,6 @@ export function RegistrationPanel({ url }: { url: string }) {
           Print poster →
         </a>
       </div>
-    </div>
+    </Panel>
   );
 }

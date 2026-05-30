@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { formatPhp } from "@/lib/marketing/format";
+import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
   title: "Services — staff",
@@ -38,7 +39,7 @@ export default async function ServicesAdminPage() {
         </Link>
       </header>
 
-      <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+      <Panel className="overflow-x-auto">
         <table className="w-full min-w-[760px] text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
@@ -124,7 +125,7 @@ export default async function ServicesAdminPage() {
             )}
           </tbody>
         </table>
-      </div>
+      </Panel>
     </div>
   );
 }

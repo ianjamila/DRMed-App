@@ -8,6 +8,7 @@ import { TransitionButtons } from "./transition-buttons";
 import { NewAppointmentSheet, type ServiceOption, type PhysicianOption } from "./new-appointment-sheet";
 import { RegistrationLinkButton } from "@/components/staff/registration-link-button";
 import { PageHeader } from "@/components/staff/page-header";
+import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
   title: "Appointments — staff",
@@ -277,7 +278,7 @@ function Section({
       <h2 className="mb-3 font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
         {title}
       </h2>
-      <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+      <Panel className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
@@ -306,7 +307,7 @@ function Section({
             )}
           </tbody>
         </table>
-      </div>
+      </Panel>
     </section>
   );
 }

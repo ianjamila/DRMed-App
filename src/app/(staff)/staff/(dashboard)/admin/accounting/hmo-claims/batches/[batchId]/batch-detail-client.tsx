@@ -20,6 +20,7 @@ import {
 } from "./modals/record-settlement-modal";
 import { SubmitBatchModal } from "./modals/submit-batch-modal";
 import { AcknowledgeBatchModal } from "./modals/acknowledge-batch-modal";
+import { Panel } from "@/components/ui/panel";
 
 type BatchRow = Database["public"]["Tables"]["hmo_claim_batches"]["Row"] & {
   hmo_providers: { name: string } | null;
@@ -372,9 +373,9 @@ function TotalsRow({
   return (
     <dl className="grid grid-cols-2 gap-3 md:grid-cols-5">
       {cells.map((c) => (
-        <div
+        <Panel
           key={c.label}
-          className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-3"
+          className="p-3"
         >
           <dt className="text-xs uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             {c.label}
@@ -389,7 +390,7 @@ function TotalsRow({
           >
             {PHP.format(c.value)}
           </dd>
-        </div>
+        </Panel>
       ))}
     </dl>
   );
@@ -566,7 +567,7 @@ function ItemsList({
   return (
     <section className="space-y-3" aria-label="Items in batch">
       {/* Desktop: table */}
-      <div className="hidden overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white md:block">
+      <Panel className="hidden overflow-x-auto md:block">
         <table className="w-full min-w-[940px] text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
@@ -595,7 +596,7 @@ function ItemsList({
             ))}
           </tbody>
         </table>
-      </div>
+      </Panel>
 
       {/* Mobile: card stack */}
       <div className="space-y-3 md:hidden">
@@ -694,7 +695,7 @@ function ItemCardMobile({
   const unresolved = unresolvedOf(item);
   const kind = serviceKind(item);
   return (
-    <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4">
+    <Panel className="p-4">
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="font-semibold text-[color:var(--color-brand-navy)]">
@@ -767,7 +768,7 @@ function ItemCardMobile({
           onResolve={onResolve}
         />
       </div>
-    </div>
+    </Panel>
   );
 }
 

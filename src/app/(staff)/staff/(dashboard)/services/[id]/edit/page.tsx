@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { formatPhp } from "@/lib/marketing/format";
 import { ServiceForm, type VendorLite } from "../../service-form";
+import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
   title: "Edit service — staff",
@@ -88,9 +89,9 @@ export default async function EditServicePage({ params }: Props) {
         {service.code}
       </p>
 
-      <div className="mt-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
+      <Panel className="mt-6 p-6">
         <ServiceForm initial={service} vendors={vendorList} />
-      </div>
+      </Panel>
 
       <section className="mt-8">
         <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
@@ -100,7 +101,7 @@ export default async function EditServicePage({ params }: Props) {
           Every price change is recorded automatically. Showing the most recent{" "}
           {HISTORY_LIMIT}.
         </p>
-        <div className="mt-3 overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+        <Panel className="mt-3 overflow-x-auto">
           <table className="w-full min-w-[560px] text-sm">
             <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
               <tr>
@@ -150,7 +151,7 @@ export default async function EditServicePage({ params }: Props) {
               )}
             </tbody>
           </table>
-        </div>
+        </Panel>
       </section>
     </div>
   );

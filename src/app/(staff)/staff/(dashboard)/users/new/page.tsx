@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { StaffForm } from "../staff-form";
+import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
   title: "New staff user — staff",
@@ -23,9 +24,9 @@ export default async function NewStaffUserPage() {
         The new user will receive a Supabase-backed account they can sign in
         with at /staff/login.
       </p>
-      <div className="mt-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
+      <Panel className="mt-6 p-6">
         <StaffForm />
-      </div>
+      </Panel>
     </div>
   );
 }

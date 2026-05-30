@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import type { DashboardRole } from "@/lib/dashboards/cards";
 import { setCardVisibility } from "./actions";
+import { Panel } from "@/components/ui/panel";
 
 interface CardItem {
   id: string;
@@ -72,9 +73,9 @@ export function DashboardCardSettingsClient({
       ) : null}
 
       {localCards.length === 0 ? (
-        <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-8 text-center text-sm text-[color:var(--color-brand-text-soft)]">
+        <Panel className="p-8 text-center text-sm text-[color:var(--color-brand-text-soft)]">
           No cards configured for this role.
-        </div>
+        </Panel>
       ) : (
         <div className="space-y-6">
           {(Object.keys(grouped) as CardItem["group"][]).map((g) => {

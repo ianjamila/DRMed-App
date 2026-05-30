@@ -1,4 +1,5 @@
 import { Skeleton } from "@/components/ui/skeleton";
+import { Panel } from "@/components/ui/panel";
 
 export default function Loading() {
   return (
@@ -15,14 +16,14 @@ export default function Loading() {
       {/* Stat cards grid — 4 columns on xl, 2 on sm */}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 mb-8">
         {Array.from({ length: 4 }).map((_, i) => (
-          <div
+          <Panel
             key={i}
-            className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5"
+            className="p-5"
           >
             <Skeleton className="h-3 w-24 mb-3" />
             <Skeleton className="h-8 w-20 mb-2" />
             <Skeleton className="h-3 w-32" />
-          </div>
+          </Panel>
         ))}
       </div>
 
@@ -32,20 +33,20 @@ export default function Loading() {
       {/* Second row of stat cards */}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 mb-8">
         {Array.from({ length: 2 }).map((_, i) => (
-          <div
+          <Panel
             key={i}
-            className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5"
+            className="p-5"
           >
             <Skeleton className="h-3 w-24 mb-3" />
             <Skeleton className="h-8 w-20 mb-2" />
             <Skeleton className="h-3 w-32" />
-          </div>
+          </Panel>
         ))}
       </div>
 
       {/* Activity strip: recent items list */}
       <Skeleton className="h-5 w-40 mb-4" />
-      <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white divide-y divide-[color:var(--color-brand-bg-mid)]">
+      <Panel className="divide-y divide-[color:var(--color-brand-bg-mid)]">
         {Array.from({ length: 4 }).map((_, i) => (
           <div key={i} className="flex items-center justify-between px-4 py-3">
             <div className="flex flex-col gap-1.5">
@@ -55,7 +56,7 @@ export default function Loading() {
             <Skeleton className="h-3 w-16" />
           </div>
         ))}
-      </div>
+      </Panel>
     </div>
   );
 }

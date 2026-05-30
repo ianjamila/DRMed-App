@@ -7,6 +7,7 @@ import {
   createClaimBatchAction,
   addItemsToBatchAction,
 } from "../../actions";
+import { Panel } from "@/components/ui/panel";
 
 const PHP = new Intl.NumberFormat("en-PH", {
   style: "currency",
@@ -175,7 +176,7 @@ export function NewBatchClient({
           </p>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+        <Panel className="overflow-x-auto">
           <table className="w-full min-w-[480px] text-sm">
             <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
               <tr>
@@ -243,10 +244,10 @@ export function NewBatchClient({
               })}
             </tbody>
           </table>
-        </div>
+        </Panel>
       )}
 
-      <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4 shadow-sm">
+      <Panel className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 p-4 shadow-sm">
         <div className="text-xs text-[color:var(--color-brand-text-soft)]">
           <span className="font-semibold text-[color:var(--color-brand-navy)]">
             {selected.size}
@@ -268,7 +269,7 @@ export function NewBatchClient({
               ? `Add ${selected.size} item${selected.size === 1 ? "" : "s"} to batch`
               : "Create draft batch"}
         </button>
-      </div>
+      </Panel>
       {err ? (
         <p role="alert" className="text-sm text-red-700">
           {err}

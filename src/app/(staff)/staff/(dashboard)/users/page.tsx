@@ -3,6 +3,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { RestoreButton } from "./restore-button";
 import { PageHeader } from "@/components/staff/page-header";
+import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
   title: "Staff users — staff",
@@ -108,7 +109,7 @@ export default async function StaffUsersPage() {
           </span>
         </h2>
 
-        <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+        <Panel className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
               <tr>
@@ -168,7 +169,7 @@ export default async function StaffUsersPage() {
               )}
             </tbody>
           </table>
-        </div>
+        </Panel>
       </section>
 
       {/* Deleted users — hidden entirely when empty so the section doesn't

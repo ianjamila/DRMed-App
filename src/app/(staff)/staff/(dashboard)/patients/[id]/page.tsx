@@ -8,6 +8,7 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { getPatientConsentState } from "@/lib/consent/gate";
 import { ConsentPanel } from "./consent/consent-panel";
 import { paymentStatusLabel } from "@/lib/ui/payment-status";
+import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
   title: "Patient — staff",
@@ -191,7 +192,7 @@ export default async function PatientDetailPage({ params }: Props) {
         <h2 className="font-heading text-xl font-extrabold text-[color:var(--color-brand-navy)]">
           Visits
         </h2>
-        <div className="mt-3 overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+        <Panel className="mt-3 overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
               <tr>
@@ -245,7 +246,7 @@ export default async function PatientDetailPage({ params }: Props) {
               )}
             </tbody>
           </table>
-        </div>
+        </Panel>
       </section>
     </div>
   );

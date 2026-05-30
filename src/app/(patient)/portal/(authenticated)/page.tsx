@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requirePatientProfile } from "@/lib/auth/require-patient";
 import { DownloadButton } from "./download-button";
 import { PackageCard, type PackageComponentRow } from "./package-card";
+import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
   title: "Your results — drmed.ph",
@@ -390,7 +391,7 @@ export default async function PatientPortalPage() {
       ) : null}
 
       {/* Desktop / tablet: scrollable table */}
-      <div className="mt-6 hidden overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white sm:block">
+      <Panel className="mt-6 hidden overflow-x-auto sm:block">
         <table className="w-full min-w-[560px] text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
@@ -480,12 +481,12 @@ export default async function PatientPortalPage() {
             )}
           </tbody>
         </table>
-      </div>
+      </Panel>
 
       {/* Mobile: stacked cards (same rows as the table above) */}
       <div className="mt-6 sm:hidden">
         {standalones.length === 0 ? (
-          <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]">
+          <Panel className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]">
             {nothingToShow ? (
               <>
                 No released results yet. We&apos;ll text and email you when
@@ -497,7 +498,7 @@ export default async function PatientPortalPage() {
                 the package cards above.
               </>
             )}
-          </div>
+          </Panel>
         ) : (
           <ul className="space-y-3">
             {standalones.map((row) => (

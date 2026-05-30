@@ -9,6 +9,7 @@ import {
   MarkHistoricPaidModal,
   WriteOffHistoricModal,
 } from "../_components/historic-claim-modals";
+import { Panel } from "@/components/ui/panel";
 
 type SummaryRow =
   Database["public"]["Views"]["v_hmo_provider_summary"]["Row"];
@@ -120,9 +121,9 @@ function SummaryStrip({ summary }: { summary: SummaryRow }) {
   return (
     <dl className="grid grid-cols-2 gap-3 md:grid-cols-4">
       {cells.map((c) => (
-        <div
+        <Panel
           key={c.label}
-          className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-3"
+          className="p-3"
         >
           <dt className="text-xs uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             {c.label}
@@ -137,7 +138,7 @@ function SummaryStrip({ summary }: { summary: SummaryRow }) {
           >
             {c.value}
           </dd>
-        </div>
+        </Panel>
       ))}
     </dl>
   );
@@ -194,7 +195,7 @@ function BatchesTab({ batches }: { batches: BatchRow[] }) {
       {visible.length === 0 ? (
         <EmptyState message="No batches matching this filter." />
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+        <Panel className="overflow-x-auto">
           <table className="w-full min-w-[640px] text-sm">
             <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
               <tr>
@@ -247,7 +248,7 @@ function BatchesTab({ batches }: { batches: BatchRow[] }) {
               })}
             </tbody>
           </table>
-        </div>
+        </Panel>
       )}
     </div>
   );
@@ -339,7 +340,7 @@ function UnbilledTab({
 
   return (
     <div className="space-y-3">
-      <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+      <Panel className="overflow-x-auto">
         <table className="w-full min-w-[640px] text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
@@ -443,8 +444,8 @@ function UnbilledTab({
             })}
           </tbody>
         </table>
-      </div>
-      <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-3 shadow-sm">
+      </Panel>
+      <Panel className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 p-3 shadow-sm">
         <div className="text-xs text-[color:var(--color-brand-text-soft)]">
           <span className="font-semibold text-[color:var(--color-brand-navy)]">
             {selected.size}
@@ -505,7 +506,7 @@ function UnbilledTab({
             </button>
           </div>
         )}
-      </div>
+      </Panel>
       {bulkModal === "billed" && (
         <MarkHistoricBilledModal
           claimIds={historicIds}
@@ -575,7 +576,7 @@ function AgingTab({ rows }: { rows: AgingRow[] }) {
   return (
     <div className="space-y-4">
       {grandTotal > 0 ? (
-        <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4">
+        <Panel className="p-4">
           <div
             role="img"
             aria-label={`Aging breakdown: ${ariaSummary}`}
@@ -610,9 +611,9 @@ function AgingTab({ rows }: { rows: AgingRow[] }) {
               </li>
             ))}
           </ul>
-        </div>
+        </Panel>
       ) : null}
-      <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+      <Panel className="overflow-x-auto">
         <table className="w-full min-w-[480px] text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
@@ -643,7 +644,7 @@ function AgingTab({ rows }: { rows: AgingRow[] }) {
             })}
           </tbody>
         </table>
-      </div>
+      </Panel>
     </div>
   );
 }

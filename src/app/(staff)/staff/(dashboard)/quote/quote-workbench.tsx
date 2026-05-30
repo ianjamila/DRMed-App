@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { formatPhp } from "@/lib/marketing/format";
+import { Panel } from "@/components/ui/panel";
 
 export interface QuoteService {
   id: string;
@@ -230,7 +231,7 @@ export function QuoteWorkbench({ services }: Props) {
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+      <Panel className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
@@ -333,7 +334,7 @@ export function QuoteWorkbench({ services }: Props) {
             )}
           </tbody>
         </table>
-      </div>
+      </Panel>
 
       {totalPages > 1 ? (
         <div className="flex items-center justify-between text-xs text-[color:var(--color-brand-text-soft)]">

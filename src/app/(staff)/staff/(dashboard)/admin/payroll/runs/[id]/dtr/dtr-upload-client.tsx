@@ -15,6 +15,7 @@ import {
   commitDtrAction,
   reconcileDtrEmployeeAction,
 } from "./actions";
+import { Panel } from "@/components/ui/panel";
 
 // =============================================================================
 // Prop shapes
@@ -278,7 +279,7 @@ export function DtrUploadClient({
         ) : (
           <>
             {/* Desktop table */}
-            <div className="hidden overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white md:block">
+            <Panel className="hidden overflow-x-auto md:block">
               <table className="w-full min-w-[720px] text-sm">
                 <thead className="bg-[color:var(--color-bg-mid)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                   <tr>
@@ -316,13 +317,13 @@ export function DtrUploadClient({
                   ))}
                 </tbody>
               </table>
-            </div>
+            </Panel>
             {/* Mobile cards */}
             <div className="space-y-3 md:hidden">
               {imports.map((imp) => (
-                <div
+                <Panel
                   key={imp.id}
-                  className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4 shadow-sm"
+                  className="p-4 shadow-sm"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div>
@@ -350,7 +351,7 @@ export function DtrUploadClient({
                       {imp.parsed_rows_count}
                     </dd>
                   </dl>
-                </div>
+                </Panel>
               ))}
             </div>
           </>
@@ -574,7 +575,7 @@ interface ReconcileTableProps {
 
 function ReconcileTable({ rows, employees }: ReconcileTableProps) {
   return (
-    <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+    <Panel className="overflow-x-auto">
       <table className="w-full min-w-[820px] text-sm">
         <thead className="bg-[color:var(--color-bg-mid)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
           <tr>
@@ -592,7 +593,7 @@ function ReconcileTable({ rows, employees }: ReconcileTableProps) {
           ))}
         </tbody>
       </table>
-    </div>
+    </Panel>
   );
 }
 

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { formatPhp } from "@/lib/marketing/format";
+import { Panel } from "@/components/ui/panel";
 
 export const metadata = { title: "Gift code sales — staff" };
 
@@ -173,7 +174,7 @@ export default async function SalesPage({ searchParams }: PageProps) {
           <h2 className="mb-2 font-heading text-sm font-extrabold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             Per day
           </h2>
-          <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+          <Panel className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                 <tr>
@@ -196,7 +197,7 @@ export default async function SalesPage({ searchParams }: PageProps) {
                 ))}
               </tbody>
             </table>
-          </div>
+          </Panel>
         </section>
       ) : null}
 
@@ -204,7 +205,7 @@ export default async function SalesPage({ searchParams }: PageProps) {
         <h2 className="mb-2 font-heading text-sm font-extrabold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
           Individual sales ({sales.length})
         </h2>
-        <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+        <Panel className="overflow-x-auto">
           <table className="w-full min-w-[820px] text-sm">
             <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
               <tr>
@@ -290,7 +291,7 @@ export default async function SalesPage({ searchParams }: PageProps) {
               )}
             </tbody>
           </table>
-        </div>
+        </Panel>
       </section>
     </div>
   );
@@ -298,13 +299,13 @@ export default async function SalesPage({ searchParams }: PageProps) {
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-4">
+    <Panel className="px-4 py-4">
       <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
         {label}
       </p>
       <p className="mt-1 font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
         {value}
       </p>
-    </div>
+    </Panel>
   );
 }

@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { BookFromInquiryForm } from "./book-form";
+import { Panel } from "@/components/ui/panel";
 
 export const metadata = { title: "Book from inquiry — staff" };
 
@@ -70,7 +71,7 @@ export default async function BookFromInquiryPage({ params }: PageProps) {
         ) : null}
       </header>
 
-      <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
+      <Panel className="p-6">
         <BookFromInquiryForm
           inquiryId={id}
           services={(services ?? []).map((s) => ({
@@ -80,7 +81,7 @@ export default async function BookFromInquiryPage({ params }: PageProps) {
             kind: s.kind,
           }))}
         />
-      </div>
+      </Panel>
     </div>
   );
 }

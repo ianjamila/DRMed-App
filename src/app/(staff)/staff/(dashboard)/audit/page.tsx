@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
+import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
   title: "Audit log — staff",
@@ -194,7 +195,7 @@ export default async function AuditLogPage({ searchParams }: Props) {
         </p>
       ) : null}
 
-      <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+      <Panel className="overflow-x-auto">
         <table className="w-full min-w-[820px] text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
@@ -254,7 +255,7 @@ export default async function AuditLogPage({ searchParams }: Props) {
             )}
           </tbody>
         </table>
-      </div>
+      </Panel>
 
       <div className="mt-4 flex items-center justify-between text-xs text-[color:var(--color-brand-text-soft)]">
         <span>

@@ -12,6 +12,7 @@ import {
   type ActionResult,
 } from "./actions";
 import type { StaffSession } from "@/lib/auth/require-staff";
+import { Panel } from "@/components/ui/panel";
 
 interface Props {
   role: StaffSession["role"];
@@ -49,7 +50,7 @@ export function EnrollForm({ role }: Props) {
 
   if (!enroll) {
     return (
-      <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
+      <Panel className="p-5">
         <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
           {role === "admin"
             ? "MFA is required for admin accounts"
@@ -67,12 +68,12 @@ export function EnrollForm({ role }: Props) {
         <Button onClick={start} disabled={starting} className="mt-4 w-full">
           {starting ? "Preparing…" : "Begin setup"}
         </Button>
-      </div>
+      </Panel>
     );
   }
 
   return (
-    <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
+    <Panel className="p-5">
       <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
         Scan the QR code
       </h2>
@@ -130,6 +131,6 @@ export function EnrollForm({ role }: Props) {
           {verifyPending ? "Verifying…" : "Verify and continue"}
         </Button>
       </form>
-    </div>
+    </Panel>
   );
 }

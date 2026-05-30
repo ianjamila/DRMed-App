@@ -6,6 +6,7 @@ import { RealtimeRefresher } from "@/components/staff/realtime-refresher";
 import { ClaimButton } from "./claim-button";
 import { sectionTabClass } from "@/components/staff/section-tabs-style";
 import { PageHeader } from "@/components/staff/page-header";
+import { Panel } from "@/components/ui/panel";
 
 // ---------------------------------------------------------------------------
 // Queue card types — after the grouping fold
@@ -230,7 +231,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         }
       />
 
-      <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+      <Panel className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
@@ -367,7 +368,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
             )}
           </tbody>
         </table>
-      </div>
+      </Panel>
     </div>
   );
 }

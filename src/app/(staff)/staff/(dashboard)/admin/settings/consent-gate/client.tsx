@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { setConsentGateRequiredAction } from "./actions";
+import { Panel } from "@/components/ui/panel";
 
 export function ConsentGateToggle({
   enabled,
@@ -37,7 +38,7 @@ export function ConsentGateToggle({
   }
 
   return (
-    <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
+    <Panel className="p-5">
       <div className="flex items-center justify-between gap-4">
         <div>
           <p className="font-bold text-[color:var(--color-brand-navy)]">
@@ -118,6 +119,6 @@ export function ConsentGateToggle({
           </div>
         </div>
       )}
-    </div>
+    </Panel>
   );
 }

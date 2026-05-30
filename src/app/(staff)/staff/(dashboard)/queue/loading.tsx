@@ -1,4 +1,5 @@
 import { Skeleton } from "@/components/ui/skeleton";
+import { Panel } from "@/components/ui/panel";
 
 export default function Loading() {
   return (
@@ -17,7 +18,7 @@ export default function Loading() {
       </header>
 
       {/* Queue table */}
-      <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+      <Panel className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-[color:var(--color-brand-bg)]">
             <tr>
@@ -52,7 +53,7 @@ export default function Loading() {
             ))}
           </tbody>
         </table>
-      </div>
+      </Panel>
     </div>
   );
 }

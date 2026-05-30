@@ -6,6 +6,7 @@ import { patientSearchOrClauses } from "@/lib/patients/search";
 import { VisitForm } from "./visit-form";
 import { PatientsSearchInput } from "../../patients/search-input";
 import { VisitsTabs } from "../_components/visits-tabs";
+import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
   title: "New visit — staff",
@@ -73,7 +74,7 @@ export default async function NewVisitPage({ searchParams }: Props) {
         receipt.
       </p>
 
-      <div className="mt-8 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
+      <Panel className="mt-8 p-6">
         <VisitForm
           patient={patient}
           services={(services ?? []).map((s) => ({
@@ -94,7 +95,7 @@ export default async function NewVisitPage({ searchParams }: Props) {
             compensation_arrangement: p.compensation_arrangement,
           }))}
         />
-      </div>
+      </Panel>
     </div>
   );
 }
@@ -142,7 +143,7 @@ async function PatientPicker({ query }: { query: string }) {
         <PatientsSearchInput initialQuery={query} />
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+      <Panel className="overflow-hidden">
         {rows.length === 0 ? (
           <p className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]">
             {query.trim()
@@ -179,7 +180,7 @@ async function PatientPicker({ query }: { query: string }) {
             })}
           </ul>
         )}
-      </div>
+      </Panel>
 
       {rows.length === PICKER_LIMIT ? (
         <p className="mt-3 text-xs text-[color:var(--color-brand-text-soft)]">

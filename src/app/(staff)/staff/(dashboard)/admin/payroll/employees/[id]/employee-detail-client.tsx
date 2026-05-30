@@ -22,6 +22,7 @@ import {
   recordLeaveUsageAction,
   recordLeaveCashConversionAction,
 } from "../../leaves/actions";
+import { Panel } from "@/components/ui/panel";
 
 export interface EmployeeDetail {
   id: string;
@@ -574,7 +575,7 @@ function AllowancesTab({
       </div>
 
       {showAdd ? (
-        <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
+        <Panel className="p-5">
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Label">
               <input
@@ -630,10 +631,10 @@ function AllowancesTab({
               {isPending ? "Saving…" : "Add allowance"}
             </button>
           </div>
-        </div>
+        </Panel>
       ) : null}
 
-      <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+      <Panel className="overflow-x-auto">
         <table className="w-full min-w-[680px] text-sm">
           <thead className="bg-[color:var(--color-bg-mid)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
@@ -699,7 +700,7 @@ function AllowancesTab({
             )}
           </tbody>
         </table>
-      </div>
+      </Panel>
       {rowError ? <p className="text-sm text-red-600">{rowError}</p> : null}
     </section>
   );
@@ -791,7 +792,7 @@ function LoansTab({
       </div>
 
       {showAdd ? (
-        <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
+        <Panel className="p-5">
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Principal">
               <div className="flex items-center gap-2">
@@ -846,10 +847,10 @@ function LoansTab({
               {isPending ? "Saving…" : "Request loan"}
             </button>
           </div>
-        </div>
+        </Panel>
       ) : null}
 
-      <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+      <Panel className="overflow-x-auto">
         <table className="w-full min-w-[860px] text-sm">
           <thead className="bg-[color:var(--color-bg-mid)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
@@ -949,7 +950,7 @@ function LoansTab({
             )}
           </tbody>
         </table>
-      </div>
+      </Panel>
       {rowError ? <p className="text-sm text-red-600">{rowError}</p> : null}
 
       {disburseLoan ? (
@@ -1178,7 +1179,7 @@ function LeavesTab({
         <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
           Days present and leave taken per recent payroll period.
         </p>
-        <div className="mt-3 overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+        <Panel className="mt-3 overflow-x-auto">
           <table className="w-full min-w-[760px] text-sm">
             <thead className="bg-[color:var(--color-bg-mid)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
               <tr>
@@ -1230,7 +1231,7 @@ function LeavesTab({
               )}
             </tbody>
           </table>
-        </div>
+        </Panel>
       </div>
 
       <div>
@@ -1240,7 +1241,7 @@ function LeavesTab({
         <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
           Last 30 overtime requests for this employee.
         </p>
-        <div className="mt-3 overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+        <Panel className="mt-3 overflow-x-auto">
           <table className="w-full min-w-[640px] text-sm">
             <thead className="bg-[color:var(--color-bg-mid)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
               <tr>
@@ -1282,7 +1283,7 @@ function LeavesTab({
               )}
             </tbody>
           </table>
-        </div>
+        </Panel>
       </div>
 
       {grantOpen ? (

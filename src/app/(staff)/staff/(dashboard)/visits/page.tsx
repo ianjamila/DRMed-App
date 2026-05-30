@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { VisitsTabs } from "./_components/visits-tabs";
 import { paymentStatusLabel } from "@/lib/ui/payment-status";
+import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
   title: "Visits — staff",
@@ -181,13 +182,13 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
       </form>
 
       {!visits || visits.length === 0 ? (
-        <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-8 text-center text-sm text-[color:var(--color-brand-text-soft)]">
+        <Panel className="p-8 text-center text-sm text-[color:var(--color-brand-text-soft)]">
           No visits in this range.
-        </div>
+        </Panel>
       ) : (
         <>
           {/* Desktop table */}
-          <div className="hidden overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white md:block">
+          <Panel className="hidden overflow-x-auto md:block">
             <table className="w-full text-sm">
               <thead className="bg-[color:var(--color-brand-bg)] text-[color:var(--color-brand-text-soft)]">
                 <tr>
@@ -271,7 +272,7 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
                 })}
               </tbody>
             </table>
-          </div>
+          </Panel>
 
           {/* Mobile card list */}
           <div className="space-y-3 md:hidden">

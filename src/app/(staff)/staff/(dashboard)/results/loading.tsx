@@ -1,4 +1,5 @@
 import { Skeleton } from "@/components/ui/skeleton";
+import { Panel } from "@/components/ui/panel";
 
 export default function Loading() {
   return (
@@ -17,17 +18,17 @@ export default function Loading() {
       </nav>
 
       {/* Date + search filter bar */}
-      <div className="mb-6 grid grid-cols-1 gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4 sm:grid-cols-2 lg:grid-cols-4">
+      <Panel className="mb-6 grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
         {Array.from({ length: 4 }).map((_, i) => (
           <div key={i}>
             <Skeleton className="h-3 w-24 mb-2" />
             <Skeleton className="h-8 w-full rounded-md" />
           </div>
         ))}
-      </div>
+      </Panel>
 
       {/* Results table */}
-      <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+      <Panel className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-[color:var(--color-brand-bg)]">
             <tr>
@@ -62,7 +63,7 @@ export default function Loading() {
             ))}
           </tbody>
         </table>
-      </div>
+      </Panel>
 
       {/* Pagination */}
       <div className="mt-4 flex items-center justify-between">

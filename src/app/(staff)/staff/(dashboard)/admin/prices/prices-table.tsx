@@ -12,6 +12,7 @@ import { useRouter } from "next/navigation";
 import { formatPhp } from "@/lib/marketing/format";
 import { updateServicePricesAction } from "./actions";
 import { ServiceHistoryPanel } from "./service-history-panel";
+import { Panel } from "@/components/ui/panel";
 
 export interface PriceRow {
   id: string;
@@ -229,7 +230,7 @@ export function PricesTable({ rows }: Props) {
         </p>
       </div>
 
-      <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+      <Panel className="overflow-x-auto">
         <table className="w-full min-w-[860px] text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
@@ -434,7 +435,7 @@ export function PricesTable({ rows }: Props) {
             )}
           </tbody>
         </table>
-      </div>
+      </Panel>
 
       <p className="text-xs text-[color:var(--color-brand-text-soft)]">
         Tip: leave HMO or Senior empty if the service isn&apos;t HMO billable

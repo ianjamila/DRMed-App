@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { Panel } from "@/components/ui/panel";
 
 export const metadata = { title: "HMO aging snapshots — staff" };
 export const dynamic = "force-dynamic";
@@ -119,7 +120,7 @@ function SnapshotTable({ rows }: { rows: SnapshotRow[] }) {
   const providers = Array.from(byProvider.keys()).sort();
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+    <Panel className="overflow-x-auto">
       <table className="w-full min-w-[900px] text-sm">
         <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
           <tr>
@@ -163,6 +164,6 @@ function SnapshotTable({ rows }: { rows: SnapshotRow[] }) {
           })}
         </tbody>
       </table>
-    </div>
+    </Panel>
   );
 }

@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { formatPhp } from "@/lib/marketing/format";
 import { SellGiftCodeForm } from "./sell-form";
+import { Panel } from "@/components/ui/panel";
 
 export const metadata = { title: "Sell gift code — staff" };
 
@@ -74,9 +75,9 @@ export default async function SellGiftCodePage({ searchParams }: PageProps) {
         </div>
       ) : null}
 
-      <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
+      <Panel className="p-6">
         <SellGiftCodeForm initialCode={params.code ?? ""} />
-      </div>
+      </Panel>
     </div>
   );
 }

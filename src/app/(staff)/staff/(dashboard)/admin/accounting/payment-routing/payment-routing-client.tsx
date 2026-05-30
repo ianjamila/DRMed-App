@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { updatePaymentMethodMapAction } from "./actions";
+import { Panel } from "@/components/ui/panel";
 
 interface MapRow {
   id: string;
@@ -26,7 +27,7 @@ export function PaymentRoutingClient({
   accounts: AccountOption[];
 }) {
   return (
-    <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+    <Panel className="overflow-x-auto">
       <table className="w-full min-w-[640px] text-sm">
         <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
           <tr>
@@ -42,7 +43,7 @@ export function PaymentRoutingClient({
           ))}
         </tbody>
       </table>
-    </div>
+    </Panel>
   );
 }
 

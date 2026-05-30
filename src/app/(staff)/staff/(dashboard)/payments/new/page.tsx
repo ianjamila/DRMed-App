@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { formatPhp } from "@/lib/marketing/format";
 import { PaymentForm } from "./payment-form";
+import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
   title: "Record payment — staff",
@@ -84,9 +85,9 @@ export default async function NewPaymentPage({ searchParams }: Props) {
         </div>
       </div>
 
-      <div className="mt-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
+      <Panel className="mt-6 p-6">
         <PaymentForm visitId={visit.id} balance={balance} />
-      </div>
+      </Panel>
     </div>
   );
 }

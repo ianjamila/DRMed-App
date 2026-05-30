@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { ServiceForm } from "../service-form";
+import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
   title: "New service — staff",
@@ -19,9 +20,9 @@ export default async function NewServicePage() {
       <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
         New service
       </h1>
-      <div className="mt-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
+      <Panel className="mt-6 p-6">
         <ServiceForm />
-      </div>
+      </Panel>
     </div>
   );
 }

@@ -17,6 +17,7 @@ import {
   endContributionBracketAction,
   endWtBracketAction,
 } from "../config/actions";
+import { Panel } from "@/components/ui/panel";
 
 // =============================================================================
 // Prop shapes
@@ -261,7 +262,7 @@ function ContributionTable({
 }) {
   return (
     <>
-      <div className="hidden overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white md:block">
+      <Panel className="hidden overflow-x-auto md:block">
         <table className="w-full min-w-[1100px] text-sm">
           <thead className="bg-[color:var(--color-bg-mid)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
@@ -338,7 +339,7 @@ function ContributionTable({
             )}
           </tbody>
         </table>
-      </div>
+      </Panel>
 
       {/* Mobile cards */}
       <div className="space-y-3 md:hidden">
@@ -350,9 +351,9 @@ function ContributionTable({
           rows.map((r) => {
             const active = r.effective_to === null;
             return (
-              <div
+              <Panel
                 key={r.id}
-                className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4 shadow-sm"
+                className="p-4 shadow-sm"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -416,7 +417,7 @@ function ContributionTable({
                     </button>
                   ) : null}
                 </div>
-              </div>
+              </Panel>
             );
           })
         )}
@@ -446,7 +447,7 @@ function WtTable({
 }) {
   return (
     <>
-      <div className="hidden overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white md:block">
+      <Panel className="hidden overflow-x-auto md:block">
         <table className="w-full min-w-[1080px] text-sm">
           <thead className="bg-[color:var(--color-bg-mid)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
@@ -525,7 +526,7 @@ function WtTable({
             )}
           </tbody>
         </table>
-      </div>
+      </Panel>
 
       {/* Mobile cards */}
       <div className="space-y-3 md:hidden">
@@ -537,9 +538,9 @@ function WtTable({
           rows.map((r) => {
             const active = r.effective_to === null;
             return (
-              <div
+              <Panel
                 key={r.id}
-                className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4 shadow-sm"
+                className="p-4 shadow-sm"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -605,7 +606,7 @@ function WtTable({
                     </button>
                   ) : null}
                 </div>
-              </div>
+              </Panel>
             );
           })
         )}

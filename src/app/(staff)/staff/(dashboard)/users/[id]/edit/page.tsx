@@ -5,6 +5,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { StaffForm } from "../../staff-form";
 import { AdminResetForm } from "./admin-reset-form";
 import { DeleteForm } from "./delete-form";
+import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
   title: "Edit staff user — staff",
@@ -60,7 +61,7 @@ export default async function EditStaffUserPage({ params }: Props) {
       <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
         {userResp?.user?.email ?? "—"}
       </p>
-      <div className="mt-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
+      <Panel className="mt-6 p-6">
         <StaffForm
           initial={{
             id: profile.id,
@@ -72,7 +73,7 @@ export default async function EditStaffUserPage({ params }: Props) {
             prc_license_no: profile.prc_license_no,
           }}
         />
-      </div>
+      </Panel>
 
       <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50/40 p-6">
         <h2 className="font-heading text-lg font-bold text-amber-900">
