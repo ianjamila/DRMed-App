@@ -73,7 +73,7 @@ function PackageGroupSection({
 }) {
   return (
     <section className="mb-16">
-      <h2 className="mb-8 font-[family-name:var(--font-heading)] text-2xl font-extrabold text-[color:var(--color-brand-navy)] md:text-3xl">
+      <h2 className="mb-8 font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)] md:text-3xl">
         {group}
       </h2>
       <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
@@ -82,12 +82,12 @@ function PackageGroupSection({
             key={pkg.id}
             className="flex flex-col rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6 transition-shadow hover:shadow-md"
           >
-            <h3 className="font-[family-name:var(--font-heading)] text-lg font-bold text-[color:var(--color-brand-navy)]">
+            <h3 className="font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">
               {pkg.name}
             </h3>
 
             <div className="mt-4 flex items-baseline gap-2">
-              <span className="font-[family-name:var(--font-heading)] text-2xl font-extrabold text-[color:var(--color-brand-cyan)]">
+              <span className="font-heading text-2xl font-extrabold text-[color:var(--color-brand-cyan)]">
                 {formatPhp(pkg.price_php)}
               </span>
             </div>

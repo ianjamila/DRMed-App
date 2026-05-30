@@ -222,7 +222,7 @@ export function PaymentFormClient({
       {vendorId && (
         <section>
           <div className="mb-2 flex items-center justify-between">
-            <h2 className="font-[family-name:var(--font-heading)] text-lg font-bold text-[color:var(--color-brand-navy)]">
+            <h2 className="font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">
               Allocate to bills
             </h2>
             {bills.length > 0 && (

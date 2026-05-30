@@ -14,7 +14,7 @@ export default function NewsletterPage() {
         <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
           Newsletter
         </p>
-        <h1 className="mt-2 font-[family-name:var(--font-heading)] text-4xl font-extrabold text-[color:var(--color-brand-navy)] sm:text-5xl">
+        <h1 className="mt-2 font-heading text-4xl font-extrabold text-[color:var(--color-brand-navy)] sm:text-5xl">
           Stay in the loop
         </h1>
         <p className="mt-4 max-w-xl text-base text-[color:var(--color-brand-text-mid)]">

@@ -125,7 +125,7 @@ export function PayslipDetailClient({
                 className="h-12 w-auto shrink-0 sm:h-14"
               />
               <div className="min-w-0">
-                <p className="font-[family-name:var(--font-heading)] text-base font-extrabold leading-tight text-[color:var(--color-brand-navy)] sm:text-lg">
+                <p className="font-heading text-base font-extrabold leading-tight text-[color:var(--color-brand-navy)] sm:text-lg">
                   DRM Medical Diagnostics &amp; Wellness Center
                 </p>
                 <p className="mt-0.5 text-xs text-[color:var(--color-brand-text-soft)]">
@@ -136,7 +136,7 @@ export function PayslipDetailClient({
                 </p>
               </div>
             </div>
-            <p className="font-[family-name:var(--font-heading)] text-xl font-extrabold tracking-wide text-[color:var(--color-brand-navy)] sm:text-2xl">
+            <p className="font-heading text-xl font-extrabold tracking-wide text-[color:var(--color-brand-navy)] sm:text-2xl">
               PAYSLIP
             </p>
           </div>
@@ -148,7 +148,7 @@ export function PayslipDetailClient({
               <p className="text-[11px] font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                 Employee
               </p>
-              <p className="mt-1 font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+              <p className="mt-1 font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
                 {data.employee.full_name}
               </p>
               {data.employee.employee_number ? (
@@ -196,7 +196,7 @@ export function PayslipDetailClient({
               <p className="text-[11px] font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                 Pay period
               </p>
-              <p className="mt-1 font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+              <p className="mt-1 font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
                 {formatPeriodRange(
                   data.period.period_start,
                   data.period.period_end,
@@ -229,7 +229,7 @@ export function PayslipDetailClient({
         <section className="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-2">
           {/* Earnings */}
           <article className="rounded-2xl bg-white p-5 shadow-sm sm:p-7">
-            <h2 className="font-[family-name:var(--font-heading)] text-sm font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)]">
+            <h2 className="font-heading text-sm font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)]">
               Earnings
             </h2>
             <dl className="mt-3 space-y-1.5 text-sm">
@@ -270,7 +270,7 @@ export function PayslipDetailClient({
 
           {/* Deductions */}
           <article className="rounded-2xl bg-white p-5 shadow-sm sm:p-7">
-            <h2 className="font-[family-name:var(--font-heading)] text-sm font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)]">
+            <h2 className="font-heading text-sm font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)]">
               Deductions
             </h2>
             <dl className="mt-3 space-y-1.5 text-sm">
@@ -343,13 +343,13 @@ export function PayslipDetailClient({
         </section>
 
         {/* Net pay band */}
-        <section className="mt-5 overflow-hidden rounded-2xl bg-gradient-to-r from-[#284570] to-[#06B6D4] p-5 text-white shadow-sm sm:p-7">
+        <section className="mt-5 overflow-hidden rounded-2xl bg-gradient-to-r from-[color:var(--color-brand-navy)] to-[color:var(--color-brand-cyan)] p-5 text-white shadow-sm sm:p-7">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-white/80">
                 Net pay
               </p>
-              <p className="mt-1 font-[family-name:var(--font-heading)] text-4xl font-extrabold leading-tight sm:text-5xl">
+              <p className="mt-1 font-heading text-4xl font-extrabold leading-tight sm:text-5xl">
                 {formatPeso(data.run.net_pay_php)}
               </p>
             </div>
@@ -372,7 +372,7 @@ export function PayslipDetailClient({
         <section className="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-2">
           {/* YTD totals */}
           <article className="rounded-2xl bg-white p-5 shadow-sm sm:p-7">
-            <h2 className="font-[family-name:var(--font-heading)] text-sm font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)]">
+            <h2 className="font-heading text-sm font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)]">
               Year-to-date totals
             </h2>
             <dl className="mt-3 space-y-1.5 text-sm">
@@ -428,7 +428,7 @@ export function PayslipDetailClient({
 
           {/* Leave + attendance */}
           <article className="rounded-2xl bg-white p-5 shadow-sm sm:p-7">
-            <h2 className="font-[family-name:var(--font-heading)] text-sm font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)]">
+            <h2 className="font-heading text-sm font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)]">
               Leave balances
             </h2>
             <p className="mt-0.5 text-xs text-[color:var(--color-brand-text-soft)]">

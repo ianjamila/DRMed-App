@@ -47,7 +47,7 @@ export default async function ComingSoonPage({ params }: PageProps) {
         <span className="inline-flex items-center rounded-full bg-[color:var(--color-brand-cyan)]/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
           Planned
         </span>
-        <h1 className="mt-3 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+        <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
           {mod.label}
         </h1>
         <p className="mt-1 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
@@ -59,7 +59,7 @@ export default async function ComingSoonPage({ params }: PageProps) {
       </header>
 
       <section className="mt-8 rounded-xl border border-dashed border-[color:var(--color-brand-cyan-light)] bg-[color:var(--color-brand-bg)] p-6">
-        <h2 className="font-[family-name:var(--font-heading)] text-sm font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+        <h2 className="font-heading text-sm font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
           What this module will include
         </h2>
         <ul className="mt-4 space-y-2">

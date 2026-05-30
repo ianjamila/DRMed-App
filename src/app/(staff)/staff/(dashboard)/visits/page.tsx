@@ -3,6 +3,7 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { VisitsTabs } from "./_components/visits-tabs";
+import { paymentStatusLabel } from "@/lib/ui/payment-status";
 
 export const metadata = {
   title: "Visits — staff",
@@ -117,7 +118,7 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
   return (
     <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-4">
-        <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+        <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
           Visits
         </h1>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
@@ -260,9 +261,9 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
                       </td>
                       <td className="px-4 py-3">
                         <span
-                          className={`inline-block rounded-full border px-2 py-0.5 text-xs font-medium ${STATUS_BADGE[status] ?? ""}`}
+                          className={`inline-block rounded-md px-2 py-0.5 text-xs font-semibold ${STATUS_BADGE[status] ?? ""}`}
                         >
-                          {status}
+                          {paymentStatusLabel(status)}
                         </span>
                       </td>
                     </tr>
@@ -291,7 +292,7 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
                       #{String(v.visit_number).padStart(4, "0")}
                     </Link>
                     <span
-                      className={`inline-block rounded-full border px-2 py-0.5 text-xs font-medium ${STATUS_BADGE[status] ?? ""}`}
+                      className={`inline-block rounded-md px-2 py-0.5 text-xs font-semibold ${STATUS_BADGE[status] ?? ""}`}
                     >
                       {status}
                     </span>

@@ -434,7 +434,7 @@ function AddHolidayDrawer({
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[color:var(--color-brand-bg-mid)] bg-white px-5 py-4">
           <h2
             id="add-holiday-title"
-            className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]"
+            className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]"
           >
             Add holiday
           </h2>

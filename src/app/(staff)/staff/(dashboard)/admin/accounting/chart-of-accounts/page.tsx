@@ -50,7 +50,7 @@ export default async function ChartOfAccountsPage() {
           <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
             Phase 12.1 · Admin
           </p>
-          <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+          <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
             Chart of accounts
           </h1>
           <p className="mt-2 max-w-xl text-sm text-[color:var(--color-brand-text-soft)]">

@@ -37,7 +37,7 @@ export function StaffShell({ session, children }: Props) {
         <div className="flex items-center justify-between gap-2 px-5 py-5">
           <Link
             href="/staff"
-            className="font-[family-name:var(--font-heading)] text-lg font-extrabold tracking-tight text-[color:var(--color-brand-navy)]"
+            className="font-heading text-lg font-extrabold tracking-tight text-[color:var(--color-brand-navy)]"
           >
             drmed<span className="text-[color:var(--color-brand-cyan)]">.staff</span>
           </Link>
@@ -79,7 +79,7 @@ export function StaffShell({ session, children }: Props) {
             />
             <Link
               href="/staff"
-              className="font-[family-name:var(--font-heading)] text-base font-extrabold text-[color:var(--color-brand-navy)]"
+              className="font-heading text-base font-extrabold text-[color:var(--color-brand-navy)]"
             >
               drmed
               <span className="text-[color:var(--color-brand-cyan)]">.staff</span>

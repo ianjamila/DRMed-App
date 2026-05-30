@@ -132,7 +132,7 @@ export default async function DisplayPage() {
       <DisplayPoller intervalSec={10} />
 
       <header className="flex items-baseline justify-between gap-4">
-        <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold tracking-tight sm:text-5xl">
+        <h1 className="font-heading text-3xl font-extrabold tracking-tight sm:text-5xl">
           Now serving
         </h1>
         <p className="text-xs font-mono uppercase tracking-widest text-white/60">
@@ -164,7 +164,7 @@ export default async function DisplayPage() {
                 {row.drm_id}
               </p>
               <div>
-                <p className="font-[family-name:var(--font-heading)] text-xl font-extrabold sm:text-3xl">
+                <p className="font-heading text-xl font-extrabold sm:text-3xl">
                   {row.display_name}
                 </p>
                 <p className="text-sm text-white/70 sm:text-base">

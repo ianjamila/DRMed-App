@@ -50,7 +50,7 @@ export function EnrollForm({ role }: Props) {
   if (!enroll) {
     return (
       <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
-        <h2 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+        <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
           {role === "admin"
             ? "MFA is required for admin accounts"
             : "Set up two-factor authentication"}
@@ -73,7 +73,7 @@ export function EnrollForm({ role }: Props) {
 
   return (
     <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
-      <h2 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+      <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
         Scan the QR code
       </h2>
       <p className="mt-2 text-sm text-[color:var(--color-brand-text-soft)]">

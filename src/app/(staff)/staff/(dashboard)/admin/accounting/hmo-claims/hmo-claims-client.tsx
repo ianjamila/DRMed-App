@@ -2,6 +2,7 @@
 
 import { Fragment, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
+import { Button } from "@/components/ui/button";
 import type { Database } from "@/types/database";
 import { snapshotHmoAgingAction } from "./actions";
 import {
@@ -186,7 +187,7 @@ function ConsolidatedTotals({
       className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-navy)] p-4 text-white shadow-sm"
     >
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="font-[family-name:var(--font-heading)] text-lg font-bold">
+        <h2 className="font-heading text-lg font-bold">
           All HMOs combined
         </h2>
         <p className="text-xs text-white/70">
@@ -447,7 +448,7 @@ function ProviderCard({
       href={href}
       className="block rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4 shadow-sm transition hover:border-[color:var(--color-brand-cyan)] hover:shadow"
     >
-      <h3 className="font-[family-name:var(--font-heading)] text-lg font-bold text-[color:var(--color-brand-navy)]">
+      <h3 className="font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">
         {row.provider_name ?? "Unknown provider"}
       </h3>
       <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
@@ -728,20 +729,24 @@ function AllUnbilled({
                         >
                           Mark billed
                         </button>
-                        <button
+                        <Button
                           type="button"
+                          variant="success"
+                          size="xs"
                           onClick={() => setRowModal({ kind: "paid", claimId: id, amount: Number(r.billed_amount_php ?? 0) })}
-                          className="min-h-[28px] whitespace-nowrap rounded-md border border-emerald-600 bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-700 hover:bg-emerald-600 hover:text-white"
+                          className="min-h-[28px] whitespace-nowrap text-[10px] font-bold uppercase tracking-wider"
                         >
                           Mark paid
-                        </button>
-                        <button
+                        </Button>
+                        <Button
                           type="button"
+                          variant="destructive"
+                          size="xs"
                           onClick={() => setRowModal({ kind: "writeoff", claimId: id, amount: Number(r.billed_amount_php ?? 0) })}
-                          className="min-h-[28px] whitespace-nowrap rounded-md border border-red-600 bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-red-700 hover:bg-red-600 hover:text-white"
+                          className="min-h-[28px] whitespace-nowrap text-[10px] font-bold uppercase tracking-wider"
                         >
                           Write off
-                        </button>
+                        </Button>
                       </div>
                     ) : r.provider_id ? (
                       <Link
@@ -777,20 +782,24 @@ function AllUnbilled({
             >
               Mark billed ({selected.size})
             </button>
-            <button
+            <Button
               type="button"
+              variant="success"
+              size="sm"
               onClick={() => setBulkModal("paid")}
-              className="min-h-[44px] whitespace-nowrap rounded-md border border-emerald-600 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wider text-emerald-700 hover:bg-emerald-600 hover:text-white"
+              className="min-h-[44px] whitespace-nowrap text-xs font-bold uppercase tracking-wider"
             >
               Mark paid
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="destructive"
+              size="sm"
               onClick={() => setBulkModal("writeoff")}
-              className="min-h-[44px] whitespace-nowrap rounded-md border border-red-600 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wider text-red-700 hover:bg-red-600 hover:text-white"
+              className="min-h-[44px] whitespace-nowrap text-xs font-bold uppercase tracking-wider"
             >
               Write off
-            </button>
+            </Button>
             <button
               type="button"
               onClick={() => setSelected(new Set())}
@@ -1082,20 +1091,24 @@ function AllAging({
                   <td className="px-4 py-3 text-right">
                     {isHistoric && id ? (
                       <div className="flex flex-nowrap items-center justify-end gap-1.5">
-                        <button
+                        <Button
                           type="button"
+                          variant="success"
+                          size="xs"
                           onClick={() => setRowModal({ kind: "paid", claimId: id, amount: Number(r.unresolved_balance_php ?? 0) })}
-                          className="min-h-[28px] whitespace-nowrap rounded-md border border-emerald-600 bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-700 hover:bg-emerald-600 hover:text-white"
+                          className="min-h-[28px] whitespace-nowrap text-[10px] font-bold uppercase tracking-wider"
                         >
                           Mark paid
-                        </button>
-                        <button
+                        </Button>
+                        <Button
                           type="button"
+                          variant="destructive"
+                          size="xs"
                           onClick={() => setRowModal({ kind: "writeoff", claimId: id, amount: Number(r.unresolved_balance_php ?? 0) })}
-                          className="min-h-[28px] whitespace-nowrap rounded-md border border-red-600 bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-red-700 hover:bg-red-600 hover:text-white"
+                          className="min-h-[28px] whitespace-nowrap text-[10px] font-bold uppercase tracking-wider"
                         >
                           Write off
-                        </button>
+                        </Button>
                       </div>
                     ) : r.batch_id ? (
                       <Link

@@ -196,7 +196,7 @@ export function PayslipsClient({
           <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
             Payslips
           </p>
-          <h1 className="mt-1 font-[family-name:var(--font-heading)] text-2xl font-extrabold leading-tight text-[color:var(--color-brand-navy)] sm:text-3xl">
+          <h1 className="mt-1 font-heading text-2xl font-extrabold leading-tight text-[color:var(--color-brand-navy)] sm:text-3xl">
             {selectedEmployeeId
               ? "Viewing another employee"
               : `Hi, ${viewerFullName.split(" ")[0]}`}
@@ -255,7 +255,7 @@ export function PayslipsClient({
             ) : null}
             {older.length > 0 ? (
               <section className="mt-8">
-                <h2 className="px-1 font-[family-name:var(--font-heading)] text-sm font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+                <h2 className="px-1 font-heading text-sm font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                   Earlier this year
                 </h2>
                 <ul className="mt-2 space-y-2">
@@ -430,7 +430,7 @@ function LatestPayslipCard({
       >
         <span
           aria-hidden={blurred}
-          className={`block font-[family-name:var(--font-heading)] text-4xl font-extrabold leading-tight transition select-none sm:text-5xl ${
+          className={`block font-heading text-4xl font-extrabold leading-tight transition select-none sm:text-5xl ${
             blurred ? "blur-md" : ""
           }`}
         >
@@ -478,7 +478,7 @@ function OlderPayslipCard({
     <article className="rounded-2xl bg-white p-4 shadow-sm transition hover:shadow">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="font-[family-name:var(--font-heading)] text-sm font-bold text-[color:var(--color-brand-navy)]">
+          <p className="font-heading text-sm font-bold text-[color:var(--color-brand-navy)]">
             {formatPeriodRange(payslip.period_start, payslip.period_end)}
           </p>
           <p className="mt-0.5 text-xs text-[color:var(--color-brand-text-soft)]">
@@ -501,7 +501,7 @@ function OlderPayslipCard({
         >
           <span
             aria-hidden={blurred}
-            className={`block font-[family-name:var(--font-heading)] text-xl font-extrabold text-[color:var(--color-brand-navy)] transition select-none ${
+            className={`block font-heading text-xl font-extrabold text-[color:var(--color-brand-navy)] transition select-none ${
               blurred ? "blur-md" : ""
             }`}
           >
@@ -608,7 +608,7 @@ function YtdField({
       </p>
       <span
         aria-hidden={blurred}
-        className={`mt-1 block font-[family-name:var(--font-heading)] font-extrabold transition select-none ${
+        className={`mt-1 block font-heading font-extrabold transition select-none ${
           emphasised
             ? "text-2xl text-[color:var(--color-brand-navy)]"
             : "text-lg text-[color:var(--color-brand-text-mid)]"
@@ -632,7 +632,7 @@ function YtdField({
 function EmptyState({ title, body }: { title: string; body: string }) {
   return (
     <div className="mt-8 rounded-3xl border border-dashed border-[color:var(--color-brand-bg-mid)] bg-white p-8 text-center">
-      <p className="font-[family-name:var(--font-heading)] text-base font-bold text-[color:var(--color-brand-navy)]">
+      <p className="font-heading text-base font-bold text-[color:var(--color-brand-navy)]">
         {title}
       </p>
       <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">{body}</p>

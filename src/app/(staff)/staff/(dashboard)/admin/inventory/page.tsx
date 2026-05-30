@@ -102,7 +102,7 @@ export default async function InventoryPage({ searchParams }: SearchProps) {
       </Link>
       <header className="mt-3 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+          <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
             Inventory
           </h1>
           <p className="mt-1 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
@@ -235,7 +235,7 @@ export default async function InventoryPage({ searchParams }: SearchProps) {
                       </td>
                       <td className="px-4 py-3">
                         <span
-                          className={`inline-block rounded-full border px-2 py-0.5 text-xs font-medium ${STATUS_BADGE[r.stock_status] ?? ""}`}
+                          className={`inline-block rounded-md px-2 py-0.5 text-xs font-semibold ${STATUS_BADGE[r.stock_status] ?? ""}`}
                         >
                           {STATUS_LABEL[r.stock_status] ?? r.stock_status}
                         </span>

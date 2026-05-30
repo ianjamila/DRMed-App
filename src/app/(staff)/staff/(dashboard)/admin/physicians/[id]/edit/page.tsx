@@ -46,7 +46,7 @@ export default async function EditPhysicianPage({ params }: PageProps) {
               ← Physicians
             </Link>
           </p>
-          <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+          <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
             {physician.full_name}
           </h1>
           <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
@@ -62,7 +62,7 @@ export default async function EditPhysicianPage({ params }: PageProps) {
       </header>
 
       <section className="mb-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
-        <h2 className="font-[family-name:var(--font-heading)] text-sm font-extrabold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+        <h2 className="font-heading text-sm font-extrabold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
           Photo
         </h2>
         <div className="mt-3">
@@ -73,7 +73,7 @@ export default async function EditPhysicianPage({ params }: PageProps) {
       <PhysicianForm initial={physician} />
 
       <section className="mt-8 border-t border-[color:var(--color-brand-bg-mid)] pt-6">
-        <h2 className="mb-3 font-[family-name:var(--font-heading)] text-sm font-extrabold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+        <h2 className="mb-3 font-heading text-sm font-extrabold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
           Danger zone
         </h2>
         <DeletePhysicianButton

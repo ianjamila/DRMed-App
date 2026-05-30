@@ -2,6 +2,7 @@
 
 import { useActionState, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -243,10 +244,12 @@ export function PatientForm({ initial, referralOptions }: Props) {
           Data privacy consent (RA 10173)
         </legend>
         {consentAlreadySigned ? (
-          <p className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
-            ✓ Consent already on file (signed{" "}
-            {new Date(initial!.consent_signed_at!).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })})
-          </p>
+          <Alert variant="success">
+            <AlertDescription>
+              ✓ Consent already on file (signed{" "}
+              {new Date(initial!.consent_signed_at!).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })})
+            </AlertDescription>
+          </Alert>
         ) : (
           <>
             <label className="flex items-start gap-2 text-sm">

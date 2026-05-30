@@ -130,12 +130,12 @@ export default async function PortalBookPage() {
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
       <div className="flex items-baseline justify-between gap-3">
-        <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+        <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
           Book an appointment
         </h1>
         <Link
           href="/portal"
-          className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
+          className="link-brand text-xs font-bold uppercase tracking-wider"
         >
           ← Back to results
         </Link>

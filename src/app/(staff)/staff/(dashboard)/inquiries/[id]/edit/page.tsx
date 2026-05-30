@@ -1,5 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
+import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/server";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { InquiryForm } from "../../inquiry-form";
@@ -55,7 +56,7 @@ export default async function EditInquiryPage({ params }: PageProps) {
               ← Inquiries
             </Link>
           </p>
-          <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+          <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
             {inquiry.caller_name}
           </h1>
           <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
@@ -63,12 +64,12 @@ export default async function EditInquiryPage({ params }: PageProps) {
           </p>
         </div>
         {inquiry.status !== "confirmed" ? (
-          <Link
-            href={`/staff/inquiries/${inquiry.id}/book`}
-            className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700"
+          <Button
+            variant="success"
+            render={<Link href={`/staff/inquiries/${inquiry.id}/book`} />}
           >
             Book from this inquiry
-          </Link>
+          </Button>
         ) : null}
       </header>
 

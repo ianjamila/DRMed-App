@@ -27,7 +27,7 @@ export default function TermsPage() {
           medical advice.
         </p>
 
-        <h2 className="mt-6 font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+        <h2 className="mt-6 font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
           Patient Portal access
         </h2>
         <p>
@@ -37,7 +37,7 @@ export default function TermsPage() {
           reception immediately for re-issuance.
         </p>
 
-        <h2 className="mt-6 font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+        <h2 className="mt-6 font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
           Accuracy of information
         </h2>
         <p>
@@ -46,7 +46,7 @@ export default function TermsPage() {
           is confirmed at the clinic upon registration.
         </p>
 
-        <h2 className="mt-6 font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+        <h2 className="mt-6 font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
           Limitation of liability
         </h2>
         <p>
@@ -55,7 +55,7 @@ export default function TermsPage() {
           consultation with a licensed physician.
         </p>
 
-        <h2 className="mt-6 font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+        <h2 className="mt-6 font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
           Changes to these terms
         </h2>
         <p>

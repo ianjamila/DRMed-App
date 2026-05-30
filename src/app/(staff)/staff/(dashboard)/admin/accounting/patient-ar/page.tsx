@@ -6,6 +6,7 @@ import {
   sectionTabsNavClass,
   sectionTabClass,
 } from "@/components/staff/section-tabs-style";
+import { paymentStatusLabel } from "@/lib/ui/payment-status";
 
 export const metadata = { title: "Patient AR aging — staff" };
 export const dynamic = "force-dynamic";
@@ -151,7 +152,7 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
         >
           ← Dashboard
         </Link>
-        <h1 className="mt-3 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+        <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
           Patient AR aging
         </h1>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
@@ -181,7 +182,7 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
           <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             Grand total
           </p>
-          <p className="mt-2 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+          <p className="mt-2 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
             {PHP.format(grandTotal)}
           </p>
           <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
@@ -224,7 +225,7 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
                       </td>
                       <td className="whitespace-nowrap px-4 py-3">
                         <span
-                          className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${ageBadge(days)}`}
+                          className={`inline-block rounded-md px-2 py-0.5 text-xs font-semibold ${ageBadge(days)}`}
                         >
                           {days}d
                         </span>
@@ -264,9 +265,9 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
                       </td>
                       <td className="px-4 py-3">
                         <span
-                          className={`inline-block rounded-full border px-2 py-0.5 text-xs font-medium ${statusBadge(v.payment_status)}`}
+                          className={`inline-block rounded-md px-2 py-0.5 text-xs font-semibold ${statusBadge(v.payment_status)}`}
                         >
-                          {v.payment_status}
+                          {paymentStatusLabel(v.payment_status)}
                         </span>
                       </td>
                     </tr>
@@ -311,7 +312,7 @@ function BucketCard({
       <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
         {label}
       </p>
-      <p className="mt-2 font-[family-name:var(--font-heading)] text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
+      <p className="mt-2 font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
         {PHP.format(totals.amount)}
       </p>
       <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">

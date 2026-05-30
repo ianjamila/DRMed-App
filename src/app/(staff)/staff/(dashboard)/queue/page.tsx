@@ -4,6 +4,8 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { queueTitleForRole, sectionsForRole } from "@/lib/auth/role-sections";
 import { RealtimeRefresher } from "@/components/staff/realtime-refresher";
 import { ClaimButton } from "./claim-button";
+import { sectionTabClass } from "@/components/staff/section-tabs-style";
+import { PageHeader } from "@/components/staff/page-header";
 
 // ---------------------------------------------------------------------------
 // Queue card types — after the grouping fold
@@ -203,34 +205,30 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           { table: "test_requests", event: "UPDATE" },
         ]}
       />
-      <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            {queueTitle}
-          </h1>
-          <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
-            Tests requested or in progress, oldest first.
-          </p>
-        </div>
-        <nav className="flex gap-2 text-sm">
-          <FilterTab href="/staff/queue" label="All" active={filter === "all"} />
-          <FilterTab
-            href="/staff/queue?filter=pending_release"
-            label="Pending release"
-            active={filter === "pending_release"}
-          />
-          <FilterTab
-            href="/staff/queue?filter=released_today"
-            label="Released today"
-            active={filter === "released_today"}
-          />
-          <FilterTab
-            href="/staff/queue?filter=mine"
-            label="Mine"
-            active={filter === "mine"}
-          />
-        </nav>
-      </header>
+      <PageHeader
+        title={queueTitle}
+        subtitle="Tests requested or in progress, oldest first."
+        actions={
+          <nav className="flex gap-2 text-sm">
+            <FilterTab href="/staff/queue" label="All" active={filter === "all"} />
+            <FilterTab
+              href="/staff/queue?filter=pending_release"
+              label="Pending release"
+              active={filter === "pending_release"}
+            />
+            <FilterTab
+              href="/staff/queue?filter=released_today"
+              label="Released today"
+              active={filter === "released_today"}
+            />
+            <FilterTab
+              href="/staff/queue?filter=mine"
+              label="Mine"
+              active={filter === "mine"}
+            />
+          </nav>
+        }
+      />
 
       <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
         <table className="w-full text-sm">
@@ -384,14 +382,7 @@ function FilterTab({
   active: boolean;
 }) {
   return (
-    <Link
-      href={href}
-      className={`rounded-md px-3 py-1.5 font-semibold ${
-        active
-          ? "bg-[color:var(--color-brand-navy)] text-white"
-          : "border border-[color:var(--color-brand-bg-mid)] text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-bg)]"
-      }`}
-    >
+    <Link href={href} className={sectionTabClass(active)}>
       {label}
     </Link>
   );

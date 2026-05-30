@@ -171,7 +171,7 @@ function PrivacySection({
 }) {
   return (
     <section className="mt-8">
-      <h2 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+      <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
         {title}
       </h2>
       <div className="mt-3 text-base leading-relaxed text-[color:var(--color-brand-text-mid)]">

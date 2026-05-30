@@ -100,7 +100,7 @@ export default async function InquiriesPage({ searchParams }: PageProps) {
           <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
             Phase 10 · Reception
           </p>
-          <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+          <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
             Inquiries
           </h1>
           <p className="mt-1 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">

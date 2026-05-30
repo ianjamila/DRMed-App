@@ -10,6 +10,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useFocusTrap } from "@/lib/a11y/use-focus-trap";
 import { formatPhp } from "@/lib/marketing/format";
 import { formatManilaDate } from "@/lib/payroll/format";
+import { sectionTabClass } from "@/components/staff/section-tabs-style";
 import {
   createContributionBracketAction,
   createWtBracketAction,
@@ -167,11 +168,7 @@ export function RatesClient({
               aria-selected={active}
               onClick={() => switchKind(k)}
               disabled={isPending}
-              className={`min-h-[44px] rounded-md px-4 py-2 text-sm font-bold transition disabled:opacity-50 ${
-                active
-                  ? "bg-[color:var(--color-brand-navy)] text-white"
-                  : "border border-[color:var(--color-brand-bg-mid)] bg-white text-[color:var(--color-brand-navy)] hover:border-[color:var(--color-brand-cyan)]"
-              }`}
+              className={`${sectionTabClass(active)} disabled:opacity-50`}
             >
               {TAB_LABEL[k]}
               <span
@@ -800,7 +797,7 @@ function AddBracketDrawer({
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[color:var(--color-brand-bg-mid)] bg-white px-5 py-4">
           <h2
             id="add-bracket-title"
-            className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]"
+            className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]"
           >
             {title}
           </h2>

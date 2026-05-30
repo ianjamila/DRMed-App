@@ -42,7 +42,7 @@ export default async function DailyRevenuePage({
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6">
         <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">Phase 12.C · Admin · Reports</p>
-        <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">Daily revenue</h1>
+        <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">Daily revenue</h1>
         <form className="mt-3 flex flex-wrap items-end gap-2 text-sm" method="get">
           <label>From <input type="date" name="from" defaultValue={from} className="rounded border px-2 py-1" /></label>
           <label>To <input type="date" name="to" defaultValue={to} className="rounded border px-2 py-1" /></label>

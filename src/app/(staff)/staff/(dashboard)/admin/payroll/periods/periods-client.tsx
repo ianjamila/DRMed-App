@@ -420,7 +420,7 @@ function CreatePeriodDialog({
         <div className="flex items-center justify-between border-b border-[color:var(--color-brand-bg-mid)] px-5 py-4">
           <h2
             id="create-period-title"
-            className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]"
+            className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]"
           >
             Create next period
           </h2>

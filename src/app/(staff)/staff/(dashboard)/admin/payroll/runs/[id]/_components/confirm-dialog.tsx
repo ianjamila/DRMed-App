@@ -108,7 +108,7 @@ export function ConfirmDialog({
         className="relative z-10 w-full max-w-[520px] overflow-hidden rounded-xl bg-white shadow-2xl"
       >
         <div className="border-b border-[color:var(--color-brand-bg-mid)] px-5 py-4">
-          <h3 className="font-[family-name:var(--font-heading)] text-base font-extrabold text-[color:var(--color-brand-navy)]">
+          <h3 className="font-heading text-base font-extrabold text-[color:var(--color-brand-navy)]">
             {title}
           </h3>
         </div>

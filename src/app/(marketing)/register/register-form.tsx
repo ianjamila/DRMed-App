@@ -2,9 +2,14 @@
 
 import * as React from "react";
 import { useActionState } from "react";
+import { Input } from "@/components/ui/input";
 import { submitRegistrationAction, type RegistrationResult } from "./actions";
 
-const INPUT = "w-full rounded-md border border-[color:var(--color-brand-bg-mid)] px-3 py-2 text-sm";
+// The text/email/tel/date fields use the shared <Input> (h-11 + focus ring,
+// matching /schedule). Only the <select> keeps this hand-rolled class — with a
+// matching focus ring + 44px min-height for parity.
+const INPUT =
+  "w-full rounded-md border border-[color:var(--color-brand-bg-mid)] px-3 py-2 text-sm min-h-[44px] focus:border-[color:var(--color-brand-cyan)] focus:outline-none focus:ring-2 focus:ring-[color:var(--color-brand-cyan)]/40";
 
 export function RegisterForm() {
   const [state, formAction, pending] = useActionState<RegistrationResult | null, FormData>(
@@ -28,7 +33,7 @@ export function RegisterForm() {
   if (state?.ok && state.matched === false) {
     return (
       <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-6 text-center">
-        <h2 className="font-[family-name:var(--font-heading)] text-xl font-extrabold text-emerald-900">You&apos;re registered.</h2>
+        <h2 className="font-heading text-xl font-extrabold text-emerald-900">You&apos;re registered.</h2>
         <p className="mt-3 text-sm text-emerald-900">Your DRM-ID</p>
         <p className="font-mono text-2xl font-bold text-emerald-900">{state.drm_id}</p>
         <p className="mt-3 text-sm text-emerald-800">
@@ -40,7 +45,7 @@ export function RegisterForm() {
   if (state?.ok && state.matched === true) {
     return (
       <div className="rounded-xl border border-sky-300 bg-sky-50 p-6 text-center">
-        <h2 className="font-[family-name:var(--font-heading)] text-xl font-extrabold text-sky-900">We found your record.</h2>
+        <h2 className="font-heading text-xl font-extrabold text-sky-900">We found your record.</h2>
         <p className="mt-3 text-sm text-sky-900">
           It looks like you&apos;re already in our system — we&apos;ve emailed your DRM-ID to the address on file. Check your inbox,
           or visit reception if you don&apos;t receive it.
@@ -64,19 +69,19 @@ export function RegisterForm() {
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <label className="flex flex-col gap-1 text-sm">
           First name
-          <input name="first_name" required value={f.first_name} onChange={(e) => setF({ ...f, first_name: e.target.value })} className={INPUT} />
+          <Input name="first_name" required value={f.first_name} onChange={(e) => setF({ ...f, first_name: e.target.value })} />
         </label>
         <label className="flex flex-col gap-1 text-sm">
           Last name
-          <input name="last_name" required value={f.last_name} onChange={(e) => setF({ ...f, last_name: e.target.value })} className={INPUT} />
+          <Input name="last_name" required value={f.last_name} onChange={(e) => setF({ ...f, last_name: e.target.value })} />
         </label>
         <label className="flex flex-col gap-1 text-sm">
           Middle name (optional)
-          <input name="middle_name" value={f.middle_name} onChange={(e) => setF({ ...f, middle_name: e.target.value })} className={INPUT} />
+          <Input name="middle_name" value={f.middle_name} onChange={(e) => setF({ ...f, middle_name: e.target.value })} />
         </label>
         <label className="flex flex-col gap-1 text-sm">
           Birthdate
-          <input type="date" name="birthdate" required value={f.birthdate} onChange={(e) => setF({ ...f, birthdate: e.target.value })} className={INPUT} />
+          <Input type="date" name="birthdate" required value={f.birthdate} onChange={(e) => setF({ ...f, birthdate: e.target.value })} />
         </label>
         <label className="flex flex-col gap-1 text-sm">
           Sex
@@ -88,28 +93,29 @@ export function RegisterForm() {
         </label>
         <label className="flex flex-col gap-1 text-sm">
           Phone
-          <input name="phone" required placeholder="+639XXXXXXXXX or 09XX…" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} className={INPUT} />
+          <Input type="tel" name="phone" required placeholder="+639XXXXXXXXX or 09XX…" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} />
         </label>
       </div>
 
       <label className="flex flex-col gap-1 text-sm">
         Email
-        <input type="email" name="email" required value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} className={INPUT} />
+        <Input type="email" name="email" required value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} />
         <span className="text-xs text-[color:var(--color-brand-text-soft)]">We email your DRM-ID here.</span>
       </label>
 
       <label className="flex flex-col gap-1 text-sm">
         Address (optional)
-        <input name="address" value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} className={INPUT} />
+        <Input name="address" value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} />
       </label>
 
       <label className="flex items-start gap-2 text-sm">
         <input
           type="checkbox"
           name="data_privacy_consent"
+          required
           checked={f.data_privacy_consent}
           onChange={(e) => setF({ ...f, data_privacy_consent: e.target.checked })}
-          className="mt-1"
+          className="mt-1 h-5 w-5"
         />
         <span>
           I consent to drmed.ph processing my personal and health information for registration and care under the Philippine

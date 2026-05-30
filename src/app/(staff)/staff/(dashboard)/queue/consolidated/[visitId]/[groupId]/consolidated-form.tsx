@@ -144,7 +144,7 @@ export function ConsolidatedForm(props: Props) {
       </Link>
 
       <header className="mt-3">
-        <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+        <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
           {props.group.name}
         </h1>
         <p className="mt-1 font-semibold text-[color:var(--color-brand-navy)]">
@@ -195,7 +195,7 @@ export function ConsolidatedForm(props: Props) {
             className="space-y-4"
           >
             <div>
-              <h2 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+              <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
                 Enter result values
               </h2>
               <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">

@@ -122,7 +122,7 @@ export default async function HistoricClaimDetail({
           <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
             Historic HMO claim · {claim.source_tab} row {claim.source_row}
           </p>
-          <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+          <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
             {claim.patient_name}
           </h1>
           <p className="mt-2 text-sm text-[color:var(--color-brand-text-soft)]">
@@ -182,7 +182,7 @@ export default async function HistoricClaimDetail({
       )}
 
       <section className="mb-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4">
-        <h2 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+        <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
           Activity
         </h2>
         {auditRows.length === 0 ? (
@@ -231,7 +231,7 @@ export default async function HistoricClaimDetail({
 
       <section className="mb-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4">
         <div className="mb-3 flex items-baseline justify-between">
-          <h2 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+          <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
             All tests / services on {fmtDate(claim.claim_date)}
           </h2>
           <div className="text-xs text-[color:var(--color-brand-text-soft)]">

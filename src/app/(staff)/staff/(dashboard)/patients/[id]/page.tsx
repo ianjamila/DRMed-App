@@ -7,6 +7,7 @@ import { ReissuePinButton } from "./reissue-pin-button";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { getPatientConsentState } from "@/lib/consent/gate";
 import { ConsentPanel } from "./consent/consent-panel";
+import { paymentStatusLabel } from "@/lib/ui/payment-status";
 
 export const metadata = {
   title: "Patient — staff",
@@ -80,7 +81,7 @@ export default async function PatientDetailPage({ params }: Props) {
           <p className="font-mono text-sm text-[color:var(--color-brand-text-soft)]">
             {patient.drm_id}
           </p>
-          <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+          <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
             {patient.last_name}, {patient.first_name}
             {patient.middle_name ? ` ${patient.middle_name}` : ""}
           </h1>
@@ -187,11 +188,11 @@ export default async function PatientDetailPage({ params }: Props) {
       </div>
 
       <section className="mt-8">
-        <h2 className="font-[family-name:var(--font-heading)] text-xl font-extrabold text-[color:var(--color-brand-navy)]">
+        <h2 className="font-heading text-xl font-extrabold text-[color:var(--color-brand-navy)]">
           Visits
         </h2>
         <div className="mt-3 overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
-          <table className="w-full min-w-[640px] text-sm">
+          <table className="w-full text-sm">
             <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
               <tr>
                 <th className="px-4 py-3">Visit #</th>
@@ -236,7 +237,7 @@ export default async function PatientDetailPage({ params }: Props) {
                           PAYMENT_STATUS_STYLE[v.payment_status] ?? ""
                         }`}
                       >
-                        {v.payment_status}
+                        {paymentStatusLabel(v.payment_status)}
                       </span>
                     </td>
                   </tr>

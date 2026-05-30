@@ -88,6 +88,14 @@ export async function submitRegistrationAction(
     return { ok: true, matched: true };
   }
 
+  // Server-side RA-10173 gate: never record a consent row (or finish the
+  // registration) unless data-privacy consent was actually given. The schema
+  // already refines on this, but we re-check the parsed boolean explicitly so
+  // a future schema change can't silently let an unconsented patient through.
+  if (!d.data_privacy_consent) {
+    return { ok: false, error: "Please accept the data-privacy consent to register." };
+  }
+
   // New registrant: record the RA-10173 consent the form required (the
   // sync_patient_consent_state trigger flips patients.consent_current = true),
   // then email + show the DRM-ID.

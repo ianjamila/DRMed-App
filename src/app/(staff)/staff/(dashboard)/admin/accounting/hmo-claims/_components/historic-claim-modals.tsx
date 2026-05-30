@@ -56,7 +56,7 @@ function ModalShell({
       }}
     >
       <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
-        <h2 className="font-[family-name:var(--font-heading)] text-xl font-extrabold text-[color:var(--color-brand-navy)]">
+        <h2 className="font-heading text-xl font-extrabold text-[color:var(--color-brand-navy)]">
           {title}
         </h2>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">{description}</p>

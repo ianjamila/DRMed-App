@@ -34,7 +34,7 @@ function RunNowSection() {
 
   return (
     <section className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
-      <h2 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+      <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
         Run sync now
       </h2>
       <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
@@ -78,7 +78,7 @@ function RewindSection() {
 
   return (
     <section className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
-      <h2 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+      <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
         Rewind & re-sync from a date
       </h2>
       <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">

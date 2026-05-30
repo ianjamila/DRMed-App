@@ -27,7 +27,7 @@ export default async function NewCampaignPage() {
             ← Newsletter
           </Link>
         </p>
-        <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+        <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
           New campaign
         </h1>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">

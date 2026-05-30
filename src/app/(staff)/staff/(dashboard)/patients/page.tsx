@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { formatPhoneLocal } from "@/lib/format/phone";
 import { patientSearchOrClauses } from "@/lib/patients/search";
 import { PatientsSearchInput } from "./search-input";
+import { PageHeader } from "@/components/staff/page-header";
 
 export const metadata = {
   title: "Patients — staff",
@@ -60,29 +61,25 @@ export default async function PatientsPage({ searchParams }: SearchProps) {
 
   return (
     <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
-      <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            Patients
-          </h1>
-          <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
-            Search by DRM-ID, name, phone, or email — filters as you type.
-          </p>
-        </div>
-        <Link
-          href="/staff/patients/new"
-          className="rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
-        >
-          + New patient
-        </Link>
-      </header>
+      <PageHeader
+        title="Patients"
+        subtitle="Search by DRM-ID, name, phone, or email — filters as you type."
+        actions={
+          <Link
+            href="/staff/patients/new"
+            className="rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
+          >
+            + New patient
+          </Link>
+        }
+      />
 
       <div className="mb-6">
         <PatientsSearchInput initialQuery={query} />
       </div>
 
       <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
-        <table className="w-full min-w-[640px] text-sm">
+        <table className="w-full text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
               <th className="px-4 py-3">DRM-ID</th>

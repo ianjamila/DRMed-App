@@ -39,7 +39,7 @@ export default async function EditAccountPage({
         <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
           Phase 12.1 · Admin
         </p>
-        <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+        <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
           Edit account
         </h1>
         <p className="mt-1 font-mono text-xs text-[color:var(--color-brand-text-soft)]">

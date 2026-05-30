@@ -88,7 +88,7 @@ export function EarningDeductionDrawer({
       <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-[color:var(--color-brand-bg-mid)] px-4 py-3">
           <div>
-            <h3 className="font-[family-name:var(--font-heading)] text-base font-extrabold text-[color:var(--color-brand-navy)]">
+            <h3 className="font-heading text-base font-extrabold text-[color:var(--color-brand-navy)]">
               {employeeRun.full_name}
             </h3>
             <p className="text-xs text-[color:var(--color-brand-text-soft)]">
@@ -126,7 +126,7 @@ export function EarningDeductionDrawer({
       >
         <div className="flex items-center justify-between border-b border-[color:var(--color-brand-bg-mid)] px-5 py-4">
           <div className="min-w-0">
-            <h3 className="truncate font-[family-name:var(--font-heading)] text-base font-extrabold text-[color:var(--color-brand-navy)]">
+            <h3 className="truncate font-heading text-base font-extrabold text-[color:var(--color-brand-navy)]">
               {employeeRun.full_name}
             </h3>
             <p className="text-xs text-[color:var(--color-brand-text-soft)]">
@@ -235,7 +235,7 @@ function DrawerBody({
           <span className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             Net pay
           </span>
-          <span className="font-[family-name:var(--font-heading)] text-xl font-extrabold text-[color:var(--color-brand-navy)]">
+          <span className="font-heading text-xl font-extrabold text-[color:var(--color-brand-navy)]">
             {formatPhp(liveNet)}
           </span>
         </div>

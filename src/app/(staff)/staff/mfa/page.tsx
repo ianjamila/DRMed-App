@@ -40,7 +40,7 @@ export default async function StaffMfaPage() {
         <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
           drmed.staff · {session.role}
         </p>
-        <h1 className="mt-1 font-[family-name:var(--font-heading)] text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
+        <h1 className="mt-1 font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
           Two-factor authentication
         </h1>
         <p className="mt-2 text-sm text-[color:var(--color-brand-text-soft)]">

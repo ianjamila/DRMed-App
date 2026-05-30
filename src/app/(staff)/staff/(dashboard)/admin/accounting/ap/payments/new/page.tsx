@@ -26,7 +26,7 @@ export default async function NewPaymentPage() {
         <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
           Phase 12.4 · Admin · AP · Payment
         </p>
-        <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+        <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
           New payment
         </h1>
         <p className="mt-2 text-sm text-[color:var(--color-brand-text-soft)]">

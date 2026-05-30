@@ -82,7 +82,7 @@ export function CoaListClient({ rows }: { rows: CoaRow[] }) {
       ) : (
         grouped.map((group) => (
           <section key={group.label} className="mb-6">
-            <h2 className="mb-2 font-[family-name:var(--font-heading)] text-sm font-extrabold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+            <h2 className="mb-2 font-heading text-sm font-extrabold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
               {group.label} ({group.rows.length})
             </h2>
             <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">

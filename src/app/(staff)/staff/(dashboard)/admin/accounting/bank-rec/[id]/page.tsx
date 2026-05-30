@@ -214,7 +214,7 @@ export default async function BankStatementDetailPage({ params }: PageProps) {
       </Link>
       <header className="mt-3 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+          <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
             {statement.statement_label}
           </h1>
           <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
@@ -259,7 +259,7 @@ export default async function BankStatementDetailPage({ params }: PageProps) {
 
       {unmatched.length > 0 ? (
         <section className="mb-8">
-          <h2 className="mb-3 font-[family-name:var(--font-heading)] text-xl font-bold text-[color:var(--color-brand-navy)]">
+          <h2 className="mb-3 font-heading text-xl font-bold text-[color:var(--color-brand-navy)]">
             Unmatched ({unmatched.length})
           </h2>
           <div className="space-y-3">
@@ -285,7 +285,7 @@ export default async function BankStatementDetailPage({ params }: PageProps) {
       ) : null}
 
       <section>
-        <h2 className="mb-3 font-[family-name:var(--font-heading)] text-xl font-bold text-[color:var(--color-brand-navy)]">
+        <h2 className="mb-3 font-heading text-xl font-bold text-[color:var(--color-brand-navy)]">
           Matched ({matched.length})
         </h2>
         <div className="overflow-hidden rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
@@ -377,7 +377,7 @@ function SummaryTile({
       <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
         {label}
       </p>
-      <p className="mt-2 font-[family-name:var(--font-heading)] text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
+      <p className="mt-2 font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
         {value}
       </p>
       {hint ? (

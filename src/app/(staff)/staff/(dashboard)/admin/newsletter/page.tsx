@@ -73,7 +73,7 @@ export default async function NewsletterAdminPage({ searchParams }: PageProps) {
           <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
             Phase 14 · Admin
           </p>
-          <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+          <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
             Newsletter
           </h1>
           <p className="mt-1 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
@@ -113,7 +113,7 @@ export default async function NewsletterAdminPage({ searchParams }: PageProps) {
 
       <section className="mt-8">
         <div className="flex flex-wrap items-end justify-between gap-3">
-          <h2 className="font-[family-name:var(--font-heading)] text-sm font-extrabold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+          <h2 className="font-heading text-sm font-extrabold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             Subscribers ({filteredCount})
           </h2>
           <nav className="flex gap-2">
@@ -228,7 +228,7 @@ export default async function NewsletterAdminPage({ searchParams }: PageProps) {
       </section>
 
       <section className="mt-8">
-        <h2 className="font-[family-name:var(--font-heading)] text-sm font-extrabold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+        <h2 className="font-heading text-sm font-extrabold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
           Recent campaigns
         </h2>
         {campaigns.length === 0 ? (

@@ -4,6 +4,7 @@ import { useDeferredValue, useMemo, useState } from "react";
 import Link from "next/link";
 import { formatPhp } from "@/lib/marketing/format";
 import type { PublicService, ServiceSection } from "@/lib/marketing/services";
+import { sectionTabClass } from "@/components/staff/section-tabs-style";
 
 type TabKey =
   | "all"
@@ -137,11 +138,7 @@ export function ServicesCatalog({ services }: Props) {
                 role="tab"
                 aria-selected={active}
                 onClick={() => setTab(t.key)}
-                className={
-                  active
-                    ? "rounded-full bg-[color:var(--color-brand-navy)] px-4 py-1.5 text-xs font-bold text-white"
-                    : "rounded-full border border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-1.5 text-xs font-bold text-[color:var(--color-brand-navy)] hover:border-[color:var(--color-brand-cyan)] hover:text-[color:var(--color-brand-cyan)]"
-                }
+                className={sectionTabClass(active)}
               >
                 {t.label}
                 <span
@@ -181,7 +178,7 @@ export function ServicesCatalog({ services }: Props) {
                     </span>
                   ) : null}
                 </div>
-                <h2 className="mt-1 font-[family-name:var(--font-heading)] text-base font-bold text-[color:var(--color-brand-navy)] group-hover:text-[color:var(--color-brand-cyan)]">
+                <h2 className="mt-1 font-heading text-base font-bold text-[color:var(--color-brand-navy)] group-hover:text-[color:var(--color-brand-cyan)]">
                   {service.name}
                 </h2>
                 <div className="mt-4 flex items-center justify-between border-t border-[color:var(--color-brand-bg-mid)] pt-3 text-sm">

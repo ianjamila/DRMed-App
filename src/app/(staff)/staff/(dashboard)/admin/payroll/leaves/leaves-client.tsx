@@ -464,7 +464,7 @@ function ActionDrawer({
           <div>
             <h2
               id="leave-action-title"
-              className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]"
+              className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]"
             >
               {title}
             </h2>

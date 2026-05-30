@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { RestoreButton } from "./restore-button";
+import { PageHeader } from "@/components/staff/page-header";
 
 export const metadata = {
   title: "Staff users — staff",
@@ -85,26 +86,22 @@ export default async function StaffUsersPage() {
 
   return (
     <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
-      <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            Staff users
-          </h1>
-          <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
-            Manage who can sign into the staff portal and what role they have.
-          </p>
-        </div>
-        <Link
-          href="/staff/users/new"
-          className="rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
-        >
-          + New staff user
-        </Link>
-      </header>
+      <PageHeader
+        title="Staff users"
+        subtitle="Manage who can sign into the staff portal and what role they have."
+        actions={
+          <Link
+            href="/staff/users/new"
+            className="rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
+          >
+            + New staff user
+          </Link>
+        }
+      />
 
       {/* Existing users */}
       <section>
-        <h2 className="mb-3 font-[family-name:var(--font-heading)] text-lg font-bold text-[color:var(--color-brand-navy)]">
+        <h2 className="mb-3 font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">
           Existing users
           <span className="ml-2 rounded-md bg-[color:var(--color-brand-bg)] px-2 py-0.5 text-xs font-semibold text-[color:var(--color-brand-text-mid)]">
             {existing.length}
@@ -178,7 +175,7 @@ export default async function StaffUsersPage() {
           add visual noise to a fresh deployment. */}
       {deleted.length > 0 ? (
         <section className="mt-10">
-          <h2 className="mb-3 font-[family-name:var(--font-heading)] text-lg font-bold text-[color:var(--color-brand-navy)]">
+          <h2 className="mb-3 font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">
             Deleted users
             <span className="ml-2 rounded-md bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-900">
               {deleted.length}

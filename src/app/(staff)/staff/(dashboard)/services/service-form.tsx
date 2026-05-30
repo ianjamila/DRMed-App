@@ -383,7 +383,7 @@ export function ServiceForm({ initial, vendors = [] }: Props) {
           >
             <h2
               id="price-confirm-title"
-              className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]"
+              className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]"
             >
               Confirm price change
             </h2>

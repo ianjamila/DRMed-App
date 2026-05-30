@@ -138,7 +138,7 @@ export function StaffMobileNavTrigger({ role, email, fullName }: Props) {
           <Link
             href="/staff"
             onClick={close}
-            className="font-[family-name:var(--font-heading)] text-lg font-extrabold tracking-tight text-[color:var(--color-brand-navy)]"
+            className="font-heading text-lg font-extrabold tracking-tight text-[color:var(--color-brand-navy)]"
           >
             drmed
             <span className="text-[color:var(--color-brand-cyan)]">.staff</span>

@@ -15,7 +15,7 @@ export function PatientShell({ patient, children }: Props) {
         <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
           <Link
             href="/portal"
-            className="font-[family-name:var(--font-heading)] text-lg font-extrabold tracking-tight text-[color:var(--color-brand-navy)]"
+            className="font-heading text-lg font-extrabold tracking-tight text-[color:var(--color-brand-navy)]"
           >
             drmed<span className="text-[color:var(--color-brand-cyan)]">.portal</span>
           </Link>
@@ -40,7 +40,7 @@ export function PatientShell({ patient, children }: Props) {
           </nav>
         </div>
         <div className="mx-auto max-w-5xl border-t border-[color:var(--color-brand-bg-mid)] px-4 py-3 sm:px-6 lg:px-8">
-          <p className="font-[family-name:var(--font-heading)] text-base font-extrabold text-[color:var(--color-brand-navy)]">
+          <p className="font-heading text-base font-extrabold text-[color:var(--color-brand-navy)]">
             {patient.last_name}, {patient.first_name}
             {patient.middle_name ? ` ${patient.middle_name}` : ""}
           </p>

@@ -323,7 +323,7 @@ export function BillFormClient(props: Props) {
         <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
           Phase 12.4 · Admin · AP · Bill
         </p>
-        <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+        <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
           {mode === "create" ? "New bill" : "Edit bill"}
         </h1>
       </header>

@@ -236,7 +236,7 @@ export default async function VendorPerformancePage({ searchParams }: SearchProp
         </Link>
         <div className="mt-3 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+            <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
               Send-out vendor performance
             </h1>
             <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
@@ -458,7 +458,7 @@ function SummaryTile({
       <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
         {label}
       </p>
-      <p className="mt-2 font-[family-name:var(--font-heading)] text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
+      <p className="mt-2 font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
         {value}
       </p>
       {hint ? (

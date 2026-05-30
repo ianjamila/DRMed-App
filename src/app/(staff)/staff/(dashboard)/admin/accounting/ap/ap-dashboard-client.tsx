@@ -93,7 +93,7 @@ export function APDashboardClient({ data }: { data: DashboardData }) {
       {/* Drafts */}
       <Card>
         <CardHeader className="flex flex-row items-baseline justify-between gap-2 space-y-0">
-          <CardTitle className="font-[family-name:var(--font-heading)] text-lg font-bold">Drafts</CardTitle>
+          <CardTitle className="font-heading text-lg font-bold">Drafts</CardTitle>
           <Link
             href="/staff/admin/accounting/ap/bills?status=draft"
             className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)] hover:underline"
@@ -116,7 +116,7 @@ export function APDashboardClient({ data }: { data: DashboardData }) {
       {/* Upcoming recurring */}
       <Card>
         <CardHeader className="flex flex-row items-baseline justify-between gap-2 space-y-0">
-          <CardTitle className="font-[family-name:var(--font-heading)] text-lg font-bold">Upcoming recurring (next 7 days)</CardTitle>
+          <CardTitle className="font-heading text-lg font-bold">Upcoming recurring (next 7 days)</CardTitle>
           <Link
             href="/staff/admin/accounting/ap/recurring"
             className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)] hover:underline"
@@ -156,7 +156,7 @@ export function APDashboardClient({ data }: { data: DashboardData }) {
       {/* Top vendors */}
       <Card>
         <CardHeader className="flex flex-row items-baseline justify-between gap-2 space-y-0">
-          <CardTitle className="font-[family-name:var(--font-heading)] text-lg font-bold">Top 5 vendors by outstanding</CardTitle>
+          <CardTitle className="font-heading text-lg font-bold">Top 5 vendors by outstanding</CardTitle>
           <Link
             href="/staff/admin/accounting/ap/vendors"
             className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)] hover:underline"
@@ -188,7 +188,7 @@ export function APDashboardClient({ data }: { data: DashboardData }) {
       {/* WT MTD */}
       <Card>
         <CardHeader className="flex flex-row items-baseline justify-between gap-2 space-y-0">
-          <CardTitle className="font-[family-name:var(--font-heading)] text-lg font-bold">Withholding tax this month</CardTitle>
+          <CardTitle className="font-heading text-lg font-bold">Withholding tax this month</CardTitle>
         </CardHeader>
         <CardContent>
           <p className="font-mono text-2xl tabular-nums text-[color:var(--color-brand-navy)]">

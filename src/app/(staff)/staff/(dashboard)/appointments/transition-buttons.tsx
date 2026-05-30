@@ -63,8 +63,8 @@ export function TransitionButtons({
           <Button
             type="button"
             size="sm"
+            variant="success"
             disabled={pending}
-            className="bg-emerald-600 text-white hover:bg-emerald-700"
             onClick={() => fire(markArrivedAction)}
           >
             {pending ? "…" : `Mark arrived${groupSuffix}`}
@@ -148,7 +148,7 @@ export function TransitionButtons({
         <Button
           type="button"
           size="sm"
-          variant="outline"
+          variant="destructive"
           disabled={pending}
           onClick={() => {
             if (
@@ -161,7 +161,6 @@ export function TransitionButtons({
               return;
             fire(deleteAppointmentAction);
           }}
-          className="border-red-200 text-red-700 hover:bg-red-50"
         >
           Delete
         </Button>

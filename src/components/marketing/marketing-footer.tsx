@@ -8,7 +8,7 @@ export function MarketingFooter() {
       <div className="border-b border-white/10">
         <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-8 sm:px-6 md:flex-row md:items-center md:justify-between lg:px-8">
           <div className="max-w-md">
-            <p className="font-[family-name:var(--font-heading)] text-lg font-extrabold">
+            <p className="font-heading text-lg font-extrabold">
               Stay in the loop
             </p>
             <p className="mt-1 text-sm text-white/70">
@@ -29,7 +29,7 @@ export function MarketingFooter() {
 
       <div className="mx-auto grid max-w-7xl gap-10 px-4 py-12 sm:px-6 md:grid-cols-4 lg:px-8">
         <div className="md:col-span-2">
-          <p className="font-[family-name:var(--font-heading)] text-2xl font-extrabold tracking-tight">
+          <p className="font-heading text-2xl font-extrabold tracking-tight">
             drmed<span className="text-[color:var(--color-brand-cyan)]">.ph</span>
           </p>
           <p className="mt-3 max-w-md text-sm text-white/70">

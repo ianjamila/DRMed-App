@@ -7,6 +7,7 @@ import { RealtimeRefresher } from "@/components/staff/realtime-refresher";
 import { TransitionButtons } from "./transition-buttons";
 import { NewAppointmentSheet, type ServiceOption, type PhysicianOption } from "./new-appointment-sheet";
 import { RegistrationLinkButton } from "@/components/staff/registration-link-button";
+import { PageHeader } from "@/components/staff/page-header";
 
 export const metadata = {
   title: "Appointments — staff",
@@ -227,22 +228,16 @@ export default async function AppointmentsPage() {
           { table: "appointments", event: "UPDATE" },
         ]}
       />
-      <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            Appointments
-          </h1>
-          <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
-            Public bookings from /schedule plus staff-created appointments.
-            Multi-service requests are grouped — one card with all picked
-            tests, single set of action buttons.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <RegistrationLinkButton url={registerUrl} />
-          <NewAppointmentSheet services={services} physicians={physicians} selfBookUrl={selfBookUrl} />
-        </div>
-      </header>
+      <PageHeader
+        title="Appointments"
+        subtitle="Public bookings from /schedule plus staff-created appointments. Multi-service requests are grouped — one card with all picked tests, single set of action buttons."
+        actions={
+          <>
+            <RegistrationLinkButton url={registerUrl} />
+            <NewAppointmentSheet services={services} physicians={physicians} selfBookUrl={selfBookUrl} />
+          </>
+        }
+      />
 
       <Section
         title={`Pending callback (${groupRows(pending).length})`}
@@ -279,11 +274,11 @@ function Section({
 }) {
   return (
     <section className="mt-6">
-      <h2 className="mb-3 font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+      <h2 className="mb-3 font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
         {title}
       </h2>
       <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
-        <table className="w-full min-w-[820px] text-sm">
+        <table className="w-full text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
               <th className="px-4 py-3">Requested</th>

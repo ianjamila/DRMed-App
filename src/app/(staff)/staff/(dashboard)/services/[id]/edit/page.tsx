@@ -81,7 +81,7 @@ export default async function EditServicePage({ params }: Props) {
       >
         ← Services
       </Link>
-      <h1 className="mt-3 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+      <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
         Edit service
       </h1>
       <p className="mt-1 font-mono text-xs text-[color:var(--color-brand-text-soft)]">
@@ -93,7 +93,7 @@ export default async function EditServicePage({ params }: Props) {
       </div>
 
       <section className="mt-8">
-        <h2 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+        <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
           Price history
         </h2>
         <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">

@@ -153,7 +153,7 @@ export default async function HomePage() {
               <span className="h-px w-8 bg-[color:var(--color-brand-cyan)]" />
               Premier Diagnostic Care · Quezon City
             </p>
-            <h1 className="font-[family-name:var(--font-heading)] text-4xl font-extrabold leading-tight text-[color:var(--color-brand-navy)] sm:text-5xl md:text-6xl">
+            <h1 className="font-heading text-4xl font-extrabold leading-tight text-[color:var(--color-brand-navy)] sm:text-5xl md:text-6xl">
               Your Family&apos;s
               <br />
               Well-Being is{" "}
@@ -188,7 +188,7 @@ export default async function HomePage() {
             <dl className="mt-12 grid grid-cols-2 gap-6 border-t border-[color:var(--color-brand-bg-mid)] pt-8 sm:grid-cols-4">
               {HERO_STATS.map((stat) => (
                 <div key={stat.label}>
-                  <dt className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+                  <dt className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
                     {stat.value}
                   </dt>
                   <dd className="mt-1 text-xs font-medium leading-tight text-[color:var(--color-brand-text-soft)]">
@@ -214,7 +214,7 @@ export default async function HomePage() {
                 <p className="text-[10px] font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
                   Accredited Facility
                 </p>
-                <p className="mt-1 font-[family-name:var(--font-heading)] text-lg font-extrabold">
+                <p className="mt-1 font-heading text-lg font-extrabold">
                   10 HMO Partners
                 </p>
                 <p className="text-xs text-white/70">Cashless · No hassle</p>
@@ -223,7 +223,7 @@ export default async function HomePage() {
                 <p className="text-[10px] font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
                   Average Turnaround
                 </p>
-                <p className="mt-1 font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+                <p className="mt-1 font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
                   24 Hours
                 </p>
                 <p className="text-xs text-[color:var(--color-brand-text-soft)]">
@@ -267,7 +267,7 @@ export default async function HomePage() {
               <span className="h-px w-8 bg-[color:var(--color-brand-cyan)]" />
               Clinic & Lab Services
             </p>
-            <h2 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)] md:text-5xl">
+            <h2 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)] md:text-5xl">
               Everything Under
               <br />
               <span className="text-[color:var(--color-brand-cyan)]">
@@ -292,7 +292,7 @@ export default async function HomePage() {
               <span className="text-3xl" aria-hidden>
                 {service.icon}
               </span>
-              <h3 className="mt-4 font-[family-name:var(--font-heading)] text-lg font-bold text-[color:var(--color-brand-navy)]">
+              <h3 className="mt-4 font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">
                 {service.name}
               </h3>
               <p className="mt-2 text-sm leading-relaxed text-[color:var(--color-brand-text-soft)]">
@@ -331,7 +331,7 @@ export default async function HomePage() {
                 <span className="h-px w-8 bg-[color:var(--color-brand-cyan)]" />
                 Health Packages
               </p>
-              <h2 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold md:text-5xl">
+              <h2 className="font-heading text-3xl font-extrabold md:text-5xl">
                 Diagnostic{" "}
                 <span className="text-[color:var(--color-brand-cyan)]">
                   Packages
@@ -368,7 +368,7 @@ export default async function HomePage() {
                 <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
                   {pkg.type}
                 </p>
-                <h3 className="mt-3 font-[family-name:var(--font-heading)] text-lg font-bold leading-tight">
+                <h3 className="mt-3 font-heading text-lg font-bold leading-tight">
                   {pkg.title}
                 </h3>
                 <p className="mt-2 text-sm text-white/70">{pkg.desc}</p>
@@ -401,7 +401,7 @@ export default async function HomePage() {
             <span className="h-px w-8 bg-[color:var(--color-brand-cyan)]" />
             Our Specialists
           </p>
-          <h2 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)] md:text-5xl">
+          <h2 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)] md:text-5xl">
             Meet Our{" "}
             <span className="text-[color:var(--color-brand-cyan)]">Doctors</span>
           </h2>
@@ -419,7 +419,7 @@ export default async function HomePage() {
               className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6"
             >
               <div className="flex items-baseline justify-between">
-                <h3 className="font-[family-name:var(--font-heading)] text-lg font-bold text-[color:var(--color-brand-navy)]">
+                <h3 className="font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">
                   {group.title}
                 </h3>
                 <span className="text-xs font-medium text-[color:var(--color-brand-cyan)]">
@@ -465,7 +465,7 @@ export default async function HomePage() {
               <span className="h-px w-8 bg-[color:var(--color-brand-cyan)]" />
               Patient Portal
             </p>
-            <h2 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)] md:text-5xl">
+            <h2 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)] md:text-5xl">
               Your Results,{" "}
               <span className="text-[color:var(--color-brand-cyan)]">
                 Securely Accessible
@@ -487,7 +487,7 @@ export default async function HomePage() {
                 <span className="text-2xl" aria-hidden>
                   {feat.icon}
                 </span>
-                <h3 className="mt-4 font-[family-name:var(--font-heading)] text-lg font-bold text-[color:var(--color-brand-navy)]">
+                <h3 className="mt-4 font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">
                   {feat.title}
                 </h3>
                 <p className="mt-2 text-sm leading-relaxed text-[color:var(--color-brand-text-soft)]">
@@ -503,7 +503,7 @@ export default async function HomePage() {
                 <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
                   Secure Patient Sign-In
                 </p>
-                <h3 className="mt-2 font-[family-name:var(--font-heading)] text-2xl font-extrabold">
+                <h3 className="mt-2 font-heading text-2xl font-extrabold">
                   Access My Results
                 </h3>
                 <p className="mt-1 text-sm text-white/70">
@@ -532,7 +532,7 @@ export default async function HomePage() {
             Accredited HMO Partners
             <span className="h-px w-8 bg-[color:var(--color-brand-cyan)]" />
           </p>
-          <h2 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)] md:text-5xl">
+          <h2 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)] md:text-5xl">
             We Accept Your{" "}
             <span className="text-[color:var(--color-brand-cyan)]">HMO</span>
           </h2>
@@ -551,7 +551,7 @@ export default async function HomePage() {
             <span className="h-px w-8 bg-[color:var(--color-brand-cyan)]" />
             Payment Options
           </p>
-          <h2 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)] md:text-5xl">
+          <h2 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)] md:text-5xl">
             100%{" "}
             <span className="text-[color:var(--color-brand-cyan)]">
               Convenient
@@ -574,7 +574,7 @@ export default async function HomePage() {
               <span className="text-3xl" aria-hidden>
                 {method.icon}
               </span>
-              <h3 className="mt-4 font-[family-name:var(--font-heading)] text-lg font-bold text-[color:var(--color-brand-navy)]">
+              <h3 className="mt-4 font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">
                 {method.title}
               </h3>
               <p className="mt-2 text-sm leading-relaxed text-[color:var(--color-brand-text-soft)]">
@@ -601,7 +601,7 @@ export default async function HomePage() {
               <span className="h-px w-8 bg-[color:var(--color-brand-cyan)]" />
               Reach Us
             </p>
-            <h2 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold md:text-5xl">
+            <h2 className="font-heading text-3xl font-extrabold md:text-5xl">
               Get in{" "}
               <span className="text-[color:var(--color-brand-cyan)]">
                 Touch
@@ -694,7 +694,7 @@ export default async function HomePage() {
             <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
               Inquire / Book
             </p>
-            <h3 className="mt-2 font-[family-name:var(--font-heading)] text-xl font-extrabold text-[color:var(--color-brand-navy)]">
+            <h3 className="mt-2 font-heading text-xl font-extrabold text-[color:var(--color-brand-navy)]">
               Send us a Message
             </h3>
             <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">

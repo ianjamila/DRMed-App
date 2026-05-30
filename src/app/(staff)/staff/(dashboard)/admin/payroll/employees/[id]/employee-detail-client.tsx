@@ -168,7 +168,7 @@ export function EmployeeDetailClient(props: Props) {
             ← Employees
           </Link>
         </p>
-        <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+        <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
           {employee.full_name}
         </h1>
         <HeaderFacts employee={employee} />
@@ -374,7 +374,7 @@ function OverviewTab({ employee }: { employee: EmployeeDetail }) {
 
   return (
     <section className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
-      <h2 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+      <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
         Employment details
       </h2>
       <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
@@ -561,7 +561,7 @@ function AllowancesTab({
   return (
     <section className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+        <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
           Allowances
         </h2>
         <button
@@ -778,7 +778,7 @@ function LoansTab({
   return (
     <section className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+        <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
           Loans
         </h2>
         <button
@@ -1172,7 +1172,7 @@ function LeavesTab({
       </div>
 
       <div>
-        <h3 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+        <h3 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
           Period history (last 10)
         </h3>
         <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
@@ -1234,7 +1234,7 @@ function LeavesTab({
       </div>
 
       <div>
-        <h3 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+        <h3 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
           Recent OT slips
         </h3>
         <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
@@ -1659,7 +1659,7 @@ function Dialog({
         className="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+        <h3 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
           {title}
         </h3>
         <div className="mt-3">{children}</div>

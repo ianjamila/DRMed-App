@@ -107,7 +107,7 @@ export default async function SalesPage({ searchParams }: PageProps) {
             ← Gift codes
           </Link>
         </p>
-        <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+        <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
           Gift code sales
         </h1>
         <p className="mt-1 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
@@ -170,7 +170,7 @@ export default async function SalesPage({ searchParams }: PageProps) {
 
       {daily.length > 0 ? (
         <section className="mb-6">
-          <h2 className="mb-2 font-[family-name:var(--font-heading)] text-sm font-extrabold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+          <h2 className="mb-2 font-heading text-sm font-extrabold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             Per day
           </h2>
           <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
@@ -201,7 +201,7 @@ export default async function SalesPage({ searchParams }: PageProps) {
       ) : null}
 
       <section>
-        <h2 className="mb-2 font-[family-name:var(--font-heading)] text-sm font-extrabold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+        <h2 className="mb-2 font-heading text-sm font-extrabold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
           Individual sales ({sales.length})
         </h2>
         <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
@@ -302,7 +302,7 @@ function Stat({ label, value }: { label: string; value: string }) {
       <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
         {label}
       </p>
-      <p className="mt-1 font-[family-name:var(--font-heading)] text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
+      <p className="mt-1 font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
         {value}
       </p>
     </div>

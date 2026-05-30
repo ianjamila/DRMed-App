@@ -3,6 +3,7 @@
 import { useActionState, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {
@@ -93,27 +94,29 @@ export function InquiryForm({
   return (
     <form action={formAction} className="grid gap-5">
       {isLocked ? (
-        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
-          <p className="font-semibold">This inquiry is confirmed.</p>
-          <p className="mt-1">
-            {initial?.linked_appointment_id ? (
-              <Link
-                href={`/staff/appointments`}
-                className="underline hover:no-underline"
-              >
-                Open the linked appointment
-              </Link>
-            ) : initial?.linked_visit_id ? (
-              <Link
-                href={`/staff/visits`}
-                className="underline hover:no-underline"
-              >
-                Open the linked visit
-              </Link>
-            ) : null}
-            {" "}— editing other fields below is fine; status stays confirmed.
-          </p>
-        </div>
+        <Alert variant="success">
+          <AlertTitle>This inquiry is confirmed.</AlertTitle>
+          <AlertDescription>
+            <p>
+              {initial?.linked_appointment_id ? (
+                <Link
+                  href={`/staff/appointments`}
+                  className="underline hover:no-underline"
+                >
+                  Open the linked appointment
+                </Link>
+              ) : initial?.linked_visit_id ? (
+                <Link
+                  href={`/staff/visits`}
+                  className="underline hover:no-underline"
+                >
+                  Open the linked visit
+                </Link>
+              ) : null}
+              {" "}— editing other fields below is fine; status stays confirmed.
+            </p>
+          </AlertDescription>
+        </Alert>
       ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2">

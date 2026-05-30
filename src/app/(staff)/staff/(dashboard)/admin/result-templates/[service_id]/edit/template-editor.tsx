@@ -141,7 +141,7 @@ export function TemplateEditor(props: Props) {
         <p className="font-mono text-xs text-[color:var(--color-brand-text-soft)]">
           {props.serviceCode}
         </p>
-        <h2 className="mt-0.5 font-[family-name:var(--font-heading)] text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
+        <h2 className="mt-0.5 font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
           {props.serviceName}
         </h2>
         <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
@@ -150,7 +150,7 @@ export function TemplateEditor(props: Props) {
       </header>
 
       <section className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
-        <h3 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+        <h3 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
           Template settings
         </h3>
         <div className="mt-4 grid gap-4">
@@ -206,7 +206,7 @@ export function TemplateEditor(props: Props) {
 
       <section className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
         <div className="mb-3 flex items-center justify-between">
-          <h3 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+          <h3 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
             Parameters ({params.length})
           </h3>
           <Button

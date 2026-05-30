@@ -15,7 +15,7 @@ export function PlannedCard({ label, teaser, module }: PlannedCardProps) {
       <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
         {label}
       </p>
-      <p className="mt-2 font-[family-name:var(--font-heading)] text-2xl font-bold text-[color:var(--color-brand-navy)]/60">
+      <p className="mt-2 font-heading text-2xl font-bold text-[color:var(--color-brand-navy)]/60">
         —
       </p>
       <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">{teaser}</p>

@@ -98,7 +98,7 @@ export default async function CashFlowPage({ searchParams }: SearchProps) {
   if (cashAccountIds.length === 0) {
     return (
       <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
-        <h1 className="font-[family-name:var(--font-heading)] text-2xl font-bold text-[color:var(--color-brand-navy)]">
+        <h1 className="font-heading text-2xl font-bold text-[color:var(--color-brand-navy)]">
           Cash flow
         </h1>
         <p className="mt-4 text-sm text-[color:var(--color-brand-text-soft)]">
@@ -212,7 +212,7 @@ export default async function CashFlowPage({ searchParams }: SearchProps) {
         >
           ← Dashboard
         </Link>
-        <h1 className="mt-3 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+        <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
           Financial statements
         </h1>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
@@ -467,7 +467,7 @@ function SummaryTile({
         {label}
       </p>
       <p
-        className={`mt-2 whitespace-nowrap font-[family-name:var(--font-heading)] text-2xl font-extrabold ${
+        className={`mt-2 whitespace-nowrap font-heading text-2xl font-extrabold ${
           valueNegative ? "text-red-600" : "text-[color:var(--color-brand-navy)]"
         }`}
       >

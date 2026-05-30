@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { PricesTable, type PriceRow } from "./prices-table";
+import { PageHeader } from "@/components/staff/page-header";
 
 export const metadata = {
   title: "Prices — staff",
@@ -87,16 +88,11 @@ export default async function PricesAdminPage() {
   });
 
   return (
-    <div className="mx-auto max-w-[1400px] px-4 py-8 sm:px-6 lg:px-8">
-      <header className="mb-6">
-        <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Prices
-        </h1>
-        <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
-          Edit DRMed, HMO, and Senior/PWD pricing for every service. Each change
-          is recorded automatically — click any row to see its full history.
-        </p>
-      </header>
+    <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
+      <PageHeader
+        title="Prices"
+        subtitle="Edit DRMed, HMO, and Senior/PWD pricing for every service. Each change is recorded automatically — click any row to see its full history."
+      />
 
       <PricesTable rows={rows} />
     </div>

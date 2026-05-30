@@ -28,7 +28,7 @@ export default async function HmoProvidersIndex() {
           <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
             Phase 7B · Admin
           </p>
-          <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+          <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
             HMO providers
           </h1>
           <p className="mt-2 max-w-xl text-sm text-[color:var(--color-brand-text-soft)]">
@@ -79,7 +79,7 @@ function Section({
 }) {
   return (
     <section className="mt-2">
-      <h2 className="font-[family-name:var(--font-heading)] text-sm font-extrabold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+      <h2 className="font-heading text-sm font-extrabold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
         {title}
       </h2>
       {rows.length === 0 ? (
