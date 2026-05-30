@@ -119,10 +119,9 @@ export default async function GroupReceiptPage({ params }: Props) {
               </div>
               <div className="sm:text-right">
                 <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-                  Visit
+                  Date
                 </p>
-                <p className="mt-0.5 font-semibold">#{slip.visit.visit_number}</p>
-                <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+                <p className="mt-0.5 font-semibold">
                   {new Date(slip.visit.visit_date).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })}
                 </p>
               </div>
