@@ -145,6 +145,16 @@
   }
 }
 
+/* Accessible inline link: navy + underline (cyan fails AA on small text). */
+.link-brand {
+  color: var(--color-brand-navy);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.link-brand:hover {
+  color: var(--color-brand-cyan);
+}
+
 /* HMO partners marquee — paired duplicate markup so -50% equals one full cycle. */
 @keyframes hmo-ticker-scroll {
   from { transform: translateX(0); }
