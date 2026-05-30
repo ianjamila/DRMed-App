@@ -320,42 +320,60 @@ export function PricesTable({ rows }: Props) {
                         </div>
                       </td>
                       <td className="px-4 py-2 align-middle">
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          value={edit.price}
-                          onChange={(e) =>
-                            patchEdit(r.id, { price: e.target.value })
-                          }
-                          className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 text-right text-sm font-semibold focus:border-[color:var(--color-brand-cyan)] focus:outline-none focus:ring-1 focus:ring-[color:var(--color-brand-cyan)]"
-                        />
+                        {r.kind === "doctor_consultation" ? (
+                          <span className="text-xs text-[color:var(--color-brand-text-soft)]">
+                            priced at counter
+                          </span>
+                        ) : (
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={edit.price}
+                            onChange={(e) =>
+                              patchEdit(r.id, { price: e.target.value })
+                            }
+                            className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 text-right text-sm font-semibold focus:border-[color:var(--color-brand-cyan)] focus:outline-none focus:ring-1 focus:ring-[color:var(--color-brand-cyan)]"
+                          />
+                        )}
                       </td>
                       <td className="px-4 py-2 align-middle">
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          placeholder="—"
-                          value={edit.hmo}
-                          onChange={(e) =>
-                            patchEdit(r.id, { hmo: e.target.value })
-                          }
-                          className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 text-right text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none focus:ring-1 focus:ring-[color:var(--color-brand-cyan)]"
-                        />
+                        {r.kind === "doctor_consultation" ? (
+                          <span className="text-xs text-[color:var(--color-brand-text-soft)]">
+                            —
+                          </span>
+                        ) : (
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            placeholder="—"
+                            value={edit.hmo}
+                            onChange={(e) =>
+                              patchEdit(r.id, { hmo: e.target.value })
+                            }
+                            className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 text-right text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none focus:ring-1 focus:ring-[color:var(--color-brand-cyan)]"
+                          />
+                        )}
                       </td>
                       <td className="px-4 py-2 align-middle">
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          placeholder="—"
-                          value={edit.senior}
-                          onChange={(e) =>
-                            patchEdit(r.id, { senior: e.target.value })
-                          }
-                          className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 text-right text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none focus:ring-1 focus:ring-[color:var(--color-brand-cyan)]"
-                        />
+                        {r.kind === "doctor_consultation" ? (
+                          <span className="text-xs text-[color:var(--color-brand-text-soft)]">
+                            —
+                          </span>
+                        ) : (
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            placeholder="—"
+                            value={edit.senior}
+                            onChange={(e) =>
+                              patchEdit(r.id, { senior: e.target.value })
+                            }
+                            className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 text-right text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none focus:ring-1 focus:ring-[color:var(--color-brand-cyan)]"
+                          />
+                        )}
                       </td>
                       <td className="px-4 py-2 align-middle text-xs text-[color:var(--color-brand-text-mid)]">
                         {r.last_changed_at ? (
