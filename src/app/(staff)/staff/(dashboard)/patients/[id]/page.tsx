@@ -7,6 +7,7 @@ import { ReissuePinButton } from "./reissue-pin-button";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { getPatientConsentState } from "@/lib/consent/gate";
 import { ConsentPanel } from "./consent/consent-panel";
+import { paymentStatusLabel } from "@/lib/ui/payment-status";
 
 export const metadata = {
   title: "Patient — staff",
@@ -236,7 +237,7 @@ export default async function PatientDetailPage({ params }: Props) {
                           PAYMENT_STATUS_STYLE[v.payment_status] ?? ""
                         }`}
                       >
-                        {v.payment_status}
+                        {paymentStatusLabel(v.payment_status)}
                       </span>
                     </td>
                   </tr>

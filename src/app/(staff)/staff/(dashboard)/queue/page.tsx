@@ -4,6 +4,7 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { queueTitleForRole, sectionsForRole } from "@/lib/auth/role-sections";
 import { RealtimeRefresher } from "@/components/staff/realtime-refresher";
 import { ClaimButton } from "./claim-button";
+import { sectionTabClass } from "@/components/staff/section-tabs-style";
 
 // ---------------------------------------------------------------------------
 // Queue card types — after the grouping fold
@@ -384,14 +385,7 @@ function FilterTab({
   active: boolean;
 }) {
   return (
-    <Link
-      href={href}
-      className={`rounded-md px-3 py-1.5 font-semibold ${
-        active
-          ? "bg-[color:var(--color-brand-navy)] text-white"
-          : "border border-[color:var(--color-brand-bg-mid)] text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-bg)]"
-      }`}
-    >
+    <Link href={href} className={sectionTabClass(active)}>
       {label}
     </Link>
   );

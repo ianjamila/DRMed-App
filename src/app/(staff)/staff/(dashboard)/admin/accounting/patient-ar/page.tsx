@@ -6,6 +6,7 @@ import {
   sectionTabsNavClass,
   sectionTabClass,
 } from "@/components/staff/section-tabs-style";
+import { paymentStatusLabel } from "@/lib/ui/payment-status";
 
 export const metadata = { title: "Patient AR aging — staff" };
 export const dynamic = "force-dynamic";
@@ -266,7 +267,7 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
                         <span
                           className={`inline-block rounded-full border px-2 py-0.5 text-xs font-medium ${statusBadge(v.payment_status)}`}
                         >
-                          {v.payment_status}
+                          {paymentStatusLabel(v.payment_status)}
                         </span>
                       </td>
                     </tr>

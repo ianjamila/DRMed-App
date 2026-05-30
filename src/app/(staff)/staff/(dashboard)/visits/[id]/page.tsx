@@ -9,6 +9,7 @@ import { ReleaseButton } from "./release-button";
 import { MarkDoneButton } from "./mark-done-button";
 import { VoidPaymentDialog } from "../../payments/[id]/void/void-payment-dialog";
 import { isConsentGateRequired, getPatientConsentState } from "@/lib/consent/gate";
+import { paymentStatusLabel } from "@/lib/ui/payment-status";
 
 export const metadata = {
   title: "Visit — staff",
@@ -290,7 +291,7 @@ export default async function VisitDetailPage({ params }: Props) {
                 PAYMENT_STATUS_STYLE[visit.payment_status] ?? ""
               }`}
             >
-              {visit.payment_status}
+              {paymentStatusLabel(visit.payment_status)}
             </span>
           </p>
         </div>

@@ -3,6 +3,7 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { VisitsTabs } from "./_components/visits-tabs";
+import { paymentStatusLabel } from "@/lib/ui/payment-status";
 
 export const metadata = {
   title: "Visits — staff",
@@ -262,7 +263,7 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
                         <span
                           className={`inline-block rounded-full border px-2 py-0.5 text-xs font-medium ${STATUS_BADGE[status] ?? ""}`}
                         >
-                          {status}
+                          {paymentStatusLabel(status)}
                         </span>
                       </td>
                     </tr>
