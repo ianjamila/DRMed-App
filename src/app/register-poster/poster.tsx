@@ -58,7 +58,10 @@ export function RegisterPoster({ url }: { url: string }) {
         </p>
       </div>
 
-      <style>{`@media print { .no-print { display: none !important; } @page { margin: 1.2cm; } }`}</style>
+      {/* @page margin:0 suppresses the browser's auto print headers/footers
+          (date, title, URL, page numbers); the container's p-8 keeps a clean
+          white border so content isn't edge-to-edge. */}
+      <style>{`@page { margin: 0; } @media print { .no-print { display: none !important; } }`}</style>
     </div>
   );
 }
