@@ -65,7 +65,7 @@ export default async function SchedulePage({ params }: PageProps) {
             ← {physician.full_name}
           </Link>
         </p>
-        <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+        <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
           Schedule
         </h1>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
@@ -75,7 +75,7 @@ export default async function SchedulePage({ params }: PageProps) {
       </header>
 
       <section className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
-        <h2 className="font-[family-name:var(--font-heading)] text-sm font-extrabold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+        <h2 className="font-heading text-sm font-extrabold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
           Recurring blocks ({blocks.length})
         </h2>
 
@@ -117,7 +117,7 @@ export default async function SchedulePage({ params }: PageProps) {
       </section>
 
       <section className="mt-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
-        <h2 className="font-[family-name:var(--font-heading)] text-sm font-extrabold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+        <h2 className="font-heading text-sm font-extrabold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
           Upcoming overrides ({overrides.length})
         </h2>
 

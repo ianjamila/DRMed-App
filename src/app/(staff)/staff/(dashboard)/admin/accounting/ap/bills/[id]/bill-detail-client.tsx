@@ -175,7 +175,7 @@ export function BillDetailClient({
           <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
             Phase 12.4 · Admin · AP · Bill
           </p>
-          <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+          <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
             {bill.bill_number}
           </h1>
           <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
@@ -294,7 +294,7 @@ export function BillDetailClient({
 
       {/* LINES */}
       <section>
-        <h2 className="mb-2 font-[family-name:var(--font-heading)] text-lg font-bold text-[color:var(--color-brand-navy)]">
+        <h2 className="mb-2 font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">
           Lines
         </h2>
         <div className="overflow-x-auto rounded-md border border-gray-200">
@@ -331,7 +331,7 @@ export function BillDetailClient({
       {/* PAYMENTS */}
       {bill.bill_payment_allocations.length > 0 && (
         <section>
-          <h2 className="mb-2 font-[family-name:var(--font-heading)] text-lg font-bold text-[color:var(--color-brand-navy)]">
+          <h2 className="mb-2 font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">
             Payments
           </h2>
           <ul className="divide-y divide-gray-100 rounded-md border border-gray-200">
@@ -373,7 +373,7 @@ export function BillDetailClient({
 
       {/* ATTACHMENTS */}
       <section>
-        <h2 className="mb-2 font-[family-name:var(--font-heading)] text-lg font-bold text-[color:var(--color-brand-navy)]">
+        <h2 className="mb-2 font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">
           Attachments
         </h2>
         {bill.bill_attachments.length === 0 ? (

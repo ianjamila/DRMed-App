@@ -73,7 +73,7 @@ function PatientSlot({
         patient ? borderTone : "border-[color:var(--color-brand-bg-mid)] bg-white"
       }`}
     >
-      <h2 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+      <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
         {title}
       </h2>
       <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
@@ -162,7 +162,7 @@ function ConfirmMerge({
   if (state?.ok) {
     return (
       <section className="rounded-xl border border-emerald-300 bg-emerald-50 p-5">
-        <h2 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-emerald-900">
+        <h2 className="font-heading text-lg font-extrabold text-emerald-900">
           Merge complete
         </h2>
         <p className="mt-2 text-sm text-emerald-900">
@@ -180,7 +180,7 @@ function ConfirmMerge({
 
   return (
     <section className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
-      <h2 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+      <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
         Confirm merge
       </h2>
       <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">

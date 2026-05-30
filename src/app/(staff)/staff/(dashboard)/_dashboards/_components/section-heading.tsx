@@ -20,7 +20,7 @@ export function SectionHeading({
   if (!children) {
     return (
       <div className="mb-3 mt-8 first:mt-0">
-        <h2 className="font-[family-name:var(--font-heading)] text-xl font-bold text-[color:var(--color-brand-navy)]">
+        <h2 className="font-heading text-xl font-bold text-[color:var(--color-brand-navy)]">
           {title}
         </h2>
         {subtitle ? (
@@ -34,7 +34,7 @@ export function SectionHeading({
     return (
       <section className="mt-8 first:mt-0">
         <div className="mb-3">
-          <h2 className="font-[family-name:var(--font-heading)] text-xl font-bold text-[color:var(--color-brand-navy)]">
+          <h2 className="font-heading text-xl font-bold text-[color:var(--color-brand-navy)]">
             {title}
           </h2>
           {subtitle ? (
@@ -61,7 +61,7 @@ export function SectionHeading({
           ▸
         </span>
         <div>
-          <h2 className="font-[family-name:var(--font-heading)] text-xl font-bold text-[color:var(--color-brand-navy)]">
+          <h2 className="font-heading text-xl font-bold text-[color:var(--color-brand-navy)]">
             {title}
           </h2>
           {subtitle ? (

@@ -80,7 +80,7 @@ export function CashDrawerClient(props: {
     <main className="mx-auto max-w-3xl px-4 py-6 sm:px-6">
       <PaymentsTabs />
       <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h1 className="font-[family-name:var(--font-heading)] text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
+        <h1 className="font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
           Cash drawer
         </h1>
         <div className="flex flex-col items-start gap-1 text-sm text-[color:var(--color-brand-text-soft)] sm:items-end">
@@ -264,7 +264,7 @@ function AdjustmentModal(props: {
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 p-4">
       <div className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl">
-        <h2 className="font-[family-name:var(--font-heading)] text-lg font-bold text-[color:var(--color-brand-navy)]">
+        <h2 className="font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">
           {props.mode === "payout" ? "Pay out cash" : props.mode === "topup" ? "Add cash to drawer" : "Remove cash from drawer"}
         </h2>
         {props.mode === "payout" && (

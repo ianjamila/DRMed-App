@@ -215,7 +215,7 @@ export default async function JournalListPage({ searchParams }: SearchProps) {
         </Link>
         <div className="mt-3 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+            <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
               Journal entries
             </h1>
             <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">

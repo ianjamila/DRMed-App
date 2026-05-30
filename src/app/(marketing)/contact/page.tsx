@@ -19,7 +19,7 @@ export default function ContactPage() {
 
       <section className="mx-auto grid max-w-7xl gap-12 px-4 py-16 sm:px-6 md:grid-cols-2 lg:px-8">
         <div>
-          <h2 className="font-[family-name:var(--font-heading)] text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
+          <h2 className="font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
             Visit, call, or email
           </h2>
           <p className="mt-4 text-base leading-relaxed text-[color:var(--color-brand-text-mid)]">
@@ -82,7 +82,7 @@ export default function ContactPage() {
         </div>
 
         <div className="rounded-2xl border border-[color:var(--color-brand-bg-mid)] bg-white p-8 shadow-sm">
-          <h2 className="font-[family-name:var(--font-heading)] text-xl font-extrabold text-[color:var(--color-brand-navy)]">
+          <h2 className="font-heading text-xl font-extrabold text-[color:var(--color-brand-navy)]">
             Send us a message
           </h2>
           <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">

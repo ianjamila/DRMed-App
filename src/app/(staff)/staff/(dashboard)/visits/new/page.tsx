@@ -65,7 +65,7 @@ export default async function NewVisitPage({ searchParams }: Props) {
       >
         ← Patient
       </Link>
-      <h1 className="mt-3 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+      <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
         New visit
       </h1>
       <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
@@ -121,7 +121,7 @@ async function PatientPicker({ query }: { query: string }) {
     <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+          <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
             Visits
           </h1>
           <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">

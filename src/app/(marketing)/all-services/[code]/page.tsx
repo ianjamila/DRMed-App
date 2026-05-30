@@ -49,7 +49,7 @@ export default async function ServiceDetailPage({ params }: ServicePageProps) {
         <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
           {service.code}
         </p>
-        <h1 className="mt-2 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)] md:text-4xl">
+        <h1 className="mt-2 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)] md:text-4xl">
           {service.name}
         </h1>
       </header>
@@ -59,7 +59,7 @@ export default async function ServiceDetailPage({ params }: ServicePageProps) {
           <dt className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
             Price
           </dt>
-          <dd className="mt-2 font-[family-name:var(--font-heading)] text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
+          <dd className="mt-2 font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
             {service.kind === "lab_package" ? (
               formatPhp(service.price_php)
             ) : (
@@ -73,7 +73,7 @@ export default async function ServiceDetailPage({ params }: ServicePageProps) {
           <dt className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
             Turnaround
           </dt>
-          <dd className="mt-2 font-[family-name:var(--font-heading)] text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
+          <dd className="mt-2 font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
             {service.turnaround_hours
               ? `${service.turnaround_hours} hours`
               : "Inquire"}
@@ -83,7 +83,7 @@ export default async function ServiceDetailPage({ params }: ServicePageProps) {
           <dt className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
             Code
           </dt>
-          <dd className="mt-2 font-[family-name:var(--font-heading)] text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
+          <dd className="mt-2 font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
             {service.code}
           </dd>
         </div>
@@ -92,7 +92,7 @@ export default async function ServiceDetailPage({ params }: ServicePageProps) {
       {service.description ? (
         service.kind === "lab_package" ? (
           <section className="mt-10">
-            <h2 className="font-[family-name:var(--font-heading)] text-xl font-extrabold text-[color:var(--color-brand-navy)]">
+            <h2 className="font-heading text-xl font-extrabold text-[color:var(--color-brand-navy)]">
               What&apos;s included
             </h2>
             <ul className="mt-4 grid gap-2 sm:grid-cols-2">
@@ -112,7 +112,7 @@ export default async function ServiceDetailPage({ params }: ServicePageProps) {
           </section>
         ) : (
           <section className="mt-10">
-            <h2 className="font-[family-name:var(--font-heading)] text-xl font-extrabold text-[color:var(--color-brand-navy)]">
+            <h2 className="font-heading text-xl font-extrabold text-[color:var(--color-brand-navy)]">
               About this test
             </h2>
             <p className="mt-3 text-base leading-relaxed text-[color:var(--color-brand-text-mid)]">
@@ -123,7 +123,7 @@ export default async function ServiceDetailPage({ params }: ServicePageProps) {
       ) : null}
 
       <section className="mt-10 rounded-2xl bg-gradient-to-br from-[color:var(--color-brand-cyan)] to-[color:var(--color-brand-navy)] p-8 text-white">
-        <h2 className="font-[family-name:var(--font-heading)] text-xl font-extrabold">
+        <h2 className="font-heading text-xl font-extrabold">
           Ready to book?
         </h2>
         <p className="mt-2 text-sm text-white/80">

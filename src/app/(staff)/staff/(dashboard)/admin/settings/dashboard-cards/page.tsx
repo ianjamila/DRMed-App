@@ -61,7 +61,7 @@ export default async function DashboardCardSettingsPage({
         >
           ← Dashboard
         </Link>
-        <h1 className="mt-3 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+        <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
           Dashboard card settings
         </h1>
         <p className="mt-1 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">

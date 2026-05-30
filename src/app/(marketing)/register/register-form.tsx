@@ -33,7 +33,7 @@ export function RegisterForm() {
   if (state?.ok && state.matched === false) {
     return (
       <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-6 text-center">
-        <h2 className="font-[family-name:var(--font-heading)] text-xl font-extrabold text-emerald-900">You&apos;re registered.</h2>
+        <h2 className="font-heading text-xl font-extrabold text-emerald-900">You&apos;re registered.</h2>
         <p className="mt-3 text-sm text-emerald-900">Your DRM-ID</p>
         <p className="font-mono text-2xl font-bold text-emerald-900">{state.drm_id}</p>
         <p className="mt-3 text-sm text-emerald-800">
@@ -45,7 +45,7 @@ export function RegisterForm() {
   if (state?.ok && state.matched === true) {
     return (
       <div className="rounded-xl border border-sky-300 bg-sky-50 p-6 text-center">
-        <h2 className="font-[family-name:var(--font-heading)] text-xl font-extrabold text-sky-900">We found your record.</h2>
+        <h2 className="font-heading text-xl font-extrabold text-sky-900">We found your record.</h2>
         <p className="mt-3 text-sm text-sky-900">
           It looks like you&apos;re already in our system — we&apos;ve emailed your DRM-ID to the address on file. Check your inbox,
           or visit reception if you don&apos;t receive it.

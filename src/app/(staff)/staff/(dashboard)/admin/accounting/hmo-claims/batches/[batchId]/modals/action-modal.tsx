@@ -33,7 +33,7 @@ export function ActionModal({
       <div className={`w-full ${maxW} ${maxH} rounded-t-2xl bg-white p-6 md:rounded-2xl`}>
         <h2
           id="action-modal-title"
-          className="font-[family-name:var(--font-heading)] text-xl font-extrabold text-[color:var(--color-brand-navy)]"
+          className="font-heading text-xl font-extrabold text-[color:var(--color-brand-navy)]"
         >
           {title}
         </h2>

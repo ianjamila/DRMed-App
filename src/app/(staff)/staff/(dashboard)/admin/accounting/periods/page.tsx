@@ -65,7 +65,7 @@ export default async function PeriodsPage({
           <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
             Phase 12.1 · Admin
           </p>
-          <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+          <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
             Accounting periods
           </h1>
           <p className="mt-2 max-w-xl text-sm text-[color:var(--color-brand-text-soft)]">
@@ -125,7 +125,7 @@ export default async function PeriodsPage({
             >
               <div className="mb-3 flex items-start justify-between">
                 <div>
-                  <h2 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+                  <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
                     Q{q} {year}
                   </h2>
                   <p className="text-xs text-[color:var(--color-brand-text-soft)]">

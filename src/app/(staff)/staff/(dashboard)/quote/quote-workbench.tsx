@@ -364,7 +364,7 @@ export function QuoteWorkbench({ services }: Props) {
       {mode === "builder" ? (
         <aside className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+            <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
               Selected ({picked.size})
             </h2>
             <label className="flex items-center gap-2 text-xs">
@@ -407,7 +407,7 @@ export function QuoteWorkbench({ services }: Props) {
                   <p className="text-xs uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                     Total {seniorMode ? "(Senior/PWD)" : "(cash)"}
                   </p>
-                  <p className="mt-1 font-[family-name:var(--font-heading)] text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
+                  <p className="mt-1 font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
                     {formatPhp(
                       seniorMode ? builderTotals.senior : builderTotals.cash,
                     )}

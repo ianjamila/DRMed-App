@@ -79,7 +79,7 @@ export default async function PatientVisitDetailPage({ params }: Props) {
         <p className="font-mono text-sm text-[color:var(--color-brand-text-soft)]">
           Visit #{visit.visit_number}
         </p>
-        <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+        <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
           {new Date(visit.visit_date).toLocaleDateString("en-PH", {
             dateStyle: "long",
           })}

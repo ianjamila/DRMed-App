@@ -41,7 +41,7 @@ function NewClosureForm() {
 
   return (
     <section className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
-      <h2 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+      <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
         Add closure
       </h2>
       <form action={formAction} className="mt-4 grid gap-4 sm:grid-cols-3">
@@ -88,7 +88,7 @@ function NewClosureForm() {
 function ClosuresTable({ closures }: { closures: ClosureRow[] }) {
   return (
     <section>
-      <h2 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+      <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
         Upcoming closures ({closures.length})
       </h2>
       <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">

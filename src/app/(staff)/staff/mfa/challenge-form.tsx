@@ -17,7 +17,7 @@ export function ChallengeForm() {
 
   return (
     <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
-      <h2 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+      <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
         Enter your authenticator code
       </h2>
       <p className="mt-2 text-sm text-[color:var(--color-brand-text-soft)]">

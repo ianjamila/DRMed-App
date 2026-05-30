@@ -18,7 +18,7 @@ export default function AboutPage() {
       <section className="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">
         <div className="grid gap-10 md:grid-cols-2">
           <div>
-            <h2 className="font-[family-name:var(--font-heading)] text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
+            <h2 className="font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
               Our Mission
             </h2>
             <p className="mt-4 text-base leading-relaxed text-[color:var(--color-brand-text-mid)]">
@@ -30,7 +30,7 @@ export default function AboutPage() {
             </p>
           </div>
           <div>
-            <h2 className="font-[family-name:var(--font-heading)] text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
+            <h2 className="font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
               Our Vision
             </h2>
             <p className="mt-4 text-base leading-relaxed text-[color:var(--color-brand-text-mid)]">
@@ -49,7 +49,7 @@ export default function AboutPage() {
       <section className="bg-[color:var(--color-brand-navy)] text-white">
         <div className="mx-auto grid max-w-7xl gap-10 px-4 py-16 sm:px-6 md:grid-cols-2 lg:px-8">
           <div>
-            <h2 className="font-[family-name:var(--font-heading)] text-2xl font-extrabold">
+            <h2 className="font-heading text-2xl font-extrabold">
               Our Commitment to Quality and Well-Being
             </h2>
             <p className="mt-4 text-base leading-relaxed text-white/80">
@@ -60,7 +60,7 @@ export default function AboutPage() {
             </p>
           </div>
           <div>
-            <h2 className="font-[family-name:var(--font-heading)] text-2xl font-extrabold">
+            <h2 className="font-heading text-2xl font-extrabold">
               Our Objectives
             </h2>
             <p className="mt-4 text-base leading-relaxed text-white/80">

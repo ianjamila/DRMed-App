@@ -35,7 +35,7 @@ export default async function EditResultTemplatePage({ params }: Props) {
         >
           ← Result templates
         </Link>
-        <h1 className="mt-3 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+        <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
           {svc.name}
         </h1>
         <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
@@ -94,7 +94,7 @@ export default async function EditResultTemplatePage({ params }: Props) {
       >
         ← Result templates
       </Link>
-      <h1 className="mt-3 mb-4 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+      <h1 className="mt-3 mb-4 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
         {tpl ? "Edit template" : "Create template"}
       </h1>
 

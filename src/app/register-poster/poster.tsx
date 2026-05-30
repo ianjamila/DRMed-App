@@ -26,7 +26,7 @@ export function RegisterPoster({ url }: { url: string }) {
         </p>
       </div>
 
-      <h1 className="font-[family-name:var(--font-heading)] text-4xl leading-tight font-extrabold text-[color:var(--color-brand-navy)]">
+      <h1 className="font-heading text-4xl leading-tight font-extrabold text-[color:var(--color-brand-navy)]">
         Skip the counter form
       </h1>
       <p className="text-lg text-[color:var(--color-brand-text-mid)]">

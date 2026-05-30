@@ -14,7 +14,7 @@ export function PageHero({ eyebrow, title, description }: PageHeroProps) {
             {eyebrow}
           </p>
         ) : null}
-        <h1 className="font-[family-name:var(--font-heading)] text-4xl font-extrabold text-[color:var(--color-brand-navy)] md:text-5xl">
+        <h1 className="font-heading text-4xl font-extrabold text-[color:var(--color-brand-navy)] md:text-5xl">
           {title}
         </h1>
         {description ? (

@@ -186,7 +186,7 @@ function ConsolidatedTotals({
       className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-navy)] p-4 text-white shadow-sm"
     >
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="font-[family-name:var(--font-heading)] text-lg font-bold">
+        <h2 className="font-heading text-lg font-bold">
           All HMOs combined
         </h2>
         <p className="text-xs text-white/70">
@@ -447,7 +447,7 @@ function ProviderCard({
       href={href}
       className="block rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4 shadow-sm transition hover:border-[color:var(--color-brand-cyan)] hover:shadow"
     >
-      <h3 className="font-[family-name:var(--font-heading)] text-lg font-bold text-[color:var(--color-brand-navy)]">
+      <h3 className="font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">
         {row.provider_name ?? "Unknown provider"}
       </h3>
       <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">

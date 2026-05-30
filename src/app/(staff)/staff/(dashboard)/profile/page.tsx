@@ -18,7 +18,7 @@ export default async function ProfilePage() {
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6 lg:px-8">
-      <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+      <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
         My profile
       </h1>
       <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
@@ -26,7 +26,7 @@ export default async function ProfilePage() {
       </p>
 
       <div className="mt-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
-        <h2 className="font-[family-name:var(--font-heading)] text-lg font-bold text-[color:var(--color-brand-navy)]">
+        <h2 className="font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">
           Account
         </h2>
         <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
@@ -61,7 +61,7 @@ export default async function ProfilePage() {
       </div>
 
       <div className="mt-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
-        <h2 className="font-[family-name:var(--font-heading)] text-lg font-bold text-[color:var(--color-brand-navy)]">
+        <h2 className="font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">
           Change password
         </h2>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">

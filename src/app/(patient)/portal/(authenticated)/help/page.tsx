@@ -14,7 +14,7 @@ export default function PatientHelpPage() {
       >
         ← Back to results
       </Link>
-      <h1 className="mt-3 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+      <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
         Help
       </h1>
 
@@ -107,7 +107,7 @@ function Section({
 }) {
   return (
     <section className="mt-8">
-      <h2 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+      <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
         {title}
       </h2>
       <p className="mt-2 text-sm leading-relaxed text-[color:var(--color-brand-text-mid)]">

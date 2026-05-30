@@ -149,7 +149,7 @@ export default async function SchedulePage() {
           <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
             Book online
           </p>
-          <h2 className="mt-2 font-[family-name:var(--font-heading)] text-2xl font-extrabold text-[color:var(--color-brand-navy)] md:text-3xl">
+          <h2 className="mt-2 font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)] md:text-3xl">
             Reserve your slot
           </h2>
           <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-mid)]">
@@ -212,7 +212,7 @@ export default async function SchedulePage() {
             <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
               Operating Hours
             </p>
-            <h2 className="mt-3 font-[family-name:var(--font-heading)] text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
+            <h2 className="mt-3 font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
               {CONTACT.hours}
             </h2>
             <p className="mt-4 text-sm text-[color:var(--color-brand-text-soft)]">
@@ -225,7 +225,7 @@ export default async function SchedulePage() {
             <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
               Address
             </p>
-            <h2 className="mt-3 font-[family-name:var(--font-heading)] text-xl font-extrabold text-[color:var(--color-brand-navy)]">
+            <h2 className="mt-3 font-heading text-xl font-extrabold text-[color:var(--color-brand-navy)]">
               {CONTACT.address.line1}
             </h2>
             <p className="mt-2 text-base text-[color:var(--color-brand-text-mid)]">

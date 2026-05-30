@@ -270,7 +270,7 @@ export function BookingForm({
   if (state?.ok && state.drm_id) {
     return (
       <div className="rounded-2xl border border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-bg)] p-8">
-        <h3 className="font-[family-name:var(--font-heading)] text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
+        <h3 className="font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
           {state.pending_callback
             ? "Request received."
             : "Booking confirmed."}

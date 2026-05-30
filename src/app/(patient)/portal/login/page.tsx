@@ -17,7 +17,7 @@ export default function PatientLoginPage() {
       <div className="mb-6 text-center">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/logo.png" alt="DRMed" className="mx-auto mb-4 h-12 w-auto" />
-        <p className="font-[family-name:var(--font-heading)] text-2xl font-extrabold tracking-tight text-[color:var(--color-brand-navy)]">
+        <p className="font-heading text-2xl font-extrabold tracking-tight text-[color:var(--color-brand-navy)]">
           drmed<span className="text-[color:var(--color-brand-cyan)]">.portal</span>
         </p>
       </div>

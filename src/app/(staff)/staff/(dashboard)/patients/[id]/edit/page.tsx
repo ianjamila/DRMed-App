@@ -41,7 +41,7 @@ export default async function EditPatientPage({ params }: Props) {
       >
         ← {patient.last_name}, {patient.first_name}
       </Link>
-      <h1 className="mt-3 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+      <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
         Edit patient
       </h1>
       <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">

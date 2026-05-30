@@ -252,7 +252,7 @@ export default async function VisitDetailPage({ params }: Props) {
               </Link>
             </p>
           ) : null}
-          <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+          <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
             {patient.last_name}, {patient.first_name}
           </h1>
         </div>
@@ -331,7 +331,7 @@ export default async function VisitDetailPage({ params }: Props) {
       ) : null}
 
       <section className="mt-8">
-        <h2 className="mb-3 font-[family-name:var(--font-heading)] text-xl font-extrabold text-[color:var(--color-brand-navy)]">
+        <h2 className="mb-3 font-heading text-xl font-extrabold text-[color:var(--color-brand-navy)]">
           Tests
         </h2>
 
@@ -359,7 +359,7 @@ export default async function VisitDetailPage({ params }: Props) {
                         <p className="font-mono text-[10px] uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                           {svc.code} · Package
                         </p>
-                        <p className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+                        <p className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
                           {svc.name}
                         </p>
                         {h.package_completed_at ? (
@@ -607,7 +607,7 @@ export default async function VisitDetailPage({ params }: Props) {
       </section>
 
       <section className="mt-8">
-        <h2 className="mb-3 font-[family-name:var(--font-heading)] text-xl font-extrabold text-[color:var(--color-brand-navy)]">
+        <h2 className="mb-3 font-heading text-xl font-extrabold text-[color:var(--color-brand-navy)]">
           Payments
         </h2>
         <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
@@ -720,7 +720,7 @@ function Field({
         {label}
       </p>
       <p
-        className={`mt-1 font-[family-name:var(--font-heading)] text-2xl font-extrabold ${
+        className={`mt-1 font-heading text-2xl font-extrabold ${
           highlight ? "text-red-600" : "text-[color:var(--color-brand-navy)]"
         }`}
       >

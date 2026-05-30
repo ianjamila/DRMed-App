@@ -29,7 +29,7 @@ export function StatCard({ label, value, hint, href, accent = "default" }: StatC
         {label}
       </p>
       <p
-        className={`mt-2 font-[family-name:var(--font-heading)] text-3xl font-extrabold ${valueColor}`}
+        className={`mt-2 font-heading text-3xl font-extrabold ${valueColor}`}
       >
         {value}
       </p>

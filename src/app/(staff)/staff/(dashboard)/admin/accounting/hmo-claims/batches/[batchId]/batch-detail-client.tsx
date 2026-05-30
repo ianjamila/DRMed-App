@@ -295,7 +295,7 @@ function Header({
         <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
           Phase 12.3 · Batch
         </p>
-        <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+        <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
           {batch.reference_no ?? `Batch #${batch.id.slice(0, 8)}`}
         </h1>
         <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">

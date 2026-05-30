@@ -16,7 +16,7 @@ export default async function ImportPatientsPage() {
       >
         ← Dashboard
       </Link>
-      <h1 className="mt-3 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+      <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
         Import patients
       </h1>
       <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-mid)]">

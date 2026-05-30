@@ -226,7 +226,7 @@ export default async function QueueTestDetailPage({ params }: Props) {
           <p className="font-mono text-sm text-[color:var(--color-brand-text-soft)]">
             {svc.code}
           </p>
-          <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+          <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
             {svc.name}
           </h1>
         </div>
@@ -290,7 +290,7 @@ export default async function QueueTestDetailPage({ params }: Props) {
 
         {canStructured ? (
           <div>
-            <h2 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+            <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
               Enter result values
             </h2>
             <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
@@ -317,7 +317,7 @@ export default async function QueueTestDetailPage({ params }: Props) {
 
         {canUpload ? (
           <div>
-            <h2 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+            <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
               Upload result
             </h2>
             <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
@@ -336,7 +336,7 @@ export default async function QueueTestDetailPage({ params }: Props) {
 
         {result?.finalised_at || (result && result.generation_kind === "uploaded") ? (
           <div className={canStructured || canUpload || claimable ? "mt-6" : ""}>
-            <h2 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+            <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
               Result on file
               {result.amendment_count > 0 ? (
                 <span className="ml-2 rounded-md bg-amber-100 px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-amber-900">
@@ -488,7 +488,7 @@ function PackageHeaderSummary({
           <p className="font-mono text-sm text-[color:var(--color-brand-text-soft)]">
             {serviceCode}
           </p>
-          <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+          <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
             {serviceName}
           </h1>
           <p className="mt-1 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
@@ -544,7 +544,7 @@ function PackageHeaderSummary({
       </section>
 
       <section className="mt-6">
-        <h2 className="mb-3 font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+        <h2 className="mb-3 font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
           Components ({components.length})
         </h2>
         {components.length === 0 ? (

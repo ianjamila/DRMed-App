@@ -148,7 +148,7 @@ function PhysicianGroupSection({
   return (
     <section className="mb-12">
       <div className="mb-6 flex items-baseline justify-between">
-        <h2 className="font-[family-name:var(--font-heading)] text-2xl font-extrabold text-[color:var(--color-brand-navy)] md:text-3xl">
+        <h2 className="font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)] md:text-3xl">
           {group}
         </h2>
         <span className="text-sm font-medium text-[color:var(--color-brand-cyan)]">
@@ -170,7 +170,7 @@ function PhysicianGroupSection({
             >
               <DoctorAvatar photoUrl={photoUrl} name={doc.full_name} />
               <div className="min-w-0 flex-1">
-                <h3 className="font-[family-name:var(--font-heading)] text-base font-bold leading-tight text-[color:var(--color-brand-navy)]">
+                <h3 className="font-heading text-base font-bold leading-tight text-[color:var(--color-brand-navy)]">
                   {doc.full_name}
                 </h3>
                 <p className="mt-1 text-xs font-medium text-[color:var(--color-brand-cyan)]">

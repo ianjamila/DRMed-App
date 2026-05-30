@@ -48,7 +48,7 @@ export function PatientPortalLauncher({ triggerClassName }: Props) {
       />
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle className="font-[family-name:var(--font-heading)] text-xl text-[color:var(--color-brand-navy)]">
+          <DialogTitle className="font-heading text-xl text-[color:var(--color-brand-navy)]">
             Patient Portal
           </DialogTitle>
           <DialogDescription>

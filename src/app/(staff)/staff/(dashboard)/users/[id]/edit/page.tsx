@@ -54,7 +54,7 @@ export default async function EditStaffUserPage({ params }: Props) {
       >
         ← Staff users
       </Link>
-      <h1 className="mt-3 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+      <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
         Edit staff user
       </h1>
       <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
@@ -75,7 +75,7 @@ export default async function EditStaffUserPage({ params }: Props) {
       </div>
 
       <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50/40 p-6">
-        <h2 className="font-[family-name:var(--font-heading)] text-lg font-bold text-amber-900">
+        <h2 className="font-heading text-lg font-bold text-amber-900">
           Reset password
         </h2>
         {isSelf ? (
@@ -106,7 +106,7 @@ export default async function EditStaffUserPage({ params }: Props) {
       {/* Danger zone: delete (admin only, never self, never on already-deleted) */}
       {!isSelf && !isDeleted ? (
         <div className="mt-6 rounded-xl border-2 border-rose-300 bg-rose-50/30 p-6">
-          <h2 className="font-[family-name:var(--font-heading)] text-lg font-bold text-rose-900">
+          <h2 className="font-heading text-lg font-bold text-rose-900">
             Danger zone
           </h2>
           <div className="mt-3">

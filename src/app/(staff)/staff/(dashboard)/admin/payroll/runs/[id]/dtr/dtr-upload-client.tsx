@@ -255,7 +255,7 @@ export function DtrUploadClient({
             Pay runs :: {formatPeriodRange(run.period_start, run.period_end)}
           </span>
         </nav>
-        <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+        <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
           Import DTR
         </h1>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
@@ -268,7 +268,7 @@ export function DtrUploadClient({
       {/* Section A: Prior imports                                    */}
       {/* =========================================================== */}
       <section className="mb-8">
-        <h2 className="mb-3 font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+        <h2 className="mb-3 font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
           Prior imports
         </h2>
         {imports.length === 0 ? (
@@ -384,7 +384,7 @@ export function DtrUploadClient({
       {/* Section B: Upload new CSV                                   */}
       {/* =========================================================== */}
       <section className="mb-8 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5 shadow-sm">
-        <h2 className="mb-3 font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+        <h2 className="mb-3 font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
           Upload new CSV
         </h2>
         <p className="mb-4 text-sm text-[color:var(--color-brand-text-soft)]">
@@ -491,7 +491,7 @@ export function DtrUploadClient({
       {/* =========================================================== */}
       {flaggedRows.length > 0 ? (
         <section>
-          <h2 className="mb-3 font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+          <h2 className="mb-3 font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
             Reconcile flagged rows
           </h2>
           <p className="mb-3 text-sm text-[color:var(--color-brand-text-soft)]">

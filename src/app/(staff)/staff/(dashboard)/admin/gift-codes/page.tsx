@@ -83,7 +83,7 @@ export default async function GiftCodesAdminPage({ searchParams }: PageProps) {
           <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
             Phase 11 · Admin
           </p>
-          <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+          <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
             Gift codes
           </h1>
           <p className="mt-1 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">

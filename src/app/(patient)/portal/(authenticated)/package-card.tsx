@@ -84,7 +84,7 @@ export function PackageCard(props: PackageCardProps) {
     <article className="mb-4 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+          <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
             {props.header.package_name}
           </h2>
           <p className="mt-0.5 font-mono text-xs text-[color:var(--color-brand-text-soft)]">

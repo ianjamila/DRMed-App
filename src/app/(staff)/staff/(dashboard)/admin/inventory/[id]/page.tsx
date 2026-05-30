@@ -123,7 +123,7 @@ export default async function InventoryItemPage({ params }: PageProps) {
       </Link>
       <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+          <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
             {item.name}
           </h1>
           <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-[color:var(--color-brand-text-soft)]">
@@ -184,7 +184,7 @@ export default async function InventoryItemPage({ params }: PageProps) {
 
       {canPostMovements ? (
         <section className="mb-8">
-          <h2 className="mb-3 font-[family-name:var(--font-heading)] text-xl font-bold text-[color:var(--color-brand-navy)]">
+          <h2 className="mb-3 font-heading text-xl font-bold text-[color:var(--color-brand-navy)]">
             Record movement
           </h2>
           <MovementForm itemId={item.id} expiryTracking={item.expiry_tracking} />
@@ -192,7 +192,7 @@ export default async function InventoryItemPage({ params }: PageProps) {
       ) : null}
 
       <section>
-        <h2 className="mb-3 font-[family-name:var(--font-heading)] text-xl font-bold text-[color:var(--color-brand-navy)]">
+        <h2 className="mb-3 font-heading text-xl font-bold text-[color:var(--color-brand-navy)]">
           Movement history
         </h2>
         <div className="overflow-hidden rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
@@ -292,7 +292,7 @@ function SummaryTile({
         {label}
       </p>
       <p
-        className={`mt-2 font-[family-name:var(--font-heading)] ${customBadge ? `inline-block rounded-full border px-3 py-1 text-sm font-bold ${customBadge}` : "text-2xl font-extrabold text-[color:var(--color-brand-navy)]"}`}
+        className={`mt-2 font-heading ${customBadge ? `inline-block rounded-full border px-3 py-1 text-sm font-bold ${customBadge}` : "text-2xl font-extrabold text-[color:var(--color-brand-navy)]"}`}
       >
         {value}
       </p>

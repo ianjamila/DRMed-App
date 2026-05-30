@@ -18,7 +18,7 @@ export function ContactForm() {
   if (state?.ok) {
     return (
       <div className="rounded-2xl border border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-bg)] p-8">
-        <h3 className="font-[family-name:var(--font-heading)] text-xl font-extrabold text-[color:var(--color-brand-navy)]">
+        <h3 className="font-heading text-xl font-extrabold text-[color:var(--color-brand-navy)]">
           Thank you — we received your message.
         </h3>
         <p className="mt-2 text-sm text-[color:var(--color-brand-text-mid)]">

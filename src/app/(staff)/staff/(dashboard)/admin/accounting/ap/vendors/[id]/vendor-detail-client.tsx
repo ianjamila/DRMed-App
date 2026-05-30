@@ -125,7 +125,7 @@ export function VendorDetailClient({ vendor, bills, payments }: Props) {
           Phase 12.4 · Admin · AP · Vendor
         </p>
         <div className="mt-1 flex flex-wrap items-center gap-3">
-          <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+          <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
             {vendor.name}
           </h1>
           {!vendor.is_active && (
@@ -216,7 +216,7 @@ export function VendorDetailClient({ vendor, bills, payments }: Props) {
       {/* Bills table                                                         */}
       {/* ------------------------------------------------------------------ */}
       <section className="mb-8">
-        <h2 className="mb-3 font-[family-name:var(--font-heading)] text-lg font-bold text-[color:var(--color-brand-navy)]">
+        <h2 className="mb-3 font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">
           Bills
         </h2>
         {bills.length === 0 ? (
@@ -270,7 +270,7 @@ export function VendorDetailClient({ vendor, bills, payments }: Props) {
       {/* Payments table                                                      */}
       {/* ------------------------------------------------------------------ */}
       <section>
-        <h2 className="mb-3 font-[family-name:var(--font-heading)] text-lg font-bold text-[color:var(--color-brand-navy)]">
+        <h2 className="mb-3 font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">
           Payments
         </h2>
         {payments.length === 0 ? (

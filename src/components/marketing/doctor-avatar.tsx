@@ -14,7 +14,7 @@ export function DoctorAvatar({ photoUrl, name }: Props) {
 
   if (errored) {
     return (
-      <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-full border-2 border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-bg)] font-[family-name:var(--font-heading)] text-xl font-extrabold text-[color:var(--color-brand-cyan)]">
+      <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-full border-2 border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-bg)] font-heading text-xl font-extrabold text-[color:var(--color-brand-cyan)]">
         {physicianInitials(name)}
       </div>
     );

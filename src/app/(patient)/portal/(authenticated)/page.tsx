@@ -365,7 +365,7 @@ export default async function PatientPortalPage() {
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
-      <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+      <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
         Your results
       </h1>
       <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
@@ -483,7 +483,7 @@ export default async function PatientPortalPage() {
 
       {visitsWithPending.length > 0 ? (
         <section className="mt-8 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
-          <h2 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+          <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
             Still in progress
           </h2>
           <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
@@ -512,7 +512,7 @@ export default async function PatientPortalPage() {
       ) : null}
 
       <section className="mt-8 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
-        <h2 className="font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+        <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
           Download a copy of your data
         </h2>
         <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">

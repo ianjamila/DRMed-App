@@ -855,7 +855,7 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [] }: 
         <span className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
           Total
         </span>
-        <span className="font-[family-name:var(--font-heading)] text-2xl font-extrabold">
+        <span className="font-heading text-2xl font-extrabold">
           {formatPhp(total)}
         </span>
       </div>

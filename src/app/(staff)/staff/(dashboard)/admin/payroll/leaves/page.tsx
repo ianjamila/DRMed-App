@@ -190,7 +190,7 @@ export default async function PayrollLeavesPage({ searchParams }: PageProps) {
   return (
     <div className="mx-auto max-w-[1400px] px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6">
-        <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+        <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
           Leave dashboard
         </h1>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">

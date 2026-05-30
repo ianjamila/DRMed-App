@@ -59,7 +59,7 @@ export default async function CancelAppointmentPage({ params }: Props) {
         ← Back to drmed.ph
       </Link>
 
-      <h1 className="mt-3 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+      <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
         {alreadyCancelled
           ? "Already cancelled"
           : cancellable

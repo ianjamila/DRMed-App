@@ -72,7 +72,7 @@ export default async function UnsubscribePage({ searchParams }: PageProps) {
       <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
         Newsletter
       </p>
-      <h1 className="mt-2 font-[family-name:var(--font-heading)] text-4xl font-extrabold text-[color:var(--color-brand-navy)]">
+      <h1 className="mt-2 font-heading text-4xl font-extrabold text-[color:var(--color-brand-navy)]">
         {alreadyDone ? "You were already unsubscribed" : "You are unsubscribed"}
       </h1>
       <p className="mt-4 text-base text-[color:var(--color-brand-text-mid)]">
@@ -108,7 +108,7 @@ export default async function UnsubscribePage({ searchParams }: PageProps) {
 function Outcome({ title, body }: { title: string; body: string }) {
   return (
     <main className="mx-auto max-w-xl px-4 py-16 sm:px-6 lg:px-8">
-      <h1 className="font-[family-name:var(--font-heading)] text-4xl font-extrabold text-[color:var(--color-brand-navy)]">
+      <h1 className="font-heading text-4xl font-extrabold text-[color:var(--color-brand-navy)]">
         {title}
       </h1>
       <p className="mt-4 text-base text-[color:var(--color-brand-text-mid)]">

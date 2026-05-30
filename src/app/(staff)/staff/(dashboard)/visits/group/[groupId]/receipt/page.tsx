@@ -88,7 +88,7 @@ export default async function GroupReceiptPage({ params }: Props) {
             <header className="border-b border-[color:var(--color-brand-bg-mid)] pb-4">
               {/* eslint-disable-next-line @next/next/no-img-element -- plain img prints reliably */}
               <img src="/logo.png" alt="DRMed" className="mb-2 h-14 w-auto" />
-              <p className="font-[family-name:var(--font-heading)] text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
+              <p className="font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
                 {SITE.name}
               </p>
               <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
@@ -174,7 +174,7 @@ export default async function GroupReceiptPage({ params }: Props) {
                   <td colSpan={4} className="py-3 text-right font-bold">
                     Total Due
                   </td>
-                  <td className="py-3 text-right font-[family-name:var(--font-heading)] text-xl font-extrabold">
+                  <td className="py-3 text-right font-heading text-xl font-extrabold">
                     {formatPhp(total)}
                   </td>
                 </tr>

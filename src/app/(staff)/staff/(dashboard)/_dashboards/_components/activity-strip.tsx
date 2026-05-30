@@ -18,7 +18,7 @@ export function ActivityStrip({ title, items, emptyMessage, viewAllHref }: Activ
   return (
     <article className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
       <header className="mb-3 flex items-center justify-between">
-        <h3 className="font-[family-name:var(--font-heading)] text-sm font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+        <h3 className="font-heading text-sm font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
           {title}
         </h3>
         {viewAllHref ? (

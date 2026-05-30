@@ -181,7 +181,7 @@ export function ServicesCatalog({ services }: Props) {
                     </span>
                   ) : null}
                 </div>
-                <h2 className="mt-1 font-[family-name:var(--font-heading)] text-base font-bold text-[color:var(--color-brand-navy)] group-hover:text-[color:var(--color-brand-cyan)]">
+                <h2 className="mt-1 font-heading text-base font-bold text-[color:var(--color-brand-navy)] group-hover:text-[color:var(--color-brand-cyan)]">
                   {service.name}
                 </h2>
                 <div className="mt-4 flex items-center justify-between border-t border-[color:var(--color-brand-bg-mid)] pt-3 text-sm">

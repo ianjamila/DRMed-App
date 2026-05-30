@@ -80,7 +80,7 @@ export default async function PatientDetailPage({ params }: Props) {
           <p className="font-mono text-sm text-[color:var(--color-brand-text-soft)]">
             {patient.drm_id}
           </p>
-          <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+          <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
             {patient.last_name}, {patient.first_name}
             {patient.middle_name ? ` ${patient.middle_name}` : ""}
           </h1>
@@ -187,7 +187,7 @@ export default async function PatientDetailPage({ params }: Props) {
       </div>
 
       <section className="mt-8">
-        <h2 className="font-[family-name:var(--font-heading)] text-xl font-extrabold text-[color:var(--color-brand-navy)]">
+        <h2 className="font-heading text-xl font-extrabold text-[color:var(--color-brand-navy)]">
           Visits
         </h2>
         <div className="mt-3 overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">

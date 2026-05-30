@@ -15,7 +15,7 @@ export function DashboardHeader({ firstName, roleLabel, title }: DashboardHeader
           {roleLabel}
         </span>
       </div>
-      <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+      <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
         {title}
       </h1>
     </header>

@@ -221,7 +221,7 @@ export default async function LabTatPage({ searchParams }: SearchProps) {
         ← Dashboard
       </Link>
       <header className="mt-3">
-        <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+        <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
           Lab TAT analytics
         </h1>
         <p className="mt-1 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
@@ -397,7 +397,7 @@ export default async function LabTatPage({ searchParams }: SearchProps) {
 
       {slaBreachRows.length > 0 ? (
         <section className="mt-8">
-          <h2 className="mb-3 font-[family-name:var(--font-heading)] text-xl font-bold text-[color:var(--color-brand-navy)]">
+          <h2 className="mb-3 font-heading text-xl font-bold text-[color:var(--color-brand-navy)]">
             SLA breach detail (top 20)
           </h2>
           <div className="overflow-hidden rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
@@ -473,7 +473,7 @@ function SummaryTile({
       <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
         {label}
       </p>
-      <p className="mt-2 font-[family-name:var(--font-heading)] text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
+      <p className="mt-2 font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
         {value}
       </p>
       {hint ? (

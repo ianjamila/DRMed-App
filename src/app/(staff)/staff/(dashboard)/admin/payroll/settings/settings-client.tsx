@@ -151,7 +151,7 @@ export function SettingsClient({ rows, error }: Props) {
             className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white"
           >
             <header className="border-b border-[color:var(--color-brand-bg-mid)] px-5 py-3">
-              <h2 className="font-[family-name:var(--font-heading)] text-base font-extrabold uppercase tracking-wider text-[color:var(--color-brand-navy)]">
+              <h2 className="font-heading text-base font-extrabold uppercase tracking-wider text-[color:var(--color-brand-navy)]">
                 {cat}
               </h2>
             </header>

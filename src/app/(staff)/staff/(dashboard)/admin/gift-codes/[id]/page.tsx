@@ -82,7 +82,7 @@ export default async function GiftCodeDetailPage({ params }: PageProps) {
       </header>
 
       <section className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
-        <h2 className="font-[family-name:var(--font-heading)] text-sm font-extrabold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+        <h2 className="font-heading text-sm font-extrabold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
           Lifecycle
         </h2>
         <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">

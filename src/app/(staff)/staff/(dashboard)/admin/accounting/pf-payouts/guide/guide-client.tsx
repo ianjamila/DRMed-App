@@ -32,7 +32,7 @@ export function PayDoctorsGuide() {
         id="pay-doctors-guide"
         className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6"
       >
-        <h1 className="font-[family-name:var(--font-heading)] text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
+        <h1 className="font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
           How to pay doctors
         </h1>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">

@@ -229,7 +229,7 @@ export default async function AppointmentsPage() {
       />
       <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+          <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
             Appointments
           </h1>
           <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
@@ -279,7 +279,7 @@ function Section({
 }) {
   return (
     <section className="mt-6">
-      <h2 className="mb-3 font-[family-name:var(--font-heading)] text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+      <h2 className="mb-3 font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
         {title}
       </h2>
       <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">

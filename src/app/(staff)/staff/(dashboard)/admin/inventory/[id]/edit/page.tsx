@@ -37,7 +37,7 @@ export default async function EditInventoryItemPage({ params }: PageProps) {
       >
         ← {item.name}
       </Link>
-      <h1 className="mt-3 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+      <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
         Edit inventory item
       </h1>
 

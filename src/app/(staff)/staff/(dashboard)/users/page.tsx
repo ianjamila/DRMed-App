@@ -87,7 +87,7 @@ export default async function StaffUsersPage() {
     <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+          <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
             Staff users
           </h1>
           <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
@@ -104,7 +104,7 @@ export default async function StaffUsersPage() {
 
       {/* Existing users */}
       <section>
-        <h2 className="mb-3 font-[family-name:var(--font-heading)] text-lg font-bold text-[color:var(--color-brand-navy)]">
+        <h2 className="mb-3 font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">
           Existing users
           <span className="ml-2 rounded-md bg-[color:var(--color-brand-bg)] px-2 py-0.5 text-xs font-semibold text-[color:var(--color-brand-text-mid)]">
             {existing.length}
@@ -178,7 +178,7 @@ export default async function StaffUsersPage() {
           add visual noise to a fresh deployment. */}
       {deleted.length > 0 ? (
         <section className="mt-10">
-          <h2 className="mb-3 font-[family-name:var(--font-heading)] text-lg font-bold text-[color:var(--color-brand-navy)]">
+          <h2 className="mb-3 font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">
             Deleted users
             <span className="ml-2 rounded-md bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-900">
               {deleted.length}

@@ -140,7 +140,7 @@ export function DisbursementDetailClient({
             <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
               Phase 12.5 · Admin · Accounting
             </p>
-            <h1 className="mt-1 font-[family-name:var(--font-heading)] text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+            <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
               {batchLabel}
             </h1>
             {isVoided && (
@@ -201,7 +201,7 @@ export function DisbursementDetailClient({
 
       {/* Cleared entries */}
       <section>
-        <h2 className="font-[family-name:var(--font-heading)] text-xl font-bold text-[color:var(--color-brand-navy)] mb-3">
+        <h2 className="font-heading text-xl font-bold text-[color:var(--color-brand-navy)] mb-3">
           Cleared entries ({entries.length})
         </h2>
         {entries.length === 0 ? (

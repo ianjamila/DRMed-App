@@ -374,7 +374,7 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
       <header className="mb-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white px-5 py-5 sm:px-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0 flex-1">
-            <h1 className="font-[family-name:var(--font-heading)] text-2xl font-extrabold text-[color:var(--color-brand-navy)] sm:text-3xl">
+            <h1 className="font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)] sm:text-3xl">
               Pay run · {formatPeriodRange(run.period_start, run.period_end)}
             </h1>
             <p className="mt-2 text-sm text-[color:var(--color-brand-text-soft)]">
@@ -431,7 +431,7 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
           role="alert"
           className="mb-6 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3"
         >
-          <p className="font-[family-name:var(--font-heading)] text-sm font-extrabold text-rose-900">
+          <p className="font-heading text-sm font-extrabold text-rose-900">
             Could not load per-employee rows
           </p>
           <p className="mt-1 text-sm text-rose-900">{loadError}</p>
@@ -526,7 +526,7 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
       {/* Per-employee table */}
       <section className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[color:var(--color-brand-bg-mid)] px-4 py-3 sm:px-5">
-          <h2 className="font-[family-name:var(--font-heading)] text-base font-extrabold text-[color:var(--color-brand-navy)]">
+          <h2 className="font-heading text-base font-extrabold text-[color:var(--color-brand-navy)]">
             Per-employee summary
           </h2>
           {/* The mobile viewport always uses slide-out (more usable on narrow
@@ -757,7 +757,7 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
               />
               <div className="mt-1 flex items-center justify-between border-t border-[color:var(--color-brand-bg-mid)] pt-2">
                 <strong>{"Σ Net pay (to disburse)"}</strong>
-                <strong className="font-[family-name:var(--font-heading)] text-sm">
+                <strong className="font-heading text-sm">
                   {formatPhp(run.sum_net_php)}
                 </strong>
               </div>
@@ -1003,7 +1003,7 @@ function KpiBox({
         {label}
       </p>
       <p
-        className={`mt-2 font-[family-name:var(--font-heading)] text-[color:var(--color-brand-navy)] ${
+        className={`mt-2 font-heading text-[color:var(--color-brand-navy)] ${
           emphasis ? "text-2xl font-extrabold" : "text-xl font-bold"
         }`}
       >
@@ -1030,7 +1030,7 @@ function Banner({
     tone === "amber" ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-slate-50";
   return (
     <div className={`rounded-xl border px-4 py-3 ${toneClass}`}>
-      <p className="font-[family-name:var(--font-heading)] text-sm font-extrabold text-amber-900">
+      <p className="font-heading text-sm font-extrabold text-amber-900">
         {title}
       </p>
       <div className="mt-1">{children}</div>
