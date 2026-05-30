@@ -2,7 +2,6 @@
 
 import { Fragment, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
-import { Button } from "@/components/ui/button";
 import type { Database } from "@/types/database";
 import { snapshotHmoAgingAction } from "./actions";
 import {
@@ -730,24 +729,20 @@ function AllUnbilled({
                         >
                           Mark billed
                         </button>
-                        <Button
+                        <button
                           type="button"
-                          variant="success"
-                          size="xs"
                           onClick={() => setRowModal({ kind: "paid", claimId: id, amount: Number(r.billed_amount_php ?? 0) })}
-                          className="min-h-[28px] whitespace-nowrap text-[10px] font-bold uppercase tracking-wider"
+                          className="min-h-[28px] whitespace-nowrap rounded-md border border-emerald-600 bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-700 hover:bg-emerald-600 hover:text-white"
                         >
                           Mark paid
-                        </Button>
-                        <Button
+                        </button>
+                        <button
                           type="button"
-                          variant="destructive"
-                          size="xs"
                           onClick={() => setRowModal({ kind: "writeoff", claimId: id, amount: Number(r.billed_amount_php ?? 0) })}
-                          className="min-h-[28px] whitespace-nowrap text-[10px] font-bold uppercase tracking-wider"
+                          className="min-h-[28px] whitespace-nowrap rounded-md border border-red-600 bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-red-700 hover:bg-red-600 hover:text-white"
                         >
                           Write off
-                        </Button>
+                        </button>
                       </div>
                     ) : r.provider_id ? (
                       <Link
@@ -783,24 +778,20 @@ function AllUnbilled({
             >
               Mark billed ({selected.size})
             </button>
-            <Button
+            <button
               type="button"
-              variant="success"
-              size="sm"
               onClick={() => setBulkModal("paid")}
-              className="min-h-[44px] whitespace-nowrap text-xs font-bold uppercase tracking-wider"
+              className="min-h-[44px] whitespace-nowrap rounded-md border border-emerald-600 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wider text-emerald-700 hover:bg-emerald-600 hover:text-white"
             >
               Mark paid
-            </Button>
-            <Button
+            </button>
+            <button
               type="button"
-              variant="destructive"
-              size="sm"
               onClick={() => setBulkModal("writeoff")}
-              className="min-h-[44px] whitespace-nowrap text-xs font-bold uppercase tracking-wider"
+              className="min-h-[44px] whitespace-nowrap rounded-md border border-red-600 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wider text-red-700 hover:bg-red-600 hover:text-white"
             >
               Write off
-            </Button>
+            </button>
             <button
               type="button"
               onClick={() => setSelected(new Set())}
@@ -1092,24 +1083,20 @@ function AllAging({
                   <td className="px-4 py-3 text-right">
                     {isHistoric && id ? (
                       <div className="flex flex-nowrap items-center justify-end gap-1.5">
-                        <Button
+                        <button
                           type="button"
-                          variant="success"
-                          size="xs"
                           onClick={() => setRowModal({ kind: "paid", claimId: id, amount: Number(r.unresolved_balance_php ?? 0) })}
-                          className="min-h-[28px] whitespace-nowrap text-[10px] font-bold uppercase tracking-wider"
+                          className="min-h-[28px] whitespace-nowrap rounded-md border border-emerald-600 bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-700 hover:bg-emerald-600 hover:text-white"
                         >
                           Mark paid
-                        </Button>
-                        <Button
+                        </button>
+                        <button
                           type="button"
-                          variant="destructive"
-                          size="xs"
                           onClick={() => setRowModal({ kind: "writeoff", claimId: id, amount: Number(r.unresolved_balance_php ?? 0) })}
-                          className="min-h-[28px] whitespace-nowrap text-[10px] font-bold uppercase tracking-wider"
+                          className="min-h-[28px] whitespace-nowrap rounded-md border border-red-600 bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-red-700 hover:bg-red-600 hover:text-white"
                         >
                           Write off
-                        </Button>
+                        </button>
                       </div>
                     ) : r.batch_id ? (
                       <Link
