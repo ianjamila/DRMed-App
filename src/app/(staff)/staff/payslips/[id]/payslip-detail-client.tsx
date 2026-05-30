@@ -343,7 +343,7 @@ export function PayslipDetailClient({
         </section>
 
         {/* Net pay band */}
-        <section className="mt-5 overflow-hidden rounded-2xl bg-gradient-to-r from-[#284570] to-[#06B6D4] p-5 text-white shadow-sm sm:p-7">
+        <section className="mt-5 overflow-hidden rounded-2xl bg-gradient-to-r from-[color:var(--color-brand-navy)] to-[color:var(--color-brand-cyan)] p-5 text-white shadow-sm sm:p-7">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-white/80">

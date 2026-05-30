@@ -441,7 +441,7 @@ export default async function VisitDetailPage({ params }: Props) {
         ) : null}
 
         <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
-          <table className="w-full min-w-[720px] text-sm">
+          <table className="w-full text-sm">
             <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
               <tr>
                 <th className="px-4 py-3">Service</th>
@@ -611,7 +611,7 @@ export default async function VisitDetailPage({ params }: Props) {
           Payments
         </h2>
         <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
-          <table className="w-full min-w-[640px] text-sm">
+          <table className="w-full text-sm">
             <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
               <tr>
                 <th className="px-4 py-3">Date</th>
