@@ -158,7 +158,7 @@ export default async function SchedulePage() {
             packages or HMO,{" "}
             <a
               href="/contact"
-              className="font-bold text-[color:var(--color-brand-cyan)] hover:underline"
+              className="link-brand font-bold"
             >
               message us instead
             </a>
@@ -168,7 +168,7 @@ export default async function SchedulePage() {
             Just want a DRM-ID without booking?{" "}
             <a
               href="/register"
-              className="font-bold text-[color:var(--color-brand-cyan)] hover:underline"
+              className="link-brand font-bold"
             >
               Pre-register here
             </a>
@@ -236,14 +236,14 @@ export default async function SchedulePage() {
             <p className="mt-4 text-sm">
               <a
                 href={`tel:${CONTACT.phone.mobileE164}`}
-                className="text-[color:var(--color-brand-cyan)] hover:underline"
+                className="link-brand"
               >
                 Mobile: {CONTACT.phone.mobile}
               </a>
               <br />
               <a
                 href={`tel:${CONTACT.phone.landlineE164}`}
-                className="text-[color:var(--color-brand-cyan)] hover:underline"
+                className="link-brand"
               >
                 Tel: {CONTACT.phone.landline}
               </a>

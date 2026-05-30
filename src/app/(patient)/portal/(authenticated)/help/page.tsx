@@ -10,7 +10,7 @@ export default function PatientHelpPage() {
     <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8">
       <Link
         href="/portal"
-        className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
+        className="link-brand text-xs font-bold uppercase tracking-wider"
       >
         ← Back to results
       </Link>
@@ -47,7 +47,7 @@ export default function PatientHelpPage() {
       <Section title="The download isn't opening.">
         Each download link is good for 5 minutes only. If your browser
         blocked the new tab, allow popups for{" "}
-        <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">
+        <code className="rounded bg-[color:var(--color-brand-bg)] px-1 py-0.5 text-xs">
           drmed.ph
         </code>{" "}
         and try again.
@@ -58,7 +58,7 @@ export default function PatientHelpPage() {
         full notice at{" "}
         <Link
           href="/privacy"
-          className="text-[color:var(--color-brand-cyan)] hover:underline"
+          className="link-brand"
         >
           /privacy
         </Link>
@@ -73,21 +73,21 @@ export default function PatientHelpPage() {
           Call{" "}
           <a
             href={`tel:${CONTACT.phone.mobileE164}`}
-            className="font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
+            className="link-brand font-semibold"
           >
             {CONTACT.phone.mobile}
           </a>{" "}
           or{" "}
           <a
             href={`tel:${CONTACT.phone.landlineE164}`}
-            className="font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
+            className="link-brand font-semibold"
           >
             {CONTACT.phone.landline}
           </a>{" "}
           during {CONTACT.hours}, or email{" "}
           <a
             href={`mailto:${CONTACT.email}`}
-            className="font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
+            className="link-brand font-semibold"
           >
             {CONTACT.email}
           </a>

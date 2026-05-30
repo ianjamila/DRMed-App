@@ -22,7 +22,7 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 const RELEASED_STATUS_STYLE = "bg-emerald-100 text-emerald-900";
-const PENDING_STATUS_STYLE = "bg-slate-200 text-slate-700";
+const PENDING_STATUS_STYLE = "bg-[color:var(--color-brand-bg-mid)] text-[color:var(--color-brand-text-soft)]";
 
 export default async function PatientVisitDetailPage({ params }: Props) {
   const { id } = await params;
@@ -71,7 +71,7 @@ export default async function PatientVisitDetailPage({ params }: Props) {
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
       <Link
         href="/portal"
-        className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
+        className="link-brand text-xs font-bold uppercase tracking-wider"
       >
         ← All results
       </Link>

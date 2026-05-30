@@ -296,7 +296,7 @@ export function BookingForm({
             A confirmation has been sent to the contact info on your file.
             <Link
               href="/portal"
-              className="ml-2 font-bold text-[color:var(--color-brand-cyan)] hover:underline"
+              className="link-brand ml-2 font-bold"
             >
               Back to portal →
             </Link>
@@ -725,7 +725,7 @@ export function BookingForm({
             required
             checked={serviceAgreement}
             onChange={(e) => setServiceAgreement(e.target.checked)}
-            className="mt-1"
+            className="mt-1 h-5 w-5"
           />
           <span>
             <span className="font-semibold text-[color:var(--color-brand-navy)]">
@@ -736,7 +736,7 @@ export function BookingForm({
             Lab results are released only after payment. See the{" "}
             <Link
               href="/privacy"
-              className="text-[color:var(--color-brand-cyan)] hover:underline"
+              className="link-brand"
             >
               Privacy Notice
             </Link>{" "}
@@ -751,7 +751,7 @@ export function BookingForm({
             value="on"
             checked={marketingConsent}
             onChange={(e) => setMarketingConsent(e.target.checked)}
-            className="mt-1"
+            className="mt-1 h-5 w-5"
           />
           <span>
             <span className="font-semibold text-[color:var(--color-brand-navy)]">

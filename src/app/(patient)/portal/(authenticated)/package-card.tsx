@@ -108,7 +108,7 @@ export function PackageCard(props: PackageCardProps) {
           type="button"
           onClick={downloadConsolidated}
           disabled={!props.consolidatedAvailable || pending}
-          className="min-h-[44px] bg-[color:var(--color-brand-cyan)] text-white hover:bg-[color:var(--color-brand-navy)] disabled:bg-slate-300"
+          className="min-h-[44px] bg-[color:var(--color-brand-cyan)] text-white hover:bg-[color:var(--color-brand-navy)] disabled:bg-[color:var(--color-brand-bg-mid)]"
           title={
             !props.consolidatedAvailable
               ? "Available when all components are released"

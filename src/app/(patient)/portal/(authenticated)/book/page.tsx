@@ -135,7 +135,7 @@ export default async function PortalBookPage() {
         </h1>
         <Link
           href="/portal"
-          className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
+          className="link-brand text-xs font-bold uppercase tracking-wider"
         >
           ← Back to results
         </Link>

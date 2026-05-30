@@ -22,7 +22,7 @@ export function DownloadButton({ testRequestId, resultId }: Props) {
         type="button"
         size="sm"
         disabled={pending}
-        className="bg-[color:var(--color-brand-cyan)] text-white hover:bg-[color:var(--color-brand-navy)]"
+        className="min-h-[44px] bg-[color:var(--color-brand-cyan)] text-white hover:bg-[color:var(--color-brand-navy)]"
         onClick={() =>
           start(async () => {
             setError(null);
