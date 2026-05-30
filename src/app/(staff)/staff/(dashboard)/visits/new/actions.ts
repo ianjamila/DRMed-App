@@ -10,6 +10,7 @@ import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { generatePin, hashPin } from "@/lib/auth/pin";
 import { setVisitPinFlash } from "@/lib/auth/visit-pin-flash";
+import { splitDoctorFee } from "@/lib/visits/consultation-fee";
 import type { Database } from "@/types/database";
 
 const DiscountKindEnum = z.enum([
@@ -97,6 +98,19 @@ export async function createVisitAction(
     return { ok: false, error: "One or more services could not be found." };
   }
 
+  // The doctor-fee split depends on the attending physician's compensation
+  // arrangement (rent_paying / shareholder → clinic keeps ₱0; pf_split → ₱100).
+  let attendingArrangement: string | null = null;
+  if (parsed.data.attending_physician_id) {
+    const physAdmin = createAdminClient();
+    const { data: phys } = await physAdmin
+      .from("physicians")
+      .select("compensation_arrangement")
+      .eq("id", parsed.data.attending_physician_id)
+      .maybeSingle();
+    attendingArrangement = phys?.compensation_arrangement ?? null;
+  }
+
   // Snapshot pricing per line — same arithmetic as the client form so the
   // server is the source of truth even if the client sent stale values.
   const hmoSelected = parsed.data.hmo_provider_id !== null;
@@ -107,7 +121,20 @@ export async function createVisitAction(
     const seniorPesoOff =
       s.senior_discount_php != null ? Number(s.senior_discount_php) : null;
 
-    const base = hmoSelected && hmoPrice != null ? hmoPrice : cashPrice;
+    // doctor_consultation: price is typed at the counter, not from the catalog.
+    const consultFeeRaw =
+      s.kind === "doctor_consultation"
+        ? formData.get(`consult_fee__${service_id}`)?.toString() ?? ""
+        : "";
+    const consultFee = Number(consultFeeRaw);
+    const base =
+      s.kind === "doctor_consultation"
+        ? Number.isFinite(consultFee) && consultFee >= 0
+          ? consultFee
+          : 0
+        : hmoSelected && hmoPrice != null
+          ? hmoPrice
+          : cashPrice;
 
     const rawKind = formData.get(`discount_kind__${service_id}`)?.toString() ?? "";
     const parsedKind = DiscountKindEnum.safeParse(rawKind);
@@ -135,19 +162,20 @@ export async function createVisitAction(
 
     const final_price_php = Math.max(0, base - discount_amount_php);
 
-    // Doctor consultation: capture clinic_fee + doctor_pf split. Default to
-    // clinic_fee=100 and doctor_pf=final-100 when reception leaves the
-    // inputs empty.
+    // Doctor consultation: capture clinic_fee + doctor_pf split. The split is
+    // centralized in splitDoctorFee, which defaults clinic_fee from the
+    // physician's arrangement and PF to the remainder when inputs are empty.
     let clinic_fee_php: number | null = null;
     let doctor_pf_php: number | null = null;
     if (s.kind === "doctor_consultation") {
-      const cfRaw = formData.get(`clinic_fee__${service_id}`)?.toString() ?? "";
-      const cfNum = cfRaw === "" ? 100 : Number(cfRaw);
-      clinic_fee_php = Number.isFinite(cfNum) && cfNum >= 0 ? cfNum : 100;
-      const pfRaw = formData.get(`doctor_pf__${service_id}`)?.toString() ?? "";
-      const pfDefault = Math.max(0, final_price_php - clinic_fee_php);
-      const pfNum = pfRaw === "" ? pfDefault : Number(pfRaw);
-      doctor_pf_php = Number.isFinite(pfNum) && pfNum >= 0 ? pfNum : pfDefault;
+      const split = splitDoctorFee({
+        finalPrice: final_price_php,
+        arrangement: attendingArrangement,
+        clinicFeeRaw: formData.get(`clinic_fee__${service_id}`)?.toString() ?? "",
+        doctorPfRaw: formData.get(`doctor_pf__${service_id}`)?.toString() ?? "",
+      });
+      clinic_fee_php = split.clinic_fee_php;
+      doctor_pf_php = split.doctor_pf_php;
     }
 
     // Doctor procedure: capture description + post-approval HMO grant + clinic fee + doctor PF.
@@ -163,13 +191,17 @@ export async function createVisitAction(
       // Procedure lines mirror consult lines: capture clinic_fee + doctor_pf split.
       // Default clinic_fee=0 for procedures unless the form sends a value.
       if (clinic_fee_php === null) {
+        // Procedures default clinic fee to 0 unless reception types one; PF is
+        // the remainder. (defaultClinicFee handles rent/shareholder = 0 too.)
         const cfRaw = formData.get(`clinic_fee__${service_id}`)?.toString() ?? "";
-        const cfNum = cfRaw === "" ? 0 : Number(cfRaw);
-        clinic_fee_php = Number.isFinite(cfNum) && cfNum >= 0 ? cfNum : 0;
-        const pfRaw = formData.get(`doctor_pf__${service_id}`)?.toString() ?? "";
-        const pfDefault = Math.max(0, final_price_php - clinic_fee_php);
-        const pfNum = pfRaw === "" ? pfDefault : Number(pfRaw);
-        doctor_pf_php = Number.isFinite(pfNum) && pfNum >= 0 ? pfNum : pfDefault;
+        const split = splitDoctorFee({
+          finalPrice: final_price_php,
+          arrangement: attendingArrangement,
+          clinicFeeRaw: cfRaw.trim() === "" ? "0" : cfRaw,
+          doctorPfRaw: formData.get(`doctor_pf__${service_id}`)?.toString() ?? "",
+        });
+        clinic_fee_php = split.clinic_fee_php;
+        doctor_pf_php = split.doctor_pf_php;
       }
     }
 
@@ -185,6 +217,25 @@ export async function createVisitAction(
       hmo_approved_amount_php,
     };
   });
+
+  // A consultation must have a positive (manual) fee and an attending physician
+  // — release later requires the physician (P0034), and a ₱0 consult is a slip.
+  const hasConsult = lines.some(
+    (l) => services.find((s) => s.id === l.service_id)?.kind === "doctor_consultation",
+  );
+  if (hasConsult) {
+    if (!parsed.data.attending_physician_id) {
+      return { ok: false, error: "Select an attending physician for the consultation." };
+    }
+    const badConsult = lines.some(
+      (l) =>
+        services.find((s) => s.id === l.service_id)?.kind === "doctor_consultation" &&
+        !(l.final_price_php > 0),
+    );
+    if (badConsult) {
+      return { ok: false, error: "Enter a consultation fee greater than ₱0." };
+    }
+  }
 
   const totalPhp = lines.reduce((sum, l) => sum + l.final_price_php, 0);
 
