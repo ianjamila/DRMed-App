@@ -40,14 +40,14 @@ export default function NewsletterPage() {
           Need lab results, an appointment, or to talk to reception? Use the{" "}
           <a
             href="/portal/login"
-            className="text-[color:var(--color-brand-cyan)] hover:underline"
+            className="link-brand"
           >
             patient portal
           </a>{" "}
           or{" "}
           <a
             href="/contact"
-            className="text-[color:var(--color-brand-cyan)] hover:underline"
+            className="link-brand"
           >
             contact page
           </a>{" "}

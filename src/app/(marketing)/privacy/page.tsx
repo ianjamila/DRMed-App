@@ -37,7 +37,7 @@ export default function PrivacyPage() {
             Mobile:{" "}
             <a
               href={`tel:${CONTACT.phone.mobileE164}`}
-              className="text-[color:var(--color-brand-cyan)] hover:underline"
+              className="link-brand"
             >
               {CONTACT.phone.mobile}
             </a>
@@ -45,7 +45,7 @@ export default function PrivacyPage() {
             Telephone:{" "}
             <a
               href={`tel:${CONTACT.phone.landlineE164}`}
-              className="text-[color:var(--color-brand-cyan)] hover:underline"
+              className="link-brand"
             >
               {CONTACT.phone.landline}
             </a>
@@ -150,7 +150,7 @@ export default function PrivacyPage() {
             contact DRMed through the numbers listed above or through{" "}
             <Link
               href="/contact"
-              className="text-[color:var(--color-brand-cyan)] hover:underline"
+              className="link-brand"
             >
               our contact form
             </Link>
