@@ -86,6 +86,8 @@ export default async function GroupReceiptPage({ params }: Props) {
             }`}
           >
             <header className="border-b border-[color:var(--color-brand-bg-mid)] pb-4">
+              {/* eslint-disable-next-line @next/next/no-img-element -- plain img prints reliably */}
+              <img src="/logo.png" alt="DRMed" className="mb-2 h-14 w-auto" />
               <p className="font-[family-name:var(--font-heading)] text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
                 {SITE.name}
               </p>
