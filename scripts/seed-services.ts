@@ -161,6 +161,16 @@ const services: ServiceSeed[] = [
   // src/lib/marketing/physicians.ts. Reception assigns the specific doctor
   // on day-of based on availability (Phase 6.5 behavior; Phase 9 will let
   // patients pick a physician directly).
+  // Generic manual-price consultation anchor (price typed at the counter).
+  {
+    code: "CONSULT",
+    name: "Consultation",
+    description:
+      "Generic consultation service. Reception enters the actual price at the counter.",
+    price_php: 0,
+    turnaround_hours: null,
+    kind: "doctor_consultation",
+  },
   {
     code: "CONSULT_OBGYN",
     name: "OB-GYN consultation",
