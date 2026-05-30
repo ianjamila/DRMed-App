@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { RestoreButton } from "./restore-button";
+import { PageHeader } from "@/components/staff/page-header";
 
 export const metadata = {
   title: "Staff users — staff",
@@ -85,22 +86,18 @@ export default async function StaffUsersPage() {
 
   return (
     <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
-      <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            Staff users
-          </h1>
-          <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
-            Manage who can sign into the staff portal and what role they have.
-          </p>
-        </div>
-        <Link
-          href="/staff/users/new"
-          className="rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
-        >
-          + New staff user
-        </Link>
-      </header>
+      <PageHeader
+        title="Staff users"
+        subtitle="Manage who can sign into the staff portal and what role they have."
+        actions={
+          <Link
+            href="/staff/users/new"
+            className="rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
+          >
+            + New staff user
+          </Link>
+        }
+      />
 
       {/* Existing users */}
       <section>

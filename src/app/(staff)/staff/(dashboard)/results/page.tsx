@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { sectionsForRole } from "@/lib/auth/role-sections";
 import { matchesAllTokens } from "@/lib/patients/search";
+import { PageHeader } from "@/components/staff/page-header";
 
 export const metadata = { title: "Results — staff" };
 export const dynamic = "force-dynamic";
@@ -168,16 +169,10 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
 
   return (
     <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
-      <header className="mb-6">
-        <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Results
-        </h1>
-        <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
-          Archive of every test request — created, in progress, ready for
-          release, released, or cancelled.
-          {hasFilters ? ` · ${total} matching` : ` · ${total} total`}
-        </p>
-      </header>
+      <PageHeader
+        title="Results"
+        subtitle={<>Archive of every test request — created, in progress, ready for release, released, or cancelled.{hasFilters ? ` · ${total} matching` : ` · ${total} total`}</>}
+      />
 
       <nav className="mb-4 flex flex-wrap gap-2">
         {STATUSES.map((s) => {
