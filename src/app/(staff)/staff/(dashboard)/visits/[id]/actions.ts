@@ -88,6 +88,20 @@ export async function markConsultationDoneAction(
 ): Promise<ReleaseResult> {
   const session = await requireActiveStaff();
   const supabase = await createClient();
+
+  // This action is only for consultation lines — releasing fires PF accrual.
+  // Guard server-side so a future/mis-wired caller can't release another kind.
+  const { data: tr } = await supabase
+    .from("test_requests")
+    .select("services ( kind )")
+    .eq("id", testRequestId)
+    .eq("visit_id", visitId)
+    .maybeSingle();
+  const svc = Array.isArray(tr?.services) ? tr?.services[0] : tr?.services;
+  if (!tr || svc?.kind !== "doctor_consultation") {
+    return { ok: false, error: "This action is only for consultations." };
+  }
+
   const now = new Date().toISOString();
 
   const { error } = await supabase
