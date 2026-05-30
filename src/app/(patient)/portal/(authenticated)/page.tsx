@@ -389,7 +389,8 @@ export default async function PatientPortalPage() {
         </section>
       ) : null}
 
-      <div className="mt-6 overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+      {/* Desktop / tablet: scrollable table */}
+      <div className="mt-6 hidden overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white sm:block">
         <table className="w-full min-w-[560px] text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
@@ -479,6 +480,81 @@ export default async function PatientPortalPage() {
             )}
           </tbody>
         </table>
+      </div>
+
+      {/* Mobile: stacked cards (same rows as the table above) */}
+      <div className="mt-6 sm:hidden">
+        {standalones.length === 0 ? (
+          <div className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]">
+            {nothingToShow ? (
+              <>
+                No released results yet. We&apos;ll text and email you when
+                they&apos;re ready.
+              </>
+            ) : (
+              <>
+                No individual results — your released results are grouped into
+                the package cards above.
+              </>
+            )}
+          </div>
+        ) : (
+          <ul className="space-y-3">
+            {standalones.map((row) => (
+              <li
+                key={row.result_key}
+                className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-semibold text-[color:var(--color-brand-navy)]">
+                      {row.primary_label}
+                    </p>
+                    {row.sub_label ? (
+                      <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+                        {row.sub_label}
+                      </p>
+                    ) : row.test_code ? (
+                      <p className="font-mono text-xs text-[color:var(--color-brand-text-soft)]">
+                        {row.test_code}
+                      </p>
+                    ) : null}
+                  </div>
+                  <span className="shrink-0 rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-900">
+                    Released
+                  </span>
+                </div>
+                <div className="mt-2 flex items-center justify-between text-xs text-[color:var(--color-brand-text-soft)]">
+                  <Link
+                    href={`/portal/visits/${row.visit_id}`}
+                    className="font-mono hover:text-[color:var(--color-brand-cyan)]"
+                  >
+                    #{row.visit_number}
+                  </Link>
+                  <span>
+                    {new Date(row.test_date).toLocaleDateString("en-PH", {
+                      timeZone: "Asia/Manila",
+                    })}
+                  </span>
+                </div>
+                <div className="mt-3">
+                  {row.has_result ? (
+                    <DownloadButton
+                      testRequestId={
+                        row.is_consolidated ? undefined : row.result_key
+                      }
+                      resultId={row.is_consolidated ? row.result_key : undefined}
+                    />
+                  ) : (
+                    <span className="text-xs text-[color:var(--color-brand-text-soft)]">
+                      No file
+                    </span>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
 
       {visitsWithPending.length > 0 ? (

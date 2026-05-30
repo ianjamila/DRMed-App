@@ -31,13 +31,18 @@ export function PatientLoginForm() {
         <Input
           id="pin"
           name="pin"
-          placeholder="From your receipt"
+          placeholder="ABCD1234"
           autoComplete="off"
           spellCheck={false}
           autoCapitalize="characters"
           maxLength={8}
+          aria-describedby="pin-hint"
+          className="font-mono tracking-wider"
           required
         />
+        <p id="pin-hint" className="text-xs text-[color:var(--color-brand-text-soft)]">
+          8-character code from your receipt
+        </p>
       </div>
       {state && !state.ok ? (
         <p className="text-sm text-red-600" role="alert">
