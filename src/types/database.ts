@@ -3266,6 +3266,8 @@ export type Database = {
           amount_php: number
           created_at: string
           id: string
+          legacy_import_run_id: string | null
+          legacy_source_ref: string | null
           method: string | null
           notes: string | null
           received_at: string
@@ -3280,6 +3282,8 @@ export type Database = {
           amount_php: number
           created_at?: string
           id?: string
+          legacy_import_run_id?: string | null
+          legacy_source_ref?: string | null
           method?: string | null
           notes?: string | null
           received_at?: string
@@ -3294,6 +3298,8 @@ export type Database = {
           amount_php?: number
           created_at?: string
           id?: string
+          legacy_import_run_id?: string | null
+          legacy_source_ref?: string | null
           method?: string | null
           notes?: string | null
           received_at?: string
@@ -3305,6 +3311,13 @@ export type Database = {
           voided_by?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "payments_legacy_import_run_id_fkey"
+            columns: ["legacy_import_run_id"]
+            isOneToOne: false
+            referencedRelation: "legacy_import_runs"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "payments_visit_id_fkey"
             columns: ["visit_id"]
@@ -5141,6 +5154,8 @@ export type Database = {
           home_service_fee_php: number | null
           id: string
           is_package_header: boolean
+          legacy_import_run_id: string | null
+          legacy_source_ref: string | null
           package_completed_at: string | null
           parent_id: string | null
           procedure_description: string | null
@@ -5180,6 +5195,8 @@ export type Database = {
           home_service_fee_php?: number | null
           id?: string
           is_package_header?: boolean
+          legacy_import_run_id?: string | null
+          legacy_source_ref?: string | null
           package_completed_at?: string | null
           parent_id?: string | null
           procedure_description?: string | null
@@ -5219,6 +5236,8 @@ export type Database = {
           home_service_fee_php?: number | null
           id?: string
           is_package_header?: boolean
+          legacy_import_run_id?: string | null
+          legacy_source_ref?: string | null
           package_completed_at?: string | null
           parent_id?: string | null
           procedure_description?: string | null
@@ -5265,6 +5284,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "v_hmo_provider_summary"
             referencedColumns: ["provider_id"]
+          },
+          {
+            foreignKeyName: "test_requests_legacy_import_run_id_fkey"
+            columns: ["legacy_import_run_id"]
+            isOneToOne: false
+            referencedRelation: "legacy_import_runs"
+            referencedColumns: ["id"]
           },
           {
             foreignKeyName: "test_requests_parent_id_fkey"
@@ -5405,6 +5431,8 @@ export type Database = {
           hmo_authorization_no: string | null
           hmo_provider_id: string | null
           id: string
+          legacy_import_run_id: string | null
+          legacy_source_ref: string | null
           notes: string | null
           paid_php: number
           patient_id: string
@@ -5423,6 +5451,8 @@ export type Database = {
           hmo_authorization_no?: string | null
           hmo_provider_id?: string | null
           id?: string
+          legacy_import_run_id?: string | null
+          legacy_source_ref?: string | null
           notes?: string | null
           paid_php?: number
           patient_id: string
@@ -5441,6 +5471,8 @@ export type Database = {
           hmo_authorization_no?: string | null
           hmo_provider_id?: string | null
           id?: string
+          legacy_import_run_id?: string | null
+          legacy_source_ref?: string | null
           notes?: string | null
           paid_php?: number
           patient_id?: string
@@ -5472,6 +5504,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "v_hmo_provider_summary"
             referencedColumns: ["provider_id"]
+          },
+          {
+            foreignKeyName: "visits_legacy_import_run_id_fkey"
+            columns: ["legacy_import_run_id"]
+            isOneToOne: false
+            referencedRelation: "legacy_import_runs"
+            referencedColumns: ["id"]
           },
           {
             foreignKeyName: "visits_patient_id_fkey"
