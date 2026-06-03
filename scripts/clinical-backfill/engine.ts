@@ -100,6 +100,13 @@ export async function run(cfg: TabConfig): Promise<void> {
       continue;
     }
     // patient
+    const parsed = parseTransactionName(r.patient_name);
+    // Stable, run-independent token for a person (same sheet name -> same token
+    // every run). Used as the new-patient dedup key AND the control_no-less visit
+    // group key, so re-runs stay idempotent: a resolved patient_id flips from a
+    // NEW:placeholder to a real uuid once the patient is created in a prior run,
+    // but this token does not.
+    const nameToken = `${parsed.last}|${parsed.first}`.toLowerCase();
     const m = matchPatient(r.patient_name, "", patientIndex);
     let patient_id: string; let created_patient = false;
     if (m.kind === "match") { patient_id = m.patient_id; }
@@ -107,22 +114,21 @@ export async function run(cfg: TabConfig): Promise<void> {
       ambiguous.push([String(r.row_number), r.patient_name, m.candidates.join("|"), r.posting_date ?? ""]);
       continue; // held — not committed in the auto pass
     } else {
-      // new patient (dedup within run by matchKey)
-      const { last, first } = parseTransactionName(r.patient_name);
-      const nk = `${last}|${first}`.toLowerCase();
-      if (!nk.trim() || nk === "|") {
+      // new patient (dedup within run by the stable name token)
+      if (!nameToken.trim() || nameToken === "|") {
         exclusions.push([String(r.row_number), r.posting_date ?? "", "unparseable_name", r.patient_name, r.service, "", "", ""]);
         continue;
       }
-      if (!newPatients.has(nk)) newPatients.set(nk, { last, first, sex: "", sample: r });
-      patient_id = `NEW:${nk}`; created_patient = true; // placeholder, resolved at commit
+      if (!newPatients.has(nameToken)) newPatients.set(nameToken, { last: parsed.last, first: parsed.first, sex: "", sample: r });
+      patient_id = `NEW:${nameToken}`; created_patient = true; // placeholder, resolved at commit
     }
     // service
     const sm = mapService(r.service, cfg.isConsult, svcIndex);
     if (!sm.matched) unmappedServices.set(r.service, (unmappedServices.get(r.service) ?? 0) + 1);
 
-    // group key: tab+control_no, fallback patient+date
-    const gkey = r.control_no ? `${cfg.tab}|${r.control_no}` : `${cfg.tab}|${patient_id}|${r.posting_date}`;
+    // group key: tab+control_no; fallback uses the STABLE name token + date (NOT
+    // the volatile patient_id) so the control_no-less branch is idempotent.
+    const gkey = r.control_no ? `${cfg.tab}|${r.control_no}` : `${cfg.tab}|name:${nameToken}|${r.posting_date}`;
     let v = visits.get(gkey);
     if (!v) {
       const hmoId = isHmoRow(r) ? (hmoByName.get(normaliseHmoProvider(r.hmo_provider).toLowerCase()) ?? null) : null;
@@ -196,22 +202,57 @@ async function commit(
   // CORRECTION A: omit drm_id — the DB has a DEFAULT generate_drm_id() on the
   // column, so the Postgres sequence assigns it automatically (mirrors the proven
   // scripts/import-legacy-customers.ts pattern). Never compute or pass drm_id here.
+  // Reuse patients THIS backfill already created so re-runs / partial-failure
+  // resumes don't mint duplicate patient rows. Keyed on a stable
+  // clinical_name_token stamped into legacy_intake at creation — the fuzzy
+  // matcher alone is insufficient (e.g. single-token names are stored with
+  // first_name=last_name and would not re-match on a blank first token).
+  const priorClinicalPatients = await fetchAll<{ id: string; legacy_intake: { clinical_name_token?: string } | null }>(
+    async (lo, hi) => {
+      const { data, error } = await admin.from("patients")
+        .select("id,legacy_intake").not("legacy_import_run_id", "is", null).range(lo, hi);
+      if (error) throw new Error(error.message);
+      return (data ?? []) as { id: string; legacy_intake: { clinical_name_token?: string } | null }[];
+    },
+  );
+  const priorByToken = new Map<string, string>();
+  for (const pp of priorClinicalPatients) {
+    const tok = pp.legacy_intake?.clinical_name_token;
+    if (typeof tok === "string" && tok && !priorByToken.has(tok)) priorByToken.set(tok, pp.id);
+  }
+
   const newIdByKey = new Map<string, string>();
+  let pNew = 0, pReused = 0;
   for (const [nk, p] of newPatients) {
+    const reuse = priorByToken.get(nk);
+    if (reuse) { newIdByKey.set(`NEW:${nk}`, reuse); pReused++; continue; }
     const { data, error } = await admin.from("patients").insert({
       first_name: p.first || p.last,   // first_name is NOT NULL; fall back to last
       last_name: p.last,
       pre_registered: false,
       birthdate_confirmed: false,
       legacy_import_run_id: runId,
-      legacy_intake: { source: `clinical_backfill:${cfg.tab}`, raw: p.sample } as never,
+      legacy_intake: { source: `clinical_backfill:${cfg.tab}`, clinical_name_token: nk, raw: p.sample } as never,
     } as never).select("id").single();
     if (error || !data) throw new Error(`patient insert (${nk}): ${error?.message}`);
     newIdByKey.set(`NEW:${nk}`, data.id as string);
+    priorByToken.set(nk, data.id as string); // also guards against intra-run dupes
+    pNew++;
   }
 
   // 2. visits -> test_requests -> payment, idempotent on legacy_source_ref
+  // Pre-seed visit_number uniqueness with every existing visit_number so a newly
+  // built H-<control_no> can't collide with an app visit OR a visit the OTHER tab
+  // already created under the same control_no (lab + consult can share one). On
+  // collision buildVisitNumber appends -2/-3...; idempotency skips re-imports first
+  // so this only fires for genuinely new visits.
   const usedVisitNumbers = new Set<string>();
+  const existingVisitNumbers = await fetchAll<{ visit_number: string }>(async (lo, hi) => {
+    const { data, error } = await admin.from("visits").select("visit_number").range(lo, hi);
+    if (error) throw new Error(error.message);
+    return (data ?? []) as { visit_number: string }[];
+  });
+  for (const e of existingVisitNumbers) usedVisitNumbers.add(e.visit_number);
   let vIns = 0, vSkip = 0, tIns = 0, pIns = 0;
   for (const v of visitArr) {
     const patient_id = v.patient_id.startsWith("NEW:") ? newIdByKey.get(v.patient_id)! : v.patient_id;
@@ -249,8 +290,11 @@ async function commit(
         base_price_php: base, discount_amount_php: discount,
         discount_kind: discount > 0 ? "custom" : null,
         final_price_php: final,
-        clinic_fee_php: cfg.isConsult ? round2(ln.row.clinic_fee) : null,
-        doctor_pf_php: cfg.isConsult ? round2(ln.row.doctor_pf) : null,
+        // clamp pass-through consult fees to >= 0: the sheet has a few rows
+        // with a positive clinic_fee but a negative doctor_pf (data-entry
+        // anomaly), which would violate test_requests_{clinic_fee,doctor_pf}_php_check.
+        clinic_fee_php: cfg.isConsult ? Math.max(round2(ln.row.clinic_fee), 0) : null,
+        doctor_pf_php: cfg.isConsult ? Math.max(round2(ln.row.doctor_pf), 0) : null,
         is_package_header: false, test_number: null,
         receptionist_remarks: ln.serviceMatched ? null : `legacy service: ${ln.row.service}`,
         legacy_import_run_id: runId, legacy_source_ref: ref,
@@ -276,9 +320,9 @@ async function commit(
   }
 
   await admin.from("legacy_import_runs").update({
-    ended_at: new Date().toISOString(), rows_inserted: vIns + tIns + pIns,
-    notes: `visits +${vIns} (skip ${vSkip}), tests +${tIns}, payments +${pIns}, new patients +${newIdByKey.size}`,
+    ended_at: new Date().toISOString(), rows_inserted: vIns + tIns + pIns + pNew,
+    notes: `visits +${vIns} (skip ${vSkip}), tests +${tIns}, payments +${pIns}, new patients +${pNew} (reused ${pReused})`,
   } as never).eq("id", runId);
 
-  console.log(`\nCommit complete: visits +${vIns} (skip ${vSkip}), tests +${tIns}, payments +${pIns}, new patients +${newIdByKey.size}`);
+  console.log(`\nCommit complete: visits +${vIns} (skip ${vSkip}), tests +${tIns}, payments +${pIns}, new patients +${pNew} (reused ${pReused})`);
 }
