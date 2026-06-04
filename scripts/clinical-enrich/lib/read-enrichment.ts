@@ -1,13 +1,17 @@
 import ExcelJS from "exceljs";
-import { cellText, fnum } from "../../clinical-backfill/lib/xlsx";
+import { cellText } from "../../clinical-backfill/lib/xlsx";
+
+function isYes(v: ExcelJS.CellValue): boolean {
+  return cellText(v).trim().toUpperCase() === "YES";
+}
 
 /** One source-sheet row's recoverable enrichment fields, keyed by legacy_source_ref. */
 export interface EnrichmentRow {
   doctorSurname: string;          // consult only; "" for lab
-  discountSenior: number;
-  discountOther: number;          // consult col 11
-  discount10: number;             // lab col 11
-  discount5: number;              // lab col 12
+  discSenior: boolean;            // consult/lab col 10 == YES
+  discOther: boolean;             // consult col 11 == YES (lab: false)
+  disc10: boolean;                // lab col 11 == YES (consult: false)
+  disc5: boolean;                 // lab col 12 == YES (consult: false)
   newRepeat: string;              // lab col 17; "" for consult
 }
 
@@ -27,10 +31,10 @@ export async function readEnrichment(xlsxPath: string): Promise<Map<string, Enri
     if (row.getCell(1).value == null) return;
     out.set(`DOCTOR CONSULTATION r${rn}`, {
       doctorSurname: cellText(row.getCell(8).value).trim(),
-      discountSenior: fnum(row.getCell(10).value),
-      discountOther: fnum(row.getCell(11).value),
-      discount10: 0,
-      discount5: 0,
+      discSenior: isYes(row.getCell(10).value),
+      discOther: isYes(row.getCell(11).value),
+      disc10: false,
+      disc5: false,
       newRepeat: "",
     });
   });
@@ -42,10 +46,10 @@ export async function readEnrichment(xlsxPath: string): Promise<Map<string, Enri
     if (row.getCell(1).value == null) return;
     out.set(`LAB SERVICE r${rn}`, {
       doctorSurname: "",
-      discountSenior: fnum(row.getCell(10).value),
-      discountOther: 0,
-      discount10: fnum(row.getCell(11).value),
-      discount5: fnum(row.getCell(12).value),
+      discSenior: isYes(row.getCell(10).value),
+      discOther: false,
+      disc10: isYes(row.getCell(11).value),
+      disc5: isYes(row.getCell(12).value),
       newRepeat: cellText(row.getCell(17).value).trim(),
     });
   });

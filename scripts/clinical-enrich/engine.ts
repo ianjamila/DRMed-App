@@ -117,8 +117,8 @@ export async function run(): Promise<void> {
     if ((tr.discount_amount_php ?? 0) > 0 && tr.discount_kind === "custom") {
       const kind = classifyDiscount(
         isConsult
-          ? { senior: e.discountSenior, other: e.discountOther }
-          : { senior: e.discountSenior, d10: e.discount10, d5: e.discount5 },
+          ? { senior: e.discSenior, other: e.discOther }
+          : { senior: e.discSenior, d10: e.disc10, d5: e.disc5 },
         isConsult,
       );
       if (kind) (trDiscount.get(kind) ?? trDiscount.set(kind, []).get(kind)!).push(tr.id);
