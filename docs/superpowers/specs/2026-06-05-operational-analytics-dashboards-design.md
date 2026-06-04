@@ -24,10 +24,14 @@ lists, the campaign-brief export, consent) to its own project — see §13.
 
 ### Scope (this spec = sub-projects 1 + 2)
 
-- **Part A — Historical doctor attribution.** Recover the attending doctor for
-  the 1,605 backfilled consults (the source sheet's column 8 *is* the doctor
-  surname) and set `visits.attending_physician_id`. Unblocks every per-doctor /
-  per-specialty cut below.
+- **Part A — Historical enrichment (single sheet re-read pass).** Recover three
+  fields the backfill dropped, all from re-reading the master sheet:
+  1. **Attending doctor** — the consult tab's column 8 *is* the doctor surname →
+     set `visits.attending_physician_id` (unblocks every per-doctor/specialty cut).
+  2. **Discount type** — both tabs split Senior/PWD vs other discounts → set
+     `test_requests.discount_kind` precisely (currently all historical = `custom`).
+  3. **New vs repeat customer** — the lab tab hand-tracked this → store a per-visit
+     marker so historical new-vs-repeat is *accurate*, not name-match-approximate.
 - **Part B — Analytics dashboards.** A faithful **Daily report**, **trend
   charts**, a **today snapshot**, and four analytics packs (HMO, Doctor/Specialty
   productivity, Marketing/Growth, Ops deep-dive), all driven by SQL views.
@@ -64,9 +68,14 @@ lists, the campaign-brief export, consent) to its own project — see §13.
 
 ---
 
-## 3. Part A — Historical doctor attribution
+## 3. Part A — Historical enrichment pass
 
-### 3.1 The finding
+One script re-reads the master sheet once and recovers three dropped fields
+(§3.1–3.6). All writes are GL-silent UPDATEs on legacy rows (no `status` change;
+`bridge_test_request_released` short-circuits on `legacy_import_run_id`),
+idempotent (fill-only-where-still-default), dry-run → review CSV → `--commit`.
+
+### 3.1 The finding (doctor)
 
 The `DOCTOR CONSULTATION` tab's **column 8** (header mislabeled "SERVICE") holds
 the **attending doctor's surname**, stored as Google-Sheets formula cells — read
@@ -130,6 +139,39 @@ collapse to one key.
 > Roster physicians with **no** col-8 appearance (Dr. Daniel John Mariano —
 > Radiologist; Dr. Lizcel Alonzo — Psychiatrist) simply have zero historical
 > consults; that is expected, not an error.
+
+### 3.4 Discount-type recovery (BIR / Senior-PWD compliance)
+
+The backfill set every historical discount to `discount_kind='custom'`. The sheet
+keeps the split in dedicated columns, mapping cleanly to the existing enum
+(`{senior_pwd_20, pct_10, pct_5, other_pct_20, custom}`):
+
+- **LAB SERVICE:** col 10 Senior/PWD (20%) → `senior_pwd_20`; col 11 Discount
+  (10%) → `pct_10`; col 12 Discount (5%) → `pct_5`.
+- **DOCTOR CONSULTATION:** col 10 Senior/PWD (20%) → `senior_pwd_20`; col 11
+  Other discounts (20%) → `other_pct_20`.
+
+For each committed line with a discount, set `test_requests.discount_kind` from
+whichever column is non-zero (Senior/PWD takes precedence if multiple). Lines with
+no discount stay NULL. Enables the Senior/PWD vs other cut over full history.
+
+### 3.5 New-vs-repeat recovery
+
+The LAB SERVICE tab's **col 17 "NEW / REPEAT CUSTOMER"** is the clinic's own
+ground-truth flag. A tiny migration adds nullable **`visits.source_new_repeat
+text`** (`'new' | 'repeat'`); Part A sets it from col 17 for lab visits (consult
+tab has no such column → left NULL). The new-vs-repeat metric (§5.2) uses this
+recovered flag where present (history) and computes first-visit from visit history
+otherwise (live) — making the headline marketing metric accurate, not
+name-match-approximate, for the historical period.
+
+### 3.6 Flow & safety
+
+All three recoveries run in the **same** dry-run → commit pass per tab, keyed on
+`legacy_source_ref` (the row pointer already on every backfilled record).
+GL-silent, idempotent, with a combined `enrichment-summary` + per-field unmatched
+CSVs. Validation SQL asserts zero JE delta and reports attribution/discount/new-
+repeat coverage.
 
 ---
 
@@ -223,7 +265,8 @@ acquisition; referral-source breakdown; age/sex demographics; service & specialt
 demand + seasonality (by month).
 
 **Ops deep-dive pack:** top services Pareto (volume & revenue); revenue per visit
-& per clinic day; busiest day-of-week; send-out vs in-house + margin.
+& per clinic day; busiest day-of-week; send-out vs in-house + margin;
+**discounts by type** (Senior/PWD vs other — BIR-relevant, full history via §3.4).
 
 ### 5.3 Today snapshot (cards on the staff dashboard)
 
@@ -243,7 +286,9 @@ the "light ops snapshot." (Card visibility honors the existing dashboard-card pr
 | Send-out margin | Full for the 82 costed send-out services |
 | Referral source | ~85% of patients (customer import captured it); richer going forward |
 | Age / sex demographics | ~80% of patients have a birthdate; sex where recorded |
-| New-vs-repeat / retention | Reliable **going forward**; weaker on legacy (name-only patient matching can under/over-count repeats) — label as "approximate for pre-2026" |
+| Discount type (Senior/PWD vs other) | **Full**, after Part A §3.4 recovers it from the sheet (was lumped `custom`) |
+| New-vs-repeat (lab) | **Accurate** for lab history via recovered col-17 flag (§3.5); consult history + retention *cohorts* still computed/approximate |
+| Retention cohorts / repeat-frequency | Reliable **going forward**; legacy cohort curves approximate (name-only matching) — label "approximate for pre-2026" |
 
 Surfaces that depend on partial data show a small "based on N% with data" note so
 nobody over-reads them.
@@ -268,8 +313,10 @@ nobody over-reads them.
 
 ## 8. Build sequence (dispatches)
 
-1. **Part A** — surname map + attribution script + dry-run + commit (local → prod
-   via MCP env) + validation. Ship first; it's the prerequisite + low-risk.
+1. **Part A enrichment** — tiny migration (`visits.source_new_repeat`); the
+   single-pass recovery script (doctor map §3.2 + discount-type §3.4 + new/repeat
+   §3.5); dry-run → review CSVs → commit (local → prod via MCP env) + validation.
+   Ship first; prerequisite + low-risk + GL-silent.
 2. **Views migration** — the `v_ops_*` views + `v_payment_channel` helper; regen
    types; SQL smoke (counts reconcile to raw).
 3. **Daily report** page (the faithful reproduction) + CSV export.
