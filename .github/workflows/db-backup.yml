@@ -53,7 +53,9 @@ jobs:
             exit 1
           fi
           age -r "$BACKUP_AGE_RECIPIENT" -o "${{ steps.name.outputs.enc }}" "${{ steps.name.outputs.raw }}"
-          rm -f "${{ steps.name.outputs.raw }}"
+          # The raw dump is written by the root-running postgres:17 container, so it
+          # is root-owned in sticky /tmp; the non-root runner needs sudo to delete it.
+          sudo rm -f "${{ steps.name.outputs.raw }}"
           ls -lh "${{ steps.name.outputs.enc }}"
 
       - name: Upload to Vercel Blob + sweep old backups
