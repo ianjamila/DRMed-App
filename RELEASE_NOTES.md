@@ -167,3 +167,53 @@ this fills the operational records that sit alongside them.
 - Optionally grow the service catalog to reduce the **69 unmapped lab services**
   (currently mapped to a generic "Legacy lab test", original name preserved in
   `receptionist_remarks`).
+
+# v1.16.0 — analytics Part A: historical enrichment
+
+Recovers fields the clinical backfill (v1.15.0) dropped, by re-reading the legacy
+master sheet once and applying **GL-silent, idempotent, batched** UPDATEs to the
+already-committed legacy `visits` / `test_requests`. This is **Part A** of the
+operational-analytics dashboards project (Part B — SQL views + dashboards — is a
+separate plan, to be written against this enriched data).
+
+## What shipped
+
+- **Migration 0092** — adds nullable `visits.source_new_repeat` (`'new' | 'repeat'`).
+- **Standalone enrichment importer** under `scripts/clinical-enrich/` (tested
+  pure-logic lib: surname→physician map, discount-type classifier, new/repeat
+  parser; a sheet reader; a batched commit engine joining committed rows by
+  `legacy_source_ref`). Dry-run → review CSV → `--commit --confirm [--prod]`,
+  mirroring the v1.15.0 ergonomics. Fill-NULL-only / reclassify-`custom`-only →
+  re-runs are no-ops.
+- **`enrich:clinical`** npm script + `validate.sql` coverage/GL-silence checks.
+
+## Production result
+
+- **Attending doctor** → `visits.attending_physician_id`: **1,546 of 1,605**
+  legacy consults attributed (96.3%) across 16 physicians; 59 → "Other" (56
+  off-roster: SEVILLEJA/JOSON/SAYSON/VILLANUEVA + ambiguous bare DANTES; ~3 blank).
+  No invented physician rows.
+- **Discount type** → `test_requests.discount_kind`: **5,343** rows reclassified
+  from the lumped `custom` (5,291 `senior_pwd_20`, 43 `pct_10`, 9 `pct_5`); the
+  type lives in the sheet's `"YES"`/`"N/A"` **flag** columns (not amounts — a
+  plan-assumption correction made during the dry-run). 1,436 genuinely-unflagged
+  discounts stay `custom`.
+- **New vs repeat**: **0 recovered** — the sheet's "NEW / REPEAT CUSTOMER" column
+  is empty across all rows. The 0092 column stays NULL; Part B computes
+  new-vs-repeat from visit history. (Spec premise was incorrect.)
+- **GL-silence verified: 0** JEs reference any legacy clinical row. Idempotent
+  re-run: **+0**.
+
+## Follow-ups
+
+- **Per-doctor history is incomplete for the busiest doctors.** The consult tab
+  has **7,996** rows but only **1,605** were committed by the v1.15.0 backfill,
+  and the uncommitted ~6,400 are overwhelmingly the top doctors: GAYO (2,269 in
+  sheet → 3 committed), R.VICENCIO (2,267 → 3), LORENZO (838 → 1), A.VICENCIO
+  (282 → 0), ARCEGA (156 → 0). Mid/low-volume doctors are 80–90% covered. To get
+  meaningful per-doctor trends, commit the held/uncommitted consults (ties to the
+  v1.15.0 "1,548 ambiguous rows" follow-up), then **re-run `enrich:clinical`** —
+  it will attribute the newly-committed rows automatically (idempotent).
+- Consult `discount_amount_php` is actually the doctor PF (base − clinic fee), a
+  v1.15.0 backfill artifact; Part A only relabels the *type*, not amounts. Fix
+  separately if consult discount *amounts* matter.
