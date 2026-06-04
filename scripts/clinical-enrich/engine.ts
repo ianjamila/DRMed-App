@@ -143,6 +143,9 @@ export async function run(): Promise<void> {
   console.log(`  doctor attribution:   ${physTotal} visits (across ${visitPhys.size} physicians)`);
   console.log(`  unmatched doctors:    ${[...unmatchedDocs.values()].reduce((a, b) => a + b, 0)} consults (${unmatchedDocs.size} surnames)`);
   console.log(`  discount reclassify:  ${discTotal} test_requests`);
+  for (const [kind, ids] of [...trDiscount.entries()].sort((a, b) => b[1].length - a[1].length)) {
+    console.log(`      ${kind.padEnd(14)} ${ids.length}`);
+  }
   console.log(`  new/repeat set:       ${nrTotal} visits`);
 
   const csv = await writeCsv(
