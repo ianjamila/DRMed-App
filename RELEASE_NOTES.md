@@ -122,3 +122,48 @@ These were intentionally out of scope for v1 and tracked for follow-up:
   pre-existing static roster.
 - 14 doctor consultation services.
 - 11 HMO providers.
+
+---
+
+# v1.15.0 — historical clinical-data backfill
+
+Backfills the previously-empty **clinical operational layer** (`visits` /
+`test_requests` / `payments`) from the legacy master sheet (Dec 2023 → app
+cutover), completing the historical-data project: patients (v1.11.0) and the
+accounting books (Phase 12.B, 22k `history_import` JEs) were already loaded;
+this fills the operational records that sit alongside them.
+
+## What shipped
+
+- **Migration 0091** — adds `legacy_import_run_id` / `legacy_source_ref`
+  provenance (+ partial unique/lookup indexes) to `visits`, `test_requests`,
+  and `payments`, and guards the three insert-path trigger functions
+  (`bridge_payment_insert`, `payments_block_after_close`,
+  `bridge_test_request_released`) so legacy rows are **GL-silent** — the books
+  already hold every peso, so the backfill posts **zero** new journal entries.
+  `recalc_visit_payment` stays live so `payment_status` still computes.
+- **Standalone importers** under `scripts/clinical-backfill/` (tested pure-logic
+  lib + a dry-run → review-CSVs → `--commit --confirm` engine, mirroring the
+  12.B ergonomics). Idempotent on `legacy_source_ref` (pre-loaded in-memory);
+  new patients reused across runs via a stable `clinical_name_token`.
+- **Portal** — released historical tests (no digital result on file) now show
+  "Released — pre-system record (no digital copy on file)" instead of a bare
+  "No file"; the download control stays hidden.
+
+## Production load (released metadata; no result values — the source is a billing ledger)
+
+- **8,081 visits**, **18,639 released test requests**, **7,276 payments**,
+  **786 new patients** (2023–2026).
+- **GL-silence verified: 0** journal entries reference any legacy clinical row.
+- Orphan check (visit total = Σ line finals): **0**.
+- Books reconciliation: clinical revenue is ~87% of booked revenue per year;
+  the gap is the **1,548 ambiguous-name rows held back** for manual resolution
+  (RA 10173 — never auto-assign an ambiguous patient) plus discounts/rounding.
+
+## Follow-ups
+
+- Resolve the held **ambiguous** rows (`tmp/clinical-*-ambiguous*.csv`) with the
+  partner and import them with explicit patient assignments.
+- Optionally grow the service catalog to reduce the **69 unmapped lab services**
+  (currently mapped to a generic "Legacy lab test", original name preserved in
+  `receptionist_remarks`).
