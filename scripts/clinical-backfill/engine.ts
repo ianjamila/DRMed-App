@@ -240,27 +240,51 @@ async function commit(
     pNew++;
   }
 
-  // 2. visits -> test_requests -> payment, idempotent on legacy_source_ref
-  // Pre-seed visit_number uniqueness with every existing visit_number so a newly
-  // built H-<control_no> can't collide with an app visit OR a visit the OTHER tab
-  // already created under the same control_no (lab + consult can share one). On
-  // collision buildVisitNumber appends -2/-3...; idempotency skips re-imports first
-  // so this only fires for genuinely new visits.
+  // 2. visits -> test_requests -> payment, idempotent on legacy_source_ref.
+  // Pre-load existing rows ONCE into in-memory indexes instead of a per-row
+  // SELECT. This (a) roughly halves network round-trips for the whole import and
+  // (b) makes a resume after a transient/partial failure near-instant — it skips
+  // the thousands of already-imported rows in memory rather than re-querying each
+  // (the per-row SELECT made every retry re-scan the whole prior progress).
+  // usedVisitNumbers also pre-seeds visit_number uniqueness so a new
+  // H-<control_no> can't collide with an app visit or the other tab's visit
+  // sharing a control_no.
   const usedVisitNumbers = new Set<string>();
-  const existingVisitNumbers = await fetchAll<{ visit_number: string }>(async (lo, hi) => {
-    const { data, error } = await admin.from("visits").select("visit_number").range(lo, hi);
+  const existingVisitByRef = new Map<string, string>(); // legacy_source_ref -> visit id
+  const existingVisitRows = await fetchAll<{ id: string; visit_number: string; legacy_source_ref: string | null }>(
+    async (lo, hi) => {
+      const { data, error } = await admin.from("visits")
+        .select("id,visit_number,legacy_source_ref").range(lo, hi);
+      if (error) throw new Error(error.message);
+      return (data ?? []) as { id: string; visit_number: string; legacy_source_ref: string | null }[];
+    },
+  );
+  for (const e of existingVisitRows) {
+    if (e.visit_number) usedVisitNumbers.add(e.visit_number);
+    if (e.legacy_source_ref) existingVisitByRef.set(e.legacy_source_ref, e.id);
+  }
+  const existingTestRefs = new Set<string>();
+  for (const e of await fetchAll<{ legacy_source_ref: string }>(async (lo, hi) => {
+    const { data, error } = await admin.from("test_requests")
+      .select("legacy_source_ref").not("legacy_source_ref", "is", null).range(lo, hi);
     if (error) throw new Error(error.message);
-    return (data ?? []) as { visit_number: string }[];
-  });
-  for (const e of existingVisitNumbers) usedVisitNumbers.add(e.visit_number);
+    return (data ?? []) as { legacy_source_ref: string }[];
+  })) existingTestRefs.add(e.legacy_source_ref);
+  const existingPaymentRefs = new Set<string>();
+  for (const e of await fetchAll<{ legacy_source_ref: string }>(async (lo, hi) => {
+    const { data, error } = await admin.from("payments")
+      .select("legacy_source_ref").not("legacy_source_ref", "is", null).range(lo, hi);
+    if (error) throw new Error(error.message);
+    return (data ?? []) as { legacy_source_ref: string }[];
+  })) existingPaymentRefs.add(e.legacy_source_ref);
   let vIns = 0, vSkip = 0, tIns = 0, pIns = 0;
   for (const v of visitArr) {
     const patient_id = v.patient_id.startsWith("NEW:") ? newIdByKey.get(v.patient_id)! : v.patient_id;
     const visitRef = `${cfg.tab} ${v.control_no ? "control=" + v.control_no : "grp=" + v.key}`;
-    // idempotency: skip if this visit ref already imported
-    const { data: existV } = await admin.from("visits").select("id").eq("legacy_source_ref", visitRef).maybeSingle();
+    // idempotency: skip if this visit ref already imported (in-memory index)
+    const existingVisitId = existingVisitByRef.get(visitRef);
     let visitId: string;
-    if (existV?.id) { visitId = existV.id; vSkip++; }
+    if (existingVisitId) { visitId = existingVisitId; vSkip++; }
     else {
       const visit_number = buildVisitNumber(cfg.tab, v.control_no, 0, usedVisitNumbers);
       const { data: vr, error: vErr } = await admin.from("visits").insert({
@@ -271,12 +295,12 @@ async function commit(
       } as never).select("id").single();
       if (vErr || !vr) throw new Error(`visit insert (${visitRef}): ${vErr?.message}`);
       visitId = vr.id as string; vIns++;
+      existingVisitByRef.set(visitRef, visitId);
     }
     // test_requests
     for (const ln of v.lines) {
       const ref = `${cfg.tab} r${ln.row.row_number}`;
-      const { data: existT } = await admin.from("test_requests").select("id").eq("legacy_source_ref", ref).maybeSingle();
-      if (existT?.id) continue;
+      if (existingTestRefs.has(ref)) continue;
       const base = round2(ln.row.base > 0 ? ln.row.base : ln.row.final);
       const final = round2(cfg.isConsult ? ln.row.clinic_fee : (ln.row.final > 0 ? ln.row.final : ln.row.base));
       const discount = round2(Math.max(base - final, 0));
@@ -300,13 +324,13 @@ async function commit(
         legacy_import_run_id: runId, legacy_source_ref: ref,
       } as never);
       if (tErr) throw new Error(`test_request insert (${ref}): ${tErr.message}`);
+      existingTestRefs.add(ref);
       tIns++;
     }
     // payment (only if collected > 0)
     if (v.collected > 0) {
       const pref = `${cfg.tab} ${v.control_no ? "control=" + v.control_no : "grp=" + v.key} pay`;
-      const { data: existP } = await admin.from("payments").select("id").eq("legacy_source_ref", pref).maybeSingle();
-      if (!existP?.id) {
+      if (!existingPaymentRefs.has(pref)) {
         const { error: pErr } = await admin.from("payments").insert({
           visit_id: visitId, amount_php: v.collected, method: v.method,
           reference_number: v.or_number || null, received_by: systemUserId,
@@ -314,6 +338,7 @@ async function commit(
           legacy_import_run_id: runId, legacy_source_ref: pref,
         } as never);
         if (pErr) throw new Error(`payment insert (${pref}): ${pErr.message}`);
+        existingPaymentRefs.add(pref);
         pIns++;
       }
     }
