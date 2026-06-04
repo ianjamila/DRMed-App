@@ -5437,6 +5437,7 @@ export type Database = {
           paid_php: number
           patient_id: string
           payment_status: string
+          source_new_repeat: string | null
           total_php: number
           updated_at: string
           visit_date: string
@@ -5457,6 +5458,7 @@ export type Database = {
           paid_php?: number
           patient_id: string
           payment_status?: string
+          source_new_repeat?: string | null
           total_php?: number
           updated_at?: string
           visit_date?: string
@@ -5477,6 +5479,7 @@ export type Database = {
           paid_php?: number
           patient_id?: string
           payment_status?: string
+          source_new_repeat?: string | null
           total_php?: number
           updated_at?: string
           visit_date?: string
