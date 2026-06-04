@@ -29,6 +29,9 @@ interface ReleasedRow {
   test_date: string;
   released_at: string | null;
   has_result: boolean;
+  /** True when this row came from the historical backfill (legacy_import_run_id IS NOT NULL).
+   *  Used to show a more informative label when no digital copy exists. */
+  is_legacy: boolean;
 }
 
 // Package header surfaced as a card. Components hang off it via
@@ -111,6 +114,7 @@ async function loadResults(patientId: string): Promise<PortalData> {
     .select(
       `
         id, status, released_at, parent_id, is_package_header, created_at,
+        legacy_import_run_id,
         services!test_requests_service_id_fkey ( code, name ),
         visits!inner ( id, visit_number, visit_date, patient_id )
       `,
@@ -322,6 +326,8 @@ async function loadResults(patientId: string): Promise<PortalData> {
         test_date: visit.visit_date,
         released_at: releasedAt,
         has_result: Boolean(result.storage_path),
+        // A result row exists but has no storage_path — not a legacy concern.
+        is_legacy: false,
       });
     }
 
@@ -342,6 +348,7 @@ async function loadResults(patientId: string): Promise<PortalData> {
         test_date: visit.visit_date,
         released_at: tr.released_at,
         has_result: false,
+        is_legacy: Boolean(tr.legacy_import_run_id),
       });
     }
   }
@@ -470,6 +477,13 @@ export default async function PatientPortalPage() {
                         testRequestId={row.is_consolidated ? undefined : row.result_key}
                         resultId={row.is_consolidated ? row.result_key : undefined}
                       />
+                    ) : row.is_legacy ? (
+                      <span className="text-xs text-[color:var(--color-brand-text-soft)]">
+                        Released —{" "}
+                        <span className="block sm:inline">
+                          pre-system record (no digital copy on file)
+                        </span>
+                      </span>
                     ) : (
                       <span className="text-xs text-[color:var(--color-brand-text-soft)]">
                         No file
@@ -546,6 +560,11 @@ export default async function PatientPortalPage() {
                       }
                       resultId={row.is_consolidated ? row.result_key : undefined}
                     />
+                  ) : row.is_legacy ? (
+                    <span className="text-xs text-[color:var(--color-brand-text-soft)]">
+                      Released —{" "}
+                      pre-system record (no digital copy on file)
+                    </span>
                   ) : (
                     <span className="text-xs text-[color:var(--color-brand-text-soft)]">
                       No file

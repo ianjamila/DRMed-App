@@ -33,7 +33,7 @@ export default async function PatientVisitDetailPage({ params }: Props) {
   const { data: visitRaw } = await admin
     .from("visits")
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .select("id, patient_id, visit_number, visit_date, payment_status, test_requests(id, status, released_at, services!inner(name, code), result_test_requests(result_id, results!inner(id, storage_path)))" as any)
+    .select("id, patient_id, visit_number, visit_date, payment_status, test_requests(id, status, released_at, legacy_import_run_id, services!inner(name, code), result_test_requests(result_id, results!inner(id, storage_path)))" as any)
     .eq("id", id)
     .eq("patient_id", patient.patient_id)
     .maybeSingle();
@@ -44,6 +44,7 @@ export default async function PatientVisitDetailPage({ params }: Props) {
     id: string;
     status: string;
     released_at: string | null;
+    legacy_import_run_id: string | null;
     services: { name: string; code: string } | { name: string; code: string }[] | null;
     result_test_requests: {
       result_id: string;
@@ -141,6 +142,13 @@ export default async function PatientVisitDetailPage({ params }: Props) {
                     <td className="px-4 py-3 text-right">
                       {result?.storage_path ? (
                         <DownloadButton testRequestId={t.id} />
+                      ) : t.legacy_import_run_id ? (
+                        <span className="text-xs text-[color:var(--color-brand-text-soft)]">
+                          Released —{" "}
+                          <span className="block sm:inline">
+                            pre-system record (no digital copy on file)
+                          </span>
+                        </span>
                       ) : (
                         <span className="text-xs text-[color:var(--color-brand-text-soft)]">
                           No file

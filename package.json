@@ -1,6 +1,6 @@
 {
   "name": "drmed-app",
-  "version": "1.14.0",
+  "version": "1.15.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -34,7 +34,9 @@
     "import:history:expenses": "tsx --env-file=.env.local scripts/history-import/expenses.ts",
     "import:history:veritas-pay": "tsx --env-file=.env.local scripts/history-import/veritas-pay.ts",
     "import:history:doctor-cons": "tsx --env-file=.env.local scripts/history-import/doctor-consultations.ts",
-    "import:history:lab-services": "tsx --env-file=.env.local scripts/history-import/lab-services.ts"
+    "import:history:lab-services": "tsx --env-file=.env.local scripts/history-import/lab-services.ts",
+    "backfill:clinical:lab": "tsx --env-file=.env.local scripts/clinical-backfill/lab.ts",
+    "backfill:clinical:consult": "tsx --env-file=.env.local scripts/clinical-backfill/consult.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
