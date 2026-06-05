@@ -1,3 +1,4 @@
+import { Card } from "@/components/ui/card";
 import type { DailyMatrix } from "@/lib/operations/daily-report";
 
 const PESO = (n: number) =>
@@ -35,12 +36,12 @@ export function SummaryCards({ matrix }: { matrix: DailyMatrix }) {
   return (
     <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
       {cards.map((c) => (
-        <div key={c.label} className="rounded-lg border bg-white p-3 shadow-sm">
+        <Card key={c.label} size="sm" className="gap-1 px-4">
           <div className="text-xs text-[color:var(--color-brand-text-soft)]">{c.label}</div>
-          <div className="mt-1 font-mono text-lg font-semibold text-[color:var(--color-brand-navy)]">
+          <div className="font-mono text-lg font-semibold tabular-nums text-[color:var(--color-brand-navy)]">
             {c.value}
           </div>
-        </div>
+        </Card>
       ))}
     </div>
   );

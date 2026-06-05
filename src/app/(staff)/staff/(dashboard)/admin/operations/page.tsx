@@ -9,7 +9,10 @@ import {
   type TotalsRow,
   type DoctorRow,
 } from "@/lib/operations/daily-report";
+import { buttonVariants } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { OperationsTabs } from "./_components/operations-tabs";
+import { DateControls } from "./_components/date-controls";
 import { SummaryCards } from "./_components/summary-cards";
 import { DailyMatrixTable } from "./_components/daily-matrix";
 import { DoctorPanel } from "./_components/doctor-panel";
@@ -63,9 +66,9 @@ export default async function OperationsDailyReportPage({
       <div className="p-4">
         <h1 className="text-xl font-semibold text-[color:var(--color-brand-navy)]">Operations</h1>
         <OperationsTabs />
-        <p className="mt-6 text-sm text-red-700">
+        <Card className="mt-6 px-4 text-sm text-destructive">
           Could not load the operational report. Please try again.
-        </p>
+        </Card>
       </div>
     );
   }
@@ -84,28 +87,17 @@ export default async function OperationsDailyReportPage({
     <div className="p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold text-[color:var(--color-brand-navy)]">Operations</h1>
-        <a
-          href={csvHref}
-          className="min-h-[44px] rounded border px-3 py-2 text-sm text-[color:var(--color-brand-navy)]"
-        >
+        <a href={csvHref} className={buttonVariants({ variant: "outline", size: "sm" })}>
           Export CSV
         </a>
       </div>
       <OperationsTabs />
 
-      <form className="mt-3 flex flex-wrap items-end gap-2 text-sm" method="get">
-        <label className="flex flex-col">
-          From
-          <input type="date" name="from" defaultValue={from} className="rounded border px-2 py-1" />
-        </label>
-        <label className="flex flex-col">
-          To
-          <input type="date" name="to" defaultValue={to} className="rounded border px-2 py-1" />
-        </label>
-        <button type="submit" className="min-h-[44px] rounded border px-3 py-1">Apply</button>
-      </form>
+      {/* key on the range so the custom From/To inputs re-init after a pill/year
+          navigation (useState would otherwise keep its stale initial value). */}
+      <DateControls key={`${from}_${to}`} from={from} to={to} today={today} />
 
-      <p className="mt-2 text-xs text-[color:var(--color-brand-text-soft)]">
+      <p className="mt-3 text-xs text-[color:var(--color-brand-text-soft)]">
         Totals are <strong>lab + consult only</strong> — rent, mobile APE, and procedures are
         excluded, so on days with those line items this reads slightly under the manual sheet.
       </p>
