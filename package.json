@@ -37,7 +37,8 @@
     "import:history:lab-services": "tsx --env-file=.env.local scripts/history-import/lab-services.ts",
     "backfill:clinical:lab": "tsx --env-file=.env.local scripts/clinical-backfill/lab.ts",
     "backfill:clinical:consult": "tsx --env-file=.env.local scripts/clinical-backfill/consult.ts",
-    "enrich:clinical": "tsx --env-file=.env.local scripts/clinical-enrich/enrich.ts"
+    "enrich:clinical": "tsx --env-file=.env.local scripts/clinical-enrich/enrich.ts",
+    "dedup:patients": "tsx --env-file=.env.local scripts/patient-dedup/index.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
