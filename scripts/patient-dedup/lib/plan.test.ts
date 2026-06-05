@@ -58,8 +58,8 @@ describe("classify via planCluster", () => {
     const m = p({ id: "m", sex: "M", phone: "09171112222" });
     expect(planCluster([canon, m]).review[0].reason).toBe("sex-conflict");
   });
-  it("name-only (no corroboration) -> review name-only", () => {
-    const m = p({ id: "m" });
+  it("name-only, member NOT a stub (has a non-matching phone) -> review name-only", () => {
+    const m = p({ id: "m", phone: "09993334444" });
     expect(planCluster([canon, m]).review[0].reason).toBe("name-only");
   });
   it("mixed cluster: true dup auto-merges, odd member -> review (partial)", () => {
@@ -68,6 +68,75 @@ describe("classify via planCluster", () => {
     const plan = planCluster([canon, dup, odd]);
     expect(plan.auto.map((a) => a.row.id)).toEqual(["dup"]);
     expect(plan.review.map((r) => r.row.id)).toEqual(["odd"]);
+  });
+});
+
+describe("name-stub rule (Tier 3)", () => {
+  // A richer record with DOB+phone; the canonical in every case below.
+  const rich = (first: string) =>
+    p({ id: "canon", first_name: first, birthdate: "1990-05-05", sex: "F", phone: "09171112222", email: "x@y.com" });
+  // A bare stub: no dob/phone/email. The backfill-created duplicate.
+  const stub = (id: string, first: string) => p({ id, first_name: first });
+
+  it("bare stub with the SAME given name -> auto name-stub", () => {
+    const plan = planCluster([rich("Robi"), stub("m", "Robi")]);
+    expect(plan.canonical.id).toBe("canon");
+    expect(plan.auto).toEqual([{ row: expect.objectContaining({ id: "m" }), tier: "name-stub" }]);
+  });
+
+  it("bare stub whose given name is a prefix of the canonical's -> auto name-stub", () => {
+    // canonical "Zoe Maribelle" (rich), stub "Zoe"
+    const plan = planCluster([rich("Zoe Maribelle"), stub("m", "Zoe")]);
+    expect(plan.auto[0]).toMatchObject({ row: { id: "m" }, tier: "name-stub" });
+  });
+
+  it("bare stub whose given name EXTENDS the canonical's -> auto name-stub", () => {
+    // canonical "Zoe" (rich), stub "Zoe Maribelle" — refinement is symmetric
+    const plan = planCluster([rich("Zoe"), stub("m", "Zoe Maribelle")]);
+    expect(plan.auto[0]).toMatchObject({ row: { id: "m" }, tier: "name-stub" });
+  });
+
+  it("two bare stubs, divergent second tokens -> review name-only (not the same person)", () => {
+    // "Juan Carlos" vs "Juan Miguel": same matchKey, neither name a prefix of the other
+    const a = stub("a", "Juan Carlos");
+    const b = stub("b", "Juan Miguel");
+    expect(planCluster([a, b]).review[0].reason).toBe("name-only");
+  });
+
+  it("member is NOT a stub (has a DOB, non-conflicting) but name refines -> NOT name-stub", () => {
+    // member has a DOB the canonical lacks; this is not a bare stub, so it stays
+    // name-only (we don't merge on name-prefix alone once real identifiers exist).
+    const canon = p({ id: "canon", first_name: "Zoe Maribelle", phone: "09171112222" });
+    const m = p({ id: "m", first_name: "Zoe", birthdate: "2001-02-03" });
+    expect(planCluster([canon, m]).review[0].reason).toBe("name-only");
+  });
+
+  it("stub with a refining name but conflicting SEX -> review sex-conflict (guard wins)", () => {
+    const canon = p({ id: "canon", first_name: "Zoe Maribelle", sex: "F", birthdate: "1990-05-05", phone: "09171112222" });
+    const m = p({ id: "m", first_name: "Zoe", sex: "M" }); // no dob/phone/email = stub, but sex conflicts
+    expect(planCluster([canon, m]).review[0].reason).toBe("sex-conflict");
+  });
+
+  it("ambiguous bare stub (prefixes two divergent fuller names) -> review, not a guess", () => {
+    // "Angelo" could be "Angelo Ray" OR "Angelo Raymond" — don't pick one.
+    const canon = p({ id: "canon", first_name: "Angelo Raymond", birthdate: "1990-01-01", phone: "09171112222" }); // richest -> canonical
+    const ray = p({ id: "ray", first_name: "Angelo Ray" });   // divergent fuller sibling
+    const bare = p({ id: "bare", first_name: "Angelo" });      // ambiguous bare stub
+    const plan = planCluster([canon, ray, bare]);
+    expect(plan.auto).toEqual([]);                              // nothing auto-merged
+    expect(plan.review.map((r) => r.row.id).sort()).toEqual(["bare", "ray"]);
+    expect(plan.review.every((r) => r.reason === "name-only")).toBe(true);
+  });
+
+  it("non-ambiguous typo siblings still auto-merge (both extend the same bare canonical)", () => {
+    // canonical bare "Inara"; "Inara Lilian" and "Inara Liliana" both extend it,
+    // neither is itself extended by a divergent name -> both merge.
+    const canon = p({ id: "canon", first_name: "Inara", created_at: "2024-01-01T00:00:00Z" });
+    const a = p({ id: "a", first_name: "Inara Lilian" });
+    const b = p({ id: "b", first_name: "Inara Liliana" });
+    const plan = planCluster([canon, a, b]);
+    expect(plan.canonical.id).toBe("canon");
+    expect(plan.auto.map((x) => x.row.id).sort()).toEqual(["a", "b"]);
   });
 });
 

@@ -14,7 +14,7 @@ export interface PatientRow {
   visit_count: number;
 }
 
-export type Tier = "name+dob" | "name+phone" | "name+email";
+export type Tier = "name+dob" | "name+phone" | "name+email" | "name-stub";
 export type ReviewReason = "name-only" | "dob-conflict" | "sex-conflict";
 
 export interface ClusterPlan {
