@@ -1,7 +1,7 @@
 # Part B — Operational Daily Report (full daily P&L) — design
 
 **Date:** 2026-06-05
-**Status:** Design — ready for review
+**Status:** Approved 2026-06-05 — ready for B1.1 implementation plan
 **Context:** Part B of the operational-analytics dashboard project
 ([[project-ops-analytics-dashboard]]). Follows Part A enrichment (v1.16.x) and
 the patient de-dup pass (2026-06-05). Built against the cleaned, enriched data.
@@ -88,7 +88,7 @@ day-matrix. It introduces **no new bookkeeping**.
 - **Placement & gating:** under `src/app/(staff)/staff/(dashboard)/admin/operations/`,
   gated by `requireAdminStaff` (matches the existing `admin/reports/*`).
 - **`recharts`** is **not** added in B1.1 (the Daily report is a numeric matrix +
-  summary cards). It is introduced in **B1/Part-B Trends** when the first chart lands.
+  summary cards). It is introduced in **Part B2 (Trends)** when the first chart lands.
 
 ## Build phasing (each phase shippable)
 
@@ -194,14 +194,15 @@ select
 from public.test_requests tr
 join public.services s on s.id = tr.service_id
 join public.visits   v on v.id = tr.visit_id
-join public.physicians ph on ph.id = v.attending_physician_id
+left join public.physicians ph on ph.id = v.attending_physician_id
 where tr.status = 'released' and s.kind = 'doctor_consultation'
 group by business_date, ph.id, ph.full_name, ph.specialty, ph.compensation_arrangement;
 ```
 
-Consults with no `attending_physician_id` (the ~59 "Other" from Part A) aggregate
-under an "Unattributed" bucket in the UI (left-join handled UI-side or via a
-`coalesce` label).
+**LEFT JOIN** so the ~64 consults with no `attending_physician_id` are kept as a
+single null-physician group; the UI labels that group **"Unattributed"**
+(`coalesce(full_name, 'Unattributed')`). An inner join would silently drop them and
+make per-doctor totals undercount the consult total.
 
 ### Page & layout
 
@@ -254,12 +255,22 @@ short server-error pattern (no stack traces). Numbers formatted via the existing
 ### Testing
 
 - **Pure pivot/format helpers** (matrix assembly, channel-label mapping, totals
-  reconciliation) → `vitest` unit tests (no DB).
-- **A reconciliation smoke**: a SQL assertion (or seed-backed test) that
-  `v_ops_daily_*` reproduce the Dec 4 2023 figures above (50/12/23985/1668/22317).
-- Migration follows the **drmed-migrations** checklist (views are
-  `security definer`-free, read-only; no RLS rows to add; no audit obligations for
-  read-only aggregate views — confirm in the migration step).
+  reconciliation) → `vitest` unit tests (no DB). This is the CI-runnable layer.
+- **Golden-day reconciliation = a prod check, not a CI test.** The reference
+  figures live only in prod (the legacy backfill), so the reconciliation SQL runs
+  **against prod via the Supabase MCP** (as the dedup `validate.sql` did) — assert
+  `v_ops_daily_*` reproduce **Dec 4 2023** (50 / 12 / 23,985 / 1,668 / 22,317) **plus
+  2–3 more days, including a multi-method 2025/2026 day** to validate the
+  largest-payment channel rule on data I haven't yet checked. Ship this SQL as
+  `validate.sql` alongside the migration.
+- **Security / RLS posture (drmed-rls-and-auth):** create the views with
+  **`security_invoker = on`** and **do not** `grant select` to `anon`/`authenticated`
+  — only the service-role admin client reads them. (A default-definer view granted
+  to authenticated would expose clinic-wide financials past RLS.)
+- Migration follows the **drmed-migrations** checklist (sequential number; read-only
+  views, no RLS rows/audit obligations of their own); **apply to prod via the
+  Supabase MCP** (IPv6 limitation, `feedback_remote_db_ops_ipv6`), then
+  **`npm run db:types`** so `.from("v_ops_daily_*")` is typed.
 
 ## Out of scope (B1.1)
 
