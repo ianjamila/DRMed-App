@@ -217,3 +217,43 @@ separate plan, to be written against this enriched data).
 - Consult `discount_amount_php` is actually the doctor PF (base − clinic fee), a
   v1.15.0 backfill artifact; Part A only relabels the *type*, not amounts. Fix
   separately if consult discount *amounts* matter.
+
+# v1.16.1 — shareholder/rent consult recovery (backfill follow-up)
+
+Resolves the v1.16.0 "per-doctor history is incomplete for the busiest doctors"
+follow-up. The v1.15.0 backfill's consult postability rule required
+`clinic_fee > 0`, which excluded **6,316** zero-clinic-fee consults — exactly the
+clinic's `rent_paying` / `shareholder` doctors, who keep 100% of the consult so
+the clinic earns ₱0 (set in Staff → Admin → Physicians → "Compensation
+arrangement"; see `src/lib/visits/consultation-fee.ts`). Correct for the **books**
+(no clinic revenue), but it left the busiest doctors nearly absent from the
+**operational** record.
+
+## What shipped
+
+- **Arrangement-aware consult postability** (`scripts/clinical-backfill/lib/classify.ts`
+  + `engine.ts`): a `clinic_fee = 0` consult is now postable **iff** its attending
+  doctor (col-8 surname → physician) is `rent_paying` or `shareholder`. Genuinely
+  empty / `pf_split`-zero / out-of-window rows still excluded. GL-silent (legacy +
+  0091 guard); idempotent (existing 1,605 consults skipped).
+- Re-ran `backfill:clinical:consult` then `enrich:clinical` (both `--commit --prod`).
+
+## Production result
+
+- **visits +5,571**, **tests +5,613**, **payments +0** (clinic collected ₱0 on
+  these — correct), **new patients +1,932**; **246** ambiguous-name rows held for
+  partner review (RA 10173). GL-silence verified **0**.
+- Per-doctor consult counts now representative: **Gayo 3 → 2,205**, **R.Vicencio
+  3 → 2,170**, **Lorenzo 1 → 804**, **A.Vicencio 0 → 280**, **Arcega 0 → 154**
+  (pf_split doctors unchanged).
+
+## Note for Part B
+
+These consults have clinic **Sales = ₱0** by design — present per-doctor
+*productivity* (counts; PF that went to the doctor) distinctly from *clinic
+revenue* so a high-volume shareholder doctor doesn't read as "₱0 / broken."
+
+## Follow-ups
+
+- Resolve the **246** newly-held ambiguous consult rows
+  (`tmp/clinical-DOCTOR CONSULTATION-ambiguous-*.csv`) with the partner.

@@ -10,6 +10,7 @@ import { buildVisitNumber } from "./lib/visit-number";
 import { buildServiceIndex, mapService, type CatalogService } from "./lib/service-map";
 import { buildPatientIndex, matchPatient, type PatientRow } from "./lib/patient-match";
 import { parseTransactionName } from "./lib/names";
+import { resolveSurname } from "../clinical-enrich/lib/physician-map";
 import { ensureSystemUser } from "./system-user";
 import { writeCsv } from "./report";
 
@@ -84,6 +85,17 @@ export async function run(cfg: TabConfig): Promise<void> {
   });
   const hmoByName = new Map(hmoProviders.map((p) => [p.name.toLowerCase(), p.id]));
 
+  // Surnames whose attending doctor keeps 100% of the consult (clinic_fee=0 is
+  // expected, not an error) — recover their otherwise-"zero_amount" consults.
+  const physRoster = await fetchAll<{ full_name: string; compensation_arrangement: string | null }>(async (lo, hi) => {
+    const { data, error } = await admin.from("physicians").select("full_name,compensation_arrangement").range(lo, hi);
+    if (error) throw new Error(error.message);
+    return (data ?? []) as { full_name: string; compensation_arrangement: string | null }[];
+  });
+  const keepsFullFeeByName = new Set(
+    physRoster.filter((p) => p.compensation_arrangement === "rent_paying" || p.compensation_arrangement === "shareholder").map((p) => p.full_name),
+  );
+
   // classify + match + group
   const visits = new Map<string, BuiltVisit>();
   const ambiguous: string[][] = [];
@@ -93,7 +105,9 @@ export async function run(cfg: TabConfig): Promise<void> {
   const svcIndex = buildServiceIndex(services, consultId, legacyLabId);
 
   for (const r of rows) {
-    const klass = classifyRow(r, WINDOW, cfg.isConsult);
+    const doctorKeepsFullFee = cfg.isConsult
+      && (() => { const fn = resolveSurname(r.service); return fn != null && keepsFullFeeByName.has(fn); })();
+    const klass = classifyRow(r, WINDOW, cfg.isConsult, doctorKeepsFullFee);
     if (klass !== "postable") {
       exclusions.push([String(r.row_number), r.posting_date ?? "(none)", klass, r.patient_name, r.service,
         r.base.toFixed(2), r.final.toFixed(2), r.mop]);
