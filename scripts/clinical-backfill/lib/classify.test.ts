@@ -30,4 +30,24 @@ describe("classifyRow", () => {
     expect(classifyRow(row({ clinic_fee: 0, base: 500, final: 500 }), WIN, true)).toBe("zero_amount");
     expect(classifyRow(row({ clinic_fee: 200 }), WIN, true)).toBe("postable");
   });
+  it("consult clinic_fee=0 is postable when the doctor keeps the full fee", () => {
+    expect(classifyRow(row({ clinic_fee: 0, base: 500, final: 500 }), WIN, true, true)).toBe("postable");
+  });
+  it("consult clinic_fee=0 stays zero_amount when the doctor does not keep the full fee (and by default)", () => {
+    expect(classifyRow(row({ clinic_fee: 0, base: 500, final: 500 }), WIN, true, false)).toBe("zero_amount");
+    expect(classifyRow(row({ clinic_fee: 0, base: 500, final: 500 }), WIN, true)).toBe("zero_amount");
+  });
+  it("consult clinic_fee>0 is postable regardless of the doctorKeepsFullFee flag", () => {
+    expect(classifyRow(row({ clinic_fee: 200 }), WIN, true, true)).toBe("postable");
+    expect(classifyRow(row({ clinic_fee: 200 }), WIN, true, false)).toBe("postable");
+  });
+  it("lab rows are unaffected by the doctorKeepsFullFee flag", () => {
+    expect(classifyRow(row({ base: 0, final: 0 }), WIN, false, true)).toBe("zero_amount");
+    expect(classifyRow(row(), WIN, false, true)).toBe("postable");
+  });
+  it("bad_date and out_of_window still win even when doctorKeepsFullFee=true", () => {
+    expect(classifyRow(row({ posting_date: null, clinic_fee: 0 }), WIN, true, true)).toBe("bad_date");
+    expect(classifyRow(row({ posting_date: "2023-11-30", clinic_fee: 0 }), WIN, true, true)).toBe("out_of_window");
+    expect(classifyRow(row({ posting_date: "2026-05-26", clinic_fee: 0 }), WIN, true, true)).toBe("out_of_window");
+  });
 });
