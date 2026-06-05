@@ -83,8 +83,8 @@ day-matrix. It introduces **no new bookkeeping**.
   Each section gets a view (or reuses an existing one). All read-only; no writes.
 - **UI** = a new Server-Component route `Admin → Operations`, with a shared
   `SectionTabs` header (per `drmed-staff-ui` conventions): tabs **Daily report**
-  (this spec) and **Trends** (Part B2). Server-rendered tables; the wide day-matrix
-  scrolls horizontally on mobile.
+  (this spec) and **Trends** (Part B2 — rendered as a "coming soon" stub in B1.1).
+  Server-rendered tables; the wide day-matrix scrolls horizontally on mobile.
 - **Placement & gating:** under `src/app/(staff)/staff/(dashboard)/admin/operations/`,
   gated by `requireAdminStaff` (matches the existing `admin/reports/*`).
 - **`recharts`** is **not** added in B1.1 (the Daily report is a numeric matrix +
@@ -217,6 +217,15 @@ Route `admin/operations/page.tsx` (Server Component), tabbed via `SectionTabs`:
   sales · discounts · totals · gross profit), each split by channel
   (CASH/GCASH/BPI/BDO/CARD PAY/HMO) + total; columns = days of the selected month.
   Horizontally scrollable; sticky first (label) columns.
+  - **Totals scope:** the bottom TOTAL REVENUE / TOTAL DISCOUNTS / GROSS PROFIT rows
+    sum **LAB + CONSULT only** (rent/APE/procedures excluded — see Out of scope), so
+    they read slightly under the manual sheet on days with those line items. Label
+    the rollup so this is clear (e.g. "Total (lab + consult)").
+  - **Distinct-customers fidelity:** the manual sheet breaks distinct customers out
+    only for **CASH** and **HMO** (plus a Total). B1.1 shows distinct per *all*
+    channels (a harmless improvement) **and** a cross-channel Total row
+    (`v_ops_daily_totals.distinct_customers`, which is *not* the sum of per-channel
+    counts — a patient paying two ways counts once in the Total).
 - **Per-doctor / per-specialty** panel: a collapsible table — consult count, gross
   sales, PF collected per doctor (grouped by specialty), for the selected range.
   Shareholder/rent doctors are flagged so ₱0 clinic-sales reads as *by design*.
@@ -254,8 +263,29 @@ short server-error pattern (no stack traces). Numbers formatted via the existing
 
 ## Out of scope (B1.1)
 
-- Cash-collected / credit-card / expenses / net-income / HMO-AR / cash-flow
-  sections → **B1.2–B1.4** (sources fixed in the map above).
-- Charts / Trends tab → **Part B2** (introduces `recharts`).
-- Any write path, any change to how revenue/discount/PF are *captured* (B1 only
-  reads).
+Explicitly excluded so B1.1 stays focused and shippable:
+
+- **Lower-half sheet sections** — cash-collected, credit-card/Veritas, expenses,
+  net-income, HMO-AR subledger, cash-flow → **B1.2–B1.4** (sources fixed in the map
+  above).
+- **Rent / Mobile APE / Procedures rows (sheet 51–53).** They don't map cleanly to
+  data (rent is derived from `compensation_arrangement`; APE/procedures aren't
+  service kinds). Consequence: **B1.1's TOTAL REVENUE / DISCOUNTS / GROSS PROFIT =
+  LAB + CONSULT only**, so on days with rent/APE/procedures the total reads slightly
+  *under* the manual sheet (e.g. Dec 1's ₱100 rent). This divergence is stated in
+  the UI; the lines fold in with B1.3.
+- **Per-provider HMO.** B1.1's HMO is a single aggregate channel; the per-provider
+  (Maxicare/Valucare/…) in/out/ending breakdown is the **B1.4** receivables
+  subledger.
+- **Fixing residual data gaps.** The 77 still-held consults, the ~64 unattributed
+  consults, and the 45 unidentifiable junk stubs are **displayed honestly** (an
+  "Unattributed" doctor bucket; `unpaid` channel only if non-zero) but **not
+  repaired** here. The report will be ~1 row off the sheet on those residuals (the
+  Dec 4 consult gap) — expected, not a bug.
+- **Today-snapshot cards on the staff dashboard** → **Part B2**. B1.1 has
+  month-summary cards on its *own* page only.
+- **Charts / the Trends tab content** → **Part B2** (introduces `recharts`). B1.1
+  may render the Trends tab as a "coming soon" stub; nothing more.
+- **Materialized views / perf tuning, realtime updates, PDF/Excel export, non-admin
+  roles, and any write path or change to how revenue/discount/PF/attending are
+  *captured*.** Plain views, request-time, admin-only, read-only, CSV export only.
