@@ -135,3 +135,45 @@ describe("buildDailyMatrix", () => {
     expect(m.totals.revenue.total).toBe(36385);
   });
 });
+
+describe("buildDoctorRollup", () => {
+  const rows: DoctorRow[] = [
+    { business_date: "2023-12-04", physician_id: "p1", full_name: "Dr Gayo", specialty: "Internal Medicine",
+      compensation_arrangement: "shareholder", consult_count: 3, sales_gross: "0.00", pf_collected: "1500.00" },
+    { business_date: "2023-12-05", physician_id: "p1", full_name: "Dr Gayo", specialty: "Internal Medicine",
+      compensation_arrangement: "shareholder", consult_count: 2, sales_gross: "0.00", pf_collected: "1000.00" },
+    { business_date: "2023-12-04", physician_id: "p2", full_name: "Dr Cruz", specialty: "Internal Medicine",
+      compensation_arrangement: "pf_split", consult_count: 1, sales_gross: "100.00", pf_collected: "400.00" },
+    { business_date: "2023-12-04", physician_id: null, full_name: null, specialty: null,
+      compensation_arrangement: null, consult_count: 4, sales_gross: "1600.00", pf_collected: "0.00" },
+  ];
+
+  const groups = buildDoctorRollup(rows);
+
+  it("groups doctors by specialty, with an Unattributed bucket last", () => {
+    expect(groups.map((g) => g.specialty)).toEqual(["Internal Medicine", "Unattributed"]);
+  });
+  it("aggregates a doctor across days", () => {
+    const im = groups.find((g) => g.specialty === "Internal Medicine")!;
+    const gayo = im.doctors.find((d) => d.name === "Dr Gayo")!;
+    expect(gayo.consultCount).toBe(5);
+    expect(gayo.pfCollected).toBe(2500);
+    expect(gayo.salesGross).toBe(0);
+  });
+  it("flags shareholder/rent doctors as clinic-₱0-by-design", () => {
+    const im = groups.find((g) => g.specialty === "Internal Medicine")!;
+    expect(im.doctors.find((d) => d.name === "Dr Gayo")!.clinicZeroByDesign).toBe(true);
+    expect(im.doctors.find((d) => d.name === "Dr Cruz")!.clinicZeroByDesign).toBe(false);
+  });
+  it("labels the null-physician group Unattributed", () => {
+    const un = groups.find((g) => g.specialty === "Unattributed")!;
+    expect(un.doctors[0].name).toBe("Unattributed");
+    expect(un.doctors[0].consultCount).toBe(4);
+  });
+  it("rolls up specialty subtotals", () => {
+    const im = groups.find((g) => g.specialty === "Internal Medicine")!;
+    expect(im.consultCount).toBe(6);
+    expect(im.salesGross).toBe(100);
+    expect(im.pfCollected).toBe(2900);
+  });
+});

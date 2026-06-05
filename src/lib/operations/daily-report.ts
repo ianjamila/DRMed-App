@@ -199,3 +199,89 @@ export function buildDailyMatrix(
 
   return { days, sections, totals: { revenue, discount, net } };
 }
+
+export interface DoctorRow {
+  business_date: string;
+  physician_id: string | null;
+  full_name: string | null;
+  specialty: string | null;
+  compensation_arrangement: string | null;
+  consult_count: number | string;
+  sales_gross: number | string;
+  pf_collected: number | string;
+}
+
+export interface DoctorRollupRow {
+  physicianId: string | null;
+  name: string;
+  arrangement: string | null;
+  /** rent_paying | shareholder → clinic keeps ₱0 of the consult, by design. */
+  clinicZeroByDesign: boolean;
+  consultCount: number;
+  salesGross: number;
+  pfCollected: number;
+}
+
+export interface SpecialtyGroup {
+  specialty: string;
+  doctors: DoctorRollupRow[];
+  consultCount: number;
+  salesGross: number;
+  pfCollected: number;
+}
+
+const UNATTRIBUTED = "Unattributed";
+
+/** Mirrors defaultClinicFee() in lib/visits/consultation-fee.ts. */
+function clinicKeepsZero(arrangement: string | null): boolean {
+  return arrangement === "rent_paying" || arrangement === "shareholder";
+}
+
+export function buildDoctorRollup(rows: DoctorRow[]): SpecialtyGroup[] {
+  const byDoctor = new Map<string, DoctorRollupRow & { specialty: string }>();
+  for (const r of rows) {
+    const key = r.physician_id ?? "__unattributed__";
+    const specialty = r.physician_id ? (r.specialty ?? "—") : UNATTRIBUTED;
+    let d = byDoctor.get(key);
+    if (!d) {
+      d = {
+        physicianId: r.physician_id,
+        name: r.full_name ?? UNATTRIBUTED,
+        arrangement: r.compensation_arrangement,
+        clinicZeroByDesign: clinicKeepsZero(r.compensation_arrangement),
+        consultCount: 0,
+        salesGross: 0,
+        pfCollected: 0,
+        specialty,
+      };
+      byDoctor.set(key, d);
+    }
+    d.consultCount += num(r.consult_count);
+    d.salesGross += num(r.sales_gross);
+    d.pfCollected += num(r.pf_collected);
+  }
+
+  const bySpecialty = new Map<string, SpecialtyGroup>();
+  for (const d of byDoctor.values()) {
+    let g = bySpecialty.get(d.specialty);
+    if (!g) {
+      g = { specialty: d.specialty, doctors: [], consultCount: 0, salesGross: 0, pfCollected: 0 };
+      bySpecialty.set(d.specialty, g);
+    }
+    const { specialty: _drop, ...row } = d;
+    void _drop;
+    g.doctors.push(row);
+    g.consultCount += d.consultCount;
+    g.salesGross += d.salesGross;
+    g.pfCollected += d.pfCollected;
+  }
+
+  const groups = [...bySpecialty.values()];
+  groups.forEach((g) => g.doctors.sort((a, b) => b.consultCount - a.consultCount));
+  groups.sort((a, b) => {
+    if (a.specialty === UNATTRIBUTED) return 1;
+    if (b.specialty === UNATTRIBUTED) return -1;
+    return a.specialty.localeCompare(b.specialty);
+  });
+  return groups;
+}
