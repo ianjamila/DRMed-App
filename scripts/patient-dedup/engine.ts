@@ -113,7 +113,80 @@ export async function run(): Promise<void> {
   await commitMerges(admin, plans); // implemented in Task 5
 }
 
-// --- commit path (Task 5 fills this in) ---
-async function commitMerges(_admin: SupabaseClient<Database>, _plans: ClusterPlan[]): Promise<void> {
-  throw new Error("commitMerges not implemented yet");
+// Tables that carry patients(id) FKs — ALL of them. The admin merge Server Action
+// currently misses critical_alerts + patient_consents; this pass must not.
+const FK_TABLES = ["visits", "appointments", "audit_log", "critical_alerts", "patient_consents"] as const;
+const FILL_FIELDS = ["middle_name", "sex", "phone", "email", "address", "birthdate"] as const;
+
+async function mergeOne(
+  admin: SupabaseClient<Database>,
+  canonical: PatientRow,
+  source: PatientRow,
+  tier: string,
+): Promise<void> {
+  // Idempotent: skip a source already tombstoned (re-run safe).
+  const { data: cur, error: curErr } = await admin
+    .from("patients").select("merged_into_id").eq("id", source.id).maybeSingle();
+  if (curErr) throw new Error(`recheck ${source.id}: ${curErr.message}`);
+  if (!cur || cur.merged_into_id) return;
+
+  // 1. Reassign every patient_id FK. `as never` because the payload type differs
+  //    per table in the generated union; patient_id is uuid on all of them.
+  const moved: Record<string, number> = {};
+  for (const table of FK_TABLES) {
+    const { data, error } = await admin.from(table)
+      .update({ patient_id: canonical.id } as never)
+      .eq("patient_id", source.id)
+      .select("id");
+    if (error) throw new Error(`reassign ${table} (${source.drm_id}): ${error.message}`);
+    moved[table] = data?.length ?? 0;
+  }
+
+  // 2. Collapse any existing tombstone chain pointing at the source.
+  const { error: chainErr } = await admin.from("patients")
+    .update({ merged_into_id: canonical.id })
+    .eq("merged_into_id", source.id);
+  if (chainErr) throw new Error(`repoint chain (${source.drm_id}): ${chainErr.message}`);
+
+  // 3. Fill missing fields on the canonical from the source — never overwrite.
+  const fill: Record<string, string> = {};
+  for (const f of FILL_FIELDS) {
+    if (!canonical[f] && source[f]) fill[f] = source[f] as string;
+  }
+  if (Object.keys(fill).length > 0) {
+    const { error } = await admin.from("patients").update(fill as never).eq("id", canonical.id);
+    if (error) throw new Error(`fill canonical (${canonical.drm_id}): ${error.message}`);
+    Object.assign(canonical, fill); // keep in-memory canonical current for the next source in the cluster
+  }
+
+  // 4. Tombstone the source.
+  const { error: tombErr } = await admin.from("patients")
+    .update({ merged_into_id: canonical.id, merged_at: new Date().toISOString() })
+    .eq("id", source.id);
+  if (tombErr) throw new Error(`tombstone (${source.drm_id}): ${tombErr.message}`);
+
+  // 5. Audit (audit() is server-only, so insert directly with the AuditEntry shape).
+  const { error: auditErr } = await admin.from("audit_log").insert({
+    actor_id: null,
+    actor_type: "system",
+    patient_id: canonical.id,
+    action: "patient.merged",
+    resource_type: "patient",
+    resource_id: canonical.id,
+    metadata: { kept_drm_id: canonical.drm_id, merged_drm_id: source.drm_id, merged_patient_id: source.id, tier, moved },
+    ip_address: null,
+    user_agent: null,
+  });
+  if (auditErr) throw new Error(`audit (${source.drm_id}): ${auditErr.message}`);
+}
+
+async function commitMerges(admin: SupabaseClient<Database>, plans: ClusterPlan[]): Promise<void> {
+  let merged = 0;
+  for (const plan of plans) {
+    for (const m of plan.auto) {
+      await mergeOne(admin, plan.canonical, m.row, m.tier);
+      merged++;
+    }
+  }
+  console.log(`\nCommitted ${merged} merge(s). Review pile left untouched (manual via admin UI).`);
 }
