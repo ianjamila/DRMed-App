@@ -5701,6 +5701,45 @@ export type Database = {
         }
         Relationships: []
       }
+      v_ops_daily_channel: {
+        Row: {
+          business_date: string | null
+          channel: string | null
+          discount: number | null
+          distinct_customers: number | null
+          line_count: number | null
+          net: number | null
+          sales_gross: number | null
+          section: string | null
+        }
+        Relationships: []
+      }
+      v_ops_daily_doctor: {
+        Row: {
+          business_date: string | null
+          compensation_arrangement: string | null
+          consult_count: number | null
+          full_name: string | null
+          pf_collected: number | null
+          physician_id: string | null
+          sales_gross: number | null
+          specialty: string | null
+        }
+        Relationships: []
+      }
+      v_ops_daily_totals: {
+        Row: {
+          business_date: string | null
+          discount: number | null
+          distinct_customers: number | null
+          line_count: number | null
+          net: number | null
+          pf_collected: number | null
+          sales_gross: number | null
+          section: string | null
+        }
+        Relationships: []
+      }
       v_staff_advances_outstanding: {
         Row: {
           advance_count: number | null

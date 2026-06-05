@@ -85,3 +85,4 @@ backups/
 # local consent UI-walkthrough artifacts
 consent-0*.png
 .playwright-mcp/
+.env*.local
