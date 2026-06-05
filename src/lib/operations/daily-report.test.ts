@@ -4,7 +4,10 @@ import {
   enumerateDays,
   num,
   CHANNEL_ORDER,
+  buildDailyMatrix,
+  buildDoctorRollup,
 } from "./daily-report";
+import type { ChannelRow, TotalsRow, DoctorRow } from "./daily-report";
 
 describe("channelLabel", () => {
   it("maps bank_transfer to BDO (per the manual sheet)", () => {
@@ -56,5 +59,79 @@ describe("num", () => {
   });
   it("passes numbers through", () => {
     expect(num(1668)).toBe(1668);
+  });
+});
+
+describe("buildDailyMatrix", () => {
+  const days = ["2023-12-04", "2023-12-05"];
+
+  const channelRows: ChannelRow[] = [
+    { business_date: "2023-12-04", section: "lab", channel: "cash",
+      line_count: 37, distinct_customers: 8, sales_gross: "20000.00", discount: "1668.00", net: "18332.00" },
+    { business_date: "2023-12-04", section: "lab", channel: "hmo",
+      line_count: 13, distinct_customers: 4, sales_gross: "3985.00", discount: "0.00", net: "3985.00" },
+    { business_date: "2023-12-04", section: "consult", channel: "gcash",
+      line_count: 10, distinct_customers: 10, sales_gross: "7400.00", discount: "7400.00", net: "0.00" },
+    { business_date: "2023-12-05", section: "lab", channel: "cash",
+      line_count: 5, distinct_customers: 5, sales_gross: "5000.00", discount: "0.00", net: "5000.00" },
+  ];
+
+  const totalsRows: TotalsRow[] = [
+    { business_date: "2023-12-04", section: "lab", line_count: 50, distinct_customers: 12,
+      sales_gross: "23985.00", discount: "1668.00", net: "22317.00", pf_collected: "0.00" },
+    { business_date: "2023-12-04", section: "consult", line_count: 10, distinct_customers: 10,
+      sales_gross: "7400.00", discount: "7400.00", net: "0.00", pf_collected: "7400.00" },
+    { business_date: "2023-12-05", section: "lab", line_count: 5, distinct_customers: 5,
+      sales_gross: "5000.00", discount: "0.00", net: "5000.00", pf_collected: "0.00" },
+  ];
+
+  const m = buildDailyMatrix(channelRows, totalsRows, days);
+
+  it("exposes the requested days as columns", () => {
+    expect(m.days).toEqual(days);
+  });
+  it("has a lab section and a consult section", () => {
+    expect(m.sections.map((s) => s.section)).toEqual(["lab", "consult"]);
+    expect(m.sections[0].title).toBe("Lab tests");
+    expect(m.sections[1].title).toBe("Doctor consult");
+  });
+  it("lab distinct-customers row uses the cross-channel total (12, not 8+4)", () => {
+    const lab = m.sections.find((s) => s.section === "lab")!;
+    const cust = lab.rows.find((r) => r.metric === "customers")!;
+    expect(cust.byDay["2023-12-04"]).toBe(12);
+  });
+  it("lab #tests row is the section line_count total", () => {
+    const lab = m.sections.find((s) => s.section === "lab")!;
+    const count = lab.rows.find((r) => r.metric === "count")!;
+    expect(count.byDay["2023-12-04"]).toBe(50);
+    expect(count.total).toBe(55);
+  });
+  it("emits a per-channel gross-sales row for each display channel with data", () => {
+    const lab = m.sections.find((s) => s.section === "lab")!;
+    const cash = lab.rows.find((r) => r.metric === "sales" && r.channel === "cash")!;
+    const hmo = lab.rows.find((r) => r.metric === "sales" && r.channel === "hmo")!;
+    expect(cash.byDay["2023-12-04"]).toBe(20000);
+    expect(hmo.byDay["2023-12-04"]).toBe(3985);
+  });
+  it("omits a channel row that has no data in the range (e.g. BPI)", () => {
+    const lab = m.sections.find((s) => s.section === "lab")!;
+    expect(lab.rows.some((r) => r.metric === "sales" && r.channel === "bpi")).toBe(false);
+  });
+  it("lab sales-total row equals the section gross total", () => {
+    const lab = m.sections.find((s) => s.section === "lab")!;
+    const salesTotal = lab.rows.find((r) => r.metric === "sales" && r.channel === undefined)!;
+    expect(salesTotal.byDay["2023-12-04"]).toBe(23985);
+    expect(salesTotal.total).toBe(28985);
+  });
+  it("consult section carries a PF-collected row", () => {
+    const consult = m.sections.find((s) => s.section === "consult")!;
+    const pf = consult.rows.find((r) => r.metric === "pf")!;
+    expect(pf.byDay["2023-12-04"]).toBe(7400);
+  });
+  it("grand totals are LAB + CONSULT only and don't double-count", () => {
+    expect(m.totals.revenue.byDay["2023-12-04"]).toBe(31385);
+    expect(m.totals.discount.byDay["2023-12-04"]).toBe(9068);
+    expect(m.totals.net.byDay["2023-12-04"]).toBe(22317);
+    expect(m.totals.revenue.total).toBe(36385);
   });
 });
