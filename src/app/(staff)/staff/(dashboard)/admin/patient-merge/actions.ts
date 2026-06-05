@@ -31,7 +31,7 @@ export interface PatientPreview {
 }
 
 export type MergeResult =
-  | { ok: true; kept_drm_id: string; merged_drm_id: string; moved: { visits: number; appointments: number; audit_log: number } }
+  | { ok: true; kept_drm_id: string; merged_drm_id: string; moved: { visits: number; appointments: number; audit_log: number; critical_alerts: number; patient_consents: number } }
   | { ok: false; error: string };
 
 const LookupSchema = z.object({
@@ -167,6 +167,16 @@ export async function mergePatientsAction(
     .update({ patient_id: keep_id })
     .eq("patient_id", source_id)
     .select("id");
+  const { data: criticalAlerts } = await admin
+    .from("critical_alerts")
+    .update({ patient_id: keep_id })
+    .eq("patient_id", source_id)
+    .select("id");
+  const { data: consents } = await admin
+    .from("patient_consents")
+    .update({ patient_id: keep_id })
+    .eq("patient_id", source_id)
+    .select("id");
 
   // Fill missing fields on the kept row from the source row — never
   // overwrite a non-null value.
@@ -212,6 +222,8 @@ export async function mergePatientsAction(
         visits: visits?.length ?? 0,
         appointments: appts?.length ?? 0,
         audit_log: auditRows?.length ?? 0,
+        critical_alerts: criticalAlerts?.length ?? 0,
+        patient_consents: consents?.length ?? 0,
       },
       filled_from_source: Object.keys(fill),
     },
@@ -230,6 +242,8 @@ export async function mergePatientsAction(
       visits: visits?.length ?? 0,
       appointments: appts?.length ?? 0,
       audit_log: auditRows?.length ?? 0,
+      critical_alerts: criticalAlerts?.length ?? 0,
+      patient_consents: consents?.length ?? 0,
     },
   };
 }

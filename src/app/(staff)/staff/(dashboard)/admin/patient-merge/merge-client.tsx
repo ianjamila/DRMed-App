@@ -168,7 +168,9 @@ function ConfirmMerge({
         <p className="mt-2 text-sm text-emerald-900">
           {state.merged_drm_id} merged into {state.kept_drm_id}. Moved{" "}
           {state.moved.visits} visit(s), {state.moved.appointments}{" "}
-          appointment(s), {state.moved.audit_log} audit row(s).
+          appointment(s), {state.moved.audit_log} audit row(s),{" "}
+          {state.moved.critical_alerts} critical alert(s),{" "}
+          {state.moved.patient_consents} consent record(s).
         </p>
         <p className="mt-2 text-xs text-emerald-900">
           The merged-in row is tombstoned with a back-pointer; the audit
