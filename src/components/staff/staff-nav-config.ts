@@ -285,6 +285,13 @@ export const STAFF_NAV: StaffNavSection[] = [
             roles: ["admin"],
           },
           {
+            href: "/staff/admin/operations",
+            label: "Daily report",
+            description: "The clinic's full operational day-by-day report (reproduces the manual DAILY MONITORING sheet): lab + consult by payment channel and HMO, distinct customers, discounts, gross profit, PF collected, and per-doctor / per-specialty productivity. Pick any month or custom date range; export to CSV.",
+            activePrefix: "/staff/admin/operations",
+            roles: ["admin"],
+          },
+          {
             href: "/staff/admin/reports/lab-tat",
             label: "Lab turnaround time",
             description: "Measures how long tests take to complete — from sample collection to result release. Broken down by test type. Use to spot bottlenecks (e.g., 'why are FBSs taking 3 hours when they should take 1?').",
