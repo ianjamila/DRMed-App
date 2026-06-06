@@ -5,6 +5,7 @@ import { todayManilaISODate } from "@/lib/dates/manila";
 import {
   buildDailyMatrix,
   enumerateDays,
+  num,
   type ChannelRow,
   type TotalsRow,
 } from "@/lib/operations/daily-report";
@@ -27,7 +28,7 @@ export async function GET(req: NextRequest) {
   const to = sp.get("to") ?? today;
 
   const admin = createAdminClient();
-  const [channelRes, totalsRes] = await Promise.all([
+  const [channelRes, totalsRes, expensesRes] = await Promise.all([
     admin
       .from("v_ops_daily_channel")
       .select("business_date, section, channel, line_count, distinct_customers, sales_gross, discount, net")
@@ -38,9 +39,14 @@ export async function GET(req: NextRequest) {
       .select("business_date, section, line_count, distinct_customers, sales_gross, discount, net, pf_collected")
       .gte("business_date", from)
       .lte("business_date", to),
+    admin
+      .from("v_ops_daily_expenses")
+      .select("business_date, expense_php")
+      .gte("business_date", from)
+      .lte("business_date", to),
   ]);
 
-  if (channelRes.error || totalsRes.error) {
+  if (channelRes.error || totalsRes.error || expensesRes.error) {
     return new NextResponse("Failed to build report", { status: 500 });
   }
 
@@ -50,6 +56,12 @@ export async function GET(req: NextRequest) {
     (totalsRes.data ?? []) as TotalsRow[],
     days,
   );
+
+  const expensesByDay: Record<string, number> = {};
+  for (const r of expensesRes.data ?? []) {
+    if (r.business_date) expensesByDay[r.business_date] = num(r.expense_php);
+  }
+  const expenseTotal = days.reduce((a, d) => a + (expensesByDay[d] ?? 0), 0);
 
   const header = ["Section", "Metric", ...days, "Total"];
   const lines: string[] = [header.map(escapeCell).join(",")];
@@ -69,6 +81,21 @@ export async function GET(req: NextRequest) {
         .join(","),
     );
   }
+  lines.push(
+    ["TOTAL", "Expenses (all, from books)", ...days.map((d) => expensesByDay[d] ?? 0), expenseTotal]
+      .map(escapeCell)
+      .join(","),
+  );
+  lines.push(
+    [
+      "TOTAL",
+      "Net (rough = profit - expenses)",
+      ...days.map((d) => (matrix.totals.net.byDay[d] ?? 0) - (expensesByDay[d] ?? 0)),
+      matrix.totals.net.total - expenseTotal,
+    ]
+      .map(escapeCell)
+      .join(","),
+  );
 
   const filename = `operations-daily-${from}-to-${to}.csv`;
   return new NextResponse(lines.join("\n") + "\n", {

@@ -285,3 +285,36 @@ export function buildDoctorRollup(rows: DoctorRow[]): SpecialtyGroup[] {
   });
   return groups;
 }
+
+const MONTH_LABELS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+export interface MonthGroup {
+  key: string; // YYYY-MM
+  label: string; // "Jan" (or "Jan 2026" when the range spans >1 year)
+  dates: string[]; // the ISO days of this month present in the range
+}
+
+/** Group ISO (YYYY-MM-DD) days into chronological months — the unit the matrix
+ *  collapses columns by. Appends the year to the label only when the range spans
+ *  more than one calendar year, to disambiguate. */
+export function groupDaysByMonth(days: string[]): MonthGroup[] {
+  const order: string[] = [];
+  const byKey = new Map<string, string[]>();
+  for (const d of days) {
+    const key = d.slice(0, 7);
+    if (!byKey.has(key)) {
+      byKey.set(key, []);
+      order.push(key);
+    }
+    byKey.get(key)!.push(d);
+  }
+  const multiYear = new Set(days.map((d) => d.slice(0, 4))).size > 1;
+  return order.map((key) => {
+    const [y, m] = key.split("-").map(Number);
+    const base = MONTH_LABELS[m - 1] ?? key;
+    return { key, label: multiYear ? `${base} ${y}` : base, dates: byKey.get(key)! };
+  });
+}

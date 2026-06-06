@@ -6,6 +6,7 @@ import {
   CHANNEL_ORDER,
   buildDailyMatrix,
   buildDoctorRollup,
+  groupDaysByMonth,
 } from "./daily-report";
 import type { ChannelRow, TotalsRow, DoctorRow } from "./daily-report";
 
@@ -175,5 +176,22 @@ describe("buildDoctorRollup", () => {
     expect(im.consultCount).toBe(6);
     expect(im.salesGross).toBe(100);
     expect(im.pfCollected).toBe(2900);
+  });
+});
+
+describe("groupDaysByMonth", () => {
+  it("groups consecutive days into chronological months", () => {
+    const g = groupDaysByMonth(["2026-01-30", "2026-01-31", "2026-02-01"]);
+    expect(g.map((x) => x.key)).toEqual(["2026-01", "2026-02"]);
+    expect(g[0].label).toBe("Jan");
+    expect(g[0].dates).toEqual(["2026-01-30", "2026-01-31"]);
+    expect(g[1].dates).toEqual(["2026-02-01"]);
+  });
+  it("appends the year when the range spans multiple years", () => {
+    const g = groupDaysByMonth(["2025-12-31", "2026-01-01"]);
+    expect(g.map((x) => x.label)).toEqual(["Dec 2025", "Jan 2026"]);
+  });
+  it("returns [] for no days", () => {
+    expect(groupDaysByMonth([])).toEqual([]);
   });
 });

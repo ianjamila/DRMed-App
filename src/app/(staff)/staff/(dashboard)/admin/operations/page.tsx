@@ -5,6 +5,7 @@ import {
   buildDailyMatrix,
   buildDoctorRollup,
   enumerateDays,
+  num,
   type ChannelRow,
   type TotalsRow,
   type DoctorRow,
@@ -22,12 +23,6 @@ interface SearchParams {
   to?: string;
 }
 
-function lastDayOfMonth(iso: string): string {
-  const [y, m] = iso.split("-").map(Number);
-  const d = new Date(Date.UTC(y, m, 0));
-  return d.toISOString().slice(0, 10);
-}
-
 export default async function OperationsDailyReportPage({
   searchParams,
 }: {
@@ -37,13 +32,13 @@ export default async function OperationsDailyReportPage({
   const params = await searchParams;
 
   const today = todayManilaISODate();
-  const monthStart = today.slice(0, 7) + "-01";
-  const from = params.from ?? monthStart;
-  const monthEnd = lastDayOfMonth(monthStart);
-  const to = params.to ?? (monthEnd < today ? monthEnd : today);
+  // Default to the current year so you land on the 12-month overview — the matrix
+  // collapses columns by month; click a month to expand its days.
+  const from = params.from ?? `${today.slice(0, 4)}-01-01`;
+  const to = params.to ?? today;
 
   const admin = createAdminClient();
-  const [channelRes, totalsRes, doctorRes] = await Promise.all([
+  const [channelRes, totalsRes, doctorRes, expensesRes] = await Promise.all([
     admin
       .from("v_ops_daily_channel")
       .select("business_date, section, channel, line_count, distinct_customers, sales_gross, discount, net")
@@ -59,9 +54,14 @@ export default async function OperationsDailyReportPage({
       .select("business_date, physician_id, full_name, specialty, compensation_arrangement, consult_count, sales_gross, pf_collected")
       .gte("business_date", from)
       .lte("business_date", to),
+    admin
+      .from("v_ops_daily_expenses")
+      .select("business_date, expense_php")
+      .gte("business_date", from)
+      .lte("business_date", to),
   ]);
 
-  if (channelRes.error || totalsRes.error || doctorRes.error) {
+  if (channelRes.error || totalsRes.error || doctorRes.error || expensesRes.error) {
     return (
       <div className="p-4">
         <h1 className="text-xl font-semibold text-[color:var(--color-brand-navy)]">Operations</h1>
@@ -81,6 +81,12 @@ export default async function OperationsDailyReportPage({
   );
   const doctorGroups = buildDoctorRollup((doctorRes.data ?? []) as DoctorRow[]);
 
+  const expensesByDay: Record<string, number> = {};
+  for (const r of expensesRes.data ?? []) {
+    if (r.business_date) expensesByDay[r.business_date] = num(r.expense_php);
+  }
+  const expenseTotal = Object.values(expensesByDay).reduce((a, b) => a + b, 0);
+
   const csvHref = `/api/admin/operations/daily.csv?from=${from}&to=${to}`;
 
   return (
@@ -98,12 +104,14 @@ export default async function OperationsDailyReportPage({
       <DateControls key={`${from}_${to}`} from={from} to={to} today={today} />
 
       <p className="mt-3 text-xs text-[color:var(--color-brand-text-soft)]">
-        Totals are <strong>lab + consult only</strong> — rent, mobile APE, and procedures are
-        excluded, so on days with those line items this reads slightly under the manual sheet.
+        Revenue is <strong>lab + consult only</strong> (rent, mobile APE, procedures excluded).
+        <strong> Net is rough</strong>: revenue after discounts minus <em>all</em> posted
+        expenses from the books — so it mixes lab+consult revenue with clinic-wide expenses
+        (full expense P&amp;L lands in a later phase).
       </p>
 
-      <SummaryCards matrix={matrix} />
-      <DailyMatrixTable matrix={matrix} />
+      <SummaryCards matrix={matrix} expenseTotal={expenseTotal} />
+      <DailyMatrixTable matrix={matrix} expensesByDay={expensesByDay} />
       <DoctorPanel groups={doctorGroups} />
     </div>
   );
