@@ -41,7 +41,7 @@
     "dedup:patients": "tsx --env-file=.env.local scripts/patient-dedup/index.ts"
   },
   "dependencies": {
-    "@base-ui/react": "^1.4.1",
+    "@base-ui/react": "^1.5.0",
     "@hookform/resolvers": "^5.2.2",
     "@pdf-lib/fontkit": "^1.1.1",
     "@react-pdf/renderer": "^4.5.1",
