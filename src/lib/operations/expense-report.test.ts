@@ -66,3 +66,68 @@ describe("buildExpenseMatrix", () => {
     expect(m.other).toBeNull();
   });
 });
+
+import {
+  buildNetIncome,
+  buildCashFlow,
+  largestCategory,
+  cashFlowEnding,
+  booksNetIncome,
+  type PnlRow,
+} from "./expense-report";
+
+describe("buildNetIncome", () => {
+  it("net = gross profit − total expenses, per day and total", () => {
+    const days2 = ["2026-01-01", "2026-01-02"];
+    const gross = { "2026-01-01": 8660, "2026-01-02": 1000 };
+    const exp = { "2026-01-01": 6760, "2026-01-02": 400 };
+    const ni = buildNetIncome(gross, exp, days2);
+    expect(ni.net["2026-01-01"]).toBe(1900);
+    expect(ni.net["2026-01-02"]).toBe(600);
+    expect(ni.totalNet).toBe(2500);
+    expect(ni.totalGrossProfit).toBe(9660);
+    expect(ni.totalExpenses).toBe(7160);
+  });
+});
+
+describe("buildCashFlow", () => {
+  it("runs the balance from 0: ending = starting + collected − expenses", () => {
+    const days2 = ["2026-01-01", "2026-01-02", "2026-01-03"];
+    const collected = { "2026-01-01": 7960, "2026-01-02": 1500, "2026-01-03": 2100 };
+    const exp = { "2026-01-01": 6760, "2026-01-02": 750, "2026-01-03": 1400 };
+    const cf = buildCashFlow(collected, exp, days2);
+    expect(cf.starting.byDay["2026-01-01"]).toBe(0);
+    expect(cf.ending.byDay["2026-01-01"]).toBe(1200);
+    expect(cf.starting.byDay["2026-01-02"]).toBe(1200);
+    expect(cf.ending.byDay["2026-01-02"]).toBe(1950);
+    expect(cf.ending.byDay["2026-01-03"]).toBe(2650);
+  });
+});
+
+describe("largestCategory / cashFlowEnding / booksNetIncome", () => {
+  it("largestCategory returns the category with the biggest subtotal", () => {
+    const m = buildExpenseMatrix(
+      [
+        { business_date: "2026-01-01", code: "6100", name: "Salaries", expense_php: 700 },
+        { business_date: "2026-01-01", code: "6410", name: "Lab Supplies", expense_php: 200 },
+      ],
+      ["2026-01-01"],
+    );
+    expect(largestCategory(m)?.name).toBe("Manpower");
+    expect(largestCategory(m)?.total).toBe(700);
+  });
+
+  it("cashFlowEnding is the last day's running balance", () => {
+    const days2 = ["2026-01-01", "2026-01-02"];
+    const cf = buildCashFlow({ "2026-01-01": 100, "2026-01-02": 50 }, { "2026-01-01": 30, "2026-01-02": 10 }, days2);
+    expect(cashFlowEnding(cf)).toBe(110); // (100-30) + (50-10)
+  });
+
+  it("booksNetIncome = Σ(revenue − contra − expense)", () => {
+    const rows: PnlRow[] = [
+      { business_date: "2026-01-01", revenue_php: 8700, contra_revenue_php: 100, expense_php: 6760 },
+      { business_date: "2026-01-02", revenue_php: 1000, contra_revenue_php: 0, expense_php: 400 },
+    ];
+    expect(booksNetIncome(rows)).toBe(2440); // (8700-100-6760)+(1000-0-400)
+  });
+});
