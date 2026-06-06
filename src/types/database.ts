@@ -5714,6 +5714,16 @@ export type Database = {
         }
         Relationships: []
       }
+      v_ops_daily_collections: {
+        Row: {
+          amount: number | null
+          business_date: string | null
+          line_count: number | null
+          method: string | null
+          section: string | null
+        }
+        Relationships: []
+      }
       v_ops_daily_doctor: {
         Row: {
           business_date: string | null
@@ -5731,6 +5741,15 @@ export type Database = {
         Row: {
           business_date: string | null
           expense_php: number | null
+        }
+        Relationships: []
+      }
+      v_ops_daily_hmo_received: {
+        Row: {
+          amount: number | null
+          claim_count: number | null
+          received_date: string | null
+          source: string | null
         }
         Relationships: []
       }

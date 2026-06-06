@@ -4,6 +4,7 @@ const BASE = "/staff/admin/operations";
 
 const TABS = [
   { href: BASE, label: "Daily report", exact: true },
+  { href: `${BASE}/cash`, label: "Cash & cards" },
   { href: `${BASE}/trends`, label: "Trends" },
 ];
 

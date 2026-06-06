@@ -25,22 +25,27 @@ function lastDayOfYear(year: number): string {
  * (This month / This year / Last year), a jump-to-year selector, and a
  * custom from/to range. Client component so selections navigate instantly;
  * the page reads the resulting `from`/`to` search params server-side.
+ *
+ * Pass `basePath` to control the navigation target (defaults to
+ * `/staff/admin/operations` for the daily report).
  */
 export function DateControls({
   from,
   to,
   today,
+  basePath = "/staff/admin/operations",
 }: {
   from: string;
   to: string;
   today: string;
+  basePath?: string;
 }) {
   const router = useRouter();
   const [customFrom, setCustomFrom] = useState(from);
   const [customTo, setCustomTo] = useState(to);
 
   const go = (f: string, t: string) =>
-    router.push(`/staff/admin/operations?from=${f}&to=${t}`);
+    router.push(`${basePath}?from=${f}&to=${t}`);
 
   const year = Number(today.slice(0, 4));
   const monthStart = `${today.slice(0, 7)}-01`;
