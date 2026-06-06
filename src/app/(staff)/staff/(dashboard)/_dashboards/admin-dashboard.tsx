@@ -45,6 +45,7 @@ async function loadAdminStats(show: (id: string) => boolean) {
   const supabase = await createClient();
   const admin = createAdminClient();
   const today = todayManilaISODate();
+  const monthStart = `${today.slice(0, 7)}-01`;
   const startOfTodayUtc = new Date(`${today}T00:00:00+08:00`).toISOString();
   const startOfTomorrowUtc = new Date(`${today}T24:00:00+08:00`).toISOString();
   const sevenDaysAgoIso = new Date(Date.now() - 7 * 86400000).toISOString();
@@ -66,6 +67,8 @@ async function loadAdminStats(show: (id: string) => boolean) {
     payrollRunsInProgress,
     recentAudit,
     staleDrafts,
+    netTotalsMtd,
+    netExpensesMtd,
   ] = await Promise.all([
     show("admin.visits_today")
       ? supabase
@@ -190,6 +193,22 @@ async function loadAdminStats(show: (id: string) => boolean) {
           .limit(5)
           .returns<DraftJeRow[]>()
       : SKIP_DATA,
+    show("admin.net_income_mtd")
+      ? admin
+          .from("v_ops_daily_totals")
+          .select("net")
+          .gte("business_date", monthStart)
+          .lte("business_date", today)
+          .returns<{ net: number | string }[]>()
+      : SKIP_DATA,
+    show("admin.net_income_mtd")
+      ? admin
+          .from("v_ops_daily_expenses")
+          .select("expense_php")
+          .gte("business_date", monthStart)
+          .lte("business_date", today)
+          .returns<{ expense_php: number | string }[]>()
+      : SKIP_DATA,
   ]);
 
   const revenueRows = (revenueToday.data ?? []) as PaymentRow[];
@@ -245,6 +264,16 @@ async function loadAdminStats(show: (id: string) => boolean) {
   const doctorsToPayCount = positiveDoctorTotals.length;
   const doctorsToPayTotal = positiveDoctorTotals.reduce((s, v) => s + v, 0);
 
+  const netIncomeMtd =
+    ((netTotalsMtd.data ?? []) as { net: number | string }[]).reduce(
+      (s, r) => s + Number(r.net ?? 0),
+      0,
+    ) -
+    ((netExpensesMtd.data ?? []) as { expense_php: number | string }[]).reduce(
+      (s, r) => s + Number(r.expense_php ?? 0),
+      0,
+    );
+
   return {
     visitsToday: visitsToday.count ?? 0,
     queueTotal: queueTotal.count ?? 0,
@@ -262,6 +291,7 @@ async function loadAdminStats(show: (id: string) => boolean) {
     pfPendingTotal,
     doctorsToPayTotal,
     doctorsToPayCount,
+    netIncomeMtd,
     activeEmployees: activeEmployees.count ?? 0,
     payrollRunsInProgress: payrollRunsInProgress.count ?? 0,
     recentAudit: (recentAudit.data ?? []) as AuditRow[],
@@ -336,6 +366,15 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
 
       <SectionHeading title="Money">
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {show("admin.net_income_mtd") && (
+          <StatCard
+            label="Net income (this month)"
+            value={formatPeso(stats.netIncomeMtd)}
+            hint="Gross profit − expenses, month to date"
+            href="/staff/admin/operations/expenses"
+            accent={stats.netIncomeMtd >= 0 ? "good" : "warn"}
+          />
+        )}
         {show("admin.past_due_periods") && (
           <StatCard
             label="Past-due open periods"
