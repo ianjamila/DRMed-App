@@ -46,6 +46,7 @@ export const DASHBOARD_CARDS: readonly CardDef[] = [
   { id: "admin.released_today",    label: "Released today",  roles: ["admin"], group: "operations" },
 
   // ---- Admin: Money -------------------------------------------------------
+  { id: "admin.net_income_mtd",        label: "Net income (this month)",  roles: ["admin"], group: "money", sensitive: true },
   { id: "admin.past_due_periods",     label: "Past-due open periods",    roles: ["admin"], group: "money" },
   { id: "admin.draft_jes",            label: "Draft journal entries",    roles: ["admin"], group: "money" },
   { id: "admin.ap_outstanding",       label: "AP outstanding",           roles: ["admin"], group: "money", sensitive: true },
