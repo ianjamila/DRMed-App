@@ -16,7 +16,13 @@ function findRow(m: DailyMatrix, section: "lab" | "consult", metric: string) {
  * sum of each day's distinct customers (a patient seen on two days counts twice)
  * — true range-distinct is a B2 improvement; labelled honestly here.
  */
-export function SummaryCards({ matrix }: { matrix: DailyMatrix }) {
+export function SummaryCards({
+  matrix,
+  expenseTotal,
+}: {
+  matrix: DailyMatrix;
+  expenseTotal: number;
+}) {
   const labCount = findRow(matrix, "lab", "count")?.total ?? 0;
   const consultCount = findRow(matrix, "consult", "count")?.total ?? 0;
   const labCust = findRow(matrix, "lab", "customers")?.total ?? 0;
@@ -29,8 +35,10 @@ export function SummaryCards({ matrix }: { matrix: DailyMatrix }) {
     { label: "# Consults", value: INT(consultCount) },
     { label: "Gross sales", value: PESO(matrix.totals.revenue.total) },
     { label: "Discounts", value: PESO(matrix.totals.discount.total) },
-    { label: "Gross profit (net)", value: PESO(matrix.totals.net.total) },
+    { label: "Net revenue (after disc.)", value: PESO(matrix.totals.net.total) },
     { label: "PF collected", value: PESO(pf) },
+    { label: "Expenses (from books)", value: PESO(expenseTotal) },
+    { label: "Net (rough = rev − exp)", value: PESO(matrix.totals.net.total - expenseTotal) },
   ];
 
   return (

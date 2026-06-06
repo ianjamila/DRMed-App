@@ -5727,6 +5727,13 @@ export type Database = {
         }
         Relationships: []
       }
+      v_ops_daily_expenses: {
+        Row: {
+          business_date: string | null
+          expense_php: number | null
+        }
+        Relationships: []
+      }
       v_ops_daily_totals: {
         Row: {
           business_date: string | null
