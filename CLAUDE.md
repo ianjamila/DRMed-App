@@ -127,7 +127,7 @@ All Server Actions return `{ ok: true, data } | { ok: false, error }`. User-faci
 | PG error → user-facing message translator | `src/lib/accounting/pg-errors.ts` (`translatePgError`) |
 | Manila/PHT datetime helpers | `src/lib/dates/manila.ts` (`todayManilaISODate`, etc.) |
 | Rate-limit checker | `src/lib/rate-limit/check.ts` |
-| Migrations (sequential numbering, ~0089 and counting) | `supabase/migrations/` |
+| Migrations (sequential numbering) | `supabase/migrations/` |
 
 ## Out of scope (by design)
 
