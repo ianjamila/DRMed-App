@@ -72,9 +72,30 @@ GL consult revenue (net, ₱63,530) equals the sheet's net consult (gross ₱1,0
 "discount" ₱1,002,846 = ₱63,330) to within ₱200. Pure gross-vs-net presentation, **zero**
 net-income effect. (An earlier hypothesis that consult drove the gap was wrong.)
 
-## Fix plan (prod writes — requires sign-off; NOT yet done)
+## ✅ Step 1 APPLIED to prod 2026-06-08
 
-1. **Reverse the 75 duplicate `bill_post` expense JEs** (₱418,319.34).
+The duplicate-expense reversal (fix step 1 below) was **executed and verified on prod**
+`qhptbmafrosgibooelpp`. Execution spec/plan:
+`specs/2026-06-08-books-recon-step1-void-duplicate-bills.md` +
+`plans/2026-06-08-books-recon-step1-void-duplicate-bills.md`.
+
+- **What ran:** all 75 history-imported AP bills + their 75 cash payments voided via the app's
+  guarded RPCs (`ap_void_bill_payment_cascade` then `ap_void_bill_with_guard`), in one atomic
+  transaction, attributed to admin Ian Jamila. Originals retained as `status='reversed'` (not
+  deleted); 75 + 75 `audit_log` rows written.
+- **Investigation refinement:** each duplicate was a full lifecycle (`Dr expense / Cr AP` bill
+  **+** `Dr AP / Cr Cash` payment, all cash to `1010`), so the payment had to be voided first
+  (the bill-void guard P0029 blocks paid bills). The whole AP subledger was confirmed to be
+  *nothing but* these 75 duplicates — zero genuine live bills.
+- **Result (verified):** GL net income Jan–May 2026 **−₱249,335.27 → +₱168,984.07**; expense
+  ₱3,141,114.12 → **₱2,722,794.78** (= `history_import` only, ties to the sheet); B1.3
+  `v_ops_daily_expenses` view ties to ₱2,722,794.78; AP subledger net ₱0; phantom cash outflow
+  of ₱418,319.34 removed; trial balance still balances (debits = credits = ₱26,282,199.49).
+- **Remaining gap to the +₱262,143 sheet figure (~₱93k):** steps 2–4 below, still pending.
+
+## Fix plan (prod writes — requires sign-off; step 1 ✅ DONE 2026-06-08)
+
+1. ✅ **DONE** — **Reverse the 75 duplicate `bill_post` expense JEs** (₱418,319.34).
    Filter: `source_kind='bill_post' AND description ILIKE '%[history imported_at%'`.
    **Use the app's bill-void path**, not raw JE deletion — each bill_post JE has an AP-liability
    leg and a `bills` row (BL-2026-xxxx); void must unwind the full entry + AP subledger.
