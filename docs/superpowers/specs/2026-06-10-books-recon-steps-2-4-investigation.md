@@ -106,3 +106,19 @@ Books land ≈ **+₱272,001** — a *finding*, not a failure to hit +262,143.
   the partner should update the monthly summary toward it, not the reverse.
 - **Code change:** added `--to-date=YYYY-MM-DD` cutoff to
   `scripts/history-import/{lab-services,expenses}.ts` (rows after the cutoff are held).
+
+## 2024–2025 re-check (2026-06-10, read-only) — CLEAN, no writes needed
+
+Re-checked prior years for the same incomplete-import / duplicate patterns. **All clean:**
+- **Zero duplicate import markers** across every year (LAB SERVICE 18,655 / EXPENSES 1,717 /
+  DOCTOR CONSULTATION 1,679 — all distinct). The 75 `bill_post` AP dups were confined to 2026
+  (voided in step 1).
+- **Lab (4100)** ties to the source `LAB SERVICE` tab **to the peso**: 2023 162,195.00;
+  2024 4,154,848.50; 2025 5,627,809.75 — GL = sheet exactly. No alternate 4100 source.
+- **Doctor consult (4200)** ties via the importer's parser exactly: 2024 ₱58,038.00,
+  2025 ₱126,012.00 = GL.
+- **Expenses** tie: 2024 GL = importer 3,667,463.13 exactly. 2025 GL 4,960,251.59 =
+  EXPENSES-tab 4,950,590.37 **+ ₱9,661.22 Veritas Pay card-merchant fees (65 JEs → 6610)** —
+  a legitimate separate source, not a gap. So 2025 is complete + correct.
+- **Conclusion:** the late-May-2026 incomplete-import situation does **not** recur in 2024–2025;
+  those years are fully and correctly booked. No corrective writes required.
