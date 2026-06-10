@@ -48,6 +48,7 @@ interface Args {
   year: number;
   commit: boolean;
   confirmed: boolean;
+  toDate: string | null;
 }
 
 function parseArgs(): Args {
@@ -67,7 +68,12 @@ function parseArgs(): Args {
   const confirmed =
     argv.includes('--confirm="I-mean-it"') ||
     argv.includes("--confirm=I-mean-it");
-  return { xlsx, year, commit, confirmed };
+  const toDate = argv.find((a) => a.startsWith("--to-date="))?.substring(10) ?? null;
+  if (toDate && !/^\d{4}-\d{2}-\d{2}$/.test(toDate)) {
+    console.error(`ERROR: --to-date must be YYYY-MM-DD, got ${toDate}`);
+    process.exit(2);
+  }
+  return { xlsx, year, commit, confirmed, toDate };
 }
 
 function excelSerialToISO(serial: number): string {
@@ -216,7 +222,7 @@ async function loadRows(xlsxPath: string): Promise<RawRow[]> {
 // Classify
 // ---------------------------------------------------------------------------
 
-type RowClass = "cash_postable" | "hmo_postable" | "skip_zero_final" | "skip_hmo_zero" | "bad_date" | "bad_year";
+type RowClass = "cash_postable" | "hmo_postable" | "skip_zero_final" | "skip_hmo_zero" | "bad_date" | "bad_year" | "after_cutoff";
 
 interface ClassifiedRow {
   row: RawRow;
@@ -224,9 +230,10 @@ interface ClassifiedRow {
   cash_account_code: string | null;
 }
 
-function classify(row: RawRow, year: number): RowClass {
+function classify(row: RawRow, year: number, toDate: string | null): RowClass {
   if (!row.posting_date) return "bad_date";
   if (row.posting_date.slice(0, 4) !== String(year)) return "bad_year";
+  if (toDate && row.posting_date > toDate) return "after_cutoff";
   const isHmo = row.hmo_flag.trim().toUpperCase().includes("YES") || !!row.hmo_provider || row.mop.trim().toUpperCase() === "HMO";
   if (isHmo) {
     if (row.final > 0 || row.base > 0) return "hmo_postable";
@@ -236,9 +243,9 @@ function classify(row: RawRow, year: number): RowClass {
   return "skip_zero_final";
 }
 
-function build(rows: RawRow[], year: number): ClassifiedRow[] {
+function build(rows: RawRow[], year: number, toDate: string | null): ClassifiedRow[] {
   return rows.map((r) => {
-    const rclass = classify(r, year);
+    const rclass = classify(r, year, toDate);
     const cash_account_code = rclass === "cash_postable" ? cashChannelCoa(r.mop) : null;
     return { row: r, rclass, cash_account_code };
   });
@@ -263,6 +270,7 @@ function summarise(year: number, classified: ClassifiedRow[]): void {
   console.log(`Skip HMO zero:      ${classified.filter((x) => x.rclass === "skip_hmo_zero").length.toString().padStart(5)}`);
   console.log(`Bad date:           ${classified.filter((x) => x.rclass === "bad_date").length.toString().padStart(5)}`);
   console.log(`Bad year (filtered):${classified.filter((x) => x.rclass === "bad_year").length.toString().padStart(5)}`);
+  console.log(`After cutoff (held):${classified.filter((x) => x.rclass === "after_cutoff").length.toString().padStart(5)}`);
 
   if (hmoPost.length > 0) {
     const byProvider = new Map<string, { n: number; total: number; paid: number; outstanding: number }>();
@@ -509,7 +517,8 @@ async function main() {
   console.log(`Reading: ${args.xlsx}`);
   const rows = await loadRows(args.xlsx);
   console.log(`LAB SERVICE rows read: ${rows.length}`);
-  const classified = build(rows, args.year);
+  if (args.toDate) console.log(`Cutoff: posting_date <= ${args.toDate} (rows after held)`);
+  const classified = build(rows, args.year, args.toDate);
   summarise(args.year, classified);
 
   const exclusionsPath = await writeExclusionCsv(args.year, classified);
