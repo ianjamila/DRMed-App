@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildHmoArMatrix, type HmoArRow } from "./hmo-ar-report";
+import { buildHmoArMatrix, type HmoArRow, summarizeAging, type AgingRow, AGING_BUCKETS } from "./hmo-ar-report";
 
 const range = { from: "2024-02-01", to: "2024-02-29" };
 
@@ -58,5 +58,28 @@ describe("buildHmoArMatrix", () => {
     ];
     const m = buildHmoArMatrix(rows, range);
     expect(m.providers[0].endingBalance).toBe(200);
+  });
+});
+
+describe("summarizeAging", () => {
+  it("pivots rows into per-provider bucket columns sorted by total desc", () => {
+    const rows: AgingRow[] = [
+      { provider_name: "Maxicare", bucket: "0-30", total_php: 100, item_count: 1 },
+      { provider_name: "Maxicare", bucket: "180+", total_php: 400, item_count: 2 },
+      { provider_name: "Etiqa", bucket: "0-30", total_php: 50, item_count: 1 },
+    ];
+    const s = summarizeAging(rows);
+    expect(s.providers.map((p) => p.provider)).toEqual(["Maxicare", "Etiqa"]);
+    expect(s.providers[0].buckets["180+"]).toBe(400);
+    expect(s.providers[0].total).toBe(500);
+    expect(s.grandByBucket["0-30"]).toBe(150);
+    expect(s.grandTotal).toBe(550);
+  });
+
+  it("defaults missing buckets to 0 across the canonical bucket set", () => {
+    const rows: AgingRow[] = [{ provider_name: "iCare", bucket: "61-90", total_php: 30, item_count: 1 }];
+    const s = summarizeAging(rows);
+    for (const b of AGING_BUCKETS) expect(b in s.providers[0].buckets).toBe(true);
+    expect(s.providers[0].buckets["0-30"]).toBe(0);
   });
 });
