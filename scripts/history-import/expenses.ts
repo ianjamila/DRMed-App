@@ -41,6 +41,7 @@ interface Args {
   year: number;
   commit: boolean;
   confirmed: boolean;
+  toDate: string | null;
 }
 
 function parseArgs(): Args {
@@ -62,7 +63,12 @@ function parseArgs(): Args {
   const confirmed =
     argv.includes('--confirm="I-mean-it"') ||
     argv.includes("--confirm=I-mean-it");
-  return { xlsx, year, commit, confirmed };
+  const toDate = argv.find((a) => a.startsWith("--to-date="))?.substring(10) ?? null;
+  if (toDate && !/^\d{4}-\d{2}-\d{2}$/.test(toDate)) {
+    console.error(`ERROR: --to-date must be YYYY-MM-DD, got ${toDate}`);
+    process.exit(2);
+  }
+  return { xlsx, year, commit, confirmed, toDate };
 }
 
 // ---------------------------------------------------------------------------
@@ -222,7 +228,7 @@ interface ProposedJE {
   skip_reason?: string;
 }
 
-function buildProposed(rows: RawRow[], year: number): ProposedJE[] {
+function buildProposed(rows: RawRow[], year: number, toDate: string | null): ProposedJE[] {
   const out: ProposedJE[] = [];
 
   for (const r of rows) {
@@ -269,6 +275,12 @@ function buildProposed(rows: RawRow[], year: number): ProposedJE[] {
     if (postingDate.slice(0, 4) !== String(year)) continue;
 
     base.posting_date = postingDate;
+
+    // Cutoff filter (books-recon: cap late-period re-imports).
+    if (toDate && postingDate > toDate) {
+      out.push({ ...base, lines: [], skip_reason: `after cutoff ${toDate}` });
+      continue;
+    }
 
     if (!r.cost || r.cost <= 0) {
       out.push({ ...base, lines: [], skip_reason: `cost=${r.cost} (expected > 0)` });
@@ -607,8 +619,9 @@ async function main() {
   console.log(`Reading: ${args.xlsx}`);
   const rows = await readRawRows(args.xlsx);
   console.log(`EXPENSES rows read (excl title/header/FB-Ads block): ${rows.length}`);
+  if (args.toDate) console.log(`Cutoff: posting_date <= ${args.toDate} (rows after held)`);
 
-  const proposed = buildProposed(rows, args.year);
+  const proposed = buildProposed(rows, args.year, args.toDate);
   summarise(args.year, proposed);
 
   const csvPath = await writeCsv(proposed, args.year);
