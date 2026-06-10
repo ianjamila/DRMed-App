@@ -5753,6 +5753,16 @@ export type Database = {
         }
         Relationships: []
       }
+      v_ops_daily_hmo_provider_ar: {
+        Row: {
+          business_date: string | null
+          provider_name: string | null
+          source: string | null
+          billed_in_php: number | null
+          paid_out_php: number | null
+        }
+        Relationships: []
+      }
       v_ops_daily_hmo_received: {
         Row: {
           amount: number | null
