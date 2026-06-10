@@ -63,7 +63,7 @@ export default async function HmoReceivablesPage({
         </p>
       </div>
       <OperationsTabs />
-      <DateControls from={from} to={to} today={today} basePath={BASE} />
+      <DateControls key={`${from}_${to}`} from={from} to={to} today={today} basePath={BASE} />
       <HmoSummaryCards matrix={matrix} />
       <Card className="p-0 overflow-hidden">
         <HmoArMatrixTable matrix={matrix} from={from} to={to} />
