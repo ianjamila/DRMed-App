@@ -13,6 +13,11 @@ export function HmoAgingPanel({
   labTotal: number;
   consultAr: number;
 }) {
+  // The roll-forward and the aging table measure AR on different bases, so their
+  // grand totals won't match. Surface the gap explicitly rather than leave two
+  // adjacent, conflicting "HMO AR" totals unexplained on a bookkeeper page.
+  const rollForwardTotal = labTotal + consultAr;
+  const agingBasisDelta = rollForwardTotal - aging.grandTotal;
   return (
     <Card className="p-4 space-y-3">
       <div>
@@ -54,8 +59,15 @@ export function HmoAgingPanel({
       </div>
       <p className="text-xs text-muted-foreground">
         Reconciliation: Lab AR (roll-forward) {peso(labTotal)} + Consult HMO AR {peso(consultAr)}{" "}
-        = {peso(labTotal + consultAr)}. The roll-forward above is lab-only; consult HMO AR is shown
+        = {peso(rollForwardTotal)}. The roll-forward above is lab-only; consult HMO AR is shown
         here for visibility (full consult roll-forward is a planned follow-on).
+      </p>
+      <p className="text-xs text-muted-foreground">
+        Why this differs from the aging total {peso(aging.grandTotal)} above (by{" "}
+        {peso(agingBasisDelta)}): the roll-forward counts <em>billed − dated-paid</em>, so claims
+        marked paid but never given a settlement date stay in AR; the aging table counts only
+        currently <em>pending / overdue</em> claims. Same receivables, two reporting bases — they
+        are not expected to match exactly.
       </p>
     </Card>
   );
