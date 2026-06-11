@@ -33,3 +33,12 @@ rows are acted on.
 
 > The `hint` column is guidance only (e.g. "birthdates 1 day apart — likely a typo",
 > "Jr/Sr/III marker present"). The decision is the partner's.
+
+### ⚠ Three-way clusters (hint = `MANUAL`)
+
+Two clusters have **three** candidates — `GREGORIO` (ANGELO / ANGELO RAY / ANGELO REY)
+and `DELA CRUZ, JUAN GABRIEL` (×3). A single `SAME` row would merge **all three** into the
+target, which is wrong if only two of them are the same person. For these, do **not** mark
+`SAME`; instead write in `notes` exactly which records are the same and who owns the held
+rows (e.g. "RAY = REY, merge REY→RAY; ANGELO is separate; held rows → RAY"), and engineering
+will apply it per-member.

@@ -120,6 +120,18 @@ return` 0091 guard. **Empirically confirmed:** `journal_entries` count **22,424 
 After the re-point, **334** rows remain on LEGACY-LAB (38 distinct names = the two
 deferred tiers).
 
+### Rendering safe + fully reversible
+
+- **Portal rendering verified.** ~405 of the re-pointed rows now point at `lab_package`-kind
+  services as flat standalone rows (`is_package_header=false`, `parent_id=null`, no
+  children). The patient-portal results query routes on `is_package_header`/`parent_id`,
+  **not** `service.kind` (`src/app/(patient)/portal/(authenticated)/page.tsx` ~L140-152), so
+  they fall through to `standaloneReleased` and render as normal lines — now with a real test
+  name instead of "Legacy lab test". The package-download path requires `is_package_header=
+  true` (`actions.ts` ~L273), so these can't trigger it.
+- **Reversible.** The UPDATE preserved `receptionist_remarks='legacy service: <NAME>'`, so any
+  row can be mapped back to LEGACY-LAB by name if a mapping is ever disputed.
+
 ---
 
 ## Outcome
