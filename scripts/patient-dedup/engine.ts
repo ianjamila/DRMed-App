@@ -16,7 +16,7 @@ export function parseArgs(): Args {
   };
 }
 
-function adminClient(): SupabaseClient<Database> {
+export function adminClient(): SupabaseClient<Database> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) { console.error("NEXT_PUBLIC_SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY required."); process.exit(2); }
@@ -29,7 +29,7 @@ async function fetchAll<T>(q: (from: number, to: number) => Promise<T[]>): Promi
   return out;
 }
 
-async function loadRows(admin: SupabaseClient<Database>): Promise<PatientRow[]> {
+export async function loadRows(admin: SupabaseClient<Database>): Promise<PatientRow[]> {
   const patients = await fetchAll(async (from, to) => {
     const { data, error } = await admin
       .from("patients")
@@ -118,7 +118,7 @@ export async function run(): Promise<void> {
 const FK_TABLES = ["visits", "appointments", "audit_log", "critical_alerts", "patient_consents"] as const;
 const FILL_FIELDS = ["middle_name", "sex", "phone", "email", "address", "birthdate"] as const;
 
-async function mergeOne(
+export async function mergeOne(
   admin: SupabaseClient<Database>,
   canonical: PatientRow,
   source: PatientRow,
