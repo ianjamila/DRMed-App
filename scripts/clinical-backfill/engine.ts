@@ -9,7 +9,7 @@ import { mopToMethod } from "./lib/mop-method";
 import { buildVisitNumber } from "./lib/visit-number";
 import { buildServiceIndex, mapService, type CatalogService } from "./lib/service-map";
 import { buildPatientIndex, matchPatient, type PatientRow } from "./lib/patient-match";
-import { parseTransactionName } from "./lib/names";
+import { parseTransactionName, matchKey } from "./lib/names";
 import { resolveSurname } from "../clinical-enrich/lib/physician-map";
 import { ensureSystemUser } from "./system-user";
 import { writeCsv } from "./report";
@@ -17,7 +17,7 @@ import { writeCsv } from "./report";
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const WINDOW: Window = { start: "2023-12-01", cutoverExclusive: "2026-05-26" };
 
-interface Args { xlsx: string; commit: boolean; confirmed: boolean; }
+interface Args { xlsx: string; commit: boolean; confirmed: boolean; resolutions?: string; }
 export function parseArgs(): Args {
   const argv = process.argv.slice(2);
   const xlsx = argv.find((a) => a.startsWith("--xlsx="))?.substring(7)
@@ -26,6 +26,7 @@ export function parseArgs(): Args {
     xlsx,
     commit: argv.includes("--commit"),
     confirmed: argv.includes('--confirm="I-mean-it"') || argv.includes("--confirm=I-mean-it"),
+    resolutions: argv.find((a) => a.startsWith("--resolutions="))?.substring(14),
   };
 }
 
@@ -65,12 +66,29 @@ export async function run(cfg: TabConfig): Promise<void> {
   const admin = adminClient();
 
   // catalogs
-  const patientsRaw = await fetchAll<PatientRow>(async (lo, hi) => {
+  const patientsRaw = await fetchAll<PatientRow & { drm_id: string }>(async (lo, hi) => {
     const { data, error } = await admin.from("patients")
-      .select("id,last_name,first_name,sex").is("merged_into_id", null).range(lo, hi);
-    if (error) throw new Error(error.message); return (data ?? []) as PatientRow[];
+      .select("id,drm_id,last_name,first_name,sex").is("merged_into_id", null).range(lo, hi);
+    if (error) throw new Error(error.message); return (data ?? []) as (PatientRow & { drm_id: string })[];
   });
   const patientIndex = buildPatientIndex(patientsRaw);
+
+  // Optional partner-resolution overrides: matchKey -> patient_id. Lets a DISTINCT
+  // ambiguous cluster's held rows import to the partner-chosen patient instead of
+  // staying held. SAME clusters normally collapse to a single match once resolve.ts
+  // has merged the duplicates, so the override is belt-and-suspenders for them.
+  const overrideByKey = new Map<string, string>();
+  if (args.resolutions) {
+    const { parseResolutions, buildOverrideMap } = await import("./followups/resolutions");
+    const text = await (await import("node:fs")).promises.readFile(args.resolutions, "utf8");
+    const { resolutions, errors } = parseResolutions(text);
+    if (errors.length) { console.error("Resolution file errors:\n  " + errors.join("\n  ")); process.exit(4); }
+    const drmToId = new Map(patientsRaw.map((p) => [p.drm_id, p.id]));
+    const built = buildOverrideMap(resolutions, drmToId);
+    if (built.errors.length) { console.error("Resolution mapping errors:\n  " + built.errors.join("\n  ")); process.exit(4); }
+    for (const [k, v] of built.overrides) overrideByKey.set(k, v);
+    console.log(`  resolutions loaded: ${overrideByKey.size} cluster override(s) from ${args.resolutions}`);
+  }
 
   const services = await fetchAll<CatalogService>(async (lo, hi) => {
     const { data, error } = await admin.from("services").select("id,code,name,kind,is_active").range(lo, hi);
@@ -78,7 +96,7 @@ export async function run(cfg: TabConfig): Promise<void> {
   });
   // resolve generic legacy-lab + consult anchors (commit mode upserts legacy lab)
   const consultId = services.find((s) => s.code === "CONSULT")?.id ?? "";
-  let legacyLabId = services.find((s) => s.code === "LEGACY-LAB")?.id ?? "";
+  const legacyLabId = services.find((s) => s.code === "LEGACY-LAB")?.id ?? "";
   const hmoProviders = await fetchAll<{ id: string; name: string }>(async (lo, hi) => {
     const { data, error } = await admin.from("hmo_providers").select("id,name").range(lo, hi);
     if (error) throw new Error(error.message); return (data ?? []) as { id: string; name: string }[];
@@ -99,6 +117,7 @@ export async function run(cfg: TabConfig): Promise<void> {
   // classify + match + group
   const visits = new Map<string, BuiltVisit>();
   const ambiguous: string[][] = [];
+  let resolvedViaOverride = 0;
   const newPatients = new Map<string, { last: string; first: string; sex: string; sample: RawRow }>();
   const unmappedServices = new Map<string, number>();
   const exclusions: string[][] = [];
@@ -125,8 +144,14 @@ export async function run(cfg: TabConfig): Promise<void> {
     let patient_id: string; let created_patient = false;
     if (m.kind === "match") { patient_id = m.patient_id; }
     else if (m.kind === "ambiguous") {
-      ambiguous.push([String(r.row_number), r.patient_name, m.candidates.join("|"), r.posting_date ?? ""]);
-      continue; // held — not committed in the auto pass
+      // A partner resolution can lift the hold: route this cluster's rows to the
+      // chosen patient. The override is keyed by the same matchKey the matcher uses.
+      const ov = overrideByKey.get(matchKey(parsed.last, parsed.first));
+      if (ov) { patient_id = ov; resolvedViaOverride++; }
+      else {
+        ambiguous.push([String(r.row_number), r.patient_name, m.candidates.join("|"), r.posting_date ?? ""]);
+        continue; // held — not committed in the auto pass
+      }
     } else {
       // new patient (dedup within run by the stable name token)
       if (!nameToken.trim() || nameToken === "|") {
@@ -167,6 +192,7 @@ export async function run(cfg: TabConfig): Promise<void> {
   console.log(`  test_request lines: ${visitArr.reduce((s, v) => s + v.lines.length, 0)}`);
   console.log(`  new patients:       ${newPatients.size}`);
   console.log(`  ambiguous (held):   ${ambiguous.length}`);
+  if (args.resolutions) console.log(`  resolved via partner override: ${resolvedViaOverride}`);
   console.log(`  unmapped services:  ${unmappedServices.size}`);
   console.log(`  excluded rows:      ${exclusions.length}`);
 
