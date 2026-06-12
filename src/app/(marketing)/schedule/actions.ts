@@ -124,24 +124,34 @@ export async function submitBookingAction(_prev: BookingResult | null, formData:
   const requestIp = headerStore.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
   const userAgent = headerStore.get("user-agent");
 
-  if (requestIp) {
-    const limit = await checkRateLimit({ bucket: "public_booking", identifier: requestIp, ...RATE_LIMITS.public_booking });
-    if (!limit.allowed) {
-      return { ok: false, error: `Too many booking attempts. Try again in ${Math.ceil(limit.retryAfterSec / 60)} minutes, or call reception.` };
-    }
-  }
-
   const branch = formData.get("branch");
   const sourceInput = formData.get("source");
   const isPortalSource = sourceInput === "portal";
 
   // Portal submissions ignore any client-supplied patient_id and re-derive it
   // from the session cookie — a logged-in patient can't book against another.
+  // Resolved before rate-limiting so the limit can be keyed per-patient.
   let resolvedPatientIdFromSession: string | null = null;
   if (isPortalSource) {
     const session = await getPatientSession();
     if (!session) return { ok: false, error: "Your session expired. Please sign in again." };
     resolvedPatientIdFromSession = session.patient_id;
+  }
+
+  // Identity-aware rate limiting. Authenticated portal patients are throttled
+  // per-PATIENT (generous; abuse is bounded to their own record) so they're
+  // never blocked by anonymous traffic sharing their IP. Anonymous /schedule
+  // bookings keep the per-IP guard against bot mass-booking.
+  const rateLimit = isPortalSource
+    ? { bucket: "portal_booking" as const, identifier: resolvedPatientIdFromSession!, ...RATE_LIMITS.portal_booking }
+    : requestIp
+      ? { bucket: "public_booking" as const, identifier: requestIp, ...RATE_LIMITS.public_booking }
+      : null;
+  if (rateLimit) {
+    const limit = await checkRateLimit(rateLimit);
+    if (!limit.allowed) {
+      return { ok: false, error: `Too many booking attempts. Try again in ${Math.ceil(limit.retryAfterSec / 60)} minutes, or call reception.` };
+    }
   }
 
   const patientIdInput = isPortalSource ? resolvedPatientIdFromSession : (formData.get("patient_id") as string | null);

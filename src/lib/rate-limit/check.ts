@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 export type RateLimitBucket =
   | "patient_pin"
   | "public_booking"
+  | "portal_booking"
   | "contact_form"
   | "newsletter_signup"
   | "patient_lookup"
@@ -79,7 +80,17 @@ export const RATE_LIMITS: Record<
   // PIN itself; this is the per-IP guard so an attacker can't sweep
   // DRM-IDs from one source.
   patient_pin: { windowSec: 15 * 60, max: 10 },
-  public_booking: { windowSec: 60 * 60, max: 8 },
+  // Anonymous /schedule bookings, keyed per-IP. Each one creates a patient row
+  // and fires an SMS + email, so this is the guard against a bot mass-booking.
+  // Set high enough that several genuine patients behind one shared NAT (office,
+  // clinic Wi-Fi, kiosk, carrier CGNAT) won't false-trip it within the hour.
+  public_booking: { windowSec: 60 * 60, max: 20 },
+  // Portal (authenticated) bookings, keyed per-PATIENT instead of per-IP — a
+  // signed-in patient is identity-verified and shouldn't be throttled by
+  // strangers sharing their IP. Abuse is naturally bounded to one patient (no
+  // new patient rows; notifications go only to their own on-file contact), so
+  // this is generous defense-in-depth, not a real-traffic limiter.
+  portal_booking: { windowSec: 60 * 60, max: 20 },
   contact_form: { windowSec: 60 * 60, max: 5 },
   newsletter_signup: { windowSec: 60 * 60, max: 5 },
   // Existing-patient lookup on /schedule. Tighter than public_booking
