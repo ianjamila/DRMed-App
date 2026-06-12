@@ -6,25 +6,21 @@ const GALLERY_PHOTOS = [
   {
     src: "/photos/reception.jpg",
     alt: "DRMed Clinic & Laboratory reception counter with staff greeting a patient",
-    objectPosition: "center 35%",
     caption: "Reception — where every visit begins",
   },
   {
     src: "/photos/microscope.jpg",
     alt: "Olympus microscope at the DRMed clinical microscopy bench",
-    objectPosition: "center 40%",
     caption: "Clinical microscopy — precision diagnostics",
   },
   {
     src: "/photos/lab-chemistry.jpg",
     alt: "DRMed clinical chemistry analyzer station",
-    objectPosition: "center",
     caption: "Clinical chemistry — our in-house lab",
   },
   {
     src: "/photos/waiting-area.jpg",
     alt: "DRMed Clinic & Laboratory waiting area",
-    objectPosition: "center 55%",
     caption: "A comfortable place to wait",
   },
 ] as const;
@@ -36,16 +32,18 @@ export function Gallery() {
         <SectionHeading eyebrow="Our Clinic" title="A look" accent="inside." className="mb-8" />
 
         <div className="grid grid-cols-2 gap-[14px] lg:grid-cols-4">
-          {GALLERY_PHOTOS.map(({ src, alt, objectPosition, caption }) => (
+          {GALLERY_PHOTOS.map(({ src, alt, caption }) => (
             <Reveal key={src}>
               <div>
+                {/* Sources are 3:4 portrait — match the box aspect so the full
+                    scene shows (object-cover would otherwise slice a thin band). */}
                 <Image
                   src={src}
                   alt={alt}
-                  width={400}
-                  height={190}
-                  className="h-[190px] w-full rounded-[16px] object-cover shadow-[var(--shadow-warm-sm)]"
-                  style={{ objectPosition }}
+                  width={600}
+                  height={800}
+                  sizes="(min-width: 1024px) 25vw, 50vw"
+                  className="aspect-[3/4] w-full rounded-[16px] object-cover shadow-[var(--shadow-warm-sm)]"
                 />
                 <p className="mt-2 text-[12px] italic text-[color:var(--color-ink-soft)]">
                   {caption}

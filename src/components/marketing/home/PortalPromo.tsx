@@ -103,15 +103,17 @@ export function PortalPromo() {
               </div>
             </Reveal>
 
-            {/* Pending photo slot #3 */}
+            {/* Patient-at-home photo */}
             <Reveal className="mt-[18px]">
+              {/* Source is ~16:10 landscape — match it so her head isn't clipped
+                  (the old fixed h-[230px] box was too wide/short → top crop). */}
               <Image
                 src="/photos/results-at-home.jpg"
                 alt="Patient reviewing lab results on a phone at home in soft morning light"
                 width={1400}
                 height={870}
                 sizes="(min-width: 1024px) 600px, 100vw"
-                className="h-[230px] w-full rounded-[20px] object-cover"
+                className="aspect-[16/10] w-full rounded-[20px] object-cover"
               />
               <p className="mt-2 text-[11px] italic text-[color:var(--color-ink-soft)]">
                 Your results, anytime — from the comfort of home
