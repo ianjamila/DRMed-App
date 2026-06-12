@@ -7,7 +7,6 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { ipAndAgent, firstIssue } from "@/lib/server/action-helpers";
 import { translatePgError } from "@/lib/accounting/pg-errors";
-import { todayManilaISODate } from "@/lib/dates/manila";
 import { postExpenseJournalEntry } from "@/lib/actions/accounting/post-expense";
 import {
   PETTY_CASH_CATEGORIES,
@@ -98,10 +97,13 @@ const VoidSchema = z.object({
 });
 
 /**
- * Voids a posted petty-cash entry by posting a balanced reversal JE (the same
- * pattern as `bridge_cash_adjustment_void`): swap the original lines'
- * debit/credit, post the reversal, then mark the original `reversed`. Only
- * source_kind='petty_cash' entries that are still 'posted' can be reversed.
+ * Voids a posted petty-cash entry. The actual reversal — post a balanced mirror
+ * JE (lines swapped, source_kind='reversal', reverses=<original>) and mark the
+ * original 'reversed' — runs atomically inside the `reverse_petty_cash_entry`
+ * Postgres function (migration 0102), which locks the original row `for update`
+ * so concurrent voids serialise and a half-done reversal can never double-count
+ * the expense. Only source_kind='petty_cash' entries still 'posted' can be
+ * reversed; the function raises (P0037/P0038) otherwise.
  */
 export async function voidPettyCashExpenseAction(
   je_id: string,
@@ -119,92 +121,27 @@ export async function voidPettyCashExpenseAction(
 
   const admin = createAdminClient();
 
-  const { data: original, error: oErr } = await admin
+  // entry_number for the audit log (best-effort; the reversal is the real check).
+  const { data: original } = await admin
     .from("journal_entries")
-    .select("id, entry_number, status, source_kind")
+    .select("entry_number")
     .eq("id", parsed.data.je_id)
     .maybeSingle();
-  if (oErr) return { ok: false, error: translatePgError(oErr) };
-  if (!original || original.source_kind !== "petty_cash") {
-    return { ok: false, error: "Petty-cash entry not found." };
-  }
-  if (original.status !== "posted") {
-    return { ok: false, error: "This entry is already reversed." };
-  }
 
-  const { data: lines, error: lErr } = await admin
-    .from("journal_lines")
-    .select("account_id, debit_php, credit_php, description, line_order")
-    .eq("entry_id", original.id)
-    .order("line_order", { ascending: true });
-  if (lErr) return { ok: false, error: translatePgError(lErr) };
-  if (!lines || lines.length === 0) {
-    return { ok: false, error: "Entry has no lines to reverse." };
-  }
-
-  const today = todayManilaISODate();
-  const { data: nextNum, error: nErr } = await admin.rpc("je_next_number", {
-    p_fiscal_year: Number(today.slice(0, 4)),
-  });
-  if (nErr || !nextNum) {
-    return {
-      ok: false,
-      error: translatePgError(nErr ?? { message: "je_next_number failed" }),
-    };
-  }
-
-  const { data: rev, error: rErr } = await admin
-    .from("journal_entries")
-    .insert({
-      entry_number: nextNum as string,
-      posting_date: today,
-      description:
-        `Reversal of ${original.entry_number}: ${parsed.data.void_reason}`.slice(
-          0,
-          500,
-        ),
-      notes: `petty_cash_void | actor=${session.user_id}`,
-      status: "draft",
-      source_kind: "reversal",
-      source_id: null,
-      reverses: original.id,
-      created_by: session.user_id,
-    })
-    .select("id")
-    .single();
-  if (rErr || !rev) {
-    return {
-      ok: false,
-      error: translatePgError(rErr ?? { message: "Reversal insert failed" }),
-    };
-  }
-
-  const { error: rlErr } = await admin.from("journal_lines").insert(
-    lines.map((l) => ({
-      entry_id: rev.id,
-      account_id: l.account_id,
-      debit_php: l.credit_php,
-      credit_php: l.debit_php,
-      description: l.description,
-      line_order: l.line_order,
-    })),
+  const { data: reversalId, error } = await admin.rpc(
+    "reverse_petty_cash_entry",
+    {
+      p_je_id: parsed.data.je_id,
+      p_reason: parsed.data.void_reason,
+      p_actor: session.user_id,
+    },
   );
-  if (rlErr) {
-    await admin.from("journal_entries").delete().eq("id", rev.id);
-    return { ok: false, error: translatePgError(rlErr) };
+  if (error || !reversalId) {
+    return {
+      ok: false,
+      error: translatePgError(error ?? { message: "Reversal failed" }),
+    };
   }
-
-  const { error: postErr } = await admin
-    .from("journal_entries")
-    .update({ status: "posted", posted_at: new Date().toISOString() })
-    .eq("id", rev.id);
-  if (postErr) return { ok: false, error: translatePgError(postErr) };
-
-  const { error: markErr } = await admin
-    .from("journal_entries")
-    .update({ status: "reversed", reversed_by: rev.id })
-    .eq("id", original.id);
-  if (markErr) return { ok: false, error: translatePgError(markErr) };
 
   const { ip, ua } = await ipAndAgent();
   await audit({
@@ -212,10 +149,10 @@ export async function voidPettyCashExpenseAction(
     actor_type: "staff",
     action: "petty_cash.voided",
     resource_type: "journal_entry",
-    resource_id: original.id,
+    resource_id: parsed.data.je_id,
     metadata: {
-      entry_number: original.entry_number,
-      reversal_id: rev.id,
+      entry_number: original?.entry_number ?? null,
+      reversal_id: reversalId,
       void_reason: parsed.data.void_reason,
     },
     ip_address: ip,
@@ -224,5 +161,5 @@ export async function voidPettyCashExpenseAction(
 
   revalidatePath("/staff/payments/petty-cash");
   revalidatePath("/staff/admin/accounting/journal");
-  return { ok: true, data: { reversal_id: rev.id } };
+  return { ok: true, data: { reversal_id: reversalId as string } };
 }

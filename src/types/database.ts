@@ -5909,6 +5909,10 @@ export type Database = {
         Returns: number
       }
       period_status_for: { Args: { p_date: string }; Returns: string }
+      reverse_petty_cash_entry: {
+        Args: { p_je_id: string; p_reason: string; p_actor: string }
+        Returns: string
+      }
       recompute_clinic_fee_for_unreleased: { Args: never; Returns: Json }
       recompute_hmo_batch_status: {
         Args: { p_batch_id: string }

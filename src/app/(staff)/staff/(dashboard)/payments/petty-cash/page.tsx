@@ -29,8 +29,11 @@ export default async function PettyCashPage() {
     .order("created_at", { ascending: false });
 
   const rows: PettyCashRow[] = (entries ?? []).map((e) => {
+    // A petty-cash JE is DR <expense> / CR 1010; the expense amount = the total
+    // debits (the CR cash line has debit 0). Summing debits is robust even if a
+    // future entry ever splits across multiple debit lines.
     const amount = (e.journal_lines ?? []).reduce(
-      (max, l) => Math.max(max, Number(l.debit_php) || 0),
+      (sum, l) => sum + (Number(l.debit_php) || 0),
       0,
     );
     return {
