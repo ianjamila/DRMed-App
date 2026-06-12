@@ -17,6 +17,7 @@ import {
 } from "@/components/forms/stable-fields";
 import { formatPhp } from "@/lib/marketing/format";
 import { defaultClinicFee } from "@/lib/visits/consultation-fee";
+import { isSeniorPwdEligible, seniorPwdDiscount } from "@/lib/pricing/senior";
 import {
   createVisitAction,
   getPackageComponentsAction,
@@ -31,6 +32,7 @@ export interface ServiceLite {
   price_php: number;
   hmo_price_php: number | null;
   senior_discount_php: number | null;
+  senior_pwd_eligible: boolean | null;
 }
 
 interface PatientLite {
@@ -116,11 +118,13 @@ function discountFor(
 ): number {
   switch (kind) {
     case "senior_pwd_20":
-      // Use the curated peso amount on the service when the lab has set
-      // one; otherwise fall back to the statutory 20%.
-      return s.senior_discount_php != null
-        ? Math.min(s.senior_discount_php, base)
-        : Math.round(base * 0.2 * 100) / 100;
+      // Shared helper: curated peso amount when set, else statutory 20% —
+      // and 0 for senior/PWD-ineligible services (e.g. lab packages).
+      return seniorPwdDiscount({
+        base,
+        seniorDiscountPhp: s.senior_discount_php,
+        eligible: isSeniorPwdEligible(s),
+      });
     case "pct_10":
       return Math.round(base * 0.1 * 100) / 100;
     case "pct_5":
@@ -592,6 +596,11 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [] }: 
               const doctorPfDefault = (isConsult || isProcedure)
                 ? String(Math.max(0, final - cfAuto))
                 : "";
+              // Senior/PWD-ineligible services (e.g. lab packages) don't offer
+              // the 20% senior discount at all.
+              const lineDiscountOptions = isSeniorPwdEligible(s)
+                ? DISCOUNT_OPTIONS
+                : DISCOUNT_OPTIONS.filter((o) => o.value !== "senior_pwd_20");
               return (
                 <div
                   key={s.id}
@@ -622,7 +631,7 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [] }: 
                         }
                         className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1.5 text-xs focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
                       >
-                        {DISCOUNT_OPTIONS.map((o) => (
+                        {lineDiscountOptions.map((o) => (
                           <option key={o.value} value={o.value}>
                             {o.label}
                           </option>

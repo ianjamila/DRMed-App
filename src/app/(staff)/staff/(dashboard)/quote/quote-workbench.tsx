@@ -1,15 +1,13 @@
 "use client";
 
-import {
-  Fragment,
-  useDeferredValue,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { formatPhp } from "@/lib/marketing/format";
 import { Panel } from "@/components/ui/panel";
+import {
+  isSeniorPwdEligible,
+  seniorPwdDiscount,
+  seniorPwdPrice,
+} from "@/lib/pricing/senior";
 
 export interface QuoteService {
   id: string;
@@ -18,29 +16,29 @@ export interface QuoteService {
   price_php: number;
   hmo_price_php: number | null;
   senior_discount_php: number | null;
+  senior_pwd_eligible: boolean | null;
   turnaround_hours: number | null;
   kind: string;
   section: string | null;
   is_send_out: boolean;
 }
 
-type Mode = "search" | "builder";
-
-function seniorPrice(s: QuoteService): number | null {
-  if (s.senior_discount_php == null) return null;
-  return Math.max(0, s.price_php - s.senior_discount_php);
+/** Senior/PWD price for a service line, or null when the service is ineligible. */
+function seniorPriceOf(s: QuoteService): number | null {
+  return seniorPwdPrice({
+    base: s.price_php,
+    seniorDiscountPhp: s.senior_discount_php,
+    eligible: isSeniorPwdEligible(s),
+  });
 }
 
-function formatSingleQuote(s: QuoteService): string {
-  const lines = [s.name];
-  const parts: string[] = [`${formatPhp(s.price_php)} (cash)`];
-  if (s.hmo_price_php != null) parts.push(`${formatPhp(s.hmo_price_php)} (HMO)`);
-  const sp = seniorPrice(s);
-  if (sp != null) parts.push(`Senior ${formatPhp(sp)}`);
-  lines.push(parts.join(" / "));
-  if (s.turnaround_hours) lines.push(`Turnaround: ${s.turnaround_hours} hours`);
-  if (s.is_send_out) lines.push("Send-out test (results take longer).");
-  return lines.join("\n");
+/** Senior/PWD peso discount for a service line (0 when ineligible). */
+function seniorDiscountOf(s: QuoteService): number {
+  return seniorPwdDiscount({
+    base: s.price_php,
+    seniorDiscountPhp: s.senior_discount_php,
+    eligible: isSeniorPwdEligible(s),
+  });
 }
 
 interface Props {
@@ -51,13 +49,10 @@ const PAGE_SIZE_OPTIONS = [25, 50, 100, 200] as const;
 type PageSize = (typeof PAGE_SIZE_OPTIONS)[number];
 
 export function QuoteWorkbench({ services }: Props) {
-  const [mode, setMode] = useState<Mode>("search");
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [seniorMode, setSeniorMode] = useState(false);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [builderCopied, setBuilderCopied] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<PageSize>(50);
@@ -95,8 +90,7 @@ export function QuoteWorkbench({ services }: Props) {
   const currentPage = Math.min(page, totalPages);
 
   const filtered = useMemo(
-    () =>
-      matched.slice((currentPage - 1) * pageSize, currentPage * pageSize),
+    () => matched.slice((currentPage - 1) * pageSize, currentPage * pageSize),
     [matched, currentPage, pageSize],
   );
 
@@ -108,16 +102,22 @@ export function QuoteWorkbench({ services }: Props) {
   const builderTotals = useMemo(() => {
     let cash = 0;
     let hmo = 0;
+    let hmoCount = 0;
     let hmoMissingCount = 0;
     let senior = 0;
     for (const s of pickedList) {
       cash += s.price_php;
-      if (s.hmo_price_php != null) hmo += s.hmo_price_php;
-      else hmoMissingCount++;
-      const sp = seniorPrice(s);
-      senior += sp ?? s.price_php;
+      if (s.hmo_price_php != null) {
+        hmo += s.hmo_price_php;
+        hmoCount++;
+      } else {
+        hmoMissingCount++;
+      }
+      // Ineligible services contribute their full cash price to the senior
+      // total — they get no senior/PWD discount.
+      senior += seniorPriceOf(s) ?? s.price_php;
     }
-    return { cash, hmo, hmoMissingCount, senior };
+    return { cash, hmo, hmoCount, hmoMissingCount, senior };
   }, [pickedList]);
 
   function togglePicked(id: string) {
@@ -129,67 +129,50 @@ export function QuoteWorkbench({ services }: Props) {
     });
   }
 
-  async function copyText(text: string, key: "single" | "builder", id?: string) {
+  async function copyBuilder(text: string) {
     try {
       await navigator.clipboard.writeText(text);
-      if (key === "single" && id) {
-        setCopiedId(id);
-        setTimeout(() => setCopiedId(null), 1500);
-      } else {
-        setBuilderCopied(true);
-        setTimeout(() => setBuilderCopied(false), 1500);
-      }
+      setBuilderCopied(true);
+      setTimeout(() => setBuilderCopied(false), 1500);
     } catch {
       // Browsers that block clipboard fall back to a manual prompt.
       window.prompt("Copy quote", text);
     }
   }
 
+  // Copyable summary for Viber/SMS. Always carries cash + HMO so HMO rates are
+  // never silently dropped; when Senior/PWD mode is on it shows senior prices
+  // (and flags items that don't qualify).
   function builderSummary(): string {
     if (pickedList.length === 0) return "";
     const lines = pickedList.map((s) => {
-      const price = seniorMode ? (seniorPrice(s) ?? s.price_php) : s.price_php;
-      return `• ${s.name} — ${formatPhp(price)}`;
+      if (seniorMode) {
+        const sp = seniorPriceOf(s);
+        const price = sp ?? s.price_php;
+        return `• ${s.name} — ${formatPhp(price)}${sp == null ? " (senior N/A)" : ""}`;
+      }
+      const parts = [`${formatPhp(s.price_php)} cash`];
+      if (s.hmo_price_php != null) parts.push(`${formatPhp(s.hmo_price_php)} HMO`);
+      return `• ${s.name} — ${parts.join(" · ")}`;
     });
-    const total = seniorMode ? builderTotals.senior : builderTotals.cash;
-    lines.push(
-      `\nTotal${seniorMode ? " (Senior/PWD)" : ""}: ${formatPhp(total)}`,
-    );
-    return lines.join("\n");
+    const out = [...lines, ""];
+    if (seniorMode) {
+      out.push(`Total (Senior/PWD): ${formatPhp(builderTotals.senior)}`);
+    } else {
+      out.push(`Total (cash): ${formatPhp(builderTotals.cash)}`);
+      if (builderTotals.hmoCount > 0) {
+        const note =
+          builderTotals.hmoMissingCount > 0
+            ? ` (${builderTotals.hmoMissingCount} item${builderTotals.hmoMissingCount === 1 ? "" : "s"} without HMO rate)`
+            : "";
+        out.push(`HMO total: ${formatPhp(builderTotals.hmo)}${note}`);
+      }
+    }
+    return out.join("\n");
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={() => setMode("search")}
-          className={
-            mode === "search"
-              ? "rounded-full bg-[color:var(--color-brand-navy)] px-4 py-1.5 text-xs font-bold text-white"
-              : "rounded-full border border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-1.5 text-xs font-bold text-[color:var(--color-brand-navy)] hover:border-[color:var(--color-brand-cyan)]"
-          }
-        >
-          Single quote
-        </button>
-        <button
-          type="button"
-          onClick={() => setMode("builder")}
-          className={
-            mode === "builder"
-              ? "rounded-full bg-[color:var(--color-brand-navy)] px-4 py-1.5 text-xs font-bold text-white"
-              : "rounded-full border border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-1.5 text-xs font-bold text-[color:var(--color-brand-navy)] hover:border-[color:var(--color-brand-cyan)]"
-          }
-        >
-          Quote builder
-          {picked.size > 0 ? (
-            <span className="ml-2 rounded-full bg-white/20 px-1.5 text-[10px]">
-              {picked.size}
-            </span>
-          ) : null}
-        </button>
-      </div>
-
       <div>
         <label htmlFor="quote-search" className="sr-only">
           Search services
@@ -229,15 +212,17 @@ export function QuoteWorkbench({ services }: Props) {
             </select>
           </label>
         </div>
+        <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
+          Tick services to add them to the quote — totals and a copyable summary
+          appear below.
+        </p>
       </div>
 
       <Panel className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
-              {mode === "builder" ? (
-                <th className="px-3 py-3 w-10" aria-label="Pick" />
-              ) : null}
+              <th className="px-3 py-3 w-10" aria-label="Pick" />
               <th className="px-4 py-3">Code</th>
               <th className="px-4 py-3">Name</th>
               <th className="px-4 py-3 text-right">Cash</th>
@@ -250,7 +235,7 @@ export function QuoteWorkbench({ services }: Props) {
             {filtered.length === 0 ? (
               <tr>
                 <td
-                  colSpan={mode === "builder" ? 7 : 6}
+                  colSpan={7}
                   className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]"
                 >
                   No matches.
@@ -258,77 +243,53 @@ export function QuoteWorkbench({ services }: Props) {
               </tr>
             ) : (
               filtered.map((s) => {
-                const sp = seniorPrice(s);
-                const expanded = expandedId === s.id && mode === "search";
+                const eligible = isSeniorPwdEligible(s);
+                const sp = seniorPriceOf(s);
                 return (
-                  <Fragment key={s.id}>
-                    <tr
-                      className="cursor-pointer hover:bg-[color:var(--color-brand-bg)]"
-                      onClick={() =>
-                        mode === "search"
-                          ? setExpandedId(expanded ? null : s.id)
-                          : togglePicked(s.id)
-                      }
-                    >
-                      {mode === "builder" ? (
-                        <td className="px-3 py-3">
-                          <input
-                            type="checkbox"
-                            checked={picked.has(s.id)}
-                            onChange={() => togglePicked(s.id)}
-                            onClick={(e) => e.stopPropagation()}
-                            aria-label={`Add ${s.name} to quote`}
-                          />
-                        </td>
+                  <tr
+                    key={s.id}
+                    className="cursor-pointer hover:bg-[color:var(--color-brand-bg)]"
+                    onClick={() => togglePicked(s.id)}
+                  >
+                    <td className="px-3 py-3">
+                      <input
+                        type="checkbox"
+                        checked={picked.has(s.id)}
+                        onChange={() => togglePicked(s.id)}
+                        onClick={(e) => e.stopPropagation()}
+                        aria-label={`Add ${s.name} to quote`}
+                      />
+                    </td>
+                    <td className="px-4 py-3 font-mono text-xs text-[color:var(--color-brand-text-mid)]">
+                      {s.code}
+                    </td>
+                    <td className="px-4 py-3 font-semibold text-[color:var(--color-brand-navy)]">
+                      {s.name}
+                      {s.is_send_out ? (
+                        <span className="ml-2 rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-amber-900">
+                          Send-out
+                        </span>
                       ) : null}
-                      <td className="px-4 py-3 font-mono text-xs text-[color:var(--color-brand-text-mid)]">
-                        {s.code}
-                      </td>
-                      <td className="px-4 py-3 font-semibold text-[color:var(--color-brand-navy)]">
-                        {s.name}
-                        {s.is_send_out ? (
-                          <span className="ml-2 rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-amber-900">
-                            Send-out
-                          </span>
-                        ) : null}
-                      </td>
-                      <td className="px-4 py-3 text-right font-bold text-[color:var(--color-brand-navy)]">
-                        {formatPhp(s.price_php)}
-                      </td>
-                      <td className="px-4 py-3 text-right text-[color:var(--color-brand-text-mid)]">
-                        {s.hmo_price_php != null
-                          ? formatPhp(s.hmo_price_php)
-                          : "—"}
-                      </td>
-                      <td className="px-4 py-3 text-right text-[color:var(--color-brand-text-mid)]">
-                        {s.senior_discount_php != null
-                          ? formatPhp(s.senior_discount_php)
-                          : "—"}
-                      </td>
-                      <td className="px-4 py-3 text-right font-semibold text-[color:var(--color-brand-text-mid)]">
-                        {sp != null ? formatPhp(sp) : "—"}
-                      </td>
-                    </tr>
-                    {expanded ? (
-                      <tr className="bg-[color:var(--color-brand-bg)]/50">
-                        <td colSpan={6} className="px-4 py-3">
-                          <pre className="whitespace-pre-wrap rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white p-3 text-xs leading-relaxed text-[color:var(--color-brand-text-mid)]">
-{formatSingleQuote(s)}
-                          </pre>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              copyText(formatSingleQuote(s), "single", s.id);
-                            }}
-                            className="mt-2 rounded-md bg-[color:var(--color-brand-navy)] px-3 py-1.5 text-xs font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
-                          >
-                            {copiedId === s.id ? "Copied ✓" : "Copy quote"}
-                          </button>
-                        </td>
-                      </tr>
-                    ) : null}
-                  </Fragment>
+                    </td>
+                    <td className="px-4 py-3 text-right font-bold text-[color:var(--color-brand-navy)]">
+                      {formatPhp(s.price_php)}
+                    </td>
+                    <td className="px-4 py-3 text-right text-[color:var(--color-brand-text-mid)]">
+                      {s.hmo_price_php != null ? formatPhp(s.hmo_price_php) : "—"}
+                    </td>
+                    <td className="px-4 py-3 text-right text-[color:var(--color-brand-text-mid)]">
+                      {eligible ? formatPhp(seniorDiscountOf(s)) : "—"}
+                    </td>
+                    <td className="px-4 py-3 text-right font-semibold text-[color:var(--color-brand-text-mid)]">
+                      {sp != null ? (
+                        formatPhp(sp)
+                      ) : (
+                        <span className="text-[color:var(--color-brand-text-soft)]">
+                          Not applicable
+                        </span>
+                      )}
+                    </td>
+                  </tr>
                 );
               })
             )}
@@ -362,91 +323,96 @@ export function QuoteWorkbench({ services }: Props) {
         </div>
       ) : null}
 
-      {mode === "builder" ? (
-        <aside className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
-              Selected ({picked.size})
-            </h2>
-            <label className="flex items-center gap-2 text-xs">
-              <input
-                type="checkbox"
-                checked={seniorMode}
-                onChange={(e) => setSeniorMode(e.target.checked)}
-              />
-              <span>Apply Senior/PWD discount</span>
-            </label>
-          </div>
-          {pickedList.length === 0 ? (
-            <p className="mt-3 text-sm text-[color:var(--color-brand-text-soft)]">
-              Tick rows above to add them. Totals appear here.
-            </p>
-          ) : (
-            <>
-              <ul className="mt-3 divide-y divide-[color:var(--color-brand-bg-mid)] text-sm">
-                {pickedList.map((s) => {
-                  const price = seniorMode
-                    ? (seniorPrice(s) ?? s.price_php)
-                    : s.price_php;
-                  return (
-                    <li
-                      key={s.id}
-                      className="flex items-center justify-between py-2"
-                    >
-                      <span className="text-[color:var(--color-brand-text-mid)]">
-                        {s.name}
-                      </span>
-                      <span className="font-semibold text-[color:var(--color-brand-navy)]">
-                        {formatPhp(price)}
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
-              <div className="mt-4 flex flex-wrap items-end justify-between gap-3 border-t border-[color:var(--color-brand-bg-mid)] pt-4">
-                <div>
-                  <p className="text-xs uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-                    Total {seniorMode ? "(Senior/PWD)" : "(cash)"}
-                  </p>
-                  <p className="mt-1 font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
-                    {formatPhp(
-                      seniorMode ? builderTotals.senior : builderTotals.cash,
-                    )}
-                  </p>
-                  {!seniorMode && builderTotals.hmoMissingCount === 0 ? (
-                    <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
-                      HMO total: {formatPhp(builderTotals.hmo)}
-                    </p>
-                  ) : null}
-                  {!seniorMode && builderTotals.hmoMissingCount > 0 ? (
-                    <p className="mt-1 text-xs text-amber-700">
-                      {builderTotals.hmoMissingCount} item
-                      {builderTotals.hmoMissingCount === 1 ? "" : "s"} not HMO
-                      billable.
-                    </p>
-                  ) : null}
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => copyText(builderSummary(), "builder")}
-                    className="rounded-md bg-[color:var(--color-brand-navy)] px-3 py-2 text-xs font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
+      <aside className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+            Selected ({picked.size})
+          </h2>
+          <label className="flex items-center gap-2 text-xs">
+            <input
+              type="checkbox"
+              checked={seniorMode}
+              onChange={(e) => setSeniorMode(e.target.checked)}
+            />
+            <span>Apply Senior/PWD discount</span>
+          </label>
+        </div>
+        {pickedList.length === 0 ? (
+          <p className="mt-3 text-sm text-[color:var(--color-brand-text-soft)]">
+            Tick rows above to add them. Totals appear here.
+          </p>
+        ) : (
+          <>
+            <ul className="mt-3 divide-y divide-[color:var(--color-brand-bg-mid)] text-sm">
+              {pickedList.map((s) => {
+                const sp = seniorPriceOf(s);
+                const price = seniorMode ? (sp ?? s.price_php) : s.price_php;
+                return (
+                  <li
+                    key={s.id}
+                    className="flex items-center justify-between gap-3 py-2"
                   >
-                    {builderCopied ? "Copied ✓" : "Copy summary"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPicked(new Set())}
-                    className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-xs font-bold text-[color:var(--color-brand-navy)] hover:border-[color:var(--color-brand-cyan)]"
-                  >
-                    Clear
-                  </button>
-                </div>
+                    <span className="text-[color:var(--color-brand-text-mid)]">
+                      {s.name}
+                      {seniorMode && sp == null ? (
+                        <span className="ml-2 rounded bg-[color:var(--color-brand-bg-mid)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+                          No senior disc.
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className="font-semibold text-[color:var(--color-brand-navy)]">
+                      {formatPhp(price)}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="mt-4 flex flex-wrap items-end justify-between gap-3 border-t border-[color:var(--color-brand-bg-mid)] pt-4">
+              <div>
+                <p className="text-xs uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+                  Total {seniorMode ? "(Senior/PWD)" : "(cash)"}
+                </p>
+                <p className="mt-1 font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
+                  {formatPhp(
+                    seniorMode ? builderTotals.senior : builderTotals.cash,
+                  )}
+                </p>
+                {/* HMO total is shown for whatever items DO have an HMO rate
+                    (partial), with an explicit count of the ones that don't —
+                    instead of suppressing the figure all-or-nothing. */}
+                {builderTotals.hmoCount > 0 ? (
+                  <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
+                    HMO total: {formatPhp(builderTotals.hmo)}
+                    {builderTotals.hmoMissingCount > 0
+                      ? ` · ${builderTotals.hmoMissingCount} item${builderTotals.hmoMissingCount === 1 ? "" : "s"} without HMO rate`
+                      : ""}
+                  </p>
+                ) : (
+                  <p className="mt-1 text-xs text-amber-700">
+                    No HMO rate on file for the selected items.
+                  </p>
+                )}
               </div>
-            </>
-          )}
-        </aside>
-      ) : null}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => copyBuilder(builderSummary())}
+                  className="rounded-md bg-[color:var(--color-brand-navy)] px-3 py-2 text-xs font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
+                >
+                  {builderCopied ? "Copied ✓" : "Copy summary"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPicked(new Set())}
+                  className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-xs font-bold text-[color:var(--color-brand-navy)] hover:border-[color:var(--color-brand-cyan)]"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+      </aside>
     </div>
   );
 }
