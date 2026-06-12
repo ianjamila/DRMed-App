@@ -14,6 +14,8 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // Design-handoff bundle is reference-only (export keywords stripped, not built).
     "design-handoff/**",
+    // Nested git worktrees are gitignored stale-branch copies — not in lint scope.
+    ".worktrees/**",
   ]),
 ]);
 
