@@ -1,5 +1,8 @@
-import Link from "next/link";
+import { Check, ArrowRight } from "lucide-react";
+
 import { PageHero } from "@/components/marketing/page-hero";
+import { SectionHeading, PillLink } from "@/components/marketing/ui";
+import { Reveal } from "@/components/marketing/motion";
 import {
   listActivePackages,
   PACKAGE_GROUPS_ORDERED,
@@ -29,36 +32,41 @@ export default async function PackagesPage() {
     <>
       <PageHero
         eyebrow="DRMed Clinic and Laboratory"
-        title="Detailed Diagnostic Packages"
+        title="Detailed Diagnostic"
+        accent="Packages."
         description="Full package list with detailed inclusions and prices. Please confirm latest rates and availability before booking."
       />
 
-      <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6 sm:py-20 lg:px-8">
         {grouped.length === 0 ? (
-          <p className="rounded-xl border border-dashed border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] p-8 text-center text-sm text-[color:var(--color-brand-text-soft)]">
-            Package list coming soon.
-          </p>
+          <Reveal>
+            <p className="rounded-[20px] border border-dashed border-[color:var(--color-warm-line)] bg-[color:var(--color-warm-bg)] p-8 text-center text-sm text-[color:var(--color-ink-soft)]">
+              Package list coming soon.
+            </p>
+          </Reveal>
         ) : (
           grouped.map(({ group, items }) => (
             <PackageGroupSection key={group} group={group} items={items} />
           ))
         )}
 
-        <div className="mt-16 flex flex-wrap items-center justify-center gap-3 rounded-2xl border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] px-6 py-5 text-center">
-          <p className="text-sm text-[color:var(--color-brand-text-mid)]">
-            Need a specific test that isn&apos;t in a package?
-          </p>
-          <Link
-            href="/all-services"
-            className="rounded-md bg-[color:var(--color-brand-navy)] px-5 py-2 text-sm font-bold text-white transition-colors hover:bg-[color:var(--color-brand-cyan)]"
-          >
-            Check All Services →
-          </Link>
-        </div>
+        {/* Bottom CTA bar */}
+        <Reveal>
+          <div className="mt-16 flex flex-wrap items-center justify-between gap-4 rounded-[20px] border border-[color:var(--color-warm-line-soft)] bg-[color:var(--color-warm-bg)] px-6 py-5">
+            <p className="text-sm text-[color:var(--color-ink-mid)]">
+              Need a specific test that isn&apos;t in a package?
+            </p>
+            <PillLink href="/all-services" variant="navy" size="sm">
+              Check All Services <ArrowRight className="h-[18px] w-[18px]" />
+            </PillLink>
+          </div>
+        </Reveal>
 
-        <p className="mt-12 text-center text-xs text-[color:var(--color-brand-text-soft)]">
-          Prices and inclusions may change without prior notice.
-        </p>
+        <Reveal>
+          <p className="mt-8 text-center text-xs text-[color:var(--color-ink-soft)]">
+            Prices and inclusions may change without prior notice.
+          </p>
+        </Reveal>
       </div>
     </>
   );
@@ -72,53 +80,68 @@ function PackageGroupSection({
   items: PackageWithGroup[];
 }) {
   return (
-    <section className="mb-16">
-      <h2 className="mb-8 font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)] md:text-3xl">
-        {group}
-      </h2>
+    <section className="mb-16 sm:mb-20">
+      <Reveal>
+        <SectionHeading
+          as="h2"
+          title={group}
+          className="mb-8"
+        />
+      </Reveal>
       <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-        {items.map((pkg) => (
-          <article
-            key={pkg.id}
-            className="flex flex-col rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6 transition-shadow hover:shadow-md"
-          >
-            <h3 className="font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">
-              {pkg.name}
-            </h3>
+        {items.map((pkg, i) => (
+          <Reveal key={pkg.id} delay={i * 0.06}>
+            <article className="flex flex-col rounded-[20px] border border-[color:var(--color-warm-line-soft)] bg-white p-6 shadow-[var(--shadow-warm-sm)] transition-[transform,box-shadow] duration-200 hover:-translate-y-1 hover:shadow-[var(--shadow-warm-lg)]">
+              <h3 className="font-[family-name:var(--font-display)] text-xl leading-tight text-[color:var(--color-brand-navy)]">
+                {pkg.name}
+              </h3>
 
-            <div className="mt-4 flex items-baseline gap-2">
-              <span className="font-heading text-2xl font-extrabold text-[color:var(--color-brand-cyan)]">
-                {formatPhp(pkg.price_php)}
-              </span>
-            </div>
+              <div className="mt-3">
+                <span className="font-[family-name:var(--font-display)] italic text-2xl text-[color:var(--color-brand-cyan-text)]">
+                  {formatPhp(pkg.price_php)}
+                </span>
+              </div>
 
-            {pkg.inclusions.length > 0 ? (
-              <ul className="mt-5 flex-1 space-y-1.5 border-t border-[color:var(--color-brand-bg-mid)] pt-4 text-sm text-[color:var(--color-brand-text-mid)]">
-                {pkg.inclusions.map((item) => (
-                  <li key={item}>· {item}</li>
-                ))}
-              </ul>
-            ) : (
-              <p className="mt-5 flex-1 border-t border-[color:var(--color-brand-bg-mid)] pt-4 text-sm italic text-[color:var(--color-brand-text-soft)]">
-                Contact reception for inclusions.
-              </p>
-            )}
+              {pkg.inclusions.length > 0 ? (
+                <ul className="mt-5 flex-1 space-y-2 border-t border-[color:var(--color-warm-line-soft)] pt-4">
+                  {pkg.inclusions.map((item) => (
+                    <li
+                      key={item}
+                      className="flex items-start gap-2 text-sm text-[color:var(--color-ink-mid)]"
+                    >
+                      <Check
+                        className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[color:var(--color-brand-cyan)]"
+                        aria-hidden="true"
+                      />
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-5 flex-1 border-t border-[color:var(--color-warm-line-soft)] pt-4 text-sm italic text-[color:var(--color-ink-soft)]">
+                  Contact reception for inclusions.
+                </p>
+              )}
 
-            <div className="mt-6 flex flex-wrap gap-2">
-              <Link
-                href={`/all-services/${pkg.code.toLowerCase()}`}
-                className="inline-flex items-center justify-center rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2.5 text-xs font-bold text-[color:var(--color-brand-navy)] transition-colors hover:border-[color:var(--color-brand-cyan)] hover:text-[color:var(--color-brand-cyan)]"
-              >
-                Details
-              </Link>
-              <Link
-                href="/#contact"
-                className="inline-flex flex-1 items-center justify-center rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-[color:var(--color-brand-cyan)]"
-              >
-                Book This Package
-              </Link>
-            </div>
-          </article>
+              <div className="mt-6 flex flex-wrap gap-2">
+                <PillLink
+                  href={`/all-services/${pkg.code.toLowerCase()}`}
+                  variant="line"
+                  size="sm"
+                >
+                  Details
+                </PillLink>
+                <PillLink
+                  href="/#contact"
+                  variant="navy"
+                  size="sm"
+                  className="flex-1"
+                >
+                  Book This Package
+                </PillLink>
+              </div>
+            </article>
+          </Reveal>
         ))}
       </div>
     </section>

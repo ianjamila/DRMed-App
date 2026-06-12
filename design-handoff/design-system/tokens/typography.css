@@ -1,0 +1,55 @@
+/* ============================================================
+   DRMed — Typography tokens
+   Public Sans for UI/body, Montserrat for headings.
+   Heading weights skew heavy (extrabold 800) — the brand voice
+   is confident and reassuring. Body stays at 400–500.
+   ============================================================ */
+
+:root {
+  /* ---- Families -------------------------------------------------- */
+  --font-sans: "Public Sans", ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-heading: "Montserrat", var(--font-sans);
+  --font-display: "Instrument Serif", Georgia, serif; /* marketing display — June 2026 merged-D1 redesign */
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* ---- Weights --------------------------------------------------- */
+  --fw-regular: 400;   /* @kind other */
+  --fw-medium: 500;    /* @kind other */
+  --fw-semibold: 600;  /* @kind other */
+  --fw-bold: 700;      /* @kind other */
+  --fw-extrabold: 800; /* @kind other */
+  --fw-black: 900;     /* @kind other */
+
+  /* ---- Type scale (px → rem, 16px base) -------------------------- */
+  --text-xs: 0.75rem;     /* 12 — captions, eyebrow, table labels */
+  --text-sm: 0.875rem;    /* 14 — body small, nav, UI default */
+  --text-base: 1rem;      /* 16 — body */
+  --text-lg: 1.125rem;    /* 18 — lead paragraph, card titles */
+  --text-xl: 1.25rem;     /* 20 */
+  --text-2xl: 1.5rem;     /* 24 — section subhead */
+  --text-3xl: 1.875rem;   /* 30 — H2 (mobile) */
+  --text-4xl: 2.25rem;    /* 36 — H1 (mobile) */
+  --text-5xl: 3rem;       /* 48 — H2 (desktop) */
+  --text-6xl: 3.75rem;    /* 60 — hero H1 (desktop) */
+
+  /* ---- Line heights ---------------------------------------------- */
+  --leading-tight: 1.1;
+  --leading-snug: 1.25;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.65;
+
+  /* ---- Tracking -------------------------------------------------- */
+  --tracking-tight: -0.02em;
+  --tracking-normal: 0;
+  --tracking-eyebrow: 0.18em;   /* uppercase eyebrow labels */
+  --tracking-wider: 0.05em;
+
+  /* ---- Semantic roles -------------------------------------------- */
+  --text-display: var(--text-6xl);
+  --text-h1: var(--text-4xl);
+  --text-h2: var(--text-3xl);
+  --text-h3: var(--text-lg);
+  --text-body: var(--text-base);
+  --text-caption: var(--text-xs);
+}

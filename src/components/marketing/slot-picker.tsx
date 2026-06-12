@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import {
   dayWindowFor,
   minutesOfDay,
@@ -12,16 +12,25 @@ export interface ClosureLite {
   reason: string;
 }
 
+export interface SlotValue {
+  date: string | null; // YYYY-MM-DD
+  time: string | null; // HH:MM
+}
+
 interface Props {
   // ISO date (YYYY-MM-DD) of "tomorrow in Manila", computed server-side so
   // the day grid doesn't depend on the visitor's local clock.
   startDate: string;
   // Same shape, 60 days after startDate inclusive.
   closures: ClosureLite[];
-  required?: boolean;
   // When provided, restrict bookable days/times to the given physician's
   // recurring schedule and overrides.
   availability?: PhysicianAvailability | null;
+  // Controlled selection — state lives in the parent so the booking wizard can
+  // keep it across step transitions (the parent emits the `scheduled_at` hidden
+  // field). The combined `scheduled_at` ISO is derived from value.date+value.time.
+  value: SlotValue;
+  onChange: (next: SlotValue) => void;
 }
 
 interface DayCell {
@@ -55,9 +64,6 @@ const MONTH_LONG = [
 function buildDays(startDate: string, closures: ClosureLite[]): DayCell[] {
   const closureMap = new Map(closures.map((c) => [c.closed_on, c]));
   const [y, m, d] = startDate.split("-").map(Number);
-  // Use UTC arithmetic on a midnight-anchored Date so we don't drift across
-  // DST boundaries on the visitor's clock. PH has no DST, but the visitor
-  // might be elsewhere.
   const cursor = new Date(Date.UTC(y, m - 1, d));
   const out: DayCell[] = [];
   for (let i = 0; i < 60; i++) {
@@ -92,33 +98,38 @@ function buildTimes(): string[] {
 
 const TIMES = buildTimes();
 
+// Combine a controlled SlotValue into the `scheduled_at` string the server
+// expects (or "" when incomplete). Kept here so the wizard and any other caller
+// derive it identically.
+export function slotScheduledAt(value: SlotValue): string {
+  return value.date && value.time
+    ? `${value.date}T${value.time}:00+08:00`
+    : "";
+}
+
+/**
+ * Controlled day/time picker restyled as a warm chip grid. Availability/closure
+ * logic is unchanged from the original; only presentation + the controlled API
+ * differ. The parent owns the selection and emits the hidden `scheduled_at`.
+ */
 export function SlotPicker({
   startDate,
   closures,
-  required = true,
   availability = null,
+  value,
+  onChange,
 }: Props) {
   const days = useMemo(() => buildDays(startDate, closures), [startDate, closures]);
-  const [selectedDate, setSelectedDate] = useState<string | null>(null);
-  const [selectedTime, setSelectedTime] = useState<string | null>(null);
 
-  // Resolve per-day availability once per render. When availability is null,
-  // every day shows the default 8:00–16:30 grid.
   const dayAvailability = useMemo(() => {
     return new Map(
-      days.map((d) => [
-        d.date,
-        dayWindowFor(d.date, d.dayOfWeek, availability),
-      ]),
+      days.map((d) => [d.date, dayWindowFor(d.date, d.dayOfWeek, availability)]),
     );
   }, [days, availability]);
 
-  const scheduledAt =
-    selectedDate && selectedTime
-      ? `${selectedDate}T${selectedTime}:00+08:00`
-      : "";
+  const selectedDate = value.date;
+  const selectedTime = value.time;
 
-  // Group days into months for headers.
   const monthGroups: Array<{ label: string; days: DayCell[] }> = [];
   for (const day of days) {
     const last = monthGroups[monthGroups.length - 1];
@@ -134,25 +145,18 @@ export function SlotPicker({
     : null;
 
   return (
-    <div className="grid gap-4">
-      <input
-        type="hidden"
-        name="scheduled_at"
-        value={scheduledAt}
-        required={required}
-      />
-
+    <div className="grid gap-5">
       <div>
         <p className="text-sm font-bold text-[color:var(--color-brand-navy)]">
           Pick a day
         </p>
-        <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
+        <p className="mt-1 text-xs text-[color:var(--color-ink-soft)]">
           Mon–Sat only. Closed days are dimmed and not selectable.
         </p>
         <div className="mt-3 grid gap-4">
           {monthGroups.map((group) => (
             <div key={group.label}>
-              <p className="mb-2 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+              <p className="mb-2 text-xs font-bold uppercase tracking-wider text-[color:var(--color-ink-soft)]">
                 {group.label}
               </p>
               <div className="grid grid-cols-4 gap-2 sm:grid-cols-6 md:grid-cols-7">
@@ -164,17 +168,17 @@ export function SlotPicker({
                     day.isSunday || day.closure !== null || physicianClosed;
                   const isSelected = day.date === selectedDate;
                   const baseClass =
-                    "flex flex-col items-center rounded-md border px-2 py-2 text-xs transition";
+                    "flex flex-col items-center rounded-[14px] border px-2 py-2 text-xs transition";
                   let stateClass = "";
                   if (disabled) {
                     stateClass =
-                      "cursor-not-allowed border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] text-[color:var(--color-brand-text-soft)] opacity-60";
+                      "cursor-not-allowed border-[color:var(--color-warm-line)] bg-[color:var(--color-warm-sand)] text-[color:var(--color-ink-soft)] opacity-60";
                   } else if (isSelected) {
                     stateClass =
-                      "border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-cyan)] text-white shadow";
+                      "border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-cyan)] text-white shadow-[var(--shadow-warm-sm)]";
                   } else {
                     stateClass =
-                      "border-[color:var(--color-brand-bg-mid)] bg-white text-[color:var(--color-brand-text-mid)] hover:border-[color:var(--color-brand-cyan)] hover:bg-[color:var(--color-brand-bg)]";
+                      "border-[color:var(--color-warm-line)] bg-white text-[color:var(--color-ink-mid)] hover:border-[color:var(--color-brand-cyan)] hover:bg-[color:var(--color-warm-sand)]";
                   }
                   const title = day.closure
                     ? `Closed — ${day.closure.reason}`
@@ -192,10 +196,7 @@ export function SlotPicker({
                       disabled={disabled}
                       title={title}
                       aria-pressed={isSelected}
-                      onClick={() => {
-                        setSelectedDate(day.date);
-                        setSelectedTime(null);
-                      }}
+                      onClick={() => onChange({ date: day.date, time: null })}
                       className={`${baseClass} ${stateClass}`}
                     >
                       <span className="text-[10px] font-bold uppercase tracking-wider">
@@ -222,9 +223,8 @@ export function SlotPicker({
         <p className="text-sm font-bold text-[color:var(--color-brand-navy)]">
           Pick a time
         </p>
-        <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
-          30-minute slots, 8:00 AM – 4:30 PM. Last appointment finishes by 5
-          PM.
+        <p className="mt-1 text-xs text-[color:var(--color-ink-soft)]">
+          30-minute slots, 8:00 AM – 4:30 PM. Last appointment finishes by 5 PM.
         </p>
         {selectedDate ? (
           (() => {
@@ -237,19 +237,17 @@ export function SlotPicker({
               : 16 * 60 + 30;
             const visibleTimes = TIMES.filter((t) => {
               const m = minutesOfDay(t);
-              // Inclusive on start, exclusive on end so a 12:00 end window
-              // hides the 12:00 slot (last bookable is 11:30).
               return m >= startMin && m < endMin;
             });
             if (visibleTimes.length === 0) {
               return (
-                <p className="mt-3 rounded-md border border-dashed border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] px-3 py-4 text-xs text-[color:var(--color-brand-text-soft)]">
+                <p className="mt-3 rounded-[12px] border border-dashed border-[color:var(--color-warm-line)] bg-[color:var(--color-warm-sand)] px-3 py-4 text-xs text-[color:var(--color-ink-soft)]">
                   No times available on this day.
                 </p>
               );
             }
             return (
-              <div className="mt-3 grid grid-cols-4 gap-2 sm:grid-cols-6 md:grid-cols-9">
+              <div className="mt-3 flex flex-wrap gap-2">
                 {visibleTimes.map((t) => {
                   const isSelected = t === selectedTime;
                   return (
@@ -257,11 +255,11 @@ export function SlotPicker({
                       key={t}
                       type="button"
                       aria-pressed={isSelected}
-                      onClick={() => setSelectedTime(t)}
-                      className={`rounded-md border px-2 py-1.5 text-xs font-semibold transition ${
+                      onClick={() => onChange({ date: selectedDate, time: t })}
+                      className={`min-h-[44px] rounded-full border px-4 py-2 text-[13.5px] font-semibold transition ${
                         isSelected
-                          ? "border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-cyan)] text-white"
-                          : "border-[color:var(--color-brand-bg-mid)] bg-white text-[color:var(--color-brand-text-mid)] hover:border-[color:var(--color-brand-cyan)] hover:bg-[color:var(--color-brand-bg)]"
+                          ? "border-[color:var(--color-brand-cyan)] bg-[rgba(8,168,226,0.10)] text-[color:var(--color-brand-navy)]"
+                          : "border-[color:var(--color-warm-line)] bg-white text-[color:var(--color-ink-mid)] hover:border-[color:var(--color-brand-cyan)]"
                       }`}
                     >
                       {t}
@@ -272,14 +270,14 @@ export function SlotPicker({
             );
           })()
         ) : (
-          <p className="mt-3 rounded-md border border-dashed border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] px-3 py-4 text-xs text-[color:var(--color-brand-text-soft)]">
+          <p className="mt-3 rounded-[12px] border border-dashed border-[color:var(--color-warm-line)] bg-[color:var(--color-warm-sand)] px-3 py-4 text-xs text-[color:var(--color-ink-soft)]">
             Pick a day first.
           </p>
         )}
       </div>
 
       {selectedDay && selectedTime ? (
-        <p className="text-sm text-[color:var(--color-brand-text-mid)]">
+        <p className="text-sm text-[color:var(--color-ink-mid)]">
           Selected:{" "}
           <span className="font-bold text-[color:var(--color-brand-navy)]">
             {selectedDay.weekdayShort}, {selectedDay.monthLabel.split(" ")[0]}{" "}

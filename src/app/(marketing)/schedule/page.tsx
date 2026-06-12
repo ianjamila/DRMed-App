@@ -1,5 +1,7 @@
-import { PageHero } from "@/components/marketing/page-hero";
-import { CONTACT } from "@/lib/marketing/site";
+import Image from "next/image";
+import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
+import { CONTACT, SITE } from "@/lib/marketing/site";
 import { listActiveServices } from "@/lib/marketing/services";
 import {
   addDaysISO,
@@ -133,124 +135,80 @@ export default async function SchedulePage() {
       specialty_codes: codesByPhysician.get(p.id) ?? [],
     }));
 
-  return (
-    <>
-      <PageHero
-        eyebrow="Visit Us"
-        title="Schedule & Location"
-        description="Walk in or book ahead — our team is ready to help."
-      />
+  const bookingServices = services
+    .filter(
+      (s) =>
+        s.kind === "lab_test" ||
+        s.kind === "lab_package" ||
+        s.kind === "doctor_consultation",
+    )
+    .map((s) => ({
+      id: s.id,
+      code: s.code,
+      name: s.name,
+      kind: s.kind as "lab_test" | "lab_package" | "doctor_consultation",
+      description: s.description,
+      price_php: Number(s.price_php),
+      fasting_required: s.fasting_required,
+      requires_time_slot: s.requires_time_slot,
+      specialty_code: s.specialty_code,
+    }));
 
-      <section className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
-        <section
-          id="book"
-          className="rounded-2xl border border-[color:var(--color-brand-bg-mid)] bg-white p-8 sm:p-10"
-        >
-          <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-            Book online
-          </p>
-          <h2 className="mt-2 font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)] md:text-3xl">
-            Reserve your slot
-          </h2>
-          <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-mid)]">
-            New patient? Use this form to register and book in one step. We
-            verify your identity at the counter on arrival. For corporate
+  return (
+    <div className="min-h-screen">
+      {/* Focused funnel header — replaces the marketing nav on /schedule (C12). */}
+      <header className="border-b border-[color:var(--color-warm-line-soft)] bg-[rgba(251,249,245,0.92)] backdrop-blur-[10px]">
+        <div className="mx-auto flex h-[60px] max-w-[760px] items-center justify-between px-5">
+          <Link href="/" aria-label={SITE.name} className="flex items-center">
+            <Image
+              src="/logo.png"
+              alt={SITE.name}
+              width={78}
+              height={30}
+              sizes="78px"
+              priority
+              className="h-[30px] w-auto"
+            />
+          </Link>
+          <Link
+            href="/"
+            className="inline-flex items-center gap-1.5 text-[13.5px] font-semibold text-[color:var(--color-ink-mid)] transition hover:text-[color:var(--color-brand-cyan-text)]"
+          >
+            <ArrowLeft className="h-[15px] w-[15px]" /> Back to homepage
+          </Link>
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-[760px] px-5 pb-20 pt-2">
+        <BookingForm
+          services={bookingServices}
+          closures={closures}
+          startDate={startDate}
+          specialties={specialties}
+          physicians={bookablePhysicians}
+          byAppointmentPhysicians={byAppointmentPhysicians}
+        />
+
+        {/* Minimal focused footer — privacy + a couple of escape hatches. */}
+        <footer className="mt-10 border-t border-[color:var(--color-warm-line-soft)] pt-6 text-[12px] text-[color:var(--color-ink-soft)]">
+          <p>
+            Identity is verified at the counter on arrival. For corporate
             packages or HMO,{" "}
-            <a
-              href="/contact"
-              className="link-brand font-bold"
-            >
+            <Link href="/contact" className="text-[color:var(--color-brand-cyan-text)] underline underline-offset-2">
               message us instead
-            </a>
+            </Link>
+            . Just want a DRM-ID?{" "}
+            <Link href="/register" className="text-[color:var(--color-brand-cyan-text)] underline underline-offset-2">
+              pre-register here
+            </Link>
             .
           </p>
-          <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
-            Just want a DRM-ID without booking?{" "}
-            <a
-              href="/register"
-              className="link-brand font-bold"
-            >
-              Pre-register here
-            </a>
-            {" "}— it&apos;s optional, but it saves time at the counter.
+          <p className="mt-2">
+            {CONTACT.hours} · {CONTACT.address.full} · Protected under the
+            Philippine Data Privacy Act (RA 10173).
           </p>
-
-          <div className="mt-8">
-            <BookingForm
-              services={services
-                .filter(
-                  (s) =>
-                    s.kind === "lab_test" ||
-                    s.kind === "lab_package" ||
-                    s.kind === "doctor_consultation",
-                )
-                .map((s) => ({
-                  id: s.id,
-                  code: s.code,
-                  name: s.name,
-                  kind: s.kind as
-                    | "lab_test"
-                    | "lab_package"
-                    | "doctor_consultation",
-                  description: s.description,
-                  price_php: Number(s.price_php),
-                  fasting_required: s.fasting_required,
-                  requires_time_slot: s.requires_time_slot,
-                  specialty_code: s.specialty_code,
-                }))}
-              closures={closures}
-              startDate={startDate}
-              specialties={specialties}
-              physicians={bookablePhysicians}
-              byAppointmentPhysicians={byAppointmentPhysicians}
-            />
-          </div>
-        </section>
-
-        <div className="mt-12 grid gap-8 md:grid-cols-2">
-          <article className="rounded-2xl border border-[color:var(--color-brand-bg-mid)] bg-white p-8">
-            <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-              Operating Hours
-            </p>
-            <h2 className="mt-3 font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
-              {CONTACT.hours}
-            </h2>
-            <p className="mt-4 text-sm text-[color:var(--color-brand-text-soft)]">
-              Closed on Sundays and Philippine public holidays. Last patient
-              registration is 30 minutes before closing.
-            </p>
-          </article>
-
-          <article className="rounded-2xl border border-[color:var(--color-brand-bg-mid)] bg-white p-8">
-            <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-              Address
-            </p>
-            <h2 className="mt-3 font-heading text-xl font-extrabold text-[color:var(--color-brand-navy)]">
-              {CONTACT.address.line1}
-            </h2>
-            <p className="mt-2 text-base text-[color:var(--color-brand-text-mid)]">
-              {CONTACT.address.line2}
-              <br />
-              {CONTACT.address.city}, {CONTACT.address.region}
-            </p>
-            <p className="mt-4 text-sm">
-              <a
-                href={`tel:${CONTACT.phone.mobileE164}`}
-                className="link-brand"
-              >
-                Mobile: {CONTACT.phone.mobile}
-              </a>
-              <br />
-              <a
-                href={`tel:${CONTACT.phone.landlineE164}`}
-                className="link-brand"
-              >
-                Tel: {CONTACT.phone.landline}
-              </a>
-            </p>
-          </article>
-        </div>
-      </section>
-    </>
+        </footer>
+      </main>
+    </div>
   );
 }

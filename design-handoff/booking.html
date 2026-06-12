@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en-PH">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Reserve your slot — DRMed Clinic & Laboratory</title>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Public+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet" />
+<script>document.documentElement.classList.add('js');</script>
+<style>
+  :root {
+    --navy: #263F91; --navy-deep: #1B2E6E; --cyan: #08A8E2; --cyan-text: #0779A6; --cyan-soft: rgba(8,168,226,.10);
+    --bg: #FBF9F5; --sand: #F3EEE6; --line: #E9E2D5; --line-soft: #F0EBDF;
+    --ink: #20283A; --ink-mid: #4A5266; --ink-soft: #7C8398; --err: #C2402F;
+    --serif: "Instrument Serif", Georgia, serif;
+    --sans: "Public Sans", system-ui, sans-serif;
+    --sh-1: 0 1px 2px rgba(32,40,58,.05), 0 8px 24px -12px rgba(32,40,58,.12);
+    --sh-2: 0 2px 4px rgba(32,40,58,.06), 0 18px 44px -16px rgba(38,63,145,.22);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 16px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+  a { color: inherit; text-decoration: none; }
+  .serif { font-family: var(--serif); font-weight: 400; color: var(--navy); }
+  .serif em { font-style: italic; color: var(--cyan); }
+
+  header { position: sticky; top: 0; z-index: 50; background: rgba(251,249,245,.92); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line-soft); }
+  .nav { max-width: 760px; margin-inline: auto; padding: 0 20px; display: flex; align-items: center; justify-content: space-between; height: 60px; }
+  .nav img { height: 30px; width: auto; display: block; }
+  .nav .back { display: inline-flex; gap: 7px; align-items: center; font-size: 13.5px; font-weight: 600; color: var(--ink-mid); }
+  .nav .back:hover { color: var(--cyan-text); }
+  .nav .back svg { width: 15px; height: 15px; }
+
+  /* ---- ECG progress ---- */
+  .progress { position: sticky; top: 60px; z-index: 40; background: rgba(251,249,245,.96); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line-soft); }
+  .prog-inner { max-width: 760px; margin-inline: auto; padding: 10px 20px 4px; }
+  .pulse-track { display: block; width: 100%; height: 46px; overflow: visible; }
+  .pt-base { fill: none; stroke: var(--line); stroke-width: 1.6; }
+  .pt-live { fill: none; stroke: var(--cyan); stroke-width: 2; stroke-linecap: round; filter: drop-shadow(0 0 4px rgba(8,168,226,.45)); stroke-dasharray: 100; stroke-dashoffset: 100; transition: stroke-dashoffset .9s cubic-bezier(.2,.7,.3,1); }
+  .node { fill: #fff; stroke: var(--line); stroke-width: 1.6; transition: stroke .3s, fill .3s; }
+  .node.done { fill: var(--cyan); stroke: var(--cyan); }
+  .node.now { stroke: var(--cyan); stroke-width: 2; }
+  .nodering { fill: none; stroke: var(--cyan); stroke-width: 1.5; opacity: 0; transform-origin: center; transform-box: fill-box; }
+  @media (prefers-reduced-motion: no-preference) {
+    .node.now + .nodering { animation: blipring 1s ease-out 1; }
+    .node.now { transform-origin: center; transform-box: fill-box; animation: nodebeat 2.8s ease-in-out .8s infinite; }
+  }
+  @keyframes nodebeat { 0%, 38%, 100% { transform: scale(1); } 10% { transform: scale(1.4); } 20% { transform: scale(1); } 28% { transform: scale(1.22); } }
+  @keyframes blipring { 0% { opacity: .8; transform: scale(.5); } 100% { opacity: 0; transform: scale(2.4); } }
+  .prog-labels { display: flex; justify-content: space-between; padding: 0 6px 8px; }
+  .prog-labels span { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-soft); flex: 1; text-align: center; }
+  .prog-labels span.on { color: var(--cyan-text); }
+  @media (max-width: 480px) { .prog-labels span { visibility: hidden; } .prog-labels span.on { visibility: visible; } }
+
+  main { max-width: 760px; margin-inline: auto; padding: 26px 20px 70px; }
+  .card { background: #fff; border: 1px solid var(--line-soft); border-radius: 24px; box-shadow: var(--sh-1); padding: 28px 22px; overflow: hidden; }
+  @media (min-width: 640px) { .card { padding: 38px 40px; } }
+
+  .step { display: none; }
+  .step.active { display: block; }
+  @media (prefers-reduced-motion: no-preference) {
+    html.js .step.active .step-inner { opacity: 0; transform: translateX(36px); transition: opacity .45s cubic-bezier(.2,.7,.3,1), transform .45s cubic-bezier(.2,.7,.3,1); }
+    html.js .wizard.back .step.active .step-inner { transform: translateX(-36px); }
+    html.js .step.active.shown .step-inner { opacity: 1; transform: none; }
+  }
+  .kicker { display: inline-flex; align-items: center; gap: 10px; font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .16em; color: var(--cyan-text); margin: 0; }
+  .kicker::before { content: ""; width: 26px; height: 1px; background: var(--cyan); }
+  .step h1 { font-family: var(--serif); font-weight: 400; font-size: clamp(28px, 6vw, 38px); line-height: 1.1; color: var(--navy); margin: 12px 0 0; }
+  .step .sub { font-size: 14.5px; color: var(--ink-mid); margin: 10px 0 0; max-width: 520px; }
+
+  /* Choice cards */
+  .choices { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 24px; }
+  @media (min-width: 560px) { .choices.two { grid-template-columns: 1fr 1fr; } .choices.four { grid-template-columns: 1fr 1fr; } }
+  .bcard { position: relative; text-align: left; background: #fff; border: 1.5px solid var(--line); border-radius: 18px; padding: 18px; cursor: pointer; font-family: var(--sans); transition: transform .22s, border-color .22s, box-shadow .25s; min-height: 44px; width: 100%; }
+  .bcard:hover { transform: translateY(-2px); box-shadow: var(--sh-1); }
+  .bcard .ic { width: 44px; height: 44px; border-radius: 13px; background: var(--cyan-soft); color: var(--cyan); display: grid; place-items: center; }
+  .bcard .ic svg { width: 22px; height: 22px; stroke-width: 1.8; }
+  .bcard h3 { font-size: 15.5px; font-weight: 700; color: var(--navy); margin: 12px 0 0; }
+  .bcard p { font-size: 12.5px; color: var(--ink-soft); margin: 5px 0 0; line-height: 1.45; }
+  .bcard .tick { position: absolute; top: 12px; right: 12px; width: 22px; height: 22px; border-radius: 50%; background: var(--cyan); color: #fff; display: grid; place-items: center; opacity: 0; transform: scale(.5); transition: opacity .25s, transform .25s; }
+  .bcard .tick svg { width: 12px; height: 12px; stroke-width: 3; }
+  .bcard.sel { border-color: var(--cyan); transform: translateY(-3px); box-shadow: 0 0 0 3px rgba(8,168,226,.14), var(--sh-2); }
+  .bcard.sel .tick { opacity: 1; transform: scale(1); }
+  @media (prefers-reduced-motion: no-preference) { .bcard.sel { animation: selpulse .5s ease-out 1; } }
+  @keyframes selpulse { 0% { box-shadow: 0 0 0 0 rgba(8,168,226,.35); } 100% { box-shadow: 0 0 0 12px rgba(8,168,226,0), var(--sh-2); } }
+
+  /* Chips (tests, packages, slots) */
+  .chips { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 14px; }
+  .chip { border: 1.5px solid var(--line); background: #fff; border-radius: 999px; padding: 11px 16px; font-family: var(--sans); font-size: 13.5px; font-weight: 600; color: var(--ink-mid); cursor: pointer; transition: border-color .2s, background .2s, color .2s, transform .15s; min-height: 44px; }
+  .chip:hover { border-color: var(--cyan); }
+  .chip.sel { border-color: var(--cyan); background: var(--cyan-soft); color: var(--navy); }
+  .chip.sel::before { content: "✓ "; color: var(--cyan-text); }
+  .chip:disabled { opacity: .38; cursor: not-allowed; text-decoration: line-through; }
+  .chip .pr { font-family: var(--serif); font-style: italic; color: var(--cyan-text); font-weight: 400; margin-left: 5px; }
+
+  .group-lbl { font-size: 13px; font-weight: 700; color: var(--ink); margin: 22px 0 0; }
+  .group-lbl .opt { font-weight: 500; color: var(--ink-soft); }
+
+  /* Fields */
+  .fgrid { display: grid; grid-template-columns: 1fr; gap: 14px; margin-top: 20px; }
+  @media (min-width: 560px) { .fgrid.two { grid-template-columns: 1fr 1fr; } .fgrid.three { grid-template-columns: 1fr 1fr 1fr; } }
+  .field { display: flex; flex-direction: column; gap: 6px; position: relative; }
+  .field label { font-size: 13.5px; font-weight: 600; }
+  .field label .req { color: var(--err); }
+  .field input, .field select { height: 46px; border: 1.5px solid var(--line); border-radius: 12px; padding: 0 13px; font-family: var(--sans); font-size: 15px; color: var(--ink); background: #fff; outline: none; transition: border-color .2s, box-shadow .2s; width: 100%; }
+  .field input:focus, .field select:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(8,168,226,.20), inset 2.5px 0 0 0 var(--cyan); }
+  .field .msg { display: none; font-size: 12.5px; color: var(--err); margin: 0; }
+  .field.bad input, .field.bad select { border-color: var(--err); }
+  .field.bad .msg { display: block; }
+  .field .okmark { position: absolute; right: 12px; top: 36px; width: 18px; height: 18px; pointer-events: none; }
+  .field .okmark path { fill: none; stroke: #1B9E63; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 1; }
+  .field.ok .okmark path { stroke-dashoffset: 0; transition: stroke-dashoffset .35s ease .05s; }
+  @media (prefers-reduced-motion: no-preference) { .field.bad.shake input, .field.bad.shake select { animation: shake .4s; } }
+  @keyframes shake { 10%, 90% { transform: translateX(-2px); } 25%, 75% { transform: translateX(4px); } 50% { transform: translateX(-4px); } }
+  .hint { font-size: 12.5px; color: var(--ink-soft); }
+
+  /* Info panel (walk-in, expectations) */
+  .panel { margin-top: 20px; background: var(--sand); border-radius: 18px; padding: 20px 22px; }
+  .panel h4 { font-family: var(--serif); font-weight: 400; font-size: 21px; color: var(--navy); margin: 0; }
+  .panel ul { margin: 12px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 9px; }
+  .panel li { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; color: var(--ink-mid); }
+  .panel li svg { width: 16px; height: 16px; stroke-width: 2; color: var(--cyan-text); flex-shrink: 0; margin-top: 2px; }
+  .note { display: flex; gap: 9px; align-items: flex-start; margin-top: 18px; font-size: 13px; color: var(--ink-soft); }
+  .note svg { width: 15px; height: 15px; flex-shrink: 0; margin-top: 2px; color: var(--cyan-text); }
+  .note a { color: var(--cyan-text); text-decoration: underline; text-underline-offset: 2px; }
+
+  /* Nav buttons */
+  .stepnav { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 30px; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; font-family: var(--sans); font-weight: 700; font-size: 14.5px; border-radius: 999px; border: 1.5px solid transparent; cursor: pointer; padding: 13px 26px; transition: background .2s, color .2s, border-color .2s, transform .15s, box-shadow .2s; min-height: 46px; }
+  .btn:active { transform: translateY(1px); }
+  .btn svg { width: 16px; height: 16px; }
+  .btn-cta { background: var(--cyan); color: #0B1626; box-shadow: var(--sh-1); }
+  .btn-cta:hover { background: var(--navy); color: #fff; transform: translateY(-1px); }
+  .btn-ghost { color: var(--ink-mid); padding-left: 14px; }
+  .btn-ghost:hover { color: var(--navy); }
+  .btn-line { border-color: var(--line); background: #fff; color: var(--navy); }
+  .btn-line:hover { border-color: var(--navy); }
+
+  /* Review */
+  .review { margin-top: 22px; border: 1px solid var(--line-soft); border-radius: 18px; overflow: hidden; }
+  .rrow { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; padding: 14px 18px; border-bottom: 1px solid var(--line-soft); }
+  .rrow:last-child { border-bottom: none; }
+  .rrow .k { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--ink-soft); width: 110px; flex-shrink: 0; padding-top: 2px; }
+  .rrow .v { flex: 1; font-size: 14.5px; color: var(--ink); }
+  .rrow .v small { display: block; color: var(--ink-soft); font-size: 12.5px; }
+  .rrow button { background: none; border: none; cursor: pointer; font-family: var(--sans); font-size: 12.5px; font-weight: 700; color: var(--cyan-text); padding: 2px 4px; }
+  .rrow button:hover { text-decoration: underline; }
+
+  /* Success */
+  .success { text-align: center; padding: 16px 0 8px; }
+  .suc-anim { display: block; margin: 0 auto; width: min(420px, 90%); height: 110px; overflow: visible; }
+  .suc-ecg { fill: none; stroke: var(--cyan); stroke-width: 2; stroke-linecap: round; }
+  .suc-ring { fill: none; stroke: #1B9E63; stroke-width: 2.4; }
+  .suc-check { fill: none; stroke: #1B9E63; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+  html.js .suc-ecg { stroke-dasharray: 1; stroke-dashoffset: 1; }
+  html.js .suc-ring { stroke-dasharray: 1; stroke-dashoffset: 1; }
+  html.js .suc-check { stroke-dasharray: 1; stroke-dashoffset: 1; }
+  html.js .success.go .suc-ecg { stroke-dashoffset: 0; transition: stroke-dashoffset 1.1s ease; }
+  html.js .success.go .suc-ring { stroke-dashoffset: 0; transition: stroke-dashoffset .6s ease 1s; }
+  html.js .success.go .suc-check { stroke-dashoffset: 0; transition: stroke-dashoffset .4s ease 1.5s; }
+  .success h1 { margin-top: 18px; }
+  .refcode { display: inline-block; margin-top: 14px; font-family: ui-monospace, Menlo, monospace; font-size: 15px; font-weight: 700; letter-spacing: .1em; color: var(--navy); background: var(--cyan-soft); border-radius: 999px; padding: 8px 20px; }
+  .success .review { text-align: left; }
+
+  footer { max-width: 760px; margin-inline: auto; padding: 0 20px 50px; }
+  footer p { font-size: 12px; color: var(--ink-soft); display: flex; gap: 8px; align-items: flex-start; margin: 8px 0 0; }
+  footer svg { width: 14px; height: 14px; flex-shrink: 0; margin-top: 1px; }
+
+  /* #6 summary cascade */
+  @media (prefers-reduced-motion: no-preference) {
+    html.js .review.casc .rrow { opacity: 0; transform: translateY(10px); }
+    html.js .review.casc.go .rrow { opacity: 1; transform: none; transition: opacity .4s cubic-bezier(.2,.7,.3,1), transform .4s cubic-bezier(.2,.7,.3,1); }
+    html.js .review.casc.go .rrow:nth-child(2) { transition-delay: .07s; }
+    html.js .review.casc.go .rrow:nth-child(3) { transition-delay: .14s; }
+    html.js .review.casc.go .rrow:nth-child(4) { transition-delay: .21s; }
+    html.js .review.casc.go .rrow:nth-child(5) { transition-delay: .28s; }
+    html.js .review.casc.go .rrow:nth-child(6) { transition-delay: .35s; }
+    html.js .review.casc.go .rrow:nth-child(7) { transition-delay: .42s; }
+    html.js .review.casc.go .rrow:nth-child(8) { transition-delay: .49s; }
+  }
+  /* #7 slot chip ripple */
+  .chip { position: relative; }
+  .chip .ring { position: absolute; inset: -2px; border-radius: 999px; border: 2px solid var(--cyan); opacity: 0; pointer-events: none; }
+  @media (prefers-reduced-motion: no-preference) {
+    .chip.rippling .ring { animation: chipripple .6s ease-out 1; }
+  }
+  @keyframes chipripple { 0% { opacity: .7; transform: scale(1); } 100% { opacity: 0; transform: scale(1.45); } }
+</style>
+</head>
+<body>
+<template id="__bundler_thumbnail"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="#FBF9F5"/><path d="M20,50 L38,50 43,38 50,62 57,34 63,60 68,50 80,50" stroke="#08A8E2" stroke-width="3" fill="none" stroke-linecap="round"/></svg></template>
+
+<header>
+  <div class="nav">
+    <a href="homepage.html"><img src="assets/logo.png" alt="DRMed Clinic & Laboratory" /></a>
+    <a class="back" href="homepage.html"><i data-lucide="arrow-left"></i> Back to homepage</a>
+  </div>
+</header>
+
+<div class="progress">
+  <div class="prog-inner">
+    <svg class="pulse-track" viewBox="0 0 1000 46" preserveAspectRatio="none" aria-hidden="true">
+      <path class="pt-base" id="ptbase" d=""/>
+      <path class="pt-live" id="ptlive" pathLength="100" d=""/>
+      <g id="nodes"></g>
+    </svg>
+    <div class="prog-labels" id="plabels">
+      <span>Patient</span><span>Booking</span><span>Details</span><span>About you</span><span>Review</span>
+    </div>
+  </div>
+</div>
+
+<main>
+  <div class="card wizard" id="wizard">
+
+    <!-- STEP 1: patient type -->
+    <section class="step" data-step="0">
+      <div class="step-inner">
+        <p class="kicker">Reserve your slot · Step 1 of 5</p>
+        <h1 class="serif">Have you visited <em>DRMed</em> before?</h1>
+        <p class="sub">This helps reception pull up your record faster when you arrive.</p>
+        <div class="choices two">
+          <button type="button" class="bcard" data-pick="patientType" data-val="new">
+            <span class="ic"><i data-lucide="user-round-plus"></i></span>
+            <h3>No, I'm new</h3>
+            <p>We'll set up your record and issue your DRM-ID at the counter.</p>
+            <span class="tick"><i data-lucide="check"></i></span>
+          </button>
+          <button type="button" class="bcard" data-pick="patientType" data-val="existing">
+            <span class="ic"><i data-lucide="id-card"></i></span>
+            <h3>Yes, I have a DRM-ID</h3>
+            <p>Found on your official receipt — e.g. DRM-0001.</p>
+            <span class="tick"><i data-lucide="check"></i></span>
+          </button>
+        </div>
+        <div class="fgrid" id="drmWrap" style="display:none;max-width:320px;">
+          <div class="field" data-f="drmId">
+            <label for="drm">DRM-ID <span class="req">*</span></label>
+            <input id="drm" placeholder="DRM-0001" autocomplete="off" spellcheck="false" style="font-family:ui-monospace,Menlo,monospace;letter-spacing:.08em;text-transform:uppercase;" />
+            <svg class="okmark" viewBox="0 0 18 18"><path pathLength="1" d="M3,10 L7,14 L15,4"/></svg>
+            <p class="msg">Please enter a valid DRM-ID (e.g. DRM-0001).</p>
+          </div>
+        </div>
+        <div class="note"><i data-lucide="info"></i><span>Your identity will be verified at the counter — bring a valid ID on the day of your visit.</span></div>
+        <div class="stepnav">
+          <span></span>
+          <button class="btn btn-cta" data-next>Continue <i data-lucide="arrow-right"></i></button>
+        </div>
+      </div>
+    </section>
+
+    <!-- STEP 2: booking type -->
+    <section class="step" data-step="1">
+      <div class="step-inner">
+        <p class="kicker">Reserve your slot · Step 2 of 5</p>
+        <h1 class="serif">What are you <em>booking?</em></h1>
+        <div class="choices four">
+          <button type="button" class="bcard" data-pick="bookingType" data-val="package">
+            <span class="ic"><i data-lucide="package"></i></span>
+            <h3>Diagnostic Package</h3>
+            <p>Checkup bundles — walk-in any time, no schedule needed.</p>
+            <span class="tick"><i data-lucide="check"></i></span>
+          </button>
+          <button type="button" class="bcard" data-pick="bookingType" data-val="lab">
+            <span class="ic"><i data-lucide="test-tube"></i></span>
+            <h3>Laboratory Request</h3>
+            <p>Individual tests — CBC, blood chemistry, ultrasound, and more.</p>
+            <span class="tick"><i data-lucide="check"></i></span>
+          </button>
+          <button type="button" class="bcard" data-pick="bookingType" data-val="doctor">
+            <span class="ic"><i data-lucide="stethoscope"></i></span>
+            <h3>Doctor Appointment</h3>
+            <p>Consult one of our 19+ board-certified specialists.</p>
+            <span class="tick"><i data-lucide="check"></i></span>
+          </button>
+          <button type="button" class="bcard" data-pick="bookingType" data-val="home">
+            <span class="ic"><i data-lucide="house"></i></span>
+            <h3>Home Service</h3>
+            <p>Lab collection or consultation at your home or office.</p>
+            <span class="tick"><i data-lucide="check"></i></span>
+          </button>
+        </div>
+        <div class="note"><i data-lucide="building-2"></i><span>Corporate or HMO-covered booking? <a href="homepage.html#contact">Message us instead</a> — we'll arrange it with your provider.</span></div>
+        <div class="stepnav">
+          <button class="btn btn-ghost" data-back><i data-lucide="arrow-left"></i> Back</button>
+          <button class="btn btn-cta" data-next>Continue <i data-lucide="arrow-right"></i></button>
+        </div>
+      </div>
+    </section>
+
+    <!-- STEP 3: details (branched) -->
+    <section class="step" data-step="2">
+      <div class="step-inner">
+        <p class="kicker">Reserve your slot · Step 3 of 5</p>
+
+        <!-- package branch -->
+        <div class="branch" data-branch="package" style="display:none;">
+          <h1 class="serif">Good news — just <em>walk in.</em></h1>
+          <p class="sub">Diagnostic packages don't need a schedule. Pick your package so we know what to prepare, then drop by any time within clinic hours.</p>
+          <p class="group-lbl">Choose a package</p>
+          <div class="chips" id="pkgChips"></div>
+          <div class="panel">
+            <h4>Your walk-in visit</h4>
+            <ul>
+              <li><i data-lucide="clock"></i><span><b>Monday – Saturday, 8:00 AM – 5:00 PM.</b> Come early for same-day results on most tests.</span></li>
+              <li><i data-lucide="map-pin"></i><span>4/F Northridge Plaza, Congressional Avenue, Quezon City.</span></li>
+              <li><i data-lucide="check"></i><span><b>What to bring:</b> a valid ID, your doctor's request (if any), and your HMO card or LOA if covered.</span></li>
+              <li><i data-lucide="info"></i><span>Fasting 8–10 hours is required for blood sugar and lipid tests — water is fine.</span></li>
+            </ul>
+          </div>
+          <p class="hint" style="margin-top:16px;">Want to skip the counter paperwork? Pre-register your details below — it's optional.</p>
+        </div>
+
+        <!-- lab branch -->
+        <div class="branch" data-branch="lab" style="display:none;">
+          <h1 class="serif">Which <em>tests</em> do you need?</h1>
+          <p class="sub">Select all that apply. Most lab tests are walk-in friendly — only ultrasound needs a time slot.</p>
+          <div class="chips" id="testChips"></div>
+          <div id="usWrap" style="display:none;">
+            <p class="group-lbl">Ultrasound schedule <span class="opt">— required for ultrasound only</span></p>
+            <div class="fgrid two" style="max-width:480px;">
+              <div class="field" data-f="usDate">
+                <label for="usDate">Preferred date <span class="req">*</span></label>
+                <input id="usDate" type="date" />
+                <p class="msg">Please pick a date.</p>
+              </div>
+              <div class="field" data-f="usSlot">
+                <label>Time slot <span class="req">*</span></label>
+                <div class="chips" id="usSlots" style="margin-top:2px;"></div>
+                <p class="msg">Please pick a time slot.</p>
+              </div>
+            </div>
+          </div>
+          <p class="msg" id="testsMsg" style="display:none;color:var(--err);font-size:12.5px;margin-top:10px;">Please select at least one test.</p>
+        </div>
+
+        <!-- doctor branch -->
+        <div class="branch" data-branch="doctor" style="display:none;">
+          <h1 class="serif">Choose your <em>specialist.</em></h1>
+          <p class="sub">Schedules may change without prior notice — reception will text you to confirm.</p>
+          <div class="fgrid two" style="max-width:560px;">
+            <div class="field" data-f="specialty">
+              <label for="spec">Specialty <span class="req">*</span></label>
+              <select id="spec"><option value="">Choose a specialty</option></select>
+              <p class="msg">Please choose a specialty.</p>
+            </div>
+            <div class="field" data-f="doctor">
+              <label for="doc">Doctor <span class="req">*</span></label>
+              <select id="doc" disabled><option value="">Choose a doctor</option></select>
+              <p class="msg">Please choose a doctor.</p>
+            </div>
+            <div class="field" data-f="date">
+              <label for="dDate">Preferred date <span class="req">*</span></label>
+              <input id="dDate" type="date" />
+              <p class="msg">Please pick a date.</p>
+            </div>
+          </div>
+          <div class="field" data-f="slot" style="margin-top:14px;">
+            <label>Time slot <span class="req">*</span></label>
+            <div class="chips" id="dSlots" style="margin-top:2px;"></div>
+            <p class="msg">Please pick a time slot.</p>
+          </div>
+        </div>
+
+        <!-- home branch -->
+        <div class="branch" data-branch="home" style="display:none;">
+          <h1 class="serif">Where should we <em>come to you?</em></h1>
+          <p class="sub">Lab collection and consultations brought to your home or office.</p>
+          <div class="fgrid">
+            <div class="field" data-f="addr">
+              <label for="addr">Street address <span class="req">*</span></label>
+              <input id="addr" placeholder="House/Unit no., street, subdivision or building" autocomplete="street-address" />
+              <svg class="okmark" viewBox="0 0 18 18"><path pathLength="1" d="M3,10 L7,14 L15,4"/></svg>
+              <p class="msg">Please enter your street address.</p>
+            </div>
+          </div>
+          <div class="fgrid two">
+            <div class="field" data-f="brgy">
+              <label for="brgy">Barangay <span class="req">*</span></label>
+              <input id="brgy" placeholder="e.g. Bahay Toro" />
+              <svg class="okmark" viewBox="0 0 18 18"><path pathLength="1" d="M3,10 L7,14 L15,4"/></svg>
+              <p class="msg">Please enter your barangay.</p>
+            </div>
+            <div class="field" data-f="city">
+              <label for="city">City <span class="req">*</span></label>
+              <input id="city" value="Quezon City" />
+              <svg class="okmark" viewBox="0 0 18 18"><path pathLength="1" d="M3,10 L7,14 L15,4"/></svg>
+              <p class="msg">Please enter your city.</p>
+            </div>
+          </div>
+          <div class="fgrid">
+            <div class="field">
+              <label for="lmk">Landmark or notes <span class="opt" style="font-weight:500;color:var(--ink-soft);">(optional)</span></label>
+              <input id="lmk" placeholder="Gate color, nearest corner, parking notes…" />
+            </div>
+          </div>
+          <div class="note"><i data-lucide="phone"></i><span><b>Our reception team will call you</b> to confirm availability, schedule, and the home-service fee before anything is final.</span></div>
+        </div>
+
+        <div class="stepnav">
+          <button class="btn btn-ghost" data-back><i data-lucide="arrow-left"></i> Back</button>
+          <span style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end;">
+            <button class="btn btn-line" id="walkinDone" style="display:none;">Done — I'll walk in</button>
+            <button class="btn btn-cta" data-next id="step3Next">Continue <i data-lucide="arrow-right"></i></button>
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <!-- STEP 4: personal details -->
+    <section class="step" data-step="3">
+      <div class="step-inner">
+        <p class="kicker">Reserve your slot · Step 4 of 5</p>
+        <h1 class="serif">Tell us about <em>you.</em></h1>
+        <p class="sub">Exactly what reception asks at the counter — nothing more.</p>
+        <div class="fgrid three">
+          <div class="field" data-f="first">
+            <label for="fn">First name <span class="req">*</span></label>
+            <input id="fn" autocomplete="given-name" autocapitalize="words" />
+            <svg class="okmark" viewBox="0 0 18 18"><path pathLength="1" d="M3,10 L7,14 L15,4"/></svg>
+            <p class="msg">Please enter your first name.</p>
+          </div>
+          <div class="field" data-f="middle">
+            <label for="mn">Middle name <span style="font-weight:500;color:var(--ink-soft);">(optional)</span></label>
+            <input id="mn" autocomplete="additional-name" autocapitalize="words" />
+          </div>
+          <div class="field" data-f="last">
+            <label for="ln">Last name <span class="req">*</span></label>
+            <input id="ln" autocomplete="family-name" autocapitalize="words" />
+            <svg class="okmark" viewBox="0 0 18 18"><path pathLength="1" d="M3,10 L7,14 L15,4"/></svg>
+            <p class="msg">Please enter your last name.</p>
+          </div>
+        </div>
+        <div class="fgrid two">
+          <div class="field" data-f="bday">
+            <label for="bd">Birthdate <span class="req">*</span></label>
+            <input id="bd" type="date" autocomplete="bday" />
+            <p class="msg">Please enter your birthdate.</p>
+          </div>
+          <div class="field" data-f="sex">
+            <label>Sex <span class="req">*</span></label>
+            <div class="chips" style="margin-top:2px;">
+              <button type="button" class="chip" data-sex="Female">Female</button>
+              <button type="button" class="chip" data-sex="Male">Male</button>
+            </div>
+            <p class="msg">Please choose one.</p>
+          </div>
+        </div>
+        <div class="fgrid two">
+          <div class="field" data-f="mobile">
+            <label for="mob">Mobile number <span class="req">*</span></label>
+            <input id="mob" inputmode="numeric" autocomplete="tel-national" placeholder="0916 000 0000" maxlength="13" />
+            <svg class="okmark" viewBox="0 0 18 18"><path pathLength="1" d="M3,10 L7,14 L15,4"/></svg>
+            <p class="msg">Enter an 11-digit PH mobile number starting with 09.</p>
+          </div>
+          <div class="field" data-f="email">
+            <label for="em">Email <span style="font-weight:500;color:var(--ink-soft);">(optional)</span></label>
+            <input id="em" type="email" inputmode="email" autocomplete="email" placeholder="you@email.com" />
+            <svg class="okmark" viewBox="0 0 18 18"><path pathLength="1" d="M3,10 L7,14 L15,4"/></svg>
+            <p class="msg">That email doesn't look right.</p>
+          </div>
+        </div>
+        <div class="note"><i data-lucide="shield-check"></i><span>Handled under the Philippine Data Privacy Act (RA 10173). We only use this to prepare your visit and send your confirmation.</span></div>
+        <div class="stepnav">
+          <button class="btn btn-ghost" data-back><i data-lucide="arrow-left"></i> Back</button>
+          <button class="btn btn-cta" data-next>Review my booking <i data-lucide="arrow-right"></i></button>
+        </div>
+      </div>
+    </section>
+
+    <!-- STEP 5: review -->
+    <section class="step" data-step="4">
+      <div class="step-inner">
+        <p class="kicker">Reserve your slot · Step 5 of 5</p>
+        <h1 class="serif">One last <em>look.</em></h1>
+        <p class="sub">Make sure everything's right — tap Edit to change anything.</p>
+        <div class="review" id="reviewBox"></div>
+        <div class="note"><i data-lucide="info"></i><span>Your identity will be verified at the counter. Schedules are confirmed by reception via text.</span></div>
+        <div class="stepnav">
+          <button class="btn btn-ghost" data-back><i data-lucide="arrow-left"></i> Back</button>
+          <button class="btn btn-cta" id="confirmBtn">Confirm booking <i data-lucide="check"></i></button>
+        </div>
+      </div>
+    </section>
+
+    <!-- SUCCESS -->
+    <section class="step" data-step="5">
+      <div class="step-inner success" id="successBox">
+        <svg class="suc-anim" viewBox="0 0 420 110" aria-hidden="true">
+          <path class="suc-ecg" pathLength="1" d="M0,55 L120,55 138,55 146,38 156,72 166,30 176,74 184,55 205,55 248,55"/>
+          <circle class="suc-ring" pathLength="1" cx="300" cy="55" r="34"/>
+          <path class="suc-check" pathLength="1" d="M285,56 L296,67 L316,44"/>
+        </svg>
+        <h1 class="serif" id="sucTitle">You're <em>booked.</em></h1>
+        <p class="sub" id="sucSub" style="margin-inline:auto;"></p>
+        <div class="refcode" id="refCode"></div>
+        <div class="review" id="sucReview" style="margin-top:24px;"></div>
+        <div class="panel" style="text-align:left;">
+          <h4>What happens next</h4>
+          <ul id="sucNext"></ul>
+        </div>
+        <div class="stepnav" style="justify-content:center;gap:14px;">
+          <a class="btn btn-line" href="homepage.html">Back to homepage</a>
+          <button class="btn btn-ghost" id="startOver">Book another visit</button>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</main>
+
+<footer>
+  <p><i data-lucide="shield-check"></i> Protected under the Philippine Data Privacy Act (RA 10173). Your details are used only to prepare your visit.</p>
+  <p><i data-lucide="building-2"></i> Corporate or HMO-covered? <a href="homepage.html#contact" style="color:var(--cyan-text);text-decoration:underline;text-underline-offset:2px;">&nbsp;Message us&nbsp;</a> and we'll coordinate with your provider directly.</p>
+</footer>
+
+<script src="booking-wizard.js"></script>
+<script>
+  function iconsReady(){ try { lucide.createIcons(); } catch(e) {} }
+  (function loadLucide(srcs){
+    if (!srcs.length) return;
+    const s = document.createElement('script');
+    s.src = srcs[0]; s.async = true;
+    s.onload = iconsReady;
+    s.onerror = () => loadLucide(srcs.slice(1));
+    document.body.appendChild(s);
+  })([
+    "https://cdn.jsdelivr.net/npm/lucide@0.469.0/dist/umd/lucide.min.js",
+    "https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"
+  ]);
+</script>
+</body>
+</html>
