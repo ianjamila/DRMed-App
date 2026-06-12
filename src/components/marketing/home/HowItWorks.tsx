@@ -56,8 +56,11 @@ export function HowItWorks() {
                     <Icon className="h-5 w-5" aria-hidden="true" />
                   </span>
 
-                  {/* Step number */}
-                  <span className="font-[family-name:var(--font-display)] text-[28px] italic leading-none text-[color:var(--color-brand-cyan)] opacity-50">
+                  {/* Step number — decorative faded numeral (order conveyed by DOM + heading) */}
+                  <span
+                    aria-hidden="true"
+                    className="font-[family-name:var(--font-display)] text-[28px] italic leading-none text-[color:var(--color-brand-cyan)] opacity-50"
+                  >
                     {step.n}
                   </span>
 

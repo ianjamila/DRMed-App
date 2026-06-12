@@ -19,7 +19,7 @@ export function MarketingFooter() {
               Occasional updates on new tests, promos, and schedule changes.{" "}
               <Link
                 href="/newsletter"
-                className="text-[color:var(--color-brand-cyan-on-navy)] hover:text-white hover:underline"
+                className="text-[color:var(--color-brand-cyan-on-navy)] underline underline-offset-2 hover:text-white"
               >
                 More about the newsletter →
               </Link>

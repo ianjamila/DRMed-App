@@ -34,7 +34,7 @@ export function Payments() {
           title={
             <>
               100%{" "}
-              <span className="italic text-[color:var(--color-brand-cyan)]">
+              <span className="italic text-[color:var(--color-brand-cyan-text)]">
                 convenient
               </span>{" "}
               payments.

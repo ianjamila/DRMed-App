@@ -25,7 +25,7 @@ export function NewsletterForm({ source, variant = "footer" }: Props) {
       <p
         className={
           variant === "footer"
-            ? "text-sm text-[color:var(--color-brand-cyan)]"
+            ? "text-sm text-[color:var(--color-brand-cyan-on-navy)]"
             : "rounded-lg bg-emerald-50 p-4 text-sm text-emerald-900"
         }
       >

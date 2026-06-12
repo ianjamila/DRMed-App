@@ -128,7 +128,7 @@ export function Hero() {
                   <div key={s.label}>
                     <div className="font-[family-name:var(--font-display)] text-[40px] leading-none text-[color:var(--color-brand-navy)]">
                       <CountUp to={s.to} />
-                      <em className="not-italic italic text-[0.7em] text-[color:var(--color-brand-cyan)]">
+                      <em className="not-italic italic text-[0.7em] text-[color:var(--color-brand-cyan-text)]">
                         {s.suffix}
                       </em>
                     </div>

@@ -76,7 +76,7 @@
   /* ---- Marketing ink trio (reference-page values win — C17) -------- */
   --color-ink: #20283A;               /* marketing body / headings ink */
   --color-ink-mid: #4A5266;           /* secondary copy */
-  --color-ink-soft: #7C8398;          /* muted / captions / labels */
+  --color-ink-soft: #616880;          /* muted / captions / labels — AA on warm field (5.3:1 warm-bg, 4.8:1 warm-sand) */
 
   /* ---- Marketing semantic status (warm palette) ------------------- */
   --color-danger: #C2402F;            /* warm error red — form messages */
@@ -255,6 +255,19 @@
 /* Mobile: ambient simplified to static (guardrail). */
 @media (max-width: 640px) {
   .drmed-ambient-glow { animation: none !important; }
+}
+
+/*
+ * Mobile: hero entrance is static (guardrail) — protects LCP.
+ * Overrides the JS-driven opacity:0 → 1 stagger (HeroStagger) so the hero
+ * heading/subheading paint immediately on first paint instead of waiting for
+ * hydration + motion. Matches the hero photo + ambient "static < 640px" rules.
+ */
+@media (max-width: 640px) {
+  .hero-stagger-item {
+    opacity: 1 !important;
+    transform: none !important;
+  }
 }
 
 /*

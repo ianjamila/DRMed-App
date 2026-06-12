@@ -68,7 +68,13 @@ export function SectionHeading({
         {accent ? (
           <>
             {" "}
-            <span className="italic text-[color:var(--color-brand-cyan)]">
+            <span
+              className={
+                light
+                  ? "italic text-[color:var(--color-brand-cyan-on-navy)]"
+                  : "italic text-[color:var(--color-brand-cyan-text)]"
+              }
+            >
               {accent}
             </span>
           </>

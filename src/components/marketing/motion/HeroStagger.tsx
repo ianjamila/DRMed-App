@@ -25,6 +25,11 @@ const item = {
  * (set in the marketing layout) — it keeps opacity and skips the transform.
  * The render never branches on `useReducedMotion`, so there is no hydration
  * mismatch for reduced-motion clients.
+ *
+ * Below 640px the entrance is forced static via the `.hero-stagger-item`
+ * guardrail in globals.css (opacity:1 !important) so the hero text/LCP paints
+ * immediately instead of being gated behind the JS-driven opacity:0 → 1 stagger.
+ * Matches the hero photo + ambient "static < 640px" guardrails.
  */
 export function HeroStagger({ children, className }: { children: ReactNode; className?: string }) {
   return (
@@ -42,7 +47,10 @@ export function HeroStaggerItem({
   className?: string;
 }) {
   return (
-    <motion.div className={className} variants={item}>
+    <motion.div
+      className={["hero-stagger-item", className].filter(Boolean).join(" ")}
+      variants={item}
+    >
       {children}
     </motion.div>
   );
