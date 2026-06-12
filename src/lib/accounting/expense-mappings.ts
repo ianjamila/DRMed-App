@@ -53,6 +53,33 @@ export const EXPENSE_CATEGORIES: ExpenseCategory[] = Object.keys(
   CATEGORY_TO_COA,
 ) as ExpenseCategory[];
 
+/**
+ * Categories reception may book against PETTY CASH (the `/staff/payments/petty-cash`
+ * form). A deliberate subset of the admin list:
+ *   - Excludes owner / payroll-level accounts reception shouldn't touch:
+ *     Salaries & Wages, Doctors Payroll, Benefits, Past HMO of Doctors, Rent,
+ *     Insurance, Legal & Regulatory, APE.
+ *   - Excludes "Out of Pocket Expense" (maps to 9999 SUSPENSE) — the books
+ *     reconciliation cleared that account to ₱0; petty cash must not re-pollute it.
+ * Each entry carries a plain-language hint (reception pages use everyday words).
+ */
+export const PETTY_CASH_CATEGORY_OPTIONS: {
+  value: ExpenseCategory;
+  hint: string;
+}[] = [
+  { value: "Office Supplies", hint: "Bond paper, ink, pens, folders, cleaning supplies" },
+  { value: "Lab Supplies", hint: "Small lab consumables bought with cash" },
+  { value: "Maintenance & Repair", hint: "Minor fixes — aircon cleaning, light bulbs, plumbing" },
+  { value: "Travel", hint: "Fares, courier / delivery, gas reimbursements" },
+  { value: "Permits", hint: "Government fees, permit renewals, notarial" },
+  { value: "Utilities", hint: "Small cash top-ups for water / power" },
+  { value: "Telecommunication / Internet", hint: "Prepaid load, small internet top-ups" },
+  { value: "Marketing: Ads & Promotion", hint: "Flyers, tarpaulins, small print jobs" },
+];
+
+export const PETTY_CASH_CATEGORIES: ExpenseCategory[] =
+  PETTY_CASH_CATEGORY_OPTIONS.map((o) => o.value);
+
 export type Mop =
   | "CLINIC CASH"
   | "CLINIC GCASH"

@@ -121,6 +121,12 @@ export const STAFF_NAV: StaffNavSection[] = [
         description: "Build a price quote without creating a visit. Useful for phone inquiries: 'How much for a CBC + Urinalysis + Lipid panel?' Generates a shareable quote with HMO or cash pricing.",
         roles: ["reception", "medtech", "admin"],
       },
+      {
+        href: "/staff/payments/petty-cash",
+        label: "Petty cash",
+        description: "Log small cash expenses paid from the till — transport, courier, office / lab supplies, minor repairs. Each entry is recorded in the books so the day's cash count adds up. Anything paid by GCash, bank transfer, or a vendor invoice goes through admin.",
+        roles: ["reception", "admin"],
+      },
     ],
   },
   {
