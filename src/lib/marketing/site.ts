@@ -93,7 +93,7 @@ export const SERVICE_HIGHLIGHTS = [
   {
     icon: "🏠",
     name: "Home Service",
-    desc: "Lab collection and medical consultation brought directly to your home or office.",
+    desc: "Lab sample collection brought directly to your home or office.",
     price: "Inquire",
   },
   {
