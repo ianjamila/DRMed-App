@@ -30,6 +30,7 @@ const QUICK_GROUPS: { label: string; items: { href: string; label: string }[] }[
     items: [
       { href: "/staff/visits", label: "Billing & receipts" },
       { href: "/staff/quote", label: "Quick quote" },
+      { href: "/staff/payments/petty-cash", label: "Petty cash" },
     ],
   },
   {
