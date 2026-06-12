@@ -11,7 +11,6 @@ import {
   CountUp,
   EcgUnderline,
   AmbientGlow,
-  PendingPhoto,
 } from "@/components/marketing/motion";
 import { SITE } from "@/lib/marketing/site";
 
@@ -180,9 +179,13 @@ export function Hero() {
 
               {/* hero-slot: bottom-left pending photo */}
               <div className="absolute -left-2.5 -bottom-[26px] w-[180px] rounded-[18px] bg-white p-2 shadow-[var(--shadow-warm-lg)]">
-                <PendingPhoto
-                  className="h-[150px] w-full rounded-[12px]"
-                  label="Phlebotomist + patient, window light (pending shoot)"
+                <Image
+                  src="/photos/blood-draw.jpg"
+                  alt="DRMed phlebotomist drawing blood from a seated patient by a window"
+                  width={746}
+                  height={1000}
+                  sizes="180px"
+                  className="h-[150px] w-full rounded-[12px] object-cover"
                 />
                 <p className="px-1 pb-0.5 pt-[7px] text-[10.5px] italic text-[color:var(--color-ink-soft)]">
                   Gentle, unhurried blood draws
