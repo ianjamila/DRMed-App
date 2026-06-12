@@ -4869,6 +4869,7 @@ export type Database = {
           send_out_unit_cost_php: number | null
           send_out_vendor_id: string | null
           senior_discount_php: number | null
+          senior_pwd_eligible: boolean
           specialty_code: string | null
           turnaround_hours: number | null
           updated_at: string
@@ -4894,6 +4895,7 @@ export type Database = {
           send_out_unit_cost_php?: number | null
           send_out_vendor_id?: string | null
           senior_discount_php?: number | null
+          senior_pwd_eligible?: boolean
           specialty_code?: string | null
           turnaround_hours?: number | null
           updated_at?: string
@@ -4919,6 +4921,7 @@ export type Database = {
           send_out_unit_cost_php?: number | null
           send_out_vendor_id?: string | null
           senior_discount_php?: number | null
+          senior_pwd_eligible?: boolean
           specialty_code?: string | null
           turnaround_hours?: number | null
           updated_at?: string

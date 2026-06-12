@@ -40,6 +40,7 @@ const SECTION_OPTIONS: { value: string; label: string }[] = [
   { value: "microbiology", label: "Microbiology" },
   { value: "imaging_xray", label: "Imaging — X-Ray" },
   { value: "imaging_ultrasound", label: "Imaging — Ultrasound" },
+  { value: "imaging_ecg", label: "Imaging — ECG" },
   { value: "vaccine", label: "Vaccine" },
   { value: "send_out", label: "Send-out" },
   { value: "consultation", label: "Consultation" },
@@ -55,6 +56,7 @@ interface ServiceDefaults {
   price_php: number | string;
   hmo_price_php: number | string | null;
   senior_discount_php: number | string | null;
+  senior_pwd_eligible: boolean;
   turnaround_hours: number | null;
   kind: string;
   section: string | null;
@@ -215,6 +217,24 @@ export function ServiceForm({ initial, vendors = [] }: Props) {
               Peso amount, not a percentage.
             </p>
           </div>
+          <label className="flex items-start gap-2 text-sm sm:col-span-3">
+            <input
+              type="checkbox"
+              name="senior_pwd_eligible"
+              defaultChecked={initial?.senior_pwd_eligible ?? true}
+              className="mt-0.5"
+            />
+            <span>
+              Senior / PWD 20% discount applies
+              <span className="block text-xs text-[color:var(--color-brand-text-soft)]">
+                Untick for items the discount can&apos;t apply to — e.g. lab
+                packages (already bundled at a discount) or price-sheet
+                &ldquo;*&rdquo;-marked services. When unticked, the quote and
+                new-visit form won&apos;t offer the senior/PWD rate for this
+                service.
+              </span>
+            </span>
+          </label>
         </fieldset>
 
         <div className="grid gap-4 sm:grid-cols-3">

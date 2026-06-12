@@ -9,6 +9,10 @@ import { NewAppointmentSheet, type ServiceOption, type PhysicianOption } from ".
 import { RegistrationLinkButton } from "@/components/staff/registration-link-button";
 import { PageHeader } from "@/components/staff/page-header";
 import { Panel } from "@/components/ui/panel";
+import {
+  sectionTabsNavClass,
+  sectionTabClass,
+} from "@/components/staff/section-tabs-style";
 
 export const metadata = {
   title: "Appointments — staff",
@@ -39,6 +43,7 @@ interface ApptRow {
   patient_phone: string | null;
   service_name: string | null;
   service_code: string | null;
+  service_kind: string | null;
   physician_name: string | null;
   booking_group_id: string | null;
   home_service_requested: boolean;
@@ -57,7 +62,7 @@ const APPT_SELECT = `
   id, scheduled_at, created_at, status, notes,
   walk_in_name, walk_in_phone, booking_group_id, home_service_requested,
   patients ( id, drm_id, first_name, last_name, phone ),
-  services ( name, code ),
+  services ( name, code, kind ),
   physicians ( full_name )
 `;
 
@@ -88,8 +93,8 @@ function rowFrom(a: {
       }>
     | null;
   services?:
-    | { name: string; code: string }
-    | Array<{ name: string; code: string }>
+    | { name: string; code: string; kind: string | null }
+    | Array<{ name: string; code: string; kind: string | null }>
     | null;
   physicians?:
     | { full_name: string }
@@ -113,6 +118,7 @@ function rowFrom(a: {
     patient_phone: p?.phone ?? null,
     service_name: s?.name ?? null,
     service_code: s?.code ?? null,
+    service_kind: s?.kind ?? null,
     physician_name: ph?.full_name ?? null,
     booking_group_id: a.booking_group_id,
     home_service_requested: a.home_service_requested,
@@ -179,11 +185,43 @@ async function loadPendingCallback(): Promise<ApptRow[]> {
   return (data ?? []).map(rowFrom);
 }
 
-export default async function AppointmentsPage() {
+type FilterType = "all" | "consult" | "home";
+
+const FILTER_TABS: { value: FilterType; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "consult", label: "Consultations" },
+  { value: "home", label: "Home service" },
+];
+
+function applyFilter(groups: ApptGroup[], type: FilterType): ApptGroup[] {
+  if (type === "all") return groups;
+  if (type === "home") {
+    return groups.filter((g) =>
+      g.rows.some((r) => r.home_service_requested),
+    );
+  }
+  // consult: any row has kind = doctor_consultation AND the group is NOT a
+  // home-service group (keep buckets mutually exclusive).
+  return groups.filter(
+    (g) =>
+      !g.rows.some((r) => r.home_service_requested) &&
+      g.rows.some((r) => r.service_kind === "doctor_consultation"),
+  );
+}
+
+interface SearchProps {
+  searchParams: Promise<{ type?: string }>;
+}
+
+export default async function AppointmentsPage({ searchParams }: SearchProps) {
   const session = await requireActiveStaff();
   if (session.role !== "reception" && session.role !== "admin") {
     redirect("/staff");
   }
+
+  const sp = await searchParams;
+  const type: FilterType =
+    sp.type === "consult" || sp.type === "home" ? sp.type : "all";
 
   // eslint-disable-next-line react-hooks/purity -- per-request bounds.
   const nowMs = Date.now();
@@ -220,6 +258,25 @@ export default async function AppointmentsPage() {
 
   const todayRows = [...todayScheduled, ...todayWalkIns];
 
+  // Build full (unfiltered) groups for each section — used for tab counts.
+  const allPendingGroups = groupRows(pending);
+  const allTodayGroups = groupRows(todayRows);
+  const allUpcomingGroups = groupRows(upcoming);
+
+  // Counts shown in tab labels — union of all three sections.
+  function countForTab(t: FilterType): number {
+    return (
+      applyFilter(allPendingGroups, t).length +
+      applyFilter(allTodayGroups, t).length +
+      applyFilter(allUpcomingGroups, t).length
+    );
+  }
+
+  // Filtered groups for the active tab.
+  const pendingGroups = applyFilter(allPendingGroups, type);
+  const todayGroups = applyFilter(allTodayGroups, type);
+  const upcomingGroups = applyFilter(allUpcomingGroups, type);
+
   return (
     <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
       <RealtimeRefresher
@@ -240,21 +297,37 @@ export default async function AppointmentsPage() {
         }
       />
 
+      <nav className={sectionTabsNavClass} aria-label="Appointment type filter">
+        {FILTER_TABS.map((tab) => {
+          const active = type === tab.value;
+          return (
+            <Link
+              key={tab.value}
+              href={`/staff/appointments?type=${tab.value}`}
+              className={sectionTabClass(active)}
+              aria-current={active ? "page" : undefined}
+            >
+              {tab.label} ({countForTab(tab.value)})
+            </Link>
+          );
+        })}
+      </nav>
+
       <Section
-        title={`Pending callback (${groupRows(pending).length})`}
-        groups={groupRows(pending)}
+        title={`Pending callback (${pendingGroups.length})`}
+        groups={pendingGroups}
         empty="No pending callbacks. Nice."
         isAdmin={session.role === "admin"}
       />
       <Section
-        title={`Today (${groupRows(todayRows).length})`}
-        groups={groupRows(todayRows)}
+        title={`Today (${todayGroups.length})`}
+        groups={todayGroups}
         empty="No appointments today."
         isAdmin={session.role === "admin"}
       />
       <Section
-        title={`Next 30 days (${groupRows(upcoming).length})`}
-        groups={groupRows(upcoming)}
+        title={`Next 30 days (${upcomingGroups.length})`}
+        groups={upcomingGroups}
         empty="No upcoming appointments."
         isAdmin={session.role === "admin"}
       />

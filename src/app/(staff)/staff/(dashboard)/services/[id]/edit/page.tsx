@@ -30,7 +30,7 @@ export default async function EditServicePage({ params }: Props) {
   const { data: service } = await supabase
     .from("services")
     .select(
-      "id, code, name, description, price_php, hmo_price_php, senior_discount_php, turnaround_hours, kind, section, is_send_out, send_out_lab, is_active, requires_signoff, send_out_unit_cost_php, send_out_vendor_id",
+      "id, code, name, description, price_php, hmo_price_php, senior_discount_php, senior_pwd_eligible, turnaround_hours, kind, section, is_send_out, send_out_lab, is_active, requires_signoff, send_out_unit_cost_php, send_out_vendor_id",
     )
     .eq("id", id)
     .maybeSingle();

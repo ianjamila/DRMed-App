@@ -13,13 +13,15 @@ export const metadata = {
 };
 
 interface Props {
-  searchParams: Promise<{ patient_id?: string; q?: string }>;
+  searchParams: Promise<{ patient_id?: string; q?: string; filter?: string }>;
 }
 
 const PICKER_LIMIT = 25;
 
 export default async function NewVisitPage({ searchParams }: Props) {
-  const { patient_id, q } = await searchParams;
+  const { patient_id, q, filter } = await searchParams;
+  const initialCategory: "lab" | "imaging" | undefined =
+    filter === "lab" || filter === "imaging" ? filter : undefined;
 
   if (!patient_id) {
     return <PatientPicker query={q ?? ""} />;
@@ -38,7 +40,7 @@ export default async function NewVisitPage({ searchParams }: Props) {
       supabase
         .from("services")
         .select(
-          "id, code, name, kind, price_php, hmo_price_php, senior_discount_php",
+          "id, code, name, kind, price_php, hmo_price_php, senior_discount_php, senior_pwd_eligible, section",
         )
         .eq("is_active", true)
         .order("name", { ascending: true }),
@@ -86,7 +88,10 @@ export default async function NewVisitPage({ searchParams }: Props) {
             hmo_price_php: s.hmo_price_php != null ? Number(s.hmo_price_php) : null,
             senior_discount_php:
               s.senior_discount_php != null ? Number(s.senior_discount_php) : null,
+            senior_pwd_eligible: s.senior_pwd_eligible,
+            section: s.section ?? null,
           }))}
+          initialCategory={initialCategory}
           hmoProviders={hmoProviders ?? []}
           physicians={(physicians ?? []).map((p) => ({
             id: p.id,

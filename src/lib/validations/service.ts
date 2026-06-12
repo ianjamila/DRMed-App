@@ -18,6 +18,7 @@ export const SERVICE_SECTIONS = [
   "microbiology",
   "imaging_xray",
   "imaging_ultrasound",
+  "imaging_ecg",
   "vaccine",
   "send_out",
   "consultation",
@@ -75,6 +76,9 @@ export const ServiceSchema = z.object({
   send_out_lab: optionalText,
   is_active: checkbox,
   requires_signoff: checkbox,
+  // Senior/PWD 20% eligibility. Unchecked → false (e.g. lab packages, already
+  // sold at a bundle discount). New services default to checked in the form.
+  senior_pwd_eligible: checkbox,
 });
 
 export type ServiceInput = z.infer<typeof ServiceSchema>;

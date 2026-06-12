@@ -12,6 +12,7 @@ export const ALL_SECTIONS = [
   "microbiology",
   "imaging_xray",
   "imaging_ultrasound",
+  "imaging_ecg",
   "vaccine",
   "send_out",
   "consultation",
@@ -39,7 +40,7 @@ const SECTIONS_BY_ROLE: Record<StaffSession["role"], ServiceSection[] | null> = 
     "microbiology",
     "send_out",
   ],
-  xray_technician: ["imaging_xray", "imaging_ultrasound"],
+  xray_technician: ["imaging_xray", "imaging_ultrasound", "imaging_ecg"],
   pathologist: null,
   admin: null,
 };

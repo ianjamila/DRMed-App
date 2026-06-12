@@ -12,6 +12,7 @@ import { generatePin, hashPin } from "@/lib/auth/pin";
 import { setVisitPinFlash } from "@/lib/auth/visit-pin-flash";
 import { splitDoctorFee } from "@/lib/visits/consultation-fee";
 import { isDoctorKind, partitionByCategory } from "@/lib/visits/order-lines";
+import { isSeniorPwdEligible, seniorPwdDiscount } from "@/lib/pricing/senior";
 import type { Database } from "@/types/database";
 
 const DiscountKindEnum = z.enum([
@@ -99,7 +100,9 @@ export async function createVisitAction(
 
   const { data: services, error: svcErr } = await supabase
     .from("services")
-    .select("id, kind, code, name, price_php, hmo_price_php, senior_discount_php")
+    .select(
+      "id, kind, code, name, price_php, hmo_price_php, senior_discount_php, senior_pwd_eligible",
+    )
     .in("id", parsed.data.service_ids);
 
   if (svcErr || !services || services.length !== parsed.data.service_ids.length) {
@@ -152,10 +155,13 @@ export async function createVisitAction(
 
     let discount_amount_php = 0;
     if (discount_kind === "senior_pwd_20") {
-      discount_amount_php =
-        seniorPesoOff != null
-          ? Math.min(seniorPesoOff, base)
-          : Math.round(base * 0.2 * 100) / 100;
+      // Source of truth for senior/PWD eligibility: ineligible services
+      // (e.g. lab packages) get 0 even if a stale client posted the discount.
+      discount_amount_php = seniorPwdDiscount({
+        base,
+        seniorDiscountPhp: seniorPesoOff,
+        eligible: isSeniorPwdEligible(s),
+      });
     } else if (discount_kind === "pct_10") {
       discount_amount_php = Math.round(base * 0.1 * 100) / 100;
     } else if (discount_kind === "pct_5") {

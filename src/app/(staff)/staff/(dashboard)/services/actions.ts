@@ -26,6 +26,7 @@ function parseForm(formData: FormData) {
     send_out_lab: formData.get("send_out_lab") ?? "",
     is_active: formData.get("is_active"),
     requires_signoff: formData.get("requires_signoff"),
+    senior_pwd_eligible: formData.get("senior_pwd_eligible"),
   });
 }
 

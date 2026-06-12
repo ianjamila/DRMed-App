@@ -10,15 +10,35 @@ import { QuickLinks } from "./_components/quick-links";
 import { ActivityStrip, type ActivityItem } from "./_components/activity-strip";
 import { formatPeso, formatTime, relativeAge } from "./_components/format";
 
-const QUICK_LINKS = [
-  { href: "/staff/patients", label: "Patients" },
-  { href: "/staff/visits/new", label: "New visit" },
-  { href: "/staff/visits", label: "Visit archive" },
-  { href: "/staff/appointments", label: "Appointments" },
-  { href: "/staff/quote", label: "Quick quote" },
-  { href: "/staff/gift-codes/sell", label: "Sell gift code" },
-  { href: "/staff/payments/cash-drawer", label: "Cash drawer" },
-  { href: "/staff/payments/eod", label: "End of day" },
+// Quicklinks mirror the reorganized sidebar groups (Front desk / Billing /
+// Services). Sell gift code, Cash drawer, and End of day were dropped per
+// partner feedback — they now live under the sidebar's "Hidden tabs".
+const QUICK_GROUPS: { label: string; items: { href: string; label: string }[] }[] = [
+  {
+    label: "Front desk",
+    items: [
+      { href: "/staff/patients/new", label: "New patient" },
+      { href: "/staff/patients", label: "Patients" },
+      { href: "/staff/appointments", label: "Appointments" },
+      { href: "/staff/registration", label: "Registration link" },
+      { href: "/staff/visits/queue", label: "Queue" },
+      { href: "/staff/inquiries", label: "Inquiries" },
+    ],
+  },
+  {
+    label: "Billing",
+    items: [
+      { href: "/staff/visits", label: "Billing & receipts" },
+      { href: "/staff/quote", label: "Quick quote" },
+    ],
+  },
+  {
+    label: "Services",
+    items: [
+      { href: "/staff/visits/new?filter=lab", label: "New lab request" },
+      { href: "/staff/visits/new?filter=imaging", label: "New imaging request" },
+    ],
+  },
 ];
 
 const SKIP_COUNT = Promise.resolve({ count: 0, data: null });
@@ -68,6 +88,41 @@ function pluckPatientName(
   return `${row.first_name} ${row.last_name}`.trim();
 }
 
+// Today's order breakdown (partner request #3): count test_request "orders" by
+// category beneath the "Visits today" headline. Counts leaf rows only
+// (is_package_header = false) so a package isn't double-counted with its
+// components; the components themselves fall into Lab/Imaging by their section.
+type OrderRow = {
+  services:
+    | { kind: string; section: string | null }
+    | { kind: string; section: string | null }[]
+    | null;
+};
+
+type OrderBreakdown = {
+  lab: number;
+  imaging: number;
+  consults: number;
+  procedures: number;
+  other: number;
+};
+
+// Imaging has no distinct service kind — imaging services are kind=lab_test
+// with an imaging_* section, so the Imaging bucket is section-driven.
+const IMAGING_SECTIONS = new Set([
+  "imaging_xray",
+  "imaging_ultrasound",
+  "imaging_ecg",
+]);
+
+function bucketOf(kind: string, section: string | null): keyof OrderBreakdown {
+  if (section && IMAGING_SECTIONS.has(section)) return "imaging";
+  if (kind === "doctor_consultation") return "consults";
+  if (kind === "doctor_procedure") return "procedures";
+  if (kind === "vaccine" || kind === "home_service") return "other";
+  return "lab";
+}
+
 async function loadReceptionStats(show: (id: string) => boolean) {
   const supabase = await createClient();
   const admin = createAdminClient();
@@ -108,6 +163,7 @@ async function loadReceptionStats(show: (id: string) => boolean) {
     unpaidVisits,
     recentInquiries,
     cashDrawerState,
+    todayOrders,
   ] = await Promise.all([
     show("reception.visits_today")
       ? supabase
@@ -182,7 +238,30 @@ async function loadReceptionStats(show: (id: string) => boolean) {
           .returns<InquiryRow[]>()
       : SKIP_DATA,
     cashDrawerStatePromise,
+    // Today's leaf orders, joined to their service for kind/section bucketing.
+    // Tied to the "Visits today" card's visibility so a hidden card costs no query.
+    show("reception.visits_today")
+      ? supabase
+          .from("test_requests")
+          .select("id, services!inner ( kind, section ), visits!inner ( visit_date )")
+          .eq("is_package_header", false)
+          .eq("visits.visit_date", today)
+          .returns<OrderRow[]>()
+      : SKIP_DATA,
   ]);
+
+  const orderBreakdown: OrderBreakdown = {
+    lab: 0,
+    imaging: 0,
+    consults: 0,
+    procedures: 0,
+    other: 0,
+  };
+  for (const r of (todayOrders.data ?? []) as OrderRow[]) {
+    const s = Array.isArray(r.services) ? r.services[0] : r.services;
+    if (!s) continue;
+    orderBreakdown[bucketOf(s.kind, s.section)] += 1;
+  }
 
   const unpaidRows = (unpaidToday.data ?? []) as { total_php: number | null; paid_php: number | null }[];
   const unpaidCount = unpaidRows.length;
@@ -207,6 +286,7 @@ async function loadReceptionStats(show: (id: string) => boolean) {
     unpaidVisits: (unpaidVisits.data ?? []) as VisitRow[],
     recentInquiries: (recentInquiries.data ?? []) as InquiryRow[],
     cashDrawer: { expectedCash, isClosed, hasShift: !!activeShift },
+    orderBreakdown,
   };
 }
 
@@ -328,10 +408,38 @@ export async function ReceptionDashboard({
           />
         )}
         </div>
+        {show("reception.visits_today") && (
+          <div className="mt-4">
+            <p className="mb-2 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+              Today&apos;s orders by type
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <OrderChip label="Lab" value={stats.orderBreakdown.lab} />
+              <OrderChip label="Imaging" value={stats.orderBreakdown.imaging} />
+              <OrderChip label="Consults" value={stats.orderBreakdown.consults} />
+              <OrderChip
+                label="Procedures"
+                value={stats.orderBreakdown.procedures}
+              />
+              {stats.orderBreakdown.other > 0 && (
+                <OrderChip label="Other" value={stats.orderBreakdown.other} />
+              )}
+            </div>
+          </div>
+        )}
       </SectionHeading>
 
       <SectionHeading title="Quicklinks">
-        <QuickLinks items={QUICK_LINKS} />
+        <div className="grid gap-4">
+          {QUICK_GROUPS.map((g) => (
+            <div key={g.label}>
+              <p className="mb-2 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+                {g.label}
+              </p>
+              <QuickLinks items={g.items} />
+            </div>
+          ))}
+        </div>
       </SectionHeading>
 
       <SectionHeading title="What needs attention">
@@ -362,6 +470,19 @@ export async function ReceptionDashboard({
         )}
         </div>
       </SectionHeading>
+    </div>
+  );
+}
+
+function OrderChip({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="inline-flex items-center gap-2 rounded-full border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-1.5 text-sm">
+      <span className="font-medium text-[color:var(--color-brand-text-soft)]">
+        {label}
+      </span>
+      <span className="font-heading font-extrabold text-[color:var(--color-brand-navy)]">
+        {value}
+      </span>
     </div>
   );
 }

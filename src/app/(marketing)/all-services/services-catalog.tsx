@@ -32,7 +32,7 @@ const TABS: { key: TabKey; label: string; sections: ServiceSection[] | null }[] 
   {
     key: "imaging",
     label: "Imaging",
-    sections: ["imaging_xray", "imaging_ultrasound"],
+    sections: ["imaging_xray", "imaging_ultrasound", "imaging_ecg"],
   },
   { key: "vaccines", label: "Vaccines", sections: ["vaccine"] },
   { key: "send_out", label: "Specialty", sections: ["send_out"] },
@@ -52,6 +52,7 @@ const SECTION_LABEL: Record<ServiceSection, string> = {
   microbiology: "Microbiology",
   imaging_xray: "X-Ray",
   imaging_ultrasound: "Ultrasound",
+  imaging_ecg: "ECG",
   vaccine: "Vaccine",
   send_out: "Specialty",
   consultation: "Consultation",
