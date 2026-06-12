@@ -4,10 +4,14 @@ import { Analytics } from "@vercel/analytics/next";
 import { SITE } from "@/lib/marketing/site";
 import "./globals.css";
 
+// Body font. `display: "optional"` (not "swap") so the hero subheading — the
+// mobile LCP element — paints immediately in next/font's size-adjusted fallback
+// and never swaps late, which is what gated LCP under throttling. The real face
+// still applies for fast/cached loads; the metric-matched fallback keeps CLS ~0.
 const publicSans = Public_Sans({
   variable: "--font-sans",
   subsets: ["latin"],
-  display: "swap",
+  display: "optional",
 });
 
 // Heading + display fonts are NOT preloaded: only the body font (Public_Sans)
