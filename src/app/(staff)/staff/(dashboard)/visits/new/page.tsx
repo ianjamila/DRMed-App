@@ -38,7 +38,7 @@ export default async function NewVisitPage({ searchParams }: Props) {
       supabase
         .from("services")
         .select(
-          "id, code, name, kind, price_php, hmo_price_php, senior_discount_php",
+          "id, code, name, kind, price_php, hmo_price_php, senior_discount_php, senior_pwd_eligible",
         )
         .eq("is_active", true)
         .order("name", { ascending: true }),
@@ -86,6 +86,7 @@ export default async function NewVisitPage({ searchParams }: Props) {
             hmo_price_php: s.hmo_price_php != null ? Number(s.hmo_price_php) : null,
             senior_discount_php:
               s.senior_discount_php != null ? Number(s.senior_discount_php) : null,
+            senior_pwd_eligible: s.senior_pwd_eligible,
           }))}
           hmoProviders={hmoProviders ?? []}
           physicians={(physicians ?? []).map((p) => ({

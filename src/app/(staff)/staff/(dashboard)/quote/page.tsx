@@ -17,7 +17,7 @@ export default async function QuotePage() {
   const { data } = await supabase
     .from("services")
     .select(
-      "id, code, name, price_php, hmo_price_php, senior_discount_php, turnaround_hours, kind, section, is_send_out",
+      "id, code, name, price_php, hmo_price_php, senior_discount_php, senior_pwd_eligible, turnaround_hours, kind, section, is_send_out",
     )
     .eq("is_active", true)
     .order("name", { ascending: true });
@@ -30,6 +30,7 @@ export default async function QuotePage() {
     hmo_price_php: s.hmo_price_php != null ? Number(s.hmo_price_php) : null,
     senior_discount_php:
       s.senior_discount_php != null ? Number(s.senior_discount_php) : null,
+    senior_pwd_eligible: s.senior_pwd_eligible,
     turnaround_hours: s.turnaround_hours,
     kind: s.kind,
     section: s.section,
