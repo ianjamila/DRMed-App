@@ -8,6 +8,7 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { getPatientConsentState } from "@/lib/consent/gate";
 import { ConsentPanel } from "./consent/consent-panel";
 import { paymentStatusLabel } from "@/lib/ui/payment-status";
+import { formatPatientName } from "@/lib/patients/format-name";
 import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
@@ -83,8 +84,7 @@ export default async function PatientDetailPage({ params }: Props) {
             {patient.drm_id}
           </p>
           <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            {patient.last_name}, {patient.first_name}
-            {patient.middle_name ? ` ${patient.middle_name}` : ""}
+            {formatPatientName(patient)}
           </h1>
           {patient.pre_registered ? (
             <p className="mt-1 inline-block rounded-md bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900">

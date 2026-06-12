@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { VisitsTabs } from "./_components/visits-tabs";
 import { paymentStatusLabel } from "@/lib/ui/payment-status";
+import { formatPatientName } from "@/lib/patients/format-name";
 import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
@@ -41,6 +42,7 @@ type VisitRow = {
     id: string;
     drm_id: string;
     first_name: string;
+    middle_name: string | null;
     last_name: string;
   };
   test_requests: { id: string }[] | null;
@@ -79,7 +81,7 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
     .select(
       `
         id, visit_number, visit_date, payment_status, total_php, paid_php,
-        patients!inner ( id, drm_id, first_name, last_name ),
+        patients!inner ( id, drm_id, first_name, middle_name, last_name ),
         test_requests ( id ),
         payments ( method, voided_at )
       `,
@@ -244,7 +246,7 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
                           href={`/staff/patients/${p.id}`}
                           className="text-[color:var(--color-brand-navy)] hover:underline"
                         >
-                          {p.last_name}, {p.first_name}
+                          {formatPatientName(p)}
                         </Link>{" "}
                         <span className="text-xs text-[color:var(--color-brand-text-soft)]">
                           ({p.drm_id})
@@ -302,7 +304,7 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
                     href={`/staff/patients/${p.id}`}
                     className="mt-1 block font-medium text-[color:var(--color-brand-navy)] hover:underline"
                   >
-                    {p.last_name}, {p.first_name}
+                    {formatPatientName(p)}
                   </Link>
                   <div className="text-xs text-[color:var(--color-brand-text-soft)]">
                     {p.drm_id} · {v.visit_date} · {testCount} test

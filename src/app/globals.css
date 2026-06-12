@@ -169,3 +169,29 @@
 @media (prefers-reduced-motion: reduce) {
   .hmo-ticker { animation: none; }
 }
+
+/* ---------------------------------------------------------------------------
+ * Billing receipts — A5 paper (partner request, 2026-06-13).
+ *
+ * A named `@page` scoped via the `page` property keeps A5 on the visit/group
+ * receipts only; other print surfaces (e.g. the consent form) stay at the
+ * browser default. A5 printable width at 10mm margins is ~128mm, much narrower
+ * than the on-screen `max-w-2xl` sheet — so the print rules below drop the
+ * width cap and tighten the vertical rhythm so a single visit fits one page.
+ * ------------------------------------------------------------------------- */
+@page receipt {
+  size: A5;
+  margin: 10mm;
+}
+
+.receipt-print {
+  page: receipt;
+}
+
+@media print {
+  /* Fill the A5 content box instead of the 672px on-screen cap. */
+  .receipt-print .receipt-sheet {
+    max-width: none;
+    width: 100%;
+  }
+}
