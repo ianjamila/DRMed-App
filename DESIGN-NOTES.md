@@ -139,4 +139,25 @@ is flagged PLACEHOLDER/VERIFY at its use site in code.
   metadata + anchors preserved. Brand icons: lucide-react has no Facebook/Instagram
   glyphs in this version → ExternalLink + aria-label used in contact/footer.
 
-_Updated through phase c. Subpages + booking wizard + final pass to follow._
+- **Phase d** — booking wizard. `/schedule`'s `BookingForm` rewritten into a
+  5-step ECG-progress wizard (Patient → Booking → Details → About you → Review →
+  Success) in `src/components/marketing/booking-wizard/` (EcgProgress, StepShell,
+  ChoiceCard, Chip, WizardField, ReviewRows, SuccessPanel). **Booking behavior is
+  unchanged**: the same `submitBookingAction` / `lookupPatientAction` / zod
+  schemas, the same FormData keys. Architecture: visible steps are pure state UI
+  (AnimatePresence slides), and one persistent `HiddenFields` block carries every
+  value to the server, so steps can mount/unmount without losing data. `SlotPicker`
+  was made controlled (state lifted) and restyled as a chip grid; availability /
+  closure logic unchanged. Inline per-step validation shows the same zod messages
+  (shake + ok-tick); server zod stays the source of truth. Focused-funnel layout
+  (C12): `/schedule` hides the marketing nav/footer/FAB via `HideOnPaths` +
+  `MarketingNav` self-opt-out and renders its own header + minimal footer; the
+  walk-in hours/location moved into the diagnostic-package step. `/portal/book`
+  reuses the wizard via `prefilledPatient` (Patient + About-you steps skipped).
+  Deviations: the multi-test picker stays a searchable list (not chips) since the
+  real catalog is ~250 tests; native `required` dropped in favor of JS gating +
+  server zod (avoids hidden-step focusability errors). Verified steps 1–5 + doctor
+  branch + validation at 1440/390; **live submission deferred to the phase-f E2E**
+  (no real bookings created from local dev — R3).
+
+_Updated through phase d. Subpages + final pass to follow._

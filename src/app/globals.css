@@ -78,6 +78,11 @@
   --color-ink-mid: #4A5266;           /* secondary copy */
   --color-ink-soft: #7C8398;          /* muted / captions / labels */
 
+  /* ---- Marketing semantic status (warm palette) ------------------- */
+  --color-danger: #C2402F;            /* warm error red — form messages */
+  --color-warning: #B45309;           /* amber-700 — caution notices */
+  --color-success: #1B9E63;           /* confirmation green — success draw */
+
   /* ---- Marketing elevation (warm-tinted; reference --sh-1/--sh-2) -- */
   --shadow-warm-sm: 0 1px 2px rgb(32 40 58 / 0.05), 0 8px 24px -12px rgb(32 40 58 / 0.12);
   --shadow-warm-lg: 0 2px 4px rgb(32 40 58 / 0.06), 0 18px 44px -16px rgb(38 63 145 / 0.22);
@@ -272,4 +277,103 @@
 @keyframes fabIn {
   from { opacity: 0; transform: translateY(12px) scale(0.88); }
   to   { opacity: 1; transform: translateY(0)    scale(1); }
+}
+
+/* ============================================================
+   Booking wizard (/schedule) — ECG progress, field validation,
+   success draw, review cascade. Reduced-motion safe.
+   ============================================================ */
+@keyframes wizardshake {
+  10%, 90% { transform: translateX(-2px); }
+  25%, 75% { transform: translateX(4px); }
+  50% { transform: translateX(-4px); }
+}
+
+/* ECG progress nodes */
+.wizard-prog-node {
+  fill: #fff;
+  stroke: var(--color-warm-line);
+  stroke-width: 1.6;
+  transition: fill 0.3s, stroke 0.3s;
+}
+.wizard-prog-node.done {
+  fill: var(--color-brand-cyan);
+  stroke: var(--color-brand-cyan);
+}
+.wizard-prog-node.now {
+  stroke: var(--color-brand-cyan);
+  stroke-width: 2;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .wizard-prog-node.now {
+    animation: wizard-nodebeat 2.8s ease-in-out 0.8s infinite;
+  }
+}
+@keyframes wizard-nodebeat {
+  0%, 38%, 100% { transform: scale(1); }
+  10% { transform: scale(1.4); }
+  20% { transform: scale(1); }
+  28% { transform: scale(1.22); }
+}
+
+/* Success draw — ECG → ring → check */
+.wizard-suc-ecg {
+  fill: none;
+  stroke: var(--color-brand-cyan);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+}
+.wizard-suc-ring {
+  fill: none;
+  stroke: #1b9e63;
+  stroke-width: 2.4;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+}
+.wizard-suc-check {
+  fill: none;
+  stroke: #1b9e63;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+}
+.wizard-success.go .wizard-suc-ecg {
+  stroke-dashoffset: 0;
+  transition: stroke-dashoffset 1.1s ease;
+}
+.wizard-success.go .wizard-suc-ring {
+  stroke-dashoffset: 0;
+  transition: stroke-dashoffset 0.6s ease 1s;
+}
+.wizard-success.go .wizard-suc-check {
+  stroke-dashoffset: 0;
+  transition: stroke-dashoffset 0.4s ease 1.5s;
+}
+
+/* Review cascade — rows fade up in sequence */
+@media (prefers-reduced-motion: no-preference) {
+  .wizard-casc > div { opacity: 0; transform: translateY(10px); }
+  .wizard-casc.go > div {
+    opacity: 1;
+    transform: none;
+    transition: opacity 0.4s cubic-bezier(0.2, 0.7, 0.3, 1),
+      transform 0.4s cubic-bezier(0.2, 0.7, 0.3, 1);
+  }
+  .wizard-casc.go > div:nth-child(2) { transition-delay: 0.07s; }
+  .wizard-casc.go > div:nth-child(3) { transition-delay: 0.14s; }
+  .wizard-casc.go > div:nth-child(4) { transition-delay: 0.21s; }
+  .wizard-casc.go > div:nth-child(5) { transition-delay: 0.28s; }
+  .wizard-casc.go > div:nth-child(6) { transition-delay: 0.35s; }
+  .wizard-casc.go > div:nth-child(7) { transition-delay: 0.42s; }
+  .wizard-casc.go > div:nth-child(8) { transition-delay: 0.49s; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wizard-suc-ecg, .wizard-suc-ring, .wizard-suc-check { stroke-dashoffset: 0; }
 }

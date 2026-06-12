@@ -3,6 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 import { NAV_LINKS, SITE } from "@/lib/marketing/site";
 import { PatientPortalLauncher } from "./patient-portal-launcher";
 import {
@@ -11,9 +12,13 @@ import {
   MobileDrawer,
 } from "@/components/ui/mobile-drawer";
 
+// Routes that use the focused-funnel layout (no marketing nav). See HideOnPaths.
+const FOCUSED_ROUTES = ["/schedule"];
+
 export function MarketingNav() {
   const [open, setOpen] = useState(false);
   const close = () => setOpen(false);
+  const pathname = usePathname();
 
   // Condense-on-scroll: shrink header after 420px. Initialize false to avoid
   // hydration mismatch — updated only after mount via passive scroll listener.
@@ -26,6 +31,8 @@ export function MarketingNav() {
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
+
+  if (FOCUSED_ROUTES.includes(pathname)) return null;
 
   return (
     <header
