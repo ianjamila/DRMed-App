@@ -5,6 +5,7 @@ import { peekVisitGroupPinFlash } from "@/lib/auth/visit-pin-flash";
 import { formatPhp } from "@/lib/marketing/format";
 import { CONTACT, SITE } from "@/lib/marketing/site";
 import { getPatientConsentState } from "@/lib/consent/gate";
+import { formatPatientName } from "@/lib/patients/format-name";
 import { PrintButton } from "./print-button";
 
 export const metadata = { title: "Combined receipt — staff" };
@@ -25,7 +26,7 @@ export default async function GroupReceiptPage({ params }: Props) {
       `
         id, visit_number, visit_date, total_php, visit_group_id,
         patients!inner (
-          id, drm_id, first_name, last_name,
+          id, drm_id, first_name, middle_name, last_name,
           senior_pwd_id_kind, senior_pwd_id_number
         ),
         test_requests (
@@ -62,7 +63,7 @@ export default async function GroupReceiptPage({ params }: Props) {
     .sort((a, b) => Number(b.isDoctor) - Number(a.isDoctor));
 
   return (
-    <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6 lg:px-8 print:p-0">
+    <div className="receipt-print mx-auto max-w-2xl px-4 py-8 sm:px-6 lg:px-8 print:p-0">
       <div className="mb-4 flex items-center justify-between gap-2 print:hidden">
         <Link
           href={`/staff/visits/${visits[0]!.id}`}
@@ -81,14 +82,14 @@ export default async function GroupReceiptPage({ params }: Props) {
         return (
           <article
             key={slip.visit.id}
-            className={`rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-8 print:border-0 print:p-0 ${
+            className={`receipt-sheet rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-8 print:border-0 print:p-0 print:text-xs ${
               idx > 0 ? "mt-8 print:mt-0 print:break-before-page" : ""
             }`}
           >
-            <header className="border-b border-[color:var(--color-brand-bg-mid)] pb-4">
+            <header className="border-b border-[color:var(--color-brand-bg-mid)] pb-4 print:pb-2">
               {/* eslint-disable-next-line @next/next/no-img-element -- plain img prints reliably */}
-              <img src="/logo.png" alt="DRMed" className="mb-2 h-14 w-auto" />
-              <p className="font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
+              <img src="/logo.png" alt="DRMed" className="mb-2 h-14 w-auto print:mb-1 print:h-10" />
+              <p className="font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)] print:text-lg">
                 {SITE.name}
               </p>
               <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
@@ -102,13 +103,13 @@ export default async function GroupReceiptPage({ params }: Props) {
               </p>
             </header>
 
-            <div className="grid gap-3 border-b border-[color:var(--color-brand-bg-mid)] py-4 text-sm sm:grid-cols-2">
+            <div className="grid gap-3 border-b border-[color:var(--color-brand-bg-mid)] py-4 text-sm sm:grid-cols-2 print:py-2">
               <div>
                 <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                   Patient
                 </p>
                 <p className="mt-0.5 font-semibold text-[color:var(--color-brand-navy)]">
-                  {patient.last_name}, {patient.first_name}
+                  {formatPatientName(patient)}
                 </p>
                 <p className="font-mono text-xs text-[color:var(--color-brand-text-soft)]">
                   {patient.drm_id}
@@ -127,26 +128,26 @@ export default async function GroupReceiptPage({ params }: Props) {
               </div>
             </div>
 
-            <table className="w-full text-sm">
+            <table className="w-full text-sm print:text-xs">
               <thead className="text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                 <tr>
-                  <th className="py-3">Code</th>
-                  <th className="py-3">Service</th>
-                  <th className="py-3 text-right">Price</th>
-                  <th className="py-3 text-right">Discount</th>
-                  <th className="py-3 text-right">Net</th>
+                  <th className="py-3 print:py-1.5">Code</th>
+                  <th className="py-3 print:py-1.5">Service</th>
+                  <th className="py-3 text-right print:py-1.5">Price</th>
+                  <th className="py-3 text-right print:py-1.5">Discount</th>
+                  <th className="py-3 text-right print:py-1.5">Net</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
                 {slip.lines.map((l) => (
                   <tr key={l.id}>
-                    <td className="py-3 font-mono">{l.svc?.code}</td>
-                    <td className="py-3">{l.svc?.name}</td>
-                    <td className="py-3 text-right">{formatPhp(l.base)}</td>
-                    <td className="py-3 text-right">
+                    <td className="py-3 font-mono print:py-1.5">{l.svc?.code}</td>
+                    <td className="py-3 print:py-1.5">{l.svc?.name}</td>
+                    <td className="py-3 text-right print:py-1.5">{formatPhp(l.base)}</td>
+                    <td className="py-3 text-right print:py-1.5">
                       {l.discount > 0 ? `− ${formatPhp(l.discount)}` : "—"}
                     </td>
-                    <td className="py-3 text-right">{formatPhp(l.final)}</td>
+                    <td className="py-3 text-right print:py-1.5">{formatPhp(l.final)}</td>
                   </tr>
                 ))}
               </tbody>

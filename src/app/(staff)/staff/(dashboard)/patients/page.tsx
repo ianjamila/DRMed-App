@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { formatPhoneLocal } from "@/lib/format/phone";
 import { patientSearchOrClauses } from "@/lib/patients/search";
+import { formatPatientName } from "@/lib/patients/format-name";
 import { PatientsSearchInput } from "./search-input";
 import { PageHeader } from "@/components/staff/page-header";
 import { Panel } from "@/components/ui/panel";
@@ -24,7 +25,7 @@ async function search(query: string | undefined, page: number) {
   let q = supabase
     .from("patients")
     .select(
-      "id, drm_id, first_name, last_name, phone, email, pre_registered, created_at",
+      "id, drm_id, first_name, middle_name, last_name, phone, email, pre_registered, created_at",
       { count: "exact" },
     )
     .order("created_at", { ascending: false })
@@ -102,10 +103,7 @@ export default async function PatientsPage({ searchParams }: SearchProps) {
               </tr>
             ) : (
               patients.map((p) => {
-                const displayName =
-                  p.last_name?.trim() || p.first_name?.trim()
-                    ? `${p.last_name ?? ""}${p.last_name && p.first_name ? ", " : ""}${p.first_name ?? ""}`
-                    : "—";
+                const displayName = formatPatientName(p);
                 return (
                   <tr
                     key={p.id}
@@ -123,12 +121,12 @@ export default async function PatientsPage({ searchParams }: SearchProps) {
                       <Link
                         href={`/staff/patients/${p.id}`}
                         className={
-                          displayName === "—"
+                          !displayName
                             ? "italic text-[color:var(--color-brand-text-soft)] hover:text-[color:var(--color-brand-cyan)]"
                             : "font-semibold text-[color:var(--color-brand-navy)] hover:text-[color:var(--color-brand-cyan)]"
                         }
                       >
-                        {displayName === "—" ? "(no name on file)" : displayName}
+                        {displayName || "(no name on file)"}
                       </Link>
                     </td>
                     <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
