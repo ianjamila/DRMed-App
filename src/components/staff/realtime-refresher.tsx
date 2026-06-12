@@ -5,7 +5,7 @@ import { useEffect, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 
 interface Subscription {
-  table: "appointments" | "test_requests";
+  table: "appointments" | "test_requests" | "visits" | "payments";
   event?: "INSERT" | "UPDATE" | "*";
 }
 

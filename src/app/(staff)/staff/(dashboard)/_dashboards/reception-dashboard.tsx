@@ -21,6 +21,7 @@ const QUICK_GROUPS: { label: string; items: { href: string; label: string }[] }[
       { href: "/staff/patients", label: "Patients" },
       { href: "/staff/appointments", label: "Appointments" },
       { href: "/staff/registration", label: "Registration link" },
+      { href: "/staff/visits/queue", label: "Queue" },
       { href: "/staff/inquiries", label: "Inquiries" },
     ],
   },

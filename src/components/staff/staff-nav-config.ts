@@ -88,6 +88,12 @@ export const STAFF_NAV: StaffNavSection[] = [
         roles: ["reception", "admin"],
       },
       {
+        href: "/staff/visits/queue",
+        label: "Queue",
+        description: "Today's live front-desk worklist in three stages: Waiting for payment (record the payment), Processing (lab/imaging still working on results) and Completed (paid, nothing outstanding — print the patient's billing). Updates on its own as payments come in and tests finish.",
+        roles: ["reception", "admin"],
+      },
+      {
         href: "/staff/inquiries",
         label: "Inquiries",
         description: "Inquiries that came in through the website chat or Messenger but haven't been converted into a real appointment yet. Follow up here to book them or close the thread.",
@@ -103,8 +109,9 @@ export const STAFF_NAV: StaffNavSection[] = [
         label: "Billing & receipts",
         // /staff/visits is the visit archive (every visit ever); each visit
         // opens to its printable A5 billing. excludePrefixes keeps this item
-        // from lighting on /staff/visits/new, which belongs to Services below.
-        excludePrefixes: ["/staff/visits/new"],
+        // from lighting on /staff/visits/new (Services) or /staff/visits/queue
+        // (the Front-desk Queue item owns that route).
+        excludePrefixes: ["/staff/visits/new", "/staff/visits/queue"],
         description: "Every visit ever, searchable by date / patient / status. Open a visit to print its patient billing (A5) and re-issue receipts. This is the record side of billing — to start a new charge, use New lab/imaging request under Services.",
         roles: ["reception", "admin"],
       },
