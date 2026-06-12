@@ -1,3 +1,4 @@
+import { MotionConfig } from "motion/react";
 import { MarketingNav } from "@/components/marketing/marketing-nav";
 import { MarketingFooter } from "@/components/marketing/marketing-footer";
 import { ScrollPulse } from "@/components/marketing/motion";
@@ -12,7 +13,10 @@ export default function MarketingLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <>
+    // reducedMotion="user" makes every motion primitive honor the OS preference
+    // (skip transforms, keep opacity) WITHOUT branching the rendered DOM on it —
+    // so reduced-motion clients hydrate cleanly.
+    <MotionConfig reducedMotion="user">
       <ScrollPulse />
       <MarketingNav />
       <main className="flex-1 overflow-x-clip bg-[color:var(--color-warm-bg)] text-[color:var(--color-ink)]">
@@ -22,6 +26,6 @@ export default function MarketingLayout({
         <MarketingFooter />
         <MessengerFab />
       </HideOnPaths>
-    </>
+    </MotionConfig>
   );
 }

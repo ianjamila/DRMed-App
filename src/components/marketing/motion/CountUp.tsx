@@ -17,8 +17,10 @@ interface CountUpProps {
 
 /**
  * Counts a number up from 0 to `to` the first time it scrolls into view.
- * Reduced-motion shows the final value immediately. The numeric value uses
- * en-PH grouping so large stats read naturally.
+ *
+ * The render always shows the current `value` (starts at 0) so the server and
+ * the first client render agree — no hydration mismatch. The reduced-motion
+ * decision lives in the effect (jump straight to `to`), never in render.
  */
 export function CountUp({
   to,
@@ -34,7 +36,12 @@ export function CountUp({
   const [value, setValue] = useState(0);
 
   useEffect(() => {
-    if (!inView || reduce) return;
+    if (!inView) return;
+    if (reduce) {
+      // Defer one tick so this is a post-hydration update, not a render branch.
+      const id = requestAnimationFrame(() => setValue(to));
+      return () => cancelAnimationFrame(id);
+    }
     const controls = animate(0, to, {
       duration,
       ease: [0.2, 0.7, 0.3, 1],
@@ -43,8 +50,7 @@ export function CountUp({
     return () => controls.stop();
   }, [inView, reduce, to, duration]);
 
-  // Reduced motion renders the final value directly (no state churn).
-  const formatted = (reduce ? to : value).toLocaleString("en-PH", {
+  const formatted = value.toLocaleString("en-PH", {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
   });

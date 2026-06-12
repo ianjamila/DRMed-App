@@ -1,6 +1,6 @@
 "use client";
 
-import { motion, useReducedMotion } from "motion/react";
+import { motion } from "motion/react";
 import type { ReactNode } from "react";
 
 const container = {
@@ -21,12 +21,12 @@ const item = {
 
 /**
  * Container that staggers its {@link HeroStaggerItem} children in on mount.
- * Used for the hero column (eyebrow → headline → lead → CTAs). Reduced-motion
- * renders everything immediately.
+ * Reduced motion is handled globally by `<MotionConfig reducedMotion="user">`
+ * (set in the marketing layout) — it keeps opacity and skips the transform.
+ * The render never branches on `useReducedMotion`, so there is no hydration
+ * mismatch for reduced-motion clients.
  */
 export function HeroStagger({ children, className }: { children: ReactNode; className?: string }) {
-  const reduce = useReducedMotion();
-  if (reduce) return <div className={className}>{children}</div>;
   return (
     <motion.div className={className} variants={container} initial="hidden" animate="show">
       {children}
@@ -41,8 +41,6 @@ export function HeroStaggerItem({
   children: ReactNode;
   className?: string;
 }) {
-  const reduce = useReducedMotion();
-  if (reduce) return <div className={className}>{children}</div>;
   return (
     <motion.div className={className} variants={item}>
       {children}

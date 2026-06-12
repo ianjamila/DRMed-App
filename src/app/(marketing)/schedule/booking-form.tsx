@@ -2,7 +2,7 @@
 
 import { useActionState, useMemo, useState } from "react";
 import Link from "next/link";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion, MotionConfig } from "motion/react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -157,7 +157,6 @@ export function BookingForm({
   prefilledPatient,
 }: Props) {
   const isPortalContext = prefilledPatient !== undefined;
-  const reduce = useReducedMotion();
 
   const [branch, setBranch] = useState<Branch>("lab_request");
   // Personal-info fields stay in controlled state (React 19 resets uncontrolled
@@ -368,16 +367,17 @@ export function BookingForm({
   // because nested forms are illegal. Continue is gated until a record resolves.
   const canContinuePatient = patientMode === "new" || resolvedPatient !== null;
 
-  const slide = reduce
-    ? {}
-    : {
-        initial: { opacity: 0, x: direction * 36 },
-        animate: { opacity: 1, x: 0 },
-        exit: { opacity: 0, x: direction * -36 },
-        transition: { duration: 0.35, ease: [0.2, 0.7, 0.3, 1] as const },
-      };
+  // Reduced motion is honored by MotionConfig below (skips the x transform,
+  // keeps the opacity fade) — we don't branch the render on it.
+  const slide = {
+    initial: { opacity: 0, x: direction * 36 },
+    animate: { opacity: 1, x: 0 },
+    exit: { opacity: 0, x: direction * -36 },
+    transition: { duration: 0.35, ease: [0.2, 0.7, 0.3, 1] as const },
+  };
 
   return (
+    <MotionConfig reducedMotion="user">
     <div>
       <EcgProgress steps={steps.map((s) => STEP_LABEL[s])} current={stepIndex} />
 
@@ -791,6 +791,7 @@ export function BookingForm({
           : "By submitting, you'll receive SMS and email confirmation. New patients are pre-registered — reception verifies your identity at the counter. For corporate or HMO bookings, message us instead."}
       </p>
     </div>
+    </MotionConfig>
   );
 }
 

@@ -172,4 +172,27 @@ is flagged PLACEHOLDER/VERIFY at its use site in code.
   "Our Values" grid — copy distilled from the existing mission/vision text, flagged
   PLACEHOLDER/VERIFY for partner sign-off (see launch checklist).
 
-_Updated through phase e. Final pass (a11y, Lighthouse, E2E, docs) to follow._
+- **Phase f** — final pass.
+  - **Reduced-motion sweep**: fixed a hydration mismatch that occurred for
+    reduced-motion clients — `Reveal` / `HeroStagger` / `CountUp` / the wizard
+    slide no longer branch their rendered DOM on `useReducedMotion`. A
+    `<MotionConfig reducedMotion="user">` (marketing layout + booking wizard) now
+    honors the OS preference (skips transforms, keeps opacity) with identical
+    SSR/client DOM. Verified 0 hydration/console errors under
+    `reducedMotion: 'reduce'` on `/` and `/schedule`, with every section visible.
+  - **vitest**: full suite green (188 tests / 26 files) — unchanged by the redesign.
+  - **Link/anchor sweep**: all marketing routes return 200
+    (`/ /schedule /packages /physicians /all-services /all-services/[code] /about
+    /contact /register /privacy /terms /newsletter`); all 7 homepage anchors
+    (`#home #services #packages #doctors #hmo #contact #portal`) present; nav/footer
+    links all resolve.
+  - **Logo**: marketing nav + `/schedule` logo served via `next/image` with explicit
+    dimensions/sizes (the 394KB source is optimized to the rendered size). Raw
+    `<img>` remains only in staff receipts / print / poster contexts (intentional).
+  - **Pending user go-ahead (outward-facing / creates prod data)**: booking E2E on a
+    Vercel preview (4 branches + portal, ZZTEST patients + cleanup, R2/R3) and
+    Lighthouse-mobile on the preview (Perf ≥90 / A11y ≥95 / SEO ≥95). The branch is
+    not yet pushed; these run after deploy with explicit approval.
+
+_Design system complete through phase f (local verification). Preview E2E +
+Lighthouse pending a deploy._
