@@ -27,7 +27,7 @@ const FAQ_ITEMS = [
   {
     question: "Can you come to my home or office?",
     answer:
-      "Yes — home service covers lab collection and consultations. Book it online or message us, and reception will call to confirm the schedule and fee.",
+      "Yes — our team comes to your home or office for lab sample collection (subject to availability). Consultations are done in the clinic, though some doctors offer online consultations by appointment. Book online or message us, and reception will call to confirm the schedule and fee.",
   },
 ] as const;
 
