@@ -9,11 +9,17 @@ const publicSans = Public_Sans({
   display: "swap",
 });
 
+// Heading + display fonts are NOT preloaded: only the body font (Public_Sans)
+// gates the hero subheading LCP, so preloading the heavier secondary faces
+// alongside it pushes the body font late in the network queue under throttling
+// (Lantern simulated-LCP driver). They keep `display: "swap"`, so headings/
+// accents still paint immediately in the fallback and swap in on load.
 const montserrat = Montserrat({
   variable: "--font-heading",
   subsets: ["latin"],
   weight: ["600", "700", "800", "900"],
   display: "swap",
+  preload: false,
 });
 
 // Marketing display serif — italic accents in headlines. Single weight (400),
@@ -24,6 +30,7 @@ const instrumentSerif = Instrument_Serif({
   weight: "400",
   style: ["normal", "italic"],
   display: "swap",
+  preload: false,
 });
 
 export const metadata: Metadata = {

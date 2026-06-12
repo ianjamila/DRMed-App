@@ -57,7 +57,7 @@ export function OpenNowPill() {
 
   return (
     <span
-      className="ml-2 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-0.5 align-middle text-[11px] font-bold text-white/60"
+      className="ml-2 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-0.5 align-middle text-[11px] font-bold text-white/75"
       aria-label="Clinic is currently closed"
     >
       <span className="h-1.5 w-1.5 rounded-full bg-white/40" aria-hidden="true" />

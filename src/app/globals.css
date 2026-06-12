@@ -55,7 +55,7 @@
   --color-brand-navy-deep: #1B2E6E;   /* deeper navy — footer field, navy bands */
   --color-brand-steel: #4682b4;
   --color-brand-cyan: #08A8E2;        /* accent / CTA — decorative + large display only (3.5:1 navy, 2.7:1 white) */
-  --color-brand-cyan-text: #0779A6;   /* AA-safe cyan (4.9:1 on white) — small cyan text/links on light */
+  --color-brand-cyan-text: #07739E;   /* AA-safe cyan — small cyan text/links + heading accents on light (4.6:1 warm-sand, 5.0:1 warm-bg, 5.3:1 white) */
   --color-brand-cyan-on-navy: #9BDCF7;/* AA cyan on navy — text/icons on dark surfaces */
   --color-brand-cyan-bright: #3FC1F2; /* bright step — hover/glow on dark (8.8:1 on dark base) */
   --color-brand-cyan-light: #7fbeff;

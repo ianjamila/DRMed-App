@@ -155,7 +155,13 @@ export function Hero() {
                 alt="DRMed Clinic, Northridge Plaza"
                 width={720}
                 height={520}
-                priority
+                // LCP hero image. Next 16 deprecated `priority` (preload-only, no
+                // fetchpriority) — use eager + high fetch priority so it loads at
+                // High network priority, and `sizes` so mobile pulls a ~750w
+                // variant instead of the 1920w 2x (was the simulated-LCP driver).
+                loading="eager"
+                fetchPriority="high"
+                sizes="(min-width: 1024px) 560px, 100vw"
                 className="hero-photo-img h-[420px] w-full rounded-[200px_200px_26px_26px] object-cover shadow-[var(--shadow-warm-lg)] md:h-[520px]"
               />
 

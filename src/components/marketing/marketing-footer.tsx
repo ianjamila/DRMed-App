@@ -9,7 +9,7 @@ export function MarketingFooter() {
       <div className="border-b border-white/10">
         <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-8 sm:px-6 md:flex-row md:items-center md:justify-between lg:px-8">
           <div className="max-w-md">
-            <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-white/45">
+            <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-white/65">
               Newsletter
             </p>
             <p className="mt-2 text-lg font-extrabold text-white">
@@ -74,7 +74,7 @@ export function MarketingFooter() {
 
         {/* Site links */}
         <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-white/45">
+          <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-white/65">
             Site
           </p>
           <ul className="mt-3 space-y-2 text-sm">
@@ -126,7 +126,7 @@ export function MarketingFooter() {
 
         {/* Legal + social */}
         <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-white/45">
+          <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-white/65">
             Legal
           </p>
           <ul className="mt-3 space-y-2 text-sm">
@@ -166,14 +166,14 @@ export function MarketingFooter() {
 
       {/* Bottom bar */}
       <div className="border-t border-white/10">
-        <div className="mx-auto flex max-w-7xl flex-col items-start justify-between gap-3 px-4 py-6 text-xs text-white/50 sm:flex-row sm:items-center sm:px-6 lg:px-8">
+        <div className="mx-auto flex max-w-7xl flex-col items-start justify-between gap-3 px-4 py-6 text-xs text-white/65 sm:flex-row sm:items-center sm:px-6 lg:px-8">
           <p>
             © {new Date().getFullYear()} {SITE.name}. Protected under the
             Philippine Data Privacy Act (RA 10173).
           </p>
           <Link
             href="/staff/login"
-            className="text-white/40 hover:text-white/70"
+            className="text-white/60 hover:text-white/90"
           >
             Staff sign in
           </Link>
