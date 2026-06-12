@@ -6,8 +6,9 @@ import {
   ArrowRight,
   Lock,
 } from "lucide-react";
+import Image from "next/image";
 import { SectionHeading, PillLink } from "@/components/marketing/ui";
-import { Reveal, PendingPhoto } from "@/components/marketing/motion";
+import { Reveal } from "@/components/marketing/motion";
 
 const PORTAL_FEATURES = [
   {
@@ -104,9 +105,13 @@ export function PortalPromo() {
 
             {/* Pending photo slot #3 */}
             <Reveal className="mt-[18px]">
-              <PendingPhoto
-                className="h-[230px] w-full rounded-[20px]"
-                label="Patient reviewing results at home, soft morning light (pending shoot)"
+              <Image
+                src="/photos/results-at-home.jpg"
+                alt="Patient reviewing lab results on a phone at home in soft morning light"
+                width={1400}
+                height={870}
+                sizes="(min-width: 1024px) 600px, 100vw"
+                className="h-[230px] w-full rounded-[20px] object-cover"
               />
               <p className="mt-2 text-[11px] italic text-[color:var(--color-ink-soft)]">
                 Your results, anytime — from the comfort of home
