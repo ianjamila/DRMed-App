@@ -39,6 +39,7 @@ const SECTION_LABEL: Record<string, string> = {
   microbiology: "Microbiology",
   imaging_xray: "X-Ray",
   imaging_ultrasound: "Ultrasound",
+  imaging_ecg: "ECG",
   vaccine: "Vaccines",
   send_out: "Send-out",
   consultation: "Consultations",
