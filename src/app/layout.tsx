@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Public_Sans, Montserrat } from "next/font/google";
+import { Public_Sans, Montserrat, Instrument_Serif } from "next/font/google";
 import { SITE } from "@/lib/marketing/site";
 import "./globals.css";
 
@@ -13,6 +13,16 @@ const montserrat = Montserrat({
   variable: "--font-heading",
   subsets: ["latin"],
   weight: ["600", "700", "800", "900"],
+  display: "swap",
+});
+
+// Marketing display serif — italic accents in headlines. Single weight (400),
+// normal + italic. Self-hosted at build by next/font (satisfies "self-hosted").
+const instrumentSerif = Instrument_Serif({
+  variable: "--font-display",
+  subsets: ["latin"],
+  weight: "400",
+  style: ["normal", "italic"],
   display: "swap",
 });
 
@@ -46,7 +56,7 @@ export default function RootLayout({
   return (
     <html
       lang={SITE.locale}
-      className={`${publicSans.variable} ${montserrat.variable} h-full antialiased`}
+      className={`${publicSans.variable} ${montserrat.variable} ${instrumentSerif.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-white text-[color:var(--color-brand-text)]">
         {children}

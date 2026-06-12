@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html lang="en-PH">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DRMed — Direction 1 · Refined Evolution</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Public+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet" />
+<script>document.documentElement.classList.add('js');</script>
+<style>
+  :root {
+    --navy: #263F91; --navy-deep: #1B2E6E; --cyan: #08A8E2; --cyan-soft: rgba(8,168,226,0.10);
+    --cyan-text: #0779A6; --cyan-on-navy: #9BDCF7; --bg: #FBF9F5; --sand: #F3EEE6; --line: #E9E2D5; --line-soft: #F0EBDF;
+    --ink: #20283A; --ink-mid: #4A5266; --ink-soft: #7C8398;
+    --serif: "Instrument Serif", Georgia, serif;
+    --sans: "Public Sans", system-ui, sans-serif;
+    --sh-1: 0 1px 2px rgba(32,40,58,.05), 0 8px 24px -12px rgba(32,40,58,.12);
+    --sh-2: 0 2px 4px rgba(32,40,58,.06), 0 18px 44px -16px rgba(38,63,145,.22);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 16px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+  a { color: inherit; text-decoration: none; }
+  img { display: block; }
+  .wrap { width: 100%; max-width: 1180px; margin-inline: auto; padding-inline: 22px; }
+  i[data-lucide], svg.lucide { width: 22px; height: 22px; stroke-width: 1.8; }
+
+  .eyebrow { display: inline-flex; align-items: center; gap: 12px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .18em; color: var(--cyan-text); margin: 0; }
+  .pkg-band .eyebrow, .contact .eyebrow { color: var(--cyan-on-navy); }
+  .eyebrow::before { content: ""; width: 30px; height: 1px; background: var(--cyan); }
+  .display { font-family: var(--serif); font-weight: 400; line-height: 1.04; letter-spacing: -0.01em; color: var(--navy); margin: 0; }
+  .display em { font-style: italic; color: var(--cyan); }
+  .lead { color: var(--ink-mid); font-size: 17px; }
+
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 9px; font-family: var(--sans); font-weight: 700; font-size: 15px; border-radius: 999px; border: 1.5px solid transparent; cursor: pointer; padding: 14px 26px; transition: background .2s, color .2s, border-color .2s, transform .15s, box-shadow .2s; white-space: nowrap; }
+  .btn:active { transform: translateY(1px); }
+  .btn i, .btn svg { width: 18px; height: 18px; }
+  .btn-cyan { background: var(--cyan); color: #0B1626; box-shadow: var(--sh-1); }
+  .btn-cyan:hover { background: var(--navy); color: #fff; transform: translateY(-1px); box-shadow: var(--sh-2); }
+  .btn-navy { background: var(--navy); color: #fff; }
+  .btn-navy:hover { background: var(--cyan); transform: translateY(-1px); }
+  .btn-line { border-color: var(--line); background: transparent; color: var(--navy); }
+  .btn-line:hover { border-color: var(--navy); }
+  .btn-line.on-dark { border-color: rgba(255,255,255,.35); color: #fff; }
+  .btn-line.on-dark:hover { background: #fff; color: var(--navy); border-color: #fff; }
+
+  /* ---------- Header ---------- */
+  header { position: sticky; top: 0; z-index: 50; background: rgba(251,249,245,.88); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line-soft); }
+  .nav { display: flex; align-items: center; justify-content: space-between; height: 68px; gap: 10px; }
+  .nav .logo img { height: 34px; width: auto; }
+  .nav-links { display: none; gap: 2px; }
+  .nav-links a { padding: 9px 13px; border-radius: 999px; font-size: 14px; font-weight: 600; color: var(--navy); transition: background .15s, color .15s; }
+  .nav-links a:hover { background: var(--sand); color: var(--cyan); }
+  .nav-cta { display: flex; align-items: center; gap: 8px; }
+  .nav-cta .portal { display: none; }
+  .burger { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 999px; border: 1px solid var(--line); background: #fff; color: var(--navy); cursor: pointer; }
+  .m-menu { display: none; border-top: 1px solid var(--line-soft); background: var(--bg); padding: 10px 22px 22px; }
+  .m-menu.open { display: block; }
+  .m-menu a { display: block; padding: 13px 6px; font-size: 17px; font-weight: 600; color: var(--navy); border-bottom: 1px solid var(--line-soft); }
+  @media (min-width: 920px) {
+    .nav-links { display: flex; }
+    .nav-cta .portal { display: inline-flex; }
+    .burger { display: none; }
+  }
+
+  /* ---------- Hero ---------- */
+  .hero { padding: 48px 0 56px; overflow: hidden; }
+  .hero-grid { display: grid; gap: 40px; }
+  .hero h1 { font-size: clamp(46px, 11vw, 78px); margin-top: 18px; }
+  .hero .lead { margin: 22px 0 0; max-width: 520px; }
+  .hero-cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
+  .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 22px 16px; margin-top: 44px; border-top: 1px solid var(--line); padding-top: 28px; }
+  .stat .v { font-family: var(--serif); font-size: 40px; color: var(--navy); line-height: 1; }
+  .stat .v em { font-style: italic; color: var(--cyan); font-size: .7em; }
+  .stat .l { margin-top: 6px; font-size: 12.5px; font-weight: 600; color: var(--ink-soft); letter-spacing: .02em; }
+  .hero-media { position: relative; }
+  .hero-photo { width: 100%; height: 420px; object-fit: cover; border-radius: 200px 200px 26px 26px; box-shadow: var(--sh-2); }
+  .hero-slot { position: absolute; left: -10px; bottom: -26px; width: 180px; box-shadow: var(--sh-2); border-radius: 18px; background: #fff; padding: 8px; }
+  .hero-slot .cap { font-size: 10.5px; color: var(--ink-soft); padding: 7px 4px 2px; line-height: 1.35; font-style: italic; }
+  .hero-chip { position: absolute; right: -8px; top: 38px; background: #fff; border-radius: 16px; padding: 14px 18px; box-shadow: var(--sh-2); }
+  .hero-chip .k { font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--cyan-text); }
+  .hero-chip .b { font-family: var(--serif); font-size: 20px; color: var(--navy); margin-top: 2px; }
+  .hero-chip .s { font-size: 11.5px; color: var(--ink-soft); }
+  @media (min-width: 920px) {
+    .hero { padding: 72px 0 88px; }
+    .hero-grid { grid-template-columns: 1.05fr .95fr; align-items: center; gap: 56px; }
+    .stats { grid-template-columns: repeat(4, 1fr); }
+    .hero-photo { height: 520px; }
+  }
+
+  /* ---------- Trust strip ---------- */
+  .trust { border-block: 1px solid var(--line-soft); background: #fff; }
+  .trust-grid { display: grid; grid-template-columns: 1fr; gap: 18px; padding: 26px 0; }
+  .trust-it { display: flex; align-items: center; gap: 13px; }
+  .trust-it .ic { width: 42px; height: 42px; border-radius: 999px; background: var(--cyan-soft); color: var(--cyan); display: grid; place-items: center; flex-shrink: 0; }
+  .trust-it .t { font-size: 14px; font-weight: 700; color: var(--navy); }
+  .trust-it .s { font-size: 12.5px; color: var(--ink-soft); }
+  @media (min-width: 700px) { .trust-grid { grid-template-columns: repeat(3, 1fr); } }
+  @media (min-width: 1020px) { .trust-grid { grid-template-columns: repeat(5, 1fr); } }
+
+  section { padding: 72px 0; }
+  .sec-head { margin-bottom: 40px; display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 18px; }
+  .sec-head h2 { font-size: clamp(36px, 7vw, 56px); margin-top: 12px; }
+  .sec-head .sub { margin: 14px 0 0; max-width: 560px; font-size: 15px; color: var(--ink-mid); }
+
+  /* ---------- Services ---------- */
+  .svc-grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
+  .svc { background: #fff; border: 1px solid var(--line-soft); border-radius: 20px; padding: 26px; box-shadow: var(--sh-1); transition: transform .25s, box-shadow .25s; }
+  .svc:hover { transform: translateY(-4px); box-shadow: var(--sh-2); }
+  .svc .ic { width: 48px; height: 48px; border-radius: 14px; background: var(--cyan-soft); color: var(--cyan); display: grid; place-items: center; }
+  .svc h3 { font-family: var(--sans); font-size: 17px; font-weight: 700; color: var(--navy); margin: 18px 0 0; }
+  .svc p { font-size: 14px; color: var(--ink-soft); margin: 8px 0 0; line-height: 1.55; }
+  .svc .price { margin-top: 16px; font-family: var(--serif); font-style: italic; font-size: 17px; color: var(--cyan-text); }
+  @media (min-width: 640px) { .svc-grid { grid-template-columns: 1fr 1fr; } }
+  @media (min-width: 1020px) { .svc-grid { grid-template-columns: repeat(4, 1fr); } }
+  .svc-note { margin-top: 28px; display: flex; flex-wrap: wrap; gap: 16px; align-items: center; justify-content: space-between; background: var(--sand); border-radius: 20px; padding: 22px 26px; }
+  .svc-note p { margin: 0; font-size: 14.5px; color: var(--ink-mid); }
+  .svc-note b { color: var(--navy); }
+
+  /* ---------- Packages (navy band) ---------- */
+  .pkg-band { background: var(--navy); color: #fff; border-radius: 0; }
+  .pkg-band .display { color: #fff; }
+  .pkg-band .sub { color: rgba(255,255,255,.72); }
+  .pkg-grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
+  .pkg { border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.05); border-radius: 20px; padding: 26px; transition: background .25s, transform .25s; }
+  .pkg:hover { background: rgba(255,255,255,.09); transform: translateY(-3px); }
+  .pkg .type { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .12em; color: var(--cyan-on-navy); }
+  .pkg h3 { font-family: var(--serif); font-weight: 400; font-size: 24px; line-height: 1.15; margin: 12px 0 0; }
+  .pkg p { font-size: 14px; color: rgba(255,255,255,.7); margin: 10px 0 0; }
+  .pkg .range { margin: 16px 0 0; font-family: var(--serif); font-style: italic; font-size: 18px; color: #9BDCF7; }
+  .pkg ul { margin: 16px 0 0; padding: 16px 0 0; list-style: none; border-top: 1px solid rgba(255,255,255,.12); display: flex; flex-direction: column; gap: 7px; font-size: 13.5px; color: rgba(255,255,255,.72); }
+  .pkg ul li { display: flex; gap: 9px; align-items: center; }
+  .pkg ul svg { width: 14px; height: 14px; color: var(--cyan); flex-shrink: 0; }
+  @media (min-width: 640px) { .pkg-grid { grid-template-columns: 1fr 1fr; } }
+  @media (min-width: 1020px) { .pkg-grid { grid-template-columns: repeat(4, 1fr); } }
+
+  /* ---------- Doctors ---------- */
+  .doc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .doc { background: #fff; border: 1px solid var(--line-soft); border-radius: 20px; overflow: hidden; box-shadow: var(--sh-1); transition: transform .25s, box-shadow .25s; }
+  .doc:hover { transform: translateY(-4px); box-shadow: var(--sh-2); }
+  .doc .frame { aspect-ratio: 3/4; background: var(--sand); overflow: hidden; }
+  .doc .frame img { width: 100%; height: 100%; object-fit: cover; object-position: top center; transition: transform .5s; }
+  .doc:hover .frame img { transform: scale(1.04); }
+  .doc .body { padding: 14px 16px 18px; }
+  .doc .spec { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--cyan-text); }
+  .doc .name { font-family: var(--serif); font-size: 18px; color: var(--navy); margin-top: 5px; line-height: 1.2; }
+  @media (min-width: 700px) { .doc-grid { grid-template-columns: repeat(3, 1fr); } }
+  @media (min-width: 1020px) { .doc-grid { grid-template-columns: repeat(6, 1fr); } .doc .name { font-size: 16px; } }
+  .doc-note { margin-top: 26px; display: flex; flex-wrap: wrap; gap: 14px; align-items: center; justify-content: space-between; background: #fff; border: 1px solid var(--line-soft); border-radius: 18px; padding: 18px 22px; }
+  .doc-note p { margin: 0; font-size: 13.5px; color: var(--ink-mid); display: flex; gap: 9px; align-items: center; }
+  .doc-note svg { width: 17px; height: 17px; color: var(--cyan); flex-shrink: 0; }
+
+  /* ---------- Portal promo ---------- */
+  .portal { background: var(--sand); }
+  .portal-grid { display: grid; gap: 36px; }
+  .pf-grid { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 30px; }
+  .pf { background: #fff; border-radius: 18px; padding: 20px 22px; display: flex; gap: 15px; align-items: flex-start; box-shadow: var(--sh-1); }
+  .pf .ic { width: 42px; height: 42px; border-radius: 999px; background: var(--cyan-soft); color: var(--cyan); display: grid; place-items: center; flex-shrink: 0; }
+  .pf h3 { font-size: 15px; font-weight: 700; color: var(--navy); margin: 0; }
+  .pf p { font-size: 13.5px; color: var(--ink-soft); margin: 5px 0 0; line-height: 1.5; }
+  @media (min-width: 700px) { .pf-grid { grid-template-columns: 1fr 1fr; } }
+  .portal-cta { background: var(--navy); color: #fff; border-radius: 24px; padding: 34px; position: relative; overflow: hidden; box-shadow: var(--sh-2); }
+  .portal-cta .k { font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--cyan-on-navy); }
+  .portal-cta h3 { font-family: var(--serif); font-weight: 400; font-size: 34px; margin: 12px 0 0; line-height: 1.1; }
+  .portal-cta p { font-size: 14px; color: rgba(255,255,255,.72); margin: 12px 0 0; max-width: 380px; }
+  .portal-cta .lock { margin-top: 24px; font-size: 12px; color: rgba(255,255,255,.55); display: flex; gap: 8px; align-items: center; }
+  .portal-cta .lock svg { width: 14px; height: 14px; }
+  .portal-slot-cap { font-size: 11px; color: var(--ink-soft); font-style: italic; margin-top: 8px; }
+  @media (min-width: 920px) { .portal-grid { grid-template-columns: 1.1fr .9fr; align-items: start; } }
+
+  /* ---------- HMO ---------- */
+  .hmo { text-align: center; background: #F2F6FA; }
+  .ticker-mask { margin-top: 40px; overflow: hidden; -webkit-mask-image: linear-gradient(to right, transparent, #000 10%, #000 90%, transparent); mask-image: linear-gradient(to right, transparent, #000 10%, #000 90%, transparent); }
+  .ticker { display: flex; gap: 18px; width: max-content; }
+  .ticker .pill { display: flex; align-items: center; justify-content: center; height: 84px; width: 170px; background: #fff; border: 1px solid var(--line-soft); border-radius: 18px; padding: 16px; flex-shrink: 0; box-shadow: var(--sh-1); }
+  .ticker .pill img { max-height: 46px; max-width: 122px; object-fit: contain; }
+
+  /* ---------- Payments ---------- */
+  .pay-grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
+  .pay { background: #fff; border: 1px solid var(--line-soft); border-radius: 20px; padding: 24px; box-shadow: var(--sh-1); transition: transform .25s, box-shadow .25s; }
+  .pay:hover { transform: translateY(-4px); box-shadow: var(--sh-2); }
+  .pay .ic { width: 46px; height: 46px; border-radius: 14px; background: var(--cyan-soft); color: var(--cyan); display: grid; place-items: center; }
+  .pay h3 { font-size: 16px; font-weight: 700; color: var(--navy); margin: 16px 0 0; }
+  .pay p { font-size: 13.5px; color: var(--ink-soft); margin: 7px 0 0; }
+  @media (min-width: 640px) { .pay-grid { grid-template-columns: 1fr 1fr; } }
+  @media (min-width: 1020px) { .pay-grid { grid-template-columns: repeat(4, 1fr); } }
+
+  /* ---------- Contact ---------- */
+  .contact { background: var(--navy); color: #fff; }
+  .contact .display { color: #fff; }
+  .contact-grid { display: grid; gap: 40px; }
+  .c-item { display: flex; gap: 14px; align-items: flex-start; margin-top: 24px; }
+  .c-item .ic { width: 40px; height: 40px; border-radius: 999px; background: rgba(8,168,226,.16); color: #9BDCF7; display: grid; place-items: center; flex-shrink: 0; }
+  .c-item .k { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .12em; color: var(--cyan-on-navy); }
+  .c-item .v { font-size: 14.5px; color: rgba(255,255,255,.82); margin-top: 3px; line-height: 1.5; }
+  .form-card { background: var(--bg); color: var(--ink); border-radius: 24px; padding: 30px; box-shadow: var(--sh-2); }
+  .form-card h3 { font-family: var(--serif); font-weight: 400; font-size: 28px; color: var(--navy); margin: 10px 0 0; }
+  .form-card .s { font-size: 13px; color: var(--ink-soft); margin: 5px 0 20px; }
+  .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 15px; }
+  .field label { font-size: 13.5px; font-weight: 600; }
+  .field input, .field select, .field textarea { height: 46px; border: 1px solid var(--line); border-radius: 12px; padding: 0 13px; font-family: var(--sans); font-size: 15px; color: var(--ink); background: #fff; outline: none; transition: border-color .15s, box-shadow .15s; }
+  .field textarea { height: auto; padding: 11px 13px; resize: vertical; }
+  .field input:focus, .field select:focus, .field textarea:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(8,168,226,.22), inset 2.5px 0 0 0 var(--cyan); }
+  .f-row { display: grid; grid-template-columns: 1fr; gap: 0 14px; }
+  @media (min-width: 560px) { .f-row { grid-template-columns: 1fr 1fr; } }
+  @media (min-width: 920px) { .contact-grid { grid-template-columns: 1fr 1fr; gap: 56px; } }
+
+  /* ---------- Footer ---------- */
+  footer { background: var(--navy-deep); color: #fff; padding: 56px 0 0; }
+  .foot-grid { display: grid; gap: 36px; padding-bottom: 44px; }
+  .foot-mark { font-family: var(--serif); font-size: 30px; }
+  .foot-mark span { font-style: italic; color: var(--cyan); }
+  footer p, footer a { font-size: 14px; color: rgba(255,255,255,.68); line-height: 1.75; }
+  footer a:hover { color: #fff; }
+  .foot-h { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .12em; color: rgba(255,255,255,.45); margin-bottom: 12px; }
+  footer ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  .foot-bottom { border-top: 1px solid rgba(255,255,255,.1); padding: 22px 0; display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; font-size: 12px; color: rgba(255,255,255,.45); }
+  @media (min-width: 760px) { .foot-grid { grid-template-columns: 2fr 1fr 1fr; } }
+
+  /* ---------- Motion ---------- */
+  @media (prefers-reduced-motion: no-preference) {
+    html.js [data-hero] { opacity: 0; transform: translateY(26px); transition: opacity .8s cubic-bezier(.2,.7,.3,1), transform .8s cubic-bezier(.2,.7,.3,1); }
+    html.js [data-hero].in { opacity: 1; transform: none; }
+    html.js .rv { opacity: 0; transform: translateY(26px); transition: opacity .75s cubic-bezier(.2,.7,.3,1), transform .75s cubic-bezier(.2,.7,.3,1); }
+    html.js .rv.in { opacity: 1; transform: none; }
+    .ticker { animation: tick 36s linear infinite; }
+    .ticker-mask:hover .ticker { animation-play-state: paused; }
+  }
+  @keyframes tick { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+
+  /* ===== Merged ambient + motion layer (ECG motif from D2, restrained) ===== */
+  .scroll-pulse { position: fixed; top: 0; left: 0; height: 2px; width: 100%; transform: scaleX(0); transform-origin: 0 0; background: linear-gradient(90deg, rgba(8,168,226,0), var(--cyan)); z-index: 90; pointer-events: none; filter: drop-shadow(0 0 5px rgba(8,168,226,.55)); }
+
+  .hero-glow { position: absolute; top: -220px; left: 50%; width: 760px; height: 540px; transform: translateX(-50%); background: radial-gradient(closest-side, rgba(8,168,226,.055), rgba(38,63,145,.035) 60%, transparent 75%); pointer-events: none; }
+
+  .ecg { display: block; width: 100%; height: 44px; }
+  .ecg--navy { background: var(--navy); margin-bottom: -1px; }
+  .ecg--navy .ecg-line { stroke: #9BDCF7; opacity: .38; }
+  .ecg--navy .ecg-blip { fill: #9BDCF7; filter: drop-shadow(0 0 5px rgba(155,220,247,.9)); }
+  .ecg-line { fill: none; stroke: var(--cyan); stroke-width: 1.4; opacity: .30; }
+  .ecg-blip { fill: var(--cyan); filter: drop-shadow(0 0 5px rgba(8,168,226,.9)); }
+
+  .bg-motif { position: relative; }
+  .bg-motif > .wrap { position: relative; }
+  .bg-motif::before { content: ""; position: absolute; inset: -40px 0; pointer-events: none; opacity: .05; background-repeat: repeat; transform: translateY(var(--par, 0px)); }
+  .bg-plus::before { background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><path d="M24 18v12M18 24h12" stroke="%23263F91" stroke-width="1.2" stroke-linecap="round" fill="none"/></svg>'); background-size: 48px 48px; }
+
+
+  .display em.uline { position: relative; display: inline-block; white-space: nowrap; }
+  .uline-svg { position: absolute; left: 0; bottom: -0.10em; width: 100%; height: .2em; overflow: visible; }
+  .uline-svg path { fill: none; stroke: var(--cyan); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; opacity: .9; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .hero-glow { animation: ambdrift 36s ease-in-out infinite alternate; }
+    html.js .uline-svg path { stroke-dasharray: 1; stroke-dashoffset: 1; }
+    html.js .uline-drawn .uline-svg path { stroke-dashoffset: 0; transition: stroke-dashoffset 1.1s ease .9s; }
+    html.js .hero-photo { clip-path: inset(0 100% 0 0 round 200px 200px 26px 26px); }
+    html.js .hero-media.in .hero-photo { clip-path: inset(0 0 0 0 round 200px 200px 26px 26px); transition: clip-path 1.1s cubic-bezier(.2,.7,.3,1) .25s; }
+    html.js .doc .frame img { clip-path: inset(0 100% 0 0); }
+    html.js .doc.in .frame img { clip-path: inset(0 0 0 0); transition: clip-path .9s cubic-bezier(.2,.7,.3,1) .15s, transform .5s; }
+    .svc:hover .ic svg path, .svc:hover .ic svg circle, .svc:hover .ic svg line, .svc:hover .ic svg rect, .svc:hover .ic svg polyline {
+      stroke-dasharray: 64; stroke-dashoffset: 64; animation: drawIcon .7s ease forwards;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) { .ecg-blip { display: none; } }
+  @keyframes ambdrift { from { transform: translateX(-58%) translateY(0); } to { transform: translateX(-42%) translateY(26px); } }
+  @keyframes drawIcon { to { stroke-dashoffset: 0; } }
+  /* Mobile: ambient simplified to static (guardrail) */
+  @media (max-width: 640px) {
+    .hero-glow { animation: none !important; }
+    .ecg-blip { display: none; }
+    .bg-motif::before { transform: none !important; }
+  }
+
+  /* #1 stat odometer settle */
+  @media (prefers-reduced-motion: no-preference) {
+    .stat .v.settle { animation: statsettle .35s cubic-bezier(.3,1.6,.5,1) 1; }
+  }
+  @keyframes statsettle { 0% { transform: scale(1); } 45% { transform: scale(1.045); } 100% { transform: scale(1); } }
+  /* #2 marquee pill lift */
+  .ticker .pill { transition: transform .25s, box-shadow .25s; }
+  .ticker .pill:hover { transform: translateY(-4px); box-shadow: var(--sh-2); }
+  /* #3 header condense */
+  header { transition: box-shadow .3s; }
+  .nav, .nav .logo img { transition: height .35s cubic-bezier(.2,.7,.3,1); }
+  header.cond { box-shadow: var(--sh-1); }
+  header.cond .nav { height: 56px; }
+  header.cond .nav .logo img { height: 28px; }
+  /* #4 doctor card focus */
+  .doc { transition: transform .25s, box-shadow .25s, filter .35s, opacity .35s; }
+  @media (pointer: fine) {
+    .doc-grid:hover .doc:not(:hover) { filter: saturate(.35); opacity: .6; }
+  }
+  /* #9 page-transition pulse */
+  .ptp { position: fixed; top: 0; left: 0; width: 100%; height: 44px; pointer-events: none; z-index: 99; }
+  .ptp path { fill: none; stroke: var(--cyan); stroke-width: 2; stroke-linecap: round; filter: drop-shadow(0 0 6px rgba(8,168,226,.7)); stroke-dasharray: 1; stroke-dashoffset: 1; opacity: 0; }
+  @media (prefers-reduced-motion: no-preference) {
+    .ptp.go path { animation: ptpdraw .5s cubic-bezier(.3,.6,.4,1) 1; }
+  }
+  @keyframes ptpdraw { 0% { stroke-dashoffset: 1; opacity: 1; } 80% { stroke-dashoffset: 0; opacity: 1; } 100% { stroke-dashoffset: 0; opacity: 0; } }
+
+  /* How it works */
+  .hiw-grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
+  @media (min-width: 760px) { .hiw-grid { grid-template-columns: repeat(3, 1fr); } }
+  .hiw { position: relative; background: #fff; border: 1px solid var(--line-soft); border-radius: 20px; padding: 26px; box-shadow: var(--sh-1); }
+  .hiw .n { font-family: var(--serif); font-style: italic; font-size: 44px; color: var(--cyan-text); opacity: .5; line-height: 1; }
+  .hiw h3 { font-size: 17px; font-weight: 700; color: var(--navy); margin: 14px 0 0; }
+  .hiw p { font-size: 14px; color: var(--ink-soft); margin: 8px 0 0; line-height: 1.55; }
+  .hiw .ic { position: absolute; top: 22px; right: 22px; width: 42px; height: 42px; border-radius: 13px; background: var(--cyan-soft); color: var(--cyan); display: grid; place-items: center; }
+
+  /* Testimonials */
+  .tst-grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
+  @media (min-width: 760px) { .tst-grid { grid-template-columns: repeat(3, 1fr); } }
+  .tst { background: #fff; border: 1px solid var(--line-soft); border-radius: 20px; padding: 26px; box-shadow: var(--sh-1); display: flex; flex-direction: column; }
+  .tst .qm { font-family: var(--serif); font-size: 52px; line-height: .6; color: var(--cyan); opacity: .55; }
+  .tst p { font-size: 14.5px; color: var(--ink-mid); line-height: 1.65; margin: 14px 0 0; flex: 1; }
+  .tst .who { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line-soft); }
+  .tst .who b { font-size: 14px; color: var(--navy); }
+  .tst .who span { display: block; font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
+
+  /* FAQ */
+  .faq { max-width: 720px; }
+  .faq details { border-bottom: 1px solid var(--line); }
+  .faq summary { list-style: none; cursor: pointer; display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 18px 4px; font-size: 16px; font-weight: 600; color: var(--navy); }
+  .faq summary::-webkit-details-marker { display: none; }
+  .faq summary::after { content: "+"; font-family: var(--serif); font-size: 26px; color: var(--cyan-text); transition: transform .25s; flex-shrink: 0; }
+  .faq details[open] summary::after { transform: rotate(45deg); }
+  .faq .a { padding: 0 4px 18px; font-size: 14.5px; color: var(--ink-mid); line-height: 1.65; max-width: 600px; }
+
+  /* Gallery */
+  .gal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (min-width: 920px) { .gal-grid { grid-template-columns: repeat(4, 1fr); } }
+  .gal-cap { font-size: 11.5px; color: var(--ink-soft); font-style: italic; margin-top: 8px; }
+
+  /* Open-now pill */
+  .open-pill { display: inline-flex; align-items: center; gap: 7px; margin-left: 10px; height: 22px; padding: 0 11px; border-radius: 999px; font-size: 11.5px; font-weight: 700; vertical-align: middle; }
+  .open-pill .d { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .open-pill.yes { background: rgba(27,158,99,.15); color: #137A4C; }
+  .open-pill.no { background: rgba(124,131,152,.14); color: var(--ink-soft); }
+  @media (prefers-reduced-motion: no-preference) { .open-pill.yes .d { animation: openblink 2.4s ease-in-out infinite; } }
+  @keyframes openblink { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+
+  /* Messenger button */
+  .msgr { position: fixed; right: 18px; bottom: 18px; z-index: 85; display: flex; align-items: center; gap: 0; background: var(--navy); color: #fff; border-radius: 999px; padding: 15px; box-shadow: var(--sh-2); transition: gap .25s, padding .25s, background .2s, transform .2s; }
+  .msgr svg, .msgr i { width: 22px; height: 22px; }
+  .msgr .lbl { max-width: 0; overflow: hidden; white-space: nowrap; font-size: 13.5px; font-weight: 700; transition: max-width .3s cubic-bezier(.2,.7,.3,1); }
+  .msgr:hover { background: var(--cyan); gap: 9px; padding: 15px 19px 15px 15px; transform: translateY(-2px); }
+  .msgr:hover .lbl { max-width: 120px; }
+  @media (prefers-reduced-motion: no-preference) {
+    html.js .msgr { opacity: 0; transform: translateY(14px); transition: opacity .5s, transform .5s, gap .25s, padding .25s, background .2s; }
+    html.js .msgr.in { opacity: 1; transform: none; }
+  }
+
+  /* ===== Haikei-style layered backgrounds (generated in brand palette) ===== */
+  .hero-waves { position: absolute; left: 0; right: 0; bottom: -1px; width: 100%; height: clamp(70px, 12vw, 150px); pointer-events: none; }
+  .hero-grid { position: relative; z-index: 1; }
+  .wave-into-navy { display: block; width: 100%; height: clamp(48px, 9vw, 110px); margin-bottom: -1px; }
+</style>
+</head>
+<body>
+<template id="__bundler_thumbnail"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="#FBF9F5"/><text x="50" y="62" text-anchor="middle" font-family="Georgia,serif" font-size="34" fill="#263F91">D1</text></svg></template>
+<div class="scroll-pulse" id="spulse"></div>
+<svg class="ptp" id="ptp" viewBox="0 0 1200 44" preserveAspectRatio="none" aria-hidden="true"><path pathLength="1" d="M0,22 L420,22 450,22 462,8 474,36 486,4 498,38 510,22 540,22 1200,22"/></svg>
+
+<header>
+  <div class="wrap nav">
+    <a class="logo" href="#home"><img src="assets/logo.png" alt="DRMed Clinic & Laboratory" /></a>
+    <nav class="nav-links">
+      <a href="#services">Services</a>
+      <a href="#packages">Packages</a>
+      <a href="#doctors">Specialists</a>
+      <a href="#hmo">HMO</a>
+      <a href="#contact">Contact</a>
+    </nav>
+    <div class="nav-cta">
+      <a class="btn btn-line portal" href="#portal" style="padding:10px 18px;font-size:13.5px;">Patient Portal</a>
+      <a class="btn btn-cyan" href="booking.html" style="padding:11px 20px;font-size:13.5px;">Book Now</a>
+      <button class="burger" id="burger" aria-label="Open menu"><i data-lucide="menu"></i></button>
+    </div>
+  </div>
+  <div class="m-menu" id="mmenu">
+    <a href="#services">Services</a>
+    <a href="#packages">Packages</a>
+    <a href="#doctors">Specialists</a>
+    <a href="#hmo">HMO</a>
+    <a href="#portal">Patient Portal</a>
+    <a href="#contact" style="border-bottom:none;">Contact</a>
+  </div>
+</header>
+
+<!-- Hero -->
+<section class="hero" id="home" style="padding-top:44px;position:relative;overflow:hidden;">
+  <div class="hero-glow" aria-hidden="true"></div>
+  <svg class="hero-waves" viewBox="0 0 1440 150" preserveAspectRatio="none" aria-hidden="true">
+    <path fill="#F3EEE6" fill-opacity=".55" d="M0,96 C240,140 420,52 720,72 C1020,92 1200,138 1440,92 L1440,150 L0,150 Z"></path>
+    <path fill="#E8F3FB" fill-opacity=".6" d="M0,118 C280,84 560,142 840,118 C1120,94 1300,120 1440,108 L1440,150 L0,150 Z"></path>
+    <path fill="#FFFFFF" d="M0,136 C320,118 640,148 960,134 C1200,124 1340,134 1440,130 L1440,150 L0,150 Z"></path>
+  </svg>
+  <div class="wrap hero-grid">
+    <div>
+      <p class="eyebrow" data-hero style="animation-delay:.05s">Premier Diagnostic Care · Quezon City</p>
+      <h1 class="display" data-hero style="animation-delay:.15s">Your Family's Well-Being is <em class="uline">Our Mission.<svg class="uline-svg" viewBox="0 0 200 16" preserveAspectRatio="none" aria-hidden="true"><path pathLength="1" d="M2,10 L70,9 82,9 88,3 94,14 100,2 106,13 112,9 124,9 198,8"/></svg></em></h1>
+      <p class="lead" data-hero style="animation-delay:.3s">Comprehensive medical services — doctor's consultations, laboratory tests, X-ray, ultrasound, ECG, home service and mobile clinic — at up to 50% less than hospitals.</p>
+      <div class="hero-cta" data-hero style="animation-delay:.42s">
+        <a class="btn btn-cyan" href="booking.html">Book Appointment <i data-lucide="arrow-right"></i></a>
+        <a class="btn btn-navy" href="#packages">View Packages</a>
+        <a class="btn btn-line" href="#doctors">Meet Our Doctors</a>
+      </div>
+      <div class="stats" data-hero style="animation-delay:.55s">
+        <div class="stat"><div class="v"><span data-count="19">0</span><em>+</em></div><div class="l">Specialist Physicians</div></div>
+        <div class="stat"><div class="v"><span data-count="10">0</span><em>+</em></div><div class="l">HMO Partners</div></div>
+        <div class="stat"><div class="v"><span data-count="50">0</span><em>%</em></div><div class="l">Less vs. Hospitals</div></div>
+        <div class="stat"><div class="v"><span data-count="24">0</span><em>h</em></div><div class="l">Average Turnaround</div></div>
+      </div>
+    </div>
+    <div class="hero-media" data-hero style="animation-delay:.25s">
+      <img class="hero-photo" src="assets/hero-clinic.jpg" alt="DRMed Clinic, Northridge Plaza" />
+      <div class="hero-chip">
+        <div class="k">Average Turnaround</div>
+        <div class="b">24 Hours</div>
+        <div class="s">Most tests same-day</div>
+      </div>
+      <div class="hero-slot">
+        <img src="assets/photos/phlebotomist.jpg" alt="DRMed phlebotomist drawing blood from a patient in natural window light" style="width:100%;height:150px;object-fit:cover;object-position:center 30%;border-radius:12px;display:block;" />
+        <div class="cap">Gentle, unhurried blood draws</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Trust strip -->
+<div class="trust rv">
+  <div class="wrap trust-grid">
+    <div class="trust-it"><span class="ic"><i data-lucide="shield-check"></i></span><div><div class="t">Accredited Clinic & Lab</div><div class="s">DOH-compliant facility</div></div></div>
+    <div class="trust-it"><span class="ic"><i data-lucide="zap"></i></span><div><div class="t">Results in 24 Hours</div><div class="s">Most tests same-day</div></div></div>
+    <div class="trust-it"><span class="ic"><i data-lucide="badge-percent"></i></span><div><div class="t">Up to 50% Less</div><div class="s">vs. hospitals & other clinics</div></div></div>
+    <div class="trust-it"><span class="ic"><i data-lucide="house"></i></span><div><div class="t">Home & Mobile Service</div><div class="s">We come to you</div></div></div>
+    <div class="trust-it"><span class="ic"><i data-lucide="credit-card"></i></span><div><div class="t">HMO Accepted</div><div class="s">10 major providers</div></div></div>
+  </div>
+</div>
+
+<section style="padding:72px 0 64px;">
+  <div class="wrap">
+    <div class="sec-head rv" style="margin-bottom:36px;">
+      <div>
+        <p class="eyebrow">How It Works</p>
+        <h2 class="display">Three steps to <em>peace of mind.</em></h2>
+      </div>
+    </div>
+    <div class="hiw-grid">
+      <div class="hiw rv"><span class="n">01</span><span class="ic"><i data-lucide="calendar-check"></i></span><h3>Book or walk in</h3><p>Reserve a slot online in two minutes — or just walk in for packages and most lab tests, Monday to Saturday.</p></div>
+      <div class="hiw rv"><span class="n">02</span><span class="ic"><i data-lucide="stethoscope"></i></span><h3>Visit the clinic</h3><p>4/F Northridge Plaza, Congressional Avenue. Present your ID and HMO card — our staff handles the rest.</p></div>
+      <div class="hiw rv"><span class="n">03</span><span class="ic"><i data-lucide="file-down"></i></span><h3>Results in 24 hours</h3><p>Most tests release same-day. View and download your signed results online, anytime, via the patient portal.</p></div>
+    </div>
+  </div>
+</section>
+<svg class="ecg" viewBox="0 0 1200 44" preserveAspectRatio="none" aria-hidden="true">
+  <path class="ecg-line" d="M0,22 L460,22 478,22 487,8 497,36 507,4 517,38 526,22 548,22 1200,22"/>
+  <circle class="ecg-blip" r="3" opacity="0">
+    <animateMotion dur="8s" begin="1s" repeatCount="indefinite" path="M0,22 L460,22 478,22 487,8 497,36 507,4 517,38 526,22 548,22 1200,22"/>
+    <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.08;0.18;0.82;0.92;1" dur="8s" begin="1s" repeatCount="indefinite"/>
+  </circle>
+</svg>
+<!-- Services -->
+<section id="services" class="bg-motif bg-plus">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <div>
+        <p class="eyebrow">Clinic & Lab Services</p>
+        <h2 class="display">Everything under <em>one roof.</em></h2>
+      </div>
+      <a class="btn btn-navy" href="#packages">View All Packages <i data-lucide="arrow-right"></i></a>
+    </div>
+    <div class="svc-grid">
+      <div class="svc rv"><span class="ic"><i data-lucide="stethoscope"></i></span><h3>Doctor's Consultation</h3><p>Initial and follow-up consultations with our team of licensed physicians and specialists.</p><div class="price">from ₱500</div></div>
+      <div class="svc rv"><span class="ic"><i data-lucide="test-tube"></i></span><h3>Laboratory Tests</h3><p>CBC, urinalysis, blood chemistry, lipid profiles, thyroid panels, and more.</p><div class="price">Varies by test</div></div>
+      <div class="svc rv"><span class="ic"><i data-lucide="scan-line"></i></span><h3>X-Ray Imaging</h3><p>Digital chest X-ray with rapid radiologist interpretation.</p><div class="price">from ₱550</div></div>
+      <div class="svc rv"><span class="ic"><i data-lucide="heart-pulse"></i></span><h3>ECG</h3><p>12-lead electrocardiogram with same-day results and physician interpretation.</p><div class="price">Inquire</div></div>
+      <div class="svc rv"><span class="ic"><i data-lucide="audio-waveform"></i></span><h3>Ultrasound</h3><p>Whole abdomen, pelvic, thyroid, and other ultrasound services available.</p><div class="price">Inquire</div></div>
+      <div class="svc rv"><span class="ic"><i data-lucide="clipboard-check"></i></span><h3>Fit to Work / Pre-Employment</h3><p>Complete medical clearance packages for individuals and corporate clients.</p><div class="price">from ₱400</div></div>
+      <div class="svc rv"><span class="ic"><i data-lucide="house"></i></span><h3>Home Service</h3><p>Lab collection and medical consultation brought directly to your home or office.</p><div class="price">Inquire</div></div>
+      <div class="svc rv"><span class="ic"><i data-lucide="bus"></i></span><h3>Mobile Clinic</h3><p>Bring the clinic to your community, school, or company for mass health screenings.</p><div class="price">Inquire</div></div>
+    </div>
+    <div class="svc-note rv">
+      <p>Looking for something specific? We offer <b>hundreds of individual tests</b> beyond what's shown here.</p>
+      <a class="btn btn-navy" href="#contact" style="padding:11px 20px;font-size:14px;">Check All Services <i data-lucide="arrow-right"></i></a>
+    </div>
+  </div>
+</section>
+
+<!-- Packages -->
+<section id="packages" class="pkg-band">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <div>
+        <p class="eyebrow">Health Packages</p>
+        <h2 class="display">Diagnostic <em>packages.</em></h2>
+        <p class="sub">Quick overview of our most requested package groups. For full inclusions, exact test lists, and complete price details, open the detailed packages page.</p>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <a class="btn" href="#" style="background:#fff;color:var(--navy);">View Detailed Packages <i data-lucide="arrow-right"></i></a>
+        <a class="btn btn-line on-dark" href="#contact">Custom Corporate Package</a>
+      </div>
+    </div>
+    <div class="pkg-grid">
+      <div class="pkg rv"><div class="type">Preventive Care</div><h3>Basic, Routine, and Annual Checkups</h3><p>Most requested screening bundles for regular health monitoring and annual assessment.</p><div class="range">Starts at ₱950 · up to ₱1,999</div><ul><li><i data-lucide="check"></i>Basic Package</li><li><i data-lucide="check"></i>Routine Package (Most Popular)</li><li><i data-lucide="check"></i>Annual Physical Exam</li></ul></div>
+      <div class="pkg rv"><div class="type">Executive</div><h3>Professional and Executive Panels</h3><p>Comprehensive health profiles with imaging, ECG, and advanced blood work for professionals.</p><div class="range">From ₱5,888</div><ul><li><i data-lucide="check"></i>Standard Executive</li><li><i data-lucide="check"></i>Comprehensive Executive</li><li><i data-lucide="check"></i>Deluxe Executive</li></ul></div>
+      <div class="pkg rv"><div class="type">Specialized Lab Tests</div><h3>Focused Diagnostic Panels</h3><p>Targeted test sets for thyroid, lipid, kidney, liver, and iron-related monitoring.</p><div class="range">From ₱699</div><ul><li><i data-lucide="check"></i>Thyroid Function Package</li><li><i data-lucide="check"></i>Lipid, Liver, and Kidney Panels</li><li><i data-lucide="check"></i>Iron Deficiency Package</li></ul></div>
+      <div class="pkg rv"><div class="type">Custom Plans</div><h3>Corporate and Group Packages</h3><p>Pre-employment, annual corporate screening, and customized diagnostics based on company needs.</p><div class="range">Custom quote</div><ul><li><i data-lucide="check"></i>Fit-to-work and onboarding bundles</li><li><i data-lucide="check"></i>Onsite and volume screening options</li><li><i data-lucide="check"></i>Flexible inclusions by request</li></ul></div>
+    </div>
+    <p class="rv" style="margin-top:28px;text-align:center;font-size:12px;color:rgba(255,255,255,.5);">Detailed package inclusions and prices are available on the dedicated page. Prices may change without prior notice.</p>
+  </div>
+</section>
+
+<svg class="ecg" viewBox="0 0 1200 44" preserveAspectRatio="none" aria-hidden="true">
+  <path class="ecg-line" d="M0,22 L460,22 478,22 487,8 497,36 507,4 517,38 526,22 548,22 1200,22"/>
+  <circle class="ecg-blip" r="3" opacity="0">
+    <animateMotion dur="10s" begin="4s" repeatCount="indefinite" path="M0,22 L460,22 478,22 487,8 497,36 507,4 517,38 526,22 548,22 1200,22"/>
+    <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.08;0.18;0.82;0.92;1" dur="10s" begin="4s" repeatCount="indefinite"/>
+  </circle>
+</svg>
+<!-- Specialists -->
+<section id="doctors">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <div>
+        <p class="eyebrow">Our Specialists</p>
+        <h2 class="display">Meet our <em>doctors.</em></h2>
+        <p class="sub">DRMed has 19+ board-certified physicians across key specialties. For complete schedules and doctor photos, open the detailed schedules page.</p>
+      </div>
+      <a class="btn btn-navy" href="#" style="padding:11px 20px;font-size:14px;">View Detailed Schedules <i data-lucide="arrow-right"></i></a>
+    </div>
+    <div class="doc-grid">
+      <div class="doc rv"><div class="frame"><img src="assets/doctors/robert-vicencio.jpg" alt="Dr. Robert Vicencio"></div><div class="body"><div class="spec">Internal Medicine</div><div class="name">Dr. Robert Vicencio</div></div></div>
+      <div class="doc rv"><div class="frame"><img src="assets/doctors/maria-cecilia-castelo-brojas.jpg" alt="Dr. Maria Cecilia Castelo-Brojas"></div><div class="body"><div class="spec">OB-GYN</div><div class="name">Dr. Maria Cecilia Castelo-Brojas</div></div></div>
+      <div class="doc rv"><div class="frame"><img src="assets/doctors/katherine-gayo.jpg" alt="Dr. Katherine Gayo"></div><div class="body"><div class="spec">Pediatrics</div><div class="name">Dr. Katherine Gayo</div></div></div>
+      <div class="doc rv"><div class="frame"><img src="assets/doctors/julie-ann-pacis-caling.jpg" alt="Dr. Julie Ann Pacis-Caling"></div><div class="body"><div class="spec">Family Medicine</div><div class="name">Dr. Julie Ann Pacis-Caling</div></div></div>
+      <div class="doc rv"><div class="frame"><img src="assets/doctors/nadia-mariano.jpg" alt="Dr. Nadia Mariano"></div><div class="body"><div class="spec">OB-GYN</div><div class="name">Dr. Nadia Mariano</div></div></div>
+      <div class="doc rv"><div class="frame"><img src="assets/doctors/daniel-john-mariano.jpg" alt="Dr. Daniel John Mariano"></div><div class="body"><div class="spec">Radiology</div><div class="name">Dr. Daniel John Mariano</div></div></div>
+    </div>
+    <div class="doc-note rv">
+      <p><i data-lucide="info"></i>Schedules may change without prior notice. Kindly call or message us to book your appointment and confirm availability.</p>
+      <a class="btn btn-line" href="booking.html" style="padding:10px 18px;font-size:13.5px;">Book an Appointment</a>
+    </div>
+  </div>
+</section>
+
+<!-- Testimonials -->
+<section style="padding-top:24px;">
+  <div class="wrap">
+    <div class="sec-head rv" style="margin-bottom:36px;">
+      <div>
+        <p class="eyebrow">Kind Words</p>
+        <h2 class="display">From our <em>patients.</em></h2>
+        <p class="sub">Real reviews from our Facebook page and Google Reviews.</p>
+      </div>
+    </div>
+    <div class="tst-grid">
+      <article class="tst rv"><span class="qm">“</span><p>Excellent service!!! They attended to me as soon as I got in — no waiting time (considering it was a Saturday), and everything was done in a short amount of time. The staff were highly efficient and very professional. Prices are also reasonable! I received my complete blood chemistry results the next day. Would very much recommend!</p><div class="who"><b>Sassyy Llabres</b><span>via Facebook · July 2024</span></div></article>
+      <article class="tst rv"><span class="qm">“</span><p>Mabilis ang pagprocess ng mga medical results at mabilis din ang pagasikaso nila sa mga dumadating na patients. Bukod sa mabilis ang pagprocess ay maayos din ang pagkuha ng aking laboratory. Mabait at approachable din ang mga nurse dito. Thank you po sa inyong maayos na serbisyo.</p><div class="who"><b>Lei Malana</b><span>via Facebook · August 2024</span></div></article>
+      <article class="tst rv"><span class="qm">“</span><p>Everyone is very friendly and professional, organized and not crowded looking. recommended din sa bilis ng labtests</p><div class="who"><b>April Veluz</b><span>via Google Reviews · January 2021</span></div></article>
+    </div>
+  </div>
+</section>
+
+<!-- Patient portal promo -->
+<section class="portal" id="portal">
+  <div class="wrap portal-grid">
+    <div>
+      <div class="rv">
+        <p class="eyebrow">Patient Portal</p>
+        <h2 class="display" style="font-size:clamp(34px,6.5vw,52px);margin-top:12px;">Your results, <em>securely accessible.</em></h2>
+        <p class="lead" style="margin-top:16px;font-size:15.5px;">No more waiting in queues. Access your complete lab results online, anytime — secured with your receipt-issued claim password and Philippine Data Privacy Act compliance.</p>
+      </div>
+      <div class="pf-grid">
+        <div class="pf rv"><span class="ic"><i data-lucide="key-round"></i></span><div><h3>Secure PIN Access</h3><p>Sign in using the claim password printed on your official laboratory receipt.</p></div></div>
+        <div class="pf rv"><span class="ic"><i data-lucide="file-down"></i></span><div><h3>PDF Download</h3><p>Download official signed lab results, ready to share with your physician.</p></div></div>
+        <div class="pf rv"><span class="ic"><i data-lucide="history"></i></span><div><h3>Full History Access</h3><p>View all past results. Track your health trends over time.</p></div></div>
+        <div class="pf rv"><span class="ic"><i data-lucide="shield-check"></i></span><div><h3>RA 10173 Compliant</h3><p>All records handled in accordance with the Philippine Data Privacy Act.</p></div></div>
+      </div>
+    </div>
+    <div>
+      <div class="portal-cta rv">
+        <div class="k">Secure Patient Sign-In</div>
+        <h3>Access My Results</h3>
+        <p>Use your DRM-ID and the Secure PIN printed on your receipt.</p>
+        <a class="btn btn-cyan" href="#" style="margin-top:22px;">Open Patient Portal <i data-lucide="arrow-right"></i></a>
+        <div class="lock"><i data-lucide="lock"></i> Protected under the Philippine Data Privacy Act (RA 10173).</div>
+      </div>
+      <div class="rv" style="margin-top:18px;">
+        <img src="assets/photos/patient-phone.jpg" alt="Patient reviewing her DRMed lab results on her phone at home in soft morning light" style="width:100%;height:230px;object-fit:cover;object-position:center;border-radius:20px;display:block;box-shadow:var(--sh-2);" />
+        <div class="portal-slot-cap">Your results, anytime — from the comfort of home</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- HMO -->
+<section id="hmo" class="hmo">
+  <div class="wrap rv">
+    <p class="eyebrow" style="justify-content:center;">Accredited HMO Partners</p>
+    <h2 class="display" style="font-size:clamp(34px,7vw,52px);margin-top:12px;">We accept your <em>HMO.</em></h2>
+    <p class="lead" style="max-width:520px;margin:14px auto 0;font-size:15px;">Present your HMO card at the clinic. Cashless transactions available for all covered services.</p>
+  </div>
+  <div class="ticker-mask rv"><div class="ticker" id="ticker"><div class="pill"><img src="assets/hmo/maxicare.png" alt="maxicare"></div><div class="pill"><img src="assets/hmo/intellicare.png" alt="intellicare"></div><div class="pill"><img src="assets/hmo/cocolife.png" alt="cocolife"></div><div class="pill"><img src="assets/hmo/philhealth.png" alt="philhealth"></div><div class="pill"><img src="assets/hmo/valucare.png" alt="valucare"></div><div class="pill"><img src="assets/hmo/etiqa.png" alt="etiqa"></div><div class="pill"><img src="assets/hmo/maxicare.png" alt="maxicare"></div><div class="pill"><img src="assets/hmo/intellicare.png" alt="intellicare"></div><div class="pill"><img src="assets/hmo/cocolife.png" alt="cocolife"></div><div class="pill"><img src="assets/hmo/philhealth.png" alt="philhealth"></div><div class="pill"><img src="assets/hmo/valucare.png" alt="valucare"></div><div class="pill"><img src="assets/hmo/etiqa.png" alt="etiqa"></div></div></div>
+</section>
+
+<svg class="ecg" viewBox="0 0 1200 44" preserveAspectRatio="none" aria-hidden="true">
+  <path class="ecg-line" d="M0,22 L460,22 478,22 487,8 497,36 507,4 517,38 526,22 548,22 1200,22"/>
+  <circle class="ecg-blip" r="3" opacity="0">
+    <animateMotion dur="12s" begin="7s" repeatCount="indefinite" path="M0,22 L460,22 478,22 487,8 497,36 507,4 517,38 526,22 548,22 1200,22"/>
+    <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.08;0.18;0.82;0.92;1" dur="12s" begin="7s" repeatCount="indefinite"/>
+  </circle>
+</svg>
+<!-- Payments -->
+<section style="padding-top:24px;">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <div>
+        <p class="eyebrow">Payment Options</p>
+        <h2 class="display">100% <em>convenient</em> payments.</h2>
+        <p class="sub">No more long waiting times inside crowded hospitals or health centers. Accessible, hassle-free, effortless payment options are available for your visit.</p>
+      </div>
+    </div>
+    <div class="pay-grid">
+      <div class="pay rv"><span class="ic"><i data-lucide="banknote"></i></span><h3>Cash</h3><p>Pay over the counter at the clinic.</p></div>
+      <div class="pay rv"><span class="ic"><i data-lucide="qr-code"></i></span><h3>QR Payments</h3><p>GCash / PayMaya or other QR-supported wallets.</p></div>
+      <div class="pay rv"><span class="ic"><i data-lucide="landmark"></i></span><h3>Bank Transfer</h3><p>Local bank transfer or online banking.</p></div>
+      <div class="pay rv"><span class="ic"><i data-lucide="credit-card"></i></span><h3>Card Payments</h3><p>Debit and credit card accepted.</p></div>
+    </div>
+    <p class="rv" style="margin-top:22px;font-size:14px;color:var(--ink-soft);">Need assistance? Our front desk will guide you through the payment method that works best for you.</p>
+  </div>
+</section>
+
+<!-- Gallery -->
+<section style="padding-top:8px;">
+  <div class="wrap">
+    <div class="sec-head rv" style="margin-bottom:32px;">
+      <div>
+        <p class="eyebrow">Our Clinic</p>
+        <h2 class="display">A look <em>inside.</em></h2>
+      </div>
+    </div>
+    <div class="gal-grid">
+      <div class="rv"><img src="assets/photos/reception.jpg" alt="DRMed Clinic & Laboratory reception counter with staff greeting a patient" style="width:100%;height:190px;object-fit:cover;object-position:center 35%;border-radius:16px;display:block;box-shadow:var(--sh-1);" /><div class="gal-cap">Reception — where every visit begins</div></div>
+      <div class="rv"><img src="assets/photos/microscope.jpg" alt="Olympus microscope at the DRMed clinical microscopy bench" style="width:100%;height:190px;object-fit:cover;object-position:center 40%;border-radius:16px;display:block;box-shadow:var(--sh-1);" /><div class="gal-cap">Clinical microscopy — precision diagnostics</div></div>
+      <div class="rv"><img src="assets/photos/lab-chemistry.jpg" alt="DRMed clinical chemistry analyzer station" style="width:100%;height:190px;object-fit:cover;object-position:center;border-radius:16px;display:block;box-shadow:var(--sh-1);" /><div class="gal-cap">Clinical chemistry — our in-house lab</div></div>
+      <div class="rv"><img src="assets/photos/waiting-area.jpg" alt="DRMed Clinic & Laboratory waiting area" style="width:100%;height:190px;object-fit:cover;object-position:center 55%;border-radius:16px;display:block;box-shadow:var(--sh-1);" /><div class="gal-cap">A comfortable place to wait</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section style="padding-top:40px;">
+  <div class="wrap">
+    <div class="sec-head rv" style="margin-bottom:28px;">
+      <div>
+        <p class="eyebrow">Good to Know</p>
+        <h2 class="display">Questions, <em>answered.</em></h2>
+      </div>
+    </div>
+    <div class="faq rv">
+      <details>
+        <summary>Do I need to fast before my test?</summary>
+        <div class="a">Blood sugar (FBS) and lipid tests need 8–10 hours of fasting — water is fine. Most other tests don't require it. Unsure? Message us before your visit and we'll confirm.</div>
+      </details>
+      <details>
+        <summary>Can I use my HMO?</summary>
+        <div class="a">Yes — we're accredited with 10 major HMO providers. Bring your HMO card and a valid ID; reception processes your LOA and covered services are cashless.</div>
+      </details>
+      <details>
+        <summary>How do I get my results?</summary>
+        <div class="a">Most tests release within 24 hours. We text and email you when they're ready, and you can view and download the official signed PDF anytime in the patient portal using your DRM-ID and the Secure PIN on your receipt.</div>
+      </details>
+      <details>
+        <summary>Do you see children?</summary>
+        <div class="a">Yes — we have pediatricians on staff. Schedules can change, so kindly call or message us first to confirm availability before bringing your little one in.</div>
+      </details>
+      <details>
+        <summary>Can you come to my home or office?</summary>
+        <div class="a">Yes — home service covers lab collection and consultations. Book it online or message us, and reception will call to confirm the schedule and fee.</div>
+      </details>
+    </div>
+  </div>
+</section>
+
+<!-- Contact -->
+<svg class="wave-into-navy" viewBox="0 0 1440 110" preserveAspectRatio="none" aria-hidden="true">
+  <path fill="#263F91" fill-opacity=".14" d="M0,58 C260,18 540,96 820,62 C1100,28 1280,72 1440,46 L1440,110 L0,110 Z"></path>
+  <path fill="#263F91" fill-opacity=".38" d="M0,76 C300,40 620,104 900,78 C1160,54 1330,86 1440,68 L1440,110 L0,110 Z"></path>
+  <path fill="#263F91" d="M0,94 C340,66 700,112 1020,94 C1240,82 1370,96 1440,90 L1440,110 L0,110 Z"></path>
+</svg>
+<section id="contact" class="contact">
+  <div class="wrap contact-grid">
+    <div class="rv">
+      <p class="eyebrow">Reach Us</p>
+      <h2 class="display" style="margin-top:12px;">Get in <em>touch.</em></h2>
+      <p style="margin:14px 0 0;max-width:400px;font-size:15px;color:rgba(255,255,255,.72);">We're here to help with appointments, inquiries, and corporate packages.</p>
+      <div class="c-item"><span class="ic"><i data-lucide="map-pin"></i></span><div><div class="k">Address</div><div class="v">4/F Northridge Plaza, Congressional Avenue<br>Quezon City, Metro Manila</div></div></div>
+      <div class="c-item"><span class="ic"><i data-lucide="clock"></i></span><div><div class="k">Clinic Hours</div><div class="v">Monday – Saturday · 8:00 AM – 5:00 PM<span class="open-pill" id="openPill" style="display:none;"><span class="d"></span><span id="openTxt"></span></span></div></div></div>
+      <div class="c-item"><span class="ic"><i data-lucide="phone"></i></span><div><div class="k">Phone</div><div class="v">0916 604 3208 · (02) 8 355 3517</div></div></div>
+      <div class="c-item"><span class="ic"><i data-lucide="heart-handshake"></i></span><div><div class="k">Connect With Us</div><div class="v" style="display:flex;gap:14px;align-items:center;"><span style="display:inline-flex;gap:7px;align-items:center;"><i data-lucide="facebook" style="width:16px;height:16px;"></i>Facebook</span><span style="display:inline-flex;gap:7px;align-items:center;"><i data-lucide="instagram" style="width:16px;height:16px;"></i>Instagram</span></div></div></div>
+    </div>
+    <div class="form-card rv">
+      <p class="eyebrow">Inquire / Book</p>
+      <h3>Send us a message</h3>
+      <p class="s">For appointments, corporate packages, or general inquiries.</p>
+      <div class="field"><label>Full name</label><input placeholder="Juan dela Cruz"></div>
+      <div class="f-row">
+        <div class="field"><label>Mobile</label><input inputmode="tel" placeholder="0916 000 0000"></div>
+        <div class="field"><label>Service</label><select><option>Doctor's Consultation</option><option>Laboratory Tests</option><option>X-Ray Imaging</option><option>ECG</option><option>Ultrasound</option><option>Home Service</option></select></div>
+      </div>
+      <div class="field"><label>Message</label><textarea rows="3" placeholder="How can we help?"></textarea></div>
+      <button class="btn btn-cyan" style="width:100%;">Send us a Message</button>
+    </div>
+  </div>
+</section>
+
+<a class="msgr" id="msgr" href="https://m.me/drmed.ph" target="_blank" rel="noopener" aria-label="Message us on Facebook">
+  <i data-lucide="message-circle"></i><span class="lbl">Message us</span>
+</a>
+<div style="background:#263F91;margin-bottom:-1px;"><svg class="ecg ecg--navy" id="ecgFoot" viewBox="0 0 1200 44" preserveAspectRatio="none" aria-hidden="true"><path class="ecg-line" id="ecgFootLine" d="M0,22 L460,22 478,22 487,8 497,36 507,4 517,38 526,22 548,22 1200,22"/><circle class="ecg-blip" id="footBlip" r="3" opacity="0"/></svg></div>
+<footer>
+  <div class="wrap foot-grid">
+    <div>
+      <div class="foot-mark">drmed<span>.ph</span></div>
+      <p style="margin-top:14px;max-width:340px;">4/F DRMed Clinic & Laboratory<br>Northridge Plaza, Congressional Avenue, Quezon City</p>
+      <p style="margin-top:8px;">Mobile: 0916 604 3208 · Tel: (02) 8 355 3517<br>drmedhealthcare@gmail.com<br>Monday – Saturday, 8 AM – 5 PM</p>
+    </div>
+    <div>
+      <div class="foot-h">Site</div>
+      <ul><li><a href="#services">Services</a></li><li><a href="#packages">Packages</a></li><li><a href="#doctors">Specialists</a></li><li><a href="#contact">Contact</a></li><li><a href="#portal">Patient Portal</a></li></ul>
+    </div>
+    <div>
+      <div class="foot-h">Legal</div>
+      <ul><li><a href="#">Privacy Notice</a></li><li><a href="#">Terms of Use</a></li><li><a href="#">Facebook</a></li><li><a href="#">Instagram</a></li></ul>
+    </div>
+  </div>
+  <div class="foot-bottom wrap">
+    <p style="margin:0;">© 2026 DRMed Clinic & Laboratory. Protected under the Philippine Data Privacy Act (RA 10173).</p>
+    <a href="#">Staff sign in</a>
+  </div>
+</footer>
+
+<script>
+  // Hero stagger — transition-delay comes from each element's inline animation-delay
+  document.querySelectorAll('[data-hero]').forEach(el => { el.style.transitionDelay = el.style.animationDelay || '0s'; });
+  setTimeout(() => { document.querySelectorAll('[data-hero]').forEach(el => el.classList.add('in')); document.querySelectorAll('.display em.uline').forEach(el => el.classList.add('uline-drawn')); }, 60);
+  setTimeout(() => { document.querySelectorAll('[data-hero]').forEach(el => { el.style.transition = 'none'; el.style.opacity = '1'; el.style.transform = 'none'; }); document.querySelectorAll('.hero-photo').forEach(el => { el.style.transition = 'none'; el.style.clipPath = 'none'; }); document.querySelectorAll('.uline-svg path').forEach(p => { p.style.transition = 'none'; p.style.strokeDashoffset = '0'; }); }, 2600);
+
+  // Scroll reveals — IntersectionObserver + timer fallback (rAF/IO can stall in hidden iframes)
+  const reveal = el => { el.classList.add("in"); setTimeout(() => { el.style.transition = "none"; el.style.opacity = "1"; el.style.transform = "none"; el.querySelectorAll(".frame img").forEach(i => { i.style.transition = "none"; i.style.clipPath = "none"; }); }, 1400); };
+  const io = new IntersectionObserver((es) => es.forEach(e => { if (e.isIntersecting) { reveal(e.target); io.unobserve(e.target); } }), { threshold: 0.12 });
+  document.querySelectorAll(".rv").forEach(el => io.observe(el));
+  const rvTimer = setInterval(() => {
+    const left = document.querySelectorAll(".rv:not(.in)");
+    if (!left.length) { clearInterval(rvTimer); return; }
+    left.forEach(el => { const r = el.getBoundingClientRect(); if (r.top < innerHeight * 1.15 && r.bottom > -40) reveal(el); });
+  }, 700);
+
+  // Count-up stats (timer-driven so it completes even when rAF is throttled)
+  const ranCounts = new Set();
+  const runCount = (el) => {
+    if (ranCounts.has(el)) return; ranCounts.add(el);
+    const end = +el.dataset.count, t0 = performance.now(), dur = 1400;
+    const iv = setInterval(() => {
+      const p = Math.min(1, (performance.now() - t0) / dur);
+      el.textContent = Math.round(end * (1 - Math.pow(1 - p, 3)));
+      if (p >= 1) { clearInterval(iv); var vv = el.closest(".v"); if (vv) { vv.classList.remove("settle"); void vv.offsetWidth; vv.classList.add("settle"); } }
+    }, 32);
+  };
+  const cio = new IntersectionObserver((es) => es.forEach(e => { if (e.isIntersecting) { runCount(e.target); cio.unobserve(e.target); } }), { threshold: 0.6 });
+  document.querySelectorAll("[data-count]").forEach(el => cio.observe(el));
+  const cntTimer = setInterval(() => {
+    const left = [...document.querySelectorAll("[data-count]")].filter(el => !ranCounts.has(el));
+    if (!left.length) { clearInterval(cntTimer); return; }
+    left.forEach(el => { const r = el.getBoundingClientRect(); if (r.top < innerHeight && r.bottom > 0) runCount(el); });
+  }, 500);
+
+
+  // Mobile menu
+  const burger = document.getElementById("burger"), mmenu = document.getElementById("mmenu");
+  burger.addEventListener("click", () => mmenu.classList.toggle("open"));
+  mmenu.querySelectorAll("a").forEach(a => a.addEventListener("click", () => mmenu.classList.remove("open")));
+
+  // Scroll-progress pulse + motif parallax
+  window.__amb = matchMedia("(min-width: 640px)").matches && matchMedia("(prefers-reduced-motion: no-preference)").matches;
+  const spulse = document.getElementById("spulse");
+  const onScroll = () => {
+    const de = document.documentElement;
+    const max = de.scrollHeight - de.clientHeight;
+    if (spulse && max > 0) spulse.style.transform = "scaleX(" + (max > 0 ? de.scrollTop / max : 0).toFixed(4) + ")";
+    if (window.__amb) de.style.setProperty("--par", (de.scrollTop * 0.04).toFixed(1) + "px");
+    document.querySelector("header").classList.toggle("cond", de.scrollTop > 420);
+    maybeFootBlip();
+  };
+  addEventListener("scroll", onScroll, { passive: true }); onScroll();
+
+  // #5 footer ECG sign-off — one-shot blip when it scrolls into view
+  var footBlipDone = false;
+  function maybeFootBlip() {
+    if (footBlipDone) return;
+    var svg = document.getElementById("ecgFoot");
+    if (!svg || !matchMedia("(prefers-reduced-motion: no-preference)").matches) { footBlipDone = true; return; }
+    var r = svg.getBoundingClientRect();
+    if (r.top > innerHeight || r.bottom < 0) return;
+    footBlipDone = true;
+    var path = document.getElementById("ecgFootLine"), bp = document.getElementById("footBlip");
+    var len = path.getTotalLength(), t0 = performance.now(), dur = 2400;
+    var iv = setInterval(function () {
+      var p = Math.min(1, (performance.now() - t0) / dur);
+      var pt = path.getPointAtLength(len * p);
+      bp.setAttribute("cx", pt.x); bp.setAttribute("cy", pt.y);
+      bp.setAttribute("opacity", p < .08 ? p / .08 : (p > .9 ? (1 - p) / .1 : 1));
+      if (p >= 1) { clearInterval(iv); bp.setAttribute("opacity", 0); }
+    }, 24);
+  }
+
+  // #9 page-transition pulse on Book CTAs
+  document.querySelectorAll('a[href^="Booking"]').forEach(function (a) {
+    a.addEventListener("click", function (e) {
+      if (!matchMedia("(prefers-reduced-motion: no-preference)").matches) return;
+      e.preventDefault();
+      var p = document.getElementById("ptp");
+      p.classList.remove("go"); void p.offsetWidth; p.classList.add("go");
+      setTimeout(function () { location.href = a.getAttribute("href"); }, 460);
+    });
+  });
+
+  // Open-now indicator (Asia/Manila, Mon–Sat 8–5)
+  (function () {
+    try {
+      var now = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Manila" }));
+      var day = now.getDay(), hr = now.getHours();
+      var open = day >= 1 && day <= 6 && hr >= 8 && hr < 17;
+      var pill = document.getElementById("openPill");
+      pill.className = "open-pill " + (open ? "yes" : "no");
+      document.getElementById("openTxt").textContent = open ? "Open now · closes 5 PM" : "Closed · opens 8 AM Mon–Sat";
+      pill.style.display = "inline-flex";
+    } catch (e) {}
+  })();
+
+  // Messenger button entrance
+  setTimeout(function () { var m = document.getElementById("msgr"); if (m) m.classList.add("in"); }, 1400);
+  setTimeout(function () { var m = document.getElementById("msgr"); if (m) { m.style.opacity = "1"; m.style.transform = "none"; } }, 2400);
+
+  // Magnetic primary CTAs (desktop pointers only)
+  if (matchMedia("(pointer: fine)").matches && matchMedia("(prefers-reduced-motion: no-preference)").matches) {
+    document.querySelectorAll(".btn-cyan").forEach(b => {
+      b.addEventListener("mousemove", e => {
+        const r = b.getBoundingClientRect();
+        const dx = (e.clientX - r.left - r.width / 2) / r.width, dy = (e.clientY - r.top - r.height / 2) / r.height;
+        b.style.transform = "translate(" + (dx * 6).toFixed(1) + "px, " + (dy * 5 - 1).toFixed(1) + "px)";
+      });
+      b.addEventListener("mouseleave", () => { b.style.transform = ""; });
+    });
+  }
+</script>
+<script>
+  function iconsReady(){ try { lucide.createIcons(); } catch(e) {} }
+  (function loadLucide(srcs){
+    if (!srcs.length) return;
+    const s = document.createElement('script');
+    s.src = srcs[0]; s.async = true;
+    s.onload = iconsReady;
+    s.onerror = () => loadLucide(srcs.slice(1));
+    document.body.appendChild(s);
+  })([
+    "https://cdn.jsdelivr.net/npm/lucide@0.469.0/dist/umd/lucide.min.js",
+    "https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"
+  ]);
+</script>
+</body>
+</html>

@@ -33,6 +33,7 @@
   "exclude": [
     "node_modules",
     "scripts/smoke-chemistry-consolidated.ts",
-    "tests/playwright"
+    "tests/playwright",
+    "design-handoff"
   ]
 }

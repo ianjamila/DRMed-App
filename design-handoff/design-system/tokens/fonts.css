@@ -1,0 +1,8 @@
+/* ============================================================
+   DRMed — Webfonts
+   • Public Sans       → UI / body            (--font-sans)
+   • Instrument Serif  → marketing display    (--font-display) — June 2026 redesign
+   • Montserrat        → portal/app headings  (--font-heading)
+   ============================================================ */
+
+@import url("https://fonts.googleapis.com/css2?family=Public+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Instrument+Serif:ital@0;1&family=Montserrat:wght@500;600;700;800;900&display=swap");

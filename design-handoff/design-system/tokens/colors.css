@@ -1,0 +1,74 @@
+/* ============================================================
+   DRMed — Color tokens
+   Lifted verbatim from the production app (src/app/globals.css).
+   Brand identity is navy + cyan on a cool, clinical light-blue
+   field. Semantic aliases bridge to the shadcn primitive names
+   the component library expects.
+   ============================================================ */
+
+:root {
+  /* ---- Brand core (refreshed June 2026 — redesign canon) ------------
+     Legacy production values were navy #284570 / cyan #06AEF1; the
+     refreshed brand ships #263F91 / #08A8E2. */
+  --color-brand-navy: #263F91;        /* primary — headings, nav, dark sections */
+  --color-brand-steel: #4682b4;       /* secondary blue — logo subtext, accents */
+  --color-brand-cyan: #08A8E2;        /* accent / CTA — "Book Now", highlights.
+                                         ⚠ 3.5:1 on navy, 2.7:1 on white — decorative,
+                                         icons, and large display text only. */
+  --color-brand-cyan-text: #0779A6;   /* AA-safe cyan (4.9:1 on white) — use for
+                                         small cyan text/links on light surfaces */
+  --color-brand-cyan-light: #7fbeff;  /* soft cyan — tints, decorative */
+  --color-brand-cyan-bright: #3FC1F2; /* bright step — hover/glow on dark surfaces
+                                         (8.8:1 on the dark base — AA for text) */
+  --color-brand-cyan-mid: var(--color-brand-cyan-bright); /* legacy alias */
+
+  /* ---- Surfaces -------------------------------------------------- */
+  --color-brand-bg: #f0f6fc;          /* page tint — section backgrounds */
+  --color-brand-bg-mid: #e3eef9;      /* hairline borders / dividers on tint */
+  --color-white: #ffffff;
+
+  /* Warm-neutral marketing surfaces (June 2026 merged-D1 redesign) */
+  --color-warm-bg: #FBF9F5;           /* marketing page field */
+  --color-warm-sand: #F3EEE6;         /* sand panels, info blocks */
+  --color-warm-line: #E9E2D5;         /* hairline borders on warm field */
+  --color-warm-line-soft: #F0EBDF;    /* softer dividers */
+
+  /* ---- Text ------------------------------------------------------ */
+  --color-brand-text: #1a2537;        /* primary body text (near-navy ink) */
+  --color-brand-text-mid: #374151;    /* secondary copy */
+  --color-brand-text-soft: #6b7280;   /* muted / captions / labels */
+
+  /* ---- Semantic / status ---------------------------------------- */
+  --color-success: #059669;           /* emerald-600 — released, paid, success */
+  --color-success-bg: #d1fae5;        /* emerald-100 — success pill bg */
+  --color-success-fg: #064e3b;        /* emerald-900 — success pill text */
+  --color-danger: #dc2626;            /* red-600 — destructive, errors */
+  --color-warning: #d97706;           /* amber-600 — caution notices */
+
+  /* ---- Neutral lines (kept grayscale so dividers don't shout) ---- */
+  --color-border: #e6e8eb;            /* ≈ oklch(0.922 0 0) */
+  --color-input: #e6e8eb;
+
+  /* ===========================================================
+     shadcn primitive bridge — every Button/Card/Input/Badge in
+     the component library reads these. Keep them mapped to brand.
+     =========================================================== */
+  --background: var(--color-white);
+  --foreground: var(--color-brand-text);
+  --card: var(--color-white);
+  --card-foreground: var(--color-brand-text);
+  --popover: var(--color-white);
+  --popover-foreground: var(--color-brand-text);
+  --primary: var(--color-brand-navy);
+  --primary-foreground: #ffffff;
+  --secondary: var(--color-brand-bg);
+  --secondary-foreground: var(--color-brand-text);
+  --muted: var(--color-brand-bg);
+  --muted-foreground: var(--color-brand-text-soft);
+  --accent: var(--color-brand-bg);
+  --accent-foreground: var(--color-brand-text);
+  --destructive: var(--color-danger);
+  --border: var(--color-border);
+  --input: var(--color-input);
+  --ring: var(--color-brand-cyan);
+}
