@@ -121,4 +121,22 @@ is flagged PLACEHOLDER/VERIFY at its use site in code.
       (also drives the "Open now" pill, Asia/Manila). Verify.
 - [ ] **Messenger link** — confirm `m.me/drmed.ph` is the live page handle.
 
-_Last updated: phase a (foundation). Sections appended as later phases land._
+## Implementation log
+
+- **Phase a** — foundation: tokens, Instrument Serif, motion primitives, bundle + photos.
+- **Phase b** — shell: warm sticky nav (condense-on-scroll), navy-deep serif footer
+  (all links + newsletter), Messenger FAB, ScrollPulse.
+- **Phase c** — homepage rebuilt section-by-section in `src/components/marketing/home/`
+  with shared primitives in `src/components/marketing/ui/` (`Eyebrow`,
+  `SectionHeading`, `PillLink`). Sections: hero (serif H1 + ECG underline, CountUp
+  stats, arch-top photo with ≥640px clip-path reveal, PendingPhoto inset), trust
+  strip, NEW how-it-works, services (8, Lucide), navy packages band, DB-driven
+  specialists (first 6 by `display_order`, C13), NEW testimonials (PLACEHOLDER),
+  portal promo (#portal, PendingPhoto), HMO marquee (all 10, C13), payments, NEW
+  gallery (4 real photos), NEW FAQ (PLACEHOLDER), restyled contact (ContactForm
+  reused, subject→service select, C15) with hydration-safe open-now pill (R4).
+  ECG dividers between sections + a navy ECG bridge into the footer. JSON-LD +
+  metadata + anchors preserved. Brand icons: lucide-react has no Facebook/Instagram
+  glyphs in this version → ExternalLink + aria-label used in contact/footer.
+
+_Updated through phase c. Subpages + booking wizard + final pass to follow._

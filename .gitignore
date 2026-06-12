@@ -86,3 +86,6 @@ backups/
 consent-0*.png
 .playwright-mcp/
 .env*.local
+
+# Redesign visual-verification screenshots (local only)
+ph?-*.png

@@ -10,7 +10,9 @@ export default function MarketingLayout({
     <>
       <ScrollPulse />
       <MarketingNav />
-      <main className="flex-1 overflow-x-clip">{children}</main>
+      <main className="flex-1 overflow-x-clip bg-[color:var(--color-warm-bg)] text-[color:var(--color-ink)]">
+        {children}
+      </main>
       <MarketingFooter />
       <MessengerFab />
     </>

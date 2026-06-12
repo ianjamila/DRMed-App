@@ -4,7 +4,7 @@ import { NewsletterForm } from "./newsletter-form";
 
 export function MarketingFooter() {
   return (
-    <footer className="mt-24 bg-[color:var(--color-brand-navy-deep)] text-white">
+    <footer className="bg-[color:var(--color-brand-navy-deep)] text-white">
       {/* Newsletter band */}
       <div className="border-b border-white/10">
         <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-8 sm:px-6 md:flex-row md:items-center md:justify-between lg:px-8">
