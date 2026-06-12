@@ -18,10 +18,10 @@ export default function PrivacyPage() {
       />
 
       <article className="mx-auto max-w-3xl px-4 py-12 sm:px-6 lg:px-8">
-        <p className="text-sm text-[color:var(--color-brand-text-soft)]">
+        <p className="text-sm text-[color:var(--color-ink-soft)]">
           Last updated: April 29, 2026
         </p>
-        <p className="mt-4 text-base leading-relaxed text-[color:var(--color-brand-text-mid)]">
+        <p className="mt-4 text-base leading-relaxed text-[color:var(--color-ink-mid)]">
           This notice explains how DRMed Clinic and Laboratory collects, uses,
           stores, and protects personal data in compliance with the Data
           Privacy Act of 2012 (RA 10173) and applicable NPC issuances.
@@ -37,7 +37,7 @@ export default function PrivacyPage() {
             Mobile:{" "}
             <a
               href={`tel:${CONTACT.phone.mobileE164}`}
-              className="link-brand"
+              className="text-[color:var(--color-brand-cyan-text)] underline underline-offset-2"
             >
               {CONTACT.phone.mobile}
             </a>
@@ -45,7 +45,7 @@ export default function PrivacyPage() {
             Telephone:{" "}
             <a
               href={`tel:${CONTACT.phone.landlineE164}`}
-              className="link-brand"
+              className="text-[color:var(--color-brand-cyan-text)] underline underline-offset-2"
             >
               {CONTACT.phone.landline}
             </a>
@@ -150,7 +150,7 @@ export default function PrivacyPage() {
             contact DRMed through the numbers listed above or through{" "}
             <Link
               href="/contact"
-              className="link-brand"
+              className="text-[color:var(--color-brand-cyan-text)] underline underline-offset-2"
             >
               our contact form
             </Link>
@@ -170,11 +170,11 @@ function PrivacySection({
   children: React.ReactNode;
 }) {
   return (
-    <section className="mt-8">
-      <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+    <section className="mt-8 border-t border-[color:var(--color-warm-line-soft)] pt-8">
+      <h2 className="font-[family-name:var(--font-display)] text-xl font-normal text-[color:var(--color-brand-navy)]">
         {title}
       </h2>
-      <div className="mt-3 text-base leading-relaxed text-[color:var(--color-brand-text-mid)]">
+      <div className="mt-3 text-base leading-relaxed text-[color:var(--color-ink-mid)]">
         {children}
       </div>
     </section>

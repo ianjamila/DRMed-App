@@ -1,6 +1,9 @@
-import Link from "next/link";
+import { Calendar, Info, MapPin } from "lucide-react";
+
 import { createClient } from "@/lib/supabase/server";
 import { PageHero } from "@/components/marketing/page-hero";
+import { SectionHeading, PillLink } from "@/components/marketing/ui";
+import { Reveal } from "@/components/marketing/motion";
 import { DoctorAvatar } from "@/components/marketing/doctor-avatar";
 import { physicianPhotoUrl } from "@/lib/physicians/photo";
 import { formatSchedule } from "@/lib/physicians/format-schedule";
@@ -75,21 +78,33 @@ export default async function PhysiciansPage() {
     <>
       <PageHero
         eyebrow="DRMed Clinic and Laboratory"
-        title="Physicians and Detailed Schedules"
+        title="Physicians and Detailed"
+        accent="Schedules."
         description="Complete doctor roster with photos and regular clinic schedules. Please confirm final availability before visiting."
       />
 
-      <div className="mx-auto max-w-7xl px-4 pb-8 pt-2 sm:px-6 lg:px-8">
-        <div className="flex flex-wrap items-center gap-4 text-xs font-medium text-[color:var(--color-brand-text-soft)]">
-          <span className="rounded-full bg-[color:var(--color-brand-bg)] px-3 py-1 text-[color:var(--color-brand-navy)]">
-            {totalCount}+ Physicians
-          </span>
-          <span>Northridge Plaza · Quezon City</span>
-          <span>Mon – Sat Clinic Hours</span>
+      {/* Meta strip */}
+      <div className="border-b border-[color:var(--color-warm-line-soft)] bg-[color:var(--color-warm-bg)]">
+        <div className="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
+          <div className="flex flex-wrap items-center gap-4 text-xs font-medium text-[color:var(--color-ink-mid)]">
+            <span className="flex items-center gap-1.5">
+              <span className="inline-flex h-5 items-center rounded-full bg-[rgba(8,168,226,0.10)] px-2.5 text-[color:var(--color-brand-cyan-text)] font-bold">
+                {totalCount}+ Physicians
+              </span>
+            </span>
+            <span className="flex items-center gap-1.5">
+              <MapPin className="h-3.5 w-3.5 shrink-0 text-[color:var(--color-brand-cyan)]" aria-hidden="true" />
+              Northridge Plaza · Quezon City
+            </span>
+            <span className="flex items-center gap-1.5">
+              <Calendar className="h-3.5 w-3.5 shrink-0 text-[color:var(--color-brand-cyan)]" aria-hidden="true" />
+              Mon – Sat Clinic Hours
+            </span>
+          </div>
         </div>
       </div>
 
-      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6 sm:py-20 lg:px-8">
         {groupsInOrder.map((group) => (
           <PhysicianGroupSection
             key={group}
@@ -99,38 +114,44 @@ export default async function PhysiciansPage() {
           />
         ))}
 
-        <div className="mt-12 rounded-xl bg-[color:var(--color-brand-bg)] p-6 text-sm text-[color:var(--color-brand-text-mid)]">
-          ⚠️ Schedules may change without prior notice. Kindly call{" "}
-          <a
-            href="tel:+639166043208"
-            className="font-bold text-[color:var(--color-brand-navy)] hover:text-[color:var(--color-brand-cyan)]"
-          >
-            0916 604 3208
-          </a>{" "}
-          or{" "}
-          <a
-            href="tel:+63283553517"
-            className="font-bold text-[color:var(--color-brand-navy)] hover:text-[color:var(--color-brand-cyan)]"
-          >
-            8355 3517
-          </a>{" "}
-          to confirm availability before booking.
-        </div>
+        {/* Schedule-change notice */}
+        <Reveal>
+          <div className="mt-4 flex flex-wrap items-start gap-3 rounded-[20px] border border-[color:var(--color-warm-line-soft)] bg-[color:var(--color-warm-bg)] p-5 text-sm text-[color:var(--color-ink-mid)]">
+            <Info
+              className="mt-0.5 h-4 w-4 shrink-0 text-[color:var(--color-brand-cyan)]"
+              aria-hidden="true"
+            />
+            <p>
+              Schedules may change without prior notice. Kindly call{" "}
+              <a
+                href="tel:+639166043208"
+                className="font-bold text-[color:var(--color-brand-navy)] hover:text-[color:var(--color-brand-cyan-text)]"
+              >
+                0916 604 3208
+              </a>{" "}
+              or{" "}
+              <a
+                href="tel:+63283553517"
+                className="font-bold text-[color:var(--color-brand-navy)] hover:text-[color:var(--color-brand-cyan-text)]"
+              >
+                8355 3517
+              </a>{" "}
+              to confirm availability before booking.
+            </p>
+          </div>
+        </Reveal>
 
-        <div className="mt-6 flex flex-wrap gap-3">
-          <Link
-            href="/schedule"
-            className="rounded-md bg-[color:var(--color-brand-navy)] px-5 py-2.5 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
-          >
-            Book an Appointment
-          </Link>
-          <Link
-            href="/"
-            className="rounded-md border border-[color:var(--color-brand-navy)] px-5 py-2.5 text-sm font-bold text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-navy)] hover:text-white"
-          >
-            Back to Homepage
-          </Link>
-        </div>
+        {/* Bottom CTAs */}
+        <Reveal>
+          <div className="mt-8 flex flex-wrap gap-3">
+            <PillLink href="/schedule" variant="navy" size="md">
+              Book an Appointment
+            </PillLink>
+            <PillLink href="/" variant="line" size="md">
+              Back to Homepage
+            </PillLink>
+          </div>
+        </Reveal>
       </div>
     </>
   );
@@ -146,17 +167,18 @@ function PhysicianGroupSection({
   blocksByPhysician: Map<string, ScheduleRow[]>;
 }) {
   return (
-    <section className="mb-12">
-      <div className="mb-6 flex items-baseline justify-between">
-        <h2 className="font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)] md:text-3xl">
-          {group}
-        </h2>
-        <span className="text-sm font-medium text-[color:var(--color-brand-cyan)]">
-          {physicians.length} physician{physicians.length === 1 ? "" : "s"}
-        </span>
-      </div>
-      <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-        {physicians.map((doc) => {
+    <section className="mb-14 sm:mb-16">
+      <Reveal>
+        <div className="mb-7 flex flex-wrap items-baseline justify-between gap-3">
+          <SectionHeading as="h2" title={group} />
+          <span className="inline-flex h-6 items-center rounded-full bg-[rgba(8,168,226,0.10)] px-3 text-xs font-bold text-[color:var(--color-brand-cyan-text)]">
+            {physicians.length} physician{physicians.length === 1 ? "" : "s"}
+          </span>
+        </div>
+      </Reveal>
+
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {physicians.map((doc, i) => {
           const blocks = blocksByPhysician.get(doc.id) ?? [];
           const lines = formatSchedule(blocks);
           const photoUrl = physicianPhotoUrl({
@@ -164,25 +186,35 @@ function PhysicianGroupSection({
             photo_path: doc.photo_path,
           });
           return (
-            <article
-              key={doc.id}
-              className="flex gap-4 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5"
-            >
-              <DoctorAvatar photoUrl={photoUrl} name={doc.full_name} />
-              <div className="min-w-0 flex-1">
-                <h3 className="font-heading text-base font-bold leading-tight text-[color:var(--color-brand-navy)]">
-                  {doc.full_name}
-                </h3>
-                <p className="mt-1 text-xs font-medium text-[color:var(--color-brand-cyan)]">
-                  {doc.specialty}
-                </p>
-                <ul className="mt-3 space-y-1 text-xs text-[color:var(--color-brand-text-mid)]">
-                  {lines.map((s) => (
-                    <li key={s}>· {s}</li>
-                  ))}
-                </ul>
-              </div>
-            </article>
+            <Reveal key={doc.id} delay={i * 0.05}>
+              <article className="flex gap-4 rounded-[20px] border border-[color:var(--color-warm-line-soft)] bg-white p-5 shadow-[var(--shadow-warm-sm)] transition-[transform,box-shadow] duration-200 hover:-translate-y-1 hover:shadow-[var(--shadow-warm-lg)]">
+                <DoctorAvatar photoUrl={photoUrl} name={doc.full_name} />
+                <div className="min-w-0 flex-1">
+                  <h3 className="font-[family-name:var(--font-display)] text-lg leading-tight text-[color:var(--color-brand-navy)]">
+                    {doc.full_name}
+                  </h3>
+                  <p className="mt-1 text-xs font-bold uppercase tracking-[0.08em] text-[color:var(--color-brand-cyan-text)]">
+                    {doc.specialty}
+                  </p>
+                  {lines.length > 0 && (
+                    <ul className="mt-3 space-y-1">
+                      {lines.map((s) => (
+                        <li
+                          key={s}
+                          className="flex items-center gap-1.5 text-xs text-[color:var(--color-ink-mid)]"
+                        >
+                          <Calendar
+                            className="h-3 w-3 shrink-0 text-[color:var(--color-brand-cyan)]"
+                            aria-hidden="true"
+                          />
+                          {s}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </article>
+            </Reveal>
           );
         })}
       </div>

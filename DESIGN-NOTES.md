@@ -120,6 +120,9 @@ is flagged PLACEHOLDER/VERIFY at its use site in code.
 - [ ] **Contact details & hours** — address, phones, email, Mon–Sat 08:00–17:00
       (also drives the "Open now" pill, Asia/Manila). Verify.
 - [ ] **Messenger link** — confirm `m.me/drmed.ph` is the live page handle.
+- [ ] **About-page "Our Values"** — NEW section; the four values are distilled
+      from the clinic's existing mission/vision/commitment copy (not new claims).
+      Confirm the wording, or drop the section for mission/vision only.
 
 ## Implementation log
 
@@ -160,4 +163,13 @@ is flagged PLACEHOLDER/VERIFY at its use site in code.
   branch + validation at 1440/390; **live submission deferred to the phase-f E2E**
   (no real bookings created from local dev — R3).
 
-_Updated through phase d. Subpages + final pass to follow._
+- **Phase e** — subpages. Shared `PageHero` restyled to the warm serif hero
+  (lifts every subpage). Full restyle of `/packages` (live package data, serif
+  cards), `/physicians` (DB roster, warm doctor cards), `/all-services` (+ catalog
+  filter UI + `[code]` detail), `/about`, `/contact` (reuses the restyled
+  ContactForm). Light token-level reskin of `/register`, `/privacy`, `/terms`,
+  `/newsletter`. All data queries / routes / metadata unchanged. **NEW** about-page
+  "Our Values" grid — copy distilled from the existing mission/vision text, flagged
+  PLACEHOLDER/VERIFY for partner sign-off (see launch checklist).
+
+_Updated through phase e. Final pass (a11y, Lighthouse, E2E, docs) to follow._
