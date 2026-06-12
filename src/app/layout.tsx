@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Public_Sans, Montserrat, Instrument_Serif } from "next/font/google";
-import { SpeedInsights } from "@vercel/speed-insights/next";
+import { Analytics } from "@vercel/analytics/next";
 import { SITE } from "@/lib/marketing/site";
 import "./globals.css";
 
@@ -68,7 +68,7 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col bg-white text-[color:var(--color-brand-text)]">
         {children}
-        <SpeedInsights />
+        <Analytics />
       </body>
     </html>
   );
