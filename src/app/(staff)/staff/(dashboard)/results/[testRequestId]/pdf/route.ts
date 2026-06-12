@@ -11,7 +11,7 @@ import { sectionsForRole } from "@/lib/auth/role-sections";
  *  - admin + pathologist: view any released result (sectionsForRole=null)
  *  - medtech: view results in their bench sections (chemistry/hematology/
  *    immunology/urinalysis/microbiology/send_out)
- *  - xray_technician: view imaging sections (imaging_xray/imaging_ultrasound)
+ *  - xray_technician: view imaging sections (imaging_xray/imaging_ultrasound/imaging_ecg)
  *  - reception: no access
  *
  * Logs every view to audit_log so a later access review can surface who

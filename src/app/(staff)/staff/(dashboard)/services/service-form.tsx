@@ -40,6 +40,7 @@ const SECTION_OPTIONS: { value: string; label: string }[] = [
   { value: "microbiology", label: "Microbiology" },
   { value: "imaging_xray", label: "Imaging — X-Ray" },
   { value: "imaging_ultrasound", label: "Imaging — Ultrasound" },
+  { value: "imaging_ecg", label: "Imaging — ECG" },
   { value: "vaccine", label: "Vaccine" },
   { value: "send_out", label: "Send-out" },
   { value: "consultation", label: "Consultation" },

@@ -18,6 +18,7 @@ export const SERVICE_SECTIONS = [
   "microbiology",
   "imaging_xray",
   "imaging_ultrasound",
+  "imaging_ecg",
   "vaccine",
   "send_out",
   "consultation",

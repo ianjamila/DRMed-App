@@ -20,6 +20,11 @@ export interface StaffNavItem {
   // sub-route (e.g. /staff/visits/new) but the item should still light up on
   // sibling routes (/staff/visits archive, /staff/visits/[id] detail).
   activePrefix?: string;
+  // Sub-trees that should NOT mark this item active even though they fall under
+  // `href`'s prefix. Mirrors SectionTabs' excludePrefixes — e.g. "Billing &
+  // receipts" at /staff/visits excludes /staff/visits/new (which belongs to the
+  // Services group's "New … request" items).
+  excludePrefixes?: string[];
   roles: readonly StaffRole[];
 }
 
@@ -53,18 +58,27 @@ export const STAFF_NAV: StaffNavSection[] = [
     ],
   },
   {
-    heading: "Reception",
+    heading: "Front desk",
     items: [
       {
-        href: "/staff/appointments",
-        label: "Appointments",
-        description: "Today's scheduled patients and walk-in slots. Mark patients arrived to start their visit, or reschedule no-shows. View other days using the date picker.",
+        href: "/staff/patients/new",
+        label: "New patient registration",
+        description: "Register a brand-new patient at the counter — name, contact, birthday, address. Creates the patient record so you can then start their visit. For returning patients, search under Patients instead.",
         roles: ["reception", "admin"],
       },
       {
         href: "/staff/patients",
         label: "Patients",
+        // New patient registration owns /staff/patients/new — keep this item
+        // from lighting there so only one Front-desk item is active at a time.
+        excludePrefixes: ["/staff/patients/new"],
         description: "Search the patient database by name, contact number, or DRM ID. Open a patient to see their full visit history, attached IDs, contact info, and previous test results.",
+        roles: ["reception", "admin"],
+      },
+      {
+        href: "/staff/appointments",
+        label: "Appointments",
+        description: "Today's scheduled patients and walk-in slots, filterable by Consultations / Home service. Mark patients arrived to start their visit, or reschedule no-shows. View other days using the date picker.",
         roles: ["reception", "admin"],
       },
       {
@@ -74,10 +88,24 @@ export const STAFF_NAV: StaffNavSection[] = [
         roles: ["reception", "admin"],
       },
       {
-        href: "/staff/visits/new",
-        label: "Visits",
-        activePrefix: "/staff/visits",
-        description: "Today's and historic patient visits. Lands on the New visit tab (pick patient → pick services → route to lab/imaging/consult). Switch to Archive to search every visit ever (filter by date / patient / status).",
+        href: "/staff/inquiries",
+        label: "Inquiries",
+        description: "Inquiries that came in through the website chat or Messenger but haven't been converted into a real appointment yet. Follow up here to book them or close the thread.",
+        roles: ["reception", "admin"],
+      },
+    ],
+  },
+  {
+    heading: "Billing",
+    items: [
+      {
+        href: "/staff/visits",
+        label: "Billing & receipts",
+        // /staff/visits is the visit archive (every visit ever); each visit
+        // opens to its printable A5 billing. excludePrefixes keeps this item
+        // from lighting on /staff/visits/new, which belongs to Services below.
+        excludePrefixes: ["/staff/visits/new"],
+        description: "Every visit ever, searchable by date / patient / status. Open a visit to print its patient billing (A5) and re-issue receipts. This is the record side of billing — to start a new charge, use New lab/imaging request under Services.",
         roles: ["reception", "admin"],
       },
       {
@@ -86,25 +114,26 @@ export const STAFF_NAV: StaffNavSection[] = [
         description: "Build a price quote without creating a visit. Useful for phone inquiries: 'How much for a CBC + Urinalysis + Lipid panel?' Generates a shareable quote with HMO or cash pricing.",
         roles: ["reception", "medtech", "admin"],
       },
+    ],
+  },
+  {
+    heading: "Services",
+    items: [
       {
-        href: "/staff/inquiries",
-        label: "Inquiries",
-        description: "Inquiries that came in through the website chat or Messenger but haven't been converted into a real appointment yet. Follow up here to book them or close the thread.",
+        href: "/staff/visits/new?filter=lab",
+        label: "New lab request",
+        // Both Services items open the New visit form; the ?filter pre-selects
+        // the Lab/Imaging picker category (soft — the user can still switch and
+        // build a mixed visit). activePrefix lights them across the new-visit page.
+        activePrefix: "/staff/visits/new",
+        description: "Start a new lab visit — opens the visit form with the picker pre-filtered to lab tests. Pick the patient, choose tests, and the system issues the receipt + result PIN. You can still switch to imaging, packages, or a doctor on the same form.",
         roles: ["reception", "admin"],
       },
       {
-        href: "/staff/gift-codes/sell",
-        label: "Sell gift code",
-        description: "Sell a prepaid gift code to a customer — they pay now, the recipient redeems later for services. Generates a printable code with QR + expiration date.",
-        roles: ["reception", "admin"],
-      },
-      {
-        href: "/staff/payments/cash-drawer",
-        label: "Cash drawer",
-        // Lands on the Cash drawer tab; End of day is the second tab on the
-        // same page. activePrefix keeps this item lit on the eod route too.
-        activePrefix: "/staff/payments/eod",
-        description: "Your shift cash workspace, in two tabs. Cash drawer: record the opening float, see every payment collected, and track the running till total. End of day: count the physical cash, compare to what the system expects, explain any over/short, and lock the day.",
+        href: "/staff/visits/new?filter=imaging",
+        label: "New imaging request",
+        activePrefix: "/staff/visits/new",
+        description: "Start a new imaging visit — opens the visit form pre-filtered to imaging (X-ray, ultrasound, ECG). Pick the patient and the study; the imaging tech sees it in their queue. You can still add other services on the same form.",
         roles: ["reception", "admin"],
       },
     ],
@@ -429,23 +458,6 @@ export const STAFF_NAV: StaffNavSection[] = [
           },
         ],
       },
-      {
-        heading: "Hidden tabs",
-        items: [
-          {
-            href: "/staff/signoff",
-            label: "Sign-off",
-            description: "Pathologist review queue — tests that the medtech finished but need the pathologist's final review and signature before release. Hidden from the main Lab section because pathologist review isn't yet part of the live workflow; surface here for testing or when the role goes active.",
-            roles: ["pathologist", "admin"],
-          },
-          {
-            href: "/staff/admin/accounting/patient-ar",
-            label: "Patient receivables (aging)",
-            description: "Cash patients with unpaid balances. Hidden from the main Admin section because the clinic uses all-or-nothing payments (no partial / no HMO co-pay) so this list is almost always empty. Re-surface if partial payments or co-pay are introduced.",
-            roles: ["admin"],
-          },
-        ],
-      },
     ],
   },
   {
@@ -456,11 +468,49 @@ export const STAFF_NAV: StaffNavSection[] = [
         label: "My profile",
         roles: ["reception", "medtech", "pathologist", "admin", "xray_technician"],
       },
+    ],
+  },
+  {
+    // Top-level, per-role-visible "parked" section. Items here are real and
+    // reachable but de-emphasized: either not part of the live workflow yet
+    // (Sign-off, Patient receivables) or deliberately moved off reception's
+    // main nav per partner feedback (My payslips, Sell gift code, Cash drawer).
+    // Each item keeps its own roles, so the section renders different contents
+    // per role and is dropped entirely for roles with nothing parked.
+    heading: "Hidden tabs",
+    items: [
       {
         href: "/staff/payslips",
         label: "My payslips",
         description: "Your own payslip history.",
         roles: ["reception", "medtech", "pathologist", "admin", "xray_technician"],
+      },
+      {
+        href: "/staff/gift-codes/sell",
+        label: "Sell gift code",
+        description: "Sell a prepaid gift code to a customer — they pay now, the recipient redeems later for services. Generates a printable code with QR + expiration date. Parked here for now; reception sells these rarely.",
+        roles: ["reception", "admin"],
+      },
+      {
+        href: "/staff/payments/cash-drawer",
+        label: "Cash drawer",
+        // Lands on the Cash drawer tab; End of day is the second tab on the
+        // same page. activePrefix keeps this item lit on the eod route too.
+        activePrefix: "/staff/payments/eod",
+        description: "Your shift cash workspace (Cash drawer + End of day). Parked here while the clinic counts cash manually at end of day; admins keep access for when the in-app drawer is re-enabled.",
+        roles: ["reception", "admin"],
+      },
+      {
+        href: "/staff/signoff",
+        label: "Sign-off",
+        description: "Pathologist review queue — tests that the medtech finished but need the pathologist's final review and signature before release. Hidden from the main Lab section because pathologist review isn't yet part of the live workflow; surface here for testing or when the role goes active.",
+        roles: ["pathologist", "admin"],
+      },
+      {
+        href: "/staff/admin/accounting/patient-ar",
+        label: "Patient receivables (aging)",
+        description: "Cash patients with unpaid balances. Hidden from the main Admin section because the clinic uses all-or-nothing payments (no partial / no HMO co-pay) so this list is almost always empty. Re-surface if partial payments or co-pay are introduced.",
+        roles: ["admin"],
       },
     ],
   },
@@ -496,6 +546,13 @@ export function visibleNavFor(role: StaffRole): StaffNavSection[] {
 
 export function isItemActive(item: StaffNavItem, pathname: string): boolean {
   if (item.exact) return pathname === item.href;
+  if (
+    item.excludePrefixes?.some(
+      (p) => pathname === p || pathname.startsWith(`${p}/`),
+    )
+  ) {
+    return false;
+  }
   if (pathname === item.href || pathname.startsWith(`${item.href}/`)) return true;
   if (item.activePrefix) {
     return (

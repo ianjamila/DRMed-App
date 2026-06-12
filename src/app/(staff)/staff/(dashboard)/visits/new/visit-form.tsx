@@ -33,6 +33,7 @@ export interface ServiceLite {
   hmo_price_php: number | null;
   senior_discount_php: number | null;
   senior_pwd_eligible: boolean | null;
+  section: string | null;
 }
 
 interface PatientLite {
@@ -59,6 +60,7 @@ interface Props {
   patient: PatientLite;
   hmoProviders: HmoProviderLite[];
   physicians?: PhysicianLite[];
+  initialCategory?: "lab" | "imaging";
 }
 
 // Discount kinds match the test_requests.discount_kind check constraint.
@@ -92,8 +94,14 @@ const DISCOUNT_OPTIONS: { value: DiscountKind; label: string }[] = [
 ];
 
 type ServiceTab = "doctor" | "lab";
+type LabCategory = "all" | "lab" | "imaging";
 
 const DOCTOR_KINDS = new Set(["doctor_consultation", "doctor_procedure"]);
+const IMAGING_SECTIONS = new Set(["imaging_xray", "imaging_ultrasound", "imaging_ecg"]);
+
+function isImaging(s: ServiceLite): boolean {
+  return s.section != null && IMAGING_SECTIONS.has(s.section);
+}
 
 const TAB_LABEL: Record<ServiceTab, string> = {
   doctor: "Doctor",
@@ -141,7 +149,7 @@ function discountFor(
   }
 }
 
-export function VisitForm({ services, patient, hmoProviders, physicians = [] }: Props) {
+export function VisitForm({ services, patient, hmoProviders, physicians = [], initialCategory }: Props) {
   const router = useRouter();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [doctorHmoProviderId, setDoctorHmoProviderId] = useState<string>("");
@@ -150,6 +158,7 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [] }: 
   const [attendingPhysicianId, setAttendingPhysicianId] = useState<string>("");
   const [serviceQuery, setServiceQuery] = useState("");
   const [activeTab, setActiveTab] = useState<ServiceTab>("lab");
+  const [labCategory, setLabCategory] = useState<LabCategory>(initialCategory ?? "all");
   const deferredQuery = useDeferredValue(serviceQuery);
   // Phase 14: when reception selects a lab_package, fetch its components so
   // the package row can render an indented "Includes:" list inline. Keyed by
@@ -167,19 +176,35 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [] }: 
   // the active tab. When the query is empty, show the whole tab's catalog —
   // the list lives in a fixed-height scroll box below, so even a 380-item
   // catalog never lengthens the page. Selected rows always appear at the top.
+  //
+  // On the lab tab, labCategory further narrows which services appear as
+  // matches — but already-selected items are always shown regardless of the
+  // active category, so a mixed selection is never hidden from the user.
   const visibleServices = useMemo(() => {
     const q = deferredQuery.trim().toLowerCase();
     const inTab = services.filter((s) => tabOf(s.kind) === activeTab);
+
+    // When on the lab tab and a sub-category is active, restrict the match
+    // candidate pool — but never hide already-selected items.
+    const categoryMatches = (s: ServiceLite): boolean => {
+      if (activeTab !== "lab" || labCategory === "all") return true;
+      return labCategory === "imaging" ? isImaging(s) : !isImaging(s);
+    };
+
     const matchIds = new Set<string>();
     if (q) {
       for (const s of inTab) {
-        if (`${s.name} ${s.code}`.toLowerCase().includes(q)) matchIds.add(s.id);
+        if (categoryMatches(s) && `${s.name} ${s.code}`.toLowerCase().includes(q))
+          matchIds.add(s.id);
       }
     } else {
-      for (const s of inTab) matchIds.add(s.id);
+      for (const s of inTab) {
+        if (categoryMatches(s)) matchIds.add(s.id);
+      }
     }
     // Always include currently-selected (in this tab) so they don't disappear
-    // when the user types a query that doesn't match them.
+    // when the user types a query that doesn't match them, or when the category
+    // chip is switched after a selection was already made.
     const seen = new Set<string>();
     const out: ServiceLite[] = [];
     for (const s of inTab) {
@@ -195,7 +220,7 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [] }: 
       }
     }
     return out;
-  }, [services, deferredQuery, selected, activeTab]);
+  }, [services, deferredQuery, selected, activeTab, labCategory]);
 
   const doctorHmoSelected = doctorHmoProviderId !== "";
   const labHmoSelected = labHmoProviderId !== "";
@@ -418,6 +443,39 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [] }: 
             );
           })}
         </div>
+
+        {/* Lab sub-category chips: shown only on the Lab & Services tab.
+            These are a soft pre-filter — switching chips never hides already-
+            selected items, and the category restriction does not affect what
+            gets submitted. */}
+        {activeTab === "lab" ? (
+          <div className="mt-2 flex flex-wrap gap-1.5" role="group" aria-label="Lab category filter">
+            {(["all", "lab", "imaging"] as LabCategory[]).map((cat) => {
+              const isActive = labCategory === cat;
+              const label = cat === "all" ? "All" : cat === "lab" ? "Lab" : "Imaging";
+              return (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => setLabCategory(cat)}
+                  aria-pressed={isActive}
+                  className={`min-h-11 rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
+                    isActive
+                      ? "bg-white text-[color:var(--color-brand-navy)] shadow-sm ring-1 ring-[color:var(--color-brand-bg-mid)]"
+                      : "text-[color:var(--color-brand-text-soft)] hover:text-[color:var(--color-brand-navy)]"
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+        {activeTab === "lab" && labCategory !== "all" ? (
+          <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
+            Showing {labCategory === "imaging" ? "imaging" : "lab"} only — switch to All to add other services.
+          </p>
+        ) : null}
 
         {/* Doctor tab only: attending physician default for consult/procedure
             lines. Value submits via the hidden input at the top of the form. */}

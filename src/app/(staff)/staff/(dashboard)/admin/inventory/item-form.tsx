@@ -12,6 +12,7 @@ const SECTIONS = [
   "microbiology",
   "imaging_xray",
   "imaging_ultrasound",
+  "imaging_ecg",
   "send_out",
   "front_desk",
   "general",
