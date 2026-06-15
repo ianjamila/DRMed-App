@@ -14,7 +14,9 @@ import {
 import { notifyAppointmentBooked } from "@/lib/notifications/notify-appointment-booked";
 import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit/check";
 import { resolvePatient } from "@/lib/patients/resolve";
-import { createAppointmentGroup, type PatientResolution } from "@/lib/appointments/create";
+import { createAppointmentGroup, createLabRequestOnlyBooking, type PatientResolution } from "@/lib/appointments/create";
+import type { ServiceRow } from "@/lib/appointments/timing";
+import { validateLabRequestGate, parseIntakePreference } from "@/lib/appointments/lab-request";
 
 export type BookingResult =
   | {
@@ -37,6 +39,79 @@ const HONEYPOT_OK: BookingResult = {
 };
 
 type AdminClient = ReturnType<typeof createAdminClient>;
+
+const LAB_REQUEST_BUCKET = "lab-request-forms";
+const LAB_REQUEST_MAX_FILES = 5;
+const LAB_REQUEST_MAX_BYTES = 10 * 1024 * 1024;
+const LAB_REQUEST_MIME = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/heic",
+  "image/heif",
+  "application/pdf",
+]);
+
+function sanitizeFilename(name: string): string {
+  return name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 200);
+}
+
+type LabRequestFile = { file: File; bytes: Uint8Array };
+
+// Pull + validate uploaded request-form files from the FormData. Metadata
+// checks only (count/size/mime) — bytes are read for the later upload.
+async function collectLabRequestFiles(
+  formData: FormData,
+): Promise<{ ok: true; files: LabRequestFile[] } | { ok: false; error: string }> {
+  const raw = formData.getAll("lab_request_files").filter((v): v is File => v instanceof File && v.size > 0);
+  if (raw.length === 0) return { ok: true, files: [] };
+  if (raw.length > LAB_REQUEST_MAX_FILES) {
+    return { ok: false, error: `Please attach at most ${LAB_REQUEST_MAX_FILES} files.` };
+  }
+  const files: LabRequestFile[] = [];
+  for (const file of raw) {
+    if (file.size > LAB_REQUEST_MAX_BYTES) {
+      return { ok: false, error: "Each file must be 10 MB or smaller." };
+    }
+    if (!LAB_REQUEST_MIME.has(file.type)) {
+      return { ok: false, error: "Upload a photo (JPG/PNG/HEIC) or PDF of your request form." };
+    }
+    files.push({ file, bytes: new Uint8Array(await file.arrayBuffer()) });
+  }
+  return { ok: true, files };
+}
+
+// Best-effort upload + record. Booking already succeeded; never throw.
+async function storeLabRequestFiles(
+  admin: AdminClient,
+  files: LabRequestFile[],
+  bookingGroupId: string,
+  patientId: string | null,
+): Promise<void> {
+  for (const { file, bytes } of files) {
+    const path = `lab_requests/${bookingGroupId}/${crypto.randomUUID()}-${sanitizeFilename(file.name)}`;
+    const { error: upErr } = await admin.storage
+      .from(LAB_REQUEST_BUCKET)
+      .upload(path, bytes, { contentType: file.type, upsert: false });
+    if (upErr) {
+      console.error("lab-request upload failed", upErr);
+      continue;
+    }
+    const { error: insErr } = await admin.from("appointment_attachments").insert({
+      booking_group_id: bookingGroupId,
+      patient_id: patientId,
+      storage_path: path,
+      filename: sanitizeFilename(file.name),
+      mime_type: file.type,
+      size_bytes: file.size,
+      kind: "lab_request",
+    });
+    if (insErr) {
+      console.error("lab-request attachment insert failed", insErr);
+      await admin.storage.from(LAB_REQUEST_BUCKET).remove([path]);
+    }
+  }
+}
 
 export type LookupPatientResult =
   | { ok: true; patient: { id: string; drm_id: string; first_name: string; last_name: string } }
@@ -198,6 +273,26 @@ export async function submitBookingAction(_prev: BookingResult | null, formData:
     data = { ...parsed.data, mode: "new" };
   }
 
+  // Doctor's request-form upload (non-doctor branches only). Validate file
+  // metadata before any DB work so a bad file never creates a booking.
+  const isNonDoctor = data.branch !== "doctor_appointment";
+  const collected: { ok: true; files: LabRequestFile[] } | { ok: false; error: string } = isNonDoctor
+    ? await collectLabRequestFiles(formData)
+    : { ok: true, files: [] };
+  if (!collected.ok) return { ok: false, error: collected.error };
+  const labRequestFiles = collected.files;
+  const intakePreference = parseIntakePreference(formData.get("intake_preference"));
+
+  if (isNonDoctor) {
+    const serviceCount = "service_ids" in data ? data.service_ids.length : 0;
+    const gate = validateLabRequestGate({
+      serviceCount,
+      hasForm: labRequestFiles.length > 0,
+      preference: intakePreference,
+    });
+    if (!gate.ok) return { ok: false, error: gate.error };
+  }
+
   const admin = createAdminClient();
   const scheduledAt = "scheduled_at" in data ? (data.scheduled_at ?? null) : null;
   const serviceIds = data.branch === "doctor_appointment" ? [data.service_id] : data.service_ids;
@@ -224,22 +319,49 @@ export async function submitBookingAction(_prev: BookingResult | null, formData:
     return { ok: true, patient: { patientId: row.id, drmId: row.drm_id, email: row.email, resolution: "existing" } };
   };
 
-  const result = await createAppointmentGroup(admin, {
-    branch: data.branch,
-    serviceIds,
-    physicianId,
-    scheduledAt,
-    notes: data.notes,
-    createdBy: null,
-    mode: "strict",
-    override: false,
-    resolvePatient: resolveThunk,
-  });
+  const isFormOnly =
+    isNonDoctor && serviceIds.filter((id): id is string => !!id).length === 0;
+
+  const result = isFormOnly
+    ? await createLabRequestOnlyBooking(admin, {
+        branch: data.branch,
+        intakePreference: intakePreference ?? "callback",
+        notes: data.notes,
+        createdBy: null,
+        resolvePatient: resolveThunk,
+      })
+    : await createAppointmentGroup(admin, {
+        branch: data.branch,
+        serviceIds,
+        physicianId,
+        scheduledAt,
+        notes: data.notes,
+        createdBy: null,
+        mode: "strict",
+        override: false,
+        resolvePatient: resolveThunk,
+      });
 
   if (!result.ok) {
-    // Strict mode never returns the "conflict" code; both shapes carry `error`.
     return { ok: false, error: result.error };
   }
+
+  // Upload the form(s) now that we have a booking_group_id + resolved patient.
+  if (labRequestFiles.length > 0) {
+    await storeLabRequestFiles(
+      admin,
+      labRequestFiles,
+      result.bookingGroupId,
+      result.patient.patientId,
+    );
+  }
+
+  const resultServices: ServiceRow[] = "services" in result ? (result.services as ServiceRow[]) : [];
+  const scheduledAtIso: string | null = "scheduledAtIso" in result ? (result.scheduledAtIso as string | null) : null;
+  const serviceSummary =
+    resultServices.length > 0
+      ? resultServices.map((s) => s.name).join(", ")
+      : "Tests from your uploaded request form";
 
   // Audit once at the booking-group level so the trail isn't noisy.
   await audit({
@@ -252,14 +374,17 @@ export async function submitBookingAction(_prev: BookingResult | null, formData:
     metadata: {
       drm_id: result.patient.drmId,
       branch: data.branch,
-      service_ids: result.services.map((s) => s.id),
-      service_names: result.services.map((s) => s.name),
+      service_ids: resultServices.map((s) => s.id),
+      service_names: resultServices.map((s) => s.name),
       pending_callback: result.pendingCallback,
-      scheduled_at: result.scheduledAtIso,
+      scheduled_at: scheduledAtIso,
       home_service_requested: data.branch === "home_service",
       physician_id: physicianId,
       patient_resolution: result.patient.resolution,
       via: isPortalSource ? "portal" : "schedule",
+      lab_request_attached: labRequestFiles.length > 0,
+      lab_request_count: labRequestFiles.length,
+      intake_preference: intakePreference,
     },
     ip_address: requestIp,
     user_agent: userAgent,
@@ -279,8 +404,8 @@ export async function submitBookingAction(_prev: BookingResult | null, formData:
   return {
     ok: true,
     drm_id: result.patient.drmId ?? "",
-    service_summary: result.services.map((s) => s.name).join(", "),
-    scheduled_at: result.scheduledAtIso,
+    service_summary: serviceSummary,
+    scheduled_at: scheduledAtIso,
     pending_callback: result.pendingCallback,
     booking_group_id: result.bookingGroupId,
   };
