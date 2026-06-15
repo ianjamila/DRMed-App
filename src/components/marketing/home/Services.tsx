@@ -11,9 +11,11 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+import Link from "next/link";
+
 import { SectionHeading, PillLink } from "@/components/marketing/ui";
 import { Reveal } from "@/components/marketing/motion";
-import { SERVICE_HIGHLIGHTS } from "@/lib/marketing/site";
+import { SERVICE_HIGHLIGHTS, SOCIAL } from "@/lib/marketing/site";
 
 // Map service names → Lucide icons. Exhaustive over SERVICE_HIGHLIGHTS.
 const ICON_MAP: Record<string, LucideIcon> = {
@@ -47,26 +49,51 @@ export function Services() {
         <div className="grid grid-cols-1 gap-[14px] sm:grid-cols-2 lg:grid-cols-4">
           {SERVICE_HIGHLIGHTS.map((svc) => {
             const Icon = ICON_MAP[svc.name] ?? Stethoscope;
-            return (
-              <Reveal key={svc.name}>
-                <div className="rounded-[20px] border border-[color:var(--color-warm-line-soft)] bg-white p-[26px] shadow-[var(--shadow-warm-sm)] transition-[transform,box-shadow] duration-200 hover:-translate-y-1 hover:shadow-[var(--shadow-warm-lg)]">
-                  {/* Icon chip */}
-                  <span className="grid h-12 w-12 place-items-center rounded-[14px] bg-[rgba(8,168,226,0.10)] text-[color:var(--color-brand-cyan)]">
-                    <Icon className="h-6 w-6" aria-hidden="true" />
-                  </span>
+            const isInquire = svc.price === "Inquire";
+            const href = isInquire ? SOCIAL.messenger : "/schedule";
 
-                  <h3 className="mt-[18px] font-sans text-[17px] font-bold text-[color:var(--color-brand-navy)]">
-                    {svc.name}
-                  </h3>
+            const card = (
+              <div className="flex h-full flex-col rounded-[20px] border border-[color:var(--color-warm-line-soft)] bg-white p-[26px] shadow-[var(--shadow-warm-sm)] transition-[transform,box-shadow] duration-200 hover:-translate-y-1 hover:shadow-[var(--shadow-warm-lg)] focus-visible:-translate-y-1 focus-visible:shadow-[var(--shadow-warm-lg)]">
+                {/* Icon chip */}
+                <span className="grid h-12 w-12 place-items-center rounded-[14px] bg-[rgba(8,168,226,0.10)] text-[color:var(--color-brand-cyan)]">
+                  <Icon className="h-6 w-6" aria-hidden="true" />
+                </span>
 
-                  <p className="mt-2 text-sm leading-relaxed text-[color:var(--color-ink-soft)]">
-                    {svc.desc}
-                  </p>
+                <h3 className="mt-[18px] font-sans text-[17px] font-bold text-[color:var(--color-brand-navy)]">
+                  {svc.name}
+                </h3>
 
-                  <div className="mt-4 font-[family-name:var(--font-display)] italic text-[17px] text-[color:var(--color-brand-cyan-text)]">
-                    {svc.price}
-                  </div>
+                <p className="mt-2 text-sm leading-relaxed text-[color:var(--color-ink-soft)]">
+                  {svc.desc}
+                </p>
+
+                <div className="mt-auto pt-4 font-[family-name:var(--font-display)] italic text-[17px] text-[color:var(--color-brand-cyan-text)]">
+                  {svc.price}
                 </div>
+              </div>
+            );
+
+            return (
+              <Reveal key={svc.name} className="h-full">
+                {isInquire ? (
+                  <a
+                    href={href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`Inquire about ${svc.name} on Facebook Messenger`}
+                    className="block h-full rounded-[20px] outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-brand-cyan)] focus-visible:ring-offset-2"
+                  >
+                    {card}
+                  </a>
+                ) : (
+                  <Link
+                    href={href}
+                    aria-label={`Book ${svc.name}`}
+                    className="block h-full rounded-[20px] outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-brand-cyan)] focus-visible:ring-offset-2"
+                  >
+                    {card}
+                  </Link>
+                )}
               </Reveal>
             );
           })}
