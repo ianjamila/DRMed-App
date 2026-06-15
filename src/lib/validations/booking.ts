@@ -103,6 +103,15 @@ const serviceIds = z
       .min(1, "Pick at least one service."),
   );
 
+// Like `serviceIds` but allows an empty array — used by the non-doctor
+// branches where a patient may upload a doctor's request form instead of
+// itemizing tests. The "must pick a test OR attach a form" rule is enforced
+// server-side in submitBookingAction (validateLabRequestGate).
+const serviceIdsAllowEmpty = z
+  .union([z.array(z.string()), z.string(), z.undefined()])
+  .transform((v) => (v === undefined ? [] : Array.isArray(v) ? v : [v]))
+  .pipe(z.array(z.string().uuid("Invalid service id.")));
+
 // scheduled_at — when present, must be ≥1 h from now, ≤60 d, and a valid
 // 30-min Mon–Sat slot. Empty allowed (the branch decides whether to
 // require it via .superRefine on the discriminated union).
@@ -150,11 +159,11 @@ const optionalScheduledAt = z
 // new-patient and existing-patient booking schemas.
 const DiagnosticPackageBranchFields = {
   branch: z.literal("diagnostic_package"),
-  service_ids: serviceIds,
+  service_ids: serviceIdsAllowEmpty,
 };
 const LabRequestBranchFields = {
   branch: z.literal("lab_request"),
-  service_ids: serviceIds,
+  service_ids: serviceIdsAllowEmpty,
   scheduled_at: optionalScheduledAt,
 };
 const DoctorAppointmentBranchFields = {
@@ -165,7 +174,7 @@ const DoctorAppointmentBranchFields = {
 };
 const HomeServiceBranchFields = {
   branch: z.literal("home_service"),
-  service_ids: serviceIds,
+  service_ids: serviceIdsAllowEmpty,
 };
 
 export const DiagnosticPackageBookingSchema = z.object({
