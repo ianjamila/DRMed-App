@@ -3,6 +3,7 @@ import type { createAdminClient } from "@/lib/supabase/admin";
 import { manilaSlotFor, KINDS_PER_BRANCH, type BookingBranch } from "@/lib/validations/booking";
 import { dayWindowFor } from "@/lib/physicians/availability";
 import { decideAppointmentTiming, type BookingConflict, type ServiceRow } from "@/lib/appointments/timing";
+import { labRequestStatus, type IntakePreference } from "@/lib/appointments/lab-request";
 
 // Server-side orchestration. Receives the admin client as a param (no service-
 // role import here), so it must only be called from server actions / route handlers.
@@ -168,5 +169,67 @@ export async function createAppointmentGroup(
     conflicts: timing.conflicts,
     patient,
     services,
+  };
+}
+
+export interface CreateLabRequestOnlyInput {
+  branch: BookingBranch;
+  intakePreference: IntakePreference;
+  notes: string | null;
+  createdBy: string | null;
+  resolvePatient: () => Promise<{ ok: true; patient: PatientResolution } | { ok: false; error: string }>;
+}
+
+// A booking where the patient uploaded a doctor's request form instead of
+// itemizing tests. One appointment row, service_id = null (column is nullable),
+// scheduled_at = null. Status follows the patient's choice: walk-in →
+// 'confirmed' (today's walk-in queue), callback → 'pending_callback'.
+export async function createLabRequestOnlyBooking(
+  admin: AdminClient,
+  input: CreateLabRequestOnlyInput,
+): Promise<
+  | {
+      ok: true;
+      bookingGroupId: string;
+      appointmentIds: string[];
+      pendingCallback: boolean;
+      patient: PatientResolution;
+    }
+  | { ok: false; error: string }
+> {
+  const patientRes = await input.resolvePatient();
+  if (!patientRes.ok) return { ok: false, error: patientRes.error };
+  const patient = patientRes.patient;
+
+  const bookingGroupId = randomUUID();
+  const { status, pendingCallback } = labRequestStatus(input.intakePreference);
+
+  const { data: created, error } = await admin
+    .from("appointments")
+    .insert({
+      patient_id: patient.patientId,
+      service_id: null,
+      physician_id: null,
+      scheduled_at: null,
+      notes: input.notes,
+      status,
+      booking_group_id: bookingGroupId,
+      home_service_requested: input.branch === "home_service",
+      walk_in_name: patient.walkInName ?? null,
+      walk_in_phone: patient.walkInPhone ?? null,
+      created_by: input.createdBy,
+    })
+    .select("id");
+
+  if (error || !created || created.length !== 1) {
+    return { ok: false, error: error?.message ?? "Could not save the request." };
+  }
+
+  return {
+    ok: true,
+    bookingGroupId,
+    appointmentIds: created.map((r) => r.id),
+    pendingCallback,
+    patient,
   };
 }

@@ -60,6 +60,11 @@ const nextConfig: NextConfig = {
   // and React doesn't hydrate. Allowing both here keeps the local dev loop
   // + Playwright MCP smokes working. No effect in production.
   allowedDevOrigins: ["localhost", "127.0.0.1"],
+  experimental: {
+    // Lab-request-form uploads ride inline in the booking Server Action.
+    // Compressed photos are small, but allow headroom for a 5-file submission.
+    serverActions: { bodySizeLimit: "20mb" },
+  },
   async headers() {
     return [
       {

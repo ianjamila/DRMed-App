@@ -13,6 +13,7 @@ import {
   sectionTabsNavClass,
   sectionTabClass,
 } from "@/components/staff/section-tabs-style";
+import { LabRequestLinks, type LabRequestAttachment } from "./lab-request-links";
 
 export const metadata = {
   title: "Appointments — staff",
@@ -263,6 +264,26 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
   const allTodayGroups = groupRows(todayRows);
   const allUpcomingGroups = groupRows(upcoming);
 
+  const groupIds = Array.from(
+    new Set(
+      [...allPendingGroups, ...allTodayGroups, ...allUpcomingGroups]
+        .map((g) => g.lead.booking_group_id)
+        .filter((id): id is string => !!id),
+    ),
+  );
+  const attachmentsByGroup = new Map<string, LabRequestAttachment[]>();
+  if (groupIds.length > 0) {
+    const { data: attachRows } = await supabase
+      .from("appointment_attachments")
+      .select("id, filename, booking_group_id")
+      .in("booking_group_id", groupIds);
+    for (const a of attachRows ?? []) {
+      const list = attachmentsByGroup.get(a.booking_group_id) ?? [];
+      list.push({ id: a.id, filename: a.filename });
+      attachmentsByGroup.set(a.booking_group_id, list);
+    }
+  }
+
   // Counts shown in tab labels — union of all three sections.
   function countForTab(t: FilterType): number {
     return (
@@ -318,18 +339,21 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
         groups={pendingGroups}
         empty="No pending callbacks. Nice."
         isAdmin={session.role === "admin"}
+        attachmentsByGroup={attachmentsByGroup}
       />
       <Section
         title={`Today (${todayGroups.length})`}
         groups={todayGroups}
         empty="No appointments today."
         isAdmin={session.role === "admin"}
+        attachmentsByGroup={attachmentsByGroup}
       />
       <Section
         title={`Next 30 days (${upcomingGroups.length})`}
         groups={upcomingGroups}
         empty="No upcoming appointments."
         isAdmin={session.role === "admin"}
+        attachmentsByGroup={attachmentsByGroup}
       />
     </div>
   );
@@ -340,11 +364,13 @@ function Section({
   groups,
   empty,
   isAdmin,
+  attachmentsByGroup,
 }: {
   title: string;
   groups: ApptGroup[];
   empty: string;
   isAdmin: boolean;
+  attachmentsByGroup: Map<string, LabRequestAttachment[]>;
 }) {
   return (
     <section className="mt-6">
@@ -375,7 +401,16 @@ function Section({
               </tr>
             ) : (
               groups.map((g) => (
-                <GroupRow key={g.key} group={g} isAdmin={isAdmin} />
+                <GroupRow
+                  key={g.key}
+                  group={g}
+                  isAdmin={isAdmin}
+                  attachments={
+                    g.lead.booking_group_id
+                      ? attachmentsByGroup.get(g.lead.booking_group_id) ?? []
+                      : []
+                  }
+                />
               ))
             )}
           </tbody>
@@ -388,9 +423,11 @@ function Section({
 function GroupRow({
   group,
   isAdmin,
+  attachments,
 }: {
   group: ApptGroup;
   isAdmin: boolean;
+  attachments: LabRequestAttachment[];
 }) {
   const r = group.lead;
   const ids = group.rows.map((row) => row.id);
@@ -440,6 +477,7 @@ function GroupRow({
             Home service
           </p>
         ) : null}
+        <LabRequestLinks attachments={attachments} />
       </td>
       <td className="px-4 py-3">
         {group.rows.length === 1 ? (

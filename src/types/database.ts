@@ -214,6 +214,50 @@ export type Database = {
           },
         ]
       }
+      appointment_attachments: {
+        Row: {
+          booking_group_id: string
+          created_at: string
+          filename: string
+          id: string
+          kind: string
+          mime_type: string
+          patient_id: string | null
+          size_bytes: number
+          storage_path: string
+        }
+        Insert: {
+          booking_group_id: string
+          created_at?: string
+          filename: string
+          id?: string
+          kind?: string
+          mime_type: string
+          patient_id?: string | null
+          size_bytes: number
+          storage_path: string
+        }
+        Update: {
+          booking_group_id?: string
+          created_at?: string
+          filename?: string
+          id?: string
+          kind?: string
+          mime_type?: string
+          patient_id?: string | null
+          size_bytes?: number
+          storage_path?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "appointment_attachments_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "patients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       appointments: {
         Row: {
           booking_group_id: string | null
@@ -274,6 +318,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "physicians"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "appointments_physician_id_fkey"
+            columns: ["physician_id"]
+            isOneToOne: false
+            referencedRelation: "v_ops_daily_doctor"
+            referencedColumns: ["physician_id"]
           },
           {
             foreignKeyName: "appointments_service_id_fkey"
@@ -1400,6 +1451,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "doctor_pf_disbursements_physician_id_fkey"
+            columns: ["physician_id"]
+            isOneToOne: false
+            referencedRelation: "v_ops_daily_doctor"
+            referencedColumns: ["physician_id"]
+          },
+          {
             foreignKeyName: "doctor_pf_disbursements_recorded_by_fkey"
             columns: ["recorded_by"]
             isOneToOne: false
@@ -1489,6 +1547,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "physicians"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "doctor_pf_entries_physician_id_fkey"
+            columns: ["physician_id"]
+            isOneToOne: false
+            referencedRelation: "v_ops_daily_doctor"
+            referencedColumns: ["physician_id"]
           },
           {
             foreignKeyName: "doctor_pf_entries_test_request_id_fkey"
@@ -4075,6 +4140,13 @@ export type Database = {
             referencedRelation: "physicians"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "physician_schedule_overrides_physician_id_fkey"
+            columns: ["physician_id"]
+            isOneToOne: false
+            referencedRelation: "v_ops_daily_doctor"
+            referencedColumns: ["physician_id"]
+          },
         ]
       }
       physician_schedules: {
@@ -4119,6 +4191,13 @@ export type Database = {
             referencedRelation: "physicians"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "physician_schedules_physician_id_fkey"
+            columns: ["physician_id"]
+            isOneToOne: false
+            referencedRelation: "v_ops_daily_doctor"
+            referencedColumns: ["physician_id"]
+          },
         ]
       }
       physician_specialties: {
@@ -4148,6 +4227,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "physicians"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "physician_specialties_physician_id_fkey"
+            columns: ["physician_id"]
+            isOneToOne: false
+            referencedRelation: "v_ops_daily_doctor"
+            referencedColumns: ["physician_id"]
           },
         ]
       }
@@ -5275,6 +5361,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "test_requests_attending_physician_id_fkey"
+            columns: ["attending_physician_id"]
+            isOneToOne: false
+            referencedRelation: "v_ops_daily_doctor"
+            referencedColumns: ["physician_id"]
+          },
+          {
             foreignKeyName: "test_requests_hmo_provider_id_fkey"
             columns: ["hmo_provider_id"]
             isOneToOne: false
@@ -5496,6 +5589,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "physicians"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "visits_attending_physician_id_fkey"
+            columns: ["attending_physician_id"]
+            isOneToOne: false
+            referencedRelation: "v_ops_daily_doctor"
+            referencedColumns: ["physician_id"]
           },
           {
             foreignKeyName: "visits_hmo_provider_id_fkey"
@@ -5744,8 +5844,8 @@ export type Database = {
         Row: {
           business_date: string | null
           code: string | null
-          name: string | null
           expense_php: number | null
+          name: string | null
         }
         Relationships: []
       }
@@ -5758,11 +5858,11 @@ export type Database = {
       }
       v_ops_daily_hmo_provider_ar: {
         Row: {
+          billed_in_php: number | null
           business_date: string | null
+          paid_out_php: number | null
           provider_name: string | null
           source: string | null
-          billed_in_php: number | null
-          paid_out_php: number | null
         }
         Relationships: []
       }
@@ -5778,9 +5878,9 @@ export type Database = {
       v_ops_daily_pnl: {
         Row: {
           business_date: string | null
-          revenue_php: number | null
           contra_revenue_php: number | null
           expense_php: number | null
+          revenue_php: number | null
         }
         Relationships: []
       }
@@ -5909,10 +6009,6 @@ export type Database = {
         Returns: number
       }
       period_status_for: { Args: { p_date: string }; Returns: string }
-      reverse_petty_cash_entry: {
-        Args: { p_je_id: string; p_reason: string; p_actor: string }
-        Returns: string
-      }
       recompute_clinic_fee_for_unreleased: { Args: never; Returns: Json }
       recompute_hmo_batch_status: {
         Args: { p_batch_id: string }
@@ -5941,6 +6037,10 @@ export type Database = {
       }
       resolve_revenue_account: {
         Args: { p_service_kind: string }
+        Returns: string
+      }
+      reverse_petty_cash_entry: {
+        Args: { p_actor: string; p_je_id: string; p_reason: string }
         Returns: string
       }
       set_patient_context: {
