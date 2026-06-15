@@ -1,10 +1,10 @@
 "use client";
 
-// PLACEHOLDER/VERIFY: confirm m.me/drmed.ph is the live page handle before launch (see DESIGN-NOTES.md).
-
 import { useEffect, useRef, useState } from "react";
 import { useReducedMotion } from "motion/react";
 import { MessageCircle } from "lucide-react";
+
+import { SOCIAL } from "@/lib/marketing/site";
 
 /**
  * Floating action button — fixed bottom-right — that links to the clinic's
@@ -35,7 +35,7 @@ export function MessengerFab() {
 
   return (
     <a
-      href="https://m.me/drmed.ph"
+      href={SOCIAL.messenger}
       target="_blank"
       rel="noopener noreferrer"
       aria-label="Message us on Facebook"
