@@ -34,6 +34,9 @@ export const SOCIAL = {
   facebook: "https://www.facebook.com/drmedcliniclab/",
   instagram:
     "https://www.instagram.com/drmed.ph?igsh=Yzl4eDY3bXFyMnQy&utm_source=qr",
+  // Single source of truth for the Messenger deep-link. Both m.me/drmed.ph and
+  // m.me/drmedcliniclab resolve to the page; keep drmed.ph (used by the FAB).
+  messenger: "https://m.me/drmed.ph",
 } as const;
 
 export const HERO_STATS = [
@@ -88,7 +91,7 @@ export const SERVICE_HIGHLIGHTS = [
     icon: "📋",
     name: "Fit to Work / Pre-Employment",
     desc: "Complete medical clearance packages for individuals and corporate clients.",
-    price: "from ₱400",
+    price: "Inquire",
   },
   {
     icon: "🏠",
