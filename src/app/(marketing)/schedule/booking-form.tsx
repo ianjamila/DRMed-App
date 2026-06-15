@@ -37,6 +37,8 @@ import { Chip } from "@/components/marketing/booking-wizard/Chip";
 import { WizardField } from "@/components/marketing/booking-wizard/WizardField";
 import { ReviewRows } from "@/components/marketing/booking-wizard/ReviewRows";
 import { SuccessPanel } from "@/components/marketing/booking-wizard/SuccessPanel";
+import { LabRequestUpload } from "@/components/marketing/booking-wizard/LabRequestUpload";
+import type { IntakePreference } from "@/lib/appointments/lab-request";
 
 export type ServiceKind = "lab_test" | "lab_package" | "doctor_consultation";
 
@@ -170,6 +172,8 @@ export function BookingForm({
   const [email, setEmail] = useState("");
   const [address, setAddress] = useState("");
   const [notes, setNotes] = useState("");
+  const [labRequestFiles, setLabRequestFiles] = useState<File[]>([]);
+  const [intakePreference, setIntakePreference] = useState<IntakePreference | null>(null);
   const [serviceAgreement, setServiceAgreement] = useState(false);
   const [marketingConsent, setMarketingConsent] = useState(false);
   const [selectedServiceIds, setSelectedServiceIds] = useState<Set<string>>(
@@ -321,8 +325,14 @@ export function BookingForm({
         if (!specialtyCode) e.specialty = "Pick a specialty.";
         else if (!physicianId) e.physician = "Pick a physician.";
         else if (!doctorServiceId) e.service = "Pick a consultation.";
-      } else if (selectedServiceIds.size === 0) {
-        e.services = "Pick at least one service.";
+      } else {
+        const hasForm = labRequestFiles.length > 0;
+        if (selectedServiceIds.size === 0 && !hasForm) {
+          e.services = "Pick at least one test, or upload your doctor's request form.";
+        }
+        if (hasForm && !intakePreference) {
+          e.intake = "Tell us whether you'll walk in or want us to confirm first.";
+        }
       }
     } else if (key === "about") {
       if (!firstName.trim()) e.first_name = "First name is required.";
@@ -362,6 +372,14 @@ export function BookingForm({
     setDirection(steps.indexOf(key) < stepIndex ? -1 : 1);
     setStepKey(key);
   }
+
+  // Files live in React state (not a DOM <input type=file>) so they survive
+  // step navigation + the React-19 form re-render. Append them at submit time.
+  const submitWithFiles = (formData: FormData) => {
+    for (const f of labRequestFiles) formData.append("lab_request_files", f, f.name);
+    if (intakePreference) formData.append("intake_preference", intakePreference);
+    return formAction(formData);
+  };
 
   // The patient step (and its lookup form) lives outside the booking <form>
   // because nested forms are illegal. Continue is gated until a record resolves.
@@ -500,7 +518,7 @@ export function BookingForm({
         ) : (
           // ── The booking form wraps every step after Patient. The visible
           // step is pure state UI; HiddenFields carries all values to submit. ─
-          <form action={formAction}>
+          <form action={submitWithFiles}>
             <HiddenFields
               branch={branch}
               isPortalContext={isPortalContext}
@@ -550,6 +568,8 @@ export function BookingForm({
                             setSpecialtyCode("");
                             setPhysicianId("");
                             setSlot({ date: null, time: null });
+                            setLabRequestFiles([]);
+                            setIntakePreference(null);
                           }}
                           icon={BRANCH_ICON[b]}
                           title={BRANCH_LABELS[b]}
@@ -602,6 +622,11 @@ export function BookingForm({
                     notes={notes}
                     onNotes={setNotes}
                     errors={currentErrors}
+                    showLabRequestUpload={branch !== "doctor_appointment"}
+                    labRequestFiles={labRequestFiles}
+                    onLabRequestFilesChange={setLabRequestFiles}
+                    intakePreference={intakePreference}
+                    onIntakePreferenceChange={setIntakePreference}
                   />
                 ) : null}
 
@@ -739,6 +764,8 @@ export function BookingForm({
                     submitError={state && !state.ok ? state.error : null}
                     pending={pending}
                     showSlotPicker={showSlotPicker}
+                    labRequestCount={labRequestFiles.length}
+                    intakePreference={intakePreference}
                   />
                 ) : null}
               </motion.div>
@@ -924,6 +951,11 @@ function DetailsStep(props: {
   showFastingDisclaimer: boolean;
   notes: string;
   onNotes: (v: string) => void;
+  showLabRequestUpload: boolean;
+  labRequestFiles: File[];
+  onLabRequestFilesChange: (next: File[]) => void;
+  intakePreference: IntakePreference | null;
+  onIntakePreferenceChange: (p: IntakePreference) => void;
   errors: Record<string, string>;
 }) {
   const {
@@ -954,6 +986,11 @@ function DetailsStep(props: {
     showFastingDisclaimer,
     notes,
     onNotes,
+    showLabRequestUpload,
+    labRequestFiles,
+    onLabRequestFilesChange,
+    intakePreference,
+    onIntakePreferenceChange,
     errors,
   } = props;
 
@@ -1129,15 +1166,26 @@ function DetailsStep(props: {
           ) : null}
         </div>
       ) : (
-        <ServiceMultiPicker
-          isPackages={branch === "diagnostic_package"}
-          query={serviceQuery}
-          onQueryChange={onServiceQuery}
-          services={filteredServices}
-          selectedIds={selectedServiceIds}
-          onToggle={onToggleService}
-          error={errors.services}
-        />
+        <>
+          {showLabRequestUpload ? (
+            <LabRequestUpload
+              files={labRequestFiles}
+              onFilesChange={onLabRequestFilesChange}
+              preference={intakePreference}
+              onPreferenceChange={onIntakePreferenceChange}
+              error={errors.intake}
+            />
+          ) : null}
+          <ServiceMultiPicker
+            isPackages={branch === "diagnostic_package"}
+            query={serviceQuery}
+            onQueryChange={onServiceQuery}
+            services={filteredServices}
+            selectedIds={selectedServiceIds}
+            onToggle={onToggleService}
+            error={errors.services}
+          />
+        </>
       )}
 
       {showSlotPicker ? (
@@ -1197,6 +1245,8 @@ function ReviewStep(props: {
   onServiceAgreement: (v: boolean) => void;
   marketingConsent: boolean;
   onMarketingConsent: (v: boolean) => void;
+  labRequestCount: number;
+  intakePreference: IntakePreference | null;
   errors: Record<string, string>;
   onJump: (key: StepKey) => void;
   hasAboutStep: boolean;
@@ -1221,6 +1271,8 @@ function ReviewStep(props: {
     onServiceAgreement,
     marketingConsent,
     onMarketingConsent,
+    labRequestCount,
+    intakePreference,
     errors,
     onJump,
     hasAboutStep,
@@ -1269,6 +1321,19 @@ function ReviewStep(props: {
       value: isExistingMode ? resolvedPatientName || "On file" : resolvedPatientName || "New patient",
       ...(hasAboutStep ? { onEdit: () => onJump("about") } : {}),
     },
+    ...(labRequestCount > 0
+      ? [
+          {
+            label: "Request form",
+            value: `${labRequestCount} file${labRequestCount > 1 ? "s" : ""} attached · ${
+              intakePreference === "callback"
+                ? "we'll confirm tests/price with you"
+                : "walk in — reception reads it at the counter"
+            }`,
+            onEdit: () => onJump("details"),
+          },
+        ]
+      : []),
     ...(notes.trim() ? [{ label: "Notes", value: notes.trim() }] : []),
   ];
 
