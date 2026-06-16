@@ -69,7 +69,7 @@ export async function submitRegistrationAction(
   // dedup matched on lower(email)+last_name+birthdate. No consent write: a public
   // form must not re-affirm an existing patient's consent state.
   if (res.reused) {
-    await sendEmail({
+    const sendResult = await sendEmail({
       to: d.email,
       subject: "Your DRMed DRM-ID",
       text: `Hi ${d.first_name},\n\nWe found an existing DRMed record matching your details. Your DRM-ID is ${res.drm_id}.\n\nPresent it at the clinic. After your visit, the Secure PIN printed on your receipt unlocks your results online.\n\n— DRMed Clinic & Laboratory`,
@@ -81,7 +81,15 @@ export async function submitRegistrationAction(
       action: "patient.self_register.matched",
       resource_type: "patient",
       resource_id: res.id,
-      metadata: { drm_id: res.drm_id, via: "register" },
+      metadata: {
+        drm_id: res.drm_id,
+        via: "register",
+        email: sendResult.ok
+          ? { ok: true, id: sendResult.id, to: d.email }
+          : sendResult.kind === "skipped"
+            ? { ok: false, skipped: true, reason: sendResult.reason }
+            : { ok: false, error: sendResult.error, to: d.email },
+      },
       ip_address: ip,
       user_agent: ua,
     });
@@ -123,7 +131,7 @@ export async function submitRegistrationAction(
     }
   }
 
-  await sendEmail({
+  const welcomeResult = await sendEmail({
     to: d.email,
     subject: "Welcome to DRMed — your DRM-ID",
     text: `Hi ${d.first_name},\n\nThanks for pre-registering. Your DRM-ID is ${res.drm_id}.\n\nBring it on your visit — reception verifies your identity at the counter. After your visit, the Secure PIN printed on your receipt unlocks your results online.\n\n— DRMed Clinic & Laboratory`,
@@ -136,7 +144,17 @@ export async function submitRegistrationAction(
     action: "patient.self_registered",
     resource_type: "patient",
     resource_id: res.id,
-    metadata: { drm_id: res.drm_id, via: "register", consent_recorded: true, marketing_consent: d.marketing_consent },
+    metadata: {
+      drm_id: res.drm_id,
+      via: "register",
+      consent_recorded: true,
+      marketing_consent: d.marketing_consent,
+      email: welcomeResult.ok
+        ? { ok: true, id: welcomeResult.id, to: d.email }
+        : welcomeResult.kind === "skipped"
+          ? { ok: false, skipped: true, reason: welcomeResult.reason }
+          : { ok: false, error: welcomeResult.error, to: d.email },
+    },
     ip_address: ip,
     user_agent: ua,
   });

@@ -446,6 +446,12 @@ export const STAFF_NAV: StaffNavSection[] = [
             roles: ["admin"],
           },
           {
+            href: "/staff/admin/emails-sent",
+            label: "Emails sent",
+            description: "Every transactional email the system sent — result alerts, booking confirmations, day-before reminders, newsletters, and registration welcomes. Filter by type, status, date, or patient; export to CSV.",
+            roles: ["admin"],
+          },
+          {
             href: "/staff/admin/settings/dashboard-cards",
             label: "Dashboard settings",
             description: "Pick which summary cards (today's revenue, pending releases, low inventory, etc.) appear on each role's home dashboard. Different roles see different cards by default.",

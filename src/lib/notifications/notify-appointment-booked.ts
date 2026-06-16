@@ -150,10 +150,10 @@ export async function notifyAppointmentBooked({
           ? { ok: false, skipped: true, reason: smsResult.reason }
           : { ok: false, error: smsResult.error },
       email: emailResult.ok
-        ? { ok: true, id: emailResult.id }
+        ? { ok: true, id: emailResult.id, to: email }
         : emailResult.kind === "skipped"
           ? { ok: false, skipped: true, reason: emailResult.reason }
-          : { ok: false, error: emailResult.error },
+          : { ok: false, error: emailResult.error, to: email },
     },
   });
 }
