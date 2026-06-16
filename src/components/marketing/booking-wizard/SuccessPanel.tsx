@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 
 /**
@@ -25,25 +25,23 @@ export function SuccessPanel({
   uploadedFiles?: File[];
 }) {
   const [go, setGo] = useState(false);
-  const [previews, setPreviews] = useState<
-    { url: string; name: string; isImage: boolean }[]
-  >([]);
+  // Derive object-URL previews from the in-memory files (no server round-trip).
+  const previews = useMemo(
+    () =>
+      (uploadedFiles ?? []).map((f) => {
+        const isImage = f.type.startsWith("image/");
+        return { url: isImage ? URL.createObjectURL(f) : "", name: f.name, isImage };
+      }),
+    [uploadedFiles],
+  );
+  // Revoke the object URLs when previews change or the panel unmounts.
   useEffect(() => {
-    if (!uploadedFiles || uploadedFiles.length === 0) {
-      setPreviews([]);
-      return;
-    }
-    const made = uploadedFiles.map((f) => {
-      const isImage = f.type.startsWith("image/");
-      return { url: isImage ? URL.createObjectURL(f) : "", name: f.name, isImage };
-    });
-    setPreviews(made);
     return () => {
-      made.forEach((p) => {
+      previews.forEach((p) => {
         if (p.url) URL.revokeObjectURL(p.url);
       });
     };
-  }, [uploadedFiles]);
+  }, [previews]);
   useEffect(() => {
     const id = requestAnimationFrame(() => setGo(true));
     return () => cancelAnimationFrame(id);
