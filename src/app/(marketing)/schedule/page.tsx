@@ -157,6 +157,11 @@ export default async function SchedulePage({
       : null;
   const initialBranch = matchedPhysician ? ("doctor_appointment" as const) : undefined;
   const initialPhysicianId = matchedPhysician?.id;
+  // "all" is a valid specialty selector option that shows every physician, so it
+  // is a safe fallback when a physician has no specialty_codes assigned yet.
+  const initialSpecialtyCode = matchedPhysician
+    ? (matchedPhysician.specialty_codes[0] ?? "all")
+    : undefined;
 
   const bookingServices = services
     .filter(
@@ -212,6 +217,7 @@ export default async function SchedulePage({
           byAppointmentPhysicians={byAppointmentPhysicians}
           initialBranch={initialBranch}
           initialPhysicianId={initialPhysicianId}
+          initialSpecialtyCode={initialSpecialtyCode}
         />
 
         {/* Minimal focused footer — privacy + a couple of escape hatches. */}

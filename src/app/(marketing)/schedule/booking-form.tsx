@@ -108,10 +108,12 @@ interface Props {
   // session cookie regardless of what the form posts.
   prefilledPatient?: PrefilledPatient;
   // Deep-link preselect from /schedule?doctor=<slug>. When provided, the form
-  // opens on the doctor_appointment branch with that physician pre-picked.
+  // opens on the doctor_appointment branch with that physician pre-picked and
+  // their specialty pre-selected (so the physician picker is immediately visible).
   // Absent = existing defaults apply (lab_request branch, no physician).
   initialBranch?: Branch;
   initialPhysicianId?: string;
+  initialSpecialtyCode?: string;
 }
 
 const KINDS_PER_BRANCH: Record<Branch, ReadonlyArray<ServiceKind>> = {
@@ -167,6 +169,7 @@ export function BookingForm({
   prefilledPatient,
   initialBranch,
   initialPhysicianId,
+  initialSpecialtyCode,
 }: Props) {
   const isPortalContext = prefilledPatient !== undefined;
 
@@ -190,7 +193,7 @@ export function BookingForm({
     new Set(),
   );
   const [singleServiceId, setSingleServiceId] = useState<string>("");
-  const [specialtyCode, setSpecialtyCode] = useState<string>("");
+  const [specialtyCode, setSpecialtyCode] = useState<string>(initialSpecialtyCode ?? "");
   const [physicianId, setPhysicianId] = useState<string>(initialPhysicianId ?? "");
   const [serviceQuery, setServiceQuery] = useState("");
   const [slot, setSlot] = useState<SlotValue>({ date: null, time: null });
@@ -315,6 +318,7 @@ export function BookingForm({
   const isSuccess = !!(state?.ok && (state.drm_id || isPortalContext));
   useEffect(() => {
     if (!isSuccess || trackedRef.current) return;
+    if (isPortalContext) return; // never emit analytics from the patient portal (RA 10173)
     trackedRef.current = true;
     const serviceCount =
       branch === "doctor_appointment"
@@ -323,6 +327,8 @@ export function BookingForm({
           : 0
         : selectedServiceIds.size;
     track("booking_submitted", { branch, services: serviceCount });
+    // branch/doctorServiceId/selectedServiceIds are frozen once the form is submitted
+    // (inputs are locked during pending → success), so the stale closure is intentional.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSuccess]);
   // ────────────────────────────────────────────────────────────────────────
