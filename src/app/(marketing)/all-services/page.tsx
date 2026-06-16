@@ -1,14 +1,21 @@
 import { PageHero } from "@/components/marketing/page-hero";
 import { listActiveServices } from "@/lib/marketing/services";
+import { pageMetadata } from "@/lib/marketing/metadata";
 import { ServicesCatalog } from "./services-catalog";
 
-export const metadata = {
-  title: "Check All Services",
+export const metadata = pageMetadata({
+  title: "All Services & Tests",
   description:
-    "Searchable directory of every laboratory test, imaging study, vaccine, and consultation at DRMed Clinic & Laboratory.",
-};
+    "Browse every laboratory test, imaging service, and consultation at DRMed Clinic & Laboratory in Quezon City — up to 50% less than hospitals.",
+  path: "/all-services",
+});
 
-export default async function AllServicesPage() {
+interface PageProps {
+  searchParams: Promise<{ q?: string }>;
+}
+
+export default async function AllServicesPage({ searchParams }: PageProps) {
+  const { q } = await searchParams;
   const services = await listActiveServices();
 
   return (
@@ -27,7 +34,7 @@ export default async function AllServicesPage() {
               availability.
             </p>
           ) : (
-            <ServicesCatalog services={services} />
+            <ServicesCatalog services={services} initialQuery={q ?? ""} />
           )}
         </div>
       </section>
