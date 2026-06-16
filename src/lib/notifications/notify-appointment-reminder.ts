@@ -95,10 +95,10 @@ export async function notifyAppointmentReminder({
     resource_id: appointmentId,
     metadata: {
       email: emailResult.ok
-        ? { ok: true, id: emailResult.id }
+        ? { ok: true, id: emailResult.id, to: email }
         : emailResult.kind === "skipped"
           ? { ok: false, skipped: true, reason: emailResult.reason }
-          : { ok: false, error: emailResult.error },
+          : { ok: false, error: emailResult.error, to: email },
       has_form: hasForm,
     },
   });

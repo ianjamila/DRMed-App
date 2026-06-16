@@ -58,6 +58,7 @@ export async function GET(request: Request) {
       await audit({
         actor_id: null,
         actor_type: "system",
+        patient_id: a.patient_id,
         action: "appointment.reminder.failed",
         resource_type: "appointment",
         resource_id: a.id,
