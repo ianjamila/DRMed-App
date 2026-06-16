@@ -62,6 +62,7 @@ describe("renderEmailShell", () => {
     expect(html).toContain("google.com/maps"); // get directions
     expect(html).toContain("10 major HMO providers");
     expect(html).toContain("Facebook");
+    expect(html).toContain(">drmed.ph</a>"); // website link
   });
 
   it("transactional mode has NO unsubscribe link", () => {

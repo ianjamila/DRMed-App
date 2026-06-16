@@ -96,7 +96,8 @@ function footerHtml(opts: EmailShellOptions): string {
     CONTACT.address.full,
   )}`;
   const address = `4/F ${CONTACT.address.line2}, ${CONTACT.address.city}`;
-  const social = `<a href="${SOCIAL.facebook}" style="color:${FOOT_LINK};text-decoration:none;">Facebook</a> &nbsp;·&nbsp; <a href="${SOCIAL.instagram}" style="color:${FOOT_LINK};text-decoration:none;">Instagram</a> &nbsp;·&nbsp; <a href="${SOCIAL.messenger}" style="color:${FOOT_LINK};text-decoration:none;">Messenger</a>`;
+  const website = SITE.url.replace(/\/$/, "");
+  const social = `<a href="${website}" style="color:${FOOT_LINK};text-decoration:none;font-weight:700;">${escapeHtml(SITE.shortName)}</a> &nbsp;·&nbsp; <a href="${SOCIAL.facebook}" style="color:${FOOT_LINK};text-decoration:none;">Facebook</a> &nbsp;·&nbsp; <a href="${SOCIAL.instagram}" style="color:${FOOT_LINK};text-decoration:none;">Instagram</a> &nbsp;·&nbsp; <a href="${SOCIAL.messenger}" style="color:${FOOT_LINK};text-decoration:none;">Messenger</a>`;
 
   let extra = "";
   if (opts.unsubscribeUrl) {
