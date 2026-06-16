@@ -468,3 +468,102 @@ export async function getPackagePdfDownloadUrl(
     filename: `${safePkgCode}-${headerRow.id.slice(0, 8)}.pdf`,
   };
 }
+
+const LAB_REQUEST_BUCKET = "lab-request-forms";
+
+export type FormUrlResult = { ok: true; url: string } | { ok: false; error: string };
+export type FormDeleteResult = { ok: true } | { ok: false; error: string };
+
+// 5-minute signed URL for one of the patient's own uploaded request forms.
+// Mirrors getPatientResultDownloadUrl: admin client + app-level ownership
+// check + audit. (No RLS policy on appointment_attachments for patients —
+// consistent with the other three patient-download actions.)
+export async function getPatientLabRequestFormUrl(
+  attachmentId: string,
+): Promise<FormUrlResult> {
+  const session = await getPatientSession();
+  if (!session) return { ok: false, error: "Session expired. Sign in again." };
+
+  const admin = createAdminClient();
+  const { data: att } = await admin
+    .from("appointment_attachments")
+    .select("id, storage_path, patient_id")
+    .eq("id", attachmentId)
+    .maybeSingle();
+
+  if (!att || att.patient_id !== session.patient_id) {
+    return { ok: false, error: "File not found." };
+  }
+
+  const { data: signed, error } = await admin.storage
+    .from(LAB_REQUEST_BUCKET)
+    .createSignedUrl(att.storage_path, 60 * 5);
+  if (error || !signed?.signedUrl) {
+    return { ok: false, error: "Could not open the file." };
+  }
+
+  const h = await headers();
+  await audit({
+    actor_id: null,
+    actor_type: "patient",
+    patient_id: session.patient_id,
+    action: "lab_request.viewed",
+    resource_type: "appointment_attachment",
+    resource_id: attachmentId,
+    metadata: { drm_id: session.drm_id, storage_path: att.storage_path },
+    ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    user_agent: h.get("user-agent"),
+  });
+
+  return { ok: true, url: signed.signedUrl };
+}
+
+// Removes one of the patient's own uploaded request forms (file + row).
+// The form is a convenience artifact, not an official record; the append-only
+// audit preserves that it existed and was removed.
+export async function deletePatientLabRequestUpload(
+  attachmentId: string,
+): Promise<FormDeleteResult> {
+  const session = await getPatientSession();
+  if (!session) return { ok: false, error: "Session expired. Sign in again." };
+
+  const admin = createAdminClient();
+  const { data: att } = await admin
+    .from("appointment_attachments")
+    .select("id, storage_path, patient_id, filename, booking_group_id")
+    .eq("id", attachmentId)
+    .maybeSingle();
+
+  if (!att || att.patient_id !== session.patient_id) {
+    return { ok: false, error: "File not found." };
+  }
+
+  // Best-effort object removal; proceed to delete the row regardless.
+  await admin.storage.from(LAB_REQUEST_BUCKET).remove([att.storage_path]);
+
+  const { error: delErr } = await admin
+    .from("appointment_attachments")
+    .delete()
+    .eq("id", attachmentId);
+  if (delErr) return { ok: false, error: "Could not remove the file." };
+
+  const h = await headers();
+  await audit({
+    actor_id: null,
+    actor_type: "patient",
+    patient_id: session.patient_id,
+    action: "lab_request.deleted",
+    resource_type: "appointment_attachment",
+    resource_id: attachmentId,
+    metadata: {
+      drm_id: session.drm_id,
+      filename: att.filename,
+      storage_path: att.storage_path,
+      booking_group_id: att.booking_group_id,
+    },
+    ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    user_agent: h.get("user-agent"),
+  });
+
+  return { ok: true };
+}
