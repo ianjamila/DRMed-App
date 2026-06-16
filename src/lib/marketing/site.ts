@@ -9,6 +9,9 @@ export const SITE = {
     "Comprehensive medical services including doctor's consultations, laboratory tests, X-ray, ultrasound, ECG, home service and mobile clinic — at up to 50% less than hospitals.",
   url: process.env.NEXT_PUBLIC_SITE_URL ?? "https://drmed.ph",
   locale: "en-PH",
+  priceRange: "₱₱",
+  ogImage: "/hero-clinic.jpg",
+  logo: "/logo.png",
 } as const;
 
 export const CONTACT = {
@@ -18,6 +21,7 @@ export const CONTACT = {
     city: "Quezon City",
     region: "Metro Manila",
     country: "PH",
+    postalCode: "1106",
     full: "4/F DRMed Clinic & Laboratory, Northridge Plaza, Congressional Avenue, Quezon City",
   },
   phone: {
@@ -28,6 +32,16 @@ export const CONTACT = {
   },
   email: "drmedhealthcare@gmail.com",
   hours: "Monday – Saturday, 8 AM – 5 PM",
+} as const;
+
+// Clinic geo for "Northridge Plaza, Congressional Ave, Project 8, Quezon City
+// 1106". Owner-supplied via Google Maps (2026-06-16). To refine, right-click the
+// exact clinic pin in Google Maps → first menu line = lat,lng; Share → Copy link
+// = mapUrl. Set lat/lng to null to ship MedicalClinic JSON-LD without geo.
+export const GEO = {
+  lat: 14.6705438 as number | null,
+  lng: 121.0377397 as number | null,
+  mapUrl: "https://www.google.com/maps?q=14.6705438,121.0377397",
 } as const;
 
 export const SOCIAL = {
