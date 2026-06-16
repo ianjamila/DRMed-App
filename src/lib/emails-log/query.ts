@@ -117,6 +117,10 @@ export interface EmailLogResult {
   entries: EmailLogEntry[];
   total: number;
   failures7d: number;
+  // Manila date (YYYY-MM-DD) 7 days ago — the start of the failures7d window.
+  // The banner links to ?status=failed&since=<this> so the count and the
+  // linked view describe exactly the same set.
+  since7Date: string;
   resolvedDrmId: string | null;
   drmNoMatch: boolean;
 }
@@ -133,26 +137,34 @@ export async function fetchEmailLog(filters: EmailLogFilters): Promise<EmailLogR
     .order("created_at", { ascending: false })
     .range(offset, offset + PAGE_SIZE - 1);
 
-  const { data, count } = await applyFilters(base, filters, patientId);
-  const rows = (data ?? []) as unknown as EmailAuditRow[];
+  // The failures-7d banner count is a global heads-up (all types, all patients)
+  // over the last 7 Manila days. It's independent of the page query, so run
+  // both concurrently. Date.now() is fine in route/RSC code.
+  const since7Date = new Date(Date.now() - 7 * 86_400_000).toLocaleDateString(
+    "en-CA",
+    { timeZone: "Asia/Manila" },
+  );
+  const [main, fails] = await Promise.all([
+    applyFilters(base, filters, patientId),
+    admin
+      .from("audit_log")
+      .select("id", { count: "exact", head: true })
+      .in("action", [...EMAIL_ACTIONS])
+      .gte("created_at", manilaStartUtc(since7Date)!)
+      .or("metadata->email->>error.not.is.null,action.eq.appointment.reminder.failed"),
+  ]);
+
+  const rows = (main.data ?? []) as unknown as EmailAuditRow[];
   const patients = await resolvePatients(admin, rows);
   const entries = rows.map((r) =>
     parseEmailLogRow(r, r.patient_id ? patients.get(r.patient_id) ?? null : null),
   );
 
-  // Failures in the last 7 days (banner). Date.now() is fine in route/RSC code.
-  const since7 = new Date(Date.now() - 7 * 86_400_000).toISOString();
-  const { count: failures7d } = await admin
-    .from("audit_log")
-    .select("id", { count: "exact", head: true })
-    .in("action", [...EMAIL_ACTIONS])
-    .gte("created_at", since7)
-    .or("metadata->email->>error.not.is.null,action.eq.appointment.reminder.failed");
-
   return {
     entries,
-    total: count ?? 0,
-    failures7d: failures7d ?? 0,
+    total: main.count ?? 0,
+    failures7d: fails.count ?? 0,
+    since7Date,
     resolvedDrmId,
     drmNoMatch,
   };

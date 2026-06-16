@@ -56,7 +56,7 @@ export default async function EmailsSentPage({ searchParams }: Props) {
       : null;
   const page = Math.max(1, Number(params.page ?? "1") || 1);
 
-  const { entries, total, failures7d, resolvedDrmId, drmNoMatch } =
+  const { entries, total, failures7d, since7Date, resolvedDrmId, drmNoMatch } =
     await fetchEmailLog({
       type,
       status,
@@ -112,9 +112,9 @@ export default async function EmailsSentPage({ searchParams }: Props) {
         </p>
       </header>
 
-      {failures7d > 0 ? (
+      {failures7d > 0 && status !== "failed" ? (
         <Link
-          href={buildHref({ status: "failed", page: null })}
+          href={`/staff/admin/emails-sent?status=failed&since=${since7Date}`}
           className="mb-4 flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-900 hover:bg-rose-100"
         >
           <strong>{failures7d}</strong> failed send
