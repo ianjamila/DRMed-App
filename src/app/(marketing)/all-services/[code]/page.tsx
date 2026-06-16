@@ -7,6 +7,10 @@ import { formatPhp } from "@/lib/marketing/format";
 import { PageHero } from "@/components/marketing/page-hero";
 import { PillLink } from "@/components/marketing/ui";
 import { Reveal } from "@/components/marketing/motion";
+import { SITE } from "@/lib/marketing/site";
+import { pageMetadata } from "@/lib/marketing/metadata";
+import { serviceOfferLd, breadcrumbLd } from "@/lib/marketing/structured-data";
+import { JsonLd } from "@/components/marketing/json-ld";
 
 interface ServicePageProps {
   params: Promise<{ code: string }>;
@@ -27,12 +31,13 @@ export async function generateMetadata({
   const { code } = await params;
   const service = await getServiceByCode(code);
   if (!service) return { title: "Service" };
-  return {
+  return pageMetadata({
     title: service.name,
     description:
       service.description ??
-      `${service.name} — laboratory test at DRMed Clinic & Laboratory.`,
-  };
+      `${service.name} — laboratory test at ${SITE.name}.`,
+    path: `/all-services/${service.code.toLowerCase()}`,
+  });
 }
 
 export default async function ServiceDetailPage({ params }: ServicePageProps) {
@@ -40,8 +45,24 @@ export default async function ServiceDetailPage({ params }: ServicePageProps) {
   const service = await getServiceByCode(code);
   if (!service) notFound();
 
+  const ld = [
+    serviceOfferLd({
+      code: service.code,
+      name: service.name,
+      description: service.description,
+      kind: service.kind,
+      pricePhp: service.price_php,
+    }),
+    breadcrumbLd([
+      { name: "Home", path: "/" },
+      { name: "All Services", path: "/all-services" },
+      { name: service.name, path: `/all-services/${service.code.toLowerCase()}` },
+    ]),
+  ];
+
   return (
     <>
+      <JsonLd data={ld} />
       <PageHero
         eyebrow={service.code}
         title={service.name}
