@@ -61,6 +61,7 @@ export interface SpecialtyOption {
 
 export interface BookablePhysician {
   id: string;
+  slug: string;
   full_name: string;
   specialty: string;
   group_label: string | null;
@@ -72,6 +73,7 @@ export interface BookablePhysician {
 
 export interface ByAppointmentPhysician {
   id: string;
+  slug: string;
   full_name: string;
   specialty: string;
   group_label: string | null;
@@ -104,6 +106,11 @@ interface Props {
   // authenticated via session, so the server re-derives patient_id from the
   // session cookie regardless of what the form posts.
   prefilledPatient?: PrefilledPatient;
+  // Deep-link preselect from /schedule?doctor=<slug>. When provided, the form
+  // opens on the doctor_appointment branch with that physician pre-picked.
+  // Absent = existing defaults apply (lab_request branch, no physician).
+  initialBranch?: Branch;
+  initialPhysicianId?: string;
 }
 
 const KINDS_PER_BRANCH: Record<Branch, ReadonlyArray<ServiceKind>> = {
@@ -157,10 +164,12 @@ export function BookingForm({
   physicians,
   byAppointmentPhysicians,
   prefilledPatient,
+  initialBranch,
+  initialPhysicianId,
 }: Props) {
   const isPortalContext = prefilledPatient !== undefined;
 
-  const [branch, setBranch] = useState<Branch>("lab_request");
+  const [branch, setBranch] = useState<Branch>(initialBranch ?? "lab_request");
   // Personal-info fields stay in controlled state (React 19 resets uncontrolled
   // inputs when a form action returns) and feed the persistent hidden fields.
   const [firstName, setFirstName] = useState("");
@@ -181,7 +190,7 @@ export function BookingForm({
   );
   const [singleServiceId, setSingleServiceId] = useState<string>("");
   const [specialtyCode, setSpecialtyCode] = useState<string>("");
-  const [physicianId, setPhysicianId] = useState<string>("");
+  const [physicianId, setPhysicianId] = useState<string>(initialPhysicianId ?? "");
   const [serviceQuery, setServiceQuery] = useState("");
   const [slot, setSlot] = useState<SlotValue>({ date: null, time: null });
   const [patientMode, setPatientMode] = useState<"new" | "existing">(
