@@ -1,4 +1,5 @@
 import { ArrowRight, Info } from "lucide-react";
+import Link from "next/link";
 
 import { SectionHeading, PillLink } from "@/components/marketing/ui";
 import { Reveal } from "@/components/marketing/motion";
@@ -7,6 +8,7 @@ import { DoctorPhoto } from "./DoctorPhoto";
 interface Physician {
   name: string;
   specialty: string;
+  slug: string;
   photoUrl: string;
 }
 
@@ -36,22 +38,27 @@ export function Specialists({ physicians, totalCount }: SpecialistsProps) {
         <div className="grid grid-cols-2 gap-[14px] sm:grid-cols-3 lg:grid-cols-6">
           {physicians.map((doc) => (
             <Reveal key={doc.name}>
-              <div className="group overflow-hidden rounded-[20px] border border-[color:var(--color-warm-line-soft)] bg-white shadow-[var(--shadow-warm-sm)] transition-[transform,box-shadow] duration-200 hover:-translate-y-1 hover:shadow-[var(--shadow-warm-lg)]">
-                {/* Photo frame */}
-                <div className="relative aspect-[3/4] overflow-hidden bg-[color:var(--color-warm-sand)]">
-                  <DoctorPhoto photoUrl={doc.photoUrl} name={doc.name} />
-                </div>
+              <Link
+                href={`/physicians/${doc.slug}`}
+                className="block rounded-[20px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-brand-cyan)]"
+              >
+                <div className="group overflow-hidden rounded-[20px] border border-[color:var(--color-warm-line-soft)] bg-white shadow-[var(--shadow-warm-sm)] transition-[transform,box-shadow] duration-200 hover:-translate-y-1 hover:shadow-[var(--shadow-warm-lg)]">
+                  {/* Photo frame */}
+                  <div className="relative aspect-[3/4] overflow-hidden bg-[color:var(--color-warm-sand)]">
+                    <DoctorPhoto photoUrl={doc.photoUrl} name={doc.name} />
+                  </div>
 
-                {/* Body */}
-                <div className="p-[14px_16px_18px]">
-                  <div className="text-[10.5px] font-bold uppercase tracking-[0.1em] text-[color:var(--color-brand-cyan-text)]">
-                    {doc.specialty}
-                  </div>
-                  <div className="mt-1.5 font-[family-name:var(--font-display)] text-[16px] leading-[1.2] text-[color:var(--color-brand-navy)]">
-                    {doc.name}
+                  {/* Body */}
+                  <div className="p-[14px_16px_18px]">
+                    <div className="text-[10.5px] font-bold uppercase tracking-[0.1em] text-[color:var(--color-brand-cyan-text)]">
+                      {doc.specialty}
+                    </div>
+                    <div className="mt-1.5 font-[family-name:var(--font-display)] text-[16px] leading-[1.2] text-[color:var(--color-brand-navy)]">
+                      {doc.name}
+                    </div>
                   </div>
                 </div>
-              </div>
+              </Link>
             </Reveal>
           ))}
         </div>
