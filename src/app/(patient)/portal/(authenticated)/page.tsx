@@ -480,7 +480,7 @@ export default async function PatientPortalPage() {
                 >
                   {nothingToShow ? (
                     <>
-                      No released results yet. We&apos;ll text and email you
+                      No released results yet. We&apos;ll email you
                       when they&apos;re ready.
                     </>
                   ) : (
@@ -564,7 +564,7 @@ export default async function PatientPortalPage() {
           <Panel className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]">
             {nothingToShow ? (
               <>
-                No released results yet. We&apos;ll text and email you when
+                No released results yet. We&apos;ll email you when
                 they&apos;re ready.
               </>
             ) : (

@@ -816,7 +816,7 @@ export function BookingForm({
         <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[color:var(--color-brand-cyan-text)]" />
         {isExistingMode
           ? "We'll send confirmation to the contact info already on file."
-          : "By submitting, you'll receive SMS and email confirmation. New patients are pre-registered — reception verifies your identity at the counter. For corporate or HMO bookings, message us instead."}
+          : "By submitting, you'll receive an email confirmation. New patients are pre-registered — reception verifies your identity at the counter. For corporate or HMO bookings, message us instead."}
       </p>
     </div>
     </MotionConfig>

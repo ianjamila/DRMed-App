@@ -17,7 +17,7 @@ const FAQ_ITEMS = [
   {
     question: "How do I get my results?",
     answer:
-      "Most tests release within 24 hours. We text and email you when they're ready, and you can view and download the official signed PDF anytime in the patient portal using your DRM-ID and the Secure PIN on your receipt.",
+      "Most tests release within 24 hours. We email you when they're ready, and you can view and download the official signed PDF anytime in the patient portal using your DRM-ID and the Secure PIN on your receipt.",
   },
   {
     question: "Do you see children?",
