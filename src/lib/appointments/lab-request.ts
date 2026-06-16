@@ -18,12 +18,9 @@ export function validateLabRequestGate(input: {
   hasForm: boolean;
   preference: IntakePreference | null;
 }): { ok: true } | { ok: false; error: string } {
-  if (input.serviceCount === 0 && !input.hasForm) {
-    return {
-      ok: false,
-      error: "Pick at least one test, or upload your doctor's request form.",
-    };
-  }
+  // Picking tests is OPTIONAL — a patient may book with nothing itemized and
+  // sort the details with reception (walk-in friendly). The only remaining
+  // rule is that an uploaded form still needs a walk-in/confirm preference.
   if (input.hasForm && input.preference === null) {
     return {
       ok: false,

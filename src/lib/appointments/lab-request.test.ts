@@ -27,9 +27,10 @@ describe("validateLabRequestGate", () => {
       validateLabRequestGate({ serviceCount: 0, hasForm: true, preference: "walk_in" }),
     ).toEqual({ ok: true });
   });
-  it("fails when nothing is selected and no form", () => {
-    const r = validateLabRequestGate({ serviceCount: 0, hasForm: false, preference: null });
-    expect(r.ok).toBe(false);
+  it("passes when nothing is selected and no form (picking is optional)", () => {
+    expect(
+      validateLabRequestGate({ serviceCount: 0, hasForm: false, preference: null }),
+    ).toEqual({ ok: true });
   });
   it("fails when a form is attached but no preference chosen", () => {
     const r = validateLabRequestGate({ serviceCount: 0, hasForm: true, preference: null });

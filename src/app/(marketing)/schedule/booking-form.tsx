@@ -328,9 +328,7 @@ export function BookingForm({
         else if (!doctorServiceId) e.service = "Pick a consultation.";
       } else {
         const hasForm = labRequestFiles.length > 0;
-        if (selectedServiceIds.size === 0 && !hasForm) {
-          e.services = "Pick at least one test, or upload your doctor's request form.";
-        }
+        // Picking tests is optional — no error when nothing is selected.
         if (hasForm && !intakePreference) {
           e.intake = "Tell us whether you'll walk in or want us to confirm first.";
         }
@@ -1479,7 +1477,8 @@ function ServiceMultiPicker({
     <div className="mt-6 grid gap-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <span className="text-[13.5px] font-semibold text-[color:var(--color-ink)]">
-          Pick services <span className="text-[color:var(--color-danger)]">*</span>
+          Pick services{" "}
+          <span className="font-normal text-[color:var(--color-ink-soft)]">(optional)</span>
         </span>
         <span className="text-xs text-[color:var(--color-ink-soft)]">
           {selectedIds.size} selected · {services.length} shown
