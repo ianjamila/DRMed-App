@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState, useMemo, useState } from "react";
+import { useActionState, useEffect, useMemo, useRef, useState } from "react";
+import { track } from "@vercel/analytics";
 import Link from "next/link";
 import { AnimatePresence, motion, MotionConfig } from "motion/react";
 import {
@@ -225,6 +226,10 @@ export function BookingForm({
     FormData
   >(submitBookingAction, null);
 
+  // ── Conversion event ref — declared here (hook rules require top-level) ─
+  // The effect itself fires after derived variables are in scope (below).
+  const trackedRef = useRef(false);
+
   // ── Derived (identical logic to the original single-page form) ──────────
   const filteredServices = useMemo(() => {
     const allowed = new Set<ServiceKind>(KINDS_PER_BRANCH[branch]);
@@ -303,6 +308,24 @@ export function BookingForm({
   const isExistingMode =
     isPortalContext || (patientMode === "existing" && resolvedPatient !== null);
   const doctorServiceId = autoConsultService?.id ?? singleServiceId;
+
+  // ── Conversion event (RA 10173 — payload contains NO PII) ───────────────
+  // Fires exactly once on booking success. Branch (enum string, not patient
+  // data) + numeric service count are the only payload fields.
+  const isSuccess = !!(state?.ok && (state.drm_id || isPortalContext));
+  useEffect(() => {
+    if (!isSuccess || trackedRef.current) return;
+    trackedRef.current = true;
+    const serviceCount =
+      branch === "doctor_appointment"
+        ? doctorServiceId
+          ? 1
+          : 0
+        : selectedServiceIds.size;
+    track("booking_submitted", { branch, services: serviceCount });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSuccess]);
+  // ────────────────────────────────────────────────────────────────────────
 
   // Active step list depends on context: portal skips Patient; existing
   // patients skip the "About you" personal-details step.
