@@ -4,6 +4,9 @@ import { audit } from "@/lib/audit/log";
 import { SITE } from "@/lib/marketing/site";
 import { sendEmail } from "./email";
 import { sendSms } from "./sms";
+import {
+  renderEmailShell, emailParagraph, emailDetailBox, emailButton, emailFinePrint, escapeHtml,
+} from "./branded-email";
 
 interface Input {
   appointmentId: string;
@@ -67,6 +70,7 @@ export async function notifyAppointmentBooked({
   let smsBody: string;
   let emailSubject: string;
   let emailText: string;
+  let emailHtml: string;
 
   if (isPendingCallback) {
     smsBody =
@@ -90,6 +94,19 @@ export async function notifyAppointmentBooked({
       "",
       "— DRMed Clinic and Laboratory",
     ].join("\n");
+    emailHtml = renderEmailShell({
+      heading: "Request received",
+      contentHtml:
+        emailParagraph(`Hi <b>${escapeHtml(greeting)}</b>,`) +
+        emailParagraph("Thanks for your request with DRMed Clinic &amp; Laboratory.") +
+        emailDetailBox([
+          { label: "Service", value: serviceName },
+          { label: "Status", value: "Reception will call within one working day to confirm." },
+        ]) +
+        (formCount > 0 ? emailParagraph(`<span style="color:#0a7c44;">&#10003; We received your doctor's request form (${formCount} file${formCount === 1 ? "" : "s"}).</span>`) : "") +
+        emailButton("Cancel this request", cancelUrl, "navy") +
+        emailFinePrint("Bring a valid ID on the day of your visit. For HMO, please bring your card."),
+    });
   } else {
     const when = appt.scheduled_at
       ? new Date(appt.scheduled_at).toLocaleString("en-PH", {
@@ -117,6 +134,19 @@ export async function notifyAppointmentBooked({
       "",
       "— DRMed Clinic and Laboratory",
     ].join("\n");
+    emailHtml = renderEmailShell({
+      heading: "Your booking is confirmed",
+      contentHtml:
+        emailParagraph(`Hi <b>${escapeHtml(greeting)}</b>,`) +
+        emailParagraph("Your DRMed Clinic &amp; Laboratory booking is confirmed. Here are the details:") +
+        emailDetailBox([
+          { label: "Service", value: serviceName },
+          { label: "Date / time", value: when },
+        ]) +
+        (formCount > 0 ? emailParagraph(`<span style="color:#0a7c44;">&#10003; We received your doctor's request form (${formCount} file${formCount === 1 ? "" : "s"}).</span>`) : "") +
+        emailButton("View or cancel booking", cancelUrl, "navy") +
+        emailFinePrint("Bring a valid ID. For HMO, please bring your card."),
+    });
   }
 
   const [smsResult, emailResult] = await Promise.all([
@@ -128,7 +158,7 @@ export async function notifyAppointmentBooked({
           reason: "no phone on appointment",
         }),
     email
-      ? sendEmail({ to: email, subject: emailSubject, text: emailText })
+      ? sendEmail({ to: email, subject: emailSubject, text: emailText, html: emailHtml })
       : Promise.resolve({
           ok: false as const,
           kind: "skipped" as const,
