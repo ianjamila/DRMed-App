@@ -21,7 +21,7 @@ export async function notifyAppointmentBooked({
     .from("appointments")
     .select(
       `
-        id, scheduled_at, status, walk_in_name, walk_in_phone,
+        id, scheduled_at, status, walk_in_name, walk_in_phone, booking_group_id,
         services ( name ),
         patients ( first_name, phone, email )
       `,
@@ -40,6 +40,23 @@ export async function notifyAppointmentBooked({
   const email = patient?.email ?? null;
   const serviceName = svc?.name ?? "your appointment";
   const cancelUrl = `${SITE.url.replace(/\/$/, "")}/appointments/cancel/${appt.id}`;
+
+  // Receipt note if the booking carried an uploaded doctor's request form.
+  let formCount = 0;
+  if (appt.booking_group_id) {
+    const { count } = await admin
+      .from("appointment_attachments")
+      .select("id", { count: "exact", head: true })
+      .eq("booking_group_id", appt.booking_group_id);
+    formCount = count ?? 0;
+  }
+  const formNote =
+    formCount > 0
+      ? [
+          "",
+          `We received your doctor's request form (${formCount} file${formCount === 1 ? "" : "s"}).`,
+        ]
+      : [];
 
   // pending_callback bookings (diagnostic packages, home service, by-appointment
   // doctors) have no scheduled_at and aren't confirmed yet. Reception calls
@@ -64,6 +81,7 @@ export async function notifyAppointmentBooked({
       "",
       `Service: ${serviceName}`,
       `Status: Reception will call within one working day to confirm a date and time.`,
+      ...formNote,
       "",
       `Need to cancel? Open this link:`,
       `  ${cancelUrl}`,
@@ -90,6 +108,7 @@ export async function notifyAppointmentBooked({
       "",
       `Service: ${serviceName}`,
       `Date / time: ${when}`,
+      ...formNote,
       "",
       `Need to cancel or reschedule? Open this link:`,
       `  ${cancelUrl}`,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 
 /**
@@ -15,14 +15,33 @@ export function SuccessPanel({
   scheduledAt,
   pendingCallback,
   isPortalContext,
+  uploadedFiles,
 }: {
   drmId: string;
   serviceSummary: string;
   scheduledAt: string | null;
   pendingCallback: boolean;
   isPortalContext: boolean;
+  uploadedFiles?: File[];
 }) {
   const [go, setGo] = useState(false);
+  // Derive object-URL previews from the in-memory files (no server round-trip).
+  const previews = useMemo(
+    () =>
+      (uploadedFiles ?? []).map((f) => {
+        const isImage = f.type.startsWith("image/");
+        return { url: isImage ? URL.createObjectURL(f) : "", name: f.name, isImage };
+      }),
+    [uploadedFiles],
+  );
+  // Revoke the object URLs when previews change or the panel unmounts.
+  useEffect(() => {
+    return () => {
+      previews.forEach((p) => {
+        if (p.url) URL.revokeObjectURL(p.url);
+      });
+    };
+  }, [previews]);
   useEffect(() => {
     const id = requestAnimationFrame(() => setGo(true));
     return () => cancelAnimationFrame(id);
@@ -72,6 +91,31 @@ export function SuccessPanel({
         {serviceSummary}
         {whenLabel ? ` · ${whenLabel}` : ""}
       </p>
+
+      {previews.length > 0 ? (
+        <div className="mx-auto mt-4 max-w-[460px]">
+          <p className="text-xs text-[color:var(--color-ink-soft)]">
+            Your request form was received:
+          </p>
+          <div className="mt-2 flex flex-wrap justify-center gap-2">
+            {previews.map((p, i) => (
+              <div
+                key={i}
+                className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-lg border border-[color:var(--color-warm-line-soft)] bg-white"
+              >
+                {p.isImage ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={p.url} alt="" className="h-full w-full object-cover" />
+                ) : (
+                  <span className="text-xl" aria-hidden="true">
+                    📄
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       {pendingCallback ? (
         <p className="mx-auto mt-3 max-w-[460px] text-[13.5px] text-[color:var(--color-ink-soft)]">

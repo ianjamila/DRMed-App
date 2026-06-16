@@ -268,6 +268,7 @@ export type Database = {
           notes: string | null
           patient_id: string | null
           physician_id: string | null
+          reminder_sent_at: string | null
           scheduled_at: string | null
           service_id: string | null
           status: string
@@ -283,6 +284,7 @@ export type Database = {
           notes?: string | null
           patient_id?: string | null
           physician_id?: string | null
+          reminder_sent_at?: string | null
           scheduled_at?: string | null
           service_id?: string | null
           status?: string
@@ -298,6 +300,7 @@ export type Database = {
           notes?: string | null
           patient_id?: string | null
           physician_id?: string | null
+          reminder_sent_at?: string | null
           scheduled_at?: string | null
           service_id?: string | null
           status?: string

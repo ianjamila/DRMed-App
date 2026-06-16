@@ -29,7 +29,7 @@ export default function PatientHelpPage() {
       <Section title="Why don't I see my results yet?">
         Results appear here only once they&apos;ve been signed off and
         released by the clinic, AND only after your visit is paid. We&apos;ll
-        text and email you the moment a result is released. Most tests turn
+        email you the moment a result is released. Most tests turn
         around within 24 hours.
       </Section>
 

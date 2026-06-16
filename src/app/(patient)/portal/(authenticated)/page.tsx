@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requirePatientProfile } from "@/lib/auth/require-patient";
 import { DownloadButton } from "./download-button";
 import { PackageCard, type PackageComponentRow } from "./package-card";
+import { LabRequestUploads, type UploadRow } from "./lab-request-uploads";
 import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
@@ -363,11 +364,71 @@ async function loadResults(patientId: string): Promise<PortalData> {
   return { packages, standalones, visitsWithPending };
 }
 
+async function loadUploads(patientId: string): Promise<UploadRow[]> {
+  const admin = createAdminClient();
+  const { data: atts } = await admin
+    .from("appointment_attachments")
+    .select("id, booking_group_id, filename, mime_type, size_bytes, created_at, storage_path")
+    .eq("patient_id", patientId)
+    .order("created_at", { ascending: false });
+
+  if (!atts || atts.length === 0) return [];
+
+  // Representative appointment per booking_group_id, for a context label.
+  const groupIds = [...new Set(atts.map((a) => a.booking_group_id))];
+  const { data: appts } = await admin
+    .from("appointments")
+    .select("booking_group_id, scheduled_at, services ( name )")
+    .in("booking_group_id", groupIds);
+
+  const contextByGroup = new Map<string, string>();
+  for (const ap of appts ?? []) {
+    if (!ap.booking_group_id) continue;
+    const svc = Array.isArray(ap.services) ? ap.services[0] : ap.services;
+    const name = svc?.name ?? "Lab request";
+    const when = ap.scheduled_at
+      ? new Date(ap.scheduled_at).toLocaleDateString("en-PH", {
+          timeZone: "Asia/Manila",
+          year: "numeric",
+          month: "short",
+          day: "numeric",
+        })
+      : null;
+    const label = when ? `${name} · ${when}` : name;
+    // Prefer a row that carries a scheduled time over a barer one.
+    if (!contextByGroup.has(ap.booking_group_id) || when) {
+      contextByGroup.set(ap.booking_group_id, label);
+    }
+  }
+
+  const IMG = new Set(["image/jpeg", "image/png", "image/webp"]);
+  const rows: UploadRow[] = [];
+  for (const a of atts) {
+    let thumbUrl: string | null = null;
+    if (IMG.has(a.mime_type)) {
+      const { data: signed } = await admin.storage
+        .from("lab-request-forms")
+        .createSignedUrl(a.storage_path, 60 * 5);
+      thumbUrl = signed?.signedUrl ?? null;
+    }
+    rows.push({
+      id: a.id,
+      filename: a.filename,
+      isPdf: a.mime_type === "application/pdf",
+      thumbUrl,
+      contextLabel: contextByGroup.get(a.booking_group_id) ?? null,
+      createdAt: a.created_at,
+    });
+  }
+  return rows;
+}
+
 export default async function PatientPortalPage() {
   const patient = await requirePatientProfile();
   const { packages, standalones, visitsWithPending } = await loadResults(
     patient.patient_id,
   );
+  const uploads = await loadUploads(patient.patient_id);
 
   const nothingToShow = packages.length === 0 && standalones.length === 0;
 
@@ -419,7 +480,7 @@ export default async function PatientPortalPage() {
                 >
                   {nothingToShow ? (
                     <>
-                      No released results yet. We&apos;ll text and email you
+                      No released results yet. We&apos;ll email you
                       when they&apos;re ready.
                     </>
                   ) : (
@@ -503,7 +564,7 @@ export default async function PatientPortalPage() {
           <Panel className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]">
             {nothingToShow ? (
               <>
-                No released results yet. We&apos;ll text and email you when
+                No released results yet. We&apos;ll email you when
                 they&apos;re ready.
               </>
             ) : (
@@ -604,6 +665,19 @@ export default async function PatientPortalPage() {
               </li>
             ))}
           </ul>
+        </section>
+      ) : null}
+
+      {uploads.length > 0 ? (
+        <section className="mt-8 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
+          <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+            Your uploaded request forms
+          </h2>
+          <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
+            The doctor&apos;s request form(s) you attached when booking. Tap View
+            for a 5-minute secure link.
+          </p>
+          <LabRequestUploads rows={uploads} />
         </section>
       ) : null}
 
