@@ -34,16 +34,16 @@ In `CONTACT.address`, add `postalCode` right after `country`:
     postalCode: "1106",
 ```
 
-Add a new export after the `CONTACT` block (candidate geo — **user verifies the pin from the Google Business Profile before merge**; the MedicalClinic builder omits geo when `lat`/`lng` are `null`):
+Add a new export after the `CONTACT` block (coordinates supplied by the clinic owner from Google Maps; the MedicalClinic builder omits geo when `lat`/`lng` are `null`, so this stays safe if a maintainer nulls them):
 ```ts
-// Clinic geo — CANDIDATE coordinates for "Northridge Plaza, 12 Congressional
-// Ave, Project 8, Quezon City 1106". VERIFY against the Google Business Profile
-// pin before merge. Set lat/lng to null to ship MedicalClinic JSON-LD without geo.
+// Clinic geo for "Northridge Plaza, Congressional Ave, Project 8, Quezon City
+// 1106". Owner-supplied via Google Maps (2026-06-16). To refine, right-click the
+// exact clinic pin in Google Maps → first menu line = lat,lng; Share → Copy link
+// = mapUrl. Set lat/lng to null to ship MedicalClinic JSON-LD without geo.
 export const GEO = {
-  lat: 14.6557 as number | null,
-  lng: 121.0334 as number | null,
-  mapUrl:
-    "https://www.google.com/maps/search/?api=1&query=Northridge+Plaza+Congressional+Avenue+Quezon+City",
+  lat: 14.6705438 as number | null,
+  lng: 121.0377397 as number | null,
+  mapUrl: "https://www.google.com/maps?q=14.6705438,121.0377397",
 } as const;
 ```
 
