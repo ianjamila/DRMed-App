@@ -126,7 +126,7 @@ export const PACKAGE_GROUPS = [
     type: "Preventive Care",
     title: "Basic, Routine, and Annual Checkups",
     desc: "Most requested screening bundles for regular health monitoring and annual assessment.",
-    range: "Starts at ₱950 · up to ₱1,999",
+    range: "Starts at ₱1,299",
     items: ["Basic Package", "Routine Package (Most Popular)", "Annual Physical Exam"],
   },
   {

@@ -8,6 +8,10 @@ import { resolvePatient } from "@/lib/patients/resolve";
 import { sendEmail } from "@/lib/notifications/email";
 import { CURRENT_CONSENT_NOTICE_VERSION } from "@/lib/consent/notice";
 import { RegistrationSchema } from "@/lib/validations/registration";
+import { SITE } from "@/lib/marketing/site";
+import {
+  renderEmailShell, emailParagraph, emailHighlight, emailButton, escapeHtml,
+} from "@/lib/notifications/branded-email";
 
 export type RegistrationResult =
   | { ok: true; matched: false; drm_id: string }
@@ -73,6 +77,14 @@ export async function submitRegistrationAction(
       to: d.email,
       subject: "Your DRMed DRM-ID",
       text: `Hi ${d.first_name},\n\nWe found an existing DRMed record matching your details. Your DRM-ID is ${res.drm_id}.\n\nPresent it at the clinic. After your visit, the Secure PIN printed on your receipt unlocks your results online.\n\n— DRMed Clinic & Laboratory`,
+      html: renderEmailShell({
+        heading: "Your DRMed patient ID",
+        contentHtml:
+          emailParagraph(`Hi <b>${escapeHtml(d.first_name)}</b>,`) +
+          emailParagraph("We found an existing DRMed record matching your details. Here is your patient ID:") +
+          emailHighlight("Your DRM-ID", res.drm_id) +
+          emailParagraph("Present it at the clinic. After your visit, the Secure PIN printed on your receipt unlocks your results online."),
+      }),
     });
     await audit({
       actor_id: null,
@@ -135,6 +147,15 @@ export async function submitRegistrationAction(
     to: d.email,
     subject: "Welcome to DRMed — your DRM-ID",
     text: `Hi ${d.first_name},\n\nThanks for pre-registering. Your DRM-ID is ${res.drm_id}.\n\nBring it on your visit — reception verifies your identity at the counter. After your visit, the Secure PIN printed on your receipt unlocks your results online.\n\n— DRMed Clinic & Laboratory`,
+    html: renderEmailShell({
+      heading: "Welcome to DRMed",
+      contentHtml:
+        emailParagraph(`Hi <b>${escapeHtml(d.first_name)}</b>,`) +
+        emailParagraph("Thanks for pre-registering. This is your DRMed patient ID — present it at the clinic on your visit:") +
+        emailHighlight("Your DRM-ID", res.drm_id) +
+        emailParagraph("Reception verifies your identity at the counter. After your visit, the Secure PIN printed on your receipt unlocks your results online.") +
+        emailButton("Book an appointment", `${SITE.url.replace(/\/$/, "")}/schedule`, "cyan"),
+    }),
   });
 
   await audit({
