@@ -1,3 +1,4 @@
+import { Analytics } from "@vercel/analytics/next";
 import { MotionConfig } from "motion/react";
 import { MarketingNav } from "@/components/marketing/marketing-nav";
 import { MarketingFooter } from "@/components/marketing/marketing-footer";
@@ -26,6 +27,7 @@ export default function MarketingLayout({
         <MarketingFooter />
         <MessengerFab />
       </HideOnPaths>
+      <Analytics />
     </MotionConfig>
   );
 }
