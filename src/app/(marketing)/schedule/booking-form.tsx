@@ -313,6 +313,7 @@ export function BookingForm({
         scheduledAt={state.scheduled_at}
         pendingCallback={state.pending_callback}
         isPortalContext={isPortalContext}
+        uploadedFiles={labRequestFiles}
       />
     );
   }
