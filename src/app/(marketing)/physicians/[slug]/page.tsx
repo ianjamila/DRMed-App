@@ -3,8 +3,8 @@ import Link from "next/link";
 import Image from "next/image";
 import { notFound } from "next/navigation";
 import { Calendar, MapPin, Clock, Phone, ExternalLink } from "lucide-react";
-import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient as createAnonClient } from "@supabase/supabase-js";
+import type { Database } from "@/types/database";
 import { SITE, CONTACT, GEO } from "@/lib/marketing/site";
 import { pageMetadata } from "@/lib/marketing/metadata";
 import { physicianLd, breadcrumbLd } from "@/lib/marketing/structured-data";
@@ -16,17 +16,26 @@ import { PillLink } from "@/components/marketing/ui";
 
 export const revalidate = 300;
 
+// Stateless ANON client for this public page's reads. No cookies() → the route
+// is statically generated + ISR-cached (see `revalidate`) instead of rendered
+// dynamically per request. Respects RLS (physicians + physician_schedules are
+// public-readable) and never touches the service-role key.
+function publicClient() {
+  return createAnonClient<Database>(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { auth: { persistSession: false } },
+  );
+}
+
 export async function generateStaticParams() {
-  // generateStaticParams runs at build time without an HTTP request, so we
-  // cannot use cookies() (which createClient() requires). Use the admin client
-  // (no session/cookies needed) to enumerate active physician slugs instead.
-  // Guard: in environments without DB credentials (e.g. bare CI builds) we
-  // return an empty array so Next.js falls back to on-demand ISR rendering.
-  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  // Build-time: enumerate active physician slugs so each page is prebuilt as
+  // static HTML. Guard: without DB env (e.g. bare CI builds) return [] so
+  // Next.js falls back to on-demand ISR rendering.
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
     return [];
   }
-  const admin = createAdminClient();
-  const { data } = await admin
+  const { data } = await publicClient()
     .from("physicians")
     .select("slug")
     .eq("is_active", true)
@@ -50,8 +59,7 @@ interface PhysicianRow {
 }
 
 async function loadPhysician(slug: string): Promise<PhysicianRow | null> {
-  const supabase = await createClient();
-  const { data, error } = await supabase
+  const { data, error } = await publicClient()
     .from("physicians")
     .select("id, slug, full_name, specialty, group_label, bio, photo_path")
     .eq("slug", slug)
@@ -81,8 +89,7 @@ export default async function PhysicianPage({ params }: PageProps) {
   const doc = await loadPhysician(slug);
   if (!doc) notFound();
 
-  const supabase = await createClient();
-  const { data: scheduleRows } = await supabase
+  const { data: scheduleRows } = await publicClient()
     .from("physician_schedules")
     .select("day_of_week, start_time, end_time")
     .eq("physician_id", doc.id);
