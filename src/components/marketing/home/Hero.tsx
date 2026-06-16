@@ -82,7 +82,7 @@ export function Hero() {
       </svg>
 
       <div className="relative z-[1] mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-        <div className="grid items-center gap-14 lg:grid-cols-[1.05fr_0.95fr]">
+        <div className="grid grid-cols-1 items-center gap-14 lg:grid-cols-[1.05fr_0.95fr]">
           {/* ── Left column ── */}
           <HeroStagger>
             {/* Eyebrow kicker */}
@@ -153,7 +153,7 @@ export function Hero() {
                 src="/hero-clinic.jpg"
                 alt="DRMed Clinic, Northridge Plaza"
                 width={720}
-                height={520}
+                height={573}
                 // LCP hero image. Next 16 deprecated `priority` (preload-only, no
                 // fetchpriority) — use eager + high fetch priority so it loads at
                 // High network priority, and `sizes` so mobile pulls a ~750w
@@ -161,35 +161,43 @@ export function Hero() {
                 loading="eager"
                 fetchPriority="high"
                 sizes="(min-width: 1024px) 560px, 100vw"
-                className="hero-photo-img h-[420px] w-full rounded-[200px_200px_26px_26px] object-cover shadow-[var(--shadow-warm-lg)] md:h-[520px]"
+                className="hero-photo-img h-[420px] w-full rounded-[64px_64px_26px_26px] object-cover shadow-[var(--shadow-warm-lg)] md:h-[520px]"
               />
 
-              {/* hero-chip: top-right badge */}
-              <div className="absolute -right-2 top-[38px] rounded-2xl bg-white p-[14px_18px] shadow-[var(--shadow-warm-lg)]">
-                <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[color:var(--color-brand-cyan-text)]">
-                  Average Turnaround
-                </p>
-                <p className="mt-0.5 font-[family-name:var(--font-display)] text-[20px] text-[color:var(--color-brand-navy)]">
-                  24 Hours
-                </p>
-                <p className="text-[11.5px] text-[color:var(--color-ink-soft)]">
-                  Most tests same-day
-                </p>
-              </div>
+              {/*
+               * Lower-right cluster: the blood-draw photo card with the
+               * "Average Turnaround" badge stacked on top of it. Inset on
+               * mobile (right-3) so it never bleeds past the viewport; slight
+               * bleed off the column edge on ≥sm where there's whitespace.
+               */}
+              <div className="absolute -bottom-[26px] right-3 z-[1] flex w-[186px] flex-col items-stretch gap-2 sm:-right-3">
+                {/* Average Turnaround badge — on top */}
+                <div className="rounded-2xl bg-white p-[14px_18px] shadow-[var(--shadow-warm-lg)]">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[color:var(--color-brand-cyan-text)]">
+                    Average Turnaround
+                  </p>
+                  <p className="mt-0.5 font-[family-name:var(--font-display)] text-[20px] text-[color:var(--color-brand-navy)]">
+                    24 Hours
+                  </p>
+                  <p className="text-[11.5px] text-[color:var(--color-ink-soft)]">
+                    Most tests same-day
+                  </p>
+                </div>
 
-              {/* hero-slot: bottom-left pending photo */}
-              <div className="absolute -left-2.5 -bottom-[26px] w-[180px] rounded-[18px] bg-white p-2 shadow-[var(--shadow-warm-lg)]">
-                <Image
-                  src="/photos/blood-draw.jpg"
-                  alt="DRMed phlebotomist drawing blood from a seated patient by a window"
-                  width={746}
-                  height={1000}
-                  sizes="180px"
-                  className="h-[150px] w-full rounded-[12px] object-cover"
-                />
-                <p className="px-1 pb-0.5 pt-[7px] text-[10.5px] italic text-[color:var(--color-ink-soft)]">
-                  Gentle, unhurried blood draws
-                </p>
+                {/* Blood-draw photo card — below the badge */}
+                <div className="rounded-[18px] bg-white p-2 shadow-[var(--shadow-warm-lg)]">
+                  <Image
+                    src="/photos/blood-draw.jpg"
+                    alt="DRMed phlebotomist drawing blood from a seated patient by a window"
+                    width={746}
+                    height={1000}
+                    sizes="186px"
+                    className="h-[150px] w-full rounded-[12px] object-cover"
+                  />
+                  <p className="px-1 pb-0.5 pt-[7px] text-[10.5px] italic text-[color:var(--color-ink-soft)]">
+                    Gentle, unhurried blood draws
+                  </p>
+                </div>
               </div>
             </div>
           </HeroStaggerItem>
