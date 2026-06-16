@@ -1,5 +1,6 @@
 import type { MetadataRoute } from "next";
 import { listActiveServices } from "@/lib/marketing/services";
+import { listActivePhysicians } from "@/lib/marketing/physicians";
 import { SITE } from "@/lib/marketing/site";
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
@@ -10,6 +11,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     "/",
     "/all-services",
     "/packages",
+    "/physicians",
     "/schedule",
     "/about",
     "/contact",
@@ -30,5 +32,13 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     priority: 0.6,
   }));
 
-  return [...staticEntries, ...serviceEntries];
+  const physicians = await listActivePhysicians();
+  const physicianEntries: MetadataRoute.Sitemap = physicians.map((p) => ({
+    url: `${base}/physicians/${p.slug}`,
+    lastModified: p.updated_at ? new Date(p.updated_at) : now,
+    changeFrequency: "monthly",
+    priority: 0.6,
+  }));
+
+  return [...staticEntries, ...serviceEntries, ...physicianEntries];
 }
