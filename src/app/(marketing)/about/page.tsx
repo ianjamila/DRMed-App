@@ -2,12 +2,14 @@ import { HeartHandshake, Target, Users, Award } from "lucide-react";
 import { PageHero } from "@/components/marketing/page-hero";
 import { SectionHeading, PillLink } from "@/components/marketing/ui";
 import { Reveal } from "@/components/marketing/motion";
+import { pageMetadata } from "@/lib/marketing/metadata";
 
-export const metadata = {
-  title: "About",
+export const metadata = pageMetadata({
+  title: "About DRMed Clinic & Laboratory",
   description:
-    "DRMed Clinic and Laboratory is committed to comprehensive, compassionate, and accessible healthcare for the Quezon City community.",
-};
+    "A family-focused clinic and laboratory in Quezon City offering consultations, lab tests, X-ray, ultrasound, ECG, and home service.",
+  path: "/about",
+});
 
 // PLACEHOLDER/VERIFY: this Values grid is a NEW section — the four values are
 // distilled from the clinic's existing mission/vision/commitment copy (not new

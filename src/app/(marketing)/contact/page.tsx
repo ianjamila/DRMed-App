@@ -4,12 +4,14 @@ import { SectionHeading } from "@/components/marketing/ui";
 import { Reveal } from "@/components/marketing/motion";
 import { CONTACT, SOCIAL } from "@/lib/marketing/site";
 import { ContactForm } from "./contact-form";
+import { pageMetadata } from "@/lib/marketing/metadata";
 
-export const metadata = {
-  title: "Contact",
+export const metadata = pageMetadata({
+  title: "Contact & Location",
   description:
-    "Get in touch with DRMed Clinic and Laboratory. Send us a message about appointments, HMO, corporate packages, or general inquiries.",
-};
+    "Visit DRMed Clinic & Laboratory in Quezon City. Address, phone, hours, and directions. Open Monday to Saturday, 8 AM–5 PM.",
+  path: "/contact",
+});
 
 const mapsHref = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(CONTACT.address.full)}`;
 

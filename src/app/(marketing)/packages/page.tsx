@@ -10,12 +10,14 @@ import {
   type PackageWithGroup,
 } from "@/lib/marketing/services";
 import { formatPhp } from "@/lib/marketing/format";
+import { pageMetadata } from "@/lib/marketing/metadata";
 
-export const metadata = {
-  title: "Detailed Diagnostic Packages",
+export const metadata = pageMetadata({
+  title: "Diagnostic Packages & Checkup Bundles",
   description:
-    "Full DRMed package list with detailed inclusions and prices. Confirm latest rates and availability before booking.",
-};
+    "Affordable lab packages and annual checkup bundles at DRMed Clinic & Laboratory in Quezon City — up to 50% less than hospitals.",
+  path: "/packages",
+});
 
 // Live data — admin price changes on /staff/admin/prices reflect here on next
 // request because lab_package rows are read directly from the services table.

@@ -11,11 +11,14 @@ import {
 import { createClient } from "@/lib/supabase/server";
 import { physicianPhotoUrl } from "@/lib/physicians/photo";
 import { BookingForm } from "./booking-form";
+import { pageMetadata } from "@/lib/marketing/metadata";
 
-export const metadata = {
-  title: "Schedule & Location",
-  description: `Visit DRMed Clinic & Laboratory at ${CONTACT.address.full}. Open ${CONTACT.hours}.`,
-};
+export const metadata = pageMetadata({
+  title: "Book an Appointment",
+  description:
+    "Book a consultation, lab test, or home service at DRMed Clinic & Laboratory in Quezon City. See clinic hours and location.",
+  path: "/schedule",
+});
 
 export const dynamic = "force-dynamic";
 
