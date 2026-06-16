@@ -4,6 +4,9 @@ import { audit } from "@/lib/audit/log";
 import { SITE } from "@/lib/marketing/site";
 import { sendEmail } from "./email";
 import { sendSms } from "./sms";
+import {
+  renderEmailShell, emailParagraph, emailDetailBox, emailButton, emailFinePrint, escapeHtml,
+} from "./branded-email";
 
 interface Input {
   testRequestId: string;
@@ -66,6 +69,20 @@ export async function notifyResultReleased({
     "— DRMed Clinic and Laboratory",
   ].join("\n");
 
+  const emailHtml = renderEmailShell({
+    heading: "Your lab result is ready",
+    contentHtml:
+      emailParagraph(`Hi <b>${escapeHtml(greeting)}</b>,`) +
+      emailParagraph(`Your laboratory result for <b>${escapeHtml(testName)}</b> has been released. You can view and download it securely in the patient portal.`) +
+      emailDetailBox([
+        { label: "DRM-ID", value: patient.drm_id },
+        { label: "Secure PIN", value: "printed on your receipt" },
+      ]) +
+      emailButton("Sign in to view your result", portalUrl, "cyan") +
+      emailFinePrint("Your PIN is valid for 60 days. Keep it private — anyone with your PIN can view your lab results."),
+    receivedNote: "You received this because a result was released for your DRMed visit.",
+  });
+
   const [smsResult, emailResult] = await Promise.all([
     patient.phone
       ? sendSms({ to: patient.phone, message: smsBody })
@@ -79,6 +96,7 @@ export async function notifyResultReleased({
           to: patient.email,
           subject: emailSubject,
           text: emailText,
+          html: emailHtml,
         })
       : Promise.resolve({
           ok: false as const,

@@ -7,10 +7,8 @@ import { audit } from "@/lib/audit/log";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { sendEmail } from "@/lib/notifications/email";
 import { renderMarkdown } from "@/lib/newsletter/markdown";
-import {
-  plainTextFromMarkdown,
-  wrapEmailHtml,
-} from "@/lib/newsletter/email-template";
+import { plainTextFromMarkdown } from "@/lib/newsletter/email-template";
+import { renderEmailShell } from "@/lib/notifications/branded-email";
 import { ComposeCampaignSchema } from "@/lib/validations/newsletter";
 import { SITE } from "@/lib/marketing/site";
 import { ipAndAgent } from "@/lib/server/action-helpers";
@@ -89,9 +87,8 @@ export async function sendCampaignAction(
     const results = await Promise.all(
       batch.map(async (sub) => {
         const unsubscribeUrl = `${SITE.url}/unsubscribe?token=${encodeURIComponent(sub.unsubscribe_token)}`;
-        const html = wrapEmailHtml({
-          subject: parsed.data.subject,
-          bodyHtml: renderedBodyHtml,
+        const html = renderEmailShell({
+          contentHtml: renderedBodyHtml,
           unsubscribeUrl,
         });
         const text = `${plainText}\n\n---\nUnsubscribe: ${unsubscribeUrl}`;

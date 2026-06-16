@@ -77,14 +77,14 @@ export async function notifyAppointmentReminder({
     return { emailed: false, reason: "no email" };
   }
 
-  const { subject, text } = buildReminderEmail({
+  const { subject, text, html } = buildReminderEmail({
     greeting,
     serviceName,
     when,
     cancelUrl,
     hasForm,
   });
-  const emailResult = await sendEmail({ to: email, subject, text });
+  const emailResult = await sendEmail({ to: email, subject, text, html });
 
   await audit({
     actor_id: null,
