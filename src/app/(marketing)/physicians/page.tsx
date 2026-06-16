@@ -1,4 +1,5 @@
 import { Calendar, Info, MapPin } from "lucide-react";
+import Link from "next/link";
 
 import { createClient } from "@/lib/supabase/server";
 import { PageHero } from "@/components/marketing/page-hero";
@@ -7,12 +8,16 @@ import { Reveal } from "@/components/marketing/motion";
 import { DoctorAvatar } from "@/components/marketing/doctor-avatar";
 import { physicianPhotoUrl } from "@/lib/physicians/photo";
 import { formatSchedule } from "@/lib/physicians/format-schedule";
+import { JsonLd } from "@/components/marketing/json-ld";
+import { physiciansItemListLd } from "@/lib/marketing/structured-data";
+import { pageMetadata } from "@/lib/marketing/metadata";
 
-export const metadata = {
-  title: "Physicians and Detailed Schedules",
+export const metadata = pageMetadata({
+  title: "Our Physicians & Schedules",
   description:
-    "Complete DRMed doctor roster with photos and regular clinic schedules. Confirm final availability before visiting.",
-};
+    "Meet the doctors at DRMed Clinic & Laboratory in Quezon City and view their clinic schedules. Book a consultation online.",
+  path: "/physicians",
+});
 
 export const revalidate = 300; // 5 min cache; admin edits land within 5 min
 
@@ -74,8 +79,13 @@ export default async function PhysiciansPage() {
 
   const totalCount = (physicians ?? []).length;
 
+  const itemList = physiciansItemListLd(
+    (physicians ?? []).map((d) => ({ slug: d.slug, fullName: d.full_name })),
+  );
+
   return (
     <>
+      <JsonLd data={itemList} />
       <PageHero
         eyebrow="DRMed Clinic and Laboratory"
         title="Physicians and Detailed"
@@ -187,33 +197,38 @@ function PhysicianGroupSection({
           });
           return (
             <Reveal key={doc.id} delay={i * 0.05}>
-              <article className="flex gap-4 rounded-[20px] border border-[color:var(--color-warm-line-soft)] bg-white p-5 shadow-[var(--shadow-warm-sm)] transition-[transform,box-shadow] duration-200 hover:-translate-y-1 hover:shadow-[var(--shadow-warm-lg)]">
-                <DoctorAvatar photoUrl={photoUrl} name={doc.full_name} />
-                <div className="min-w-0 flex-1">
-                  <h3 className="font-[family-name:var(--font-display)] text-lg leading-tight text-[color:var(--color-brand-navy)]">
-                    {doc.full_name}
-                  </h3>
-                  <p className="mt-1 text-xs font-bold uppercase tracking-[0.08em] text-[color:var(--color-brand-cyan-text)]">
-                    {doc.specialty}
-                  </p>
-                  {lines.length > 0 && (
-                    <ul className="mt-3 space-y-1">
-                      {lines.map((s) => (
-                        <li
-                          key={s}
-                          className="flex items-center gap-1.5 text-xs text-[color:var(--color-ink-mid)]"
-                        >
-                          <Calendar
-                            className="h-3 w-3 shrink-0 text-[color:var(--color-brand-cyan)]"
-                            aria-hidden="true"
-                          />
-                          {s}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              </article>
+              <Link
+                href={`/physicians/${doc.slug}`}
+                className="block rounded-[20px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-brand-cyan)]"
+              >
+                <article className="flex gap-4 rounded-[20px] border border-[color:var(--color-warm-line-soft)] bg-white p-5 shadow-[var(--shadow-warm-sm)] transition-[transform,box-shadow] duration-200 hover:-translate-y-1 hover:shadow-[var(--shadow-warm-lg)]">
+                  <DoctorAvatar photoUrl={photoUrl} name={doc.full_name} />
+                  <div className="min-w-0 flex-1">
+                    <h3 className="font-[family-name:var(--font-display)] text-lg leading-tight text-[color:var(--color-brand-navy)]">
+                      {doc.full_name}
+                    </h3>
+                    <p className="mt-1 text-xs font-bold uppercase tracking-[0.08em] text-[color:var(--color-brand-cyan-text)]">
+                      {doc.specialty}
+                    </p>
+                    {lines.length > 0 && (
+                      <ul className="mt-3 space-y-1">
+                        {lines.map((s) => (
+                          <li
+                            key={s}
+                            className="flex items-center gap-1.5 text-xs text-[color:var(--color-ink-mid)]"
+                          >
+                            <Calendar
+                              className="h-3 w-3 shrink-0 text-[color:var(--color-brand-cyan)]"
+                              aria-hidden="true"
+                            />
+                            {s}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </article>
+              </Link>
             </Reveal>
           );
         })}

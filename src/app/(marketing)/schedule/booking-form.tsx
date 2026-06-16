@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState, useMemo, useState } from "react";
+import { useActionState, useEffect, useMemo, useRef, useState } from "react";
+import { track } from "@vercel/analytics";
 import Link from "next/link";
 import { AnimatePresence, motion, MotionConfig } from "motion/react";
 import {
@@ -61,6 +62,7 @@ export interface SpecialtyOption {
 
 export interface BookablePhysician {
   id: string;
+  slug: string;
   full_name: string;
   specialty: string;
   group_label: string | null;
@@ -72,6 +74,7 @@ export interface BookablePhysician {
 
 export interface ByAppointmentPhysician {
   id: string;
+  slug: string;
   full_name: string;
   specialty: string;
   group_label: string | null;
@@ -104,6 +107,13 @@ interface Props {
   // authenticated via session, so the server re-derives patient_id from the
   // session cookie regardless of what the form posts.
   prefilledPatient?: PrefilledPatient;
+  // Deep-link preselect from /schedule?doctor=<slug>. When provided, the form
+  // opens on the doctor_appointment branch with that physician pre-picked and
+  // their specialty pre-selected (so the physician picker is immediately visible).
+  // Absent = existing defaults apply (lab_request branch, no physician).
+  initialBranch?: Branch;
+  initialPhysicianId?: string;
+  initialSpecialtyCode?: string;
 }
 
 const KINDS_PER_BRANCH: Record<Branch, ReadonlyArray<ServiceKind>> = {
@@ -157,10 +167,13 @@ export function BookingForm({
   physicians,
   byAppointmentPhysicians,
   prefilledPatient,
+  initialBranch,
+  initialPhysicianId,
+  initialSpecialtyCode,
 }: Props) {
   const isPortalContext = prefilledPatient !== undefined;
 
-  const [branch, setBranch] = useState<Branch>("lab_request");
+  const [branch, setBranch] = useState<Branch>(initialBranch ?? "lab_request");
   // Personal-info fields stay in controlled state (React 19 resets uncontrolled
   // inputs when a form action returns) and feed the persistent hidden fields.
   const [firstName, setFirstName] = useState("");
@@ -180,8 +193,8 @@ export function BookingForm({
     new Set(),
   );
   const [singleServiceId, setSingleServiceId] = useState<string>("");
-  const [specialtyCode, setSpecialtyCode] = useState<string>("");
-  const [physicianId, setPhysicianId] = useState<string>("");
+  const [specialtyCode, setSpecialtyCode] = useState<string>(initialSpecialtyCode ?? "");
+  const [physicianId, setPhysicianId] = useState<string>(initialPhysicianId ?? "");
   const [serviceQuery, setServiceQuery] = useState("");
   const [slot, setSlot] = useState<SlotValue>({ date: null, time: null });
   const [patientMode, setPatientMode] = useState<"new" | "existing">(
@@ -215,6 +228,10 @@ export function BookingForm({
     BookingResult | null,
     FormData
   >(submitBookingAction, null);
+
+  // ── Conversion event ref — declared here (hook rules require top-level) ─
+  // The effect itself fires after derived variables are in scope (below).
+  const trackedRef = useRef(false);
 
   // ── Derived (identical logic to the original single-page form) ──────────
   const filteredServices = useMemo(() => {
@@ -294,6 +311,27 @@ export function BookingForm({
   const isExistingMode =
     isPortalContext || (patientMode === "existing" && resolvedPatient !== null);
   const doctorServiceId = autoConsultService?.id ?? singleServiceId;
+
+  // ── Conversion event (RA 10173 — payload contains NO PII) ───────────────
+  // Fires exactly once on booking success. Branch (enum string, not patient
+  // data) + numeric service count are the only payload fields.
+  const isSuccess = !!(state?.ok && (state.drm_id || isPortalContext));
+  useEffect(() => {
+    if (!isSuccess || trackedRef.current) return;
+    if (isPortalContext) return; // never emit analytics from the patient portal (RA 10173)
+    trackedRef.current = true;
+    const serviceCount =
+      branch === "doctor_appointment"
+        ? doctorServiceId
+          ? 1
+          : 0
+        : selectedServiceIds.size;
+    track("booking_submitted", { branch, services: serviceCount });
+    // branch/doctorServiceId/selectedServiceIds are frozen once the form is submitted
+    // (inputs are locked during pending → success), so the stale closure is intentional.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSuccess]);
+  // ────────────────────────────────────────────────────────────────────────
 
   // Active step list depends on context: portal skips Patient; existing
   // patients skip the "About you" personal-details step.

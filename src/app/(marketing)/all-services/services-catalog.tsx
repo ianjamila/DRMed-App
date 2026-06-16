@@ -62,11 +62,12 @@ const SECTION_LABEL: Record<ServiceSection, string> = {
 
 interface Props {
   services: PublicService[];
+  initialQuery?: string;
 }
 
-export function ServicesCatalog({ services }: Props) {
+export function ServicesCatalog({ services, initialQuery }: Props) {
   const [tab, setTab] = useState<TabKey>("all");
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery ?? "");
   const deferredQuery = useDeferredValue(query);
 
   const filtered = useMemo(() => {

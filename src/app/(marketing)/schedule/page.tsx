@@ -11,15 +11,22 @@ import {
 import { createClient } from "@/lib/supabase/server";
 import { physicianPhotoUrl } from "@/lib/physicians/photo";
 import { BookingForm } from "./booking-form";
+import { pageMetadata } from "@/lib/marketing/metadata";
 
-export const metadata = {
-  title: "Schedule & Location",
-  description: `Visit DRMed Clinic & Laboratory at ${CONTACT.address.full}. Open ${CONTACT.hours}.`,
-};
+export const metadata = pageMetadata({
+  title: "Book an Appointment",
+  description:
+    "Book a consultation, lab test, or home service at DRMed Clinic & Laboratory in Quezon City. See clinic hours and location.",
+  path: "/schedule",
+});
 
 export const dynamic = "force-dynamic";
 
-export default async function SchedulePage() {
+export default async function SchedulePage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const services = await listActiveServices();
   const startDate = tomorrowManilaISO();
   const endDate = addDaysISO(startDate, 60);
@@ -109,6 +116,7 @@ export default async function SchedulePage() {
     .filter((p) => (blocksByPhysician.get(p.id) ?? []).length > 0)
     .map((p) => ({
       id: p.id,
+      slug: p.slug,
       full_name: p.full_name,
       specialty: p.specialty,
       group_label: p.group_label,
@@ -125,6 +133,7 @@ export default async function SchedulePage() {
     .filter((p) => (blocksByPhysician.get(p.id) ?? []).length === 0)
     .map((p) => ({
       id: p.id,
+      slug: p.slug,
       full_name: p.full_name,
       specialty: p.specialty,
       group_label: p.group_label,
@@ -134,6 +143,25 @@ export default async function SchedulePage() {
       }),
       specialty_codes: codesByPhysician.get(p.id) ?? [],
     }));
+
+  // Deep-link preselect: /schedule?doctor=<slug> opens on the doctor branch
+  // with that physician already picked. Resolve across both pools so by-
+  // appointment physicians also deep-link correctly.
+  const { doctor: doctorSlug } = await searchParams;
+  const slugString = Array.isArray(doctorSlug) ? doctorSlug[0] : doctorSlug;
+  const matchedPhysician =
+    slugString
+      ? (bookablePhysicians.find((p) => p.slug === slugString) ??
+          byAppointmentPhysicians.find((p) => p.slug === slugString) ??
+          null)
+      : null;
+  const initialBranch = matchedPhysician ? ("doctor_appointment" as const) : undefined;
+  const initialPhysicianId = matchedPhysician?.id;
+  // "all" is a valid specialty selector option that shows every physician, so it
+  // is a safe fallback when a physician has no specialty_codes assigned yet.
+  const initialSpecialtyCode = matchedPhysician
+    ? (matchedPhysician.specialty_codes[0] ?? "all")
+    : undefined;
 
   const bookingServices = services
     .filter(
@@ -187,6 +215,9 @@ export default async function SchedulePage() {
           specialties={specialties}
           physicians={bookablePhysicians}
           byAppointmentPhysicians={byAppointmentPhysicians}
+          initialBranch={initialBranch}
+          initialPhysicianId={initialPhysicianId}
+          initialSpecialtyCode={initialSpecialtyCode}
         />
 
         {/* Minimal focused footer — privacy + a couple of escape hatches. */}

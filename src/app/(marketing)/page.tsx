@@ -1,4 +1,4 @@
-import { CONTACT, SITE, SOCIAL } from "@/lib/marketing/site";
+import { SITE } from "@/lib/marketing/site";
 import { createClient } from "@/lib/supabase/server";
 import { physicianPhotoUrl } from "@/lib/physicians/photo";
 import { EcgDivider } from "@/components/marketing/motion";
@@ -15,26 +15,17 @@ import { Payments } from "@/components/marketing/home/Payments";
 import { Gallery } from "@/components/marketing/home/Gallery";
 import { Faq } from "@/components/marketing/home/Faq";
 import { Contact } from "@/components/marketing/home/Contact";
+import { JsonLd } from "@/components/marketing/json-ld";
+import { medicalClinicLd, websiteLd, faqPageLd } from "@/lib/marketing/structured-data";
+import { FAQ_ITEMS } from "@/lib/marketing/faq";
+import { pageMetadata } from "@/lib/marketing/metadata";
 
-// MedicalBusiness structured data — preserved from the original homepage.
-const jsonLd = {
-  "@context": "https://schema.org",
-  "@type": "MedicalBusiness",
-  name: SITE.name,
-  url: SITE.url,
-  email: CONTACT.email,
-  telephone: CONTACT.phone.mobileE164,
-  address: {
-    "@type": "PostalAddress",
-    streetAddress: `${CONTACT.address.line1}, ${CONTACT.address.line2}`,
-    addressLocality: CONTACT.address.city,
-    addressRegion: CONTACT.address.region,
-    addressCountry: CONTACT.address.country,
-  },
-  openingHours: "Mo-Sa 08:00-17:00",
-  medicalSpecialty: ["Diagnostic", "ClinicalLaboratory", "Radiology"],
-  sameAs: [SOCIAL.facebook, SOCIAL.instagram],
-};
+export const metadata = pageMetadata({
+  title: `${SITE.name} — ${SITE.tagline}`,
+  description: SITE.description,
+  path: "/",
+  absoluteTitle: true,
+});
 
 export default async function HomePage() {
   const supabase = await createClient();
@@ -58,15 +49,13 @@ export default async function HomePage() {
   const specialists = (topPhysicians ?? []).map((doc) => ({
     name: doc.full_name,
     specialty: doc.specialty,
+    slug: doc.slug,
     photoUrl: physicianPhotoUrl({ slug: doc.slug, photo_path: doc.photo_path }),
   }));
 
   return (
     <>
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
-      />
+      <JsonLd data={[medicalClinicLd(), websiteLd(), faqPageLd(FAQ_ITEMS)]} />
 
       <Hero />
       <TrustStrip />

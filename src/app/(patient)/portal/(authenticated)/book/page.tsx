@@ -101,6 +101,7 @@ export default async function PortalBookPage() {
     .filter((p) => (blocksByPhysician.get(p.id) ?? []).length > 0)
     .map((p) => ({
       id: p.id,
+      slug: p.slug,
       full_name: p.full_name,
       specialty: p.specialty,
       group_label: p.group_label,
@@ -117,6 +118,7 @@ export default async function PortalBookPage() {
     .filter((p) => (blocksByPhysician.get(p.id) ?? []).length === 0)
     .map((p) => ({
       id: p.id,
+      slug: p.slug,
       full_name: p.full_name,
       specialty: p.specialty,
       group_label: p.group_label,
