@@ -34,14 +34,14 @@ export const CONTACT = {
   hours: "Monday – Saturday, 8 AM – 5 PM",
 } as const;
 
-// Clinic geo for "Northridge Plaza, Congressional Ave, Project 8, Quezon City
-// 1106". Owner-supplied via Google Maps (2026-06-16). To refine, right-click the
-// exact clinic pin in Google Maps → first menu line = lat,lng; Share → Copy link
-// = mapUrl. Set lat/lng to null to ship MedicalClinic JSON-LD without geo.
+// Clinic geo for the verified "DRMed Clinic and Laboratory" Google Business
+// Profile pin (Northridge Plaza, Congressional Ave, Project 8, Quezon City
+// 1106). Owner-confirmed via Google Maps share link, 2026-06-16. Set lat/lng to
+// null to ship MedicalClinic JSON-LD without geo.
 export const GEO = {
-  lat: 14.6705438 as number | null,
-  lng: 121.0377397 as number | null,
-  mapUrl: "https://www.google.com/maps?q=14.6705438,121.0377397",
+  lat: 14.6705639 as number | null,
+  lng: 121.0389717 as number | null,
+  mapUrl: "https://maps.app.goo.gl/Qrb5WYwmA5RVuBkN9",
 } as const;
 
 export const SOCIAL = {
