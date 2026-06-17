@@ -4,7 +4,8 @@ import { reportError } from "@/lib/observability/report-error";
 import {
   INDEXNOW_ENDPOINT,
   buildIndexNowPayload,
-  indexNowEnabled,
+  indexNowKey,
+  type IndexNowEnv,
 } from "./indexnow-core";
 import { buildSitemapEntries } from "./sitemap-entries";
 
@@ -23,7 +24,13 @@ export async function submitToIndexNow(
   urls: string[],
   opts: { trigger: string },
 ): Promise<IndexNowResult> {
-  if (!indexNowEnabled(process.env as { VERCEL_ENV?: string; INDEXNOW_KEY?: string })) {
+  // Only fire in production with a configured key — preview/local no-op so we
+  // never ping real engines with non-production URLs. `indexNowKey` trims the
+  // value so the payload key matches exactly what the /indexnow-key.txt route
+  // serves (a mismatch makes IndexNow reject the whole submission).
+  const env = process.env as IndexNowEnv;
+  const key = indexNowKey(env);
+  if (env.VERCEL_ENV !== "production" || !key) {
     return { ok: true, submitted: 0, skipped: "disabled" };
   }
 
@@ -36,8 +43,6 @@ export async function submitToIndexNow(
     return { ok: false, submitted: 0 };
   }
 
-  // Non-null: indexNowEnabled() guarantees a non-empty key.
-  const key = process.env.INDEXNOW_KEY as string;
   const keyLocation = `${base}/indexnow-key.txt`;
   const payload = buildIndexNowPayload({ urls, key, host, keyLocation });
   if (!payload) return { ok: true, submitted: 0, skipped: "no-urls" };
