@@ -458,6 +458,12 @@ export const STAFF_NAV: StaffNavSection[] = [
             roles: ["admin"],
           },
           {
+            href: "/staff/admin/seo",
+            label: "Search engines (IndexNow)",
+            description: "Push new or changed pages to Bing, Yandex and other IndexNow engines for faster indexing, and re-submit the whole site after setup or a content update. (Google indexes via the sitemap, not IndexNow.)",
+            roles: ["admin"],
+          },
+          {
             href: "/staff/admin/settings/consent-gate",
             label: "Consent gate",
             description: "Turn the RA 10173 data-privacy consent requirement on or off. When ON, lab results can't be released for a patient without consent on file. Ships OFF — flip it on once reception is briefed.",
