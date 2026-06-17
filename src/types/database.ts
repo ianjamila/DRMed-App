@@ -3173,6 +3173,57 @@ export type Database = {
           },
         ]
       }
+      patient_merges: {
+        Row: {
+          filled_from_source: string[]
+          id: string
+          keep_id: string
+          merged_at: string
+          merged_by: string | null
+          moved: Json
+          source_id: string
+          undone_at: string | null
+          undone_by: string | null
+        }
+        Insert: {
+          filled_from_source?: string[]
+          id?: string
+          keep_id: string
+          merged_at?: string
+          merged_by?: string | null
+          moved?: Json
+          source_id: string
+          undone_at?: string | null
+          undone_by?: string | null
+        }
+        Update: {
+          filled_from_source?: string[]
+          id?: string
+          keep_id?: string
+          merged_at?: string
+          merged_by?: string | null
+          moved?: Json
+          source_id?: string
+          undone_at?: string | null
+          undone_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "patient_merges_keep_id_fkey"
+            columns: ["keep_id"]
+            isOneToOne: false
+            referencedRelation: "patients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "patient_merges_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: false
+            referencedRelation: "patients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       patients: {
         Row: {
           address: string | null
@@ -3197,6 +3248,7 @@ export type Database = {
           merged_into_id: string | null
           middle_name: string | null
           phone: string | null
+          phone_normalized: string | null
           pre_registered: boolean
           preferred_release_medium: string | null
           referral_source: string | null
@@ -3229,6 +3281,7 @@ export type Database = {
           merged_into_id?: string | null
           middle_name?: string | null
           phone?: string | null
+          phone_normalized?: string | null
           pre_registered?: boolean
           preferred_release_medium?: string | null
           referral_source?: string | null
@@ -3261,6 +3314,7 @@ export type Database = {
           merged_into_id?: string | null
           middle_name?: string | null
           phone?: string | null
+          phone_normalized?: string | null
           pre_registered?: boolean
           preferred_release_medium?: string | null
           referral_source?: string | null
@@ -5897,6 +5951,35 @@ export type Database = {
           pf_collected: number | null
           sales_gross: number | null
           section: string | null
+        }
+        Relationships: []
+      }
+      v_patient_dedup_candidate_pairs: {
+        Row: {
+          a_address: string | null
+          a_birthdate: string | null
+          a_created_at: string | null
+          a_drm_id: string | null
+          a_email: string | null
+          a_first_name: string | null
+          a_is_legacy: boolean | null
+          a_last_name: string | null
+          a_middle_name: string | null
+          a_phone_normalized: string | null
+          a_sex: string | null
+          b_address: string | null
+          b_birthdate: string | null
+          b_created_at: string | null
+          b_drm_id: string | null
+          b_email: string | null
+          b_first_name: string | null
+          b_is_legacy: boolean | null
+          b_last_name: string | null
+          b_middle_name: string | null
+          b_phone_normalized: string | null
+          b_sex: string | null
+          id_a: string | null
+          id_b: string | null
         }
         Relationships: []
       }

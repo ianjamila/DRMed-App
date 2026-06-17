@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
+import { reportError } from "@/lib/observability/report-error";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 
 export type LookupResult =
@@ -206,6 +207,32 @@ export async function mergePatientsAction(
     return { ok: false, error: tombErr.message };
   }
 
+  // Record the merge for reversibility (exact moved IDs + filled fields).
+  const movedIds = {
+    visits: (visits ?? []).map((r) => r.id),
+    appointments: (appts ?? []).map((r) => r.id),
+    audit_log: (auditRows ?? []).map((r) => r.id),
+    critical_alerts: (criticalAlerts ?? []).map((r) => r.id),
+    patient_consents: (consents ?? []).map((r) => r.id),
+  };
+  const { error: ledgerErr } = await admin.from("patient_merges").insert({
+    keep_id,
+    source_id,
+    merged_by: session.user_id,
+    moved: movedIds,
+    filled_from_source: Object.keys(fill),
+  });
+  if (ledgerErr) {
+    // The merge itself succeeded (rows moved + source tombstoned). If the undo
+    // ledger row failed to write, the merge is NOT reversible — surface it to
+    // Sentry rather than silently presenting it as undoable.
+    await reportError({
+      scope: "mergePatientsAction:ledger",
+      error: ledgerErr,
+      metadata: { keep_id, source_id },
+    });
+  }
+
   const h = await headers();
   await audit({
     actor_id: session.user_id,
@@ -246,4 +273,162 @@ export async function mergePatientsAction(
       patient_consents: consents?.length ?? 0,
     },
   };
+}
+
+const MERGE_UNDO_WINDOW_DAYS = 30;
+
+export interface RecentMerge {
+  id: string;
+  keep_id: string;
+  source_id: string;
+  keep_drm_id: string | null;
+  source_drm_id: string | null;
+  merged_at: string;
+  undoable: boolean;
+}
+
+export async function loadRecentMerges(): Promise<RecentMerge[]> {
+  await requireAdminStaff();
+  const admin = createAdminClient();
+  const cutoff = new Date(Date.now() - MERGE_UNDO_WINDOW_DAYS * 86400_000).toISOString();
+  const { data } = await admin
+    .from("patient_merges")
+    .select("id, keep_id, source_id, merged_at, undone_at")
+    .is("undone_at", null)
+    .gte("merged_at", cutoff)
+    .order("merged_at", { ascending: false })
+    .limit(50);
+  if (!data) return [];
+  const ids = Array.from(new Set(data.flatMap((m) => [m.keep_id, m.source_id])));
+  const { data: pts } = await admin.from("patients").select("id, drm_id").in("id", ids);
+  const drm = new Map((pts ?? []).map((p) => [p.id, p.drm_id]));
+  return data.map((m) => ({
+    id: m.id,
+    keep_id: m.keep_id,
+    source_id: m.source_id,
+    keep_drm_id: drm.get(m.keep_id) ?? null,
+    source_drm_id: drm.get(m.source_id) ?? null,
+    merged_at: m.merged_at,
+    undoable: true,
+  }));
+}
+
+export type UndoResult = { ok: true } | { ok: false; error: string };
+
+export async function undoMergeAction(
+  _prev: UndoResult | null,
+  formData: FormData,
+): Promise<UndoResult> {
+  const session = await requireAdminStaff();
+  const mergeId = z.string().uuid().safeParse(formData.get("merge_id"));
+  if (!mergeId.success) return { ok: false, error: "Invalid merge id." };
+
+  const admin = createAdminClient();
+  const { data: m } = await admin
+    .from("patient_merges")
+    .select("id, keep_id, source_id, merged_at, moved, filled_from_source, undone_at")
+    .eq("id", mergeId.data)
+    .maybeSingle();
+  if (!m) return { ok: false, error: "Merge record not found." };
+  if (m.undone_at) return { ok: false, error: "This merge was already undone." };
+
+  const ageDays = (Date.now() - new Date(m.merged_at).getTime()) / 86400_000;
+  if (ageDays > MERGE_UNDO_WINDOW_DAYS) {
+    return { ok: false, error: `Merges can only be undone within ${MERGE_UNDO_WINDOW_DAYS} days.` };
+  }
+
+  // Guard against a cascaded merge: if the kept record has itself since been
+  // merged into a third patient, re-pointing rows back to the source would
+  // leave them attached to a now-tombstoned record. Refuse rather than corrupt.
+  const { data: keepRow } = await admin
+    .from("patients")
+    .select("merged_into_id")
+    .eq("id", m.keep_id)
+    .maybeSingle();
+  if (keepRow?.merged_into_id) {
+    return {
+      ok: false,
+      error: "Can't undo: the kept patient has since been merged into another record. Resolve that merge first.",
+    };
+  }
+
+  const moved = (m.moved ?? {}) as Record<string, string[]>;
+  // Re-point each recorded row back to the source patient. Explicit per-table
+  // calls (literal table names) so each .update keeps its typed row shape.
+  const visitIds = moved["visits"] ?? [];
+  if (visitIds.length > 0) {
+    await admin.from("visits").update({ patient_id: m.source_id }).in("id", visitIds);
+  }
+  const apptIds = moved["appointments"] ?? [];
+  if (apptIds.length > 0) {
+    await admin.from("appointments").update({ patient_id: m.source_id }).in("id", apptIds);
+  }
+  // audit_log.id is bigserial (number), not uuid — cast from the JSON string values.
+  const auditIds = (moved["audit_log"] ?? []).map(Number);
+  if (auditIds.length > 0) {
+    await admin.from("audit_log").update({ patient_id: m.source_id }).in("id", auditIds);
+  }
+  const alertIds = moved["critical_alerts"] ?? [];
+  if (alertIds.length > 0) {
+    await admin.from("critical_alerts").update({ patient_id: m.source_id }).in("id", alertIds);
+  }
+  const consentIds = moved["patient_consents"] ?? [];
+  if (consentIds.length > 0) {
+    await admin.from("patient_consents").update({ patient_id: m.source_id }).in("id", consentIds);
+  }
+
+  // Null out exactly the fields the merge filled (merge only fills NULL keep
+  // fields, and only from this known set). Typed to those columns.
+  const filled = (m.filled_from_source ?? []) as string[];
+  const clear: Partial<Record<"middle_name" | "sex" | "phone" | "email" | "address", null>> = {};
+  for (const f of filled) {
+    if (f === "middle_name" || f === "sex" || f === "phone" || f === "email" || f === "address") {
+      clear[f] = null;
+    }
+  }
+  if (Object.keys(clear).length > 0) {
+    await admin.from("patients").update(clear).eq("id", m.keep_id);
+  }
+
+  // Restore the source row.
+  await admin.from("patients").update({ merged_into_id: null, merged_at: null }).eq("id", m.source_id);
+
+  // Mark the ledger row undone.
+  await admin
+    .from("patient_merges")
+    .update({ undone_at: new Date().toISOString(), undone_by: session.user_id })
+    .eq("id", m.id);
+
+  const h = await headers();
+  await audit({
+    actor_id: session.user_id,
+    actor_type: "staff",
+    patient_id: m.keep_id,
+    action: "patient.merge.undone",
+    resource_type: "patient",
+    resource_id: m.source_id,
+    metadata: { merge_id: m.id, keep_id: m.keep_id, source_id: m.source_id, restored: moved, cleared_fields: filled },
+    ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    user_agent: h.get("user-agent"),
+  });
+
+  revalidatePath("/staff/admin/patient-merge");
+  revalidatePath("/staff/admin/patient-merge/candidates");
+  revalidatePath("/staff/patients");
+  return { ok: true };
+}
+
+// One-click merge from the candidates report (ids already known + admin-confirmed
+// in the UI). Reuses the audited merge path; keep_id is the OLDER record by default.
+export async function mergeCandidateAction(
+  _prev: MergeResult | null,
+  formData: FormData,
+): Promise<MergeResult> {
+  const fd = new FormData();
+  fd.set("keep_id", String(formData.get("keep_id") ?? ""));
+  fd.set("source_id", String(formData.get("source_id") ?? ""));
+  fd.set("confirm", "MERGE");
+  const res = await mergePatientsAction(null, fd);
+  if (res.ok) revalidatePath("/staff/admin/patient-merge/candidates");
+  return res;
 }

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { MergeClient } from "./merge-client";
 
@@ -13,9 +14,14 @@ export default async function PatientMergeAdminPage() {
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6">
-        <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Merge patient profiles
-        </h1>
+        <div className="flex items-start justify-between gap-4">
+          <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+            Merge patient profiles
+          </h1>
+          <Link href="/staff/admin/patient-merge/candidates" className="text-sm font-semibold text-cyan-700 hover:underline">
+            View possible duplicates →
+          </Link>
+        </div>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
           When a patient ends up with two rows (typo on email, name
           variation, etc.), reassign their visits and appointments to a

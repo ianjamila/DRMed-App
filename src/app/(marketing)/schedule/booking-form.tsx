@@ -504,6 +504,7 @@ export function BookingForm({
                         {lookupState.error}
                       </p>
                     ) : null}
+                    <Link href="/find-my-id" className="text-sm text-cyan-700 hover:underline">Forgot your DRM-ID?</Link>
                     <div className="flex justify-end">
                       <button
                         type="submit"

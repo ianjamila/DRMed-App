@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { loadHiddenCardIds } from "@/lib/dashboards/card-prefs";
+import { loadCandidatePairs } from "@/lib/patients/find-duplicates";
 import { DashboardHeader } from "./_components/dashboard-header";
 import { SectionHeading } from "./_components/section-heading";
 import { StatCard } from "./_components/stat-card";
@@ -274,10 +275,16 @@ async function loadAdminStats(show: (id: string) => boolean) {
       0,
     );
 
+  // Possible-duplicate pairs (scored in TS, so not part of the count batch above).
+  const dupCandidates = show("admin.dup_candidates")
+    ? (await loadCandidatePairs(admin, { minTier: "probable" })).length
+    : 0;
+
   return {
     visitsToday: visitsToday.count ?? 0,
     queueTotal: queueTotal.count ?? 0,
     releasedToday: releasedToday.count ?? 0,
+    dupCandidates,
     revenueTotal,
     openPeriods: openPeriods.count ?? 0,
     draftJeCount: draftJeCount.count ?? 0,
@@ -359,6 +366,15 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
             value={stats.releasedToday}
             hint="Results released to patients"
             href="/staff/queue?filter=released_today"
+          />
+        )}
+        {show("admin.dup_candidates") && (
+          <StatCard
+            label="Possible duplicates"
+            value={stats.dupCandidates}
+            hint="Patient records to review & merge"
+            href="/staff/admin/patient-merge/candidates"
+            accent={stats.dupCandidates > 0 ? "warn" : "default"}
           />
         )}
         </div>

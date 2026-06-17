@@ -1,11 +1,16 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  checkPatientDuplicatesAction,
+  type PublicCandidate,
+} from "@/lib/patients/check-duplicates-action";
 import {
   createPatientAction,
   type PatientCreateResult,
@@ -75,8 +80,64 @@ export function PatientForm({ initial, referralOptions }: Props) {
 
   const consentAlreadySigned = !!initial?.consent_signed_at;
 
+  // Near-match advisory (create mode only). Fields are tracked via onValueChange
+  // callbacks because the inputs are self-controlled inside <Field>.
+  const [dupFields, setDupFields] = useState({
+    first_name: initial?.first_name ?? "",
+    last_name: initial?.last_name ?? "",
+    birthdate: initial?.birthdate ?? "",
+    email: initial?.email ?? "",
+    phone: initial?.phone ?? "",
+  });
+  const [dupCandidates, setDupCandidates] = useState<PublicCandidate[]>([]);
+
+  useEffect(() => {
+    if (isEdit) return;
+    // All setState happens inside the debounced callback (never synchronously in
+    // the effect body) — including the "insufficient input" clear.
+    const t = setTimeout(async () => {
+      if (
+        !dupFields.last_name.trim() ||
+        (!dupFields.email && !dupFields.phone && !dupFields.birthdate)
+      ) {
+        setDupCandidates([]);
+        return;
+      }
+      const res = await checkPatientDuplicatesAction({
+        first_name: dupFields.first_name,
+        last_name: dupFields.last_name,
+        birthdate: dupFields.birthdate || null,
+        email: dupFields.email || null,
+        phone: dupFields.phone || null,
+      });
+      if (res.ok) setDupCandidates(res.candidates);
+    }, 400);
+    return () => clearTimeout(t);
+  }, [
+    isEdit,
+    dupFields.first_name,
+    dupFields.last_name,
+    dupFields.birthdate,
+    dupFields.email,
+    dupFields.phone,
+  ]);
+
   return (
-    <form action={formAction} className="grid gap-5">
+    <form
+      action={formAction}
+      className="grid gap-5"
+      onSubmit={(e) => {
+        const hasExact = dupCandidates.some((c) => c.tier === "exact_dup");
+        if (
+          hasExact &&
+          !window.confirm(
+            "This looks like an exact match for an existing patient. Create a SEPARATE record anyway?",
+          )
+        ) {
+          e.preventDefault();
+        }
+      }}
+    >
       <fieldset className="grid gap-4 rounded-lg border border-[color:var(--color-brand-bg-mid)] p-4">
         <legend className="px-1 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
           Identity
@@ -88,6 +149,7 @@ export function PatientForm({ initial, referralOptions }: Props) {
             required
             maxLength={80}
             defaultValue={initial?.first_name ?? ""}
+            onValueChange={(v) => setDupFields((f) => ({ ...f, first_name: v }))}
           />
           <Field
             label="Last name"
@@ -95,6 +157,7 @@ export function PatientForm({ initial, referralOptions }: Props) {
             required
             maxLength={80}
             defaultValue={initial?.last_name ?? ""}
+            onValueChange={(v) => setDupFields((f) => ({ ...f, last_name: v }))}
           />
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
@@ -110,6 +173,7 @@ export function PatientForm({ initial, referralOptions }: Props) {
             type="date"
             required
             defaultValue={initial?.birthdate ?? ""}
+            onValueChange={(v) => setDupFields((f) => ({ ...f, birthdate: v }))}
           />
         </div>
         <div className="grid gap-4 sm:grid-cols-3">
@@ -133,6 +197,7 @@ export function PatientForm({ initial, referralOptions }: Props) {
             placeholder="+639XXXXXXXXX"
             maxLength={40}
             defaultValue={initial?.phone ?? ""}
+            onValueChange={(v) => setDupFields((f) => ({ ...f, phone: v }))}
           />
           <Field
             label="Email"
@@ -140,6 +205,7 @@ export function PatientForm({ initial, referralOptions }: Props) {
             type="email"
             maxLength={160}
             defaultValue={initial?.email ?? ""}
+            onValueChange={(v) => setDupFields((f) => ({ ...f, email: v }))}
           />
         </div>
         <Field
@@ -149,6 +215,38 @@ export function PatientForm({ initial, referralOptions }: Props) {
           defaultValue={initial?.address ?? ""}
         />
       </fieldset>
+
+      {!isEdit && dupCandidates.length > 0 && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm">
+          <p className="mb-2 font-semibold text-amber-900">
+            Possible existing patient{dupCandidates.length > 1 ? "s" : ""}:
+          </p>
+          <ul className="space-y-2">
+            {dupCandidates.map((c) => (
+              <li
+                key={c.id}
+                className="flex items-center justify-between gap-2"
+              >
+                <span className="text-amber-900">
+                  {c.first_name} {c.last_name} · {c.drm_id} ·{" "}
+                  {c.birthdate ?? "—"}
+                  {c.tier === "exact_dup" && (
+                    <span className="ml-1 font-bold text-red-700">
+                      exact match
+                    </span>
+                  )}
+                </span>
+                <Link
+                  href={`/staff/patients/${c.id}`}
+                  className="shrink-0 rounded bg-amber-600 px-2 py-1 text-xs font-semibold text-white hover:bg-amber-700"
+                >
+                  Use this patient
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <fieldset className="grid gap-4 rounded-lg border border-[color:var(--color-brand-bg-mid)] p-4">
         <legend className="px-1 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
@@ -332,6 +430,7 @@ interface FieldProps {
   placeholder?: string;
   maxLength?: number;
   defaultValue?: string;
+  onValueChange?: (value: string) => void;
 }
 
 function Field({
@@ -339,6 +438,7 @@ function Field({
   name,
   type = "text",
   defaultValue = "",
+  onValueChange,
   ...rest
 }: FieldProps) {
   // Self-controlled to survive React 19's form-action reset on error.
@@ -351,7 +451,10 @@ function Field({
         name={name}
         type={type}
         value={value}
-        onChange={(e) => setValue(e.target.value)}
+        onChange={(e) => {
+          setValue(e.target.value);
+          onValueChange?.(e.target.value);
+        }}
         {...rest}
       />
     </div>

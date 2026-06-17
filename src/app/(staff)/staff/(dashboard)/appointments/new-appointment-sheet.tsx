@@ -26,6 +26,7 @@ import {
   type PatientSearchRow,
   type UpcomingApptRow,
 } from "./new-appointment-actions";
+import { checkPatientDuplicatesAction, type PublicCandidate } from "@/lib/patients/check-duplicates-action";
 
 export interface ServiceOption {
   id: string;
@@ -96,6 +97,9 @@ export function NewAppointmentSheet({
   const [sendConfirmation, setSendConfirmation] = React.useState(true);
   const [showQr, setShowQr] = React.useState(false);
 
+  // Near-duplicate advisory for "New patient" mode.
+  const [dupCandidates, setDupCandidates] = React.useState<PublicCandidate[]>([]);
+
   const [conflicts, setConflicts] = React.useState<BookingConflict[]>([]);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -118,6 +122,30 @@ export function NewAppointmentSheet({
     return () => clearTimeout(handle);
   }, [query, mode, selected]);
 
+  // Debounced near-duplicate check for "New patient" mode. All setState runs
+  // inside the debounced callback (never synchronously in the effect body).
+  React.useEffect(() => {
+    const t = setTimeout(async () => {
+      if (
+        mode !== "new" ||
+        !newP.last_name.trim() ||
+        (!newP.email && !newP.phone && !newP.birthdate)
+      ) {
+        setDupCandidates([]);
+        return;
+      }
+      const res = await checkPatientDuplicatesAction({
+        first_name: newP.first_name,
+        last_name: newP.last_name,
+        birthdate: newP.birthdate || null,
+        email: newP.email || null,
+        phone: newP.phone || null,
+      });
+      if (res.ok) setDupCandidates(res.candidates);
+    }, 400);
+    return () => clearTimeout(t);
+  }, [mode, newP.first_name, newP.last_name, newP.birthdate, newP.email, newP.phone]);
+
   function resetAll() {
     setMode("existing");
     setQuery("");
@@ -133,6 +161,7 @@ export function NewAppointmentSheet({
     setScheduledAtLocal("");
     setSendConfirmation(true);
     setShowQr(false);
+    setDupCandidates([]);
     setConflicts([]);
     setError(null);
   }
@@ -142,6 +171,23 @@ export function NewAppointmentSheet({
     setResults([]);
     setQuery(`${p.last_name}, ${p.first_name} · ${p.drm_id}`);
     getPatientUpcomingAppointmentsAction(p.id).then((r) => setUpcoming(r.ok ? r.data : []));
+  }
+
+  /** Switch to "Existing patient" mode and pre-select the given candidate.
+   *  Resolves the full PatientSearchRow via searchPatientsAction so pickPatient
+   *  can populate the query label and fetch upcoming appointments normally.
+   *  Searches by DRM-ID (a searchable field) — NOT the UUID, which patient
+   *  search does not match on — then disambiguates to the exact row by id. */
+  function handleUseExistingPatient(candidate: PublicCandidate) {
+    searchPatientsAction(candidate.drm_id).then((r) => {
+      if (!r.ok) return;
+      const match = r.data.find((p) => p.id === candidate.id);
+      if (!match) return;
+      setMode("existing");
+      setDupCandidates([]);
+      setNewP({ first_name: "", last_name: "", middle_name: "", birthdate: "", sex: "", phone: "", email: "", address: "" });
+      pickPatient(match);
+    });
   }
 
   function buildPatient(): StaffBookingInput["patient"] | { error: string } {
@@ -167,6 +213,13 @@ export function NewAppointmentSheet({
 
   function submit(override: boolean) {
     setError(null);
+    // Soft-confirm when an exact-dup advisory is showing — the user can still proceed.
+    if (mode === "new") {
+      const hasExact = dupCandidates.some((c) => c.tier === "exact_dup");
+      if (hasExact && !window.confirm("This looks like an exact match for an existing patient. Create a SEPARATE record anyway?")) {
+        return;
+      }
+    }
     const patient = buildPatient();
     if ("error" in patient) {
       setError(patient.error);
@@ -305,20 +358,48 @@ export function NewAppointmentSheet({
             )}
 
             {mode === "new" && (
-              <div className="grid grid-cols-2 gap-2">
-                <input value={newP.first_name} onChange={(e) => setNewP({ ...newP, first_name: e.target.value })} placeholder="First name" className={INPUT_CLS} />
-                <input value={newP.last_name} onChange={(e) => setNewP({ ...newP, last_name: e.target.value })} placeholder="Last name" className={INPUT_CLS} />
-                <input value={newP.middle_name} onChange={(e) => setNewP({ ...newP, middle_name: e.target.value })} placeholder="Middle name (optional)" className={INPUT_CLS} />
-                <input type="date" value={newP.birthdate} onChange={(e) => setNewP({ ...newP, birthdate: e.target.value })} className={INPUT_CLS} />
-                <select value={newP.sex} onChange={(e) => setNewP({ ...newP, sex: e.target.value as "" | "male" | "female" })} className={INPUT_CLS}>
-                  <option value="">Sex (optional)</option>
-                  <option value="male">Male</option>
-                  <option value="female">Female</option>
-                </select>
-                <input value={newP.phone} onChange={(e) => setNewP({ ...newP, phone: e.target.value })} placeholder="Phone" className={INPUT_CLS} />
-                <input value={newP.email} onChange={(e) => setNewP({ ...newP, email: e.target.value })} placeholder="Email (required)" className={`col-span-2 ${INPUT_CLS}`} />
-                <input value={newP.address} onChange={(e) => setNewP({ ...newP, address: e.target.value })} placeholder="Address (optional)" className={`col-span-2 ${INPUT_CLS}`} />
-              </div>
+              <>
+                <div className="grid grid-cols-2 gap-2">
+                  <input value={newP.first_name} onChange={(e) => setNewP({ ...newP, first_name: e.target.value })} placeholder="First name" className={INPUT_CLS} />
+                  <input value={newP.last_name} onChange={(e) => setNewP({ ...newP, last_name: e.target.value })} placeholder="Last name" className={INPUT_CLS} />
+                  <input value={newP.middle_name} onChange={(e) => setNewP({ ...newP, middle_name: e.target.value })} placeholder="Middle name (optional)" className={INPUT_CLS} />
+                  <input type="date" value={newP.birthdate} onChange={(e) => setNewP({ ...newP, birthdate: e.target.value })} className={INPUT_CLS} />
+                  <select value={newP.sex} onChange={(e) => setNewP({ ...newP, sex: e.target.value as "" | "male" | "female" })} className={INPUT_CLS}>
+                    <option value="">Sex (optional)</option>
+                    <option value="male">Male</option>
+                    <option value="female">Female</option>
+                  </select>
+                  <input value={newP.phone} onChange={(e) => setNewP({ ...newP, phone: e.target.value })} placeholder="Phone" className={INPUT_CLS} />
+                  <input value={newP.email} onChange={(e) => setNewP({ ...newP, email: e.target.value })} placeholder="Email (required)" className={`col-span-2 ${INPUT_CLS}`} />
+                  <input value={newP.address} onChange={(e) => setNewP({ ...newP, address: e.target.value })} placeholder="Address (optional)" className={`col-span-2 ${INPUT_CLS}`} />
+                </div>
+                {dupCandidates.length > 0 && (
+                  <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm">
+                    <p className="mb-2 font-semibold text-amber-900">
+                      Possible existing patient{dupCandidates.length > 1 ? "s" : ""}:
+                    </p>
+                    <ul className="space-y-2">
+                      {dupCandidates.map((c) => (
+                        <li key={c.id} className="flex items-center justify-between gap-2">
+                          <span className="text-amber-900">
+                            {c.first_name} {c.last_name} · {c.drm_id} · {c.birthdate ?? "—"}
+                            {c.tier === "exact_dup" && (
+                              <span className="ml-1 font-bold text-red-700">exact match</span>
+                            )}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleUseExistingPatient(c)}
+                            className="shrink-0 rounded bg-amber-600 px-2 py-1 text-xs font-semibold text-white hover:bg-amber-700"
+                          >
+                            Use this patient
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </>
             )}
 
             {mode === "walk_in" && (

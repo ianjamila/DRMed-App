@@ -4,9 +4,11 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { PatientCreateSchema } from "@/lib/validations/patient";
+import { findCandidatesForInput } from "@/lib/patients/find-duplicates";
 import { recordConsentGrantAction } from "@/lib/actions/consent/grant";
 
 export type PatientCreateResult =
@@ -120,6 +122,41 @@ export async function createPatientAction(
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),
   });
+
+  // If this new record strongly matches an existing patient, the staff member
+  // chose to create a separate record despite the near-match advisory — record
+  // the override server-side (independent of any client acknowledgement).
+  const admin = createAdminClient();
+  const dupes = await findCandidatesForInput(
+    admin,
+    {
+      first_name: rest.first_name,
+      last_name: rest.last_name,
+      birthdate: rest.birthdate ?? null,
+      email: rest.email || null,
+      phone_normalized: (rest.phone ?? "").replace(/\D/g, "").slice(-10) || null,
+      address: null,
+      sex: null,
+      excludeId: data.id,
+    },
+    { minTier: "strong" },
+  );
+  if (dupes.length > 0) {
+    await audit({
+      actor_id: session.user_id,
+      actor_type: "staff",
+      patient_id: data.id,
+      action: "patient.create.dup_override",
+      resource_type: "patient",
+      resource_id: data.id,
+      metadata: {
+        created_drm_id: data.drm_id,
+        matched: dupes.map((d) => ({ drm_id: d.patient.drm_id, tier: d.score.tier })),
+      },
+      ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+      user_agent: h.get("user-agent"),
+    });
+  }
 
   revalidatePath("/staff/patients");
   redirect(`/staff/patients/${data.id}`);

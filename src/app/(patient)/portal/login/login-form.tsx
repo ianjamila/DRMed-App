@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -52,6 +53,7 @@ export function PatientLoginForm() {
       <Button type="submit" disabled={pending}>
         {pending ? "Signing in…" : "Access my results"}
       </Button>
+      <Link href="/find-my-id" className="text-sm text-cyan-700 hover:underline">Forgot your DRM-ID?</Link>
     </form>
   );
 }
