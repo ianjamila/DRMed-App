@@ -10,6 +10,9 @@ import {
   PhysicianCreateSchema,
   PhysicianUpdateSchema,
 } from "@/lib/validations/physician";
+import { SITE } from "@/lib/marketing/site";
+import { submitToIndexNow } from "@/lib/seo/indexnow";
+import { physicianPageUrls } from "@/lib/seo/indexnow-core";
 
 export type PhysicianResult =
   | { ok: true }
@@ -66,6 +69,10 @@ export async function createPhysicianAction(
     user_agent: ua,
   });
 
+  await submitToIndexNow(physicianPageUrls(SITE.url, created.slug), {
+    trigger: "physician.created",
+  });
+
   revalidatePath("/staff/admin/physicians");
   redirect("/staff/admin/physicians");
 }
@@ -85,6 +92,11 @@ export async function updatePhysicianAction(
   }
 
   const admin = createAdminClient();
+  const { data: prior } = await admin
+    .from("physicians")
+    .select("slug")
+    .eq("id", physicianId)
+    .maybeSingle();
   const { error } = await admin
     .from("physicians")
     .update(parsed.data)
@@ -102,6 +114,13 @@ export async function updatePhysicianAction(
     ip_address: ip,
     user_agent: ua,
   });
+
+  const slugs = new Set<string>([parsed.data.slug]);
+  if (prior?.slug && prior.slug !== parsed.data.slug) slugs.add(prior.slug);
+  await submitToIndexNow(
+    [...slugs].flatMap((s) => physicianPageUrls(SITE.url, s)),
+    { trigger: "physician.updated" },
+  );
 
   revalidatePath("/staff/admin/physicians");
   revalidatePath(`/staff/admin/physicians/${physicianId}/edit`);
@@ -187,6 +206,10 @@ export async function uploadPhotoAction(
     user_agent: ua,
   });
 
+  await submitToIndexNow(physicianPageUrls(SITE.url, physician.slug), {
+    trigger: "physician.photo_updated",
+  });
+
   revalidatePath("/staff/admin/physicians");
   revalidatePath(`/staff/admin/physicians/${physicianId}/edit`);
   return { ok: true };
@@ -244,6 +267,10 @@ export async function deletePhysicianAction(
     metadata: { slug: physician.slug, full_name: physician.full_name },
     ip_address: ip,
     user_agent: ua,
+  });
+
+  await submitToIndexNow(physicianPageUrls(SITE.url, physician.slug), {
+    trigger: "physician.deleted",
   });
 
   revalidatePath("/staff/admin/physicians");
