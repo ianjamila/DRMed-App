@@ -264,7 +264,7 @@ export async function mergePatientsAction(
   };
 }
 
-export const MERGE_UNDO_WINDOW_DAYS = 30;
+const MERGE_UNDO_WINDOW_DAYS = 30;
 
 export interface RecentMerge {
   id: string;
