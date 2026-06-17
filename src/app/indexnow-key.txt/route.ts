@@ -15,6 +15,8 @@ export function GET(): Response {
     headers: {
       "Content-Type": "text/plain; charset=utf-8",
       "Cache-Control": "public, max-age=3600",
+      // Public verification artifact — no value in being indexed.
+      "X-Robots-Tag": "noindex",
     },
   });
 }

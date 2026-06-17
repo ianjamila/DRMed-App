@@ -3,6 +3,7 @@
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { audit } from "@/lib/audit/log";
 import { ipAndAgent } from "@/lib/server/action-helpers";
+import { reportError } from "@/lib/observability/report-error";
 import { allSiteUrls, submitToIndexNow } from "@/lib/seo/indexnow";
 
 export type ResubmitResult =
@@ -12,7 +13,13 @@ export type ResubmitResult =
 export async function resubmitAllToIndexNowAction(): Promise<ResubmitResult> {
   const session = await requireAdminStaff();
 
-  const urls = await allSiteUrls();
+  let urls: string[];
+  try {
+    urls = await allSiteUrls();
+  } catch (error) {
+    await reportError({ scope: "seo/indexnow", error, metadata: { trigger: "manual.full" } });
+    return { ok: false, error: "Could not build the page list. Check the server logs." };
+  }
   const res = await submitToIndexNow(urls, { trigger: "manual.full" });
 
   const { ip, ua } = await ipAndAgent();
