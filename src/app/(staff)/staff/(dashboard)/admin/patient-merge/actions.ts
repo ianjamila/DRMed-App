@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
+import { reportError } from "@/lib/observability/report-error";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 
 export type LookupResult =
@@ -214,13 +215,23 @@ export async function mergePatientsAction(
     critical_alerts: (criticalAlerts ?? []).map((r) => r.id),
     patient_consents: (consents ?? []).map((r) => r.id),
   };
-  await admin.from("patient_merges").insert({
+  const { error: ledgerErr } = await admin.from("patient_merges").insert({
     keep_id,
     source_id,
     merged_by: session.user_id,
     moved: movedIds,
     filled_from_source: Object.keys(fill),
   });
+  if (ledgerErr) {
+    // The merge itself succeeded (rows moved + source tombstoned). If the undo
+    // ledger row failed to write, the merge is NOT reversible — surface it to
+    // Sentry rather than silently presenting it as undoable.
+    await reportError({
+      scope: "mergePatientsAction:ledger",
+      error: ledgerErr,
+      metadata: { keep_id, source_id },
+    });
+  }
 
   const h = await headers();
   await audit({
@@ -324,6 +335,21 @@ export async function undoMergeAction(
   const ageDays = (Date.now() - new Date(m.merged_at).getTime()) / 86400_000;
   if (ageDays > MERGE_UNDO_WINDOW_DAYS) {
     return { ok: false, error: `Merges can only be undone within ${MERGE_UNDO_WINDOW_DAYS} days.` };
+  }
+
+  // Guard against a cascaded merge: if the kept record has itself since been
+  // merged into a third patient, re-pointing rows back to the source would
+  // leave them attached to a now-tombstoned record. Refuse rather than corrupt.
+  const { data: keepRow } = await admin
+    .from("patients")
+    .select("merged_into_id")
+    .eq("id", m.keep_id)
+    .maybeSingle();
+  if (keepRow?.merged_into_id) {
+    return {
+      ok: false,
+      error: "Can't undo: the kept patient has since been merged into another record. Resolve that merge first.",
+    };
   }
 
   const moved = (m.moved ?? {}) as Record<string, string[]>;

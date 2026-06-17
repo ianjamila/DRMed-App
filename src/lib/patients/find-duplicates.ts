@@ -1,6 +1,7 @@
 // src/lib/patients/find-duplicates.ts
 import "server-only";
 import type { createAdminClient } from "@/lib/supabase/admin";
+import { reportError } from "@/lib/observability/report-error";
 import { scorePair, type CandidateFields, type DupScore, type DupTier } from "./duplicates";
 
 type AdminClient = ReturnType<typeof createAdminClient>;
@@ -57,7 +58,12 @@ export async function loadCandidatePairs(
 ): Promise<CandidatePair[]> {
   const min = opts.minTier ?? "probable";
   const { data, error } = await admin.from("v_patient_dedup_candidate_pairs").select("*");
-  if (error || !data) return [];
+  if (error) {
+    // Surface to Sentry — otherwise the report/dashboard/digest silently show 0.
+    await reportError({ scope: "loadCandidatePairs", error });
+    return [];
+  }
+  if (!data) return [];
   const out: CandidatePair[] = [];
   for (const row of data as Record<string, unknown>[]) {
     const a = side(row, "a", "id_a");
@@ -86,7 +92,13 @@ export async function findCandidatesForInput(
   const clauses: string[] = [];
   if (email) clauses.push(`email.eq.${email}`);
   if (phone && phone.length === 10) clauses.push(`phone_normalized.eq.${phone}`);
-  if (last && birth) clauses.push(`and(last_name.eq.${last},birthdate.eq.${birth})`);
+  if (last && birth) {
+    // Double-quote the value so PostgREST-reserved chars (commas in PH suffixes
+    // like "De la Cruz, Jr.") don't break the .or() filter; ilike keeps it
+    // case-insensitive, matching the candidate view's lower(trim()) blocking.
+    const quotedLast = `"${last.replace(/(["\\])/g, "\\$1")}"`;
+    clauses.push(`and(last_name.ilike.${quotedLast},birthdate.eq.${birth})`);
+  }
   if (clauses.length === 0) return [];
 
   const { data, error } = await admin
@@ -97,7 +109,11 @@ export async function findCandidatesForInput(
     .is("merged_into_id", null)
     .or(clauses.join(","))
     .limit(50);
-  if (error || !data) return [];
+  if (error) {
+    await reportError({ scope: "findCandidatesForInput", error });
+    return [];
+  }
+  if (!data) return [];
 
   const out: ScoredCandidate[] = [];
   for (const r of data) {
