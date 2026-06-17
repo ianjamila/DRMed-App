@@ -11,7 +11,7 @@ export function FindMyIdForm() {
   if (state?.ok) {
     return (
       <p className="rounded-md bg-green-50 p-4 text-sm text-green-800">
-        If a record matches those details, we've emailed the DRM-ID to that address. Check your inbox (and spam).
+        If a record matches those details, we have emailed the DRM-ID to that address. Check your inbox (and spam).
         No email on file? Please visit or call reception.
       </p>
     );

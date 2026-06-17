@@ -122,17 +122,18 @@ export function NewAppointmentSheet({
     return () => clearTimeout(handle);
   }, [query, mode, selected]);
 
-  // Debounced near-duplicate check for "New patient" mode.
+  // Debounced near-duplicate check for "New patient" mode. All setState runs
+  // inside the debounced callback (never synchronously in the effect body).
   React.useEffect(() => {
-    if (mode !== "new") {
-      setDupCandidates([]);
-      return;
-    }
-    if (!newP.last_name.trim() || (!newP.email && !newP.phone && !newP.birthdate)) {
-      setDupCandidates([]);
-      return;
-    }
     const t = setTimeout(async () => {
+      if (
+        mode !== "new" ||
+        !newP.last_name.trim() ||
+        (!newP.email && !newP.phone && !newP.birthdate)
+      ) {
+        setDupCandidates([]);
+        return;
+      }
       const res = await checkPatientDuplicatesAction({
         first_name: newP.first_name,
         last_name: newP.last_name,

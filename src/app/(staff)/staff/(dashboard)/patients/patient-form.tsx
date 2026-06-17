@@ -93,14 +93,16 @@ export function PatientForm({ initial, referralOptions }: Props) {
 
   useEffect(() => {
     if (isEdit) return;
-    if (
-      !dupFields.last_name.trim() ||
-      (!dupFields.email && !dupFields.phone && !dupFields.birthdate)
-    ) {
-      setDupCandidates([]);
-      return;
-    }
+    // All setState happens inside the debounced callback (never synchronously in
+    // the effect body) — including the "insufficient input" clear.
     const t = setTimeout(async () => {
+      if (
+        !dupFields.last_name.trim() ||
+        (!dupFields.email && !dupFields.phone && !dupFields.birthdate)
+      ) {
+        setDupCandidates([]);
+        return;
+      }
       const res = await checkPatientDuplicatesAction({
         first_name: dupFields.first_name,
         last_name: dupFields.last_name,
