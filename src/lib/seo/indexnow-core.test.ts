@@ -81,3 +81,45 @@ describe("buildIndexNowPayload", () => {
     expect(buildIndexNowPayload({ ...base, urls: many })?.urlList.length).toBe(10000);
   });
 });
+
+import { buildPingAuditMetadata, readPingAuditMetadata } from "./indexnow-core";
+
+describe("buildPingAuditMetadata", () => {
+  const urls = Array.from({ length: 25 }, (_, i) => `https://drmed.ph/p/${i}`);
+
+  it("captures trigger, ok, submitted, urlCount and caps sampleUrls at 20", () => {
+    const meta = buildPingAuditMetadata(
+      { ok: true, submitted: 25 },
+      { trigger: "physician.updated", payloadUrls: urls },
+    );
+    expect(meta).toEqual({
+      trigger: "physician.updated",
+      ok: true,
+      submitted: 25,
+      urlCount: 25,
+      sampleUrls: urls.slice(0, 20),
+    });
+  });
+
+  it("records failures", () => {
+    const meta = buildPingAuditMetadata(
+      { ok: false, submitted: 0 },
+      { trigger: "manual.full", payloadUrls: ["https://drmed.ph/"] },
+    );
+    expect(meta).toMatchObject({ trigger: "manual.full", ok: false, submitted: 0, urlCount: 1 });
+  });
+});
+
+describe("readPingAuditMetadata", () => {
+  it("reads a well-formed row", () => {
+    expect(
+      readPingAuditMetadata({ trigger: "service.created", ok: true, urlCount: 3 }),
+    ).toEqual({ trigger: "service.created", ok: true, urlCount: 3 });
+  });
+
+  it("defaults safely on missing/garbage metadata", () => {
+    expect(readPingAuditMetadata(null)).toEqual({ trigger: "unknown", ok: false, urlCount: 0 });
+    expect(readPingAuditMetadata("nope")).toEqual({ trigger: "unknown", ok: false, urlCount: 0 });
+    expect(readPingAuditMetadata({ ok: "yes" })).toEqual({ trigger: "unknown", ok: false, urlCount: 0 });
+  });
+});

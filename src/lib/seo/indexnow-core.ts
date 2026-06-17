@@ -1,5 +1,6 @@
 // Pure IndexNow helpers — no `server-only` so vitest can import them.
 // Keep all fetch / env-reading / reporting in the server wrapper indexnow.ts.
+import type { Json } from "@/types/database";
 
 export const INDEXNOW_ENDPOINT = "https://api.indexnow.org/indexnow";
 
@@ -84,4 +85,37 @@ export function buildIndexNowPayload(input: {
   }
   if (urlList.length === 0) return null;
   return { host, key, keyLocation, urlList };
+}
+
+const PING_SAMPLE_CAP = 20;
+
+/** Shape the audit_log.metadata for one IndexNow ping. Pure. */
+export function buildPingAuditMetadata(
+  result: { ok: boolean; submitted: number },
+  input: { trigger: string; payloadUrls: string[] },
+): Json {
+  return {
+    trigger: input.trigger,
+    ok: result.ok,
+    submitted: result.submitted,
+    urlCount: input.payloadUrls.length,
+    sampleUrls: input.payloadUrls.slice(0, PING_SAMPLE_CAP),
+  };
+}
+
+export interface PingAuditDisplay {
+  trigger: string;
+  ok: boolean;
+  urlCount: number;
+}
+
+/** Read an IndexNow ping audit row's metadata for display. Defensive: JSON of unknown shape. */
+export function readPingAuditMetadata(meta: unknown): PingAuditDisplay {
+  // audit_log.metadata is Json; narrow defensively (it's display-only).
+  const m = (meta && typeof meta === "object" ? meta : {}) as Record<string, unknown>;
+  return {
+    trigger: typeof m.trigger === "string" ? m.trigger : "unknown",
+    ok: m.ok === true,
+    urlCount: typeof m.urlCount === "number" ? m.urlCount : 0,
+  };
 }
