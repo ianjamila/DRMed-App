@@ -2,7 +2,8 @@ import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { SITE } from "@/lib/marketing/site";
 import { allSiteUrls } from "@/lib/seo/indexnow";
-import { indexNowEnabled } from "@/lib/seo/indexnow-core";
+import { indexNowEnabled, readPingAuditMetadata } from "@/lib/seo/indexnow-core";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { ResubmitIndexNowButton } from "./resubmit-button";
 
 export const metadata = { title: "Search engines (IndexNow) — staff" };
@@ -16,6 +17,21 @@ export default async function IndexNowAdminPage() {
   const keyConfigured = !!process.env.INDEXNOW_KEY?.trim();
   const live = indexNowEnabled(process.env as { VERCEL_ENV?: string; INDEXNOW_KEY?: string });
   const urls = await allSiteUrls();
+
+  const admin = createAdminClient();
+  const { data: recentPings } = await admin
+    .from("audit_log")
+    .select("id, created_at, metadata")
+    .eq("action", "seo.indexnow.ping")
+    .order("created_at", { ascending: false })
+    .limit(25);
+
+  const fmtManila = (iso: string) =>
+    new Intl.DateTimeFormat("en-PH", {
+      timeZone: "Asia/Manila",
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(new Date(iso));
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8">
@@ -67,6 +83,58 @@ export default async function IndexNowAdminPage() {
         example after a content update). Every full submit is recorded in the
         audit log.
       </p>
+
+      <section className="mt-8">
+        <h2 className="font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">
+          Recent IndexNow submissions
+        </h2>
+        <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
+          Every automatic ping (when a doctor or service is added or changed) and
+          every full submit is recorded here.
+        </p>
+        {recentPings && recentPings.length > 0 ? (
+          <div className="mt-3 overflow-x-auto rounded-lg border border-[color:var(--color-brand-bg-mid)] bg-white">
+            <table className="w-full min-w-[32rem] text-sm">
+              <thead>
+                <tr className="border-b border-[color:var(--color-brand-bg-mid)] text-left text-xs uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+                  <th className="px-3 py-2 font-semibold">Time</th>
+                  <th className="px-3 py-2 font-semibold">Trigger</th>
+                  <th className="px-3 py-2 font-semibold">URLs</th>
+                  <th className="px-3 py-2 font-semibold">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recentPings.map((row) => {
+                  const m = readPingAuditMetadata(row.metadata);
+                  return (
+                    <tr
+                      key={row.id}
+                      className="border-b border-[color:var(--color-brand-bg-mid)] last:border-0"
+                    >
+                      <td className="whitespace-nowrap px-3 py-2">{fmtManila(row.created_at)}</td>
+                      <td className="px-3 py-2 font-mono text-xs">{m.trigger}</td>
+                      <td className="px-3 py-2">{m.urlCount}</td>
+                      <td className="px-3 py-2">
+                        <span
+                          className={
+                            m.ok ? "font-semibold text-green-700" : "font-semibold text-red-700"
+                          }
+                        >
+                          {m.ok ? "OK" : "Failed"}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="mt-3 rounded-lg border border-dashed border-[color:var(--color-brand-bg-mid)] p-4 text-sm text-[color:var(--color-brand-text-soft)]">
+            No IndexNow pings recorded yet.
+          </p>
+        )}
+      </section>
     </div>
   );
 }

@@ -86,6 +86,11 @@ export async function createServiceAction(
 
   await submitToIndexNow(servicePageUrls(SITE.url, data.code), {
     trigger: "service.created",
+    actor: {
+      id: session.user_id,
+      ip: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+      ua: h.get("user-agent"),
+    },
   });
 
   revalidatePath("/staff/services");
@@ -180,7 +185,14 @@ export async function updateServiceAction(
   if (prior?.code && prior.code !== parsed.data.code) codes.add(prior.code);
   await submitToIndexNow(
     [...codes].flatMap((c) => servicePageUrls(SITE.url, c)),
-    { trigger: "service.updated" },
+    {
+      trigger: "service.updated",
+      actor: {
+        id: session.user_id,
+        ip: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+        ua: h.get("user-agent"),
+      },
+    },
   );
 
   revalidatePath("/staff/services");
