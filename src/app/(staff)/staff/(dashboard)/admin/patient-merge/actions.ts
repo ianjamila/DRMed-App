@@ -206,6 +206,22 @@ export async function mergePatientsAction(
     return { ok: false, error: tombErr.message };
   }
 
+  // Record the merge for reversibility (exact moved IDs + filled fields).
+  const movedIds = {
+    visits: (visits ?? []).map((r) => r.id),
+    appointments: (appts ?? []).map((r) => r.id),
+    audit_log: (auditRows ?? []).map((r) => r.id),
+    critical_alerts: (criticalAlerts ?? []).map((r) => r.id),
+    patient_consents: (consents ?? []).map((r) => r.id),
+  };
+  await admin.from("patient_merges").insert({
+    keep_id,
+    source_id,
+    merged_by: session.user_id,
+    moved: movedIds,
+    filled_from_source: Object.keys(fill),
+  });
+
   const h = await headers();
   await audit({
     actor_id: session.user_id,
