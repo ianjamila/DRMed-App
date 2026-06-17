@@ -391,3 +391,18 @@ export async function undoMergeAction(
   revalidatePath("/staff/patients");
   return { ok: true };
 }
+
+// One-click merge from the candidates report (ids already known + admin-confirmed
+// in the UI). Reuses the audited merge path; keep_id is the OLDER record by default.
+export async function mergeCandidateAction(
+  _prev: MergeResult | null,
+  formData: FormData,
+): Promise<MergeResult> {
+  const fd = new FormData();
+  fd.set("keep_id", String(formData.get("keep_id") ?? ""));
+  fd.set("source_id", String(formData.get("source_id") ?? ""));
+  fd.set("confirm", "MERGE");
+  const res = await mergePatientsAction(null, fd);
+  if (res.ok) revalidatePath("/staff/admin/patient-merge/candidates");
+  return res;
+}
