@@ -4,10 +4,6 @@ import type { FaqItem } from "./faq";
 const CLINIC_ID = `${SITE.url}/#clinic`;
 type SchemaObject = Record<string, unknown>;
 
-function clinicRef(): SchemaObject {
-  return { "@type": "MedicalClinic", "@id": CLINIC_ID, name: SITE.name };
-}
-
 function postalAddress(): SchemaObject {
   return {
     "@type": "PostalAddress",
@@ -19,9 +15,13 @@ function postalAddress(): SchemaObject {
   };
 }
 
-export function medicalClinicLd(): SchemaObject {
-  const ld: SchemaObject = {
-    "@context": "https://schema.org",
+// Full MedicalClinic node WITHOUT @context, so it can be embedded as a complete
+// entity inside other graphs (a physician's `worksFor`, a service's `provider`)
+// AND rendered standalone via medicalClinicLd(). One definition keeps the
+// clinic's name/address/phone/price/geo identical everywhere it appears (same
+// @id) and avoids the "thin reference" the validator flags on nested pages.
+function clinicNode(): SchemaObject {
+  const node: SchemaObject = {
     "@type": "MedicalClinic",
     "@id": CLINIC_ID,
     name: SITE.name,
@@ -42,10 +42,14 @@ export function medicalClinicLd(): SchemaObject {
     sameAs: [SOCIAL.facebook, SOCIAL.instagram],
   };
   if (GEO.lat != null && GEO.lng != null) {
-    ld.geo = { "@type": "GeoCoordinates", latitude: GEO.lat, longitude: GEO.lng };
-    if (GEO.mapUrl) ld.hasMap = GEO.mapUrl;
+    node.geo = { "@type": "GeoCoordinates", latitude: GEO.lat, longitude: GEO.lng };
+    if (GEO.mapUrl) node.hasMap = GEO.mapUrl;
   }
-  return ld;
+  return node;
+}
+
+export function medicalClinicLd(): SchemaObject {
+  return { "@context": "https://schema.org", ...clinicNode() };
 }
 
 export function websiteLd(): SchemaObject {
@@ -98,7 +102,12 @@ export function physicianLd(p: PhysicianLdInput): SchemaObject {
     url: `${SITE.url}/physicians/${p.slug}`,
     image: p.photoUrl,
     medicalSpecialty: specialties,
-    worksFor: clinicRef(),
+    // The physician practices at the clinic — carry the clinic's contact point
+    // so the Physician node is itself a complete local entity for rich results.
+    telephone: CONTACT.phone.mobileE164,
+    address: postalAddress(),
+    priceRange: SITE.priceRange,
+    worksFor: clinicNode(),
   };
 }
 
@@ -154,7 +163,7 @@ export function serviceOfferLd(s: ServiceLdInput): SchemaObject {
     name: s.name,
     description: s.description ?? `${s.name} at ${SITE.name}.`,
     url,
-    provider: clinicRef(),
+    provider: clinicNode(),
   };
   if (s.kind === "lab_package") {
     ld.offers = {
