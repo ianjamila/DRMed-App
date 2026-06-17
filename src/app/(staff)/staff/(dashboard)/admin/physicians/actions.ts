@@ -71,6 +71,7 @@ export async function createPhysicianAction(
 
   await submitToIndexNow(physicianPageUrls(SITE.url, created.slug), {
     trigger: "physician.created",
+    actor: { id: session.user_id, ip, ua },
   });
 
   revalidatePath("/staff/admin/physicians");
@@ -119,7 +120,7 @@ export async function updatePhysicianAction(
   if (prior?.slug && prior.slug !== parsed.data.slug) slugs.add(prior.slug);
   await submitToIndexNow(
     [...slugs].flatMap((s) => physicianPageUrls(SITE.url, s)),
-    { trigger: "physician.updated" },
+    { trigger: "physician.updated", actor: { id: session.user_id, ip, ua } },
   );
 
   revalidatePath("/staff/admin/physicians");
@@ -208,6 +209,7 @@ export async function uploadPhotoAction(
 
   await submitToIndexNow(physicianPageUrls(SITE.url, physician.slug), {
     trigger: "physician.photo_updated",
+    actor: { id: session.user_id, ip, ua },
   });
 
   revalidatePath("/staff/admin/physicians");
@@ -271,6 +273,7 @@ export async function deletePhysicianAction(
 
   await submitToIndexNow(physicianPageUrls(SITE.url, physician.slug), {
     trigger: "physician.deleted",
+    actor: { id: session.user_id, ip, ua },
   });
 
   revalidatePath("/staff/admin/physicians");
