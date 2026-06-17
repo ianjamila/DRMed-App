@@ -1,7 +1,6 @@
 "use server";
 
 import { requireAdminStaff } from "@/lib/auth/require-admin";
-import { audit } from "@/lib/audit/log";
 import { ipAndAgent } from "@/lib/server/action-helpers";
 import { reportError } from "@/lib/observability/report-error";
 import { allSiteUrls, submitToIndexNow } from "@/lib/seo/indexnow";
@@ -20,22 +19,13 @@ export async function resubmitAllToIndexNowAction(): Promise<ResubmitResult> {
     await reportError({ scope: "seo/indexnow", error, metadata: { trigger: "manual.full" } });
     return { ok: false, error: "Could not build the page list. Check the server logs." };
   }
-  const res = await submitToIndexNow(urls, { trigger: "manual.full" });
 
+  // submitToIndexNow writes the `seo.indexnow.ping` audit row itself (trigger
+  // "manual.full"), so no separate audit() call is needed here.
   const { ip, ua } = await ipAndAgent();
-  await audit({
-    actor_id: session.user_id,
-    actor_type: "staff",
-    action: "seo.indexnow.full_submit",
-    resource_type: "seo",
-    metadata: {
-      count: urls.length,
-      submitted: res.submitted,
-      ok: res.ok,
-      skipped: res.skipped ?? null,
-    },
-    ip_address: ip,
-    user_agent: ua,
+  const res = await submitToIndexNow(urls, {
+    trigger: "manual.full",
+    actor: { id: session.user_id, ip, ua },
   });
 
   if (!res.ok) {
