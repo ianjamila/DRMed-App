@@ -243,12 +243,12 @@ const sgpt: TemplateSeed = {
     {
       parameter_name: "SGPT (ALT)", input_type: "numeric",
       unit_si: "U/L", gender: "F",
-      ref_low_si: 0, ref_high_si: 33,
+      ref_low_si: 0, ref_high_si: 35,
     },
     {
       parameter_name: "SGPT (ALT)", input_type: "numeric",
       unit_si: "U/L", gender: "M",
-      ref_low_si: 0, ref_high_si: 41,
+      ref_low_si: 0, ref_high_si: 50,
     },
   ],
 };
@@ -263,12 +263,12 @@ const sgot: TemplateSeed = {
     {
       parameter_name: "SGOT (AST)", input_type: "numeric",
       unit_si: "U/L", gender: "F",
-      ref_low_si: 0, ref_high_si: 31,
+      ref_low_si: 0, ref_high_si: 32,
     },
     {
       parameter_name: "SGOT (AST)", input_type: "numeric",
       unit_si: "U/L", gender: "M",
-      ref_low_si: 0, ref_high_si: 37,
+      ref_low_si: 0, ref_high_si: 40,
     },
   ],
 };
@@ -295,18 +295,22 @@ const lipid: TemplateSeed = {
       si_to_conv_factor: 38.67,
     },
     {
-      // HDL — only a lower bound is clinically meaningful; values above 40
-      // (M) / 50 (F) are protective. We use 40 mg/dL (~1.03 mmol/L) as a
-      // conservative cut-off; admin can refine via CRUD if needed.
+      // HDL — only a lower bound is clinically meaningful; high HDL is
+      // protective, so no upper flag. Gender-specific lower limits per the
+      // clinic's reference form: F ≥1.16 (45 mg/dL) / M ≥0.90 (35 mg/dL).
       parameter_name: "HDL", input_type: "numeric",
       unit_si: "mmol/L", ref_low_si: 1.03,
       unit_conv: "mg/dL", ref_low_conv: 40,
       si_to_conv_factor: 38.67,
+      ranges: [
+        { band_label: "Female", gender: "F", ref_low_si: 1.16, ref_low_conv: 45 },
+        { band_label: "Male",   gender: "M", ref_low_si: 0.90, ref_low_conv: 35 },
+      ],
     },
     {
       parameter_name: "LDL", input_type: "numeric",
-      unit_si: "mmol/L", ref_low_si: 0, ref_high_si: 2.59,
-      unit_conv: "mg/dL", ref_low_conv: 0, ref_high_conv: 100,
+      unit_si: "mmol/L", ref_low_si: 0, ref_high_si: 3.3,
+      unit_conv: "mg/dL", ref_low_conv: 0, ref_high_conv: 127.41,
       si_to_conv_factor: 38.67,
     },
     {
@@ -801,11 +805,15 @@ const CHEMISTRY_DEFAULTS: Record<string, SectionEntry> = {
         unit_si: "mmol/L", ref_low_si: 1.03,
         unit_conv: "mg/dL", ref_low_conv: 40,
         si_to_conv_factor: 38.67,
+        ranges: [
+          { band_label: "Female", gender: "F", ref_low_si: 1.16, ref_low_conv: 45 },
+          { band_label: "Male",   gender: "M", ref_low_si: 0.90, ref_low_conv: 35 },
+        ],
       },
       {
         parameter_name: "LDL", input_type: "numeric",
-        unit_si: "mmol/L", ref_low_si: 0, ref_high_si: 2.59,
-        unit_conv: "mg/dL", ref_low_conv: 0, ref_high_conv: 100,
+        unit_si: "mmol/L", ref_low_si: 0, ref_high_si: 3.3,
+        unit_conv: "mg/dL", ref_low_conv: 0, ref_high_conv: 127.41,
         si_to_conv_factor: 38.67,
       },
       {
@@ -1188,12 +1196,23 @@ const CREATININE_ROW = (): ParamSeed => ({
   unit_si: "µmol/L", ref_low_si: 59, ref_high_si: 104,
   unit_conv: "mg/dL", ref_low_conv: 0.67, ref_high_conv: 1.18,
   si_to_conv_factor: 0.0113,
+  // Gender-specific reference intervals (no age banding). The flat ref_*
+  // values above stay as the null-sex fallback; pickRangeForPatient uses the
+  // matching row per patient sex for both flagging and the printed range.
+  ranges: [
+    { band_label: "Female", gender: "F", ref_low_si: 45, ref_high_si: 84,  ref_low_conv: 0.51, ref_high_conv: 0.95 },
+    { band_label: "Male",   gender: "M", ref_low_si: 59, ref_high_si: 104, ref_low_conv: 0.67, ref_high_conv: 1.18 },
+  ],
 });
 const URIC_ACID_ROW = (): ParamSeed => ({
   parameter_name: "Uric Acid", input_type: "numeric",
   unit_si: "µmol/L", ref_low_si: 142, ref_high_si: 416.5,
   unit_conv: "mg/dL", ref_low_conv: 2.38, ref_high_conv: 6.99,
   si_to_conv_factor: 0.0168,
+  ranges: [
+    { band_label: "Female", gender: "F", ref_low_si: 142,   ref_high_si: 339,   ref_low_conv: 2.38, ref_high_conv: 5.7 },
+    { band_label: "Male",   gender: "M", ref_low_si: 202.3, ref_high_si: 416.5, ref_low_conv: 3.4,  ref_high_conv: 6.99 },
+  ],
 });
 const CHOL_ROW = (): ParamSeed => ({
   parameter_name: "Total Cholesterol", input_type: "numeric",
@@ -1212,11 +1231,17 @@ const HDL_ROW = (): ParamSeed => ({
   unit_si: "mmol/L", ref_low_si: 1.03,
   unit_conv: "mg/dL", ref_low_conv: 40,
   si_to_conv_factor: 38.67,
+  // Low-only, gender-specific. High HDL is protective, so no upper bound →
+  // computeFlag never raises "H" (ref_high_si stays null on every row).
+  ranges: [
+    { band_label: "Female", gender: "F", ref_low_si: 1.16, ref_low_conv: 45 },
+    { band_label: "Male",   gender: "M", ref_low_si: 0.90, ref_low_conv: 35 },
+  ],
 });
 const LDL_ROW = (): ParamSeed => ({
   parameter_name: "LDL", input_type: "numeric",
-  unit_si: "mmol/L", ref_low_si: 0, ref_high_si: 2.59,
-  unit_conv: "mg/dL", ref_low_conv: 0, ref_high_conv: 100,
+  unit_si: "mmol/L", ref_low_si: 0, ref_high_si: 3.3,
+  unit_conv: "mg/dL", ref_low_conv: 0, ref_high_conv: 127.41,
   si_to_conv_factor: 38.67,
 });
 const VLDL_ROW = (): ParamSeed => ({
@@ -1232,12 +1257,20 @@ const SGPT_ROW = (): ParamSeed => ({
   unit_si: "U/L", ref_low_si: 0, ref_high_si: 41,
   unit_conv: "U/L", ref_low_conv: 0, ref_high_conv: 41,
   si_to_conv_factor: 1,
+  ranges: [
+    { band_label: "Female", gender: "F", ref_low_si: 0, ref_high_si: 35, ref_low_conv: 0, ref_high_conv: 35 },
+    { band_label: "Male",   gender: "M", ref_low_si: 0, ref_high_si: 50, ref_low_conv: 0, ref_high_conv: 50 },
+  ],
 });
 const SGOT_ROW = (): ParamSeed => ({
   parameter_name: "SGOT (AST)", input_type: "numeric",
   unit_si: "U/L", ref_low_si: 0, ref_high_si: 37,
   unit_conv: "U/L", ref_low_conv: 0, ref_high_conv: 37,
   si_to_conv_factor: 1,
+  ranges: [
+    { band_label: "Female", gender: "F", ref_low_si: 0, ref_high_si: 32, ref_low_conv: 0, ref_high_conv: 32 },
+    { band_label: "Male",   gender: "M", ref_low_si: 0, ref_high_si: 40, ref_low_conv: 0, ref_high_conv: 40 },
+  ],
 });
 const HBA1C_ROW = (): ParamSeed => ({
   parameter_name: "HbA1c", input_type: "numeric",
