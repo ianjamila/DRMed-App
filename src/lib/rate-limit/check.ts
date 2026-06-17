@@ -11,7 +11,8 @@ export type RateLimitBucket =
   | "staff_login"
   | "newsletter_resubscribe"
   | "appointment_cancel"
-  | "patient_registration";
+  | "patient_registration"
+  | "patient_id_recovery";
 
 export interface RateLimitConfig {
   bucket: RateLimitBucket;
@@ -113,4 +114,7 @@ export const RATE_LIMITS: Record<
   // Public self-registration. A write that creates a patient row + emails a
   // DRM-ID; 5/hour per IP matches contact_form / newsletter_signup.
   patient_registration: { windowSec: 60 * 60, max: 5 },
+  // Public DRM-ID recovery. Emails a DRM-ID to an on-file address only; 5/hour
+  // per IP matches patient_registration / contact_form.
+  patient_id_recovery: { windowSec: 60 * 60, max: 5 },
 };
