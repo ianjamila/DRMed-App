@@ -8,6 +8,9 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { ServiceSchema } from "@/lib/validations/service";
+import { SITE } from "@/lib/marketing/site";
+import { submitToIndexNow } from "@/lib/seo/indexnow";
+import { servicePageUrls } from "@/lib/seo/indexnow-core";
 
 export type ServiceResult = { ok: true } | { ok: false; error: string };
 
@@ -81,6 +84,10 @@ export async function createServiceAction(
     user_agent: h.get("user-agent"),
   });
 
+  await submitToIndexNow(servicePageUrls(SITE.url, data.code), {
+    trigger: "service.created",
+  });
+
   revalidatePath("/staff/services");
   redirect("/staff/services");
 }
@@ -109,7 +116,7 @@ export async function updateServiceAction(
   // Pre-read so audit metadata can record before/after for any price column.
   const { data: prior } = await supabase
     .from("services")
-    .select("price_php, hmo_price_php, senior_discount_php")
+    .select("code, price_php, hmo_price_php, senior_discount_php")
     .eq("id", serviceId)
     .maybeSingle();
 
@@ -168,6 +175,13 @@ export async function updateServiceAction(
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),
   });
+
+  const codes = new Set<string>([parsed.data.code]);
+  if (prior?.code && prior.code !== parsed.data.code) codes.add(prior.code);
+  await submitToIndexNow(
+    [...codes].flatMap((c) => servicePageUrls(SITE.url, c)),
+    { trigger: "service.updated" },
+  );
 
   revalidatePath("/staff/services");
   revalidatePath(`/staff/services/${serviceId}/edit`);
