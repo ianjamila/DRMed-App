@@ -66,6 +66,27 @@ describe("physicianLd", () => {
     expect(ld.medicalSpecialty).toEqual(["Pediatrics", "Internal Medicine"]);
     expect((ld.worksFor as Record<string, unknown>)["@id"]).toBe(`${SITE.url}/#clinic`);
   });
+  it("carries the clinic's contact (telephone/address/priceRange) and a COMPLETE worksFor clinic node", () => {
+    const ld = physicianLd({
+      slug: "dr-jane",
+      fullName: "Dr. Jane Cruz",
+      specialty: "Pediatrics",
+      photoUrl: "https://x/p.jpg",
+    });
+    // Physician node is itself a complete local entity (clears optional warnings).
+    expect(ld.telephone).toBeTruthy();
+    expect((ld.address as Record<string, unknown>)["@type"]).toBe("PostalAddress");
+    expect(ld.priceRange).toBeTruthy();
+    // worksFor is the FULL clinic node, not a thin {@id,name} stub.
+    const clinic = ld.worksFor as Record<string, unknown>;
+    expect(clinic["@type"]).toBe("MedicalClinic");
+    expect(clinic.telephone).toBeTruthy();
+    expect((clinic.address as Record<string, unknown>)["@type"]).toBe("PostalAddress");
+    expect(clinic.image).toBeTruthy();
+    expect(clinic.priceRange).toBeTruthy();
+    // Embedded node must NOT carry its own @context (only top-level nodes do).
+    expect(clinic["@context"]).toBeUndefined();
+  });
 });
 
 describe("physiciansItemListLd", () => {
@@ -115,6 +136,10 @@ describe("serviceOfferLd", () => {
       pricePhp: 150,
     });
     expect(test.offers).toBeUndefined(); // never leak prices the page hides
-    expect(test.provider).toBeTruthy();
+    // provider is the COMPLETE clinic node (same @id, no nested @context).
+    const provider = test.provider as Record<string, unknown>;
+    expect(provider["@id"]).toBe(`${SITE.url}/#clinic`);
+    expect(provider.telephone).toBeTruthy();
+    expect(provider["@context"]).toBeUndefined();
   });
 });
