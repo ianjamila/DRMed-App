@@ -9,15 +9,24 @@ export interface IndexNowEnv {
 }
 
 /**
+ * The configured IndexNow key, trimmed of stray whitespace, or null when
+ * unset/blank. Both the key-file route AND the submission payload MUST read
+ * the key through this so they can never disagree: if the payload sent an
+ * untrimmed value (e.g. an env var with a trailing newline) while the file
+ * serves the trimmed value, IndexNow rejects the submission — the key in the
+ * request would not match the key in the file.
+ */
+export function indexNowKey(env: IndexNowEnv): string | null {
+  const key = env.INDEXNOW_KEY?.trim();
+  return key ? key : null;
+}
+
+/**
  * Submissions only fire in production with a configured key. Preview/local
  * no-op so we never ping real engines with non-production URLs.
  */
 export function indexNowEnabled(env: IndexNowEnv): boolean {
-  return (
-    env.VERCEL_ENV === "production" &&
-    typeof env.INDEXNOW_KEY === "string" &&
-    env.INDEXNOW_KEY.trim().length > 0
-  );
+  return env.VERCEL_ENV === "production" && indexNowKey(env) !== null;
 }
 
 function trimBase(base: string): string {

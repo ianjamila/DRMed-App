@@ -3,10 +3,12 @@
 // only trusts a key file whose path is a parent of every submitted URL, and
 // our public URLs are all root-level. The ping sends this as `keyLocation`.
 
+import { indexNowKey, type IndexNowEnv } from "@/lib/seo/indexnow-core";
+
 export const dynamic = "force-dynamic";
 
 export function GET(): Response {
-  const key = process.env.INDEXNOW_KEY?.trim();
+  const key = indexNowKey(process.env as IndexNowEnv);
   if (!key) {
     return new Response("Not found", { status: 404 });
   }

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildIndexNowPayload,
   indexNowEnabled,
+  indexNowKey,
   physicianPageUrls,
   servicePageUrls,
 } from "./indexnow-core";
@@ -22,6 +23,19 @@ describe("servicePageUrls", () => {
       "https://drmed.ph/all-services",
       "https://drmed.ph/packages",
     ]);
+  });
+});
+
+describe("indexNowKey", () => {
+  it("trims stray whitespace so the payload matches the served key file", () => {
+    expect(indexNowKey({ INDEXNOW_KEY: "abc123" })).toBe("abc123");
+    expect(indexNowKey({ INDEXNOW_KEY: "  abc123  " })).toBe("abc123");
+    expect(indexNowKey({ INDEXNOW_KEY: "abc123\n" })).toBe("abc123");
+  });
+  it("returns null when unset or blank", () => {
+    expect(indexNowKey({})).toBeNull();
+    expect(indexNowKey({ INDEXNOW_KEY: "" })).toBeNull();
+    expect(indexNowKey({ INDEXNOW_KEY: "   " })).toBeNull();
   });
 });
 
