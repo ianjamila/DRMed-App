@@ -10,6 +10,7 @@ import { StaffBookingSchema, type StaffBookingInput } from "@/lib/validations/st
 import { createAppointmentGroup, type PatientResolution } from "@/lib/appointments/create";
 import type { BookingConflict } from "@/lib/appointments/timing";
 import { resolvePatient } from "@/lib/patients/resolve";
+import { findCandidatesForInput } from "@/lib/patients/find-duplicates";
 import { patientSearchOrClauses } from "@/lib/patients/search";
 import { notifyAppointmentBooked } from "@/lib/notifications/notify-appointment-booked";
 
@@ -127,6 +128,45 @@ export async function createStaffAppointmentAction(input: StaffBookingInput): Pr
     ip_address: ip,
     user_agent: ua,
   });
+
+  // If staff created a brand-new patient despite a strong/exact existing match,
+  // record the override server-side (independent of any client acknowledgement).
+  if (
+    result.patient.resolution === "created" &&
+    result.patient.patientId &&
+    data.patient.mode === "new"
+  ) {
+    const dupes = await findCandidatesForInput(
+      admin,
+      {
+        first_name: data.patient.first_name,
+        last_name: data.patient.last_name,
+        birthdate: data.patient.birthdate ?? null,
+        email: data.patient.email ?? null,
+        phone_normalized: (data.patient.phone ?? "").replace(/\D/g, "").slice(-10) || null,
+        address: null,
+        sex: null,
+        excludeId: result.patient.patientId,
+      },
+      { minTier: "strong" },
+    );
+    if (dupes.length > 0) {
+      await audit({
+        actor_id: session.user_id,
+        actor_type: "staff",
+        patient_id: result.patient.patientId,
+        action: "patient.create.dup_override",
+        resource_type: "patient",
+        resource_id: result.patient.patientId,
+        metadata: {
+          created_drm_id: result.patient.drmId,
+          matched: dupes.map((d) => ({ drm_id: d.patient.drm_id, tier: d.score.tier })),
+        },
+        ip_address: ip,
+        user_agent: ua,
+      });
+    }
+  }
 
   if (data.send_confirmation) {
     try {
