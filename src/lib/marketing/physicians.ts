@@ -22,3 +22,27 @@ export async function listActivePhysicians(): Promise<PublicPhysicianListItem[]>
   }
   return data ?? [];
 }
+
+export interface PublicPhysicianDetail {
+  slug: string;
+  full_name: string;
+  specialty: string;
+  group_label: string | null;
+  bio: string | null;
+}
+
+/** Active physicians with bio/specialty — for llms-full.txt. Public-readable per RLS. */
+export async function listActivePhysiciansDetailed(): Promise<PublicPhysicianDetail[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("physicians")
+    .select("slug, full_name, specialty, group_label, bio")
+    .eq("is_active", true)
+    .order("display_order", { ascending: true })
+    .order("full_name", { ascending: true });
+  if (error) {
+    console.error("listActivePhysiciansDetailed failed", error);
+    return [];
+  }
+  return data ?? [];
+}
