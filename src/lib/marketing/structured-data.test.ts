@@ -29,6 +29,37 @@ describe("medicalClinicLd", () => {
       expect(ld.hasMap).toBeTruthy();
     }
   });
+  it("is a complete local entity: hours spec, both phones, areas, payments, languages, reserve action, maps sameAs", () => {
+    const ld = medicalClinicLd();
+    // openingHoursSpecification (structured), in addition to the openingHours string
+    const ohs = ld.openingHoursSpecification as Record<string, unknown>;
+    expect(ohs["@type"]).toBe("OpeningHoursSpecification");
+    expect(ohs.opens).toBe("08:00");
+    expect(ohs.closes).toBe("17:00");
+    expect(ohs.dayOfWeek).toContain("Saturday");
+    expect(ohs.dayOfWeek).not.toContain("Sunday");
+    // contactPoint carries BOTH phones
+    const cps = ld.contactPoint as Array<Record<string, unknown>>;
+    expect(cps).toHaveLength(2);
+    const tels = cps.map((c) => c.telephone);
+    expect(tels).toContain("+639166043208");
+    expect(tels).toContain("+63283553517");
+    // areaServed expanded beyond just QC + Metro Manila
+    expect((ld.areaServed as unknown[]).length).toBeGreaterThan(2);
+    // payments + currency + languages
+    expect(ld.paymentAccepted).toContain("HMO");
+    expect(ld.currenciesAccepted).toBe("PHP");
+    expect(ld.knowsLanguage).toContain("fil");
+    // image is an array of place photos
+    expect(Array.isArray(ld.image)).toBe(true);
+    // sameAs includes the Google Maps place URL + Messenger
+    expect(ld.sameAs).toContain("https://maps.app.goo.gl/Qrb5WYwmA5RVuBkN9");
+    expect(ld.sameAs).toContain("https://m.me/drmed.ph");
+    // ReserveAction -> /schedule
+    const action = ld.potentialAction as Record<string, unknown>;
+    expect(action["@type"]).toBe("ReserveAction");
+    expect((action.target as Record<string, unknown>).urlTemplate).toBe(`${SITE.url}/schedule`);
+  });
 });
 
 describe("websiteLd", () => {
