@@ -7,7 +7,7 @@ type SchemaObject = Record<string, unknown>;
 function postalAddress(): SchemaObject {
   return {
     "@type": "PostalAddress",
-    streetAddress: `${CONTACT.address.line1}, ${CONTACT.address.line2}`,
+    streetAddress: `${CONTACT.address.floor} ${CONTACT.address.line2}`,
     addressLocality: CONTACT.address.city,
     addressRegion: CONTACT.address.region,
     postalCode: CONTACT.address.postalCode,
@@ -63,12 +63,14 @@ function clinicNode(): SchemaObject {
       },
     ],
     openingHours: "Mo-Sa 08:00-17:00",
-    openingHoursSpecification: {
-      "@type": "OpeningHoursSpecification",
-      dayOfWeek: [...HOURS.days],
-      opens: HOURS.opens,
-      closes: HOURS.closes,
-    },
+    openingHoursSpecification: [
+      {
+        "@type": "OpeningHoursSpecification",
+        dayOfWeek: [...HOURS.days],
+        opens: HOURS.opens,
+        closes: HOURS.closes,
+      },
+    ],
     medicalSpecialty: ["Diagnostic", "ClinicalLaboratory", "Radiology"],
     sameAs: [SOCIAL.facebook, SOCIAL.instagram, SOCIAL.messenger, GEO.mapUrl].filter(Boolean),
     potentialAction: {

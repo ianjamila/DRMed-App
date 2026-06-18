@@ -69,6 +69,10 @@ describe("isOpenNow (Asia/Manila, Mon–Sat 08:00–17:00)", () => {
     // 09:30Z = 17:30 Manila (after close)
     expect(isOpenNow(new Date("2026-06-18T09:30:00Z"))).toBe(false);
   });
+  it("open on Saturday (the week-boundary day Sunday is not)", () => {
+    // 2026-06-20 is a Saturday. 03:00Z = 11:00 Manila Sat — within hours.
+    expect(isOpenNow(new Date("2026-06-20T03:00:00Z"))).toBe(true);
+  });
   it("closed all day Sunday", () => {
     // 2026-06-21 is a Sunday. 03:00Z = 11:00 Manila Sun.
     expect(isOpenNow(new Date("2026-06-21T03:00:00Z"))).toBe(false);

@@ -201,7 +201,7 @@ export default function ContactPage() {
                     Call us if you need directions for your specific route.
                   </p>
                 </DetailRow>
-                <PillLink href={dir.google} variant="navy" size="md">
+                <PillLink href={dir.google} variant="navy" size="md" target="_blank" rel="noopener noreferrer">
                   Get directions <Navigation className="h-4 w-4" aria-hidden="true" />
                 </PillLink>
               </div>
@@ -235,7 +235,7 @@ export default function ContactPage() {
           <div className="space-y-3">
             {FAQS.map((f) => (
               <details key={f.question} className="group rounded-[16px] border border-[color:var(--color-warm-line-soft)] bg-white px-5 py-4 shadow-[var(--shadow-warm-sm)]">
-                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-[15px] font-bold text-[color:var(--color-brand-navy)]">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-[8px] text-[15px] font-bold text-[color:var(--color-brand-navy)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-brand-cyan)]">
                   <span className="flex items-center gap-2.5">
                     <HelpCircle className="h-4 w-4 shrink-0 text-[color:var(--color-brand-cyan)]" aria-hidden="true" />
                     {f.question}

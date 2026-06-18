@@ -54,7 +54,8 @@ export function directionsHrefs(): { google: string; waze: string; apple: string
   };
 }
 
-/** Cookie-free Google Maps iframe src — loaded only on user click (see MapEmbed). */
+/** No-API-key Google Maps iframe src. Sets Google cookies once loaded, so it is
+ *  rendered only after the user clicks the placeholder (see MapEmbed). */
 export function mapEmbedSrc(): string {
   const target = latLng() ?? CONTACT.address.full;
   return `https://maps.google.com/maps?q=${encodeURIComponent(target)}&z=16&output=embed`;

@@ -6,7 +6,8 @@ import { MapPin } from "lucide-react";
 /**
  * Privacy-respecting map: shows a static styled placeholder; the Google Maps
  * iframe (which sets Google cookies) loads only after the user clicks. No API
- * key — uses the cookie-free `output=embed` URL from nap.mapEmbedSrc().
+ * key — uses the no-key `output=embed` URL from nap.mapEmbedSrc(); the
+ * click-to-load gate, not the URL, is what defers Google's cookies.
  */
 export function MapEmbed({ src, title }: { src: string; title: string }) {
   const [loaded, setLoaded] = useState(false);

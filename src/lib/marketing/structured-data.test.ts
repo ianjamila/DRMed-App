@@ -31,8 +31,10 @@ describe("medicalClinicLd", () => {
   });
   it("is a complete local entity: hours spec, both phones, areas, payments, languages, reserve action, maps sameAs", () => {
     const ld = medicalClinicLd();
-    // openingHoursSpecification (structured), in addition to the openingHours string
-    const ohs = ld.openingHoursSpecification as Record<string, unknown>;
+    // openingHoursSpecification (structured array), in addition to the openingHours string
+    const ohsList = ld.openingHoursSpecification as Array<Record<string, unknown>>;
+    expect(Array.isArray(ohsList)).toBe(true);
+    const ohs = ohsList[0];
     expect(ohs["@type"]).toBe("OpeningHoursSpecification");
     expect(ohs.opens).toBe("08:00");
     expect(ohs.closes).toBe("17:00");
