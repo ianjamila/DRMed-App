@@ -50,7 +50,7 @@ export const GEO = {
 } as const;
 
 export const SOCIAL = {
-  facebook: "https://www.facebook.com/drmedcliniclab/",
+  facebook: "https://www.facebook.com/drmed.ph",
   instagram:
     "https://www.instagram.com/drmed.ph?igsh=Yzl4eDY3bXFyMnQy&utm_source=qr",
   // Single source of truth for the Messenger deep-link. Both m.me/drmed.ph and

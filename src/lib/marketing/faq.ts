@@ -7,7 +7,7 @@ export const FAQ_ITEMS: readonly FaqItem[] = [
   {
     question: "Do I need to fast before my test?",
     answer:
-      "Blood sugar (FBS) and lipid tests need 8–10 hours of fasting — water is fine. Most other tests don't require it. Unsure? Message us before your visit and we'll confirm.",
+      "Fasting depends on the test: blood sugar (FBS) needs 8–10 hours, lipid profile needs 10–12 hours, and whole abdomen ultrasound needs 6–8 hours — water is fine throughout. Most other tests don't require it. Unsure? Message us before your visit and we'll confirm.",
   },
   {
     question: "Can I use my HMO?",
@@ -27,6 +27,6 @@ export const FAQ_ITEMS: readonly FaqItem[] = [
   {
     question: "Can you come to my home or office?",
     answer:
-      "Yes — our team comes to your home or office for lab sample collection (subject to availability). Consultations are done in the clinic, though some doctors offer online consultations by appointment. Book online or message us, and reception will call to confirm the schedule and fee.",
+      "Yes — our team comes to your home or office for lab sample collection (subject to availability). Consultations are done in person at the clinic — we don't offer online consultations. Book online or message us, and reception will call to confirm the schedule and fee.",
   },
 ] as const;
