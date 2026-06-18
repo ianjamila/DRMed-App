@@ -252,5 +252,6 @@ short-link). Generated on request — does not block the code.
 5. Wheelchair accessibility (for `amenityFeature`).
 6. **Canonical business name — RESOLVED 2026-06-18:** standardized to **"DRMed Clinic and
    Laboratory"** (matches the verified Google pin). Applied across the codebase (`&`→`and` in
-   `site.ts` + ~16 hardcoded literals; typecheck + 316 tests green). Remaining user action:
-   rename the **Facebook** page ("drmedcliniclab") to match.
+   `site.ts` + ~16 hardcoded literals; typecheck + 316 tests green). Facebook already displays
+   "Drmed Clinic and Laboratory" at the top of the Page (its primary Page name is the legal
+   entity "DRMed Healthcare Inc - Congressional", which is fine to keep) — no FB change needed.
