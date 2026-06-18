@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { isOpenNow } from "@/lib/marketing/nap";
 
 /**
  * Inline pill showing whether the clinic is currently open (Asia/Manila,
@@ -14,27 +15,9 @@ export function OpenNowPill() {
   const [status, setStatus] = useState<"pending" | "open" | "closed">("pending");
 
   useEffect(() => {
-    const fmt = new Intl.DateTimeFormat("en-US", {
-      timeZone: "Asia/Manila",
-      weekday: "short",
-      hour: "numeric",
-      hour12: false,
-    });
-
-    const parts = fmt.formatToParts(new Date());
-    const weekday = parts.find((p) => p.type === "weekday")?.value ?? "";
-    const hourStr = parts.find((p) => p.type === "hour")?.value ?? "0";
-    const hour = parseInt(hourStr, 10);
-
-    // Open Mon–Sat (not Sunday), 08:00 ≤ hour < 17:00
-    const isSunday = weekday === "Sun";
-    const open = !isSunday && hour >= 8 && hour < 17;
-
-    // One-shot initialization after mount: read Manila time to avoid hydration
-    // mismatch. No subscription — this is the correct pattern for deferred
-    // client-only state (R4 requirement in the spec).
+    // One-shot after mount to avoid hydration mismatch (Manila time is client-only).
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setStatus(open ? "open" : "closed");
+    setStatus(isOpenNow(new Date()) ? "open" : "closed");
   }, []);
 
   if (status === "pending") return null;

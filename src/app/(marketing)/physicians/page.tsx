@@ -11,6 +11,7 @@ import { formatSchedule } from "@/lib/physicians/format-schedule";
 import { JsonLd } from "@/components/marketing/json-ld";
 import { physiciansItemListLd } from "@/lib/marketing/structured-data";
 import { pageMetadata } from "@/lib/marketing/metadata";
+import { CONTACT } from "@/lib/marketing/site";
 
 export const metadata = pageMetadata({
   title: "Our Physicians & Schedules",
@@ -104,7 +105,7 @@ export default async function PhysiciansPage() {
             </span>
             <span className="flex items-center gap-1.5">
               <MapPin className="h-3.5 w-3.5 shrink-0 text-[color:var(--color-brand-cyan)]" aria-hidden="true" />
-              Northridge Plaza · Quezon City
+              {CONTACT.address.line2.split(",")[0]} · {CONTACT.address.city}
             </span>
             <span className="flex items-center gap-1.5">
               <Calendar className="h-3.5 w-3.5 shrink-0 text-[color:var(--color-brand-cyan)]" aria-hidden="true" />
@@ -134,17 +135,17 @@ export default async function PhysiciansPage() {
             <p>
               Schedules may change without prior notice. Kindly call{" "}
               <a
-                href="tel:+639166043208"
+                href={`tel:${CONTACT.phone.mobileE164}`}
                 className="font-bold text-[color:var(--color-brand-navy)] hover:text-[color:var(--color-brand-cyan-text)]"
               >
-                0916 604 3208
+                {CONTACT.phone.mobile}
               </a>{" "}
               or{" "}
               <a
-                href="tel:+63283553517"
+                href={`tel:${CONTACT.phone.landlineE164}`}
                 className="font-bold text-[color:var(--color-brand-navy)] hover:text-[color:var(--color-brand-cyan-text)]"
               >
-                8355 3517
+                {CONTACT.phone.landline}
               </a>{" "}
               to confirm availability before booking.
             </p>
