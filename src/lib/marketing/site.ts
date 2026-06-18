@@ -12,6 +12,11 @@ export const SITE = {
   priceRange: "₱₱",
   ogImage: "/hero-clinic.jpg",
   logo: "/logo.png",
+  // Default image for Google Merchant product listings (lab packages). A clean,
+  // text-free clinical photo — Merchant disapproves images with promotional
+  // text/watermarks, so this is preferred over the marketing hero. Per-package
+  // images can override this once the `services` table carries an image column.
+  productImage: "/photos/lab-chemistry.jpg",
 } as const;
 
 export const CONTACT = {

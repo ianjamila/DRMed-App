@@ -176,3 +176,50 @@ export function serviceOfferLd(s: ServiceLdInput): SchemaObject {
   }
   return ld;
 }
+
+// Resolves a site-relative path ("/photos/x.jpg") to an absolute URL, while
+// leaving an already-absolute URL untouched. Google Merchant requires absolute
+// image URLs.
+function absUrl(pathOrUrl: string): string {
+  return /^https?:\/\//i.test(pathOrUrl) ? pathOrUrl : `${SITE.url}${pathOrUrl}`;
+}
+
+export interface ProductLdInput {
+  code: string;
+  name: string;
+  description: string | null;
+  pricePhp: number;
+  /** Absolute URL or site-relative path. Defaults to the brand product image. */
+  imageUrl?: string;
+}
+
+// Google Merchant's "Found by Google" automatic source discovers products by
+// crawling schema.org Product markup — it ignores the Service node above. We
+// emit a Product ONLY for lab packages (the one kind whose price the site
+// publishes), so per-test prices the UI deliberately hides are never leaked to
+// Shopping. Price flows live from the `services` table, so the Merchant listing
+// can never disagree with the site. brand + mpn cover Merchant's identifier
+// requirement for products that have no GTIN.
+export function productLd(p: ProductLdInput): SchemaObject {
+  const url = `${SITE.url}/all-services/${p.code.toLowerCase()}`;
+  return {
+    "@context": "https://schema.org",
+    "@type": "Product",
+    name: p.name,
+    description: p.description ?? `${p.name} at ${SITE.name}.`,
+    image: [absUrl(p.imageUrl ?? SITE.productImage)],
+    sku: p.code,
+    mpn: p.code,
+    brand: { "@type": "Brand", name: SITE.name },
+    category: "Health & Beauty > Health Care",
+    url,
+    offers: {
+      "@type": "Offer",
+      price: String(p.pricePhp),
+      priceCurrency: "PHP",
+      availability: "https://schema.org/InStock",
+      itemCondition: "https://schema.org/NewCondition",
+      url,
+    },
+  };
+}
