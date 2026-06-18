@@ -14,6 +14,5 @@ export const HMO_PARTNERS: HmoPartner[] = [
   { slug: "medasia-avega", name: "MedAsia AVEGA" },
   { slug: "generali", name: "Generali" },
   { slug: "amaphil", name: "Amaphil" },
-  { slug: "philhealth", name: "PhilHealth" },
   { slug: "icare", name: "iCare" },
 ];
