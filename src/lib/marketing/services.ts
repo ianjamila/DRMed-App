@@ -47,6 +47,43 @@ export type PublicService = {
 const PUBLIC_SELECT =
   "id, code, name, description, price_php, hmo_price_php, senior_discount_php, turnaround_hours, kind, section, is_send_out, send_out_lab, fasting_required, requires_time_slot, specialty_code, image_url" as const;
 
+// Default listing image per package code, served from /public/photos/packages.
+// Every active lab_package has an entry so Merchant/Shopping + Product JSON-LD
+// listings never fall back to the generic brand image. A non-null
+// services.image_url (set by staff on /staff/services) takes precedence — see
+// packageImageFor(). Photos are real package shots; the four executive tiers
+// plus lipid/kidney/iron use generated two-tone logo cards.
+const PACKAGE_IMAGE_BY_CODE: Record<string, string> = {
+  BASIC_PACKAGE: "/photos/packages/basic-package.jpg",
+  ROUTINE_PACKAGE: "/photos/packages/routine-checkup.webp",
+  ANNUAL_PHYSICAL_EXAM: "/photos/packages/annual-physical-exam.png",
+  PREGNANCY_CARE_PACKAGE: "/photos/packages/pregnancy-care.jpg",
+  STANDARD_CHEMISTRY: "/photos/packages/standard-chemistry.jpg",
+  DIABETIC_HEALTH_PACKAGE: "/photos/packages/diabetic-health.jpg",
+  DENGUE_PACKAGE: "/photos/packages/dengue-package.jpg",
+  THYROID_HEALTH_PACKAGE: "/photos/packages/thyroid-health.jpg",
+  LIVER_FUNCTION_PACKAGE: "/photos/packages/liver-health.jpg",
+  LIPID_PROFILE_PACKAGE: "/photos/packages/lipid-profile.png",
+  KIDNEY_FUNCTION_PACKAGE: "/photos/packages/kidney-function.png",
+  IRON_DEFICIENCY_PACKAGE: "/photos/packages/iron-deficiency.png",
+  EXECUTIVE_PACKAGE_STANDARD: "/photos/packages/exec-standard.png",
+  EXECUTIVE_PACKAGE_COMPREHENSIVE: "/photos/packages/exec-comprehensive.png",
+  EXECUTIVE_PACKAGE_DELUXE_MEN_S: "/photos/packages/exec-deluxe-mens.png",
+  EXECUTIVE_PACKAGE_DELUXE_WOMEN_S: "/photos/packages/exec-deluxe-womens.png",
+};
+
+/**
+ * Resolves a package's listing image. A staff-set services.image_url always
+ * wins; otherwise the per-code default map fills in. Returns null for codes
+ * with neither (e.g. non-package services), so callers keep their own fallback.
+ */
+export function packageImageFor(
+  code: string,
+  dbImageUrl: string | null,
+): string | null {
+  return dbImageUrl ?? PACKAGE_IMAGE_BY_CODE[code] ?? null;
+}
+
 function rowToPublic(s: {
   id: string;
   code: string;
@@ -69,6 +106,7 @@ function rowToPublic(s: {
     ...s,
     kind: s.kind as ServiceKind,
     section: (s.section as ServiceSection | null) ?? null,
+    image_url: packageImageFor(s.code, s.image_url),
   };
 }
 
