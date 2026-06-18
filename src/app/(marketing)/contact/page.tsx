@@ -9,7 +9,7 @@ import { pageMetadata } from "@/lib/marketing/metadata";
 export const metadata = pageMetadata({
   title: "Contact & Location",
   description:
-    "Visit DRMed Clinic & Laboratory in Quezon City. Address, phone, hours, and directions. Open Monday to Saturday, 8 AM–5 PM.",
+    "Visit DRMed Clinic and Laboratory in Quezon City. Address, phone, hours, and directions. Open Monday to Saturday, 8 AM–5 PM.",
   path: "/contact",
 });
 

@@ -98,7 +98,7 @@ export async function notifyAppointmentBooked({
       heading: "Request received",
       contentHtml:
         emailParagraph(`Hi <b>${escapeHtml(greeting)}</b>,`) +
-        emailParagraph("Thanks for your request with DRMed Clinic &amp; Laboratory.") +
+        emailParagraph("Thanks for your request with DRMed Clinic and Laboratory.") +
         emailDetailBox([
           { label: "Service", value: serviceName },
           { label: "Status", value: "Reception will call within one working day to confirm." },
@@ -138,7 +138,7 @@ export async function notifyAppointmentBooked({
       heading: "Your booking is confirmed",
       contentHtml:
         emailParagraph(`Hi <b>${escapeHtml(greeting)}</b>,`) +
-        emailParagraph("Your DRMed Clinic &amp; Laboratory booking is confirmed. Here are the details:") +
+        emailParagraph("Your DRMed Clinic and Laboratory booking is confirmed. Here are the details:") +
         emailDetailBox([
           { label: "Service", value: serviceName },
           { label: "Date / time", value: when },

@@ -47,7 +47,7 @@ export function buildReminderEmail(input: ReminderEmailInput): {
     heading: "Appointment reminder",
     contentHtml:
       emailParagraph(`Hi <b>${escapeHtml(greeting)}</b>,`) +
-      emailParagraph("This is a friendly reminder for your appointment tomorrow with DRMed Clinic &amp; Laboratory.") +
+      emailParagraph("This is a friendly reminder for your appointment tomorrow with DRMed Clinic and Laboratory.") +
       emailDetailBox([
         { label: "Service", value: serviceName },
         { label: "Date / time", value: when },

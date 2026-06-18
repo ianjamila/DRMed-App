@@ -2,7 +2,7 @@
 // Pulled from the existing drmed.ph site so the new build matches.
 
 export const SITE = {
-  name: "DRMed Clinic & Laboratory",
+  name: "DRMed Clinic and Laboratory",
   shortName: "drmed.ph",
   tagline: "Your Family's Well-Being is Our Mission.",
   description:
@@ -21,13 +21,13 @@ export const SITE = {
 
 export const CONTACT = {
   address: {
-    line1: "4/F DRMed Clinic & Laboratory",
+    line1: "4/F DRMed Clinic and Laboratory",
     line2: "Northridge Plaza, Congressional Avenue",
     city: "Quezon City",
     region: "Metro Manila",
     country: "PH",
     postalCode: "1106",
-    full: "4/F DRMed Clinic & Laboratory, Northridge Plaza, Congressional Avenue, Quezon City",
+    full: "4/F DRMed Clinic and Laboratory, Northridge Plaza, Congressional Avenue, Quezon City",
   },
   phone: {
     mobile: "0916 604 3208",

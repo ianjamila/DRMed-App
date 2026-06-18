@@ -15,7 +15,7 @@ import { pageMetadata } from "@/lib/marketing/metadata";
 export const metadata = pageMetadata({
   title: "Our Physicians & Schedules",
   description:
-    "Meet the doctors at DRMed Clinic & Laboratory in Quezon City and view their clinic schedules. Book a consultation online.",
+    "Meet the doctors at DRMed Clinic and Laboratory in Quezon City and view their clinic schedules. Book a consultation online.",
   path: "/physicians",
 });
 

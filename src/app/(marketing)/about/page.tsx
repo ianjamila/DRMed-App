@@ -5,7 +5,7 @@ import { Reveal } from "@/components/marketing/motion";
 import { pageMetadata } from "@/lib/marketing/metadata";
 
 export const metadata = pageMetadata({
-  title: "About DRMed Clinic & Laboratory",
+  title: "About DRMed Clinic and Laboratory",
   description:
     "A family-focused clinic and laboratory in Quezon City offering consultations, lab tests, X-ray, ultrasound, ECG, and home service.",
   path: "/about",

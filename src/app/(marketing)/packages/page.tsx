@@ -17,7 +17,7 @@ import { JsonLd } from "@/components/marketing/json-ld";
 export const metadata = pageMetadata({
   title: "Diagnostic Packages & Checkup Bundles",
   description:
-    "Affordable lab packages and annual checkup bundles at DRMed Clinic & Laboratory in Quezon City — up to 50% less than hospitals.",
+    "Affordable lab packages and annual checkup bundles at DRMed Clinic and Laboratory in Quezon City — up to 50% less than hospitals.",
   path: "/packages",
 });
 

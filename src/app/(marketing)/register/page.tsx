@@ -4,7 +4,7 @@ import { RegisterForm } from "./register-form";
 
 export const metadata: Metadata = {
   title: "Register — drmed.ph",
-  description: "Pre-register at DRMed Clinic & Laboratory and get your DRM-ID.",
+  description: "Pre-register at DRMed Clinic and Laboratory and get your DRM-ID.",
 };
 
 export default function RegisterPage() {

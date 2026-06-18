@@ -99,6 +99,12 @@ everywhere (UI + schema + email) with zero remaining string literals. Grep for
 `Northridge`, `Congressional`, `8 AM`, `0916 604`, `355 3517` outside `site.ts` returns only
 intentional prose, not NAP data.
 
+**Name literals:** the brand name is *also* hardcoded in ~16 spots (page metadata, register
+emails, gallery alt text, email templates). The 2026-06-18 name standardization already
+swapped these `&`→`and` in place (see decision #6); during this build, consolidate them to
+`SITE.name` (interpolated) so the name can't drift again — same single-source principle as
+the address/phone/hours.
+
 ## Pillar B — richer LocalBusiness / geo structured data
 
 Enhance `clinicNode()` in `structured-data.ts` (pure → unit-tested). New/changed fields:
@@ -244,5 +250,7 @@ short-link). Generated on request — does not block the code.
 3. Fasting guidance wording (clinical sign-off).
 4. `AREAS_SERVED` list — prune/confirm the nearby QC areas.
 5. Wheelchair accessibility (for `amenityFeature`).
-6. **Canonical business name** — standardize "DRMed Clinic **&** Laboratory" vs the Google
-   pin's "…**and** Laboratory" vs FB "drmedcliniclab"; pick one and align GBP/FB to the site.
+6. **Canonical business name — RESOLVED 2026-06-18:** standardized to **"DRMed Clinic and
+   Laboratory"** (matches the verified Google pin). Applied across the codebase (`&`→`and` in
+   `site.ts` + ~16 hardcoded literals; typecheck + 316 tests green). Remaining user action:
+   rename the **Facebook** page ("drmedcliniclab") to match.

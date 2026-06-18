@@ -6,7 +6,7 @@ import { ServicesCatalog } from "./services-catalog";
 export const metadata = pageMetadata({
   title: "All Services & Tests",
   description:
-    "Browse every laboratory test, imaging service, and consultation at DRMed Clinic & Laboratory in Quezon City — up to 50% less than hospitals.",
+    "Browse every laboratory test, imaging service, and consultation at DRMed Clinic and Laboratory in Quezon City — up to 50% less than hospitals.",
   path: "/all-services",
 });
 

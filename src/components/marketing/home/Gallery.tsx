@@ -5,7 +5,7 @@ import { Reveal } from "@/components/marketing/motion";
 const GALLERY_PHOTOS = [
   {
     src: "/photos/reception.jpg",
-    alt: "DRMed Clinic & Laboratory reception counter with staff greeting a patient",
+    alt: "DRMed Clinic and Laboratory reception counter with staff greeting a patient",
     caption: "Reception — where every visit begins",
   },
   {
@@ -20,7 +20,7 @@ const GALLERY_PHOTOS = [
   },
   {
     src: "/photos/waiting-area.jpg",
-    alt: "DRMed Clinic & Laboratory waiting area",
+    alt: "DRMed Clinic and Laboratory waiting area",
     caption: "A comfortable place to wait",
   },
 ] as const;
