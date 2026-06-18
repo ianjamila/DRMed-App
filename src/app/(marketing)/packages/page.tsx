@@ -11,13 +11,13 @@ import {
 } from "@/lib/marketing/services";
 import { formatPhp } from "@/lib/marketing/format";
 import { pageMetadata } from "@/lib/marketing/metadata";
-import { packagesItemListLd } from "@/lib/marketing/structured-data";
+import { packagesItemListLd, breadcrumbLd } from "@/lib/marketing/structured-data";
 import { JsonLd } from "@/components/marketing/json-ld";
 
 export const metadata = pageMetadata({
   title: "Diagnostic Packages & Checkup Bundles",
   description:
-    "Affordable lab packages and annual checkup bundles at DRMed Clinic & Laboratory in Quezon City — up to 50% less than hospitals.",
+    "Affordable lab packages and annual checkup bundles at DRMed Clinic and Laboratory in Quezon City — up to 50% less than hospitals.",
   path: "/packages",
 });
 
@@ -34,6 +34,7 @@ export default async function PackagesPage() {
 
   return (
     <>
+      <JsonLd data={breadcrumbLd([{ name: "Home", path: "/" }, { name: "Packages", path: "/packages" }])} />
       {packages.length > 0 ? (
         <JsonLd data={packagesItemListLd(packages)} />
       ) : null}

@@ -1,6 +1,7 @@
 import { CalendarCheck, Stethoscope, FileDown, type LucideIcon } from "lucide-react";
 import { SectionHeading } from "@/components/marketing/ui";
 import { Reveal } from "@/components/marketing/motion";
+import { CONTACT } from "@/lib/marketing/site";
 
 interface Step {
   n: string;
@@ -20,7 +21,7 @@ const STEPS: Step[] = [
     n: "02",
     icon: Stethoscope,
     title: "Visit the clinic",
-    body: "4/F Northridge Plaza, Congressional Avenue. Present your ID and HMO card — our staff handles the rest.",
+    body: `${CONTACT.address.line2}, ${CONTACT.address.city}. Present your ID and HMO card — our staff handles the rest.`,
   },
   {
     n: "03",

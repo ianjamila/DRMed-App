@@ -2,7 +2,7 @@
 // Pulled from the existing drmed.ph site so the new build matches.
 
 export const SITE = {
-  name: "DRMed Clinic & Laboratory",
+  name: "DRMed Clinic and Laboratory",
   shortName: "drmed.ph",
   tagline: "Your Family's Well-Being is Our Mission.",
   description:
@@ -21,13 +21,14 @@ export const SITE = {
 
 export const CONTACT = {
   address: {
-    line1: "4/F DRMed Clinic & Laboratory",
+    floor: "4/F",
+    line1: "4/F DRMed Clinic and Laboratory",
     line2: "Northridge Plaza, Congressional Avenue",
     city: "Quezon City",
     region: "Metro Manila",
     country: "PH",
     postalCode: "1106",
-    full: "4/F DRMed Clinic & Laboratory, Northridge Plaza, Congressional Avenue, Quezon City",
+    full: "4/F DRMed Clinic and Laboratory, Northridge Plaza, Congressional Avenue, Quezon City",
   },
   phone: {
     mobile: "0916 604 3208",
@@ -36,7 +37,7 @@ export const CONTACT = {
     landlineE164: "+63283553517",
   },
   email: "drmedhealthcare@gmail.com",
-  hours: "Monday – Saturday, 8 AM – 5 PM",
+  hours: "Monday – Saturday, 8:00 AM – 5:00 PM",
 } as const;
 
 // Clinic geo for the verified "DRMed Clinic and Laboratory" Google Business
@@ -48,6 +49,26 @@ export const GEO = {
   lng: 121.0389717 as number | null,
   mapUrl: "https://maps.app.goo.gl/Qrb5WYwmA5RVuBkN9",
 } as const;
+
+// Structured opening hours — the single source for schema openingHoursSpecification
+// and the OpenNowPill computation. Asia/Manila, no DST. lastRegistration is the
+// reception cut-off shown on the booking form.
+export const HOURS = {
+  days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"],
+  opens: "08:00",
+  closes: "17:00",
+  lastRegistration: "16:30",
+  timezone: "Asia/Manila",
+} as const;
+
+// Genuine adjacent Quezon City areas the clinic serves (walk-in + home service).
+// Used by both the areaServed schema and the /contact "Areas we serve" section.
+// Owner-confirmable — prune to match reality.
+export const AREAS_SERVED = [
+  "Project 8", "Project 6", "Bahay Toro", "Veterans Village", "Sangandaan",
+  "Balintawak", "Mindanao Avenue", "Tandang Sora", "Culiat", "Baesa",
+  "Apolonio Samson", "Congressional Avenue",
+] as const;
 
 export const SOCIAL = {
   facebook: "https://www.facebook.com/drmed.ph",

@@ -15,6 +15,7 @@ import {
   Stethoscope,
 } from "lucide-react";
 import { formatPhp } from "@/lib/marketing/format";
+import { hoursWithLastRegistration, streetAddressLine } from "@/lib/marketing/nap";
 import {
   SlotPicker,
   slotScheduledAt,
@@ -1051,11 +1052,11 @@ function DetailsStep(props: {
           <ul className="mt-3 grid gap-2.5 text-sm text-[color:var(--color-ink-mid)]">
             <li className="flex items-start gap-2.5">
               <CalendarClock className="mt-0.5 h-4 w-4 shrink-0 text-[color:var(--color-brand-cyan-text)]" />
-              Monday – Saturday, 8:00 AM – 5:00 PM (last registration 4:30 PM).
+              {hoursWithLastRegistration()}.
             </li>
             <li className="flex items-start gap-2.5">
               <Home className="mt-0.5 h-4 w-4 shrink-0 text-[color:var(--color-brand-cyan-text)]" />
-              4/F Northridge Plaza, Congressional Avenue, Quezon City.
+              {streetAddressLine()}.
             </li>
             <li className="flex items-start gap-2.5">
               <Info className="mt-0.5 h-4 w-4 shrink-0 text-[color:var(--color-brand-cyan-text)]" />

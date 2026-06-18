@@ -7,8 +7,10 @@ import { Eyebrow } from "@/components/marketing/ui/Eyebrow";
 import { ContactForm } from "@/app/(marketing)/contact/contact-form";
 import { OpenNowPill } from "./OpenNowPill";
 import { CONTACT, SOCIAL } from "@/lib/marketing/site";
+import { addressLines, hoursLabel, directionsHrefs } from "@/lib/marketing/nap";
 
-const mapsHref = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(CONTACT.address.full)}`;
+const mapsHref = directionsHrefs().google;
+const [addrTop, addrBottom] = addressLines();
 
 /**
  * Homepage Contact section — navy background with a wave SVG transition
@@ -71,9 +73,9 @@ export function Contact() {
                     Address
                   </p>
                   <p className="mt-1 text-[14.5px] leading-relaxed text-white/[.82]">
-                    4/F Northridge Plaza, Congressional Avenue
+                    {addrTop}
                     <br />
-                    Quezon City, Metro Manila
+                    {addrBottom}
                   </p>
                   <a
                     href={mapsHref}
@@ -99,7 +101,7 @@ export function Contact() {
                     Clinic Hours
                   </p>
                   <p className="mt-1 text-[14.5px] leading-relaxed text-white/[.82]">
-                    Monday – Saturday · 8:00 AM – 5:00 PM
+                    {hoursLabel()}
                     <OpenNowPill />
                   </p>
                 </div>

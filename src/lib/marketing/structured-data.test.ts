@@ -19,7 +19,7 @@ describe("medicalClinicLd", () => {
     expect(ld["@id"]).toBe(`${SITE.url}/#clinic`);
     expect((ld.address as Record<string, unknown>)["@type"]).toBe("PostalAddress");
     expect(ld.priceRange).toBeTruthy();
-    expect(ld.sameAs).toContain("https://www.facebook.com/drmedcliniclab/");
+    expect(ld.sameAs).toContain("https://www.facebook.com/drmed.ph");
   });
   it("includes geo + hasMap when coordinates are set (current config)", () => {
     const ld = medicalClinicLd();
@@ -28,6 +28,39 @@ describe("medicalClinicLd", () => {
       expect((ld.geo as Record<string, unknown>)["@type"]).toBe("GeoCoordinates");
       expect(ld.hasMap).toBeTruthy();
     }
+  });
+  it("is a complete local entity: hours spec, both phones, areas, payments, languages, reserve action, maps sameAs", () => {
+    const ld = medicalClinicLd();
+    // openingHoursSpecification (structured array), in addition to the openingHours string
+    const ohsList = ld.openingHoursSpecification as Array<Record<string, unknown>>;
+    expect(Array.isArray(ohsList)).toBe(true);
+    const ohs = ohsList[0];
+    expect(ohs["@type"]).toBe("OpeningHoursSpecification");
+    expect(ohs.opens).toBe("08:00");
+    expect(ohs.closes).toBe("17:00");
+    expect(ohs.dayOfWeek).toContain("Saturday");
+    expect(ohs.dayOfWeek).not.toContain("Sunday");
+    // contactPoint carries BOTH phones
+    const cps = ld.contactPoint as Array<Record<string, unknown>>;
+    expect(cps).toHaveLength(2);
+    const tels = cps.map((c) => c.telephone);
+    expect(tels).toContain("+639166043208");
+    expect(tels).toContain("+63283553517");
+    // areaServed expanded beyond just QC + Metro Manila
+    expect((ld.areaServed as unknown[]).length).toBeGreaterThan(2);
+    // payments + currency + languages
+    expect(ld.paymentAccepted).toContain("HMO");
+    expect(ld.currenciesAccepted).toBe("PHP");
+    expect(ld.knowsLanguage).toContain("fil");
+    // image is an array of place photos
+    expect(Array.isArray(ld.image)).toBe(true);
+    // sameAs includes the Google Maps place URL + Messenger
+    expect(ld.sameAs).toContain("https://maps.app.goo.gl/Qrb5WYwmA5RVuBkN9");
+    expect(ld.sameAs).toContain("https://m.me/drmed.ph");
+    // ReserveAction -> /schedule
+    const action = ld.potentialAction as Record<string, unknown>;
+    expect(action["@type"]).toBe("ReserveAction");
+    expect((action.target as Record<string, unknown>).urlTemplate).toBe(`${SITE.url}/schedule`);
   });
 });
 

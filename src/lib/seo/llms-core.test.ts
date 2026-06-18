@@ -4,7 +4,7 @@ import { buildLlmsTxt, buildLlmsFullTxt, type LlmsData } from "./llms-core";
 
 const DATA: LlmsData = {
   site: {
-    name: "DRMed Clinic & Laboratory",
+    name: "DRMed Clinic and Laboratory",
     url: "https://drmed.ph",
     summary: "Clinic & lab in Quezon City.",
     address: "123 Test St, Quezon City, Metro Manila 1106, PH",
@@ -54,7 +54,7 @@ describe("buildLlmsTxt", () => {
   const out = buildLlmsTxt(DATA);
 
   it("starts with the H1 and a blockquote summary", () => {
-    expect(out.startsWith("# DRMed Clinic & Laboratory\n")).toBe(true);
+    expect(out.startsWith("# DRMed Clinic and Laboratory\n")).toBe(true);
     expect(out).toContain("> Clinic & lab in Quezon City.");
   });
 

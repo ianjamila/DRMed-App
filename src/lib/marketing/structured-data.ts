@@ -1,4 +1,4 @@
-import { SITE, CONTACT, SOCIAL, GEO } from "./site";
+import { SITE, CONTACT, SOCIAL, GEO, HOURS, AREAS_SERVED } from "./site";
 import type { FaqItem } from "./faq";
 
 const CLINIC_ID = `${SITE.url}/#clinic`;
@@ -7,7 +7,7 @@ type SchemaObject = Record<string, unknown>;
 function postalAddress(): SchemaObject {
   return {
     "@type": "PostalAddress",
-    streetAddress: `${CONTACT.address.line1}, ${CONTACT.address.line2}`,
+    streetAddress: `${CONTACT.address.floor} ${CONTACT.address.line2}`,
     addressLocality: CONTACT.address.city,
     addressRegion: CONTACT.address.region,
     postalCode: CONTACT.address.postalCode,
@@ -27,19 +27,64 @@ function clinicNode(): SchemaObject {
     name: SITE.name,
     url: SITE.url,
     logo: `${SITE.url}${SITE.logo}`,
-    image: `${SITE.url}${SITE.ogImage}`,
+    image: [
+      `${SITE.url}${SITE.ogImage}`,
+      `${SITE.url}/photos/reception.jpg`,
+      `${SITE.url}/photos/lab-chemistry.jpg`,
+      `${SITE.url}/photos/waiting-area.jpg`,
+    ],
     description: SITE.description,
     email: CONTACT.email,
     telephone: CONTACT.phone.mobileE164,
     priceRange: SITE.priceRange,
+    currenciesAccepted: "PHP",
+    paymentAccepted: "Cash, GCash, Maya, Credit Card, HMO",
+    knowsLanguage: ["en", "fil"],
     address: postalAddress(),
     areaServed: [
       { "@type": "City", name: "Quezon City" },
       { "@type": "AdministrativeArea", name: "Metro Manila" },
+      ...AREAS_SERVED.map((a) => ({ "@type": "Place", name: `${a}, Quezon City` })),
+    ],
+    contactPoint: [
+      {
+        "@type": "ContactPoint",
+        telephone: CONTACT.phone.mobileE164,
+        contactType: "customer service",
+        areaServed: "PH",
+        availableLanguage: ["en", "fil"],
+      },
+      {
+        "@type": "ContactPoint",
+        telephone: CONTACT.phone.landlineE164,
+        contactType: "reservations",
+        areaServed: "PH",
+        availableLanguage: ["en", "fil"],
+      },
     ],
     openingHours: "Mo-Sa 08:00-17:00",
+    openingHoursSpecification: [
+      {
+        "@type": "OpeningHoursSpecification",
+        dayOfWeek: [...HOURS.days],
+        opens: HOURS.opens,
+        closes: HOURS.closes,
+      },
+    ],
     medicalSpecialty: ["Diagnostic", "ClinicalLaboratory", "Radiology"],
-    sameAs: [SOCIAL.facebook, SOCIAL.instagram],
+    sameAs: [SOCIAL.facebook, SOCIAL.instagram, SOCIAL.messenger, GEO.mapUrl].filter(Boolean),
+    potentialAction: {
+      "@type": "ReserveAction",
+      target: {
+        "@type": "EntryPoint",
+        urlTemplate: `${SITE.url}/schedule`,
+        actionPlatform: [
+          "http://schema.org/DesktopWebPlatform",
+          "http://schema.org/MobileWebPlatform",
+        ],
+      },
+      result: { "@type": "Reservation", name: "Clinic or laboratory appointment" },
+    },
   };
   if (GEO.lat != null && GEO.lng != null) {
     node.geo = { "@type": "GeoCoordinates", latitude: GEO.lat, longitude: GEO.lng };

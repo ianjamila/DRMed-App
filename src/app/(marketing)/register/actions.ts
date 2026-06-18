@@ -76,7 +76,7 @@ export async function submitRegistrationAction(
     const sendResult = await sendEmail({
       to: d.email,
       subject: "Your DRMed DRM-ID",
-      text: `Hi ${d.first_name},\n\nWe found an existing DRMed record matching your details. Your DRM-ID is ${res.drm_id}.\n\nPresent it at the clinic. After your visit, the Secure PIN printed on your receipt unlocks your results online.\n\n— DRMed Clinic & Laboratory`,
+      text: `Hi ${d.first_name},\n\nWe found an existing DRMed record matching your details. Your DRM-ID is ${res.drm_id}.\n\nPresent it at the clinic. After your visit, the Secure PIN printed on your receipt unlocks your results online.\n\n— DRMed Clinic and Laboratory`,
       html: renderEmailShell({
         heading: "Your DRMed patient ID",
         contentHtml:
@@ -146,7 +146,7 @@ export async function submitRegistrationAction(
   const welcomeResult = await sendEmail({
     to: d.email,
     subject: "Welcome to DRMed — your DRM-ID",
-    text: `Hi ${d.first_name},\n\nThanks for pre-registering. Your DRM-ID is ${res.drm_id}.\n\nBring it on your visit — reception verifies your identity at the counter. After your visit, the Secure PIN printed on your receipt unlocks your results online.\n\n— DRMed Clinic & Laboratory`,
+    text: `Hi ${d.first_name},\n\nThanks for pre-registering. Your DRM-ID is ${res.drm_id}.\n\nBring it on your visit — reception verifies your identity at the counter. After your visit, the Secure PIN printed on your receipt unlocks your results online.\n\n— DRMed Clinic and Laboratory`,
     html: renderEmailShell({
       heading: "Welcome to DRMed",
       contentHtml:
