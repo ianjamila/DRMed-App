@@ -6,6 +6,7 @@ import {
   faqPageLd,
   physicianLd,
   physiciansItemListLd,
+  packagesItemListLd,
   breadcrumbLd,
   serviceOfferLd,
   productLd,
@@ -100,6 +101,24 @@ describe("physiciansItemListLd", () => {
     const items = ld.itemListElement as Array<Record<string, unknown>>;
     expect(items[0].position).toBe(1);
     expect(items[1].url).toBe(`${SITE.url}/physicians/b`);
+  });
+});
+
+describe("packagesItemListLd", () => {
+  it("numbers packages from 1 with absolute lowercase-code urls", () => {
+    const ld = packagesItemListLd([
+      { code: "ROUTINE_PACKAGE", name: "Routine Package" },
+      { code: "EXECUTIVE_PACKAGE_STANDARD", name: "Standard Executive" },
+    ]);
+    expect(ld["@type"]).toBe("ItemList");
+    const items = ld.itemListElement as Array<Record<string, unknown>>;
+    expect(items).toHaveLength(2);
+    expect(items[0].position).toBe(1);
+    expect(items[0].name).toBe("Routine Package");
+    expect(items[0].url).toBe(`${SITE.url}/all-services/routine_package`);
+    expect(items[1].url).toBe(
+      `${SITE.url}/all-services/executive_package_standard`,
+    );
   });
 });
 

@@ -3,6 +3,7 @@
 import { useActionState, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   StableInput,
@@ -62,6 +63,7 @@ interface ServiceDefaults {
   section: string | null;
   is_send_out: boolean;
   send_out_lab: string | null;
+  image_url: string | null;
   is_active: boolean;
   requires_signoff: boolean;
   send_out_unit_cost_php?: number | null;
@@ -94,6 +96,8 @@ export function ServiceForm({ initial, vendors = [] }: Props) {
 
   const formRef = useRef<HTMLFormElement>(null);
   const skipConfirmRef = useRef(false);
+  const [imageUrl, setImageUrl] = useState(initial?.image_url ?? "");
+  const showImagePreview = /^(https?:\/\/|\/)/.test(imageUrl.trim());
   const [confirming, setConfirming] = useState<{
     next: { price: number | null; hmo: number | null; senior: number | null };
   } | null>(null);
@@ -169,6 +173,36 @@ export function ServiceForm({ initial, vendors = [] }: Props) {
             defaultValue={initial?.description ?? ""}
             className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
           />
+        </div>
+
+        <div className="grid gap-1.5">
+          <Label htmlFor="image_url">Listing image (optional)</Label>
+          <div className="flex items-start gap-3">
+            {showImagePreview ? (
+              // eslint-disable-next-line @next/next/no-img-element -- arbitrary external/relative URL preview; not a build-time asset
+              <img
+                src={imageUrl.trim()}
+                alt=""
+                className="h-16 w-16 shrink-0 rounded-md border border-[color:var(--color-brand-bg-mid)] object-cover"
+              />
+            ) : null}
+            <div className="grid flex-1 gap-1.5">
+              <Input
+                id="image_url"
+                name="image_url"
+                value={imageUrl}
+                onChange={(e) => setImageUrl(e.target.value)}
+                maxLength={500}
+                placeholder="/photos/lab-chemistry.jpg or https://…"
+              />
+              <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+                Used for Google Shopping / Merchant listings on lab packages.
+                Paste a full image URL or a site path starting with{" "}
+                <code>/</code>. Leave blank to use the default clinic image. Use a
+                clean photo with no text or watermark.
+              </p>
+            </div>
+          </div>
         </div>
 
         <fieldset className="grid gap-4 rounded-lg border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)]/30 p-4 sm:grid-cols-3">

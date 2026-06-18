@@ -4985,6 +4985,7 @@ export type Database = {
           fasting_required: boolean
           hmo_price_php: number | null
           id: string
+          image_url: string | null
           is_active: boolean
           is_send_out: boolean
           kind: string
@@ -5011,6 +5012,7 @@ export type Database = {
           fasting_required?: boolean
           hmo_price_php?: number | null
           id?: string
+          image_url?: string | null
           is_active?: boolean
           is_send_out?: boolean
           kind?: string
@@ -5037,6 +5039,7 @@ export type Database = {
           fasting_required?: boolean
           hmo_price_php?: number | null
           id?: string
+          image_url?: string | null
           is_active?: boolean
           is_send_out?: boolean
           kind?: string
