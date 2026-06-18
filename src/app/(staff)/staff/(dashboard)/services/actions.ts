@@ -27,6 +27,7 @@ function parseForm(formData: FormData) {
     section: formData.get("section") ?? "",
     is_send_out: formData.get("is_send_out"),
     send_out_lab: formData.get("send_out_lab") ?? "",
+    image_url: formData.get("image_url") ?? "",
     is_active: formData.get("is_active"),
     requires_signoff: formData.get("requires_signoff"),
     senior_pwd_eligible: formData.get("senior_pwd_eligible"),

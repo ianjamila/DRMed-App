@@ -74,6 +74,7 @@ export default async function ServiceDetailPage({ params }: ServicePageProps) {
         name: service.name,
         description: service.description,
         pricePhp: service.price_php,
+        imageUrl: service.image_url ?? undefined,
       }),
     );
   }

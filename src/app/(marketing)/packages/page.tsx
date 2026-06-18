@@ -11,6 +11,8 @@ import {
 } from "@/lib/marketing/services";
 import { formatPhp } from "@/lib/marketing/format";
 import { pageMetadata } from "@/lib/marketing/metadata";
+import { packagesItemListLd } from "@/lib/marketing/structured-data";
+import { JsonLd } from "@/components/marketing/json-ld";
 
 export const metadata = pageMetadata({
   title: "Diagnostic Packages & Checkup Bundles",
@@ -32,6 +34,9 @@ export default async function PackagesPage() {
 
   return (
     <>
+      {packages.length > 0 ? (
+        <JsonLd data={packagesItemListLd(packages)} />
+      ) : null}
       <PageHero
         eyebrow="DRMed Clinic and Laboratory"
         title="Detailed Diagnostic"

@@ -129,6 +129,28 @@ export function physiciansItemListLd(docs: readonly PhysicianListItem[]): Schema
   };
 }
 
+export interface PackageListItem {
+  code: string;
+  name: string;
+}
+
+// ItemList of the lab packages for the /packages catalog page, so Google reads
+// the page as a structured collection that links to each package's Product page
+// (where the priced Offer lives). Summary-style ItemList (url only) per Google's
+// collection-page guidance — the canonical Product stays on each detail page.
+export function packagesItemListLd(packages: readonly PackageListItem[]): SchemaObject {
+  return {
+    "@context": "https://schema.org",
+    "@type": "ItemList",
+    itemListElement: packages.map((p, i) => ({
+      "@type": "ListItem",
+      position: i + 1,
+      name: p.name,
+      url: `${SITE.url}/all-services/${p.code.toLowerCase()}`,
+    })),
+  };
+}
+
 export interface BreadcrumbCrumb {
   name: string;
   path: string;

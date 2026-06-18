@@ -74,6 +74,19 @@ export const ServiceSchema = z.object({
     .nullable(),
   is_send_out: checkbox,
   send_out_lab: optionalText,
+  // Public listing image: absolute URL (https://…) or site-relative path
+  // (/photos/x.jpg). Empty → null (falls back to the brand default image).
+  image_url: z
+    .string()
+    .trim()
+    .max(500)
+    .or(z.literal(""))
+    .transform((v) => (v === "" ? null : v))
+    .refine(
+      (v) => v === null || /^(https?:\/\/|\/)/.test(v),
+      "Image must be a full URL (https://…) or a path starting with /.",
+    )
+    .nullable(),
   is_active: checkbox,
   requires_signoff: checkbox,
   // Senior/PWD 20% eligibility. Unchecked → false (e.g. lab packages, already
