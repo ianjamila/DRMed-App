@@ -3,6 +3,8 @@ import { PageHero } from "@/components/marketing/page-hero";
 import { SectionHeading, PillLink } from "@/components/marketing/ui";
 import { Reveal } from "@/components/marketing/motion";
 import { pageMetadata } from "@/lib/marketing/metadata";
+import { JsonLd } from "@/components/marketing/json-ld";
+import { breadcrumbLd } from "@/lib/marketing/structured-data";
 
 export const metadata = pageMetadata({
   title: "About DRMed Clinic and Laboratory",
@@ -41,6 +43,7 @@ const VALUES = [
 export default function AboutPage() {
   return (
     <>
+      <JsonLd data={breadcrumbLd([{ name: "Home", path: "/" }, { name: "About", path: "/about" }])} />
       <PageHero
         eyebrow="About Us"
         title="At the heart of your family's health."

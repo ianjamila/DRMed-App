@@ -1,6 +1,8 @@
 import { PageHero } from "@/components/marketing/page-hero";
 import { listActiveServices } from "@/lib/marketing/services";
 import { pageMetadata } from "@/lib/marketing/metadata";
+import { JsonLd } from "@/components/marketing/json-ld";
+import { breadcrumbLd } from "@/lib/marketing/structured-data";
 import { ServicesCatalog } from "./services-catalog";
 
 export const metadata = pageMetadata({
@@ -20,6 +22,7 @@ export default async function AllServicesPage({ searchParams }: PageProps) {
 
   return (
     <>
+      <JsonLd data={breadcrumbLd([{ name: "Home", path: "/" }, { name: "All Services", path: "/all-services" }])} />
       <PageHero
         eyebrow="Full Catalog"
         title="Check All Services"
