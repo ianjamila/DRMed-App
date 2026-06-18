@@ -8,6 +8,7 @@ import {
   physiciansItemListLd,
   breadcrumbLd,
   serviceOfferLd,
+  productLd,
 } from "./structured-data";
 
 describe("medicalClinicLd", () => {
@@ -141,5 +142,53 @@ describe("serviceOfferLd", () => {
     expect(provider["@id"]).toBe(`${SITE.url}/#clinic`);
     expect(provider.telephone).toBeTruthy();
     expect(provider["@context"]).toBeUndefined();
+  });
+});
+
+describe("productLd", () => {
+  it("builds a Product with an InStock PHP Offer, brand, sku and an absolute image", () => {
+    const ld = productLd({
+      code: "ROUTINE_PACKAGE",
+      name: "Routine Package",
+      description: "CBC, Urinalysis.",
+      pricePhp: 1299,
+    });
+    expect(ld["@type"]).toBe("Product");
+    expect(ld.name).toBe("Routine Package");
+    expect(ld.sku).toBe("ROUTINE_PACKAGE");
+    // Merchant needs an identifier; brand + mpn satisfy the "no GTIN" case.
+    expect((ld.brand as Record<string, unknown>).name).toBe(SITE.name);
+    expect(ld.mpn).toBe("ROUTINE_PACKAGE");
+    // Image must be an absolute URL (Merchant rejects relative paths).
+    const images = ld.image as string[];
+    expect(images[0]).toMatch(/^https?:\/\//);
+    const offer = ld.offers as Record<string, unknown>;
+    expect(offer["@type"]).toBe("Offer");
+    expect(offer.price).toBe("1299");
+    expect(offer.priceCurrency).toBe("PHP");
+    expect(offer.availability).toBe("https://schema.org/InStock");
+    // URL points at the package's own page (lowercased code), like serviceOfferLd.
+    expect(offer.url).toBe(`${SITE.url}/all-services/routine_package`);
+    expect(ld.url).toBe(`${SITE.url}/all-services/routine_package`);
+  });
+
+  it("makes a site-relative image path absolute, and passes an absolute URL through", () => {
+    const rel = productLd({
+      code: "X",
+      name: "X",
+      description: null,
+      pricePhp: 1,
+      imageUrl: "/photos/foo.jpg",
+    });
+    expect((rel.image as string[])[0]).toBe(`${SITE.url}/photos/foo.jpg`);
+
+    const abs = productLd({
+      code: "X",
+      name: "X",
+      description: null,
+      pricePhp: 1,
+      imageUrl: "https://cdn.example/x.jpg",
+    });
+    expect((abs.image as string[])[0]).toBe("https://cdn.example/x.jpg");
   });
 });

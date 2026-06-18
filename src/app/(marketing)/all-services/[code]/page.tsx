@@ -9,7 +9,11 @@ import { PillLink } from "@/components/marketing/ui";
 import { Reveal } from "@/components/marketing/motion";
 import { SITE } from "@/lib/marketing/site";
 import { pageMetadata } from "@/lib/marketing/metadata";
-import { serviceOfferLd, breadcrumbLd } from "@/lib/marketing/structured-data";
+import {
+  serviceOfferLd,
+  breadcrumbLd,
+  productLd,
+} from "@/lib/marketing/structured-data";
 import { JsonLd } from "@/components/marketing/json-ld";
 
 interface ServicePageProps {
@@ -45,7 +49,7 @@ export default async function ServiceDetailPage({ params }: ServicePageProps) {
   const service = await getServiceByCode(code);
   if (!service) notFound();
 
-  const ld = [
+  const ld: Record<string, unknown>[] = [
     serviceOfferLd({
       code: service.code,
       name: service.name,
@@ -59,6 +63,20 @@ export default async function ServiceDetailPage({ params }: ServicePageProps) {
       { name: service.name, path: `/all-services/${service.code.toLowerCase()}` },
     ]),
   ];
+
+  // Google Merchant discovers products from Product markup, not Service — so for
+  // packages (the only priced listings) we add a Product node. Its price comes
+  // from the same live `services` row, so the Shopping listing can't drift.
+  if (service.kind === "lab_package") {
+    ld.push(
+      productLd({
+        code: service.code,
+        name: service.name,
+        description: service.description,
+        pricePhp: service.price_php,
+      }),
+    );
+  }
 
   return (
     <>
