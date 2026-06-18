@@ -19,7 +19,7 @@ describe("medicalClinicLd", () => {
     expect(ld["@id"]).toBe(`${SITE.url}/#clinic`);
     expect((ld.address as Record<string, unknown>)["@type"]).toBe("PostalAddress");
     expect(ld.priceRange).toBeTruthy();
-    expect(ld.sameAs).toContain("https://www.facebook.com/drmedcliniclab/");
+    expect(ld.sameAs).toContain("https://www.facebook.com/drmed.ph");
   });
   it("includes geo + hasMap when coordinates are set (current config)", () => {
     const ld = medicalClinicLd();
