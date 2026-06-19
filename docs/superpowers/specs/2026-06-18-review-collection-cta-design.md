@@ -40,10 +40,14 @@ infrastructure. **No database migration. No new route. No new tracker.**
 
 - `aggregateRating` / review-stars structured data of any kind.
 - First-party (on-site) review capture, storage, or moderation.
-- Printed-receipt QR, front-desk poster, dedicated post-visit thank-you email
-  (these are the agreed *medium/larger* follow-on, after this lands).
+- Printed-receipt QR, front-desk poster, dedicated post-visit thank-you email.
+- "Review asks sent" admin stat, dismissable portal card, ungated portal
+  micro-feedback, "refer a friend" CTA.
 - Any analytics/click-tracking on the review link (off-domain; RA 10173).
 - Touching `/schedule`, booking, or the day-before reminder emails.
+
+All of the above are catalogued (by cost, with the recommended order) in the
+**Out of scope / follow-on roadmap** at the end of this doc.
 
 ## Detailed design
 
@@ -68,10 +72,22 @@ export const GOOGLE_REVIEW = {
 } as const;
 ```
 
-Both the email CTA and the portal card read `GOOGLE_REVIEW.url`. During
-implementation we make one more attempt to resolve the `ChIJ` ID and, if
-obtained, **load the resulting URL to confirm it names "DRMed" before
-committing**; otherwise the `?cid=` link ships as above.
+Both the email CTA and the portal card read `GOOGLE_REVIEW.url`.
+
+**Known limitation (accepted for v1):** the shipped `?cid=` link lands on the
+Maps *listing*, not the write-review composer — so the "Leave us a Google
+review" button costs the patient one extra tap ("Write a review" on the
+listing). The verified one-tap composer needs the `ChIJ` Place ID, which can't
+be obtained headless without a Maps API key. During implementation we make one
+attempt to resolve `ChIJ` (Place ID Finder, or an algorithmic `ftid → ChIJ`
+conversion) and, if obtained, **load the resulting URL to confirm it names
+"DRMed" before relying on it**; otherwise the `?cid=` listing link ships.
+
+**Owner action (tracked follow-up):** the cleanest one-tap link is the GBP
+"Ask for reviews" short link (`https://g.page/r/<id>/review`). Grabbing it is a
+~30-second task in the Google Business Profile dashboard; pasting it into
+`GOOGLE_REVIEW.url` is a single-line config change (no redeploy logic). This
+materially improves conversion and should be done soon after launch.
 
 ### 2. Pure email CTA builder — `src/lib/notifications/branded-email.ts`
 
@@ -129,9 +145,12 @@ export async function patientAlreadyAskedForReview(
 }
 ```
 
-- Per-patient `result.notified` rows are few (one per released test), so this is
-  cheap; no new index required. (Confirm an existing `patient_id` index covers
-  it; if absent the query is still trivial at this row count.)
+- **Index-backed (verified):** `idx_audit_log_patient_id` (partial, `where
+  patient_id is not null`) exists since `0001_init.sql`. The query filters on
+  `patient_id` first, so even the common first-time-ask case (no matching row)
+  is an index scan over that one patient's handful of `result.notified` rows —
+  **not** a sequential scan of the whole audit log. No migration; safe on the
+  hot result-release path.
 
 ### 4. Wire-up — `src/lib/notifications/notify-released.ts`
 
@@ -213,14 +232,40 @@ row (§4), so surfacing it is read-only:
   `EmailLogEntry`.
 - **`src/lib/emails-log/parse-row.ts`:** set
   `reviewCtaShown: type === "result" && asObject(meta.review_cta).shown === true`.
-- **Emails-sent page** (`/staff/admin/emails-sent` — locate the row-rendering
-  component during implementation): render a small chip ("Review ask ✓") on
-  `result` rows where `reviewCtaShown` is true, near the existing type/status
-  chips. Match the existing chip styling.
+- **Emails-sent page** (`src/app/(staff)/staff/(dashboard)/admin/emails-sent/page.tsx`
+  — a single file, no separate row component): render a small chip
+  ("Review ask ✓") in the **Details** `<td>` (the cell that already holds
+  `e.detail` + the Resend id) on `result` rows where `reviewCtaShown` is true.
+  Style it like the existing status chip
+  (`rounded-md px-2 py-0.5 text-xs font-semibold`, a cyan tint to distinguish it
+  from the green "Sent" status).
+- **CSV export** (`src/lib/emails-log/csv.ts`): add a "Review ask" column
+  (`yes`/empty) so the admin export stays consistent with the UI — otherwise the
+  field is visible on screen but silently dropped from the exported file.
 
 **Tests (in `parse-row.test.ts`):** a `result.notified` row with
 `metadata.review_cta.shown = true` parses `reviewCtaShown: true`; absent/false →
-`false`; non-result rows → `false`.
+`false`; non-result rows → `false`. **Tests (in `csv.test.ts`):** the new
+column is present and reflects `reviewCtaShown`.
+
+## Edge cases & accepted limitations
+
+- **Patient merge:** if a patient record is merged into another after a review
+  ask was sent, the surviving id may not see the old `review_cta` audit row (the
+  merge tooling may not repoint `audit_log.patient_id`), so a merged patient
+  could be asked once more. Harmless — accepted, not worth special handling.
+- **Bounced email:** Resend "accepted" (`email.ok=true`) marks the patient as
+  asked even if the message later bounces, so a hard-bounce patient won't be
+  re-asked. Accepted — bounce-webhook plumbing isn't justified for a soft ask.
+- **No-email / failed send:** `review_cta.shown` is only set true when the CTA
+  was actually delivered, so these patients stay eligible for the next release.
+- **Ambient portal card:** shows on every visit while results exist, even to a
+  patient who already reviewed (we can't know — it's off-domain). Low-nag,
+  standard; a dismissable variant is listed as a cheap follow-on.
+- **Optional `decideReviewCta` predicate:** `notify-released.ts` is server-only
+  and untested. If we want the include-decision under unit test without a DB,
+  extract a pure `decideReviewCta({ hasEmail, alreadyAsked }): boolean` and test
+  it. Low value (one boolean), called out so the choice is explicit.
 
 ## Data flow
 
@@ -280,26 +325,69 @@ both CTAs/links → off-domain Google review composer/listing (no tracker)
 | `src/lib/emails-log/types.ts` | + `reviewCtaShown` field |
 | `src/lib/emails-log/parse-row.ts` | parse `review_cta.shown` |
 | `src/lib/emails-log/parse-row.test.ts` | + `reviewCtaShown` cases |
-| Emails-sent page component | + "Review ask ✓" chip on result rows |
+| `src/lib/emails-log/csv.ts` | + "Review ask" export column |
+| `src/lib/emails-log/csv.test.ts` | + column assertion |
+| `src/app/(staff)/staff/(dashboard)/admin/emails-sent/page.tsx` | + "Review ask ✓" chip in the Details cell of result rows |
 
 No migration, no new route, no new dependency.
 
-## Follow-on (agreed next, after this lands)
+## Out of scope / follow-on roadmap
 
-**Medium:**
-- Printed-receipt QR to the review link + a front-desk QR poster (captures
-  walk-ins and patients with no email on file).
-- Dedicated post-visit "thank-you" email fired a few days after the visit
+Everything below is **deliberately not built in this PR** — recorded here so the
+full picture survives. Build scope stays the three items above (email CTA +
+portal card + admin badge). Ordered so the highest-ROI items are easy to pick up
+next.
+
+### Strategic recommendations (do these first)
+
+- **Prioritise the printed-receipt QR.** Production transactional email only went
+  live recently and much of the patient base has no email / never logs into the
+  portal (see `project_emails_sent_log`). The email CTA + portal card reach only
+  the *digitally-engaged minority*; for a walk-in lab, a **printed-receipt QR +
+  front-desk poster** will drive most actual review volume. Highest-ROI
+  follow-on — ahead of any further email tweaks.
+- **Add a "review asks sent (last 30d)" stat to `/staff/admin/seo`.** Clicks are
+  untrackable by design (off-domain, no tracker), so the only success proxy is
+  *asks sent* (the `review_cta.shown` flag we already write) correlated against
+  GBP review-count growth the owner watches manually. ~10 lines; the only
+  built-in measurement we can offer.
+
+### Cheap
+
+- **Dismissable portal card** — `localStorage` "I've reviewed / hide" so the
+  ambient card stops nagging loyal patients who already reviewed.
+- **Focus-visible ring** on the portal card link (part of a broader portal a11y
+  pass worth doing someday; the card currently matches its sibling buttons,
+  which also lack an explicit focus ring).
+
+### Medium
+
+- **Printed-receipt QR + front-desk poster** (see Strategic above) — the
+  catch-all for walk-ins and no-email patients. Touches the receipt PDF and a
+  static poster asset.
+- **Dedicated post-visit "thank-you" email** fired a few days after the visit
   completes (new cron, reuse Resend) — better timing, fully decoupled from
   result sentiment; could host the review ask in addition to / instead of the
   result-email CTA.
+- **Ungated micro-feedback in the portal** — a "How was your visit? 👍 / 👎" that
+  **always** still shows the Google review link regardless of the answer. The
+  thumbs feed the clinic privately (sentiment signal); the public link is shown
+  to *everyone*. This is the **compliant** cousin of review-gating (must be
+  ungated — see Flagged).
+- **"Refer a friend" CTA** variant beside the review ask (a different growth
+  lever sharing the same email/portal real estate).
 
-**Larger (own project):**
-- First-party review capture in the portal (star + comment after viewing
+### Larger (own project)
+
+- **First-party review capture in the portal** (star + comment after viewing
   results) → genuine clinic-owned reviews → **`aggregateRating` eligible on
   `Product`/package nodes** (Product review snippets are still supported by
   Google, unlike self-serving `LocalBusiness`). Migration + RLS + portal UI +
-  moderation. This is the compliant revival of the deferred `aggregateRating`.
+  moderation. This is the compliant revival of the deferred `aggregateRating`
+  and the only path to review-star rich results.
 
-**Flagged — do NOT build:** review-gating/routing (5★→Google, low→private form)
-violates Google's review-gating policy.
+### Flagged — do NOT build
+
+- **Review-gating / routing** (5★ → Google, low → private feedback form). Common,
+  but it **violates Google's review-gating policy** and risks a penalty. The
+  *ungated* micro-feedback above is the compliant alternative.
