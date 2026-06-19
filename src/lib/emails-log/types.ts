@@ -28,6 +28,7 @@ export interface EmailLogEntry {
   resourceType: string | null;
   resourceId: string | null;
   visitId: string | null; // results only (metadata.visit_id) — for the Visit link
+  reviewCtaShown: boolean; // result emails only: did this email carry the review CTA
   bulk?: { attempted: number; delivered: number; failed: number };
 }
 

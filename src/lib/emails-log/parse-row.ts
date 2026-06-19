@@ -117,6 +117,7 @@ export function parseEmailLogRow(
     resourceType: row.resource_type,
     resourceId: row.resource_id,
     visitId: asString(meta.visit_id),
+    reviewCtaShown: type === "result" && asObject(meta.review_cta).shown === true,
     bulk,
   };
 }

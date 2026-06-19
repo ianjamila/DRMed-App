@@ -145,4 +145,27 @@ describe("parseEmailLogRow", () => {
     expect(e.status).toBe("sent");
     expect(e.recipientEmail).toBe("juan@example.com");
   });
+
+  it("result.notified — reviewCtaShown true when metadata.review_cta.shown", () => {
+    const e = parseEmailLogRow(
+      row({ metadata: { test_name: "CBC", email: { ok: true }, review_cta: { shown: true } } }),
+      patient,
+    );
+    expect(e.reviewCtaShown).toBe(true);
+  });
+
+  it("reviewCtaShown is false when absent, false, or a non-result row", () => {
+    expect(
+      parseEmailLogRow(row({ metadata: { test_name: "CBC", email: { ok: true } } }), patient).reviewCtaShown,
+    ).toBe(false);
+    expect(
+      parseEmailLogRow(row({ metadata: { review_cta: { shown: false } } }), patient).reviewCtaShown,
+    ).toBe(false);
+    expect(
+      parseEmailLogRow(
+        row({ action: "appointment.booked.notified", metadata: { review_cta: { shown: true } } }),
+        patient,
+      ).reviewCtaShown,
+    ).toBe(false);
+  });
 });

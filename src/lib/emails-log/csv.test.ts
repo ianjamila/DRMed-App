@@ -19,6 +19,7 @@ function entry(over: Partial<EmailLogEntry>): EmailLogEntry {
     resourceType: "test_request",
     resourceId: "t1",
     visitId: "v1",
+    reviewCtaShown: false,
     ...over,
   };
 }
