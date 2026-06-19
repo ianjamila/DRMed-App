@@ -5,6 +5,7 @@ import { DownloadButton } from "./download-button";
 import { PackageCard, type PackageComponentRow } from "./package-card";
 import { LabRequestUploads, type UploadRow } from "./lab-request-uploads";
 import { Panel } from "@/components/ui/panel";
+import { GOOGLE_REVIEW } from "@/lib/marketing/site";
 
 export const metadata = {
   title: "Your results — drmed.ph",
@@ -637,6 +638,26 @@ export default async function PatientPortalPage() {
           </ul>
         )}
       </div>
+
+      {!nothingToShow ? (
+        <section className="mt-8 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
+          <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+            Enjoying DRMed?
+          </h2>
+          <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
+            A quick Google review helps other families find trustworthy,
+            affordable care.
+          </p>
+          <a
+            href={GOOGLE_REVIEW.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-3 inline-block rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
+          >
+            Leave us a Google review
+          </a>
+        </section>
+      ) : null}
 
       {visitsWithPending.length > 0 ? (
         <section className="mt-8 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
