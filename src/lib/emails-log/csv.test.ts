@@ -29,7 +29,7 @@ describe("emailLogToCsv", () => {
     const csv = emailLogToCsv([entry({})]);
     const lines = csv.split("\r\n");
     expect(lines[0]).toBe(
-      '"Sent (ISO)","Type","Status","Recipient","DRM-ID","Email","Resend ID","Detail"',
+      '"Sent (ISO)","Type","Status","Recipient","DRM-ID","Email","Resend ID","Detail","Review ask"',
     );
     expect(lines[1]).toContain('"Result ready"');
     expect(lines[1]).toContain('"juan@example.com"');
@@ -57,5 +57,11 @@ describe("emailLogToCsv", () => {
     const line = csv.split("\r\n")[1];
     expect(line).toContain('"Newsletter (118/120)"');
     expect(line).toContain('"All subscribers (120)"');
+  });
+
+  it("emits the review-ask column (yes when the CTA was sent)", () => {
+    const csv = emailLogToCsv([entry({ reviewCtaShown: true })]);
+    const line = csv.split("\r\n")[1];
+    expect(line.endsWith('"yes"')).toBe(true);
   });
 });
