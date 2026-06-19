@@ -5,6 +5,8 @@ import {
   emailButton,
   emailDetailBox,
   emailHighlight,
+  emailDivider,
+  emailReviewCta,
   renderEmailShell,
 } from "./branded-email";
 
@@ -89,5 +91,21 @@ describe("renderEmailShell", () => {
     expect(html).toContain("Unsubscribe");
     expect(html).toContain("RA 10173");
     expect(html).toContain("occasional updates");
+  });
+});
+
+describe("emailDivider", () => {
+  it("renders a hairline separator row", () => {
+    expect(emailDivider()).toContain("border-top");
+  });
+});
+
+describe("emailReviewCta", () => {
+  it("renders a navy button with the review url and service-experience copy", () => {
+    const html = emailReviewCta("https://www.google.com/maps?cid=123");
+    expect(html).toContain("https://www.google.com/maps?cid=123");
+    expect(html).toContain("Leave us a Google review");
+    expect(html).toContain("#263F91"); // navy button (secondary)
+    expect(html).toContain("How was your visit"); // sentiment-safe, service-framed
   });
 });
