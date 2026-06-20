@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest, after } from "next/server";
 import { GOOGLE_REVIEW } from "@/lib/marketing/site";
-import { reviewLinkSource } from "@/lib/seo/review";
+import { REVIEW_AUDIT_ACTION, reviewLinkSource } from "@/lib/seo/review";
 import { audit } from "@/lib/audit/log";
 
 // Brandable on-domain hop to the verified Google Business Profile review
@@ -19,7 +19,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     audit({
       actor_id: null,
       actor_type: "anonymous",
-      action: "review.link.opened",
+      action: REVIEW_AUDIT_ACTION,
       metadata: { src },
       ip_address: ip,
       user_agent: userAgent,

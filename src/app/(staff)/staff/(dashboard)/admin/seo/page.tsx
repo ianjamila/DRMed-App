@@ -4,6 +4,7 @@ import { SITE } from "@/lib/marketing/site";
 import { allSiteUrls } from "@/lib/seo/indexnow";
 import { indexNowEnabled, readPingAuditMetadata } from "@/lib/seo/indexnow-core";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { REVIEW_AUDIT_ACTION } from "@/lib/seo/review";
 import { ResubmitIndexNowButton } from "./resubmit-button";
 
 export const metadata = { title: "Search engines (IndexNow) — staff" };
@@ -26,12 +27,11 @@ export default async function IndexNowAdminPage() {
     .order("created_at", { ascending: false })
     .limit(25);
 
-  const REVIEW_ACTION = "review.link.opened";
   const countReviewScans = async (src: string) => {
     const { count } = await admin
       .from("audit_log")
       .select("id", { count: "exact", head: true })
-      .eq("action", REVIEW_ACTION)
+      .eq("action", REVIEW_AUDIT_ACTION)
       .eq("metadata->>src", src);
     return count ?? 0;
   };
@@ -41,11 +41,9 @@ export default async function IndexNowAdminPage() {
     countReviewScans("portal"),
     countReviewScans("email"),
   ]);
-  const { count: scanTotalRaw } = await admin
-    .from("audit_log")
-    .select("id", { count: "exact", head: true })
-    .eq("action", REVIEW_ACTION);
-  const scanTotal = scanTotalRaw ?? 0;
+  // Total = sum of the four known sources, so the tiles always add up. Any
+  // stray "unknown"-src scan is intentionally excluded from the displayed total.
+  const scanTotal = scanReceipt + scanPoster + scanPortal + scanEmail;
 
   const fmtManila = (iso: string) =>
     new Intl.DateTimeFormat("en-PH", {

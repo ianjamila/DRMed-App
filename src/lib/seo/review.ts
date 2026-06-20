@@ -8,6 +8,9 @@
 
 export const REVIEW_PATH = "/review";
 
+/** audit_log.action recorded by the /review route on each scan. */
+export const REVIEW_AUDIT_ACTION = "review.link.opened";
+
 export type ReviewSource = "receipt" | "poster" | "portal" | "email" | "unknown";
 
 const KNOWN_SOURCES: ReadonlySet<string> = new Set<Exclude<ReviewSource, "unknown">>([
