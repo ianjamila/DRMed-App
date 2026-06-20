@@ -10,7 +10,7 @@ export const REVIEW_PATH = "/review";
 
 export type ReviewSource = "receipt" | "poster" | "portal" | "email" | "unknown";
 
-const KNOWN_SOURCES: ReadonlySet<string> = new Set([
+const KNOWN_SOURCES: ReadonlySet<string> = new Set<Exclude<ReviewSource, "unknown">>([
   "receipt",
   "poster",
   "portal",
