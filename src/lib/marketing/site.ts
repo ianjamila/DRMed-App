@@ -80,17 +80,15 @@ export const SOCIAL = {
 } as const;
 
 // Deep-link for leaving a Google review of the verified DRMed GBP listing.
-// Derived from GEO.mapUrl (owner-confirmed pin): ftid
-// 0x3397b726a17df91f:0x1b7581ea1172c841 → CID 1978630453614266433.
-//
-// Shipped value is the Maps LISTING link (CID) — guaranteed to resolve to the
-// correct place; the listing shows a prominent "Write a review" button (one
-// extra tap). Upgrade to the one-tap composer by replacing `url` with
-//   https://search.google.com/local/writereview?placeid=<CHIJ_PLACE_ID>
-// once the ChIJ Place ID is obtained — OR paste the GBP "Ask for reviews"
-// short link (https://g.page/r/<id>/review). Single edit, single source.
+// One-tap "Ask for reviews" short link from the Google Business Profile —
+// opens the review composer directly (redirects to
+// search.google.com/local/writereview?placeid=ChIJH_l9oSa3lzMRQchyEeqBdRs).
+// Owner-managed single source of truth; swap here if the GBP listing changes.
+// Fallbacks if ever needed: the Maps listing link
+// https://www.google.com/maps?cid=1978630453614266433 (one extra tap), or the
+// resolved writereview?placeid=ChIJH_l9oSa3lzMRQchyEeqBdRs URL directly.
 export const GOOGLE_REVIEW = {
-  url: "https://www.google.com/maps?cid=1978630453614266433",
+  url: "https://g.page/r/CUHIchHqgXUbEBM/review",
 } as const;
 
 export const HERO_STATS = [
