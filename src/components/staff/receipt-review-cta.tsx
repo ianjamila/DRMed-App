@@ -5,7 +5,7 @@ import { QrCode } from "@/components/ui/qr-code";
 // copy (Google prohibits incentivized reviews). `url` is the on-domain
 // /review?src=receipt link, built by the receipt page from the request host.
 export function ReceiptReviewCta({ url }: { url: string }) {
-  const display = url.replace(/^https?:\/\//, "");
+  const display = url.replace(/^https?:\/\//, "").replace(/\?.*$/, "");
   return (
     <div className="mt-6 flex items-center gap-4 rounded-lg border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] p-4 text-left print:mt-3 print:break-inside-avoid print:p-2">
       <QrCode value={url} size={88} className="shrink-0 p-2" />
@@ -14,7 +14,8 @@ export function ReceiptReviewCta({ url }: { url: string }) {
           Happy with your visit?
         </p>
         <p className="text-xs text-[color:var(--color-brand-text-soft)]">
-          Scan to leave us a Google review ★★★★★
+          Scan to leave us a Google review{" "}
+          <span aria-hidden="true">★★★★★</span>
         </p>
         <p className="mt-0.5 font-mono text-[10px] break-all text-[color:var(--color-brand-text-soft)]">
           {display}
