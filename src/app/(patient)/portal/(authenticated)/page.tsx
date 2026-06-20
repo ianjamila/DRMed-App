@@ -5,7 +5,7 @@ import { DownloadButton } from "./download-button";
 import { PackageCard, type PackageComponentRow } from "./package-card";
 import { LabRequestUploads, type UploadRow } from "./lab-request-uploads";
 import { Panel } from "@/components/ui/panel";
-import { GOOGLE_REVIEW } from "@/lib/marketing/site";
+import { reviewLink } from "@/lib/seo/review";
 
 export const metadata = {
   title: "Your results — drmed.ph",
@@ -649,7 +649,7 @@ export default async function PatientPortalPage() {
             affordable care.
           </p>
           <a
-            href={GOOGLE_REVIEW.url}
+            href={reviewLink("portal")}
             target="_blank"
             rel="noopener noreferrer"
             className="mt-3 inline-block rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
