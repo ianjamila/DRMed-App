@@ -294,7 +294,12 @@ export default async function EmailsSentPage({ searchParams }: Props) {
                           {e.resendId}
                         </span>
                       ) : null}
-                      {!e.detail && !e.resendId ? "—" : null}
+                      {e.reviewCtaShown ? (
+                        <span className="mt-0.5 inline-block rounded-md bg-cyan-100 px-2 py-0.5 text-xs font-semibold text-cyan-900">
+                          Review ask ✓
+                        </span>
+                      ) : null}
+                      {!e.detail && !e.resendId && !e.reviewCtaShown ? "—" : null}
                     </td>
                     <td className="px-4 py-3 text-xs">
                       {resource ? (

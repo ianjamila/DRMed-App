@@ -9,6 +9,7 @@ const HEADERS = [
   "Email",
   "Resend ID",
   "Detail",
+  "Review ask",
 ];
 
 function cell(v: string | null | undefined): string {
@@ -37,6 +38,7 @@ export function emailLogToCsv(entries: EmailLogEntry[]): string {
         cell(e.recipientEmail),
         cell(e.resendId),
         cell(e.detail),
+        cell(e.reviewCtaShown ? "yes" : ""),
       ].join(","),
     );
   }

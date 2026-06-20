@@ -1,12 +1,13 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
-import { SITE } from "@/lib/marketing/site";
+import { SITE, GOOGLE_REVIEW } from "@/lib/marketing/site";
 import { sendEmail } from "./email";
 import { sendSms } from "./sms";
 import {
-  renderEmailShell, emailParagraph, emailDetailBox, emailButton, emailFinePrint, escapeHtml,
+  renderEmailShell, emailParagraph, emailDetailBox, emailButton, emailFinePrint, escapeHtml, emailReviewCta,
 } from "./branded-email";
+import { patientAlreadyAskedForReview } from "./review-cta";
 
 interface Input {
   testRequestId: string;
@@ -50,6 +51,14 @@ export async function notifyResultReleased({
   const greeting = patient.first_name || "there";
   const testName = svc.name;
 
+  // Review CTA: only on a patient's FIRST delivered result email, and only if
+  // they have an email on file. Suppressed thereafter via the audit flag.
+  const hasEmail = Boolean(patient.email);
+  const alreadyAsked = hasEmail
+    ? await patientAlreadyAskedForReview(admin, patient.id)
+    : false;
+  const includeReviewCta = hasEmail && !alreadyAsked;
+
   const smsBody =
     `Hi ${greeting}, your DRMed lab result for ${testName} is ready. ` +
     `Sign in at ${portalUrl} with DRM-ID ${patient.drm_id} and your Secure PIN. — DRMED`;
@@ -65,6 +74,13 @@ export async function notifyResultReleased({
     `  Secure PIN: (printed on your receipt)`,
     "",
     "Your PIN is valid for 60 days. Keep it private — anyone with your PIN can view your lab results.",
+    ...(includeReviewCta
+      ? [
+          "",
+          "How was your visit? A quick Google review helps other families find us:",
+          GOOGLE_REVIEW.url,
+        ]
+      : []),
     "",
     "— DRMed Clinic and Laboratory",
   ].join("\n");
@@ -79,7 +95,8 @@ export async function notifyResultReleased({
         { label: "Secure PIN", value: "printed on your receipt" },
       ]) +
       emailButton("Sign in to view your result", portalUrl, "cyan") +
-      emailFinePrint("Your PIN is valid for 60 days. Keep it private — anyone with your PIN can view your lab results."),
+      emailFinePrint("Your PIN is valid for 60 days. Keep it private — anyone with your PIN can view your lab results.") +
+      (includeReviewCta ? emailReviewCta(GOOGLE_REVIEW.url) : ""),
     receivedNote: "You received this because a result was released for your DRMed visit.",
   });
 
@@ -125,6 +142,7 @@ export async function notifyResultReleased({
         : emailResult.kind === "skipped"
           ? { ok: false, skipped: true, reason: emailResult.reason }
           : { ok: false, error: emailResult.error, to: patient.email },
+      review_cta: { shown: includeReviewCta && emailResult.ok },
     },
   });
 }

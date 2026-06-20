@@ -79,6 +79,28 @@ export function emailButton(
   return `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:8px 0 22px;"><tr><td align="center" bgcolor="${bg}" style="border-radius:8px;"><a href="${escapeHtml(href)}" style="display:inline-block;padding:14px 30px;font-size:15px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:8px;background:${bg};">${label}</a></td></tr></table>`;
 }
 
+// Faint hairline rule. Table row keeps it robust across email clients (Outlook
+// strips bare <hr>). Used to separate the secondary review CTA from the
+// transactional content above it.
+export function emailDivider(): string {
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:18px 0;"><tr><td style="border-top:1px solid #e5eaf2;font-size:0;line-height:0;">&nbsp;</td></tr></table>`;
+}
+
+// Secondary "leave a Google review" CTA. Appended to the result-ready email
+// AFTER the security fine print so it never competes with the primary action.
+// Framed around the SERVICE experience, not the result — a result email can
+// carry difficult news. Navy button = visually secondary to the cyan primary.
+export function emailReviewCta(reviewUrl: string): string {
+  return (
+    emailDivider() +
+    emailParagraph(
+      "How was your visit with us? If our team took good care of you, a " +
+        "quick Google review helps other families find DRMed.",
+    ) +
+    emailButton("Leave us a Google review", reviewUrl, "navy")
+  );
+}
+
 export interface EmailShellOptions {
   // Optional navy serif heading shown above the content.
   heading?: string;
