@@ -1,7 +1,8 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
-import { SITE, GOOGLE_REVIEW } from "@/lib/marketing/site";
+import { SITE } from "@/lib/marketing/site";
+import { reviewLinkAbsolute } from "@/lib/seo/review";
 import { sendEmail } from "./email";
 import { sendSms } from "./sms";
 import {
@@ -58,6 +59,7 @@ export async function notifyResultReleased({
     ? await patientAlreadyAskedForReview(admin, patient.id)
     : false;
   const includeReviewCta = hasEmail && !alreadyAsked;
+  const reviewUrl = reviewLinkAbsolute(SITE.url, "email");
 
   const smsBody =
     `Hi ${greeting}, your DRMed lab result for ${testName} is ready. ` +
@@ -78,7 +80,7 @@ export async function notifyResultReleased({
       ? [
           "",
           "How was your visit? A quick Google review helps other families find us:",
-          GOOGLE_REVIEW.url,
+          reviewUrl,
         ]
       : []),
     "",
@@ -96,7 +98,7 @@ export async function notifyResultReleased({
       ]) +
       emailButton("Sign in to view your result", portalUrl, "cyan") +
       emailFinePrint("Your PIN is valid for 60 days. Keep it private — anyone with your PIN can view your lab results.") +
-      (includeReviewCta ? emailReviewCta(GOOGLE_REVIEW.url) : ""),
+      (includeReviewCta ? emailReviewCta(reviewUrl) : ""),
     receivedNote: "You received this because a result was released for your DRMed visit.",
   });
 

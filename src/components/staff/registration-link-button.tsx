@@ -42,6 +42,14 @@ export function RegistrationLinkButton({ url }: { url: string }) {
           >
             Open printable poster →
           </a>
+          <a
+            href="/review-poster"
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs font-semibold text-[color:var(--color-brand-cyan)] underline"
+          >
+            Google-review poster →
+          </a>
         </Panel>
       )}
     </div>

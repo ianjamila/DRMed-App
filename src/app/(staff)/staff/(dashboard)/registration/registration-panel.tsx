@@ -37,6 +37,14 @@ export function RegistrationPanel({ url }: { url: string }) {
         >
           Print poster →
         </a>
+        <a
+          href="/review-poster"
+          target="_blank"
+          rel="noreferrer"
+          className="flex-1 rounded-md border border-[color:var(--color-brand-bg-mid)] px-3 py-2 text-center text-sm font-semibold text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-bg)]"
+        >
+          Review poster →
+        </a>
       </div>
     </Panel>
   );

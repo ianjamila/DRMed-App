@@ -7,6 +7,9 @@ import { CONTACT, SITE } from "@/lib/marketing/site";
 import { getPatientConsentState } from "@/lib/consent/gate";
 import { formatPatientName } from "@/lib/patients/format-name";
 import { PrintButton } from "./print-button";
+import { headers } from "next/headers";
+import { ReceiptReviewCta } from "@/components/staff/receipt-review-cta";
+import { reviewLinkAbsolute } from "@/lib/seo/review";
 
 export const metadata = {
   title: "Receipt — staff",
@@ -62,6 +65,10 @@ export default async function ReceiptPage({ params }: Props) {
   // is read here (server component is read-only) and cleared right after
   // mount by ClearPinOnMount.
   const plainPin = await peekVisitPinFlash(visit.id);
+
+  const host = (await headers()).get("host") ?? "drmed.ph";
+  const proto = host.startsWith("localhost") ? "http" : "https";
+  const reviewUrl = reviewLinkAbsolute(`${proto}://${host}`, "receipt");
 
   return (
     <div className="receipt-print mx-auto max-w-2xl px-4 py-8 sm:px-6 lg:px-8 print:p-0">
@@ -218,6 +225,8 @@ export default async function ReceiptPage({ params }: Props) {
         <p className="mt-6 text-center text-xs text-[color:var(--color-brand-text-soft)]">
           Thank you. Your results will be sent by SMS / email when ready.
         </p>
+
+        <ReceiptReviewCta url={reviewUrl} />
       </article>
     </div>
   );

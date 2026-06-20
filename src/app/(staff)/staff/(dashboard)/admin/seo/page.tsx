@@ -4,6 +4,7 @@ import { SITE } from "@/lib/marketing/site";
 import { allSiteUrls } from "@/lib/seo/indexnow";
 import { indexNowEnabled, readPingAuditMetadata } from "@/lib/seo/indexnow-core";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { REVIEW_AUDIT_ACTION } from "@/lib/seo/review";
 import { ResubmitIndexNowButton } from "./resubmit-button";
 
 export const metadata = { title: "Search engines (IndexNow) — staff" };
@@ -25,6 +26,24 @@ export default async function IndexNowAdminPage() {
     .eq("action", "seo.indexnow.ping")
     .order("created_at", { ascending: false })
     .limit(25);
+
+  const countReviewScans = async (src: string) => {
+    const { count } = await admin
+      .from("audit_log")
+      .select("id", { count: "exact", head: true })
+      .eq("action", REVIEW_AUDIT_ACTION)
+      .eq("metadata->>src", src);
+    return count ?? 0;
+  };
+  const [scanReceipt, scanPoster, scanPortal, scanEmail] = await Promise.all([
+    countReviewScans("receipt"),
+    countReviewScans("poster"),
+    countReviewScans("portal"),
+    countReviewScans("email"),
+  ]);
+  // Total = sum of the four known sources, so the tiles always add up. Any
+  // stray "unknown"-src scan is intentionally excluded from the displayed total.
+  const scanTotal = scanReceipt + scanPoster + scanPortal + scanEmail;
 
   const fmtManila = (iso: string) =>
     new Intl.DateTimeFormat("en-PH", {
@@ -134,6 +153,53 @@ export default async function IndexNowAdminPage() {
             No IndexNow pings recorded yet.
           </p>
         )}
+      </section>
+
+      <section className="mt-8">
+        <h2 className="font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">
+          Google reviews
+        </h2>
+        <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
+          A printable desk poster and the on-receipt QR both point patients to
+          our Google review page. Scan counts below show which touchpoint is
+          working.
+        </p>
+
+        <a
+          href="/review-poster"
+          target="_blank"
+          rel="noreferrer"
+          className="mt-3 inline-block rounded-md border border-[color:var(--color-brand-bg-mid)] px-4 py-2 text-sm font-semibold text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-bg)]"
+        >
+          Print review poster →
+        </a>
+
+        <dl className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
+          {[
+            { label: "Receipt", value: scanReceipt },
+            { label: "Poster", value: scanPoster },
+            { label: "Portal", value: scanPortal },
+            { label: "Email", value: scanEmail },
+            { label: "Total", value: scanTotal },
+          ].map((s) => (
+            <div
+              key={s.label}
+              className="rounded-lg border border-[color:var(--color-brand-bg-mid)] bg-white p-3 text-center"
+            >
+              <dt className="text-xs uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+                {s.label}
+              </dt>
+              <dd className="mt-1 font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
+                {s.value}
+              </dd>
+            </div>
+          ))}
+        </dl>
+        {scanTotal === 0 ? (
+          <p className="mt-3 text-xs text-[color:var(--color-brand-text-soft)]">
+            No review-link scans recorded yet.
+          </p>
+        ) : null}
       </section>
     </div>
   );
