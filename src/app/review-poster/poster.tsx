@@ -7,6 +7,7 @@ import { SITE, CONTACT } from "@/lib/marketing/site";
 // copy — Google prohibits incentivized reviews. Mirrors the /register-poster
 // pattern (standalone, Print button hidden in print, contact footer).
 export function ReviewPoster({ url }: { url: string }) {
+  // Strip the scheme and the ?src= tracking param — cleaner on the printed poster.
   const display = url.replace(/^https?:\/\//, "").replace(/\?.*$/, "");
   return (
     <div className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center gap-5 p-8 text-center">
