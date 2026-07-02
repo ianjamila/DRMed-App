@@ -20,6 +20,10 @@ export async function buildSitemapEntries(): Promise<MetadataRoute.Sitemap> {
     "/contact",
     "/privacy",
     "/terms",
+    "/promo/beat-the-hospital-price",
+    "/promo/results-tomorrow",
+    "/promo/we-come-to-you",
+    "/promo/one-roof",
   ].map((path) => ({
     url: `${base}${path}`,
     lastModified: now,
