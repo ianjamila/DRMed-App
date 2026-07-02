@@ -18,6 +18,7 @@ import {
   RotateCcw,
   type LucideIcon,
 } from "lucide-react";
+import { todayManilaISODate } from "@/lib/dates/manila";
 
 /* ---------- palette (matches ad-dashboard.tsx) ---------- */
 const C = {
@@ -36,9 +37,7 @@ const C = {
 const KEY = "drmed_ops_v1";
 
 /* ---------- period keys (auto-reset checklists each period) ---------- */
-const today = new Date();
 const pad = (n: number) => String(n).padStart(2, "0");
-const dayKey = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
 function isoWeek(d: Date): string {
   const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
   const dayNum = t.getUTCDay() || 7;
@@ -46,9 +45,19 @@ function isoWeek(d: Date): string {
   const y0 = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
   return `${t.getUTCFullYear()}-W${pad(Math.ceil(((t.getTime() - y0.getTime()) / 86400000 + 1) / 7))}`;
 }
-const weekKey = isoWeek(today);
-const monthKey = `${today.getFullYear()}-${pad(today.getMonth() + 1)}`;
-const qKey = `${today.getFullYear()}-Q${Math.floor(today.getMonth() / 3) + 1}`;
+// Computed at mount (not module load) so a period rollover takes effect on the
+// next visit without a hard reload, and keyed to the Manila calendar so the
+// reset boundary follows clinic time rather than the browser's timezone.
+function manilaPeriodKeys(): Record<CadenceId, string> {
+  const iso = todayManilaISODate();
+  const [y, m, d] = iso.split("-").map(Number);
+  return {
+    daily: iso,
+    weekly: isoWeek(new Date(y, m - 1, d)),
+    monthly: `${y}-${pad(m)}`,
+    quarterly: `${y}-Q${Math.floor((m - 1) / 3) + 1}`,
+  };
+}
 
 /* ---------- cadence tasks (from Plan v2 §9) ---------- */
 type CadenceId = "daily" | "weekly" | "monthly" | "quarterly";
@@ -56,7 +65,6 @@ type CadenceId = "daily" | "weekly" | "monthly" | "quarterly";
 interface Cadence {
   id: CadenceId;
   label: string;
-  period: string;
   budget: string;
   icon: LucideIcon;
   tasks: string[];
@@ -66,7 +74,6 @@ const CADENCES: Cadence[] = [
   {
     id: "daily",
     label: "Daily",
-    period: dayKey,
     budget: "≤30–45 min",
     icon: Repeat,
     tasks: [
@@ -80,7 +87,6 @@ const CADENCES: Cadence[] = [
   {
     id: "weekly",
     label: "Weekly",
-    period: weekKey,
     budget: "~1–2 hrs",
     icon: CalendarDays,
     tasks: [
@@ -95,7 +101,6 @@ const CADENCES: Cadence[] = [
   {
     id: "monthly",
     label: "Monthly",
-    period: monthKey,
     budget: "~half-day",
     icon: CalendarDays,
     tasks: [
@@ -111,7 +116,6 @@ const CADENCES: Cadence[] = [
   {
     id: "quarterly",
     label: "Quarterly",
-    period: qKey,
     budget: "steering",
     icon: Map,
     tasks: [
@@ -235,14 +239,14 @@ function loadSaved(): { done: DoneState; status: StatusState; phase: number } | 
 
 // Period-reset: keep a saved checklist only when it is for the current period
 // and still matches the task list; otherwise start the period fresh.
-function buildDone(saved: DoneState | undefined): DoneState {
+function buildDone(saved: DoneState | undefined, keys: Record<CadenceId, string>): DoneState {
   const fresh: DoneState = {};
   for (const c of CADENCES) {
     const s = saved?.[c.id];
     fresh[c.id] =
-      s && s.period === c.period && s.checked.length === c.tasks.length
+      s && s.period === keys[c.id] && s.checked.length === c.tasks.length
         ? s
-        : { period: c.period, checked: c.tasks.map(() => false) };
+        : { period: keys[c.id], checked: c.tasks.map(() => false) };
   }
   return fresh;
 }
@@ -281,8 +285,9 @@ export function OpsTracker() {
   // server (which can't see localStorage and may sit in another timezone)
   // never paints mismatched HTML.
   const hydrated = useSyncExternalStore(emptySubscribe, getHydrated, getServerHydrated);
+  const [keys] = useState(() => manilaPeriodKeys());
   const [saved] = useState(() => loadSaved());
-  const [done, setDone] = useState<DoneState>(() => buildDone(saved?.done)); // {cadenceId: {period, checked:[bool]}}
+  const [done, setDone] = useState<DoneState>(() => buildDone(saved?.done, keys)); // {cadenceId: {period, checked:[bool]}}
   const [status, setStatus] = useState<StatusState>(() => ({
     ...DEFAULT_STATUS,
     ...(saved?.status ?? {}),
@@ -323,11 +328,12 @@ export function OpsTracker() {
     if (!c) return;
     setDone((d) => ({
       ...d,
-      [cid]: { period: c.period, checked: c.tasks.map(() => false) },
+      [cid]: { period: keys[cid], checked: c.tasks.map(() => false) },
     }));
   };
 
-  const dateStr = today.toLocaleDateString("en-PH", {
+  const dateStr = new Date().toLocaleDateString("en-PH", {
+    timeZone: "Asia/Manila",
     weekday: "long",
     month: "long",
     day: "numeric",
@@ -443,7 +449,7 @@ export function OpsTracker() {
                   <div className="text-xs mt-3" style={{ color: C.sub }}>
                     Auto-resets each{" "}
                     {c.id === "daily" ? "day" : c.id === "weekly" ? "week" : c.id === "monthly" ? "month" : "quarter"}{" "}
-                    · period {c.period}
+                    · period {keys[c.id]}
                   </div>
                 </div>
               );

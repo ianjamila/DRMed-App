@@ -251,8 +251,11 @@ function mapRow(r: Record<string, string>): AdRow {
     spend: n(find("spend", "amount", "cost")),
     impressions: n(find("impr")),
     clicks: n(find("link click", "clicks", "click")),
+    // "result" is a leads-only candidate: Meta exports often have a single
+    // "Results" column, and listing it under bookings too would double-map the
+    // same column into both fields (every funnel would show 100% lead→booking).
     leads: n(find("lead", "result", "conversation", "messag")),
-    bookings: n(find("booking", "conversion", "purchase", "appointment", "result")),
+    bookings: n(find("booking", "conversion", "purchase", "appointment")),
   };
 }
 
