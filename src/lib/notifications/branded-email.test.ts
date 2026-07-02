@@ -62,7 +62,7 @@ describe("renderEmailShell", () => {
     // footer essentials
     expect(html).toContain("Your Family"); // tagline
     expect(html).toContain("google.com/maps"); // get directions
-    expect(html).toContain("10 major HMO providers");
+    expect(html).toContain("10+ major HMO providers");
     expect(html).toContain("Facebook");
     expect(html).toContain(">drmed.ph</a>"); // website link
   });

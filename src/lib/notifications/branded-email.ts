@@ -140,7 +140,7 @@ function footerHtml(opts: EmailShellOptions): string {
         <p style="margin:0 0 12px;font-size:12px;font-style:italic;color:${FOOT_LINK};">${escapeHtml(SITE.tagline)}</p>
         <p style="margin:0 0 4px;font-size:12px;line-height:1.6;color:${FOOT_TEXT};">${escapeHtml(address)} &nbsp;·&nbsp; <a href="${mapsUrl}" style="color:${FOOT_LINK};text-decoration:underline;">Get directions</a></p>
         <p style="margin:0 0 4px;font-size:12px;line-height:1.6;color:${FOOT_TEXT};">${escapeHtml(CONTACT.hours)} &nbsp;·&nbsp; ${escapeHtml(CONTACT.phone.mobile)} &nbsp;·&nbsp; ${escapeHtml(CONTACT.phone.landline)}</p>
-        <p style="margin:0 0 12px;font-size:12px;line-height:1.6;color:${FOOT_TEXT};">&#10003; We accept 10 major HMO providers — bring your card on your visit.</p>
+        <p style="margin:0 0 12px;font-size:12px;line-height:1.6;color:${FOOT_TEXT};">&#10003; We accept 10+ major HMO providers — bring your card on your visit.</p>
         <p style="margin:0;font-size:12px;color:${FOOT_LINK};">${social}</p>
         ${extra}
       </td></tr>`;
