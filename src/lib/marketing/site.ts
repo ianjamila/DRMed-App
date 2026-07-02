@@ -92,7 +92,7 @@ export const GOOGLE_REVIEW = {
 } as const;
 
 export const HERO_STATS = [
-  { value: "19+", label: "Specialist Physicians" },
+  { value: "20", label: "Specialist Physicians" },
   { value: "10+", label: "HMO Partners" },
   { value: "50%", label: "Less vs. Hospitals" },
   { value: "24h", label: "Average Turnaround" },
@@ -103,7 +103,7 @@ export const TRUST_BAR = [
   { icon: "⚡", title: "Results in 24 Hours", sub: "Most tests same-day" },
   { icon: "💰", title: "Up to 50% Less", sub: "vs. hospitals & other clinics" },
   { icon: "🏠", title: "Home & Mobile Service", sub: "We come to you" },
-  { icon: "💳", title: "HMO Accepted", sub: "10 major providers" },
+  { icon: "💳", title: "HMO Accepted", sub: "10+ major providers" },
 ] as const;
 
 // Marketing-page service overview. The /services pages read live data from the

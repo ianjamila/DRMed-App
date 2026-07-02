@@ -12,7 +12,7 @@ export const FAQ_ITEMS: readonly FaqItem[] = [
   {
     question: "Can I use my HMO?",
     answer:
-      "Yes — we're accredited with 10 major HMO providers. Bring your HMO card and a valid ID; reception processes your LOA and covered services are cashless.",
+      "Yes — we're accredited with 10+ major HMO providers. Bring your HMO card and a valid ID; reception processes your LOA and covered services are cashless.",
   },
   {
     question: "How do I get my results?",

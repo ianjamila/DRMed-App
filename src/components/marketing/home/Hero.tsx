@@ -16,7 +16,7 @@ import { SITE } from "@/lib/marketing/site";
 
 // Local typed stat array matching HERO_STATS shape with numeric `to` for CountUp.
 const STATS = [
-  { to: 19, suffix: "+", label: "Specialist Physicians" },
+  { to: 20, suffix: "", label: "Specialist Physicians" },
   { to: 10, suffix: "+", label: "HMO Partners" },
   { to: 50, suffix: "%", label: "Less vs. Hospitals" },
   { to: 24, suffix: "h", label: "Average Turnaround" },

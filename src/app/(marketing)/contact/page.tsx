@@ -36,7 +36,7 @@ const FAQS: FaqItem[] = [
   {
     question: "Do you accept HMOs?",
     answer:
-      "Yes — we accept 10 major HMO providers. Present your HMO card or letter of authorization (LOA) at reception.",
+      "Yes — we accept 10+ major HMO providers. Present your HMO card or letter of authorization (LOA) at reception.",
   },
   {
     question: "Do you offer home service?",
