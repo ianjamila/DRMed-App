@@ -375,6 +375,14 @@ export const STAFF_NAV: StaffNavSection[] = [
             description: "Send email blasts to past patients (e.g., flu vaccine season reminder, new service announcement). Tracks who opened and clicked.",
             roles: ["admin"],
           },
+          {
+            // Lands on Ad performance (the bare base route); the default
+            // prefix match keeps this item lit on the /ops tab too.
+            href: "/staff/marketing",
+            label: "Marketing",
+            description: "The marketing workspace, in two tabs: Ad performance (upload your Meta + Google ad CSV exports to see spend, cost per booking, and the lead funnel) and Ops tracker (daily/weekly/monthly checklists, the 12-week launch roadmap, and the campaign status board). Data is saved in this browser only.",
+            roles: ["admin"],
+          },
         ],
       },
       {
