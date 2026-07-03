@@ -15,12 +15,12 @@ import { Reveal } from "@/components/marketing/motion";
 import {
   PromoHero,
   PromoProofRow,
+  PromoIconCard,
   PromoFaq,
   PromoClosingCta,
+  PromoJsonLd,
   type ProofItem,
 } from "@/components/marketing/promo";
-import { JsonLd } from "@/components/marketing/json-ld";
-import { breadcrumbLd, faqPageLd } from "@/lib/marketing/structured-data";
 import { getServiceByCode } from "@/lib/marketing/services";
 import { formatPhp } from "@/lib/marketing/format";
 import { pageMetadata } from "@/lib/marketing/metadata";
@@ -34,9 +34,9 @@ export const metadata = pageMetadata({
   path: "/promo/we-come-to-you",
 });
 
-// Live data — admin price changes on /staff/admin/prices reflect here on next
-// request because DRMed prices are read directly from the services table.
-export const dynamic = "force-dynamic";
+// Live DRMed prices from the services table; 5 min cache — admin price edits
+// on /staff/admin/prices land within 5 min (matches the physicians page).
+export const revalidate = 300;
 
 interface Step {
   n: string;
@@ -111,14 +111,10 @@ export default async function WeComeToYouPage() {
 
   return (
     <>
-      <JsonLd
-        data={[
-          breadcrumbLd([
-            { name: "Home", path: "/" },
-            { name: "We Come to You", path: "/promo/we-come-to-you" },
-          ]),
-          faqPageLd(FAQ),
-        ]}
+      <PromoJsonLd
+        name="We Come to You"
+        path="/promo/we-come-to-you"
+        faq={FAQ}
       />
 
       <PromoHero
@@ -144,30 +140,16 @@ export default async function WeComeToYouPage() {
           </Reveal>
 
           <div className="grid grid-cols-1 gap-[14px] sm:grid-cols-2 lg:grid-cols-4">
-            {STEPS.map((step, i) => {
-              const Icon = step.icon;
-              return (
-                <Reveal key={step.n} delay={i * 0.06}>
-                  <div className="relative h-full rounded-[20px] border border-[color:var(--color-warm-line-soft)] bg-white p-6 shadow-[var(--shadow-warm-sm)]">
-                    <span className="absolute right-[22px] top-[22px] grid h-[42px] w-[42px] place-items-center rounded-[13px] bg-[rgba(8,168,226,0.10)] text-[color:var(--color-brand-cyan)]">
-                      <Icon className="h-5 w-5" aria-hidden="true" />
-                    </span>
-                    <span
-                      aria-hidden="true"
-                      className="font-[family-name:var(--font-display)] text-[28px] italic leading-none text-[color:var(--color-brand-cyan)] opacity-50"
-                    >
-                      {step.n}
-                    </span>
-                    <h3 className="mt-[14px] text-[17px] font-bold text-[color:var(--color-brand-navy)]">
-                      {step.title}
-                    </h3>
-                    <p className="mt-2 text-[14px] leading-[1.55] text-[color:var(--color-ink-soft)]">
-                      {step.body}
-                    </p>
-                  </div>
-                </Reveal>
-              );
-            })}
+            {STEPS.map((step, i) => (
+              <Reveal key={step.n} delay={i * 0.06}>
+                <PromoIconCard
+                  icon={step.icon}
+                  title={step.title}
+                  body={step.body}
+                  step={step.n}
+                />
+              </Reveal>
+            ))}
           </div>
 
           {/* Fee note */}

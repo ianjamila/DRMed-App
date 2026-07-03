@@ -91,13 +91,6 @@ export const GOOGLE_REVIEW = {
   url: "https://g.page/r/CUHIchHqgXUbEBM/review",
 } as const;
 
-export const HERO_STATS = [
-  { value: "20", label: "Specialist Physicians" },
-  { value: "10+", label: "HMO Partners" },
-  { value: "50%", label: "Less vs. Hospitals" },
-  { value: "24h", label: "Average Turnaround" },
-] as const;
-
 export const TRUST_BAR = [
   { icon: "🏥", title: "Accredited Clinic & Lab", sub: "DOH-compliant facility" },
   { icon: "⚡", title: "Results in 24 Hours", sub: "Most tests same-day" },

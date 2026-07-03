@@ -14,12 +14,12 @@ import { Reveal } from "@/components/marketing/motion";
 import {
   PromoHero,
   PromoProofRow,
+  PromoIconCard,
   PromoFaq,
   PromoClosingCta,
+  PromoJsonLd,
   type ProofItem,
 } from "@/components/marketing/promo";
-import { JsonLd } from "@/components/marketing/json-ld";
-import { breadcrumbLd, faqPageLd } from "@/lib/marketing/structured-data";
 import { getServiceByCode } from "@/lib/marketing/services";
 import { formatPhp } from "@/lib/marketing/format";
 import { pageMetadata } from "@/lib/marketing/metadata";
@@ -32,9 +32,9 @@ export const metadata = pageMetadata({
   path: "/promo/results-tomorrow",
 });
 
-// Live data — admin price changes on /staff/admin/prices reflect here on next
-// request because DRMed prices are read directly from the services table.
-export const dynamic = "force-dynamic";
+// Live DRMed prices from the services table; 5 min cache — admin price edits
+// on /staff/admin/prices land within 5 min (matches the physicians page).
+export const revalidate = 300;
 
 interface SpeedItem {
   icon: LucideIcon;
@@ -104,14 +104,10 @@ export default async function ResultsTomorrowPage() {
 
   return (
     <>
-      <JsonLd
-        data={[
-          breadcrumbLd([
-            { name: "Home", path: "/" },
-            { name: "Results Tomorrow", path: "/promo/results-tomorrow" },
-          ]),
-          faqPageLd(FAQ),
-        ]}
+      <PromoJsonLd
+        name="Results Tomorrow"
+        path="/promo/results-tomorrow"
+        faq={FAQ}
       />
 
       <PromoHero
@@ -143,24 +139,11 @@ export default async function ResultsTomorrowPage() {
           </Reveal>
 
           <div className="grid grid-cols-1 gap-[14px] sm:grid-cols-2 lg:grid-cols-4">
-            {SPEED_ITEMS.map((item, i) => {
-              const Icon = item.icon;
-              return (
-                <Reveal key={item.title} delay={i * 0.06}>
-                  <div className="flex h-full flex-col rounded-[20px] border border-[color:var(--color-warm-line-soft)] bg-white p-6 shadow-[var(--shadow-warm-sm)]">
-                    <span className="grid h-[42px] w-[42px] place-items-center rounded-[13px] bg-[rgba(8,168,226,0.10)] text-[color:var(--color-brand-cyan)]">
-                      <Icon className="h-5 w-5" aria-hidden="true" />
-                    </span>
-                    <h3 className="mt-4 text-[17px] font-bold text-[color:var(--color-brand-navy)]">
-                      {item.title}
-                    </h3>
-                    <p className="mt-2 text-[14px] leading-[1.55] text-[color:var(--color-ink-soft)]">
-                      {item.body}
-                    </p>
-                  </div>
-                </Reveal>
-              );
-            })}
+            {SPEED_ITEMS.map((item, i) => (
+              <Reveal key={item.title} delay={i * 0.06}>
+                <PromoIconCard icon={item.icon} title={item.title} body={item.body} />
+              </Reveal>
+            ))}
           </div>
         </div>
       </section>
