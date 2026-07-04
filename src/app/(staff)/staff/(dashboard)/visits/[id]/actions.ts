@@ -10,6 +10,10 @@ import { notifyResultReleased } from "@/lib/notifications/notify-released";
 import { notifyResultsReleasedBulk } from "@/lib/notifications/notify-released-bulk";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { reportError } from "@/lib/observability/report-error";
+import {
+  MAX_BULK_SELECTION,
+  scopeToAllowedSections,
+} from "@/lib/visits/bulk-selection";
 
 export type ReleaseMedium =
   | "physical"
@@ -228,33 +232,6 @@ export async function releaseAllReadyComponentsAction(
   return { ok: true };
 }
 
-const MAX_BULK_SELECTION = 100;
-
-// Section-scopes a set of candidate rows down to the ids the current role is
-// allowed to act on. Mirrors releaseAllReadyComponentsAction's scoping block
-// exactly: `null` = unrestricted (admin/pathologist), otherwise only rows
-// whose service section is in the allowed set. Rows also carry the service
-// name for notification/audit use.
-function scopeToAllowedSections(
-  rows: {
-    id: string;
-    services:
-      | { section: string | null; name: string }
-      | { section: string | null; name: string }[]
-      | null;
-  }[],
-  allowedSections: ReturnType<typeof sectionsForRole>,
-): { id: string; name: string | null }[] {
-  return rows
-    .filter((r) => {
-      if (allowedSections === null) return true;
-      const svc = Array.isArray(r.services) ? r.services[0] : r.services;
-      const sect = svc?.section ?? null;
-      return sect != null && allowedSections.includes(sect as never);
-    })
-    .map((r) => ({ id: r.id, name: serviceName(r.services) }));
-}
-
 // Releases a hand-picked selection of ready components/standalone tests in a
 // single UPDATE. Mirrors releaseAllReadyComponentsAction's hardening but
 // operates over an arbitrary caller-supplied id list instead of "all
@@ -275,7 +252,10 @@ export async function releaseSelectedAction(
     return { ok: false, error: "No tests selected." };
   }
   if (testRequestIds.length > MAX_BULK_SELECTION) {
-    return { ok: false, error: "Too many tests selected." };
+    return {
+      ok: false,
+      error: `Too many tests selected — the limit is ${MAX_BULK_SELECTION} per action.`,
+    };
   }
 
   const session = await requireActiveStaff();
@@ -379,7 +359,10 @@ export async function undoReleaseSelectedAction(
     return { ok: false, error: "No tests selected." };
   }
   if (testRequestIds.length > MAX_BULK_SELECTION) {
-    return { ok: false, error: "Too many tests selected." };
+    return {
+      ok: false,
+      error: `Too many tests selected — the limit is ${MAX_BULK_SELECTION} per action.`,
+    };
   }
 
   const session = await requireActiveStaff();
@@ -407,6 +390,13 @@ export async function undoReleaseSelectedAction(
     return { ok: false, error: "None of the selected tests can be unreleased." };
   }
   const scopedIds = scoped.map((r) => r.id);
+  // TOCTOU note: prior_release_medium / prior_released_at are read one
+  // round-trip before the UPDATE below. If another actor undoes AND
+  // re-releases a row inside that window, these audit metadata fields record
+  // the earlier release. Accepted trade-off — the undo event itself is always
+  // real (the UPDATE is status-filtered) and the DB trigger's accounting
+  // reversal is transaction-correct; closing it fully would need an atomic
+  // RPC.
   const priorById = new Map(
     (candidates ?? []).map((r) => [
       r.id,
