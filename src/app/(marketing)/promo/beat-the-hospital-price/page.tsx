@@ -6,10 +6,9 @@ import {
   PromoProofRow,
   PromoFaq,
   PromoClosingCta,
+  PromoJsonLd,
   type ProofItem,
 } from "@/components/marketing/promo";
-import { JsonLd } from "@/components/marketing/json-ld";
-import { breadcrumbLd, faqPageLd } from "@/lib/marketing/structured-data";
 import { getServiceByCode } from "@/lib/marketing/services";
 import { formatPhp } from "@/lib/marketing/format";
 import { pageMetadata } from "@/lib/marketing/metadata";
@@ -22,9 +21,9 @@ export const metadata = pageMetadata({
   path: "/promo/beat-the-hospital-price",
 });
 
-// Live data — admin price changes on /staff/admin/prices reflect here on next
-// request because DRMed prices are read directly from the services table.
-export const dynamic = "force-dynamic";
+// Live DRMed prices from the services table; 5 min cache — admin price edits
+// on /staff/admin/prices land within 5 min (matches the physicians page).
+export const revalidate = 300;
 
 const FAQ: readonly FaqItem[] = [
   {
@@ -81,14 +80,10 @@ export default async function BeatTheHospitalPricePage() {
 
   return (
     <>
-      <JsonLd
-        data={[
-          breadcrumbLd([
-            { name: "Home", path: "/" },
-            { name: "Beat the Hospital Price", path: "/promo/beat-the-hospital-price" },
-          ]),
-          faqPageLd(FAQ),
-        ]}
+      <PromoJsonLd
+        name="Beat the Hospital Price"
+        path="/promo/beat-the-hospital-price"
+        faq={FAQ}
       />
 
       <PromoHero

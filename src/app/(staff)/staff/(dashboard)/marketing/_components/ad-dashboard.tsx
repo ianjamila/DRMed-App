@@ -16,19 +16,7 @@ import {
   type ChangeEvent,
   type ReactNode,
 } from "react";
-import {
-  PieChart,
-  Pie,
-  Cell,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-} from "recharts";
-import Papa from "papaparse";
+import dynamic from "next/dynamic";
 import {
   Upload,
   RotateCcw,
@@ -67,6 +55,25 @@ const peso = (n: number) => "₱" + Math.round(n || 0).toLocaleString("en-PH");
 const int = (n: number) => Math.round(n || 0).toLocaleString("en-PH");
 const pct = (n: number) => (isFinite(n) ? n.toFixed(1) : "0.0") + "%";
 const safe = (a: number, b: number) => (b ? a / b : 0);
+
+/* ---------- charts (recharts code-split; loaded on demand) ---------- */
+function ChartFallback({ height }: { height: number }) {
+  return (
+    <div
+      style={{ height, display: "grid", placeItems: "center", color: C.sub, fontSize: 12 }}
+    >
+      Loading chart…
+    </div>
+  );
+}
+const SpendDonut = dynamic(() => import("./ad-charts").then((m) => m.SpendDonut), {
+  ssr: false,
+  loading: () => <ChartFallback height={210} />,
+});
+const SpendTrend = dynamic(() => import("./ad-charts").then((m) => m.SpendTrend), {
+  ssr: false,
+  loading: () => <ChartFallback height={232} />,
+});
 
 /* ---------- row shapes ---------- */
 interface AdRow {
@@ -226,6 +233,45 @@ function buildSample(): AdRow[] {
   return rows;
 }
 
+/* ---------- date normalization ---------- */
+// Ad exports carry dates in several shapes: ISO ("2026-06-15", sometimes with a
+// trailing time or as a "start - end" range), US slashes ("06/15/2026"),
+// day-first slashes ("15/06/2026"), or a textual month ("Jun 15, 2026").
+// Normalize them all to ISO YYYY-MM-DD so date grouping, sorting, and the trend
+// chart stay chronological. Slash dates are read month-first, falling back to
+// day-first only when the first field is too large to be a month.
+function normalizeDate(raw: string): string {
+  const s = String(raw).trim();
+  if (!s) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+
+  // ISO anywhere in the string (handles a trailing time or a leading range date).
+  const iso = s.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+
+  // Slash- or dot-separated numeric dates.
+  const parts = s.match(/^(\d{1,4})[/.](\d{1,2})[/.](\d{1,4})$/);
+  if (parts) {
+    const [, a, b, c] = parts;
+    if (a.length === 4) return `${a}-${pad(+b)}-${pad(+c)}`; // Y/M/D
+    let month = +a;
+    let day = +b;
+    if (month > 12) [month, day] = [day, month]; // first field is day-first
+    const year = c.length <= 2 ? 2000 + +c : +c;
+    return `${year}-${pad(month)}-${pad(day)}`;
+  }
+
+  // Textual months ("Jun 15, 2026", "15 June 2026") — parsed as a local date.
+  const t = Date.parse(s);
+  if (!Number.isNaN(t)) {
+    const d = new Date(t);
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+
+  // Unknown format — keep a bounded slice so grouping is at least stable.
+  return s.slice(0, 10);
+}
+
 /* ---------- flexible CSV header mapping ---------- */
 function mapRow(r: Record<string, string>): AdRow {
   const keys = Object.keys(r);
@@ -244,7 +290,7 @@ function mapRow(r: Record<string, string>): AdRow {
   if (/face|meta|insta|ig\b/i.test(platform)) platform = "Meta";
   else if (/google|search|goog|adwords/i.test(platform)) platform = "Google";
   return {
-    date: String(find("date", "day", "reporting")).slice(0, 10),
+    date: normalizeDate(find("date", "day", "reporting")),
     platform: platform || "Other",
     campaign: String(find("campaign")).trim() || "Unattributed",
     ad: String(find("ad name", "ad ", "creative", "headline")).trim() || "—",
@@ -446,6 +492,9 @@ export function AdPerformanceDashboard() {
   const [platformF, setPlatformF] = useState("All");
   const [periodF, setPeriodF] = useState("28");
   const [target, setTarget] = useState(450);
+  // Editable draft of the target field, so it can be cleared mid-edit without
+  // the numeric `target` (used by the KPI math) snapping to 0 on every keystroke.
+  const [targetDraft, setTargetDraft] = useState("450");
   const [sort, setSort] = useState<SortState>({ key: "spend", dir: "desc" });
   const [adSort, setAdSort] = useState<SortState>({ key: "spend", dir: "desc" });
   const [note, setNote] = useState("");
@@ -513,9 +562,13 @@ export function AdPerformanceDashboard() {
   }, [filtered]);
 
   /* ---------- handlers ---------- */
-  const onUpload = (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  const onUpload = async (e: ChangeEvent<HTMLInputElement>) => {
+    const input = e.target;
+    const file = input.files?.[0];
     if (!file) return;
+    // papaparse is only needed once a staff member actually uploads a CSV, so
+    // load it on demand to keep it out of the dashboard's initial JS bundle.
+    const { default: Papa } = await import("papaparse");
     Papa.parse<Record<string, string>>(file, {
       header: true,
       skipEmptyLines: true,
@@ -538,7 +591,7 @@ export function AdPerformanceDashboard() {
       },
       error: () => setNote("Couldn't parse that CSV."),
     });
-    e.target.value = "";
+    input.value = "";
   };
   const reset = () => {
     setData(buildSample());
@@ -548,6 +601,25 @@ export function AdPerformanceDashboard() {
       window.localStorage.removeItem(STORE_KEY);
     } catch {
       /* blocked storage — nothing to clear */
+    }
+  };
+  const onTargetChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const v = e.target.value;
+    setTargetDraft(v);
+    // Empty field stays empty while editing; keep the last committed target for
+    // the KPI math and only commit a valid non-negative number.
+    if (v.trim() === "") return;
+    const parsed = parseInt(v, 10);
+    if (Number.isFinite(parsed) && parsed >= 0) setTarget(parsed);
+  };
+  const onTargetBlur = () => {
+    const parsed = parseInt(targetDraft, 10);
+    if (targetDraft.trim() === "" || !Number.isFinite(parsed) || parsed < 0) {
+      setTargetDraft(String(target)); // restore last good value
+    } else {
+      const clamped = Math.max(0, parsed);
+      setTarget(clamped);
+      setTargetDraft(String(clamped));
     }
   };
   const downloadTemplate = () => {
@@ -706,23 +778,11 @@ export function AdPerformanceDashboard() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-4">
           {/* spend by platform donut */}
           <Card title="Spend by platform">
-            <ResponsiveContainer width="100%" height={210}>
-              <PieChart>
-                <Pie
-                  data={byPlatform.map((p) => ({ name: p.name, spend: p.spend }))}
-                  dataKey="spend"
-                  nameKey="name"
-                  innerRadius={48}
-                  outerRadius={78}
-                  paddingAngle={2}
-                >
-                  {byPlatform.map((p) => (
-                    <Cell key={p.name} fill={platColor(p.name)} />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(v) => peso(Number(v))} />
-              </PieChart>
-            </ResponsiveContainer>
+            <SpendDonut
+              data={byPlatform.map((p) => ({ name: p.name, spend: p.spend }))}
+              colorOf={platColor}
+              formatPeso={peso}
+            />
             <div className="flex justify-center gap-4 -mt-2">
               {byPlatform.map((p) => (
                 <div key={p.name} className="flex items-center gap-1.5 text-xs" style={{ color: C.sub }}>
@@ -739,17 +799,12 @@ export function AdPerformanceDashboard() {
           {/* spend & captures over time */}
           <div className="lg:col-span-2">
             <Card title="Spend & patients captured over time">
-              <ResponsiveContainer width="100%" height={232}>
-                <LineChart data={byDate} margin={{ left: -10, right: 8, top: 6 }}>
-                  <CartesianGrid stroke={C.line} vertical={false} />
-                  <XAxis dataKey="label" tick={{ fontSize: 11, fill: C.sub }} interval="preserveStartEnd" />
-                  <YAxis yAxisId="l" tick={{ fontSize: 11, fill: C.sub }} />
-                  <YAxis yAxisId="r" orientation="right" tick={{ fontSize: 11, fill: C.sub }} />
-                  <Tooltip formatter={(v, n) => (n === "spend" ? peso(Number(v)) : int(Number(v)))} />
-                  <Line yAxisId="l" type="monotone" dataKey="spend" stroke={C.ink} strokeWidth={2} dot={false} name="spend" />
-                  <Line yAxisId="r" type="monotone" dataKey="bookings" stroke={C.accent} strokeWidth={2} dot={false} name="captured" />
-                </LineChart>
-              </ResponsiveContainer>
+              <SpendTrend
+                data={byDate}
+                colors={{ line: C.line, sub: C.sub, ink: C.ink, accent: C.accent }}
+                formatPeso={peso}
+                formatInt={int}
+              />
             </Card>
           </div>
         </div>
@@ -1025,8 +1080,11 @@ export function AdPerformanceDashboard() {
             Target cost / booking
             <input
               type="number"
-              value={target}
-              onChange={(e) => setTarget(Math.max(0, parseInt(e.target.value, 10) || 0))}
+              inputMode="numeric"
+              min={0}
+              value={targetDraft}
+              onChange={onTargetChange}
+              onBlur={onTargetBlur}
               className="w-24 rounded-lg px-2 py-1 text-sm outline-none"
               style={{ background: C.surface, border: `1px solid ${C.line}`, color: C.text, ...num }}
             />

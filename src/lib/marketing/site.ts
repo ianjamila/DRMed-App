@@ -36,7 +36,7 @@ export const CONTACT = {
     landline: "(02) 8 355 3517",
     landlineE164: "+63283553517",
   },
-  email: "drmedhealthcare@gmail.com",
+  email: "info@drmed.ph",
   hours: "Monday – Saturday, 8:00 AM – 5:00 PM",
 } as const;
 
@@ -90,13 +90,6 @@ export const SOCIAL = {
 export const GOOGLE_REVIEW = {
   url: "https://g.page/r/CUHIchHqgXUbEBM/review",
 } as const;
-
-export const HERO_STATS = [
-  { value: "20", label: "Specialist Physicians" },
-  { value: "10+", label: "HMO Partners" },
-  { value: "50%", label: "Less vs. Hospitals" },
-  { value: "24h", label: "Average Turnaround" },
-] as const;
 
 export const TRUST_BAR = [
   { icon: "🏥", title: "Accredited Clinic & Lab", sub: "DOH-compliant facility" },

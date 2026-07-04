@@ -14,7 +14,7 @@ import {
 } from "@/components/marketing/motion";
 import { SITE } from "@/lib/marketing/site";
 
-// Local typed stat array matching HERO_STATS shape with numeric `to` for CountUp.
+// Hero stat counters — numeric `to` + `suffix` drive the CountUp animation.
 const STATS = [
   { to: 20, suffix: "", label: "Specialist Physicians" },
   { to: 10, suffix: "+", label: "HMO Partners" },
