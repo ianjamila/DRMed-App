@@ -75,3 +75,20 @@ export function outstandingLabImagingNames(
     .filter(isOutstandingLabImaging)
     .map((t) => t.name ?? "—");
 }
+
+// Mirror of outstandingLabImagingNames for the queue's "Released" summary.
+// Filters to EXACTLY status === 'released' (not "terminal": cancelled tests
+// are terminal but must never be presented to reception as released).
+export function releasedLabImagingNames(
+  tests: readonly QueueTestLike[],
+): string[] {
+  return tests
+    .filter(
+      (t) =>
+        !t.is_package_header &&
+        t.status === "released" &&
+        t.section != null &&
+        LAB_IMAGING_SECTIONS.has(t.section),
+    )
+    .map((t) => t.name ?? "—");
+}
