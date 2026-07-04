@@ -411,6 +411,19 @@ export default async function VisitDetailPage({ params }: Props) {
                     </div>
                     <div className="mt-3 overflow-x-auto rounded-lg border border-[color:var(--color-brand-bg-mid)]">
                       <table className="w-full text-sm">
+                        {/* Visually hidden header: keeps the plan-mandated
+                            6-column layout while giving screen readers
+                            column context (esp. the "—" price cells). */}
+                        <thead className="sr-only">
+                          <tr>
+                            <th scope="col">Service</th>
+                            <th scope="col">Base</th>
+                            <th scope="col">Discount</th>
+                            <th scope="col">Final</th>
+                            <th scope="col">Status</th>
+                            <th scope="col">Action</th>
+                          </tr>
+                        </thead>
                         <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
                           {components.length === 0 ? (
                             <tr>
@@ -441,6 +454,12 @@ export default async function VisitDetailPage({ params }: Props) {
                                     </Link>
                                     <p className="font-mono text-[10px] text-[color:var(--color-brand-text-soft)]">
                                       {csvc.code}
+                                      {/* Section cue (was on the old <ul> rows):
+                                          also signals when a component belongs
+                                          to another role's bench. */}
+                                      <span className="ml-1 uppercase tracking-wider">
+                                        {csvc.section ?? "—"}
+                                      </span>
                                     </p>
                                     {c.release_medium && c.released_at ? (
                                       <p className="mt-1 text-[10px] text-emerald-700">
