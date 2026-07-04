@@ -64,6 +64,7 @@ export async function releaseTestAction(
   if (!updated || updated.length === 0) {
     // 0 rows matched — a concurrent action (e.g. a bulk package release)
     // already released it. Never audit or notify a write that didn't happen.
+    revalidatePath(`/staff/visits/${visitId}`);
     return { ok: false, error: "This result is no longer ready to release." };
   }
 
@@ -230,6 +231,7 @@ export async function markConsultationDoneAction(
   if (!updated || updated.length === 0) {
     // 0 rows matched — a concurrent action (e.g. a bulk package release)
     // already completed it. Never audit a write that didn't happen.
+    revalidatePath(`/staff/visits/${visitId}`);
     return { ok: false, error: "This consultation is no longer pending." };
   }
 
