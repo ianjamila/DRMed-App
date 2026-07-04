@@ -3,6 +3,10 @@
 **Date:** 2026-07-04
 **Status:** Approved design, pending implementation
 **Origin:** Sample Visit #0037 bug hunt (ROUTINE PACKAGE stuck at `ready_for_release`; released NA test invisible in reception Queue) + follow-up feature request (undo release).
+**Amended:** 2026-07-04, after the registration→release audit
+(`docs/superpowers/audits/2026-07-04-registration-to-release-audit.md`)
+verified every assumption against the live DB. Amendments are marked
+⟨audit⟩. The audit's verdict is GO with these amendments.
 
 ## Context — verified findings
 
@@ -35,14 +39,46 @@ Key machinery that shapes the design (all pre-existing):
   a reason. `journal_entries_one_posted_per_source` excludes
   `source_kind='reversal'` rows.
 - Payment gate (0001) and consent gate (0086) fire only on transitions
-  **to** `released` — they re-apply automatically on re-release.
-- Patient portal RLS shows `status = 'released'` only → an undone
-  result disappears from the portal instantly, no extra work.
-- `test_requests` UPDATE RLS: medtech/pathologist (+ admin path).
-  "Anyone who can release" == this existing gate; no new role logic.
-- Patient access is audit-logged (`result.downloaded`, plus the signed
-  URL access-intent action) → powers the "patient already saw this"
-  warning.
+  **to** `released` — they re-apply automatically on re-release. The
+  payment gate passes exactly `('paid','waived')`; ⟨audit⟩ both gates
+  are scoped by `visit_id` only, so a component that just passed them
+  guarantees its header (same visit, same transaction) passes too —
+  Legs A/B need no consent pre-check.
+- ⟨audit⟩ An undone result disappears from the portal instantly — but
+  note the enforcement is **app-side**: every portal read goes through
+  the admin client with explicit `status = 'released'` filters
+  (`set_patient_context()`/patient RLS exist but are not exercised by
+  the portal today — see audit H2). The hiding behavior holds either
+  way.
+- ⟨audit⟩ `test_requests` UPDATE RLS actually grants **all five staff
+  roles** (reception+admin via an `ALL` policy; medtech/pathologist/
+  xray_technician via the UPDATE policy). Reception never sees
+  Release/Undo controls only because `sectionsForRole('reception')`
+  filters every test row off the visit page — the UI section-gate is
+  the load-bearing restriction, not RLS. Still no new role logic
+  needed; just don't describe the gate as "medtech/pathologist only".
+- ⟨audit⟩ Patient access is audit-logged under a **single** action,
+  `result.downloaded` (no separate access-intent action exists), with
+  `resource_type='result'` and three different metadata shapes across
+  the three download paths — see Feature 3 for the required union
+  query. It fires when the signed URL is minted (click-time).
+- ⟨audit⟩ Two more pre-existing package triggers the design must
+  coexist with (it does — verified): `tg_header_auto_promote` (BEFORE,
+  0040) force-promotes any header at `in_progress` to
+  `ready_for_release`, so headers sit "ready" from visit creation; and
+  `tg_check_header_completion_on_release` (BEFORE, 0042) stamps
+  `package_completed_at` on the header's own transition to `released`.
+- ⟨audit⟩ A **third release path** exists besides `releaseTestAction`
+  and the new bulk action: consolidated chemistry finalisation
+  (`src/lib/actions/results/finalise-consolidated.ts`) bulk-updates
+  group members — including package components — to `released` (soft
+  `releaseDeferred` when a gate rejects). Leg A, being a trigger,
+  fires correctly from this path too; its production use also proves
+  the same-statement multi-row release pattern Leg A must tolerate.
+- ⟨audit⟩ Live `bridge_test_request_released` also short-circuits rows
+  with `legacy_import_run_id IS NOT NULL` (post-0064 addition, not in
+  the migration file). The undo trigger's defensive no-JE branch
+  already covers such rows.
 
 ## Feature 1 — Package release (per-component + auto header)
 
@@ -67,8 +103,17 @@ bulk action (defaulting to the patient's preferred medium, same as
   Per-row payment/consent triggers still enforce the gates —
   `translatePgError` on rejection.
 - One `audit()` row per released component (matching the per-release
-  convention) with `metadata.bulk: true`, plus `notifyResultReleased`
-  per component (fire-and-forget, as in `releaseTestAction`).
+  convention) with `metadata.bulk: true`.
+- ⟨audit⟩ **Notification: one consolidated notification per bulk
+  action**, not one per component (a 3-component package would
+  otherwise send 3 emails + 3 SMS to the same patient within seconds,
+  while the header auto-release moment stayed silent). The bulk action
+  sends a single "N results from your visit are ready" via the
+  existing channels (fire-and-forget); single-component
+  `releaseTestAction` keeps its per-test notification; header
+  auto-release sends nothing (its components already notified). While
+  in this file, also wire `reportError()` (Sentry) into the notifiers'
+  failure branches — audit finding H8, a proven silent-failure hole.
 - Disabled/blocked states mirror `ReleaseButton` (unpaid, consent gate).
 - The header then auto-releases via the new trigger (all components
   terminal in one statement — Leg A must tolerate same-statement
@@ -95,8 +140,11 @@ bulk action (defaulting to the patient's preferred medium, same as
 
 `/staff/visits/queue`: add `releasedLabImagingNames()` to
 `src/lib/visits/queue-stage.ts` (mirror of
-`outstandingLabImagingNames`, filtering terminal `released` leaf
-lab/imaging tests) with unit tests alongside the existing ones. Render
+`outstandingLabImagingNames`, filtering leaf lab/imaging tests with
+`status === 'released'` — ⟨audit⟩ **exactly `released`, not
+"terminal"**: a terminal-based mirror would wrongly count `cancelled`
+tests as released; unit-test this case explicitly) with unit tests
+alongside the existing ones. Render
 a **Released** summary in Processing rows (desktop table + mobile
 cards), same up-to-3-names-then-"+N more" presentation as Outstanding.
 
@@ -105,7 +153,9 @@ cards), same up-to-3-names-then-"+N more" presentation as Outstanding.
 ### Decisions (user-confirmed)
 
 - **Who:** anyone who can release — `requireActiveStaff` + existing
-  `test_requests` UPDATE RLS. No new role gate.
+  `test_requests` UPDATE RLS. No new role gate. ⟨audit⟩ Precisely:
+  the DB grant is all five staff roles; the visit page's section-gate
+  is what keeps reception from ever seeing the control (see Context).
 - **Packages:** undoing a component after the header released
   **cascades** — header reverts to `ready_for_release` (with its own
   accounting reversal) and `package_completed_at` clears. Header
@@ -122,13 +172,30 @@ Clicking opens a confirmation dialog modeled on `VoidPaymentDialog`:
 
 - States plainly: result will be pulled from the patient portal; the
   release accounting will be reversed; re-releasing later is allowed.
-- **Required reason** textarea (submit disabled while blank), matching
-  the void-payment pattern.
-- If the audit log shows patient access for this test_request's result
-  (`result.downloaded` / access-intent actions), show a prominent
-  amber warning: "Patient has already viewed/downloaded this result
-  N time(s) — undoing does not un-see it." The page (server component)
-  fetches this count and passes it down; no client-side audit query.
+- **Required reason** textarea, matching the void-payment pattern —
+  ⟨audit⟩ which is actually validate-on-click (inline "Reason is
+  required." error; Confirm disabled only while pending), an inline
+  expand rather than a modal (`void-payment-dialog.tsx`). Match that,
+  don't invent a disabled-while-blank variant.
+- If the audit log shows patient access for this test_request's
+  result, show a prominent amber warning: "Patient has already
+  viewed/downloaded this result N time(s) — undoing does not un-see
+  it." The page (server component) fetches this count and passes it
+  down; no client-side audit query.
+  ⟨audit⟩ **The count query must be a 3-way union** — the single
+  action is `result.downloaded` with `resource_type='result'` and
+  three metadata shapes (no access-intent action exists; a naive
+  `resource_id = test_request_id` count returns 0 every time):
+  1. `metadata->>'test_request_id' = $1` (single-test path), OR
+  2. `resource_id IN (SELECT result_id FROM result_test_requests
+     WHERE test_request_id = $1)` (report-group consolidated path,
+     which carries no test_request reference in metadata), OR
+  3. `metadata->'merged_component_ids' @> to_jsonb($1::text)`
+     (package-consolidated path, keyed by header).
+  Also normalize going forward: make all three download actions write
+  `metadata.test_request_ids` (array covering every component
+  involved) so future queries don't need the union for new rows; keep
+  the union for historical rows.
 
 ### Server action
 
@@ -139,7 +206,11 @@ Clicking opens a confirmation dialog modeled on `VoidPaymentDialog`:
 2. Guard: target must currently be `released`; must not be a package
    header (headers follow components — undoing a header directly is
    not offered; undo the component(s) instead). Cancelled/other
-   statuses → friendly error.
+   statuses → friendly error. ⟨audit⟩ This guard is **load-bearing,
+   not defense-in-depth**: no CHECK/trigger/RLS blocks a direct header
+   `released → ready_for_release` (the undo trigger itself can't,
+   since its own cascade legitimately produces that header
+   transition). Implement exactly as written.
 3. Update via the user-scoped client (RLS enforced):
    `status = 'ready_for_release'`, `released_at/released_by/
    release_medium = null`.
@@ -253,7 +324,8 @@ of release withdrawals.
 ## Testing
 
 - Unit: `queue-stage` released-names helper (vitest, alongside
-  existing tests).
+  existing tests). ⟨audit⟩ Must include the cancelled-is-not-released
+  case (a "terminal" mirror would count cancelled tests as released).
 - Migration tests against local Supabase (`supabase start` +
   `db:reset`), exercising: full package release flow (components →
   header auto-release → `package_completed_at`); bulk release (one
@@ -262,7 +334,9 @@ of release withdrawals.
   undo component under released header (cascade, both JEs reversed,
   stamp cleared); re-release (fresh JE, single posted JE per source);
   fully-cancelled package does not auto-release; undo blocked for
-  non-released rows.
+  non-released rows; ⟨audit⟩ a package component released via the
+  consolidated-finalise path (multi-row `.in()` update) also triggers
+  header auto-release when it's the last one.
 - Manual smoke on visit #0037's shape via seeded local data, including
   the harmonized layout with a package + released standalone together.
 
@@ -272,6 +346,12 @@ of release withdrawals.
 2. Feature 1 + Feature 4 (one PR: migration for header auto-release,
    plus the harmonized layout + per-component and bulk release UI —
    they touch the same package card) — unblocks #0037.
+   ⟨audit⟩ Post-deploy operational step: **three** package headers are
+   stuck live, not one — visits #0032 (unpaid), #0037 (paid), #0039
+   (unpaid), i.e. 100% of package visits ever created. Release them
+   through the new UI (bulk button), not a data migration: #0037
+   releases immediately; #0032/#0039 stay correctly payment-gated
+   until paid. Human actor → real audit rows + notifications.
 3. Feature 3 (migration: undo trigger + undo UI) — depends on
    Feature 1 for the cascaded-header re-release story.
 4. Feature 5 (admin undone-releases report) — depends on Feature 3's
