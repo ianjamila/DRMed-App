@@ -7,9 +7,6 @@ import { CONTACT, SITE } from "@/lib/marketing/site";
 import { getPatientConsentState } from "@/lib/consent/gate";
 import { formatPatientName } from "@/lib/patients/format-name";
 import { PrintButton } from "./print-button";
-import { headers } from "next/headers";
-import { ReceiptReviewCta } from "@/components/staff/receipt-review-cta";
-import { reviewLinkAbsolute } from "@/lib/seo/review";
 
 export const metadata = { title: "Combined receipt — staff" };
 
@@ -49,10 +46,6 @@ export default async function GroupReceiptPage({ params }: Props) {
 
   const consent = await getPatientConsentState(patient.id);
   const plainPin = await peekVisitGroupPinFlash(groupId);
-
-  const host = (await headers()).get("host") ?? "drmed.ph";
-  const proto = host.startsWith("localhost") ? "http" : "https";
-  const reviewUrl = reviewLinkAbsolute(`${proto}://${host}`, "receipt");
 
   // Order the slips: Doctor / PF first, then Lab & Services.
   const slips = visits
@@ -221,8 +214,6 @@ export default async function GroupReceiptPage({ params }: Props) {
           results when ready. One PIN covers both receipts. Valid for 60 days.
         </p>
       </div>
-
-      <ReceiptReviewCta url={reviewUrl} />
     </div>
   );
 }
