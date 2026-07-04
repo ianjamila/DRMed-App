@@ -53,6 +53,27 @@ one test_request by id and already honors payment gate, consent gate,
 and section visibility). No release button on the header itself — the
 header follows the components.
 
+**"Release all ready" bulk button** on the package card header row,
+shown when ≥ 2 components are at `ready_for_release` (a single ready
+component just shows its own button). One medium select shared by the
+bulk action (defaulting to the patient's preferred medium, same as
+`ReleaseButton`). New server action
+`releaseAllReadyComponentsAction(headerId, visitId, medium)`:
+
+- `requireActiveStaff`; verify the header row (`is_package_header`,
+  belongs to `visitId`).
+- Single user-scoped UPDATE: all rows `parent_id = headerId AND
+  status = 'ready_for_release'` → `released` (+ released_at/by/medium).
+  Per-row payment/consent triggers still enforce the gates —
+  `translatePgError` on rejection.
+- One `audit()` row per released component (matching the per-release
+  convention) with `metadata.bulk: true`, plus `notifyResultReleased`
+  per component (fire-and-forget, as in `releaseTestAction`).
+- Disabled/blocked states mirror `ReleaseButton` (unpaid, consent gate).
+- The header then auto-releases via the new trigger (all components
+  terminal in one statement — Leg A must tolerate same-statement
+  sibling updates; the count-pending check already does).
+
 **Migration — header auto-release trigger** (two legs, mirroring the
 0040/0042 two-leg precedent for unspecified AFTER-trigger ordering):
 
@@ -169,6 +190,57 @@ transition (no other code path produces it today):
 - Notifying the patient that a result was withdrawn.
 - Undo for cancelled tests (cancellation reversal already exists).
 
+## Feature 4 — Harmonized visit-page layout (packages + singles)
+
+**Decision (user-confirmed): harmonized two sections** — keep package
+cards and the singles table as distinct surfaces, but make them read as
+one system. Currently the package card is a loose sub-list while
+singles get a full billing table; with both on a visit (e.g. #0037) the
+page reads as two unrelated widgets.
+
+Changes to `visits/[id]/page.tsx`:
+
+- Explicit section headings under "Tests": **Packages** and
+  **Individual tests** (each shown only when non-empty; the existing
+  "No standalone tests on this visit." empty-state copy stays).
+- Component rows inside the package card adopt the table's visual
+  grammar: same row height/padding, columns aligned to the table's
+  Service / Status / Action rhythm, status badge in the same position,
+  and a right-aligned **Action** cell rendering the same `TestAction`
+  component the table uses (Release / Awaiting claim / Awaiting
+  sign-off / Released ✓ + Undo + PDF). Components show "—" where the
+  table shows Base/Discount/Final (they are ₱0 lines; the package price
+  lives on the header row, unchanged).
+- The header row of the card gains the "Release all ready" control
+  (Feature 1) on the right, mirroring where the table puts actions.
+- Mobile: component rows stack the same way the table's responsive
+  behavior does — no divergent mobile treatment for packages.
+- Reuse `TestAction` rather than duplicating per-status rendering; if
+  its props need a `compact` variant for card rows, add the variant
+  rather than forking the component.
+
+## Feature 5 — Admin report: undone releases
+
+New admin-only page `staff/admin/reports/undone-releases` (sibling of
+the existing `admin/reports/lab-tat`), for RA 10173-flavored oversight
+of release withdrawals.
+
+- Gate: `requireAdminStaff`. Reads `audit_log` via the admin client in
+  a server component (audit rows are service-role-written; precedent:
+  existing admin report pages).
+- Source rows: `action = 'test_request.release_undone'` (staff undos,
+  reason in metadata) and the `actor_type = 'system'` cascade rows for
+  package headers.
+- Columns: when (Manila), patient (name + DRM-ID), visit #, test
+  (service name/code), undone by (staff name), reason, and **current
+  outcome** — re-released (with date) / still unreleased / cancelled,
+  resolved by joining the test_request's current status +
+  `released_at`.
+- Filter: date range, default last 90 days. No pagination gymnastics —
+  cap at 500 rows with a "narrow the range" notice (matches the
+  simple-report precedent).
+- No migration needed; the audit trail already carries everything.
+
 ## Invariants preserved
 
 - Payment gate and consent gate remain DB-enforced on every (re-)release.
@@ -184,19 +256,26 @@ transition (no other code path produces it today):
   existing tests).
 - Migration tests against local Supabase (`supabase start` +
   `db:reset`), exercising: full package release flow (components →
-  header auto-release → `package_completed_at`); undo standalone
-  (JE reversed, PF/COGS voided); undo component under released header
-  (cascade, both JEs reversed, stamp cleared); re-release (fresh JE,
-  single posted JE per source); fully-cancelled package does not
-  auto-release; undo blocked for non-released rows.
-- Manual smoke on visit #0037's shape via seeded local data.
+  header auto-release → `package_completed_at`); bulk release (one
+  statement releases all ready components, header follows, gates still
+  reject when unpaid); undo standalone (JE reversed, PF/COGS voided);
+  undo component under released header (cascade, both JEs reversed,
+  stamp cleared); re-release (fresh JE, single posted JE per source);
+  fully-cancelled package does not auto-release; undo blocked for
+  non-released rows.
+- Manual smoke on visit #0037's shape via seeded local data, including
+  the harmonized layout with a package + released standalone together.
 
 ## Rollout order
 
 1. Feature 2 (no migration, independently shippable).
-2. Feature 1 (migration: header auto-release) — unblocks #0037.
-3. Feature 3 (migration: undo trigger) — depends on Feature 1 for the
-   cascaded-header re-release story.
+2. Feature 1 + Feature 4 (one PR: migration for header auto-release,
+   plus the harmonized layout + per-component and bulk release UI —
+   they touch the same package card) — unblocks #0037.
+3. Feature 3 (migration: undo trigger + undo UI) — depends on
+   Feature 1 for the cascaded-header re-release story.
+4. Feature 5 (admin undone-releases report) — depends on Feature 3's
+   audit rows existing.
 
 Schema-change workflow per CLAUDE.md: local diff → local test → PR →
 staging → prod; `npm run db:types` after each migration.
