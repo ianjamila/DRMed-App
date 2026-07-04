@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
+import { Panel } from "@/components/ui/panel";
 import {
   releaseSelectedAction,
   undoReleaseSelectedAction,
@@ -28,12 +29,15 @@ const MEDIUM_OPTIONS: { value: ReleaseMedium; label: string }[] = [
   { value: "other", label: "Other" },
 ];
 
-// Fixed bottom toolbar that appears once at least one row is selected in
-// either bucket. Release and unrelease are independent actions with
-// independent pending/enabled state — a receptionist can have some
-// ready-for-release rows and some released rows checked at once (e.g.
-// re-doing a release with the wrong medium) and act on either group without
-// disturbing the other's checkboxes.
+// Sticky bottom toolbar (same pattern as the hmo-claims bulk bars) that
+// appears once at least one row is selected in either bucket. Rendered as
+// the last child inside the SelectionProvider wrapping the Tests section, so
+// it stays in-flow — no overlap with the Payments section below — and sticks
+// to the viewport bottom while the Tests tables are in view. Release and
+// unrelease are independent actions with independent pending/enabled state —
+// a receptionist can have some ready-for-release rows and some released rows
+// checked at once (e.g. re-doing a release with the wrong medium) and act on
+// either group without disturbing the other's checkboxes.
 export function BulkActionBar({
   visitId,
   paid,
@@ -41,8 +45,14 @@ export function BulkActionBar({
   consentOnFile,
   gateRequired,
 }: Props) {
-  const { releaseIds, unreleaseIds, releaseCount, unreleaseCount, clear } =
-    useRowSelection();
+  const {
+    releaseIds,
+    unreleaseIds,
+    releaseCount,
+    unreleaseCount,
+    clear,
+    clearIds,
+  } = useRowSelection();
   const [medium, setMedium] = useState<ReleaseMedium>(
     preferredMedium ?? "physical",
   );
@@ -68,13 +78,22 @@ export function BulkActionBar({
   const unreleaseDisabled = unreleasePending || unreleaseCount === 0;
 
   function onRelease() {
+    // Snapshot the ids being sent so success only clears exactly this batch —
+    // rows in the other bucket, or ticked while the action is in flight,
+    // keep their checkmarks.
+    const sentIds = releaseIds;
     startRelease(async () => {
-      const result = await releaseSelectedAction(visitId, releaseIds, medium);
+      const result = await releaseSelectedAction(visitId, sentIds, medium);
       if (!result.ok) {
         alert(result.error);
         return;
       }
-      clear();
+      if (result.count < sentIds.length) {
+        alert(
+          `Released ${result.count} of ${sentIds.length} selected — the rest were already handled or not yours to release.`,
+        );
+      }
+      clearIds(sentIds);
     });
   }
 
@@ -84,112 +103,123 @@ export function BulkActionBar({
       return;
     }
     setReasonError(null);
+    const sentIds = unreleaseIds;
     startUnrelease(async () => {
       const result = await undoReleaseSelectedAction(
         visitId,
-        unreleaseIds,
+        sentIds,
         reason.trim(),
       );
       if (!result.ok) {
         alert(result.error);
         return;
       }
+      if (result.count < sentIds.length) {
+        alert(
+          `Unreleased ${result.count} of ${sentIds.length} selected — the rest had already changed.`,
+        );
+      }
       setReason("");
-      clear();
+      clearIds(sentIds);
     });
   }
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-40 border-t border-[color:var(--color-brand-bg-mid)] bg-white shadow-[0_-2px_10px_rgba(0,0,0,0.08)]">
-      <div className="mx-auto flex max-w-screen-2xl flex-wrap items-center gap-3 px-4 py-3 sm:px-6 lg:px-8">
-        <div className="text-xs text-[color:var(--color-brand-text-soft)]">
-          <span className="font-semibold text-[color:var(--color-brand-navy)]">
-            {totalSelected}
-          </span>{" "}
-          selected
-          {releaseCount > 0 ? ` · ${releaseCount} ready` : ""}
-          {unreleaseCount > 0 ? ` · ${unreleaseCount} released` : ""}
-        </div>
-
-        <button
-          type="button"
-          onClick={() => {
-            clear();
-            setReason("");
-            setReasonError(null);
-          }}
-          className="text-xs font-semibold text-[color:var(--color-brand-text-soft)] hover:underline"
-        >
-          Clear
-        </button>
-
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          {releaseCount > 0 ? (
-            <div className="flex items-center gap-1.5">
-              {!consentOnFile && !gateRequired ? (
-                <span className="text-[11px] text-amber-600">
-                  Consent not on file
-                </span>
-              ) : null}
-              <select
-                value={medium}
-                onChange={(e) => setMedium(e.target.value as ReleaseMedium)}
-                disabled={releaseDisabled}
-                title={releaseTitle ?? "Release medium"}
-                className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 text-xs focus:border-[color:var(--color-brand-cyan)] focus:outline-none disabled:opacity-50"
-              >
-                {MEDIUM_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-              <Button
-                type="button"
-                size="sm"
-                disabled={releaseDisabled}
-                title={releaseTitle}
-                className="bg-[color:var(--color-brand-cyan)] text-white hover:bg-[color:var(--color-brand-navy)]"
-                onClick={onRelease}
-              >
-                {releasePending
-                  ? "Releasing…"
-                  : `Release selected (${releaseCount})`}
-              </Button>
-            </div>
-          ) : null}
-
-          {unreleaseCount > 0 ? (
-            <div className="flex items-center gap-1.5">
-              <input
-                type="text"
-                value={reason}
-                onChange={(e) => {
-                  setReason(e.target.value);
-                  if (reasonError) setReasonError(null);
-                }}
-                placeholder="Reason (required)…"
-                disabled={unreleasePending}
-                className="w-40 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 text-xs focus:border-[color:var(--color-brand-cyan)] focus:outline-none disabled:opacity-50"
-              />
-              {reasonError ? (
-                <span className="text-[11px] text-red-600">{reasonError}</span>
-              ) : null}
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={unreleaseDisabled}
-                onClick={onUnrelease}
-              >
-                {unreleasePending
-                  ? "Undoing…"
-                  : `Unrelease selected (${unreleaseCount})`}
-              </Button>
-            </div>
-          ) : null}
-        </div>
+    <Panel
+      role="region"
+      aria-label="Bulk actions"
+      className="sticky bottom-0 z-10 mt-4 flex flex-wrap items-center gap-3 p-3 shadow-sm"
+    >
+      <div
+        aria-live="polite"
+        className="text-xs text-[color:var(--color-brand-text-soft)]"
+      >
+        <span className="font-semibold text-[color:var(--color-brand-navy)]">
+          {totalSelected}
+        </span>{" "}
+        selected
+        {releaseCount > 0 ? ` · ${releaseCount} ready` : ""}
+        {unreleaseCount > 0 ? ` · ${unreleaseCount} released` : ""}
       </div>
-    </div>
+
+      <button
+        type="button"
+        onClick={() => {
+          clear();
+          setReason("");
+          setReasonError(null);
+        }}
+        className="text-xs font-semibold text-[color:var(--color-brand-text-soft)] hover:underline"
+      >
+        Clear
+      </button>
+
+      <div className="ml-auto flex flex-wrap items-center gap-2">
+        {releaseCount > 0 ? (
+          <div className="flex items-center gap-1.5">
+            {!consentOnFile && !gateRequired ? (
+              <span className="text-[11px] text-amber-600">
+                Consent not on file
+              </span>
+            ) : null}
+            <select
+              value={medium}
+              onChange={(e) => setMedium(e.target.value as ReleaseMedium)}
+              disabled={releaseDisabled}
+              title={releaseTitle ?? "Release medium"}
+              className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 text-xs focus:border-[color:var(--color-brand-cyan)] focus:outline-none disabled:opacity-50"
+            >
+              {MEDIUM_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+            <Button
+              type="button"
+              size="sm"
+              disabled={releaseDisabled}
+              title={releaseTitle}
+              className="bg-[color:var(--color-brand-cyan)] text-white hover:bg-[color:var(--color-brand-navy)]"
+              onClick={onRelease}
+            >
+              {releasePending
+                ? "Releasing…"
+                : `Release selected (${releaseCount})`}
+            </Button>
+          </div>
+        ) : null}
+
+        {unreleaseCount > 0 ? (
+          <div className="flex items-center gap-1.5">
+            <input
+              type="text"
+              value={reason}
+              onChange={(e) => {
+                setReason(e.target.value);
+                if (reasonError) setReasonError(null);
+              }}
+              placeholder="Reason (required)…"
+              disabled={unreleasePending}
+              className="w-40 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 text-xs focus:border-[color:var(--color-brand-cyan)] focus:outline-none disabled:opacity-50"
+            />
+            {reasonError ? (
+              <span className="text-[11px] text-red-600">{reasonError}</span>
+            ) : null}
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={unreleaseDisabled}
+              onClick={onUnrelease}
+            >
+              {unreleasePending
+                ? "Undoing…"
+                : `Unrelease selected (${unreleaseCount})`}
+            </Button>
+          </div>
+        ) : null}
+      </div>
+    </Panel>
   );
 }

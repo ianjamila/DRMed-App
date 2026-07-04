@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { MAX_BULK_SELECTION } from "@/lib/visits/bulk-selection";
 import {
   useRowSelection,
@@ -19,8 +20,17 @@ interface Props {
 // own eligibility bucket hits MAX_BULK_SELECTION so a receptionist can't
 // build a selection the server action would reject outright.
 export function RowSelectCheckbox({ testRequestId, eligibility, label }: Props) {
-  const { isSelected, toggle, releaseCount, unreleaseCount } =
+  const { isSelected, toggle, clearIds, releaseCount, unreleaseCount } =
     useRowSelection();
+
+  // Prune this row from the selection when the checkbox unmounts or its
+  // eligibility flips (a revalidation moved the row ready↔released or out of
+  // eligibility entirely). Keeps the bar's counts honest — a stale id can
+  // otherwise linger in the Map with no visible checkbox backing it.
+  useEffect(() => {
+    return () => clearIds([testRequestId]);
+  }, [testRequestId, eligibility, clearIds]);
+
   const checked = isSelected(testRequestId);
   const countOfKind = eligibility === "release" ? releaseCount : unreleaseCount;
   const atCap = !checked && countOfKind >= MAX_BULK_SELECTION;

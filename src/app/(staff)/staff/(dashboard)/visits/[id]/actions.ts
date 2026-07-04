@@ -27,6 +27,16 @@ export type ReleaseResult =
   | { ok: true }
   | { ok: false; error: string };
 
+// Bulk-selection actions additionally report how many rows the UPDATE
+// actually touched, so the UI can tell the user when part of the selection
+// was skipped (already handled by a concurrent action, or outside the
+// caller's section scope). Local to releaseSelectedAction /
+// undoReleaseSelectedAction — the older per-row/per-package actions keep the
+// plain ReleaseResult shape.
+export type BulkSelectionResult =
+  | { ok: true; count: number }
+  | { ok: false; error: string };
+
 const VALID_MEDIA: readonly ReleaseMedium[] = [
   "physical",
   "email",
@@ -244,7 +254,7 @@ export async function releaseSelectedAction(
   visitId: string,
   testRequestIds: string[],
   releaseMedium: ReleaseMedium,
-): Promise<ReleaseResult> {
+): Promise<BulkSelectionResult> {
   if (!VALID_MEDIA.includes(releaseMedium)) {
     return { ok: false, error: "Invalid release medium." };
   }
@@ -337,7 +347,7 @@ export async function releaseSelectedAction(
   }
 
   revalidatePath(`/staff/visits/${visitId}`);
-  return { ok: true };
+  return { ok: true, count: released.length };
 }
 
 // Undoes a hand-picked selection of released rows back to ready_for_release.
@@ -350,7 +360,7 @@ export async function undoReleaseSelectedAction(
   visitId: string,
   testRequestIds: string[],
   reason: string,
-): Promise<ReleaseResult> {
+): Promise<BulkSelectionResult> {
   const trimmedReason = reason.trim();
   if (!trimmedReason) {
     return { ok: false, error: "Reason is required." };
@@ -447,7 +457,7 @@ export async function undoReleaseSelectedAction(
   }
 
   revalidatePath(`/staff/visits/${visitId}`);
-  return { ok: true };
+  return { ok: true, count: undone.length };
 }
 
 export async function markConsultationDoneAction(

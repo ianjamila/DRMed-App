@@ -20,6 +20,11 @@ interface SelectionContextValue {
   isSelected: (testRequestId: string) => boolean;
   toggle: (testRequestId: string, eligibility: SelectionEligibility) => void;
   clear: () => void;
+  // Removes only the given ids, leaving the rest of the selection intact —
+  // used after a bulk action succeeds so acting on one bucket never unchecks
+  // the other bucket (or rows ticked mid-flight), and by checkboxes pruning
+  // themselves when their row's status/eligibility changes after revalidation.
+  clearIds: (testRequestIds: string[]) => void;
   releaseIds: string[];
   unreleaseIds: string[];
   releaseCount: number;
@@ -61,6 +66,21 @@ export function SelectionProvider({ children }: { children: ReactNode }) {
 
   const clear = useCallback(() => setSelection(new Map()), []);
 
+  const clearIds = useCallback((testRequestIds: string[]) => {
+    if (testRequestIds.length === 0) return;
+    setSelection((prev) => {
+      let changed = false;
+      const next = new Map(prev);
+      for (const id of testRequestIds) {
+        if (next.delete(id)) changed = true;
+      }
+      // Return the same reference when nothing was removed so React can
+      // bail out of the re-render (matters for the unmount-pruning effect,
+      // which fires for every eligible row on any full-page revalidation).
+      return changed ? next : prev;
+    });
+  }, []);
+
   const isSelected = useCallback(
     (testRequestId: string) => selection.has(testRequestId),
     [selection],
@@ -81,12 +101,13 @@ export function SelectionProvider({ children }: { children: ReactNode }) {
       isSelected,
       toggle,
       clear,
+      clearIds,
       releaseIds,
       unreleaseIds,
       releaseCount: releaseIds.length,
       unreleaseCount: unreleaseIds.length,
     }),
-    [isSelected, toggle, clear, releaseIds, unreleaseIds],
+    [isSelected, toggle, clear, clearIds, releaseIds, unreleaseIds],
   );
 
   return (
