@@ -8,6 +8,9 @@ import { sectionsForRole } from "@/lib/auth/role-sections";
 import { ReleaseButton } from "./release-button";
 import { ReleaseAllButton } from "./release-all-button";
 import { MarkDoneButton } from "./mark-done-button";
+import { SelectionProvider } from "./selection-context";
+import { RowSelectCheckbox } from "./row-select-checkbox";
+import { BulkActionBar } from "./bulk-action-bar";
 import { VoidPaymentDialog } from "../../payments/[id]/void/void-payment-dialog";
 import { isConsentGateRequired, getPatientConsentState } from "@/lib/consent/gate";
 import { paymentStatusLabel } from "@/lib/ui/payment-status";
@@ -333,6 +336,7 @@ export default async function VisitDetailPage({ params }: Props) {
         </section>
       ) : null}
 
+      <SelectionProvider>
       <section className="mt-8">
         <h2 className="mb-3 font-heading text-xl font-extrabold text-[color:var(--color-brand-navy)]">
           Tests
@@ -416,6 +420,7 @@ export default async function VisitDetailPage({ params }: Props) {
                             column context (esp. the "—" price cells). */}
                         <thead className="sr-only">
                           <tr>
+                            <th scope="col">Select</th>
                             <th scope="col">Service</th>
                             <th scope="col">Base</th>
                             <th scope="col">Discount</th>
@@ -428,7 +433,7 @@ export default async function VisitDetailPage({ params }: Props) {
                           {components.length === 0 ? (
                             <tr>
                               <td
-                                colSpan={6}
+                                colSpan={7}
                                 className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]"
                               >
                                 No components linked yet.
@@ -445,6 +450,21 @@ export default async function VisitDetailPage({ params }: Props) {
                                   key={c.id}
                                   className="hover:bg-[color:var(--color-brand-bg)]"
                                 >
+                                  <td className="px-4 py-3">
+                                    {c.status === "ready_for_release" ? (
+                                      <RowSelectCheckbox
+                                        testRequestId={c.id}
+                                        eligibility="release"
+                                        label={csvc.name}
+                                      />
+                                    ) : c.status === "released" ? (
+                                      <RowSelectCheckbox
+                                        testRequestId={c.id}
+                                        eligibility="unrelease"
+                                        label={csvc.name}
+                                      />
+                                    ) : null}
+                                  </td>
                                   <td className="px-4 py-3">
                                     <Link
                                       href={`/staff/queue/${c.id}`}
@@ -531,6 +551,9 @@ export default async function VisitDetailPage({ params }: Props) {
           <table className="w-full text-sm">
             <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
               <tr>
+                <th className="px-2 py-3">
+                  <span className="sr-only">Select</span>
+                </th>
                 <th className="px-4 py-3">Service</th>
                 <th className="px-4 py-3 text-right">Base</th>
                 <th className="px-4 py-3 text-right">Discount</th>
@@ -567,6 +590,21 @@ export default async function VisitDetailPage({ params }: Props) {
                     key={t.id}
                     className="hover:bg-[color:var(--color-brand-bg)]"
                   >
+                    <td className="px-2 py-3">
+                      {t.status === "ready_for_release" ? (
+                        <RowSelectCheckbox
+                          testRequestId={t.id}
+                          eligibility="release"
+                          label={svc.name}
+                        />
+                      ) : t.status === "released" ? (
+                        <RowSelectCheckbox
+                          testRequestId={t.id}
+                          eligibility="unrelease"
+                          label={svc.name}
+                        />
+                      ) : null}
+                    </td>
                     <td className="px-4 py-3">
                       <Link
                         href={`/staff/queue/${t.id}`}
@@ -672,7 +710,7 @@ export default async function VisitDetailPage({ params }: Props) {
               {standalones.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={6}
+                    colSpan={7}
                     className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]"
                   >
                     {packageHeaders.length > 0
@@ -692,6 +730,22 @@ export default async function VisitDetailPage({ params }: Props) {
           </p>
         ) : null}
       </section>
+      <BulkActionBar
+        visitId={visit.id}
+        paid={isPaid}
+        preferredMedium={
+          (patient.preferred_release_medium ?? null) as
+            | "physical"
+            | "email"
+            | "viber"
+            | "gcash"
+            | "pickup"
+            | null
+        }
+        consentOnFile={consent.current}
+        gateRequired={gateRequired}
+      />
+      </SelectionProvider>
 
       <section className="mt-8">
         <h2 className="mb-3 font-heading text-xl font-extrabold text-[color:var(--color-brand-navy)]">
