@@ -340,6 +340,12 @@ export const STAFF_NAV: StaffNavSection[] = [
             roles: ["admin"],
           },
           {
+            href: "/staff/admin/reports/undone-releases",
+            label: "Undone releases",
+            description: "Every result release that was withdrawn — who undid it, why, whether the patient had already seen it, and whether it has since been re-released or cancelled (RA 10173 oversight).",
+            roles: ["admin"],
+          },
+          {
             href: "/staff/admin/accounting",
             label: "External sync status",
             description: "Status board for the daily export that pushes accounting data out to Google Sheets (where your external bookkeeper or auditor can pull it). Check here if the bookkeeper says they didn't get today's data — you can re-run a failed sync from this page.",
