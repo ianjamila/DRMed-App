@@ -14,6 +14,7 @@ import { Panel } from "@/components/ui/panel";
 import {
   visitStage,
   outstandingLabImagingNames,
+  releasedLabImagingNames,
   type QueueStage,
   type QueueTestLike,
 } from "@/lib/visits/queue-stage";
@@ -211,7 +212,7 @@ export default async function VisitsQueuePage({ searchParams }: SearchProps) {
                   <th className="px-4 py-3">Visit #</th>
                   <th className="px-4 py-3">Patient</th>
                   <th className="px-4 py-3">
-                    {stage === "processing" ? "Outstanding" : "Status"}
+                    {stage === "processing" ? "Outstanding / Released" : "Status"}
                   </th>
                   <th className="px-4 py-3 text-right">Total</th>
                   <th className="px-4 py-3 text-right">
@@ -282,10 +283,9 @@ function ActionLink({
   );
 }
 
-// Outstanding lab/imaging summary for a Processing row: up to three names then
-// "+N more", so reception can tell the patient what they're still waiting on.
-function OutstandingSummary({ tests }: { tests: QueueTestLike[] }) {
-  const names = outstandingLabImagingNames(tests);
+// Up-to-three names then "+N more" — shared by the Outstanding and Released
+// summaries on Processing rows.
+function NameSummary({ names }: { names: string[] }) {
   if (names.length === 0) return <span>—</span>;
   const shown = names.slice(0, 3);
   const extra = names.length - shown.length;
@@ -299,6 +299,30 @@ function OutstandingSummary({ tests }: { tests: QueueTestLike[] }) {
         </span>
       ) : null}
     </span>
+  );
+}
+
+// Processing rows tell reception both what the patient is still waiting on and
+// what has already been released (already-released tests used to be invisible
+// here — the Visit #0037 class of confusion).
+function ProcessingTestsSummary({ tests }: { tests: QueueTestLike[] }) {
+  const outstanding = outstandingLabImagingNames(tests);
+  const released = releasedLabImagingNames(tests);
+  return (
+    <div className="space-y-0.5">
+      <p className="text-xs">
+        <span className="font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+          Outstanding:{" "}
+        </span>
+        <NameSummary names={outstanding} />
+      </p>
+      <p className="text-xs">
+        <span className="font-bold uppercase tracking-wider text-emerald-700">
+          Released:{" "}
+        </span>
+        <NameSummary names={released} />
+      </p>
+    </div>
   );
 }
 
@@ -337,7 +361,7 @@ function QueueRow({ entry, stage }: { entry: QueueEntry; stage: QueueStage }) {
       </td>
       <td className="px-4 py-3">
         {stage === "processing" ? (
-          <OutstandingSummary tests={entry.tests} />
+          <ProcessingTestsSummary tests={entry.tests} />
         ) : (
           <span
             className={`inline-block rounded-md border px-2 py-0.5 text-xs font-semibold ${STATUS_BADGE[status] ?? ""}`}
@@ -387,12 +411,9 @@ function QueueCard({ entry, stage }: { entry: QueueEntry; stage: QueueStage }) {
         <PatientCell visit={visit} />
       </div>
       {stage === "processing" ? (
-        <p className="mt-2 text-xs">
-          <span className="font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-            Outstanding:{" "}
-          </span>
-          <OutstandingSummary tests={entry.tests} />
-        </p>
+        <div className="mt-2">
+          <ProcessingTestsSummary tests={entry.tests} />
+        </div>
       ) : null}
       <div className="mt-2 flex items-end justify-between gap-3">
         <div className="text-xs">

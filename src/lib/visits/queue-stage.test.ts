@@ -3,6 +3,7 @@ import {
   visitStage,
   isOutstandingLabImaging,
   outstandingLabImagingNames,
+  releasedLabImagingNames,
   type QueueTestLike,
 } from "./queue-stage";
 
@@ -139,6 +140,38 @@ describe("outstandingLabImagingNames", () => {
   it("falls back to a dash when a name is missing", () => {
     expect(
       outstandingLabImagingNames([test({ name: null, status: "requested" })]),
+    ).toEqual(["—"]);
+  });
+});
+
+describe("releasedLabImagingNames", () => {
+  it("returns only released leaf lab/imaging test names", () => {
+    const names = releasedLabImagingNames([
+      test({ name: "CBC", status: "released" }),
+      test({ name: "Chest X-ray", section: "imaging_xray", status: "released" }),
+      test({ name: "FBS", status: "ready_for_release" }), // not yet released
+      test({
+        name: "ROUTINE PACKAGE",
+        is_package_header: true,
+        section: "package",
+        status: "released",
+      }), // header — excluded
+      test({ name: "Consult", section: null, status: "released" }), // not lab/imaging
+    ]);
+    expect(names).toEqual(["CBC", "Chest X-ray"]);
+  });
+
+  it("does NOT count cancelled tests as released (terminal ≠ released)", () => {
+    const names = releasedLabImagingNames([
+      test({ name: "Urinalysis", status: "cancelled" }),
+      test({ name: "CBC", status: "released" }),
+    ]);
+    expect(names).toEqual(["CBC"]);
+  });
+
+  it("falls back to a dash when a name is missing", () => {
+    expect(
+      releasedLabImagingNames([test({ name: null, status: "released" })]),
     ).toEqual(["—"]);
   });
 });
