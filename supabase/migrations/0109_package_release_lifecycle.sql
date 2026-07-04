@@ -539,12 +539,26 @@ begin
          set status = 'released', released_at = now(),
              released_by = auth.uid(), release_medium = 'other'
        where id = h.id and status = 'ready_for_release';
-    exception when check_violation then
-      -- Consent gate can legitimately reject here (withdrawn since the
-      -- components released). Never abort the payment that triggered us;
-      -- the header stays ready_for_release and releases on the next
-      -- component re-release (Leg A) or manual action.
-      null;
+    exception when others then
+      -- Consent-gate rejection (check_violation) is the expected case here
+      -- (withdrawn since the components released), but ANY failure — e.g.
+      -- P0002 closed accounting period (0028) or P0003 zero-line JE (0029)
+      -- raised by the release bridge — must never abort the payment that
+      -- triggered us. The header stays ready_for_release and releases on
+      -- the next component re-release (Leg A) or manual action. Leave an
+      -- audit breadcrumb (coa.suspense_post pattern, Part 1 above) so a
+      -- blocked header is distinguishable from one merely waiting on
+      -- components.
+      insert into public.audit_log (
+        actor_id, actor_type, action, resource_type, resource_id, metadata
+      ) values (
+        auth.uid(),
+        'system',
+        'test_request.header_auto_release_failed',
+        'test_request',
+        h.id,
+        jsonb_build_object('visit_id', new.id, 'sqlstate', SQLSTATE, 'error', SQLERRM)
+      );
     end;
   end loop;
   return new;
