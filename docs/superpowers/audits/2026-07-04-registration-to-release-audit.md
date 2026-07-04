@@ -133,3 +133,79 @@ None of the three notifiers report to Sentry; failures land only as audit rows b
 4. **H1 guard the `requires_signoff` toggle** (disable with a "not yet wired" note) until a sign-off queue exists.
 
 **Schedule separately:** H2 (portal RLS strategy — decide: real RLS vs codified app-filter + lint), H5 (lab-queue ops cluster: reassign/steal-guard/ownership/deferred-visibility), H6 (booking hardening migration), H7 (consent pre-flight before the gate is ever enabled), then the MEDIUMs.
+
+---
+
+## 8. Approved remediation sequence (user-approved 2026-07-04)
+
+The user approved fixing **all** findings. PRs 1–4 are the spec's rollout
+order, unchanged. PRs 5–9 below are the remediation grouping — one PR per
+subsystem, each self-contained and shippable in order. Finding references
+(S/H/M) point at §2–§5 above.
+
+**PR 1 — Feature 2** (spec): Released column in reception Queue. No migration.
+
+**PR 2 — Features 1+4** (spec): header auto-release migration, package-card
+release UI (per-component + bulk), harmonized visit layout, consolidated
+bulk-action notification (S2), `reportError()` in all three notifiers (H8).
+Post-deploy: release the three stuck packages via the new UI (S3).
+
+**PR 3 — Feature 3** (spec): undo-release migration + UI, viewed-warning
+union query + `metadata.test_request_ids` normalization (S1).
+
+**PR 4 — Feature 5** (spec): admin undone-releases report.
+
+**PR 5 — Payments integrity:** void→recalc migration (fire
+`recalc_visit_payment` on the void UPDATE + `voided_at IS NULL` filter in
+the sum; H4); staff "waive balance / HMO-covered" action setting
+`payment_status='waived'` — admin-gated, required reason,
+VoidPaymentDialog-pattern confirm, audit row (H3); route
+`recordPaymentAction`/`redeemGiftCode` errors through `translatePgError`
+(M10); correct the stale recalc claim in `.claude/skills/drmed-payments/SKILL.md`.
+
+**PR 6 — Lab queue operations:** admin unclaim/reassign action for
+`assigned_to` (audit-logged; H5a); consolidated-flow fixes — optimistic
+claim guard + row-count check + `started_at` stamp + unify audit action to
+`test_request.claimed`, ownership check in `finaliseConsolidatedReport`,
+thread `releaseDeferred` to the UI so the medtech sees "finalised — release
+deferred until payment" (H5b/c); disable the `requires_signoff` service
+toggle with a "sign-off queue not yet built" note (H1 — full sign-off queue
+deliberately deferred, see below); critical-value acknowledge action +
+unacked-alerts list page (M8); "stuck tests" admin report
+(`in_progress`/`ready_for_release` older than N days — proactive guard for
+this audit's whole bug class).
+
+**PR 7 — Booking + registration hardening:** migration tightening the
+public `appointments` INSERT (SECURITY DEFINER RPC or real `with_check`) +
+partial unique index `(physician_id, scheduled_at) WHERE status NOT IN
+('cancelled','no_show')`, app catches the unique-violation as `slot_taken`
+(H6); reminder cron rolling catch-up window (M1); fuzzy-dedup advisory on
+`/register` + advisory lock around resolve's check-then-insert (M4);
+`pre_registered` clearing — auto-clear on first staff visit + explicit
+"verify identity" action (M5); `.email()` on staff patient schemas, loud
+rate-limit fail-open, `ipAndAgent()` reuse (M10). Operational note: smoke
+`/register` (both branches) before the QR poster ships.
+
+**PR 8 — Consent + notification correctness:** intake consent capture/
+banner for `consent_current=false` patients + admin "patients without
+consent" pre-flight report (H7); portal consent gate suppresses the data
+fetch instead of overlaying (M3); `NOTIFICATIONS_LIVE`-style env guard
+(M6); skip email/SMS when `release_medium='physical'`/`'pickup'` (M7);
+patient-merge notification of the surviving DRM-ID (M2); `visit_pin.issued`
+audit row (M10); fix SMS comment drift + use the RLS-bound client in
+`updatePatientAction` (LOWs).
+
+**PR 9 — Portal RLS enforcement (H2):** wire portal reads through an
+anon-key client + `set_patient_context()` so the patient RLS policies
+actually enforce; keep the app-level ownership filters as
+defense-in-depth; add a test asserting every `portal/**` query is
+ownership-scoped. If real RLS wiring proves infeasible mid-implementation,
+STOP and report — do not silently fall back to documenting the admin-client
+pattern. Optional rider: harmonize the patient visit-detail page's package
+display with the main list's PackageCard.
+
+**Explicitly deferred (not in this programme):** building the real
+pathologist sign-off queue (needs workflow design with the pathologist;
+PR 6's toggle guard defuses the hazard); "add test to existing visit" flow;
+genericized wording for stigma-sensitive service names in notifications
+(product decision); visit↔appointment linkage/no-show sweep.
