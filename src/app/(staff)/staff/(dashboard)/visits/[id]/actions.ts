@@ -158,6 +158,7 @@ export async function releaseAllReadyComponentsAction(
       })
       .map((r) => r.id);
     if (scopedIds.length === 0) {
+      revalidatePath(`/staff/visits/${visitId}`);
       return { ok: false, error: "No components are ready to release." };
     }
   }
@@ -187,6 +188,7 @@ export async function releaseAllReadyComponentsAction(
 
   if (error) return { ok: false, error: translatePgError(error) };
   if (!released || released.length === 0) {
+    revalidatePath(`/staff/visits/${visitId}`);
     return { ok: false, error: "No components are ready to release." };
   }
 
