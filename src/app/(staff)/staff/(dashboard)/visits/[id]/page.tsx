@@ -6,6 +6,7 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { formatPhp } from "@/lib/marketing/format";
 import { sectionsForRole } from "@/lib/auth/role-sections";
 import { ReleaseButton } from "./release-button";
+import { ReleaseAllButton } from "./release-all-button";
 import { MarkDoneButton } from "./mark-done-button";
 import { VoidPaymentDialog } from "../../payments/[id]/void/void-payment-dialog";
 import { isConsentGateRequired, getPatientConsentState } from "@/lib/consent/gate";
@@ -338,26 +339,29 @@ export default async function VisitDetailPage({ params }: Props) {
         </h2>
 
         {packageHeaders.length > 0 ? (
-          <div className="mb-4 space-y-4">
-            {packageHeaders.map((h) => {
-              const svc = Array.isArray(h.services) ? h.services[0] : h.services;
-              if (!svc) return null;
-              const finalPrice =
-                h.final_price_php != null
-                  ? Number(h.final_price_php)
-                  : Number(svc.price_php);
-              const components = componentsByParent.get(h.id) ?? [];
-              return (
-                <Panel
-                  key={h.id}
-                  className="p-5"
-                >
-                  <Link
-                    href={`/staff/queue/${h.id}`}
-                    className="block hover:opacity-90"
-                  >
+          <>
+            <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+              Packages
+            </h3>
+            <div className="mb-4 space-y-4">
+              {packageHeaders.map((h) => {
+                const svc = Array.isArray(h.services) ? h.services[0] : h.services;
+                if (!svc) return null;
+                const finalPrice =
+                  h.final_price_php != null
+                    ? Number(h.final_price_php)
+                    : Number(svc.price_php);
+                const components = componentsByParent.get(h.id) ?? [];
+                const readyCount = components.filter(
+                  (c) => c.status === "ready_for_release",
+                ).length;
+                return (
+                  <Panel key={h.id} className="p-5">
                     <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0">
+                      <Link
+                        href={`/staff/queue/${h.id}`}
+                        className="min-w-0 hover:opacity-90"
+                      >
                         <p className="font-mono text-[10px] uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                           {svc.code} · Package
                         </p>
@@ -372,7 +376,7 @@ export default async function VisitDetailPage({ params }: Props) {
                             )}
                           </p>
                         ) : null}
-                      </div>
+                      </Link>
                       <div className="flex flex-col items-end gap-1">
                         <span className="font-mono text-sm font-semibold text-[color:var(--color-brand-navy)]">
                           {formatPhp(finalPrice)}
@@ -384,62 +388,143 @@ export default async function VisitDetailPage({ params }: Props) {
                         >
                           {h.status.replace(/_/g, " ")}
                         </span>
+                        {readyCount >= 2 ? (
+                          <ReleaseAllButton
+                            headerId={h.id}
+                            visitId={visit.id}
+                            paid={isPaid}
+                            consentOnFile={consent.current}
+                            gateRequired={gateRequired}
+                            readyCount={readyCount}
+                            preferredMedium={
+                              (patient.preferred_release_medium ?? null) as
+                                | "physical"
+                                | "email"
+                                | "viber"
+                                | "gcash"
+                                | "pickup"
+                                | null
+                            }
+                          />
+                        ) : null}
                       </div>
                     </div>
-                  </Link>
-                  <ul className="mt-3 space-y-1 border-l-2 border-[color:var(--color-brand-bg-mid)] pl-4">
-                    {components.length === 0 ? (
-                      <li className="py-1 text-xs text-[color:var(--color-brand-text-soft)]">
-                        No components linked yet.
-                      </li>
-                    ) : (
-                      components.map((c) => {
-                        const csvc = Array.isArray(c.services)
-                          ? c.services[0]
-                          : c.services;
-                        if (!csvc) return null;
-                        return (
-                          <li
-                            key={c.id}
-                            className="flex flex-wrap items-center justify-between gap-2 py-1 text-sm"
-                          >
-                            <Link
-                              href={`/staff/queue/${c.id}`}
-                              className="font-medium text-[color:var(--color-brand-navy)] hover:text-[color:var(--color-brand-cyan)] hover:underline"
-                            >
-                              {csvc.name}
-                            </Link>
-                            <span className="flex items-center gap-2 text-[11px] text-[color:var(--color-brand-text-soft)]">
-                              <span className="font-mono uppercase tracking-wider">
-                                {csvc.section ?? "—"}
-                              </span>
-                              <span
-                                className={`rounded-md px-2 py-0.5 font-semibold ${
-                                  TEST_STATUS_STYLE[c.status] ?? ""
-                                }`}
+                    <div className="mt-3 overflow-x-auto rounded-lg border border-[color:var(--color-brand-bg-mid)]">
+                      <table className="w-full text-sm">
+                        {/* Visually hidden header: keeps the plan-mandated
+                            6-column layout while giving screen readers
+                            column context (esp. the "—" price cells). */}
+                        <thead className="sr-only">
+                          <tr>
+                            <th scope="col">Service</th>
+                            <th scope="col">Base</th>
+                            <th scope="col">Discount</th>
+                            <th scope="col">Final</th>
+                            <th scope="col">Status</th>
+                            <th scope="col">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
+                          {components.length === 0 ? (
+                            <tr>
+                              <td
+                                colSpan={6}
+                                className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]"
                               >
-                                {c.status.replace(/_/g, " ")}
-                              </span>
-                              {c.status === "released" && hasPdfByTrId.get(c.id) ? (
-                                <a
-                                  href={`/staff/results/${c.id}/pdf`}
-                                  target="_blank"
-                                  rel="noopener"
-                                  className="font-bold text-[color:var(--color-brand-cyan)] hover:underline"
+                                No components linked yet.
+                              </td>
+                            </tr>
+                          ) : (
+                            components.map((c) => {
+                              const csvc = Array.isArray(c.services)
+                                ? c.services[0]
+                                : c.services;
+                              if (!csvc) return null;
+                              return (
+                                <tr
+                                  key={c.id}
+                                  className="hover:bg-[color:var(--color-brand-bg)]"
                                 >
-                                  PDF →
-                                </a>
-                              ) : null}
-                            </span>
-                          </li>
-                        );
-                      })
-                    )}
-                  </ul>
-                </Panel>
-              );
-            })}
-          </div>
+                                  <td className="px-4 py-3">
+                                    <Link
+                                      href={`/staff/queue/${c.id}`}
+                                      className="text-[color:var(--color-brand-navy)] hover:text-[color:var(--color-brand-cyan)] hover:underline"
+                                    >
+                                      {csvc.name}
+                                    </Link>
+                                    <p className="font-mono text-[10px] text-[color:var(--color-brand-text-soft)]">
+                                      {csvc.code}
+                                      {/* Section cue (was on the old <ul> rows):
+                                          also signals when a component belongs
+                                          to another role's bench. */}
+                                      <span className="ml-1 uppercase tracking-wider">
+                                        {csvc.section ?? "—"}
+                                      </span>
+                                    </p>
+                                    {c.release_medium && c.released_at ? (
+                                      <p className="mt-1 text-[10px] text-emerald-700">
+                                        Released via {c.release_medium}
+                                      </p>
+                                    ) : null}
+                                  </td>
+                                  <td className="px-4 py-3 text-right font-mono text-xs text-[color:var(--color-brand-text-soft)]">
+                                    —
+                                  </td>
+                                  <td className="px-4 py-3 text-right font-mono text-xs text-[color:var(--color-brand-text-soft)]">
+                                    —
+                                  </td>
+                                  <td className="px-4 py-3 text-right font-mono text-xs text-[color:var(--color-brand-text-soft)]">
+                                    —
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <span
+                                      className={`rounded-md px-2 py-0.5 text-xs font-semibold ${
+                                        TEST_STATUS_STYLE[c.status] ?? ""
+                                      }`}
+                                    >
+                                      {c.status.replace(/_/g, " ")}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3 text-right">
+                                    <TestAction
+                                      size="compact"
+                                      status={c.status}
+                                      testRequestId={c.id}
+                                      visitId={visit.id}
+                                      paid={isPaid}
+                                      consentOnFile={consent.current}
+                                      gateRequired={gateRequired}
+                                      hasPdf={hasPdfByTrId.get(c.id) === true}
+                                      kind={csvc.kind}
+                                      preferredMedium={
+                                        (patient.preferred_release_medium ?? null) as
+                                          | "physical"
+                                          | "email"
+                                          | "viber"
+                                          | "gcash"
+                                          | "pickup"
+                                          | null
+                                      }
+                                    />
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Panel>
+                );
+              })}
+            </div>
+          </>
+        ) : null}
+
+        {standalones.length > 0 ? (
+          <h3 className="mb-2 mt-4 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+            Individual tests
+          </h3>
         ) : null}
 
         <Panel className="overflow-x-auto">
@@ -781,6 +866,9 @@ interface TestActionProps {
   gateRequired: boolean;
   hasPdf?: boolean;
   kind: string;
+  // "compact" is used inside package-component rows, which are denser than
+  // the standalone tests table.
+  size?: "default" | "compact";
 }
 
 // Renders a context-appropriate cell for the Action column on the visit
@@ -796,7 +884,10 @@ function TestAction({
   gateRequired,
   hasPdf,
   kind,
+  size = "default",
 }: TestActionProps) {
+  const sizeCls = size === "compact" ? "text-[10px]" : "text-xs";
+
   if (status === "ready_for_release") {
     return (
       <ReleaseButton
@@ -806,6 +897,7 @@ function TestAction({
         preferredMedium={preferredMedium}
         consentOnFile={consentOnFile}
         gateRequired={gateRequired}
+        size={size}
       />
     );
   }
@@ -817,12 +909,12 @@ function TestAction({
     const hint = status === "requested" ? "Awaiting claim" : "Awaiting result";
     return (
       <div className="flex flex-col items-end gap-0.5">
-        <span className="text-xs text-[color:var(--color-brand-text-soft)]">
+        <span className={`${sizeCls} text-[color:var(--color-brand-text-soft)]`}>
           {hint}
         </span>
         <Link
           href={`/staff/queue/${testRequestId}`}
-          className="text-xs font-bold text-[color:var(--color-brand-cyan)] hover:underline"
+          className={`${sizeCls} font-bold text-[color:var(--color-brand-cyan)] hover:underline`}
         >
           Open in queue →
         </Link>
@@ -832,7 +924,7 @@ function TestAction({
 
   if (status === "result_uploaded") {
     return (
-      <span className="text-xs text-[color:var(--color-brand-text-soft)]">
+      <span className={`${sizeCls} text-[color:var(--color-brand-text-soft)]`}>
         Awaiting sign-off
       </span>
     );
@@ -841,7 +933,7 @@ function TestAction({
   if (status === "released") {
     return (
       <div className="flex flex-col items-end gap-0.5">
-        <span className="text-xs font-semibold text-emerald-700">
+        <span className={`${sizeCls} font-semibold text-emerald-700`}>
           Released ✓
         </span>
         {hasPdf ? (
@@ -849,7 +941,7 @@ function TestAction({
             href={`/staff/results/${testRequestId}/pdf`}
             target="_blank"
             rel="noopener"
-            className="text-xs font-bold text-[color:var(--color-brand-cyan)] hover:underline"
+            className={`${sizeCls} font-bold text-[color:var(--color-brand-cyan)] hover:underline`}
           >
             View PDF →
           </a>
@@ -860,7 +952,7 @@ function TestAction({
 
   if (status === "cancelled") {
     return (
-      <span className="text-xs text-[color:var(--color-brand-text-soft)]">
+      <span className={`${sizeCls} text-[color:var(--color-brand-text-soft)]`}>
         —
       </span>
     );

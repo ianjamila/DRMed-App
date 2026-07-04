@@ -80,7 +80,10 @@ export function parseEmailLogRow(
 
   let detail: string | null = null;
   if (type === "result") {
-    detail = asString(meta.test_name);
+    detail =
+      asString(meta.test_name) ??
+      // asNumber coerces a missing/invalid count to 0 → render "?" instead.
+      (meta.bulk === true ? `${asNumber(meta.count) || "?"} results ready` : null);
   } else if (type === "newsletter") {
     detail = asString(meta.subject);
   } else if (status === "failed") {
