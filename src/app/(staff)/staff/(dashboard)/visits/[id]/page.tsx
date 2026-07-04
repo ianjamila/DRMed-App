@@ -11,7 +11,9 @@ import { MarkDoneButton } from "./mark-done-button";
 import { SelectionProvider } from "./selection-context";
 import { RowSelectCheckbox } from "./row-select-checkbox";
 import { BulkActionBar } from "./bulk-action-bar";
+import { UndoReleaseDialog } from "./undo-release-dialog";
 import { VoidPaymentDialog } from "../../payments/[id]/void/void-payment-dialog";
+import { countResultViews } from "@/lib/results/viewed-count";
 import { isConsentGateRequired, getPatientConsentState } from "@/lib/consent/gate";
 import { paymentStatusLabel } from "@/lib/ui/payment-status";
 import { Panel } from "@/components/ui/panel";
@@ -231,6 +233,23 @@ export default async function VisitDetailPage({ params }: Props) {
       standalones.push(t);
     }
   }
+
+  // Patient viewed/downloaded counts for every visible released row — drives
+  // the loud "already viewed" warning on the per-row undo dialog and the bulk
+  // bar. Headers are excluded: they carry no undo affordance (the 0110
+  // cascade owns header flips) and package downloads are attributed to
+  // components via merged_component_ids/test_request_ids.
+  const releasedRowIds = allRows
+    .filter((r) => !r.is_package_header && r.status === "released")
+    .map((r) => r.id);
+  const viewedCountByTrId = new Map<string, number>(
+    await Promise.all(
+      releasedRowIds.map(
+        async (trId) => [trId, await countResultViews(trId)] as const,
+      ),
+    ),
+  );
+  const viewedCountRecord = Object.fromEntries(viewedCountByTrId);
 
   return (
     <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
@@ -516,6 +535,7 @@ export default async function VisitDetailPage({ params }: Props) {
                                       gateRequired={gateRequired}
                                       hasPdf={hasPdfByTrId.get(c.id) === true}
                                       kind={csvc.kind}
+                                      viewedCount={viewedCountByTrId.get(c.id) ?? 0}
                                       preferredMedium={
                                         (patient.preferred_release_medium ?? null) as
                                           | "physical"
@@ -693,6 +713,7 @@ export default async function VisitDetailPage({ params }: Props) {
                         gateRequired={gateRequired}
                         hasPdf={hasPdfByTrId.get(t.id) === true}
                         kind={svc.kind}
+                        viewedCount={viewedCountByTrId.get(t.id) ?? 0}
                         preferredMedium={
                           (patient.preferred_release_medium ?? null) as
                             | "physical"
@@ -744,6 +765,7 @@ export default async function VisitDetailPage({ params }: Props) {
         }
         consentOnFile={consent.current}
         gateRequired={gateRequired}
+        viewedCountById={viewedCountRecord}
       />
       </SelectionProvider>
 
@@ -920,6 +942,9 @@ interface TestActionProps {
   gateRequired: boolean;
   hasPdf?: boolean;
   kind: string;
+  // Patient viewed/downloaded count for a released row — drives the undo
+  // dialog's "already viewed" warning.
+  viewedCount: number;
   // "compact" is used inside package-component rows, which are denser than
   // the standalone tests table.
   size?: "default" | "compact";
@@ -938,6 +963,7 @@ function TestAction({
   gateRequired,
   hasPdf,
   kind,
+  viewedCount,
   size = "default",
 }: TestActionProps) {
   const sizeCls = size === "compact" ? "text-[10px]" : "text-xs";
@@ -1000,6 +1026,15 @@ function TestAction({
             View PDF →
           </a>
         ) : null}
+        {/* Headers never reach TestAction (only components + standalones
+            render it), so every released row here may offer Undo — the 0110
+            cascade flips the header when its last component is undone. */}
+        <UndoReleaseDialog
+          testRequestId={testRequestId}
+          visitId={visitId}
+          viewedCount={viewedCount}
+          size={size}
+        />
       </div>
     );
   }

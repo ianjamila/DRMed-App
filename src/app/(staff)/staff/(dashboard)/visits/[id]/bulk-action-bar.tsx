@@ -18,6 +18,11 @@ interface Props {
   preferredMedium: ReleaseMedium | null;
   consentOnFile: boolean;
   gateRequired: boolean;
+  // Patient viewed/downloaded counts for the visit's released rows, computed
+  // server-side by the page — the unrelease group shows a loud warning when
+  // any selected result has already been seen (same message the per-row undo
+  // dialog carries; bulk must not be a quiet bypass).
+  viewedCountById: Record<string, number>;
 }
 
 const MEDIUM_OPTIONS: { value: ReleaseMedium; label: string }[] = [
@@ -44,6 +49,7 @@ export function BulkActionBar({
   preferredMedium,
   consentOnFile,
   gateRequired,
+  viewedCountById,
 }: Props) {
   const {
     releaseIds,
@@ -76,6 +82,9 @@ export function BulkActionBar({
   // Undo is a corrective action, not a delivery event — it's never
   // payment-gated (a visit can go back to unpaid after release, e.g. a void).
   const unreleaseDisabled = unreleasePending || unreleaseCount === 0;
+  const viewedSelected = unreleaseIds.filter(
+    (trId) => (viewedCountById[trId] ?? 0) > 0,
+  ).length;
 
   function onRelease() {
     // Snapshot the ids being sent so success only clears exactly this batch —
@@ -192,6 +201,15 @@ export function BulkActionBar({
 
         {unreleaseCount > 0 ? (
           <div className="flex items-center gap-1.5">
+            {viewedSelected > 0 ? (
+              <span className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-800">
+                {viewedSelected === 1
+                  ? unreleaseCount === 1
+                    ? "Patient already viewed the selected result — undoing does not un-see it."
+                    : `Patient already viewed 1 of the ${unreleaseCount} selected results — undoing does not un-see it.`
+                  : `Patient already viewed ${viewedSelected} of the ${unreleaseCount} selected results — undoing does not un-see them.`}
+              </span>
+            ) : null}
             <input
               type="text"
               value={reason}
