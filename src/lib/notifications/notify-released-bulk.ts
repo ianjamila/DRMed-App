@@ -12,46 +12,44 @@ import {
 import { patientAlreadyAskedForReview } from "./review-cta";
 
 interface Input {
-  testRequestId: string;
   visitId: string;
+  testRequestIds: string[];
+  testNames: string[];
 }
 
-// Fired by reception's release action. Pulls the patient + test name, sends
-// SMS via Semaphore and email via Resend in parallel, audit-logs each
-// outcome. Failures never throw — release is the source of truth.
-export async function notifyResultReleased({
-  testRequestId,
+const MAX_LISTED = 6;
+
+// Fired by the bulk-release server action (releaseAllReadyComponentsAction).
+// Sends ONE consolidated SMS + email covering every component released in
+// that action, instead of one message per component. Pulls the patient off
+// the visit, sends via Semaphore/Resend in parallel, audit-logs the outcome.
+// Failures never throw — release is the source of truth.
+export async function notifyResultsReleasedBulk({
   visitId,
+  testRequestIds,
+  testNames,
 }: Input): Promise<void> {
+  if (testRequestIds.length === 0) return;
   const admin = createAdminClient();
 
-  const { data: row } = await admin
-    .from("test_requests")
+  const { data: visit } = await admin
+    .from("visits")
     .select(
       `
-        id, visit_id,
-        services!inner ( name ),
-        visits!inner (
-          id,
-          patients!inner ( id, drm_id, first_name, phone, email )
-        )
+        id,
+        patients!inner ( id, drm_id, first_name, phone, email )
       `,
     )
-    .eq("id", testRequestId)
+    .eq("id", visitId)
     .maybeSingle();
 
-  if (!row) return;
-  const visit = Array.isArray(row.visits) ? row.visits[0] : row.visits;
   if (!visit) return;
-  const patient = Array.isArray(visit.patients)
-    ? visit.patients[0]
-    : visit.patients;
-  const svc = Array.isArray(row.services) ? row.services[0] : row.services;
-  if (!patient || !svc) return;
+  const patient = Array.isArray(visit.patients) ? visit.patients[0] : visit.patients;
+  if (!patient) return;
 
+  const count = testNames.length;
   const portalUrl = `${SITE.url.replace(/\/$/, "")}/portal`;
   const greeting = patient.first_name || "there";
-  const testName = svc.name;
 
   // Review CTA: only on a patient's FIRST delivered result email, and only if
   // they have an email on file. Suppressed thereafter via the audit flag.
@@ -63,14 +61,19 @@ export async function notifyResultReleased({
   const reviewUrl = reviewLinkAbsolute(SITE.url, "email");
 
   const smsBody =
-    `Hi ${greeting}, your DRMed lab result for ${testName} is ready. ` +
+    `Hi ${greeting}, ${count} result${count === 1 ? "" : "s"} from your DRMed visit ${count === 1 ? "is" : "are"} ready. ` +
     `Sign in at ${portalUrl} with DRM-ID ${patient.drm_id} and your Secure PIN. — DRMED`;
 
-  const emailSubject = `Your DRMed lab result is ready (${testName})`;
+  const listedNames = testNames.slice(0, MAX_LISTED);
+  const extraCount = testNames.length - listedNames.length;
+
+  const emailSubject = `${count} lab result${count === 1 ? "" : "s"} ready — DRMed`;
   const emailText = [
     `Hi ${greeting},`,
     "",
-    `Your laboratory result for ${testName} has been released.`,
+    `${count} result${count === 1 ? "" : "s"} from your visit have been released:`,
+    ...listedNames.map((n) => `  - ${n}`),
+    ...(extraCount > 0 ? [`  + ${extraCount} more`] : []),
     "",
     `Sign in at ${portalUrl} with:`,
     `  DRM-ID: ${patient.drm_id}`,
@@ -88,19 +91,25 @@ export async function notifyResultReleased({
     "— DRMed Clinic and Laboratory",
   ].join("\n");
 
+  const testNameRows = [
+    ...listedNames.map((n) => ({ label: "Result", value: n })),
+    ...(extraCount > 0 ? [{ label: "", value: `+${extraCount} more` }] : []),
+  ];
+
   const emailHtml = renderEmailShell({
-    heading: "Your lab result is ready",
+    heading: "Your lab results are ready",
     contentHtml:
       emailParagraph(`Hi <b>${escapeHtml(greeting)}</b>,`) +
-      emailParagraph(`Your laboratory result for <b>${escapeHtml(testName)}</b> has been released. You can view and download it securely in the patient portal.`) +
+      emailParagraph(`<b>${count} result${count === 1 ? "" : "s"}</b> from your visit have been released. You can view and download them securely in the patient portal.`) +
+      emailDetailBox(testNameRows) +
       emailDetailBox([
         { label: "DRM-ID", value: patient.drm_id },
         { label: "Secure PIN", value: "printed on your receipt" },
       ]) +
-      emailButton("Sign in to view your result", portalUrl, "cyan") +
+      emailButton("Sign in to view your results", portalUrl, "cyan") +
       emailFinePrint("Your PIN is valid for 60 days. Keep it private — anyone with your PIN can view your lab results.") +
       (includeReviewCta ? emailReviewCta(reviewUrl) : ""),
-    receivedNote: "You received this because a result was released for your DRMed visit.",
+    receivedNote: "You received this because results were released for your DRMed visit.",
   });
 
   const [smsResult, emailResult] = await Promise.all([
@@ -127,16 +136,16 @@ export async function notifyResultReleased({
 
   if (!smsResult.ok && smsResult.kind === "error") {
     await reportError({
-      scope: "notify/result-released:sms",
+      scope: "notify/result-released-bulk:sms",
       error: new Error(smsResult.error),
-      metadata: { test_request_id: testRequestId, visit_id: visitId },
+      metadata: { visit_id: visitId, test_request_ids: testRequestIds },
     });
   }
   if (!emailResult.ok && emailResult.kind === "error") {
     await reportError({
-      scope: "notify/result-released:email",
+      scope: "notify/result-released-bulk:email",
       error: new Error(emailResult.error),
-      metadata: { test_request_id: testRequestId, visit_id: visitId },
+      metadata: { visit_id: visitId, test_request_ids: testRequestIds },
     });
   }
 
@@ -146,10 +155,9 @@ export async function notifyResultReleased({
     patient_id: patient.id,
     action: "result.notified",
     resource_type: "test_request",
-    resource_id: testRequestId,
+    resource_id: testRequestIds[0],
     metadata: {
       visit_id: visitId,
-      test_name: testName,
       sms: smsResult.ok
         ? { ok: true, id: smsResult.id }
         : smsResult.kind === "skipped"
@@ -161,6 +169,10 @@ export async function notifyResultReleased({
           ? { ok: false, skipped: true, reason: emailResult.reason }
           : { ok: false, error: emailResult.error, to: patient.email },
       review_cta: { shown: includeReviewCta && emailResult.ok },
+      bulk: true,
+      count,
+      test_names: testNames,
+      test_request_ids: testRequestIds,
     },
   });
 }

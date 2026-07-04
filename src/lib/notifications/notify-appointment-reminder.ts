@@ -1,6 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
+import { reportError } from "@/lib/observability/report-error";
 import { SITE } from "@/lib/marketing/site";
 import { sendEmail } from "./email";
 import { buildReminderEmail } from "./reminder-email";
@@ -85,6 +86,14 @@ export async function notifyAppointmentReminder({
     hasForm,
   });
   const emailResult = await sendEmail({ to: email, subject, text, html });
+
+  if (!emailResult.ok && emailResult.kind === "error") {
+    await reportError({
+      scope: "notify/appointment-reminder:email",
+      error: new Error(emailResult.error),
+      metadata: { appointment_id: appointmentId },
+    });
+  }
 
   await audit({
     actor_id: null,

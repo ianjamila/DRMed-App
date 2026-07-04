@@ -1,6 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
+import { reportError } from "@/lib/observability/report-error";
 import { SITE } from "@/lib/marketing/site";
 import { sendEmail } from "./email";
 import { sendSms } from "./sms";
@@ -165,6 +166,21 @@ export async function notifyAppointmentBooked({
           reason: "no email on appointment",
         }),
   ]);
+
+  if (!smsResult.ok && smsResult.kind === "error") {
+    await reportError({
+      scope: "notify/appointment-booked:sms",
+      error: new Error(smsResult.error),
+      metadata: { appointment_id: appointmentId },
+    });
+  }
+  if (!emailResult.ok && emailResult.kind === "error") {
+    await reportError({
+      scope: "notify/appointment-booked:email",
+      error: new Error(emailResult.error),
+      metadata: { appointment_id: appointmentId },
+    });
+  }
 
   await audit({
     actor_id: null,
