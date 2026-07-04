@@ -10,6 +10,10 @@ import { notifyResultReleased } from "@/lib/notifications/notify-released";
 import { notifyResultsReleasedBulk } from "@/lib/notifications/notify-released-bulk";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { reportError } from "@/lib/observability/report-error";
+import {
+  MAX_BULK_SELECTION,
+  scopeToAllowedSections,
+} from "@/lib/visits/bulk-selection";
 
 export type ReleaseMedium =
   | "physical"
@@ -21,6 +25,16 @@ export type ReleaseMedium =
 
 export type ReleaseResult =
   | { ok: true }
+  | { ok: false; error: string };
+
+// Bulk-selection actions additionally report how many rows the UPDATE
+// actually touched, so the UI can tell the user when part of the selection
+// was skipped (already handled by a concurrent action, or outside the
+// caller's section scope). Local to releaseSelectedAction /
+// undoReleaseSelectedAction — the older per-row/per-package actions keep the
+// plain ReleaseResult shape.
+export type BulkSelectionResult =
+  | { ok: true; count: number }
   | { ok: false; error: string };
 
 const VALID_MEDIA: readonly ReleaseMedium[] = [
@@ -226,6 +240,224 @@ export async function releaseAllReadyComponentsAction(
 
   revalidatePath(`/staff/visits/${visitId}`);
   return { ok: true };
+}
+
+// Releases a hand-picked selection of ready components/standalone tests in a
+// single UPDATE. Mirrors releaseAllReadyComponentsAction's hardening but
+// operates over an arbitrary caller-supplied id list instead of "all
+// components under one header." Package headers are never included in the
+// selection (is_package_header = false is part of the pre-SELECT filter) —
+// if a selection happens to complete a package, migration 0109's Leg A
+// trigger auto-releases the header exactly as it does for the existing bulk
+// action.
+export async function releaseSelectedAction(
+  visitId: string,
+  testRequestIds: string[],
+  releaseMedium: ReleaseMedium,
+): Promise<BulkSelectionResult> {
+  if (!VALID_MEDIA.includes(releaseMedium)) {
+    return { ok: false, error: "Invalid release medium." };
+  }
+  if (testRequestIds.length === 0) {
+    return { ok: false, error: "No tests selected." };
+  }
+  if (testRequestIds.length > MAX_BULK_SELECTION) {
+    return {
+      ok: false,
+      error: `Too many tests selected — the limit is ${MAX_BULK_SELECTION} per action.`,
+    };
+  }
+
+  const session = await requireActiveStaff();
+  const supabase = await createClient();
+
+  const allowedSections = sectionsForRole(session.role);
+  const { data: candidates } = await supabase
+    .from("test_requests")
+    .select("id, services!inner ( section, name )")
+    .in("id", testRequestIds)
+    .eq("visit_id", visitId)
+    .eq("status", "ready_for_release")
+    .eq("is_package_header", false);
+
+  const scoped = scopeToAllowedSections(candidates ?? [], allowedSections);
+  if (scoped.length === 0) {
+    revalidatePath(`/staff/visits/${visitId}`);
+    return { ok: false, error: "None of the selected tests are ready to release." };
+  }
+  const scopedIds = scoped.map((r) => r.id);
+
+  const now = new Date().toISOString();
+  const { data: released, error } = await supabase
+    .from("test_requests")
+    .update({
+      status: "released",
+      released_at: now,
+      released_by: session.user_id,
+      release_medium: releaseMedium,
+    })
+    .in("id", scopedIds)
+    .eq("visit_id", visitId)
+    .eq("status", "ready_for_release")
+    .select("id, services ( name )");
+
+  if (error) return { ok: false, error: translatePgError(error) };
+  if (!released || released.length === 0) {
+    revalidatePath(`/staff/visits/${visitId}`);
+    return { ok: false, error: "None of the selected tests are ready to release." };
+  }
+
+  const h = await headers();
+  const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+  const ua = h.get("user-agent");
+  for (const row of released) {
+    await audit({
+      actor_id: session.user_id,
+      actor_type: "staff",
+      action: "test_request.released",
+      resource_type: "test_request",
+      resource_id: row.id,
+      metadata: {
+        visit_id: visitId,
+        release_medium: releaseMedium,
+        bulk: true,
+        selection: true,
+      },
+      ip_address: ip,
+      user_agent: ua,
+    });
+  }
+
+  try {
+    if (released.length === 1) {
+      await notifyResultReleased({ testRequestId: released[0].id, visitId });
+    } else {
+      await notifyResultsReleasedBulk({
+        visitId,
+        testRequestIds: released.map((r) => r.id),
+        testNames: released.map((r) => serviceName(r.services) ?? "Result"),
+      });
+    }
+  } catch (err) {
+    await reportError({
+      scope: "notify/result-released-selection",
+      error: err,
+      metadata: { visit_id: visitId, test_request_ids: released.map((r) => r.id) },
+    });
+  }
+
+  revalidatePath(`/staff/visits/${visitId}`);
+  return { ok: true, count: released.length };
+}
+
+// Undoes a hand-picked selection of released rows back to ready_for_release.
+// Migration 0110's trigger reverses each row's JE (a no-op for ₱0 package
+// components), voids any open PF/COGS subledger rows, and cascades the
+// header flip + header JE reversal when a component undo completes the
+// package's un-release. NO notification is sent — undo is a corrective
+// action, not a result delivery event.
+export async function undoReleaseSelectedAction(
+  visitId: string,
+  testRequestIds: string[],
+  reason: string,
+): Promise<BulkSelectionResult> {
+  const trimmedReason = reason.trim();
+  if (!trimmedReason) {
+    return { ok: false, error: "Reason is required." };
+  }
+  if (testRequestIds.length === 0) {
+    return { ok: false, error: "No tests selected." };
+  }
+  if (testRequestIds.length > MAX_BULK_SELECTION) {
+    return {
+      ok: false,
+      error: `Too many tests selected — the limit is ${MAX_BULK_SELECTION} per action.`,
+    };
+  }
+
+  const session = await requireActiveStaff();
+  const supabase = await createClient();
+
+  const allowedSections = sectionsForRole(session.role);
+  // is_package_header = false is LOAD-BEARING, not a convenience filter:
+  // nothing at the DB layer blocks a direct header released→ready_for_release
+  // transition, and that state (header ready, components released) would let
+  // a later payment-status change silently re-release the header with a
+  // fresh JE. Headers must only ever flip via the 0110 cascade (triggered by
+  // undoing their last released component), never by being selected here
+  // directly.
+  const { data: candidates } = await supabase
+    .from("test_requests")
+    .select("id, release_medium, released_at, services!inner ( section, name )")
+    .in("id", testRequestIds)
+    .eq("visit_id", visitId)
+    .eq("status", "released")
+    .eq("is_package_header", false);
+
+  const scoped = scopeToAllowedSections(candidates ?? [], allowedSections);
+  if (scoped.length === 0) {
+    revalidatePath(`/staff/visits/${visitId}`);
+    return { ok: false, error: "None of the selected tests can be unreleased." };
+  }
+  const scopedIds = scoped.map((r) => r.id);
+  // TOCTOU note: prior_release_medium / prior_released_at are read one
+  // round-trip before the UPDATE below. If another actor undoes AND
+  // re-releases a row inside that window, these audit metadata fields record
+  // the earlier release. Accepted trade-off — the undo event itself is always
+  // real (the UPDATE is status-filtered) and the DB trigger's accounting
+  // reversal is transaction-correct; closing it fully would need an atomic
+  // RPC.
+  const priorById = new Map(
+    (candidates ?? []).map((r) => [
+      r.id,
+      { release_medium: r.release_medium, released_at: r.released_at },
+    ]),
+  );
+
+  const { data: undone, error } = await supabase
+    .from("test_requests")
+    .update({
+      status: "ready_for_release",
+      released_at: null,
+      released_by: null,
+      release_medium: null,
+    })
+    .in("id", scopedIds)
+    .eq("visit_id", visitId)
+    .eq("status", "released")
+    .select("id");
+
+  if (error) return { ok: false, error: translatePgError(error) };
+  if (!undone || undone.length === 0) {
+    revalidatePath(`/staff/visits/${visitId}`);
+    return { ok: false, error: "None of the selected tests can be unreleased." };
+  }
+
+  const h = await headers();
+  const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+  const ua = h.get("user-agent");
+  for (const row of undone) {
+    const prior = priorById.get(row.id);
+    await audit({
+      actor_id: session.user_id,
+      actor_type: "staff",
+      action: "test_request.release_undone",
+      resource_type: "test_request",
+      resource_id: row.id,
+      metadata: {
+        visit_id: visitId,
+        reason: trimmedReason,
+        prior_release_medium: prior?.release_medium ?? null,
+        prior_released_at: prior?.released_at ?? null,
+        bulk: true,
+      },
+      ip_address: ip,
+      user_agent: ua,
+    });
+  }
+
+  revalidatePath(`/staff/visits/${visitId}`);
+  return { ok: true, count: undone.length };
 }
 
 export async function markConsultationDoneAction(

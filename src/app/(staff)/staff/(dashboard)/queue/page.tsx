@@ -14,6 +14,7 @@ import { Panel } from "@/components/ui/panel";
 type QueueCardSingle = {
   kind: "single";
   testRequestId: string;
+  visitId: string;
   requestedAt: string;
   label: string;
   code: string;
@@ -179,6 +180,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
       cards.push({
         kind: "single",
         testRequestId: r.id,
+        visitId: r.visit_id,
         requestedAt: r.requested_at,
         label: svc.name,
         code: svc.code,
@@ -237,6 +239,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
             <tr>
               <th className="px-4 py-3">Requested</th>
               <th className="px-4 py-3">Patient</th>
+              <th className="px-4 py-3">Visit</th>
               <th className="px-4 py-3">Test</th>
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3 text-right">Action</th>
@@ -246,7 +249,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
             {cards.length === 0 ? (
               <tr>
                 <td
-                  colSpan={5}
+                  colSpan={6}
                   className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]"
                 >
                   Queue is empty.
@@ -273,8 +276,16 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                           {card.patientName}
                         </Link>
                         <p className="font-mono text-xs text-[color:var(--color-brand-text-soft)]">
-                          {card.patientDrmId} · Visit #{card.visitNumber}
+                          {card.patientDrmId}
                         </p>
+                      </td>
+                      <td className="px-4 py-3">
+                        <Link
+                          href={`/staff/visits/${card.visitId}`}
+                          className="font-semibold text-[color:var(--color-brand-navy)] hover:text-[color:var(--color-brand-cyan)]"
+                        >
+                          #{card.visitNumber}
+                        </Link>
                       </td>
                       <td className="px-4 py-3">
                         <p className="font-semibold text-[color:var(--color-brand-navy)]">
@@ -331,8 +342,16 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                         {card.patientName}
                       </Link>
                       <p className="font-mono text-xs text-[color:var(--color-brand-text-soft)]">
-                        {card.patientDrmId} · Visit #{card.visitNumber}
+                        {card.patientDrmId}
                       </p>
+                    </td>
+                    <td className="px-4 py-3">
+                      <Link
+                        href={`/staff/visits/${card.visitId}`}
+                        className="font-semibold text-[color:var(--color-brand-navy)] hover:text-[color:var(--color-brand-cyan)]"
+                      >
+                        #{card.visitNumber}
+                      </Link>
                     </td>
                     <td className="px-4 py-3">
                       <p className="font-semibold text-[color:var(--color-brand-navy)]">
