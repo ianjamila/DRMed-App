@@ -43,7 +43,7 @@ export async function releaseTestAction(
   const supabase = await createClient();
   const now = new Date().toISOString();
 
-  const { error } = await supabase
+  const { data: updated, error } = await supabase
     .from("test_requests")
     .update({
       status: "released",
@@ -52,12 +52,19 @@ export async function releaseTestAction(
       release_medium: releaseMedium,
     })
     .eq("id", testRequestId)
-    .eq("visit_id", visitId);
+    .eq("visit_id", visitId)
+    .eq("status", "ready_for_release")
+    .select("id");
 
   if (error) {
     // The payment-gating and consent-gating triggers raise check_violation
     // (23514). translatePgError turns both into friendly, gate-specific text.
     return { ok: false, error: translatePgError(error) };
+  }
+  if (!updated || updated.length === 0) {
+    // 0 rows matched — a concurrent action (e.g. a bulk package release)
+    // already released it. Never audit or notify a write that didn't happen.
+    return { ok: false, error: "This result is no longer ready to release." };
   }
 
   const h = await headers();
@@ -135,6 +142,7 @@ export async function releaseAllReadyComponentsAction(
       release_medium: releaseMedium,
     })
     .eq("parent_id", headerId)
+    .eq("visit_id", visitId)
     .eq("status", "ready_for_release")
     .select("id, services ( name )");
 
@@ -201,7 +209,7 @@ export async function markConsultationDoneAction(
 
   const now = new Date().toISOString();
 
-  const { error } = await supabase
+  const { error, data: updated } = await supabase
     .from("test_requests")
     .update({
       status: "released",
@@ -210,12 +218,19 @@ export async function markConsultationDoneAction(
       release_medium: "other",
     })
     .eq("id", testRequestId)
-    .eq("visit_id", visitId);
+    .eq("visit_id", visitId)
+    .in("status", ["requested", "in_progress"])
+    .select("id");
 
   if (error) {
     // Payment gate (visit not paid) or P0034 (consult has no attending
     // physician) → friendly text.
     return { ok: false, error: translatePgError(error) };
+  }
+  if (!updated || updated.length === 0) {
+    // 0 rows matched — a concurrent action (e.g. a bulk package release)
+    // already completed it. Never audit a write that didn't happen.
+    return { ok: false, error: "This consultation is no longer pending." };
   }
 
   const h = await headers();

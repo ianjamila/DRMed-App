@@ -42,6 +42,16 @@ describe("parseEmailLogRow", () => {
     expect(e.visitId).toBe("v1");
   });
 
+  it("result.notified — bulk row without test_name falls back to count detail", () => {
+    const e = parseEmailLogRow(
+      row({ metadata: { visit_id: "v1", bulk: true, count: 3, email: { ok: true, id: "re_1" } } }),
+      patient,
+    );
+    expect(e.type).toBe("result");
+    expect(e.status).toBe("sent");
+    expect(e.detail).toBe("3 results ready");
+  });
+
   it("uses snapshot metadata.email.to over the patient's current email", () => {
     const e = parseEmailLogRow(
       row({ metadata: { test_name: "CBC", email: { ok: true, id: "re_1", to: "old@example.com" } } }),
