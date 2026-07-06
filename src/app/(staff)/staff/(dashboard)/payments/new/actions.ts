@@ -8,6 +8,7 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { PaymentRecordSchema } from "@/lib/validations/payment";
 import { RedeemGiftCodePaymentSchema } from "@/lib/validations/gift-code";
 import { ipAndAgent } from "@/lib/server/action-helpers";
+import { translatePgError } from "@/lib/accounting/pg-errors";
 
 export type PaymentResult = { ok: true } | { ok: false; error: string };
 
@@ -52,7 +53,12 @@ export async function recordPaymentAction(
     .single();
 
   if (error || !data) {
-    return { ok: false, error: error?.message ?? "Could not record payment." };
+    // EOD-closure block, JE-edit block etc. surface as raised exceptions —
+    // route through translatePgError instead of leaking raw PG text.
+    return {
+      ok: false,
+      error: error ? translatePgError(error) : "Could not record payment.",
+    };
   }
 
   const { ip, ua } = await ipAndAgent();
@@ -154,7 +160,7 @@ async function redeemGiftCode(
   if (payErr || !payment) {
     return {
       ok: false,
-      error: payErr?.message ?? "Could not record payment.",
+      error: payErr ? translatePgError(payErr) : "Could not record payment.",
     };
   }
 
@@ -172,7 +178,7 @@ async function redeemGiftCode(
   if (updErr) {
     // Best-effort rollback so the visit doesn't show a phantom payment.
     await admin.from("payments").delete().eq("id", payment.id);
-    return { ok: false, error: updErr.message };
+    return { ok: false, error: translatePgError(updErr) };
   }
 
   const { ip, ua } = await ipAndAgent();

@@ -39,16 +39,16 @@ services (0001_init.sql:88–100)
 - Trigger: `trg_test_requests_payment_gate` (line ~340)
 - **This is the source of truth.** UI/Server-Action checks are for UX only.
 
-### 2. `recalc_visit_payment()` — line ~348
-- AFTER INSERT on `payments`
-- Sums `payments.amount_php WHERE visit_id=... AND voided_at IS NULL`
+### 2. `recalc_visit_payment()` — line ~348 (current def in `0111`)
+- AFTER INSERT, and AFTER UPDATE OF `voided_at` when voiding (0111)
+- Sums `payments.amount_php WHERE visit_id=... AND voided_at IS NULL` (filter added in 0111; before that the sum included voided rows)
 - Sets `visits.paid_php = sum`
 - Sets `visits.payment_status`:
   - `'paid'` if `paid_php ≥ total_php`
   - `'partial'` if `paid_php > 0`
   - `'unpaid'` otherwise
-- **Preserves `'waived'`** — doesn't overwrite (line ~374)
-- Trigger: `trg_payments_recalc` (line ~384)
+- **Preserves `'waived'`** — doesn't overwrite (incl. through a void)
+- Triggers: `trg_payments_recalc` (0001), `trg_payments_recalc_on_void` (0111)
 
 ### 3. `advance_test_on_result_upload()` — line ~393
 - AFTER INSERT on `results`
@@ -63,6 +63,7 @@ services (0001_init.sql:88–100)
 |---|---|---|
 | `recordPaymentAction()` | `src/app/(staff)/staff/(dashboard)/payments/new/actions.ts` | Validates via `PaymentRecordSchema`, inserts `payments` row, fires `audit({ action: 'payment.recorded' })` with `ipAndAgent()`, redirects to visit detail |
 | `voidPaymentAction()` | `src/app/(staff)/staff/(dashboard)/payments/[id]/void/actions.ts` | Validates reason, reads payment, resets linked `gift_codes.status` back to `'purchased'`, sets `voided_at/by/void_reason`, fires audit. P0007 guard prevents un-voiding. |
+| `waiveVisitBalanceAction()` | `src/app/(staff)/staff/(dashboard)/visits/[id]/actions.ts` | Admin-only. Sets `visits.payment_status = 'waived'` (HMO/charity/no-charge — the one legitimate manual write to that column), fires `audit({ action: 'payment.waived' })`. `recalc_visit_payment` preserves `'waived'` thereafter. |
 | `recordCashAdjustmentAction()` | `src/app/(staff)/staff/(dashboard)/payments/cash-drawer/actions.ts` | Inserts `eod_cash_adjustments`. Role-gated to reception/admin. |
 | `getCashDrawerStateAction()` | same | Calls RPC `cash_drawer_state` |
 
