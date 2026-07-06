@@ -14,6 +14,7 @@ import {
   MAX_BULK_SELECTION,
   scopeToAllowedSections,
 } from "@/lib/visits/bulk-selection";
+import { countResultViews } from "@/lib/results/viewed-count";
 
 export type ReleaseMedium =
   | "physical"
@@ -413,6 +414,16 @@ export async function undoReleaseSelectedAction(
       { release_medium: r.release_medium, released_at: r.released_at },
     ]),
   );
+  // Snapshot how often the patient had already viewed/downloaded each result
+  // at the moment of undo — the undone-releases report surfaces this (RA
+  // 10173: undoing does not un-see a result the patient already opened).
+  const viewedCountById = new Map<string, number>(
+    await Promise.all(
+      scopedIds.map(
+        async (trId) => [trId, await countResultViews(trId)] as const,
+      ),
+    ),
+  );
 
   const { data: undone, error } = await supabase
     .from("test_requests")
@@ -449,6 +460,7 @@ export async function undoReleaseSelectedAction(
         reason: trimmedReason,
         prior_release_medium: prior?.release_medium ?? null,
         prior_released_at: prior?.released_at ?? null,
+        viewed_count: viewedCountById.get(row.id) ?? 0,
         bulk: true,
       },
       ip_address: ip,

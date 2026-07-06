@@ -112,6 +112,9 @@ export async function getPatientConsolidatedResultDownloadUrl(
     metadata: {
       kind: "consolidated",
       drm_id: session.drm_id,
+      // Normalized shape for viewed-count queries: every test_request this
+      // download exposed (see src/lib/results/viewed-count.ts).
+      test_request_ids: junctions.map((j) => j.test_request_id),
     },
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),
@@ -202,6 +205,9 @@ export async function getPatientResultDownloadUrl(
       test_request_id: testRequestId,
       visit_id: visit.id,
       drm_id: session.drm_id,
+      // Normalized shape for viewed-count queries (test_request_id stays for
+      // historical-query compatibility).
+      test_request_ids: [testRequestId],
     },
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),
@@ -450,6 +456,9 @@ export async function getPackagePdfDownloadUrl(
       header_test_request_id: headerRow.id,
       package_code: headerService?.code ?? null,
       merged_component_ids: releasedComponents.map((c) => c.id),
+      // Normalized shape for viewed-count queries (merged_component_ids stays
+      // for historical-query compatibility).
+      test_request_ids: releasedComponents.map((c) => c.id),
       merged_page_count: merged.getPageCount(),
       skipped_cancelled_components: cancelledComponents.length,
       skipped_malformed_components: skippedMalformed,
