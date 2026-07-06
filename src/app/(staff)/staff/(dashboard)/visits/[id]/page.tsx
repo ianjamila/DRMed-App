@@ -12,6 +12,7 @@ import { SelectionProvider } from "./selection-context";
 import { RowSelectCheckbox } from "./row-select-checkbox";
 import { BulkActionBar } from "./bulk-action-bar";
 import { UndoReleaseDialog } from "./undo-release-dialog";
+import { WaiveBalanceDialog } from "./waive-balance-dialog";
 import { VoidPaymentDialog } from "../../payments/[id]/void/void-payment-dialog";
 import { countResultViews } from "@/lib/results/viewed-count";
 import { isConsentGateRequired, getPatientConsentState } from "@/lib/consent/gate";
@@ -318,6 +319,12 @@ export default async function VisitDetailPage({ params }: Props) {
               {paymentStatusLabel(visit.payment_status)}
             </span>
           </p>
+          {isAdmin && !isPaid ? (
+            <WaiveBalanceDialog
+              visitId={visit.id}
+              balanceLabel={formatPhp(balance > 0 ? balance : 0)}
+            />
+          ) : null}
         </div>
       </section>
 
