@@ -5,6 +5,9 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
+import { requireAdminStaff } from "@/lib/auth/require-admin";
+import { ipAndAgent } from "@/lib/server/action-helpers";
+import { WaiveBalanceSchema } from "@/lib/validations/accounting";
 import { sectionsForRole } from "@/lib/auth/role-sections";
 import { notifyResultReleased } from "@/lib/notifications/notify-released";
 import { notifyResultsReleasedBulk } from "@/lib/notifications/notify-released-bulk";
@@ -470,6 +473,72 @@ export async function undoReleaseSelectedAction(
 
   revalidatePath(`/staff/visits/${visitId}`);
   return { ok: true, count: undone.length };
+}
+
+// H3: admin-only escape hatch for visits that will never be cash-paid
+// (HMO-covered, charity, no-charge). Setting payment_status = 'waived' is the
+// one legitimate manual write to that column — recalc_visit_payment preserves
+// 'waived' through every later payment/void, and the 0109 Leg B trigger then
+// auto-releases any package header whose components are already terminal.
+export async function waiveVisitBalanceAction(
+  visitId: string,
+  reason: string,
+): Promise<ReleaseResult> {
+  const parsed = WaiveBalanceSchema.safeParse({ reason });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Reason is required." };
+  }
+  const session = await requireAdminStaff();
+  const supabase = await createClient();
+
+  const { data: visit } = await supabase
+    .from("visits")
+    .select("payment_status, total_php, paid_php")
+    .eq("id", visitId)
+    .maybeSingle();
+  if (!visit) {
+    return { ok: false, error: "Visit not found." };
+  }
+  if (visit.payment_status === "waived") {
+    return { ok: false, error: "This visit's balance is already waived." };
+  }
+  if (visit.payment_status === "paid") {
+    return { ok: false, error: "This visit is already fully paid — nothing to waive." };
+  }
+
+  // Status filter keeps the write race-safe: a concurrent payment that flips
+  // the visit to 'paid' makes this UPDATE match 0 rows instead of clobbering.
+  const { data: updated, error } = await supabase
+    .from("visits")
+    .update({ payment_status: "waived" })
+    .eq("id", visitId)
+    .in("payment_status", ["unpaid", "partial"])
+    .select("id");
+
+  if (error) return { ok: false, error: translatePgError(error) };
+  if (!updated || updated.length === 0) {
+    revalidatePath(`/staff/visits/${visitId}`);
+    return { ok: false, error: "This visit can no longer be waived." };
+  }
+
+  const { ip, ua } = await ipAndAgent();
+  await audit({
+    actor_id: session.user_id,
+    actor_type: "staff",
+    action: "payment.waived",
+    resource_type: "visit",
+    resource_id: visitId,
+    metadata: {
+      reason: parsed.data.reason,
+      previous_status: visit.payment_status,
+      balance_waived_php: Number(visit.total_php) - Number(visit.paid_php),
+    },
+    ip_address: ip,
+    user_agent: ua,
+  });
+
+  revalidatePath(`/staff/visits/${visitId}`);
+  return { ok: true };
 }
 
 export async function markConsultationDoneAction(
