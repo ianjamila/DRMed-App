@@ -161,12 +161,14 @@ export async function createAppointmentGroup(
   // The pre-insert conflict SELECT above is fast-path UX; the RPC's advisory
   // lock + re-check is the authoritative last line against a slot race. A
   // P0040 at insert is a hard error in BOTH modes (the row was not inserted),
-  // unlike pre-insert conflicts which staff may override.
+  // unlike pre-insert conflicts which staff may override. An explicit staff
+  // override ("Book anyway", audited) skips the occupancy re-check — the
+  // guard exists to stop races, not deliberate staff double-booking.
   const { data: created, error } = await admin.rpc("appointments_insert_slot_guarded", {
     p_rows: rows,
     p_physician_id: physicianId ?? undefined,
     p_scheduled_at: timing.scheduledAtIso ?? undefined,
-    p_allow_concurrent: allowConcurrent,
+    p_allow_concurrent: allowConcurrent || (input.mode === "relaxed" && input.override),
   });
   if (error) {
     if (error.code === "P0040") {
