@@ -88,6 +88,14 @@ export async function unclaimTestAction(
   const session = await requireAdminStaff();
   const supabase = await createClient();
 
+  // Pre-read the current holder for the audit row — the post-update select
+  // would return assigned_to already nulled.
+  const { data: before } = await supabase
+    .from("test_requests")
+    .select("assigned_to")
+    .eq("id", testRequestId)
+    .maybeSingle();
+
   // Only an in-flight claim with no uploaded result can be unclaimed.
   const { data, error } = await supabase
     .from("test_requests")
@@ -95,7 +103,7 @@ export async function unclaimTestAction(
     .eq("id", testRequestId)
     .eq("status", "in_progress")
     .not("assigned_to", "is", null)
-    .select("id, visit_id, assigned_to")
+    .select("id, visit_id")
     .maybeSingle();
 
   if (error) return { ok: false, error: translatePgError(error) };
@@ -115,7 +123,7 @@ export async function unclaimTestAction(
     resource_id: testRequestId,
     metadata: {
       visit_id: data.visit_id,
-      previous_assignee: data.assigned_to,
+      previous_assignee: before?.assigned_to ?? null,
       reason: reason?.trim() || null,
     },
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
