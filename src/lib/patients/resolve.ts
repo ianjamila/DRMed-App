@@ -45,34 +45,21 @@ export async function resolvePatientCore(
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 
-// Real wiring. Trigger trg_patients_normalise_email keeps stored emails
-// lowercase so equality lookup hits idx_patients_dedup_lookup directly.
+// Real wiring. The dedup check-then-insert now lives in the DB
+// (resolve_patient_guarded, migration 0112): an advisory xact-lock on the
+// dedup triple makes concurrent resolves of the same identity yield one row.
+// Same contract as resolvePatientCore — reuse on (lower(email), last_name,
+// birthdate), else insert with pre_registered = true, never overwrite an
+// existing row's contact fields.
 export async function resolvePatient(admin: AdminClient, fields: ResolvePatientFields): Promise<ResolvePatientResult> {
-  return resolvePatientCore(
-    {
-      async findExisting(key) {
-        const { data } = await admin
-          .from("patients")
-          .select("id, drm_id")
-          .eq("email", key.email)
-          .eq("last_name", key.last_name)
-          .eq("birthdate", key.birthdate)
-          .limit(1)
-          .maybeSingle();
-        return data ?? null;
-      },
-      async insertPatient(f) {
-        const { data, error } = await admin
-          .from("patients")
-          .insert({ ...f, pre_registered: true })
-          .select("id, drm_id")
-          .single();
-        if (error || !data) {
-          return { ok: false, error: error?.message ?? "Could not save patient details." };
-        }
-        return { ok: true, id: data.id, drm_id: data.drm_id };
-      },
-    },
-    fields,
-  );
+  const email = fields.email.trim().toLowerCase();
+  const { data, error } = await admin.rpc("resolve_patient_guarded", {
+    p_email: email,
+    p_last_name: fields.last_name,
+    p_birthdate: fields.birthdate,
+    p_fields: { ...fields, email },
+  });
+  const row = data?.[0];
+  if (error || !row) return { ok: false, error: error?.message ?? "Could not save patient details." };
+  return { ok: true, id: row.id, drm_id: row.drm_id, reused: row.reused };
 }
