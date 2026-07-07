@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { formatPhp } from "@/lib/marketing/format";
 import { formatPhoneLocal } from "@/lib/format/phone";
 import { ReissuePinButton } from "./reissue-pin-button";
+import { VerifyIdentityButton } from "./verify-identity-button";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { getPatientConsentState } from "@/lib/consent/gate";
 import { ConsentPanel } from "./consent/consent-panel";
@@ -87,9 +88,12 @@ export default async function PatientDetailPage({ params }: Props) {
             {formatPatientName(patient)}
           </h1>
           {patient.pre_registered ? (
-            <p className="mt-1 inline-block rounded-md bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900">
-              Pre-registered — verify identity at counter
-            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="mt-1 inline-block rounded-md bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900">
+                Pre-registered — verify identity at counter
+              </p>
+              <VerifyIdentityButton patientId={patient.id} />
+            </div>
           ) : null}
         </div>
         <div className="flex flex-wrap gap-2">

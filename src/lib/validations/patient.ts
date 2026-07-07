@@ -59,7 +59,16 @@ const PatientFields = {
     .nullable()
     .or(z.literal("").transform(() => null)),
   phone: optionalText(40),
-  email: optionalText(160),
+  // M10: email is optional, but when present it must be a real address —
+  // it's the dedup key and the DRM-ID delivery channel.
+  email: z
+    .string()
+    .trim()
+    .email("Enter a valid email address.")
+    .max(160)
+    .or(z.literal(""))
+    .transform((v) => (v === "" ? null : v))
+    .nullable(),
   address: optionalText(240),
 
   // Phase 7B.3 additions:

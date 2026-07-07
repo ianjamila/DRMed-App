@@ -64,7 +64,16 @@ export const PatientImportRowSchema = z
       )
       .nullable(),
     phone: trimmed(40),
-    email: trimmed(160),
+    // M10: optional, but a present value must be a real address (dedup key +
+    // DRM-ID delivery channel) — matches PatientFields.email in patient.ts.
+    email: z
+      .string()
+      .trim()
+      .email("email must be a valid email address")
+      .max(160)
+      .or(z.literal(""))
+      .transform((v) => (v === "" ? null : v))
+      .nullable(),
     address: trimmed(160),
   })
   .strip();
