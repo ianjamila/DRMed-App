@@ -161,6 +161,12 @@ export const STAFF_NAV: StaffNavSection[] = [
         roles: ["medtech", "pathologist", "admin", "xray_technician"],
       },
       {
+        href: "/staff/critical-alerts",
+        label: "Critical alerts",
+        description: "Results that crossed a critical threshold (dangerously high or low values). Review each one, make the clinical follow-up call, then acknowledge it here so the whole team can see it's been handled.",
+        roles: ["pathologist", "admin"],
+      },
+      {
         href: "/staff/results",
         label: "Results",
         description: "Archive of every result ever created or released — searchable by patient name, DRM-ID, or service. Filter by status (released / ready / in progress / cancelled) and date range. View the released PDF inline for review. Per partner policy, admins + medtechs can see all results.",
@@ -337,6 +343,12 @@ export const STAFF_NAV: StaffNavSection[] = [
             href: "/staff/admin/reports/lab-tat",
             label: "Lab turnaround time",
             description: "Measures how long tests take to complete — from sample collection to result release. Broken down by test type. Use to spot bottlenecks (e.g., 'why are FBSs taking 3 hours when they should take 1?').",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/reports/stuck-tests",
+            label: "Stuck tests",
+            description: "Tests sitting too long in any non-final state — unclaimed, in progress, or ready but unreleased — so nothing silently stalls like Visit #0037 did.",
             roles: ["admin"],
           },
           {

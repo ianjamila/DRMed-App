@@ -24,23 +24,33 @@ export async function claimConsolidated(
     const session = await requireActiveStaff();
     const supabase = await createClient();
 
-    const { error } = await supabase
+    // Only claim if every member is still 'requested' — concurrency-safe,
+    // matching claimTestAction's semantics for single tests.
+    const { data, error } = await supabase
       .from("test_requests")
       .update({
         assigned_to: session.user_id,
         status: "in_progress",
+        started_at: new Date().toISOString(),
       })
       .in("id", testRequestIds)
-      .in("status", ["requested", "in_progress"]);
+      .eq("status", "requested")
+      .select("id");
     if (error) {
       return { ok: false, error: translatePgError(error) };
+    }
+    if ((data ?? []).length !== testRequestIds.length) {
+      return {
+        ok: false,
+        error: "Some tests in this report were already claimed or changed status.",
+      };
     }
 
     const h = await headers();
     await audit({
       actor_id: session.user_id,
       actor_type: "staff",
-      action: "test_request.claim",
+      action: "test_request.claimed",
       resource_type: "test_request",
       resource_id: null,
       metadata: { test_request_ids: testRequestIds, grouped: true },

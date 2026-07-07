@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { ClaimButton } from "../claim-button";
+import { ReassignPanel } from "./reassign-panel";
 import { UploadResultForm } from "./upload-form";
 import { ViewResultButton } from "./view-result-button";
 import { StructuredResultForm } from "./structured-form";
@@ -34,6 +36,7 @@ const TEST_STATUS_STYLE: Record<string, string> = {
 
 export default async function QueueTestDetailPage({ params }: Props) {
   const { id } = await params;
+  const session = await requireActiveStaff();
   const supabase = await createClient();
   const {
     data: { user },
@@ -196,6 +199,30 @@ export default async function QueueTestDetailPage({ params }: Props) {
     }
   }
 
+  // Admin-only reassignment data: current assignee's name + the roster of
+  // active lab-capable staff the claim could move to.
+  const showReassignPanel = session.role === "admin" && !!test.assigned_to;
+  let assigneeName = "—";
+  let labStaff: Array<{ id: string; full_name: string; role: string }> = [];
+  if (showReassignPanel) {
+    const { data: staffRows } = await supabase
+      .from("staff_profiles")
+      .select("id, full_name, role")
+      .eq("is_active", true)
+      .is("deleted_at", null)
+      .in("role", ["medtech", "xray_technician", "pathologist", "admin"])
+      .order("full_name");
+    labStaff = (staffRows ?? []).filter((s) => s.id !== test.assigned_to);
+    // Separate lookup: the current holder may be deactivated (that's exactly
+    // the stuck-claim case), so the active-roster query above won't find them.
+    const { data: holder } = await supabase
+      .from("staff_profiles")
+      .select("full_name")
+      .eq("id", test.assigned_to!)
+      .maybeSingle();
+    assigneeName = holder?.full_name ?? "(unknown staff)";
+  }
+
   // Decide which workflow surface to render in the action card.
   // Order of precedence:
   //   structured-form  → in-house service with a template, editable, no
@@ -272,6 +299,13 @@ export default async function QueueTestDetailPage({ params }: Props) {
             <p className="text-xs text-[color:var(--color-brand-text-soft)]">
               Typical turnaround: {svc.turnaround_hours}h
             </p>
+          ) : null}
+          {showReassignPanel ? (
+            <ReassignPanel
+              testRequestId={test.id}
+              assigneeName={assigneeName}
+              labStaff={labStaff}
+            />
           ) : null}
         </div>
       </section>
