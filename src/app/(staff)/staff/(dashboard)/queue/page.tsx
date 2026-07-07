@@ -194,6 +194,22 @@ export default async function QueuePage({ searchParams }: SearchProps) {
     }
   }
   cards.push(...groupedAcc.values());
+
+  // Admins see who holds each in-progress claim so stuck claims are visible
+  // straight from the list (unclaim/reassign lives on the detail page).
+  const claimerNames = new Map<string, string>();
+  if (session.role === "admin") {
+    const claimerIds = Array.from(
+      new Set(cards.map((c) => c.claimedBy).filter((v): v is string => !!v)),
+    );
+    if (claimerIds.length > 0) {
+      const { data: claimers } = await supabase
+        .from("staff_profiles")
+        .select("id, full_name")
+        .in("id", claimerIds);
+      for (const p of claimers ?? []) claimerNames.set(p.id, p.full_name);
+    }
+  }
   // Sort by requestedAt ascending (oldest first) — mirrors the query order
   // but ensures grouped cards (which may have been inserted after single
   // cards) sort consistently.
@@ -303,6 +319,11 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                         >
                           {card.status.replace(/_/g, " ")}
                         </span>
+                        {card.claimedBy && claimerNames.has(card.claimedBy) ? (
+                          <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
+                            Claimed by {claimerNames.get(card.claimedBy)}
+                          </p>
+                        ) : null}
                       </td>
                       <td className="px-4 py-3 text-right">
                         {card.status === "requested" ? (
@@ -372,6 +393,11 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                       >
                         {card.status.replace(/_/g, " ")}
                       </span>
+                      {card.claimedBy && claimerNames.has(card.claimedBy) ? (
+                        <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
+                          Claimed by {claimerNames.get(card.claimedBy)}
+                        </p>
+                      ) : null}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <Link
