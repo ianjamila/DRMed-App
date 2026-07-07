@@ -139,6 +139,9 @@ export async function submitRegistrationAction(
   // Email it to the on-file address — which equals the supplied email, since the
   // dedup matched on lower(email)+last_name+birthdate. No consent write: a public
   // form must not re-affirm an existing patient's consent state.
+  // NOTE: an exact-triple match also scores ≥ strong in the fuzzy pass above, so
+  // this branch is a defensive fallback for when that query fails open ([]) —
+  // not the primary matched path.
   if (res.reused) {
     const sendResult = await sendEmail({
       to: d.email,

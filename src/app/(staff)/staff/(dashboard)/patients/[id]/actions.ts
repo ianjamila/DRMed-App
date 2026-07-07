@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
+import { ipAndAgent } from "@/lib/server/action-helpers";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { generatePin, hashPin } from "@/lib/auth/pin";
 import { setVisitPinFlash } from "@/lib/auth/visit-pin-flash";
@@ -96,7 +97,7 @@ export async function verifyPatientIdentityAction(
   if (error) return { ok: false, error: error.message };
 
   if (cleared && cleared.length > 0) {
-    const h = await headers();
+    const { ip, ua } = await ipAndAgent();
     await audit({
       actor_id: session.user_id,
       actor_type: "staff",
@@ -105,8 +106,8 @@ export async function verifyPatientIdentityAction(
       resource_type: "patient",
       resource_id: patientId,
       metadata: { via: "manual" },
-      ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
-      user_agent: h.get("user-agent"),
+      ip_address: ip,
+      user_agent: ua,
     });
   }
 

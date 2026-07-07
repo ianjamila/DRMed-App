@@ -2,6 +2,7 @@
 
 import { useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
 import { verifyPatientIdentityAction } from "./actions";
 
 interface Props {
@@ -15,10 +16,12 @@ export function VerifyIdentityButton({ patientId }: Props) {
   const router = useRouter();
 
   return (
-    <button
+    <Button
       type="button"
+      variant="outline"
+      size="xs"
       disabled={pending}
-      className="mt-1 inline-block rounded-md border border-amber-300 bg-white px-2 py-0.5 text-xs font-semibold text-amber-900 hover:bg-amber-50 disabled:opacity-60"
+      className="mt-1 border-amber-300 text-amber-900 hover:bg-amber-50"
       onClick={() => {
         start(async () => {
           const result = await verifyPatientIdentityAction(patientId);
@@ -31,6 +34,6 @@ export function VerifyIdentityButton({ patientId }: Props) {
       }}
     >
       {pending ? "Marking…" : "Mark identity verified"}
-    </button>
+    </Button>
   );
 }
