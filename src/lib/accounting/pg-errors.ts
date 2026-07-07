@@ -105,6 +105,11 @@ export function translatePgError(err: PgError): string {
     // 12.5 — COGS + Doctor PF subledger
     case "P0034":
       return "An attending physician is required for consults and procedures. Please select a physician on the visit before releasing this test.";
+    // PR 7 — booking hardening
+    case "P0040":
+      // appointments_insert_slot_guarded raise; byte-identical to the
+      // historical slot_taken conflict message in timing.ts.
+      return "That slot was just taken. Please pick another time.";
     default:
       return err.message ?? "Database error. Please try again.";
   }
