@@ -3,7 +3,7 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { PatientUpdateSchema } from "@/lib/validations/patient";
@@ -72,16 +72,18 @@ export async function updatePatientAction(
   const birthdateRaw = (formData.get("birthdate") ?? "").toString().trim();
   const birthdate_confirmed = birthdateRaw !== "" ? true : undefined;
 
-  // Use the admin client so RLS doesn't block reception editing patients
-  // they didn't create. Authorisation lives at requireActiveStaff above.
-  const admin = createAdminClient();
+  // RLS-bound client: the `patients: staff full` policy is role-based
+  // (has_role) with no ownership clause, so any active staff member can edit
+  // any patient — no need to bypass RLS with the admin client here.
+  // requireActiveStaff above still gates the action.
+  const supabase = await createClient();
 
   // Check whether the patient already has current consent. If they do, skip
   // recording a new grant to avoid duplicates. The DB trigger owns
   // consent_signed_at and consent_current — do NOT write those columns here.
   let consentSignedNow = false;
   if (consentGivenToday) {
-    const { data: existing } = await admin
+    const { data: existing } = await supabase
       .from("patients")
       .select("consent_current")
       .eq("id", patientId)
@@ -99,7 +101,7 @@ export async function updatePatientAction(
     }
   }
 
-  const { error } = await admin
+  const { error } = await supabase
     .from("patients")
     .update({
       ...rest,

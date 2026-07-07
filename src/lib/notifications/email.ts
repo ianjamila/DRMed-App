@@ -17,6 +17,19 @@ export type SendResult =
 // placeholders, so the release flow keeps working before the user wires up
 // their Resend account.
 export async function sendEmail(input: SendEmailInput): Promise<SendResult> {
+  // M6: real keys in .env.local + `npm run dev` must never message real
+  // patients. Sends require production, or an explicit local opt-in.
+  const live =
+    process.env.VERCEL_ENV === "production" ||
+    process.env.NOTIFICATIONS_LIVE === "true";
+  if (!live) {
+    return {
+      ok: false,
+      kind: "skipped",
+      reason: "NOTIFICATIONS_LIVE not enabled in this environment",
+    };
+  }
+
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.RESEND_FROM_EMAIL;
   const replyTo = process.env.RESEND_REPLY_TO_EMAIL;

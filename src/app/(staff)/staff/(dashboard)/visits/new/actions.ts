@@ -401,6 +401,24 @@ export async function createVisitAction(
       user_agent: ua,
     });
 
+    // M10: a fresh Secure PIN is minted with every new visit (like the manual
+    // visit_pin.reissued audit). Record the issuance for RA-10173 traceability
+    // — NEVER the PIN or its hash, only that one was issued.
+    await audit({
+      actor_id: session.user_id,
+      actor_type: "staff",
+      patient_id: parsed.data.patient_id,
+      action: "visit_pin.issued",
+      resource_type: "visit",
+      resource_id: c.visitId,
+      metadata: {
+        visit_number: c.visitNumber,
+        reason: "visit_created",
+      },
+      ip_address: ip,
+      user_agent: ua,
+    });
+
     for (let i = 0; i < c.decompositions.length; i++) {
       const d = c.decompositions[i]!;
       const pkgService = services.find((s) => s.id === d.headerLine.service_id);

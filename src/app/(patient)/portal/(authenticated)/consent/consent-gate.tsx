@@ -11,8 +11,8 @@ export function PortalConsentGate() {
   const [err, setErr] = useState<string | null>(null);
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-[color:var(--color-brand-bg)]/95 p-4">
-      <div className="mx-auto max-w-lg rounded-2xl bg-white p-5 shadow-xl">
+    <div className="mx-auto w-full max-w-lg px-4 py-8">
+      <div className="rounded-2xl bg-white p-5 shadow-xl">
         <h1 className="text-lg font-extrabold text-[color:var(--color-brand-navy)]">
           Data Privacy Consent
         </h1>

@@ -17,11 +17,14 @@ export default async function ConsentGateSettingsPage() {
     .maybeSingle();
   const enabled = !!settings?.gate_required;
 
-  // How many patients would be blocked right now (no current consent on file).
+  // How many active patients would be blocked right now (no current consent on
+  // file). Exclude merged tombstones so the number matches the pre-flight
+  // report the admin is being pointed at.
   const { count } = await admin
     .from("patients")
     .select("id", { count: "exact", head: true })
-    .eq("consent_current", false);
+    .eq("consent_current", false)
+    .is("merged_into_id", null);
   const blockedCount = count ?? 0;
 
   return (
@@ -45,6 +48,20 @@ export default async function ConsentGateSettingsPage() {
           backfilled results are unaffected.
         </p>
       </header>
+
+      {blockedCount > 0 ? (
+        <p className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          {blockedCount} active{" "}
+          {blockedCount === 1 ? "patient lacks" : "patients lack"} consent —{" "}
+          <Link
+            href="/staff/admin/reports/patients-without-consent"
+            className="font-semibold underline hover:no-underline"
+          >
+            review the list
+          </Link>{" "}
+          before enabling.
+        </p>
+      ) : null}
 
       <ConsentGateToggle enabled={enabled} blockedCount={blockedCount} />
 
