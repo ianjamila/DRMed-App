@@ -14,14 +14,20 @@ import { patientAlreadyAskedForReview } from "./review-cta";
 interface Input {
   testRequestId: string;
   visitId: string;
+  // How the result was handed over. A physical/pickup hand-off means the
+  // patient collected the printout in person — no message is sent (M7).
+  releaseMedium: string;
 }
 
-// Fired by reception's release action. Pulls the patient + test name, sends
-// SMS via Semaphore and email via Resend in parallel, audit-logs each
-// outcome. Failures never throw — release is the source of truth.
+// Fired by reception's release action. Pulls the patient + test name, then
+// emails via Resend and texts via Semaphore in parallel — but SMS is skipped
+// unless Semaphore is configured, and it never has been in prod, so in practice
+// only email goes out. Each outcome is audit-logged. Failures never throw —
+// release is the source of truth.
 export async function notifyResultReleased({
   testRequestId,
   visitId,
+  releaseMedium,
 }: Input): Promise<void> {
   const admin = createAdminClient();
 
@@ -48,6 +54,33 @@ export async function notifyResultReleased({
     : visit.patients;
   const svc = Array.isArray(row.services) ? row.services[0] : row.services;
   if (!patient || !svc) return;
+
+  // M7: physical hand-off (printout collected in person) — record the notified
+  // audit row as skipped on both channels and send nothing.
+  if (releaseMedium === "physical" || releaseMedium === "pickup") {
+    const skipped = {
+      ok: false as const,
+      skipped: true as const,
+      reason: "physical hand-off — no message sent",
+    };
+    await audit({
+      actor_id: null,
+      actor_type: "system",
+      patient_id: patient.id,
+      action: "result.notified",
+      resource_type: "test_request",
+      resource_id: testRequestId,
+      metadata: {
+        visit_id: visitId,
+        test_name: svc.name,
+        release_medium: releaseMedium,
+        sms: skipped,
+        email: skipped,
+        review_cta: { shown: false },
+      },
+    });
+    return;
+  }
 
   const portalUrl = `${SITE.url.replace(/\/$/, "")}/portal`;
   const greeting = patient.first_name || "there";

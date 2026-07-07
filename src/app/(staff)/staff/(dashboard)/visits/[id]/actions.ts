@@ -102,7 +102,7 @@ export async function releaseTestAction(
   // Fire-and-forget notification. Failures are audit-logged inside, never
   // bubble up — release is the source of truth.
   try {
-    await notifyResultReleased({ testRequestId, visitId });
+    await notifyResultReleased({ testRequestId, visitId, releaseMedium });
   } catch (err) {
     await reportError({
       scope: "notify/result-released",
@@ -233,6 +233,7 @@ export async function releaseAllReadyComponentsAction(
       visitId,
       testRequestIds: released.map((r) => r.id),
       testNames: released.map((r) => serviceName(r.services) ?? "Result"),
+      releaseMedium,
     });
   } catch (err) {
     await reportError({
@@ -334,12 +335,17 @@ export async function releaseSelectedAction(
 
   try {
     if (released.length === 1) {
-      await notifyResultReleased({ testRequestId: released[0].id, visitId });
+      await notifyResultReleased({
+        testRequestId: released[0].id,
+        visitId,
+        releaseMedium,
+      });
     } else {
       await notifyResultsReleasedBulk({
         visitId,
         testRequestIds: released.map((r) => r.id),
         testNames: released.map((r) => serviceName(r.services) ?? "Result"),
+        releaseMedium,
       });
     }
   } catch (err) {

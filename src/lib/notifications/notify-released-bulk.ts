@@ -15,6 +15,9 @@ interface Input {
   visitId: string;
   testRequestIds: string[];
   testNames: string[];
+  // How the results were handed over. A physical/pickup hand-off means the
+  // patient collected the printouts in person — no message is sent (M7).
+  releaseMedium: string;
 }
 
 const MAX_LISTED = 6;
@@ -28,6 +31,7 @@ export async function notifyResultsReleasedBulk({
   visitId,
   testRequestIds,
   testNames,
+  releaseMedium,
 }: Input): Promise<void> {
   if (testRequestIds.length === 0) return;
   const admin = createAdminClient();
@@ -48,6 +52,37 @@ export async function notifyResultsReleasedBulk({
   if (!patient) return;
 
   const count = testNames.length;
+
+  // M7: physical hand-off (printouts collected in person) — record the notified
+  // audit row as skipped on both channels and send nothing.
+  if (releaseMedium === "physical" || releaseMedium === "pickup") {
+    const skipped = {
+      ok: false as const,
+      skipped: true as const,
+      reason: "physical hand-off — no message sent",
+    };
+    await audit({
+      actor_id: null,
+      actor_type: "system",
+      patient_id: patient.id,
+      action: "result.notified",
+      resource_type: "test_request",
+      resource_id: testRequestIds[0],
+      metadata: {
+        visit_id: visitId,
+        release_medium: releaseMedium,
+        sms: skipped,
+        email: skipped,
+        review_cta: { shown: false },
+        bulk: true,
+        count,
+        test_names: testNames,
+        test_request_ids: testRequestIds,
+      },
+    });
+    return;
+  }
+
   const portalUrl = `${SITE.url.replace(/\/$/, "")}/portal`;
   const greeting = patient.first_name || "there";
 

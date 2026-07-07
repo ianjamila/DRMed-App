@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getPatientConsentState } from "@/lib/consent/gate";
 import { patientSearchOrClauses } from "@/lib/patients/search";
 import { VisitForm } from "./visit-form";
 import { PatientsSearchInput } from "../../patients/search-input";
@@ -60,6 +61,14 @@ export default async function NewVisitPage({ searchParams }: Props) {
     redirect("/staff/visits/new");
   }
 
+  // H7: nudge reception to capture data-privacy consent at intake. Banner only
+  // — visit creation is never blocked here (the consent gate ships OFF, and even
+  // when ON it gates result *release*, not intake).
+  const consent = await getPatientConsentState(patient.id);
+  const patientName =
+    `${patient.first_name ?? ""} ${patient.last_name ?? ""}`.trim() ||
+    "this patient";
+
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
       <Link
@@ -75,6 +84,22 @@ export default async function NewVisitPage({ searchParams }: Props) {
         Visit number is auto-generated. PIN will be shown on the printed
         receipt.
       </p>
+
+      {!consent.current ? (
+        <div className="mt-6 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+          <p>
+            Data-privacy consent is not on file for {patientName}. Capture it
+            now — once the consent gate is enabled, results cannot be released
+            without it.
+          </p>
+          <Link
+            href={`/staff/patients/${patient.id}#consent`}
+            className="mt-2 inline-block font-semibold text-amber-900 underline hover:no-underline"
+          >
+            Record consent →
+          </Link>
+        </div>
+      ) : null}
 
       <Panel className="mt-8 p-6">
         <VisitForm

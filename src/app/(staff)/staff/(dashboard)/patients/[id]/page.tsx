@@ -182,7 +182,7 @@ export default async function PatientDetailPage({ params }: Props) {
         />
       </section>
 
-      <div className="mt-3">
+      <div id="consent" className="mt-3 scroll-mt-24">
         <ConsentPanel
           patientId={id}
           current={consent.current}

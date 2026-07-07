@@ -17,7 +17,7 @@ Built for compliance with the Philippine Data Privacy Act (RA 10173).
 - **Backend:** Supabase (Postgres, Auth, Storage, Edge Functions, Row Level Security)
 - **Forms:** react-hook-form + zod
 - **Hosting:** Vercel (single project, single domain)
-- **Notifications:** Resend (email), Semaphore (PH SMS)
+- **Notifications:** Resend (email); Semaphore (PH SMS) is wired but has never been configured in prod, so SMS is skipped and only email goes out
 - **Accounting sync:** Google Sheets API via service account
 
 ---
@@ -152,7 +152,7 @@ Patient walks in
   → (Optional) Pathologist signs off         [status: ready_for_release]
   → Patient pays at reception                [visit.payment_status: paid]
   → Reception releases result                [status: released]
-  → Patient gets SMS + email notification
+  → Patient gets an email notification (SMS too, if Semaphore is ever configured)
   → Patient signs into portal, downloads PDF
 ```
 

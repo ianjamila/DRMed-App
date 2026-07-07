@@ -7,6 +7,13 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { reportError } from "@/lib/observability/report-error";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
+import { sendEmail } from "@/lib/notifications/email";
+import {
+  renderEmailShell,
+  emailParagraph,
+  emailHighlight,
+  escapeHtml,
+} from "@/lib/notifications/branded-email";
 
 export type LookupResult =
   | {
@@ -233,6 +240,32 @@ export async function mergePatientsAction(
     });
   }
 
+  // M2: let the kept patient know their records were combined, so they use the
+  // right DRM-ID going forward. The email uses the kept row's address (either
+  // its own or the one just filled in from the source). It never mentions the
+  // retired DRM-ID or any PIN — the current PIN lives on the patient's most
+  // recent receipt.
+  const keptEmail = keep.email ?? fill.email ?? null;
+  const mergeEmail = keptEmail
+    ? await sendEmail({
+        to: keptEmail,
+        subject: "Your DRMed records were combined",
+        text: `Hi ${keep.first_name},\n\nWe combined two DRMed records that belonged to you into one. From now on, use this DRM-ID: ${keep.drm_id}, together with the Secure PIN printed on your most recent receipt, to view your results online.\n\n— DRMed Clinic and Laboratory`,
+        html: renderEmailShell({
+          heading: "Your DRMed patient ID",
+          contentHtml:
+            emailParagraph(`Hi <b>${escapeHtml(keep.first_name)}</b>,`) +
+            emailParagraph(
+              "We combined two DRMed records that belonged to you into one. From now on, use this patient ID:",
+            ) +
+            emailHighlight("Your DRM-ID", keep.drm_id) +
+            emailParagraph(
+              "Sign in with the Secure PIN printed on your most recent receipt to view your results online.",
+            ),
+        }),
+      })
+    : null;
+
   const h = await headers();
   await audit({
     actor_id: session.user_id,
@@ -253,6 +286,15 @@ export async function mergePatientsAction(
         patient_consents: consents?.length ?? 0,
       },
       filled_from_source: Object.keys(fill),
+      notification: {
+        email: !mergeEmail
+          ? { ok: false, skipped: true, reason: "no on-file email" }
+          : mergeEmail.ok
+            ? { ok: true, id: mergeEmail.id, to: keptEmail }
+            : mergeEmail.kind === "skipped"
+              ? { ok: false, skipped: true, reason: mergeEmail.reason }
+              : { ok: false, error: mergeEmail.error, to: keptEmail },
+      },
     },
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),

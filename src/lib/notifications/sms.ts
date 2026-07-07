@@ -15,6 +15,19 @@ export type SmsResult =
 // Phone numbers are normalized to local PH format (09XXXXXXXXX) since
 // Semaphore expects that, not E.164.
 export async function sendSms(input: SendSmsInput): Promise<SmsResult> {
+  // M6: real keys in .env.local + `npm run dev` must never message real
+  // patients. Sends require production, or an explicit local opt-in.
+  const live =
+    process.env.VERCEL_ENV === "production" ||
+    process.env.NOTIFICATIONS_LIVE === "true";
+  if (!live) {
+    return {
+      ok: false,
+      kind: "skipped",
+      reason: "NOTIFICATIONS_LIVE not enabled in this environment",
+    };
+  }
+
   const apiKey = process.env.SEMAPHORE_API_KEY;
   const sender = process.env.SEMAPHORE_SENDER_NAME;
 

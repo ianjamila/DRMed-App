@@ -14,8 +14,10 @@ interface Input {
   patientId: string | null;
 }
 
-// Sends the booking confirmation. Failures are audit-logged but never thrown
-// — the appointment row is the source of truth, not the SMS/email delivery.
+// Sends the booking confirmation — email via Resend, plus SMS via Semaphore
+// only if it's configured (it never has been in prod, so SMS is skipped in
+// practice). Failures are audit-logged but never thrown — the appointment row
+// is the source of truth, not delivery.
 export async function notifyAppointmentBooked({
   appointmentId,
   patientId,
