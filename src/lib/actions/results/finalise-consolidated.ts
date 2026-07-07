@@ -20,7 +20,14 @@ export interface FinaliseInput {
 }
 
 export type FinaliseResult =
-  | { ok: true; data: { result_id: string } }
+  | {
+      ok: true;
+      data: {
+        result_id: string;
+        releaseDeferred: boolean;
+        deferredReason: "payment" | "consent" | null;
+      };
+    }
   | { ok: false; error: string };
 
 export async function finaliseConsolidatedReport(
@@ -28,6 +35,20 @@ export async function finaliseConsolidatedReport(
 ): Promise<FinaliseResult> {
   const session = await requireActiveStaff();
   const admin = createAdminClient();
+
+  // Ownership check: only the medtech who claimed this report may finalise
+  // it (mirrors prepareStructured's check). Admins get no bypass — same as
+  // the single-test flow; an admin who needs to take over uses reassign.
+  const { data: claimRows } = await admin
+    .from("test_requests")
+    .select("id, assigned_to")
+    .in("id", input.testRequestIds);
+  if (
+    (claimRows ?? []).length !== input.testRequestIds.length ||
+    (claimRows ?? []).some((r) => r.assigned_to !== session.user_id)
+  ) {
+    return { ok: false, error: "You haven't claimed this report." };
+  }
 
   // Idempotency guard: if any of these test_requests are already linked to a
   // result, a fresh consolidated finalise will trip
@@ -182,5 +203,8 @@ export async function finaliseConsolidatedReport(
     });
   }
 
-  return { ok: true, data: { result_id: resultsRow.id } };
+  return {
+    ok: true,
+    data: { result_id: resultsRow.id, releaseDeferred, deferredReason },
+  };
 }

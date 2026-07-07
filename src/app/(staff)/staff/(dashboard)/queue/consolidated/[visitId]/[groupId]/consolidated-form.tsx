@@ -37,6 +37,9 @@ export function ConsolidatedForm(props: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [deferredReason, setDeferredReason] = useState<
+    "payment" | "consent" | null
+  >(null);
 
   const enabledParamNames = new Set<string>(
     props.orderedServiceCodes.flatMap((c) => SERVICE_TO_PARAMS[c] ?? []),
@@ -130,6 +133,12 @@ export function ConsolidatedForm(props: Props) {
         setError(res.error);
         return;
       }
+      if (res.data.releaseDeferred) {
+        // Stay on the page so the medtech sees the report is finalised but
+        // not yet in the patient's hands — and why.
+        setDeferredReason(res.data.deferredReason ?? "payment");
+        return;
+      }
       router.push("/staff/queue");
     });
   }
@@ -167,7 +176,23 @@ export function ConsolidatedForm(props: Props) {
       </header>
 
       <section className="mt-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
-        {!isClaimedByMe ? (
+        {deferredReason ? (
+          <div className="rounded-lg border border-amber-300 bg-amber-50 p-4">
+            <p className="text-sm font-semibold text-amber-900">
+              Report finalised — release deferred:{" "}
+              {deferredReason === "payment"
+                ? "visit not yet paid; results release automatically once payment is recorded"
+                : "patient consent not on file"}
+            </p>
+            <button
+              type="button"
+              onClick={() => router.push("/staff/queue")}
+              className="mt-3 min-h-[44px] rounded-lg bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
+            >
+              Back to queue
+            </button>
+          </div>
+        ) : !isClaimedByMe ? (
           <div>
             <p className="text-sm text-[color:var(--color-brand-text-mid)]">
               {props.claimedBy
