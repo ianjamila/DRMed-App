@@ -1,10 +1,12 @@
 "use server";
 
-import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit/check";
+import { ipAndAgent } from "@/lib/server/action-helpers";
+import { reportError } from "@/lib/observability/report-error";
 import { resolvePatient } from "@/lib/patients/resolve";
+import { findCandidatesForInput } from "@/lib/patients/find-duplicates";
 import { sendEmail } from "@/lib/notifications/email";
 import { CURRENT_CONSENT_NOTICE_VERSION } from "@/lib/consent/notice";
 import { RegistrationSchema } from "@/lib/validations/registration";
@@ -27,15 +29,21 @@ export async function submitRegistrationAction(
 ): Promise<RegistrationResult> {
   if ((formData.get("website") ?? "") !== "") return HONEYPOT_OK;
 
-  const h = await headers();
-  const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
-  const ua = h.get("user-agent");
+  const { ip, ua } = await ipAndAgent();
 
   if (ip) {
     const limit = await checkRateLimit({ bucket: "patient_registration", identifier: ip, ...RATE_LIMITS.patient_registration });
     if (!limit.allowed) {
       return { ok: false, error: `Too many attempts. Try again in ${Math.ceil(limit.retryAfterSec / 60)} minutes, or visit reception.` };
     }
+  } else {
+    // M10: the limit was silently skipped — make the fail-open loud so a
+    // proxy/header misconfiguration can't quietly disable rate-limiting.
+    void reportError({
+      scope: "rate-limit/no-client-ip",
+      error: new Error("x-forwarded-for missing"),
+      metadata: { bucket: "patient_registration" },
+    });
   }
 
   const parsed = RegistrationSchema.safeParse({
@@ -56,6 +64,65 @@ export async function submitRegistrationAction(
   const d = parsed.data;
 
   const admin = createAdminClient();
+
+  // M4: fuzzy dedup before the exact-triple resolve. A strong/exact near-match
+  // (e.g. same person, new email) is treated like the matched branch below:
+  // email the DRM-ID to the CANDIDATE's on-file address — never the supplied
+  // one, and never on screen (enumeration safety) — and create no new row and
+  // no consent row. probable/weak proceed to resolvePatient (itself
+  // advisory-locked since 0112).
+  const candidates = await findCandidatesForInput(admin, {
+    first_name: d.first_name,
+    last_name: d.last_name,
+    birthdate: d.birthdate,
+    email: d.email,
+    phone_normalized: (d.phone ?? "").replace(/\D/g, "").slice(-10) || null,
+    address: d.address,
+    sex: d.sex,
+  }, { minTier: "strong" });
+  const match = candidates[0];
+  if (match) {
+    const onFileEmail = match.patient.email;
+    const sendResult = onFileEmail
+      ? await sendEmail({
+          to: onFileEmail,
+          subject: "Your DRMed DRM-ID",
+          text: `Hi ${match.patient.first_name},\n\nWe found an existing DRMed record matching your details. Your DRM-ID is ${match.patient.drm_id}.\n\nPresent it at the clinic. After your visit, the Secure PIN printed on your receipt unlocks your results online.\n\n— DRMed Clinic and Laboratory`,
+          html: renderEmailShell({
+            heading: "Your DRMed patient ID",
+            contentHtml:
+              emailParagraph(`Hi <b>${escapeHtml(match.patient.first_name)}</b>,`) +
+              emailParagraph("We found an existing DRMed record matching your details. Here is your patient ID:") +
+              emailHighlight("Your DRM-ID", match.patient.drm_id) +
+              emailParagraph("Present it at the clinic. After your visit, the Secure PIN printed on your receipt unlocks your results online."),
+          }),
+        })
+      : null;
+    await audit({
+      actor_id: null,
+      actor_type: "anonymous",
+      patient_id: match.patient.id,
+      action: "patient.self_register.matched",
+      resource_type: "patient",
+      resource_id: match.patient.id,
+      metadata: {
+        drm_id: match.patient.drm_id,
+        via: "register",
+        dedup_tier: match.score.tier,
+        email: !sendResult
+          ? { ok: false, skipped: true, reason: "no on-file email" }
+          : sendResult.ok
+            ? { ok: true, id: sendResult.id, to: onFileEmail }
+            : sendResult.kind === "skipped"
+              ? { ok: false, skipped: true, reason: sendResult.reason }
+              : { ok: false, error: sendResult.error, to: onFileEmail },
+      },
+      ip_address: ip,
+      user_agent: ua,
+    });
+    return { ok: true, matched: true };
+  }
+
   const res = await resolvePatient(admin, {
     first_name: d.first_name,
     last_name: d.last_name,
@@ -72,6 +139,9 @@ export async function submitRegistrationAction(
   // Email it to the on-file address — which equals the supplied email, since the
   // dedup matched on lower(email)+last_name+birthdate. No consent write: a public
   // form must not re-affirm an existing patient's consent state.
+  // NOTE: an exact-triple match also scores ≥ strong in the fuzzy pass above, so
+  // this branch is a defensive fallback for when that query fails open ([]) —
+  // not the primary matched path.
   if (res.reused) {
     const sendResult = await sendEmail({
       to: d.email,

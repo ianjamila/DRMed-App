@@ -14,7 +14,12 @@ export async function GET(request: Request) {
     return Response.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  const { startIso, endIso } = manilaDayWindowUtc(1); // tomorrow, Manila
+  // M1: rolling catch-up — a missed cron run must not permanently drop that
+  // day's reminders. Window = [now, end of tomorrow Manila]: still-future
+  // appointments whose reminder was never stamped get caught up (possibly
+  // same-day), past appointments are never reminded retroactively.
+  const { endIso } = manilaDayWindowUtc(1);
+  const startIso = new Date().toISOString();
   const admin = createAdminClient();
 
   const { data: due, error } = await admin

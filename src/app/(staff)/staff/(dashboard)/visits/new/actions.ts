@@ -354,6 +354,28 @@ export async function createVisitAction(
   const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
   const ua = h.get("user-agent");
 
+  // M5: a visit means the patient is physically at the counter — reception has
+  // verified identity, so the pre-registration flag clears automatically.
+  const { data: verifiedRows } = await admin
+    .from("patients")
+    .update({ pre_registered: false })
+    .eq("id", parsed.data.patient_id)
+    .eq("pre_registered", true)
+    .select("id");
+  if (verifiedRows && verifiedRows.length > 0) {
+    await audit({
+      actor_id: session.user_id,
+      actor_type: "staff",
+      patient_id: parsed.data.patient_id,
+      action: "patient.identity_verified",
+      resource_type: "patient",
+      resource_id: parsed.data.patient_id,
+      metadata: { via: "visit_created" },
+      ip_address: ip,
+      user_agent: ua,
+    });
+  }
+
   for (const c of created) {
     const visitLines = split
       ? c.visitId === created[0]!.visitId

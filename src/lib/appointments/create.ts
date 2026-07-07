@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { createAdminClient } from "@/lib/supabase/admin";
+import { translatePgError } from "@/lib/accounting/pg-errors";
 import { manilaSlotFor, KINDS_PER_BRANCH, type BookingBranch } from "@/lib/validations/booking";
 import { dayWindowFor } from "@/lib/physicians/availability";
 import { decideAppointmentTiming, type BookingConflict, type ServiceRow } from "@/lib/appointments/timing";
@@ -85,6 +86,9 @@ export async function createAppointmentGroup(
   }
 
   // 2. For the doctor branch, resolve availability context (DB).
+  // allowConcurrent is hoisted so the guarded insert below can pass it; it only
+  // engages when a physician+slot guard applies (doctor branch).
+  const allowConcurrent = services[0]?.allow_concurrent ?? true;
   let doctorCtx: DoctorCtx | undefined;
   if (input.branch === "doctor_appointment") {
     if (!input.physicianId) return { ok: false, error: "Pick a physician." };
@@ -100,7 +104,6 @@ export async function createAppointmentGroup(
       .from("physician_schedules")
       .select("day_of_week, start_time, end_time")
       .eq("physician_id", input.physicianId);
-    const allowConcurrent = services[0]?.allow_concurrent ?? true;
     const byAppointment = (blocks ?? []).length === 0;
     if (byAppointment) {
       doctorCtx = { byAppointment: true, dayClosed: false, window: { available: false }, existingBookingCount: 0, allowConcurrent };
@@ -155,15 +158,32 @@ export async function createAppointmentGroup(
     walk_in_phone: patient.walkInPhone ?? null,
     created_by: input.createdBy,
   }));
-  const { data: created, error } = await admin.from("appointments").insert(rows).select("id");
-  if (error || !created || created.length !== rows.length) {
-    return { ok: false, error: error?.message ?? "Could not save the appointment." };
+  // The pre-insert conflict SELECT above is fast-path UX; the RPC's advisory
+  // lock + re-check is the authoritative last line against a slot race. A
+  // P0040 at insert is a hard error in BOTH modes (the row was not inserted),
+  // unlike pre-insert conflicts which staff may override. An explicit staff
+  // override ("Book anyway", audited) skips the occupancy re-check — the
+  // guard exists to stop races, not deliberate staff double-booking.
+  const { data: created, error } = await admin.rpc("appointments_insert_slot_guarded", {
+    p_rows: rows,
+    p_physician_id: physicianId ?? undefined,
+    p_scheduled_at: timing.scheduledAtIso ?? undefined,
+    p_allow_concurrent: allowConcurrent || (input.mode === "relaxed" && input.override),
+  });
+  if (error) {
+    if (error.code === "P0040") {
+      return { ok: false, error: "That slot was just taken. Please pick another time." };
+    }
+    return { ok: false, error: translatePgError(error) };
+  }
+  if (!created || created.length !== rows.length) {
+    return { ok: false, error: "Could not save the appointment." };
   }
 
   return {
     ok: true,
     bookingGroupId,
-    appointmentIds: created.map((r) => r.id),
+    appointmentIds: created,
     scheduledAtIso: timing.scheduledAtIso,
     pendingCallback: timing.pendingCallback,
     conflicts: timing.conflicts,
@@ -204,31 +224,35 @@ export async function createLabRequestOnlyBooking(
   const bookingGroupId = randomUUID();
   const { status, pendingCallback } = labRequestStatus(input.intakePreference);
 
-  const { data: created, error } = await admin
-    .from("appointments")
-    .insert({
-      patient_id: patient.patientId,
-      service_id: null,
-      physician_id: null,
-      scheduled_at: null,
-      notes: input.notes,
-      status,
-      booking_group_id: bookingGroupId,
-      home_service_requested: input.branch === "home_service",
-      walk_in_name: patient.walkInName ?? null,
-      walk_in_phone: patient.walkInPhone ?? null,
-      created_by: input.createdBy,
-    })
-    .select("id");
+  // No physician/slot → the RPC skips the slot guard and is a plain insert,
+  // but keeps one code path (and the dropped-INSERT-policy posture) for all
+  // appointment writes.
+  const { data: created, error } = await admin.rpc("appointments_insert_slot_guarded", {
+    p_rows: [
+      {
+        patient_id: patient.patientId,
+        service_id: null,
+        physician_id: null,
+        scheduled_at: null,
+        notes: input.notes,
+        status,
+        booking_group_id: bookingGroupId,
+        home_service_requested: input.branch === "home_service",
+        walk_in_name: patient.walkInName ?? null,
+        walk_in_phone: patient.walkInPhone ?? null,
+        created_by: input.createdBy,
+      },
+    ],
+  });
 
   if (error || !created || created.length !== 1) {
-    return { ok: false, error: error?.message ?? "Could not save the request." };
+    return { ok: false, error: error ? translatePgError(error) : "Could not save the request." };
   }
 
   return {
     ok: true,
     bookingGroupId,
-    appointmentIds: created.map((r) => r.id),
+    appointmentIds: created,
     pendingCallback,
     patient,
   };

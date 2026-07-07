@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { reportError } from "@/lib/observability/report-error";
 
 export type RateLimitBucket =
   | "patient_pin"
@@ -30,13 +31,21 @@ export type RateLimitResult =
 // until the oldest in-window attempt drops out — that's when the caller
 // should be allowed to try again.
 //
-// On any DB error we fail-open with `allowed: true` and log the error;
-// rate-limiting silently breaking is preferable to locking everyone out
-// during a Supabase blip.
+// On any DB error we fail-open with `allowed: true` — rate-limiting silently
+// breaking is preferable to locking everyone out during a Supabase blip. But
+// the fail-open must be LOUD (M10): every such branch reports to Sentry so a
+// broken limiter can't go unnoticed.
 export async function checkRateLimit(
   cfg: RateLimitConfig,
 ): Promise<RateLimitResult> {
-  if (!cfg.identifier) return { allowed: true };
+  if (!cfg.identifier) {
+    void reportError({
+      scope: "rate-limit",
+      error: new Error("empty rate-limit identifier — check skipped"),
+      metadata: { bucket: cfg.bucket },
+    });
+    return { allowed: true };
+  }
 
   const admin = createAdminClient();
   const since = new Date(Date.now() - cfg.windowSec * 1000).toISOString();
@@ -45,7 +54,7 @@ export async function checkRateLimit(
     .from("rate_limit_attempts")
     .insert({ bucket: cfg.bucket, identifier: cfg.identifier });
   if (insErr) {
-    console.error("rate_limit insert failed", insErr);
+    void reportError({ scope: "rate-limit", error: insErr, metadata: { bucket: cfg.bucket } });
     return { allowed: true };
   }
 
@@ -57,7 +66,7 @@ export async function checkRateLimit(
     .gte("attempted_at", since)
     .order("attempted_at", { ascending: true });
   if (selErr) {
-    console.error("rate_limit count failed", selErr);
+    void reportError({ scope: "rate-limit", error: selErr, metadata: { bucket: cfg.bucket } });
     return { allowed: true };
   }
 

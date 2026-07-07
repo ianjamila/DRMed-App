@@ -1,8 +1,9 @@
 "use server";
 
-import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
+import { ipAndAgent } from "@/lib/server/action-helpers";
+import { reportError } from "@/lib/observability/report-error";
 import { getPatientSession } from "@/lib/auth/patient-session-cookies";
 import {
   BookingSchema,
@@ -125,15 +126,20 @@ export async function lookupPatientAction(
   _prev: LookupPatientResult | null,
   formData: FormData,
 ): Promise<LookupPatientResult> {
-  const headerStore = await headers();
-  const requestIp = headerStore.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
-  const userAgent = headerStore.get("user-agent");
+  const { ip: requestIp, ua: userAgent } = await ipAndAgent();
 
   if (requestIp) {
     const limit = await checkRateLimit({ bucket: "patient_lookup", identifier: requestIp, ...RATE_LIMITS.patient_lookup });
     if (!limit.allowed) {
       return { ok: false, error: `Too many lookups. Try again in ${Math.ceil(limit.retryAfterSec / 60)} minutes, or call reception.` };
     }
+  } else {
+    // M10: the limit was silently skipped — make the fail-open loud.
+    void reportError({
+      scope: "rate-limit/no-client-ip",
+      error: new Error("x-forwarded-for missing"),
+      metadata: { bucket: "patient_lookup" },
+    });
   }
 
   const parsed = PatientLookupSchema.safeParse({ drm_id: formData.get("drm_id"), last_name: formData.get("last_name") });
@@ -195,9 +201,7 @@ export async function submitBookingAction(_prev: BookingResult | null, formData:
     return HONEYPOT_OK;
   }
 
-  const headerStore = await headers();
-  const requestIp = headerStore.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
-  const userAgent = headerStore.get("user-agent");
+  const { ip: requestIp, ua: userAgent } = await ipAndAgent();
 
   const branch = formData.get("branch");
   const sourceInput = formData.get("source");
@@ -227,6 +231,14 @@ export async function submitBookingAction(_prev: BookingResult | null, formData:
     if (!limit.allowed) {
       return { ok: false, error: `Too many booking attempts. Try again in ${Math.ceil(limit.retryAfterSec / 60)} minutes, or call reception.` };
     }
+  } else {
+    // M10: anonymous booking with no client IP — the limit was silently
+    // skipped; make the fail-open loud.
+    void reportError({
+      scope: "rate-limit/no-client-ip",
+      error: new Error("x-forwarded-for missing"),
+      metadata: { bucket: "public_booking" },
+    });
   }
 
   const patientIdInput = isPortalSource ? resolvedPatientIdFromSession : (formData.get("patient_id") as string | null);

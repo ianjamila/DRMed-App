@@ -6066,6 +6066,15 @@ export type Database = {
           kind: string
         }[]
       }
+      appointments_insert_slot_guarded: {
+        Args: {
+          p_allow_concurrent?: boolean
+          p_physician_id?: string
+          p_rows: Json
+          p_scheduled_at?: string
+        }
+        Returns: string[]
+      }
       bridge_replay_summary: {
         Args: { p_end: string; p_start: string }
         Returns: Json
@@ -6123,6 +6132,19 @@ export type Database = {
       resolve_discount_account: {
         Args: { p_service_kind: string }
         Returns: string
+      }
+      resolve_patient_guarded: {
+        Args: {
+          p_birthdate: string
+          p_email: string
+          p_fields: Json
+          p_last_name: string
+        }
+        Returns: {
+          drm_id: string
+          id: string
+          reused: boolean
+        }[]
       }
       resolve_revenue_account: {
         Args: { p_service_kind: string }
