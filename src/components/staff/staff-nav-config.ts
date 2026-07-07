@@ -346,6 +346,12 @@ export const STAFF_NAV: StaffNavSection[] = [
             roles: ["admin"],
           },
           {
+            href: "/staff/admin/reports/stuck-tests",
+            label: "Stuck tests",
+            description: "Tests sitting too long in any non-final state — unclaimed, in progress, or ready but unreleased — so nothing silently stalls like Visit #0037 did.",
+            roles: ["admin"],
+          },
+          {
             href: "/staff/admin/reports/undone-releases",
             label: "Undone releases",
             description: "Every result release that was withdrawn — who undid it, why, whether the patient had already seen it, and whether it has since been re-released or cancelled (RA 10173 oversight).",
