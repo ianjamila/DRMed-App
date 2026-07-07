@@ -3,6 +3,7 @@
 import { headers } from "next/headers";
 import { PDFDocument } from "pdf-lib";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createPatientClient } from "@/lib/supabase/patient";
 import { audit } from "@/lib/audit/log";
 import { getPatientSession } from "@/lib/auth/patient-session-cookies";
 import { renderResultPdf } from "@/lib/results/render-pdf";
@@ -29,11 +30,16 @@ export async function getPatientConsolidatedResultDownloadUrl(
   const session = await getPatientSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
 
+  // Ownership verification reads run through the patient-scoped client so RLS
+  // backs them (results are only visible when linked to a released test the
+  // patient owns). The service-role client stays for the Storage signing +
+  // audit below. The app-level ownership check remains as defense-in-depth.
+  const db = await createPatientClient(session.patient_id);
   const admin = createAdminClient();
 
   // Verify the result exists and is linked to at least one released
   // test_request owned by this patient.
-  const { data: resultRow } = await admin
+  const { data: resultRow } = await db
     .from("results")
     .select(
       `
@@ -133,9 +139,12 @@ export async function getPatientResultDownloadUrl(
   const session = await getPatientSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
 
+  // Patient-scoped read (RLS-backed) for the ownership/release check; admin
+  // stays only for the Storage signing below. App-level checks kept.
+  const db = await createPatientClient(session.patient_id);
   const admin = createAdminClient();
 
-  const { data: testRow } = await admin
+  const { data: testRow } = await db
     .from("test_requests")
     .select(
       `
@@ -238,12 +247,16 @@ export async function getPackagePdfDownloadUrl(
   const session = await getPatientSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
 
+  // Verification reads (header, components, result junctions) run through the
+  // patient-scoped client so RLS enforces ownership; admin stays for the
+  // Storage .download() of each component PDF + audit. App-level checks kept.
+  const db = await createPatientClient(session.patient_id);
   const admin = createAdminClient();
 
   // 1) Load the header + linked visit + linked patient. We need patient
   // demographics for the cover page (sex/birthdate drive the patient
   // grid the same way it does for any other rendered result PDF).
-  const { data: headerRow } = await admin
+  const { data: headerRow } = await db
     .from("test_requests")
     .select(
       `
@@ -288,7 +301,7 @@ export async function getPackagePdfDownloadUrl(
 
   // 2) Load components. Order by created_at because the visit-creation
   // action inserts them in package_components.sort_order.
-  const { data: components } = await admin
+  const { data: components } = await db
     .from("test_requests")
     .select(
       `
@@ -336,7 +349,7 @@ export async function getPackagePdfDownloadUrl(
   }
 
   // 3) Load results.storage_path for each released component via the junction.
-  const { data: junctions } = await admin
+  const { data: junctions } = await db
     .from("result_test_requests")
     .select("test_request_id, results!inner(id, storage_path)")
     .in(
@@ -484,17 +497,18 @@ export type FormUrlResult = { ok: true; url: string } | { ok: false; error: stri
 export type FormDeleteResult = { ok: true } | { ok: false; error: string };
 
 // 5-minute signed URL for one of the patient's own uploaded request forms.
-// Mirrors getPatientResultDownloadUrl: admin client + app-level ownership
-// check + audit. (No RLS policy on appointment_attachments for patients —
-// consistent with the other three patient-download actions.)
+// Mirrors getPatientResultDownloadUrl: patient-scoped read (RLS:
+// appointment_attachments patient-self) for ownership, admin only for the
+// Storage signing + audit. App-level ownership check kept as defense-in-depth.
 export async function getPatientLabRequestFormUrl(
   attachmentId: string,
 ): Promise<FormUrlResult> {
   const session = await getPatientSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
 
+  const db = await createPatientClient(session.patient_id);
   const admin = createAdminClient();
-  const { data: att } = await admin
+  const { data: att } = await db
     .from("appointment_attachments")
     .select("id, storage_path, patient_id")
     .eq("id", attachmentId)
@@ -536,8 +550,12 @@ export async function deletePatientLabRequestUpload(
   const session = await getPatientSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
 
+  // Ownership read is RLS-backed (patient client); admin stays for the Storage
+  // remove + the row DELETE (no anon write policy on appointment_attachments)
+  // + audit. App-level ownership check kept as defense-in-depth.
+  const db = await createPatientClient(session.patient_id);
   const admin = createAdminClient();
-  const { data: att } = await admin
+  const { data: att } = await db
     .from("appointment_attachments")
     .select("id, storage_path, patient_id, filename, booking_group_id")
     .eq("id", attachmentId)

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createPatientClient } from "@/lib/supabase/patient";
 import { requirePatientProfile } from "@/lib/auth/require-patient";
 import { DownloadButton } from "../../download-button";
 import { Panel } from "@/components/ui/panel";
@@ -28,9 +28,13 @@ const PENDING_STATUS_STYLE = "bg-[color:var(--color-brand-bg-mid)] text-[color:v
 export default async function PatientVisitDetailPage({ params }: Props) {
   const { id } = await params;
   const patient = await requirePatientProfile();
-  const admin = createAdminClient();
+  // Patient-scoped client — visits/test_requests/results RLS enforces ownership
+  // and released-only visibility; the .eq("patient_id", …) filter stays as
+  // defense-in-depth. A visit id that isn't the patient's now returns no row
+  // (RLS-backed) → notFound(), not just an app-level filter miss.
+  const db = await createPatientClient(patient.patient_id);
 
-  const { data: visitRaw } = await admin
+  const { data: visitRaw } = await db
     .from("visits")
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     .select("id, patient_id, visit_number, visit_date, payment_status, test_requests(id, status, released_at, legacy_import_run_id, services!inner(name, code), result_test_requests(result_id, results!inner(id, storage_path)))" as any)

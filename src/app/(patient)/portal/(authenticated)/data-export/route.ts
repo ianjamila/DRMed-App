@@ -1,6 +1,7 @@
 import { headers } from "next/headers";
 import JSZip from "jszip";
 import { requirePatientProfile } from "@/lib/auth/require-patient";
+import { createPatientClient } from "@/lib/supabase/patient";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 
@@ -16,20 +17,26 @@ const MAX_BUNDLE_BYTES = 50 * 1024 * 1024; // 50 MB
 
 export async function GET() {
   const patient = await requirePatientProfile();
+  // Patient-scoped client for every data read (RLS-enforced ownership). The
+  // service-role client stays only for what RLS can't serve: the audit_log read
+  // (compliance ledger, deliberately not patient-RLS-readable) and the Storage
+  // .download() of result PDFs (buckets have no patient policy). All the
+  // existing .eq("patient_id"/"visit_id", …) filters stay as defense-in-depth.
+  const db = await createPatientClient(patient.patient_id);
   const admin = createAdminClient();
   const h = await headers();
   const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
   const ua = h.get("user-agent");
 
   // 1. Patient row (full).
-  const { data: patientRow } = await admin
+  const { data: patientRow } = await db
     .from("patients")
     .select("*")
     .eq("id", patient.patient_id)
     .single();
 
   // 2. Visits + test_requests (status timeline) + payments (their own).
-  const { data: visits } = await admin
+  const { data: visits } = await db
     .from("visits")
     .select(
       "id, visit_number, visit_date, payment_status, total_php, paid_php, notes, created_at",
@@ -46,7 +53,7 @@ export async function GET() {
     { data: releasedResults },
   ] = await Promise.all([
     visitIds.length > 0
-      ? admin
+      ? db
           .from("test_requests")
           .select(
             "id, visit_id, status, requested_at, started_at, completed_at, released_at, services!inner ( code, name )",
@@ -54,25 +61,27 @@ export async function GET() {
           .in("visit_id", visitIds)
       : Promise.resolve({ data: [] }),
     visitIds.length > 0
-      ? admin
+      ? db
           .from("payments")
           .select("id, visit_id, amount_php, method, paid_at, reference")
           .in("visit_id", visitIds)
       : Promise.resolve({ data: [] }),
-    admin
+    db
       .from("appointments")
       .select(
         "id, scheduled_at, status, notes, created_at, services ( code, name )",
       )
       .eq("patient_id", patient.patient_id)
       .order("created_at", { ascending: false }),
+    // audit_log stays on the service-role client: the compliance ledger is
+    // deliberately not patient-RLS-readable.
     admin
       .from("audit_log")
       .select("id, action, actor_type, created_at, metadata")
       .eq("patient_id", patient.patient_id)
       .order("created_at", { ascending: false })
       .limit(500),
-    admin
+    db
       .from("result_test_requests")
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .select("test_request_id, results!inner(storage_path), test_requests!inner(id, visit_id, status, services!inner(code, name))" as any)
