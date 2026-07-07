@@ -388,13 +388,28 @@ export function ServiceForm({ initial, vendors = [] }: Props) {
             />
             <span>Active (visible on the marketing site)</span>
           </label>
-          <label className="flex items-center gap-2 text-sm">
+          <label className="flex items-start gap-2 text-sm">
+            {/* Locked: the sign-off queue doesn't exist yet, so flipping this
+                on would strand results at "awaiting sign-off". The hidden
+                input preserves the current value so edits don't clear it. */}
             <input
               type="checkbox"
-              name="requires_signoff"
+              disabled
               defaultChecked={initial?.requires_signoff ?? false}
             />
-            <span>Requires pathologist sign-off</span>
+            <input
+              type="hidden"
+              name="requires_signoff"
+              value={initial?.requires_signoff ? "true" : "false"}
+            />
+            <span>
+              Requires pathologist sign-off
+              <span className="block text-xs text-[color:var(--color-brand-text-soft)]">
+                The pathologist sign-off queue isn&apos;t built yet — flipping
+                this on would strand results at &quot;awaiting sign-off&quot;
+                with no way forward. Locked until the sign-off queue ships.
+              </span>
+            </span>
           </label>
         </div>
 

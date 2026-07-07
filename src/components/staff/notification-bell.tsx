@@ -340,6 +340,17 @@ export function NotificationBell({ role }: Props) {
               })}
             </ul>
           )}
+          {items.some((i) => i.severity === "critical") ? (
+            <div className="mt-1 border-t border-[color:var(--color-brand-bg-mid)] px-2 pb-1 pt-2">
+              <Link
+                href="/staff/critical-alerts"
+                onClick={() => setOpen(false)}
+                className="text-xs font-semibold text-red-700 hover:underline"
+              >
+                View all critical alerts →
+              </Link>
+            </div>
+          ) : null}
         </Panel>
       ) : null}
     </div>

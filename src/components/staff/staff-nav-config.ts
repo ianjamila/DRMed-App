@@ -161,6 +161,12 @@ export const STAFF_NAV: StaffNavSection[] = [
         roles: ["medtech", "pathologist", "admin", "xray_technician"],
       },
       {
+        href: "/staff/critical-alerts",
+        label: "Critical alerts",
+        description: "Results that crossed a critical threshold (dangerously high or low values). Review each one, make the clinical follow-up call, then acknowledge it here so the whole team can see it's been handled.",
+        roles: ["pathologist", "admin"],
+      },
+      {
         href: "/staff/results",
         label: "Results",
         description: "Archive of every result ever created or released — searchable by patient name, DRM-ID, or service. Filter by status (released / ready / in progress / cancelled) and date range. View the released PDF inline for review. Per partner policy, admins + medtechs can see all results.",
