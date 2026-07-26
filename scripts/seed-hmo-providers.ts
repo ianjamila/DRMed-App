@@ -6,6 +6,7 @@
  *
  *   npm run seed:hmo
  */
+import "./lib/load-env";
 import { createClient } from "@supabase/supabase-js";
 import type { Database, TablesInsert } from "../src/types/database";
 import { requireLocalOrExplicitProd } from "./lib/env-guard";
@@ -17,7 +18,9 @@ if (!SUPABASE_URL || !SERVICE_KEY) {
   process.exit(1);
 }
 
-requireLocalOrExplicitProd("seed:hmo");
+requireLocalOrExplicitProd("seed:hmo", {
+  writes: "upserts `hmo_providers` rows by name",
+});
 
 const admin = createClient<Database>(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },

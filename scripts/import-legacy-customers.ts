@@ -6,6 +6,8 @@
 //   npm run import:legacy -- --csv="$HOME/Downloads/CUSTOMER LIST - CUSTOMER LIST2.csv"
 //   npm run import:legacy -- --csv=... --commit --confirm="I-mean-it"
 
+import "./lib/load-env";
+import { requireLocalOrExplicitProd } from "./lib/env-guard";
 import { promises as fs } from "node:fs";
 import { parse } from "csv-parse/sync";
 import { createClient } from "@supabase/supabase-js";
@@ -335,6 +337,10 @@ async function writePreflightCsv(
 }
 
 async function main() {
+  requireLocalOrExplicitProd("import:legacy", {
+    writes: "inserts `patients` rows from the legacy customer CSV (with provenance)",
+  });
+
   const args = parseArgs();
   const text = await fs.readFile(args.csv, "utf-8");
   const records = parse(text, {

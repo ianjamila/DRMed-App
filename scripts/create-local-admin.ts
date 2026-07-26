@@ -8,6 +8,7 @@
  *   ADMIN_EMAIL=admin@drmed.ph ADMIN_PASSWORD=... \
  *   npx tsx scripts/create-local-admin.ts
  */
+import "./lib/load-env";
 import { createClient } from "@supabase/supabase-js";
 import { requireLocalOrExplicitProd } from "./lib/env-guard";
 
@@ -21,7 +22,9 @@ if (!URL || !KEY || !EMAIL || !PASSWORD) {
   console.error("Set NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, ADMIN_EMAIL, ADMIN_PASSWORD.");
   process.exit(2);
 }
-requireLocalOrExplicitProd("create-local-admin");
+requireLocalOrExplicitProd("create-local-admin", {
+  writes: "creates an auth user and an admin `staff_profiles` row",
+});
 
 const admin = createClient(URL, KEY, {
   auth: { persistSession: false, autoRefreshToken: false },

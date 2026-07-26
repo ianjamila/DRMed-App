@@ -24,7 +24,8 @@
  * We inline an identical admin client here — same env vars, same options.
  */
 
-import "dotenv/config";
+import "./lib/load-env";
+import { requireLocalOrExplicitProd } from "./lib/env-guard";
 import { createClient } from "@supabase/supabase-js";
 import pg from "pg";
 import type { Database } from "../src/types/database";
@@ -94,6 +95,15 @@ const hasCommit = args.includes("--commit");
 const confirmArg = args.find((a) => a.startsWith("--confirm="));
 const confirmValue = confirmArg ? confirmArg.slice("--confirm=".length).replace(/^"|"$/g, "") : null;
 const REQUIRED_CONFIRM = "I-mean-it";
+
+// Before ANY connection is opened. The `--commit --confirm` pair proves the
+// operator meant to wipe; it says nothing about WHICH database they are
+// pointed at, and this script TRUNCATEs over SUPABASE_DB_URL rather than the
+// REST endpoint — so the guard has to check that URL too (it does).
+requireLocalOrExplicitProd("wipe:operational", {
+  writes:
+    "TRUNCATEs every operational table — patients, visits, payments, results, journal entries, audit_log",
+});
 
 // ---------------------------------------------------------------------------
 // Supabase service-role client (read counts; same pattern as src/lib/supabase/admin.ts)

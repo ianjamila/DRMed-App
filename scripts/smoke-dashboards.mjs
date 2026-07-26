@@ -8,25 +8,29 @@
 //   4. Fetch each protected route with the cookie, assert status + content markers
 //   5. Tear the test user down (delete staff_profile + auth.users)
 //
-// Reads env from .env.local. Runs against whichever dev server is up at APP_BASE.
+// Reads env via scripts/lib/load-env (local stack by default; SEED_ALLOW_PROD=1
+// or --prod to target the linked remote). Runs against the dev server at APP_BASE.
 
+// Must run under `tsx` (see the `smoke:dashboards` npm script) — the env
+// loader and guard below are TypeScript modules shared with the other runners.
+import "./lib/load-env";
+import { requireLocalOrExplicitProd } from "./lib/env-guard";
 import { createClient } from "@supabase/supabase-js";
-import { readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 
-const env = Object.fromEntries(
-  readFileSync(new URL("../.env.local", import.meta.url), "utf8")
-    .split("\n")
-    .filter((l) => l && !l.startsWith("#"))
-    .map((l) => {
-      const i = l.indexOf("=");
-      return [l.slice(0, i), l.slice(i + 1)];
-    }),
-);
+requireLocalOrExplicitProd("smoke:dashboards", {
+  writes: "creates and then deletes temporary auth users + staff_profiles rows",
+});
 
-const SUPABASE_URL = env.NEXT_PUBLIC_SUPABASE_URL.replace(/^"|"$/g, "");
-const ANON_KEY = env.NEXT_PUBLIC_SUPABASE_ANON_KEY.replace(/^"|"$/g, "");
-const SERVICE_KEY = env.SUPABASE_SERVICE_ROLE_KEY.replace(/^"|"$/g, "");
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+if (!SUPABASE_URL || !ANON_KEY || !SERVICE_KEY) {
+  console.error(
+    "Missing NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY",
+  );
+  process.exit(1);
+}
 const APP_BASE = process.env.APP_BASE ?? "http://localhost:3001";
 
 const projectRef = new URL(SUPABASE_URL).host.split(".")[0];

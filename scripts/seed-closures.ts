@@ -11,6 +11,7 @@
  * movable ones that have already been proclaimed for 2026; the admin
  * Closures page (/staff/admin/closures) is the canonical way to add the rest.
  */
+import "./lib/load-env";
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "../src/types/database";
 import { requireLocalOrExplicitProd } from "./lib/env-guard";
@@ -25,7 +26,9 @@ if (!SUPABASE_URL || !SERVICE_KEY) {
   process.exit(1);
 }
 
-requireLocalOrExplicitProd("seed:closures");
+requireLocalOrExplicitProd("seed:closures", {
+  writes: "upserts `clinic_closures` rows (public holidays)",
+});
 
 const admin = createClient<Database>(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },

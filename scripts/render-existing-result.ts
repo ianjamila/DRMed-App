@@ -5,11 +5,18 @@
 // Usage:
 //   set -a && . .env.local && set +a && tsx scripts/render-existing-result.ts <results.id> <out-path>
 
+import "./lib/load-env";
+import { requireLocalOrExplicitProd } from "./lib/env-guard";
 import { renderResultPdf } from "../src/lib/results/render-pdf";
 import { loadResultDocumentInput } from "../src/lib/results/loaders";
 import { writeFileSync } from "node:fs";
 
 async function main() {
+  requireLocalOrExplicitProd("render-existing-result", {
+    readOnly: true,
+    writes: "an existing `results` row and its patient/visit context",
+  });
+
   const [, , resultId, outPath] = process.argv;
   if (!resultId || !outPath) {
     console.error("usage: tsx scripts/render-existing-result.ts <results.id> <out-path>");

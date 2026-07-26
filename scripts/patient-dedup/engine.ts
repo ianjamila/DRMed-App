@@ -1,4 +1,5 @@
 // scripts/patient-dedup/engine.ts
+import "../lib/load-env";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../../src/types/database";
 import { requireLocalOrExplicitProd } from "../lib/env-guard";
@@ -95,7 +96,11 @@ export async function run(): Promise<void> {
   if (args.commit && !args.confirmed) {
     console.error('\n--commit requires --confirm="I-mean-it".'); process.exit(3);
   }
-  if (args.commit) requireLocalOrExplicitProd("dedup:patients");
+  if (args.commit)
+    requireLocalOrExplicitProd("dedup:patients", {
+      writes:
+        "MERGES patient records — sets `patients.merged_into_id` and repoints their visits",
+    });
 
   const admin = adminClient();
   const rows = await loadRows(admin);

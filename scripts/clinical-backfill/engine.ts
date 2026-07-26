@@ -1,3 +1,4 @@
+import "../lib/load-env";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../../src/types/database";
 import { requireLocalOrExplicitProd } from "../lib/env-guard";
@@ -218,7 +219,13 @@ async function commit(
   svcIndex: ReturnType<typeof buildServiceIndex>,
   resolvedLegacyLabId: string,
 ): Promise<void> {
-  requireLocalOrExplicitProd(`backfill:clinical:${cfg.isConsult ? "consult" : "lab"}`);
+  requireLocalOrExplicitProd(
+    `backfill:clinical:${cfg.isConsult ? "consult" : "lab"}`,
+    {
+      writes:
+        "inserts historic patients, visits, bills and test requests from the mastersheet",
+    },
+  );
   const systemUserId = await ensureSystemUser(admin);
 
   // ensure generic legacy-lab service exists (lab tab only)

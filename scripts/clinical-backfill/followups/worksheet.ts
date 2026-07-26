@@ -20,6 +20,8 @@
 //      file `resolve.ts` reads to import the held rows.
 //
 // Run: tsx --env-file=.env.local scripts/clinical-backfill/followups/worksheet.ts
+import "../../lib/load-env";
+import { requireLocalOrExplicitProd } from "../../lib/env-guard";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
@@ -93,6 +95,11 @@ interface Cluster {
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
 async function main(): Promise<void> {
+  requireLocalOrExplicitProd("clinical-backfill:worksheet", {
+    readOnly: true,
+    writes: "live patient identities (DRM-ID, DOB, phone) for the decision CSVs",
+  });
+
   const admin = adminClient();
 
   // 1. held rows from the latest ambiguous dry-run CSVs ---------------------

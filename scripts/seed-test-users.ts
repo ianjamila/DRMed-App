@@ -6,6 +6,7 @@
  * Idempotent: re-running upserts based on email / drm_id / visit_number.
  * Prints test credentials at the end.
  */
+import "./lib/load-env";
 import { createClient } from "@supabase/supabase-js";
 import { generatePin, hashPin } from "../src/lib/auth/pin";
 import type { Database } from "../src/types/database";
@@ -21,7 +22,9 @@ if (!SUPABASE_URL || !SERVICE_KEY) {
   process.exit(1);
 }
 
-requireLocalOrExplicitProd("seed:test");
+requireLocalOrExplicitProd("seed:test", {
+  writes: "creates staff auth users plus sample patients, visits and receipt PINs",
+});
 
 const admin = createClient<Database>(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },

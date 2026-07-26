@@ -80,6 +80,37 @@ See `.env.example` for the full list. You'll need separate values for local dev,
 
 **Never commit `.env.local` or any file containing real keys.**
 
+### Which database the `scripts/` runners talk to
+
+The seed / import / backfill / smoke scripts under `scripts/` all build a
+**service-role** client, which bypasses RLS. They do **not** read `.env.local`
+by default, because in this repo `.env.local` normally points at the linked
+**production** project — running `npm run seed:services` against it would
+rewrite the live clinic's price list.
+
+Instead every runner goes through `scripts/lib/load-env.ts`:
+
+| Invocation | Env file(s) read | Target |
+|---|---|---|
+| `npm run seed:services` | `.env.development.local`, then `.env.local` for anything the first does not define | local Supabase stack |
+| `SEED_ALLOW_PROD=1 npm run seed:services` | `.env.local` only | whatever `.env.local` points at |
+| `npm run seed:services -- --prod` | same as above | same as above |
+| `DRMED_ENV_FILE=/path/to/env npm run …` | exactly that file, no layering | whatever it points at |
+
+Real environment variables always win over the files, so
+`NEXT_PUBLIC_SUPABASE_URL=… npm run …` and CI-provided values still work.
+
+On top of that, `requireLocalOrExplicitProd()` **refuses to run** whenever a
+resolved target — `NEXT_PUBLIC_SUPABASE_URL` *or* `SUPABASE_DB_URL` — is not a
+local host, unless one of the opt-ins above is present. When it is, the script
+prints a banner naming the host, the Supabase project ref and what it is about
+to write, then pauses for five seconds on a TTY (`SEED_SKIP_COUNTDOWN=1` or
+`--yes` skips the pause).
+
+Working in a git worktree? None of the worktrees carry their own
+`.env.development.local`; the loader falls back to the main checkout's copy
+automatically.
+
 The service-role key (`SUPABASE_SERVICE_ROLE_KEY`) bypasses Row Level Security and must NEVER be exposed to the browser. It is only imported by `src/lib/supabase/admin.ts` and only used in Server Actions, Route Handlers, and Edge Functions.
 
 ### Consultant staff IDs (Phase 12.5 — required in production)

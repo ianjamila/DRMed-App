@@ -12,6 +12,7 @@
  * Sources: standard lab references (NIH MedlinePlus, RITM, Lab Tests Online)
  * paraphrased to a one-paragraph summary for patient-facing context.
  */
+import "./lib/load-env";
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "../src/types/database";
 import { requireLocalOrExplicitProd } from "./lib/env-guard";
@@ -26,7 +27,9 @@ if (!SUPABASE_URL || !SERVICE_KEY) {
   process.exit(1);
 }
 
-requireLocalOrExplicitProd("populate-test-descriptions");
+requireLocalOrExplicitProd("populate-test-descriptions", {
+  writes: "fills `services.description` where it is currently NULL",
+});
 
 const admin = createClient<Database>(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },

@@ -11,6 +11,7 @@
 //
 // Run (dry-run): tsx --env-file=.env.local scripts/clinical-backfill/followups/repoint-services.ts
 // Run (commit):  ... --commit --confirm="I-mean-it" --prod
+import "../../lib/load-env";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../../../src/types/database";
 import { requireLocalOrExplicitProd } from "../../lib/env-guard";
@@ -77,7 +78,9 @@ async function main(): Promise<void> {
     return;
   }
   if (!args.confirmed) { console.error('\n--commit requires --confirm="I-mean-it".'); process.exit(3); }
-  requireLocalOrExplicitProd("clinical-backfill:repoint-services");
+  requireLocalOrExplicitProd("clinical-backfill:repoint-services", {
+    writes: "rewrites `bill_lines.service_id` off the LEGACY-LAB shell service",
+  });
 
   let moved = 0;
   const byAlias: Record<string, number> = {};

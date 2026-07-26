@@ -34,6 +34,7 @@
  * The 1000-row PostgREST cap is a real concern: LAB SERVICE has ~6,500
  * rows/year in 2024+2025. The idempotency fetch chunks by month, then merges.
  */
+import "../lib/load-env";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import ExcelJS from "exceljs";
@@ -346,7 +347,9 @@ async function fetchExistingKeys(admin: SupabaseClient<Database>, year: number):
 // ---------------------------------------------------------------------------
 
 async function commit(year: number, classified: ClassifiedRow[]): Promise<void> {
-  requireLocalOrExplicitProd("import:history:lab-services");
+  requireLocalOrExplicitProd("import:history:lab-services", {
+    writes: "inserts historic lab visits, bills, HMO claims and journal entries",
+  });
   const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!SUPABASE_URL || !SERVICE_KEY) {
