@@ -143,8 +143,14 @@ export default async function EditGroupTemplatePage({ params }: Props) {
         </h1>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
           One consolidated template shared by every service in the{" "}
-          <strong>{group.name}</strong> group. The medtech queue routes all of
-          them to a single {group.name} report form.
+          <strong>{group.name}</strong>
+          {!group.is_active ? (
+            <span className="ml-1.5 rounded bg-red-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-red-700">
+              Inactive
+            </span>
+          ) : null}{" "}
+          group. The medtech queue routes all of them to a single{" "}
+          {group.name} report form.
         </p>
       </div>
 

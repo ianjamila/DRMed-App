@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
+import { translatePgError } from "@/lib/accounting/pg-errors";
 
 export type DeleteSupersededResult =
   | { ok: true }
@@ -64,7 +65,7 @@ export async function deleteSupersededTemplateAction(input: {
     p_template_id: tpl.id,
   });
   if (delErr) {
-    return { ok: false, error: `Could not delete: ${delErr.message}` };
+    return { ok: false, error: translatePgError(delErr) };
   }
 
   const h = await headers();
