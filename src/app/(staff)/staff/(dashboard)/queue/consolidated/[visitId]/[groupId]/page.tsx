@@ -54,7 +54,7 @@ export default async function ConsolidatedQueuePage({
   if (!requests || requests.length === 0) redirect("/staff/queue");
 
   // Which params this visit's ordered services enable — from
-  // report_group_service_params (0118), not the old hardcoded map. Package
+  // report_group_service_params (0120), not the old hardcoded map. Package
   // headers legitimately have no rows; their components carry the encoding.
   const orderedServiceIds = requests.map((r) => {
     const svc = Array.isArray(r.services) ? r.services[0] : r.services;

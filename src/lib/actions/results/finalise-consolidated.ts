@@ -53,7 +53,7 @@ export async function finaliseConsolidatedReport(
 
   // Server-side re-validation of enablement. The client only submits values
   // for fields it currently sees as enabled, but "enabled" is now a DB
-  // mapping (report_group_service_params, migration 0118) instead of a
+  // mapping (report_group_service_params, migration 0120) instead of a
   // compile-time constant — an admin can edit the group mapping while a
   // medtech has the form open. Recompute the enabled set from the DB right
   // before persisting; if any submitted value falls outside it, refuse the

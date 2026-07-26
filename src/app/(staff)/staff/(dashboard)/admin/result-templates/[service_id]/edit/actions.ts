@@ -173,7 +173,7 @@ export async function saveTemplateAndParamsAction(
         error: `Cannot delete params with critical-value alert history (${alertCount} alert(s) reference them). Mark the template inactive instead.`,
       };
     }
-    // 0119 guard: raw deletes are blocked; the RPC sets the opt-in flag and
+    // 0121 guard: raw deletes are blocked; the RPC sets the opt-in flag and
     // deletes in one transaction. Mapping rows cascade away with the param.
     const { error: delErr } = await admin.rpc("admin_delete_template_params", {
       param_ids: toDelete,

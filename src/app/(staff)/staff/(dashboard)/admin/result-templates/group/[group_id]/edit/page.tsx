@@ -111,7 +111,7 @@ export default async function EditGroupTemplatePage({ params }: Props) {
       };
     });
 
-  // Change history: the app's own saves + the 0119 delete-audit rows, merged
+  // Change history: the app's own saves + the 0121 delete-audit rows, merged
   // with superseded per-service template deletions scoped to this group.
   // The latter's resource_id is the *deleted per-service template's* id, not
   // this group template's, so they need a separate query keyed off metadata.
@@ -272,7 +272,7 @@ export default async function EditGroupTemplatePage({ params }: Props) {
           </h3>
           <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
             Saves from this screen plus database-level parameter deletions
-            (logged by trigger since migration 0119). The 2-month CHEMISTRY
+            (logged by trigger since migration 0121). The 2-month CHEMISTRY
             outage was invisible precisely because nothing recorded the loss.
           </p>
           {history.length === 0 ? (
