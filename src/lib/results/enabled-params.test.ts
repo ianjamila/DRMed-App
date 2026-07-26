@@ -23,8 +23,8 @@ describe("deriveEnabledParamIds", () => {
 
   it("package headers (no mapping rows) contribute nothing", () => {
     // LIPID_PROFILE_PACKAGE has no rows by design — components carry encoding.
-    const out = deriveEnabledParamIds(links, ["svc-lipid-package", "svc-chol-component"]);
-    expect(out).toEqual(new Set());
+    const out = deriveEnabledParamIds(links, ["svc-lipid-package", "svc-lipid"]);
+    expect(out).toEqual(new Set(["param-chol", "param-hdl"]));
   });
 
   it("unions across multiple ordered services", () => {
@@ -35,5 +35,11 @@ describe("deriveEnabledParamIds", () => {
   it("empty inputs produce an empty set", () => {
     expect(deriveEnabledParamIds([], ["svc-fbs"])).toEqual(new Set());
     expect(deriveEnabledParamIds(links, [])).toEqual(new Set());
+  });
+
+  it("duplicate links and duplicate ordered service ids absorb into the set", () => {
+    const dupLinks = [...links, { service_id: "svc-fbs", parameter_id: "param-fbs" }];
+    const out = deriveEnabledParamIds(dupLinks, ["svc-fbs", "svc-fbs"]);
+    expect(out).toEqual(new Set(["param-fbs"]));
   });
 });

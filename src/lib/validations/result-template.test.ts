@@ -80,8 +80,19 @@ describe("TemplateEditorPayloadSchema", () => {
     expect(res.success).toBe(false);
   });
 
-  it("rejects a payload still using the old service_id key", () => {
+  it("rejects a payload with no target", () => {
     const legacy = { ...payload, target: undefined, service_id: UUID_A };
     expect(TemplateEditorPayloadSchema.safeParse(legacy).success).toBe(false);
+  });
+
+  it("strips a stray legacy service_id key when target is present", () => {
+    const res = TemplateEditorPayloadSchema.safeParse({
+      ...payload,
+      service_id: UUID_B,
+    });
+    expect(res.success).toBe(true);
+    if (res.success) {
+      expect("service_id" in res.data).toBe(false);
+    }
   });
 });
