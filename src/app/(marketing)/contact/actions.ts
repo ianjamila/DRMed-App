@@ -4,8 +4,13 @@ import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ContactSchema } from "@/lib/validations/contact";
 import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit/check";
+import { sendMetaCapiEvent } from "@/lib/analytics/meta-capi";
+import { SITE } from "@/lib/marketing/site";
 
 export type ContactResult = { ok: true } | { ok: false; error: string };
+
+// Kept in sync with contact-form.tsx's CORPORATE_SUBJECT.
+const CORPORATE_SUBJECT = "Corporate / HMO";
 
 export async function submitContactMessage(
   _prev: ContactResult | null,
@@ -66,6 +71,23 @@ export async function submitContactMessage(
       ok: false,
       error: "Sorry — we couldn't send your message. Please try again or call us.",
     };
+  }
+
+  // Server-side mirror of the browser Pixel event fired from contact-form.tsx,
+  // de-duped via the shared event_id. Corporate/HMO inquiries fire as a
+  // distinct "Lead" event (higher-intent B2B) vs the general "Contact" event.
+  const eventId = formData.get("event_id");
+  if (typeof eventId === "string" && eventId) {
+    const isCorporate = parsed.data.subject === CORPORATE_SUBJECT;
+    await sendMetaCapiEvent({
+      eventName: isCorporate ? "Lead" : "Contact",
+      eventId,
+      eventSourceUrl: `${SITE.url.replace(/\/$/, "")}/contact`,
+      customData: {
+        content_name: isCorporate ? "corporate_quote_request" : "contact_form",
+      },
+      userData: { clientIpAddress: ipAddress, clientUserAgent: userAgent },
+    });
   }
 
   return { ok: true };

@@ -16,6 +16,7 @@ import Link from "next/link";
 import { SectionHeading, PillLink } from "@/components/marketing/ui";
 import { Reveal } from "@/components/marketing/motion";
 import { SERVICE_HIGHLIGHTS, SOCIAL } from "@/lib/marketing/site";
+import { TrackedMessengerLink } from "@/components/marketing/tracked-messenger-link";
 
 // Map service names → Lucide icons. Exhaustive over SERVICE_HIGHLIGHTS.
 const ICON_MAP: Record<string, LucideIcon> = {
@@ -76,15 +77,16 @@ export function Services() {
             return (
               <Reveal key={svc.name} className="h-full">
                 {isInquire ? (
-                  <a
+                  <TrackedMessengerLink
                     href={href}
+                    contentName={`services_inquire_${svc.name}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     aria-label={`Inquire about ${svc.name} on Facebook Messenger`}
                     className="block h-full rounded-[20px] outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-brand-cyan)] focus-visible:ring-offset-2"
                   >
                     {card}
-                  </a>
+                  </TrackedMessengerLink>
                 ) : (
                   <Link
                     href={href}

@@ -4,9 +4,15 @@ import {
   PATIENT_SESSION_COOKIE_NAME,
   verifyPatientSession,
 } from "@/lib/auth/patient-session";
+import {
+  ATTRIBUTION_COOKIE_NAME,
+  ATTRIBUTION_MAX_AGE_SECONDS,
+  attributionFromSearchParams,
+} from "@/lib/analytics/attribution";
+import { CONSENT_COOKIE_NAME, hasAdvertisingConsent } from "@/lib/analytics/consent";
 
 export async function proxy(request: NextRequest) {
-  const { pathname } = request.nextUrl;
+  const { pathname, searchParams } = request.nextUrl;
 
   // ---- Patient portal: verify HttpOnly JWT cookie ----------------------------
   if (pathname.startsWith("/portal") && !pathname.startsWith("/portal/login")) {
@@ -18,6 +24,25 @@ export async function proxy(request: NextRequest) {
     }
     return NextResponse.next({ request });
   }
+
+  // ---- Ad-click attribution: capture UTM params from the landing URL (last
+  // touch, 30 days). Computed here (pure, no side effects) and applied to the
+  // final `response` object at the end of this function — the Supabase
+  // cookie-refresh logic below reassigns `response`, so setting the cookie any
+  // earlier would get silently dropped.
+  //
+  // Gated three ways: never on /staff or /portal (RA 10173 — no marketing
+  // tracking in those contexts; /portal must be re-checked here because the
+  // authenticated-portal branch above deliberately excludes /portal/login,
+  // which would otherwise fall through and get tagged), and never without the
+  // visitor's explicit opt-in consent.
+  const consented = hasAdvertisingConsent(
+    request.cookies.get(CONSENT_COOKIE_NAME)?.value,
+  );
+  const attribution =
+    consented && !pathname.startsWith("/staff") && !pathname.startsWith("/portal")
+      ? attributionFromSearchParams(searchParams, pathname)
+      : null;
 
   // ---- Staff portal: refresh Supabase session and guard ----------------------
   let response = NextResponse.next({ request });
@@ -56,6 +81,16 @@ export async function proxy(request: NextRequest) {
     const url = request.nextUrl.clone();
     url.pathname = "/staff/login";
     return NextResponse.redirect(url);
+  }
+
+  if (attribution) {
+    response.cookies.set(ATTRIBUTION_COOKIE_NAME, JSON.stringify(attribution), {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: ATTRIBUTION_MAX_AGE_SECONDS,
+    });
   }
 
   return response;

@@ -2,6 +2,8 @@
 
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { track } from "@vercel/analytics";
+import { metaTrack } from "@/lib/analytics/meta-pixel";
+import { newEventId } from "@/lib/analytics/event-id";
 import Link from "next/link";
 import { AnimatePresence, motion, MotionConfig } from "motion/react";
 import {
@@ -230,9 +232,14 @@ export function BookingForm({
     FormData
   >(submitBookingAction, null);
 
-  // ── Conversion event ref — declared here (hook rules require top-level) ─
+  // ── Conversion event refs — declared here (hook rules require top-level) ─
   // The effect itself fires after derived variables are in scope (below).
   const trackedRef = useRef(false);
+  // Random per-submission id used ONLY to de-dupe the browser Pixel event
+  // against the server-side CAPI event. Deliberately NOT booking_group_id or
+  // any other internal record identifier — RA 10173: nothing that identifies a
+  // patient or a clinic record goes to a third-party ad platform.
+  const eventIdRef = useRef<string | null>(null);
 
   // ── Derived (identical logic to the original single-page form) ──────────
   const filteredServices = useMemo(() => {
@@ -328,6 +335,12 @@ export function BookingForm({
           : 0
         : selectedServiceIds.size;
     track("booking_submitted", { branch, services: serviceCount });
+    // eventIdRef holds the random id sent with the submission, which the
+    // server-side CAPI "Schedule" event (submitBookingAction) echoes back to
+    // Meta so the two are de-duped instead of double-counted.
+    if (eventIdRef.current) {
+      metaTrack("Schedule", { content_name: branch, num_items: serviceCount }, eventIdRef.current);
+    }
     // branch/doctorServiceId/selectedServiceIds are frozen once the form is submitted
     // (inputs are locked during pending → success), so the stale closure is intentional.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -416,6 +429,13 @@ export function BookingForm({
   const submitWithFiles = (formData: FormData) => {
     for (const f of labRequestFiles) formData.append("lab_request_files", f, f.name);
     if (intakePreference) formData.append("intake_preference", intakePreference);
+    // Portal bookings emit no marketing analytics at all (RA 10173), so they
+    // don't carry a dedup id either.
+    if (!isPortalContext) {
+      const id = newEventId();
+      eventIdRef.current = id;
+      formData.set("event_id", id);
+    }
     return formAction(formData);
   };
 

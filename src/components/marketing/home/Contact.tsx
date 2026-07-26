@@ -8,6 +8,7 @@ import { ContactForm } from "@/app/(marketing)/contact/contact-form";
 import { OpenNowPill } from "./OpenNowPill";
 import { CONTACT, SOCIAL } from "@/lib/marketing/site";
 import { addressLines, hoursLabel, directionsHrefs } from "@/lib/marketing/nap";
+import { TrackedTelLink } from "@/components/marketing/tracked-tel-link";
 
 const mapsHref = directionsHrefs().google;
 const [addrTop, addrBottom] = addressLines();
@@ -120,19 +121,21 @@ export function Contact() {
                     Phone
                   </p>
                   <p className="mt-1 text-[14.5px] leading-relaxed text-white/[.82]">
-                    <a
+                    <TrackedTelLink
                       href={`tel:${CONTACT.phone.mobileE164}`}
+                      label="homepage_contact"
                       className="hover:text-white"
                     >
                       {CONTACT.phone.mobile}
-                    </a>
+                    </TrackedTelLink>
                     {" · "}
-                    <a
+                    <TrackedTelLink
                       href={`tel:${CONTACT.phone.landlineE164}`}
+                      label="homepage_contact"
                       className="hover:text-white"
                     >
                       {CONTACT.phone.landline}
-                    </a>
+                    </TrackedTelLink>
                   </p>
                 </div>
               </div>

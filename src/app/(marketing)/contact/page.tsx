@@ -11,6 +11,7 @@ import { JsonLd } from "@/components/marketing/json-ld";
 import { medicalClinicLd, breadcrumbLd, faqPageLd } from "@/lib/marketing/structured-data";
 import { pageMetadata } from "@/lib/marketing/metadata";
 import type { FaqItem } from "@/lib/marketing/faq";
+import { TrackedTelLink } from "@/components/marketing/tracked-tel-link";
 
 export const metadata = pageMetadata({
   title: "Contact & Location",
@@ -131,13 +132,13 @@ export default function ContactPage() {
 
                 <DetailRow icon={<Phone className="h-5 w-5" />} label="Phone">
                   <p className="mt-1 text-[14.5px] leading-relaxed">
-                    <a href={telHref("mobile")} className="text-[color:var(--color-ink-mid)] hover:text-[color:var(--color-brand-navy)]">
+                    <TrackedTelLink href={telHref("mobile")} label="contact_page" className="text-[color:var(--color-ink-mid)] hover:text-[color:var(--color-brand-navy)]">
                       {CONTACT.phone.mobile}
-                    </a>
+                    </TrackedTelLink>
                     {" · "}
-                    <a href={telHref("landline")} className="text-[color:var(--color-ink-mid)] hover:text-[color:var(--color-brand-navy)]">
+                    <TrackedTelLink href={telHref("landline")} label="contact_page" className="text-[color:var(--color-ink-mid)] hover:text-[color:var(--color-brand-navy)]">
                       {CONTACT.phone.landline}
-                    </a>
+                    </TrackedTelLink>
                   </p>
                 </DetailRow>
 

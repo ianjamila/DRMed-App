@@ -18,6 +18,9 @@ import { resolvePatient } from "@/lib/patients/resolve";
 import { createAppointmentGroup, createLabRequestOnlyBooking, type PatientResolution } from "@/lib/appointments/create";
 import type { ServiceRow } from "@/lib/appointments/timing";
 import { validateLabRequestGate, parseIntakePreference } from "@/lib/appointments/lab-request";
+import { sendMetaCapiEvent } from "@/lib/analytics/meta-capi";
+import { readAttributionCookie } from "@/lib/analytics/attribution-server";
+import { SITE } from "@/lib/marketing/site";
 
 export type BookingResult =
   | {
@@ -202,6 +205,9 @@ export async function submitBookingAction(_prev: BookingResult | null, formData:
   }
 
   const { ip: requestIp, ua: userAgent } = await ipAndAgent();
+  // Never read/attach ad attribution for portal bookings (RA 10173 — no
+  // marketing tracking in patient-authenticated contexts).
+  const attribution = formData.get("source") === "portal" ? null : await readAttributionCookie();
 
   const branch = formData.get("branch");
   const sourceInput = formData.get("source");
@@ -397,10 +403,31 @@ export async function submitBookingAction(_prev: BookingResult | null, formData:
       lab_request_attached: labRequestFiles.length > 0,
       lab_request_count: labRequestFiles.length,
       intake_preference: intakePreference,
+      attribution,
     },
     ip_address: requestIp,
     user_agent: userAgent,
   });
+
+  // Server-side "Schedule" conversion event, mirroring the browser Pixel event
+  // fired from booking-form.tsx. De-duped via the random event_id the form
+  // generated per submission — never booking_group_id, so no internal clinic
+  // record identifier reaches Meta (RA 10173). Skipped for portal bookings —
+  // same posture as the client-side tracking effect.
+  const bookingEventId = formData.get("event_id");
+  if (!isPortalSource && typeof bookingEventId === "string" && bookingEventId) {
+    await sendMetaCapiEvent({
+      eventName: "Schedule",
+      eventId: bookingEventId,
+      eventSourceUrl: `${SITE.url.replace(/\/$/, "")}/schedule`,
+      customData: {
+        content_name: data.branch,
+        content_category: "booking",
+        ...(attribution?.utm_campaign ? { campaign: attribution.utm_campaign } : {}),
+      },
+      userData: { clientIpAddress: requestIp, clientUserAgent: userAgent },
+    });
+  }
 
   if (data.marketing_consent && result.patient.email) {
     await maybeSubscribe(admin, result.patient.email, requestIp);

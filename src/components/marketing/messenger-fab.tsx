@@ -5,6 +5,7 @@ import { useReducedMotion } from "motion/react";
 import { MessageCircle } from "lucide-react";
 
 import { SOCIAL } from "@/lib/marketing/site";
+import { metaTrack } from "@/lib/analytics/meta-pixel";
 
 /**
  * Floating action button — fixed bottom-right — that links to the clinic's
@@ -39,6 +40,7 @@ export function MessengerFab() {
       target="_blank"
       rel="noopener noreferrer"
       aria-label="Message us on Facebook"
+      onClick={() => metaTrack("Contact", { content_name: "messenger_fab" })}
       className={[
         // Position
         "fixed right-[18px] bottom-[18px] z-[85]",

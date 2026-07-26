@@ -11,6 +11,7 @@ import { sendEmail } from "@/lib/notifications/email";
 import { CURRENT_CONSENT_NOTICE_VERSION } from "@/lib/consent/notice";
 import { RegistrationSchema } from "@/lib/validations/registration";
 import { SITE } from "@/lib/marketing/site";
+import { sendMetaCapiEvent } from "@/lib/analytics/meta-capi";
 import {
   renderEmailShell, emailParagraph, emailHighlight, emailButton, escapeHtml,
 } from "@/lib/notifications/branded-email";
@@ -249,6 +250,21 @@ export async function submitRegistrationAction(
     ip_address: ip,
     user_agent: ua,
   });
+
+  // "App adoption from ads" conversion event — mirrors the browser Pixel event
+  // fired from register-form.tsx, de-duped via the random event_id that form
+  // generated. Never the DRM-ID: that is a clinic patient identifier and must
+  // not reach a third-party ad platform (RA 10173).
+  const registrationEventId = formData.get("event_id");
+  if (typeof registrationEventId === "string" && registrationEventId) {
+    await sendMetaCapiEvent({
+      eventName: "CompleteRegistration",
+      eventId: registrationEventId,
+      eventSourceUrl: `${SITE.url.replace(/\/$/, "")}/register`,
+      customData: { content_name: "patient_self_registration" },
+      userData: { clientIpAddress: ip, clientUserAgent: ua },
+    });
+  }
 
   return { ok: true, matched: false, drm_id: res.drm_id };
 }
