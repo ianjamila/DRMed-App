@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
+import { translatePgError } from "@/lib/accounting/pg-errors";
 import {
   TemplateEditorPayloadSchema,
   type TemplateEditorPayload,
@@ -159,7 +160,7 @@ export async function saveTemplateAndParamsAction(
       param_ids: toDelete,
     });
     if (delErr) {
-      return { ok: false, error: `Could not delete params: ${delErr.message}` };
+      return { ok: false, error: translatePgError(delErr) };
     }
   }
 
