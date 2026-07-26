@@ -214,6 +214,21 @@ export function ConsolidatedForm(props: Props) {
               </p>
             </div>
 
+            {params.length > 0 &&
+            props.orderedServiceCodes.length > 0 &&
+            enabledParamIds.size === 0 ? (
+              <p
+                className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700"
+                role="alert"
+              >
+                Every field below is disabled — not because nothing was
+                ordered, but because none of the ordered tests map to a field
+                on this template. This is a configuration problem, not a
+                data-entry one. Report it to an admin instead of working
+                around it.
+              </p>
+            ) : null}
+
             <div className="overflow-x-auto rounded-lg border border-[color:var(--color-brand-bg-mid)]">
               <table className="w-full text-sm">
                 <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">

@@ -45,9 +45,15 @@ export default async function ResultTemplatesIndex() {
     .select("id, report_group_id, layout, is_active")
     .not("report_group_id", "is", null);
 
-  const { data: paramRows } = await supabase
-    .from("result_template_params")
-    .select("template_id");
+  const { data: paramRows } = (groupTemplates ?? []).length
+    ? await supabase
+        .from("result_template_params")
+        .select("template_id")
+        .in(
+          "template_id",
+          (groupTemplates ?? []).map((t) => t.id),
+        )
+    : { data: [] };
   const paramCountByTemplate = new Map<string, number>();
   for (const r of paramRows ?? []) {
     paramCountByTemplate.set(
@@ -83,6 +89,23 @@ export default async function ResultTemplatesIndex() {
   );
   const sendOut = ungrouped.filter((r) => r.is_send_out);
 
+  // Which grouped services actually have a report_group_service_params row —
+  // a group can have an active, populated template that nothing maps to
+  // (e.g. every member service was re-pointed at a different group), which
+  // silently disables every field on the consolidated encoding form.
+  const { data: groupMapRows } = grouped.length
+    ? await supabase
+        .from("report_group_service_params")
+        .select("service_id")
+        .in(
+          "service_id",
+          grouped.map((r) => r.id),
+        )
+    : { data: [] };
+  const mappedServiceIds = new Set(
+    (groupMapRows ?? []).map((r) => r.service_id),
+  );
+
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
       <header>
@@ -114,6 +137,11 @@ export default async function ResultTemplatesIndex() {
               const nParams = tpl ? (paramCountByTemplate.get(tpl.id) ?? 0) : 0;
               const members = grouped.filter((r) => r.reportGroupId === g.id);
               const broken = !!tpl && tpl.is_active && nParams === 0;
+              const hasAnyMapping = members.some((m) =>
+                mappedServiceIds.has(m.id),
+              );
+              const noMappings =
+                !!tpl && tpl.is_active && nParams > 0 && !hasAnyMapping;
               return (
                 <li
                   key={g.id}
@@ -126,6 +154,11 @@ export default async function ResultTemplatesIndex() {
                       </p>
                       <p className="truncate font-semibold text-[color:var(--color-brand-navy)]">
                         {g.name}
+                        {!g.is_active ? (
+                          <span className="ml-1.5 rounded bg-red-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-red-700">
+                            Inactive
+                          </span>
+                        ) : null}
                         <span className="ml-2 text-xs font-normal text-[color:var(--color-brand-text-soft)]">
                           {tpl
                             ? `${tpl.layout} · ${nParams} param${nParams === 1 ? "" : "s"} · ${members.length} services`
@@ -136,6 +169,13 @@ export default async function ResultTemplatesIndex() {
                         <p className="mt-0.5 text-xs font-bold text-red-700">
                           ⚠ Active template with 0 parameters — the encoding
                           form is broken.
+                        </p>
+                      ) : null}
+                      {noMappings ? (
+                        <p className="mt-0.5 text-xs font-bold text-red-700">
+                          ⚠ No services are mapped to this template&apos;s
+                          fields — every field on the consolidated encoding
+                          form is disabled.
                         </p>
                       ) : null}
                       {tpl && !tpl.is_active ? (
