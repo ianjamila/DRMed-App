@@ -13,25 +13,10 @@ interface Props {
   visit: ConsolidatedFormVisit;
   orderedServiceCodes: string[];
   testRequestIds: string[];
+  enabledParamIds: string[];
   claimedBy: string | null;
   myStaffId: string;
 }
-
-// Map service code → parameter_names it covers on the consolidated chemistry
-// template. Verified against live DB (T3 seed, migration 0053).
-const SERVICE_TO_PARAMS: Record<string, string[]> = {
-  FBS_RBS: ["FBS"],
-  BUN: ["BUN"],
-  CREATININE: ["Creatinine"],
-  BUA_URIC_ACID: ["Uric Acid"],
-  TRIGLYCERIDES: ["Triglycerides"],
-  CHOLESTEROL: ["Cholesterol"],
-  HDL_LDL_VLDL: ["HDL", "LDL", "VLDL"],
-  SGPT_ALT: ["SGPT (ALT)"],
-  SGOT_AST: ["SGOT (AST)"],
-  HBA1C: ["HBA1C"],
-  LIPID_PROFILE: ["Triglycerides", "Cholesterol", "HDL", "LDL", "VLDL"],
-};
 
 export function ConsolidatedForm(props: Props) {
   const router = useRouter();
@@ -41,9 +26,9 @@ export function ConsolidatedForm(props: Props) {
     "payment" | "consent" | null
   >(null);
 
-  const enabledParamNames = new Set<string>(
-    props.orderedServiceCodes.flatMap((c) => SERVICE_TO_PARAMS[c] ?? []),
-  );
+  // Derived server-side from report_group_service_params — identity-based, so
+  // renaming a parameter in the admin editor can't silently disable a field.
+  const enabledParamIds = new Set(props.enabledParamIds);
 
   // Filter params by gender for this patient, then sort by sort_order.
   // patients.sex is stored as 'male'/'female' in the DB; template params use
@@ -109,7 +94,7 @@ export function ConsolidatedForm(props: Props) {
   function handleFinalise() {
     setError(null);
     const payload = params
-      .filter((p) => enabledParamNames.has(p.parameter_name))
+      .filter((p) => enabledParamIds.has(p.id))
       .map((p) => ({
         parameter_id: p.id,
         numeric_value_si:
@@ -242,7 +227,7 @@ export function ConsolidatedForm(props: Props) {
                 </thead>
                 <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
                   {params.map((p) => {
-                    const enabled = enabledParamNames.has(p.parameter_name);
+                    const enabled = enabledParamIds.has(p.id);
                     return (
                       <tr
                         key={p.id}
