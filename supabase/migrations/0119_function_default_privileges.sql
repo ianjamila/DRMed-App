@@ -68,6 +68,15 @@
 
 -- 1. Drop Postgres's hard-wired PUBLIC EXECUTE on new functions. MUST be
 --    schema-less — the `in schema public` form silently does nothing here.
+--
+--    NOTE FOR FUTURE MAINTAINERS: because this statement is schema-less it is
+--    genuinely GLOBAL — it applies to every schema `postgres` creates functions
+--    in, not just `public`. Today the repo only ever creates functions in
+--    `public`, and `extensions` is explicitly restored in step 4. If you add a
+--    new schema (a reporting schema, say), its functions will inherit this
+--    tighter default too, and Postgres's normal PUBLIC-execute behaviour will
+--    NOT apply there. Grant explicitly in that schema, or add a step-4-style
+--    restore for it.
 alter default privileges for role postgres
   revoke execute on functions from public;
 
@@ -106,6 +115,10 @@ begin
     raise exception '0119: service_role did NOT inherit EXECUTE on new functions — the admin client would break on every function added from now on';
   end if;
 
+  -- Informative on the hosted project, where `postgres` is NOT a superuser. On a
+  -- local CLI stack `postgres` IS superuser, so has_function_privilege always
+  -- returns true there regardless of the ACL — this assertion is a no-op locally
+  -- and should not be read as evidence the change took. Checks above carry that.
   if not has_function_privilege('postgres', 'public.drmed_0119_probe()', 'EXECUTE') then
     raise exception '0119: postgres did not inherit EXECUTE on new functions';
   end if;

@@ -283,6 +283,26 @@ begin
       '0118: employee_leave_balance lost authenticated EXECUTE — staff leave-record writes would fail';
   end if;
 
+  -- (3b) …and nothing BEYOND that keep-list may remain authenticated-executable.
+  --      This mirrors check (1) for `authenticated`. Without it the safety net is
+  --      asymmetric with this migration's own threat model, which rates the
+  --      authenticated exposure as the worse of the two: a signed-in staff JWT is
+  --      a real credential, and these functions take a caller-supplied actor. A
+  --      future edit that drops `authenticated` from one `from` clause by mistake
+  --      would otherwise pass both `db reset` and the prod apply undetected.
+  select string_agg(p.proname, ', ' order by p.proname) into v_leaked
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public'
+    and p.prosecdef
+    and has_function_privilege('authenticated', p.oid, 'EXECUTE')
+    and p.proname not in ('has_role', 'is_staff', 'staff_role',
+                          'eod_lock_check', 'employee_leave_balance');
+  if v_leaked is not null then
+    raise exception
+      '0118: SECURITY DEFINER function(s) still executable by authenticated: %', v_leaked;
+  end if;
+
   -- (4) Every *callable* SECURITY DEFINER function must remain executable by
   --     service_role — that is the role the admin client runs as, so losing it
   --     would break the accounting, payroll and HMO write paths outright. Trigger
