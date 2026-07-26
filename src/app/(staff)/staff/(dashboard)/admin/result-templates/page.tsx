@@ -17,6 +17,7 @@ interface ServiceRow {
   kind: string;
   is_send_out: boolean;
   templateLayout: string | null;
+  reportGroupId: string | null;
 }
 
 export default async function ResultTemplatesIndex() {
@@ -27,13 +28,33 @@ export default async function ResultTemplatesIndex() {
 
   const { data: services } = await supabase
     .from("services")
-    .select("id, code, name, kind, is_send_out, is_active")
+    .select("id, code, name, kind, is_send_out, is_active, report_group_id")
     .eq("is_active", true)
     .order("name", { ascending: true });
 
   const { data: templates } = await supabase
     .from("result_templates")
     .select("service_id, layout, is_active");
+
+  const { data: groups } = await supabase
+    .from("report_groups")
+    .select("id, code, name, is_active");
+
+  const { data: groupTemplates } = await supabase
+    .from("result_templates")
+    .select("id, report_group_id, layout, is_active")
+    .not("report_group_id", "is", null);
+
+  const { data: paramRows } = await supabase
+    .from("result_template_params")
+    .select("template_id");
+  const paramCountByTemplate = new Map<string, number>();
+  for (const r of paramRows ?? []) {
+    paramCountByTemplate.set(
+      r.template_id,
+      (paramCountByTemplate.get(r.template_id) ?? 0) + 1,
+    );
+  }
 
   const tplByService = new Map<string, string>();
   for (const t of templates ?? []) {
@@ -51,13 +72,16 @@ export default async function ResultTemplatesIndex() {
       kind: s.kind,
       is_send_out: s.is_send_out ?? false,
       templateLayout: tplByService.get(s.id) ?? null,
+      reportGroupId: s.report_group_id ?? null,
     }));
 
-  const withTemplate = rows.filter((r) => r.templateLayout);
-  const eligibleNoTemplate = rows.filter(
+  const grouped = rows.filter((r) => r.reportGroupId);
+  const ungrouped = rows.filter((r) => !r.reportGroupId);
+  const withTemplate = ungrouped.filter((r) => r.templateLayout);
+  const eligibleNoTemplate = ungrouped.filter(
     (r) => !r.templateLayout && !r.is_send_out,
   );
-  const sendOut = rows.filter((r) => r.is_send_out);
+  const sendOut = ungrouped.filter((r) => r.is_send_out);
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
@@ -74,6 +98,93 @@ export default async function ResultTemplatesIndex() {
           will look — values are synthesised placeholders for layout review.
         </p>
       </header>
+
+      <Section
+        title="Report groups (consolidated templates)"
+        subtitle="One shared template per group — services below route to a single consolidated report form in the queue."
+      >
+        {(groups ?? []).length === 0 ? (
+          <Empty text="No report groups configured." />
+        ) : (
+          <ul className="grid gap-3">
+            {(groups ?? []).map((g) => {
+              const tpl = (groupTemplates ?? []).find(
+                (t) => t.report_group_id === g.id,
+              );
+              const nParams = tpl ? (paramCountByTemplate.get(tpl.id) ?? 0) : 0;
+              const members = grouped.filter((r) => r.reportGroupId === g.id);
+              const broken = !!tpl && tpl.is_active && nParams === 0;
+              return (
+                <li
+                  key={g.id}
+                  className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-3"
+                >
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="min-w-0">
+                      <p className="font-mono text-xs text-[color:var(--color-brand-text-soft)]">
+                        {g.code}
+                      </p>
+                      <p className="truncate font-semibold text-[color:var(--color-brand-navy)]">
+                        {g.name}
+                        <span className="ml-2 text-xs font-normal text-[color:var(--color-brand-text-soft)]">
+                          {tpl
+                            ? `${tpl.layout} · ${nParams} param${nParams === 1 ? "" : "s"} · ${members.length} services`
+                            : "no template yet"}
+                        </span>
+                      </p>
+                      {broken ? (
+                        <p className="mt-0.5 text-xs font-bold text-red-700">
+                          ⚠ Active template with 0 parameters — the encoding
+                          form is broken.
+                        </p>
+                      ) : null}
+                      {tpl && !tpl.is_active ? (
+                        <p className="mt-0.5 text-xs font-bold text-amber-700">
+                          Template inactive — the consolidated queue form will
+                          not load.
+                        </p>
+                      ) : null}
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Link
+                        href={`/staff/admin/result-templates/group/${g.id}/edit`}
+                        className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-bg)]"
+                      >
+                        {tpl ? "Edit" : "Create"}
+                      </Link>
+                      {tpl ? (
+                        <Link
+                          href={`/staff/admin/result-templates/preview/group/${g.id}`}
+                          target="_blank"
+                          rel="noopener"
+                          className="rounded-md bg-[color:var(--color-brand-navy)] px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-white hover:bg-[color:var(--color-brand-cyan)]"
+                        >
+                          Preview PDF
+                        </Link>
+                      ) : null}
+                    </div>
+                  </div>
+                  {members.length > 0 ? (
+                    <div className="mt-2 flex flex-wrap items-baseline gap-x-1.5 gap-y-1 border-t border-[color:var(--color-brand-bg-mid)] pt-2">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+                        Managed by this group:
+                      </span>
+                      {members.map((m) => (
+                        <span
+                          key={m.id}
+                          className="font-mono text-[10px] text-[color:var(--color-brand-text-mid)]"
+                        >
+                          {m.code}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </Section>
 
       <Section
         title="With template"
