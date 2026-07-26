@@ -83,6 +83,7 @@ export default async function EditResultTemplatePage({ params }: Props) {
           ref_low_conv: r.ref_low_conv,
           ref_high_conv: r.ref_high_conv,
         })),
+        service_ids: null,
       }))
     : [];
 
@@ -99,9 +100,7 @@ export default async function EditResultTemplatePage({ params }: Props) {
       </h1>
 
       <TemplateEditor
-        serviceId={svc.id}
-        serviceCode={svc.code}
-        serviceName={svc.name}
+        target={{ kind: "service", id: svc.id, code: svc.code, name: svc.name }}
         hasTemplate={!!tpl}
         initialLayout={(tpl?.layout ?? "simple") as TemplateEditorPayload["layout"]}
         initialHeaderNotes={tpl?.header_notes ?? null}
