@@ -45,8 +45,19 @@
 -- result_values row referencing it intact, and is reversible.
 --
 -- Idempotent: every statement is a targeted UPDATE whose WHERE clause stops
--- matching once applied. Safe on a fresh database — the NA row is seeded by
--- earlier migrations, so this simply re-applies the same end state.
+-- matching once applied.
+--
+-- REPLAY SAFETY (corrected 2026-07-27): an earlier version of this comment
+-- claimed the NA row is "seeded by earlier migrations". It is not — the service
+-- catalogue and the vendors list are both seeded by scripts (seed-services.ts /
+-- import-test-list.ts), never by a migration. On a database built from
+-- migrations alone, `services` is EMPTY, the two UPDATEs match nothing, and the
+-- post-condition below used to abort the whole replay with 'service NA not
+-- found'. That made `supabase db reset` impossible to complete, so fresh local
+-- environments and CI could not be built from migrations at all.
+--
+-- The post-condition now skips when there is no NA row to reclassify, and still
+-- fails loudly when the row IS present and the reclassification did not take.
 -- =============================================================================
 
 update public.services s
@@ -78,6 +89,14 @@ do $$
 declare
   r record;
 begin
+  -- Nothing to reclassify on a catalogue-less database (a fresh replay). Skip
+  -- rather than abort — see REPLAY SAFETY in the header.
+  if not exists (select 1 from public.services where code = 'NA') then
+    raise notice
+      '0116: no services row with code NA — nothing to reclassify. This is expected on a database built from migrations alone; the catalogue is seeded separately by scripts/seed-services.ts.';
+    return;
+  end if;
+
   select s.is_send_out, s.send_out_lab, s.send_out_vendor_id,
          s.send_out_unit_cost_php, s.section, v.name as vendor_name
     into r
@@ -85,9 +104,6 @@ begin
     left join public.vendors v on v.id = s.send_out_vendor_id
    where s.code = 'NA';
 
-  if r is null then
-    raise exception 'service NA not found';
-  end if;
   if not r.is_send_out
      or r.send_out_vendor_id is null
      or r.vendor_name is distinct from 'Hi Precision'
