@@ -59,6 +59,17 @@ export async function deleteSupersededTemplateAction(input: {
         error: `Cannot delete: ${refCount} finalised result values still reference this template's params.`,
       };
     }
+
+    const { count: alertCount } = await admin
+      .from("critical_alerts")
+      .select("id", { count: "exact", head: true })
+      .in("parameter_id", paramIds);
+    if ((alertCount ?? 0) > 0) {
+      return {
+        ok: false,
+        error: `Cannot delete: ${alertCount} critical-value alert(s) reference this template's params — alert history must be preserved.`,
+      };
+    }
   }
 
   const { error: delErr } = await admin.rpc("admin_delete_result_template", {

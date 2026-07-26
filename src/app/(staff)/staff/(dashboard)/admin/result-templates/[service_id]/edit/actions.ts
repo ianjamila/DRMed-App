@@ -55,9 +55,15 @@ export async function saveTemplateAndParamsAction(
 
     const { data: groupSvcs } = await admin
       .from("services")
-      .select("id")
+      .select("id, kind")
       .eq("report_group_id", data.target.id);
-    groupServiceIds = new Set((groupSvcs ?? []).map((s) => s.id));
+    // Billing headers (lab_package) can't enable fields — the UI already
+    // excludes them from the mappable-services list, so exclude them here
+    // too or a hand-crafted payload could map a service_id that isn't a
+    // real encoding target.
+    groupServiceIds = new Set(
+      (groupSvcs ?? []).filter((s) => s.kind !== "lab_package").map((s) => s.id),
+    );
     for (const p of data.params) {
       for (const sid of p.service_ids ?? []) {
         if (!groupServiceIds.has(sid)) {
@@ -154,6 +160,19 @@ export async function saveTemplateAndParamsAction(
         error: `Cannot delete params already used in finalised results (${refCount} value rows reference them). Mark the template inactive instead.`,
       };
     }
+    // critical_alerts.parameter_id cascades on delete (unlike result_values,
+    // which is a plain FK the DB blocks) — block explicitly so acknowledged
+    // critical-value alert history isn't silently destroyed.
+    const { count: alertCount } = await admin
+      .from("critical_alerts")
+      .select("id", { count: "exact", head: true })
+      .in("parameter_id", toDelete);
+    if ((alertCount ?? 0) > 0) {
+      return {
+        ok: false,
+        error: `Cannot delete params with critical-value alert history (${alertCount} alert(s) reference them). Mark the template inactive instead.`,
+      };
+    }
     // 0119 guard: raw deletes are blocked; the RPC sets the opt-in flag and
     // deletes in one transaction. Mapping rows cascade away with the param.
     const { error: delErr } = await admin.rpc("admin_delete_template_params", {
@@ -169,6 +188,8 @@ export async function saveTemplateAndParamsAction(
   let totalRangesInserted = 0;
   let totalRangesUpdated = 0;
   let totalRangesDeleted = 0;
+  let mappingsAdded = 0;
+  let mappingsRemoved = 0;
 
   for (let i = 0; i < data.params.length; i++) {
     const p = data.params[i];
@@ -307,6 +328,7 @@ export async function saveTemplateAndParamsAction(
             error: `Could not unmap services from "${p.parameter_name}": ${mDelErr.message}`,
           };
         }
+        mappingsRemoved += removeIds.length;
       }
       if (addIds.length > 0) {
         const { error: mInsErr } = await admin
@@ -318,6 +340,7 @@ export async function saveTemplateAndParamsAction(
             error: `Could not map services to "${p.parameter_name}": ${mInsErr.message}`,
           };
         }
+        mappingsAdded += addIds.length;
       }
     }
   }
@@ -339,6 +362,8 @@ export async function saveTemplateAndParamsAction(
       ranges_inserted: totalRangesInserted,
       ranges_updated: totalRangesUpdated,
       ranges_deleted: totalRangesDeleted,
+      mappings_added: mappingsAdded,
+      mappings_removed: mappingsRemoved,
     },
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),

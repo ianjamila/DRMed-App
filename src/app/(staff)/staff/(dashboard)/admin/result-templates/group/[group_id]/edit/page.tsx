@@ -111,8 +111,11 @@ export default async function EditGroupTemplatePage({ params }: Props) {
       };
     });
 
-  // Change history: the app's own saves + the 0119 delete-audit rows.
-  const { data: history } = tpl
+  // Change history: the app's own saves + the 0119 delete-audit rows, merged
+  // with superseded per-service template deletions scoped to this group.
+  // The latter's resource_id is the *deleted per-service template's* id, not
+  // this group template's, so they need a separate query keyed off metadata.
+  const { data: ownHistory } = tpl
     ? await admin
         .from("audit_log")
         .select("id, actor_id, actor_type, action, metadata, created_at")
@@ -121,8 +124,19 @@ export default async function EditGroupTemplatePage({ params }: Props) {
         .order("created_at", { ascending: false })
         .limit(15)
     : { data: [] };
+  const { data: supersededHistory } = await admin
+    .from("audit_log")
+    .select("id, actor_id, actor_type, action, metadata, created_at")
+    .eq("resource_type", "result_template")
+    .eq("action", "result_template.superseded_deleted")
+    .eq("metadata->>report_group_id", group_id)
+    .order("created_at", { ascending: false })
+    .limit(15);
+  const history = [...(ownHistory ?? []), ...(supersededHistory ?? [])]
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    .slice(0, 15);
   const actorIds = [
-    ...new Set((history ?? []).map((h) => h.actor_id).filter((a): a is string => !!a)),
+    ...new Set(history.map((h) => h.actor_id).filter((a): a is string => !!a)),
   ];
   const { data: actors } = actorIds.length
     ? await admin.from("staff_profiles").select("id, full_name").in("id", actorIds)
@@ -261,22 +275,26 @@ export default async function EditGroupTemplatePage({ params }: Props) {
             (logged by trigger since migration 0119). The 2-month CHEMISTRY
             outage was invisible precisely because nothing recorded the loss.
           </p>
-          {(history ?? []).length === 0 ? (
+          {history.length === 0 ? (
             <p className="mt-3 text-sm text-[color:var(--color-brand-text-soft)]">
               No recorded changes yet.
             </p>
           ) : (
             <ul className="mt-3 divide-y divide-[color:var(--color-brand-bg-mid)]">
-              {(history ?? []).map((h) => {
+              {history.map((h) => {
                 const meta = (h.metadata ?? {}) as Record<string, unknown>;
                 const isDelete = h.action === "result_template.params_deleted";
+                const isSupersededDelete =
+                  h.action === "result_template.superseded_deleted";
                 return (
                   <li key={h.id} className="flex items-baseline justify-between gap-3 py-2">
                     <div className="min-w-0">
-                      <p className={`text-sm font-medium ${isDelete ? "text-red-700" : "text-[color:var(--color-brand-navy)]"}`}>
-                        {isDelete
-                          ? `Deleted ${String(meta.deleted_count ?? "?")} parameter(s) — ${String(meta.remaining_count ?? "?")} remaining`
-                          : `Saved — ${String(meta.param_count ?? "?")} parameter(s)`}
+                      <p className={`text-sm font-medium ${isDelete || isSupersededDelete ? "text-red-700" : "text-[color:var(--color-brand-navy)]"}`}>
+                        {isSupersededDelete
+                          ? `Deleted superseded ${String(meta.service_code ?? "?")} template — ${String(meta.param_count ?? "?")} parameter(s)`
+                          : isDelete
+                            ? `Deleted ${String(meta.deleted_count ?? "?")} parameter(s) — ${String(meta.remaining_count ?? "?")} remaining`
+                            : `Saved — ${String(meta.param_count ?? "?")} parameter(s)`}
                       </p>
                       <p className="text-xs text-[color:var(--color-brand-text-soft)]">
                         {h.actor_id
