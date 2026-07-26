@@ -48,6 +48,17 @@ const eventName = arg("event") ?? "Schedule";
 const eventId = arg("event-id") ?? `verify-${Date.now().toString(36)}`;
 const suppliedEventId = arg("event-id") !== undefined;
 
+// Meta rejects an event whose user_data carries no customer-information
+// parameter at all (code 100 / subcode 2804050). The app satisfies this with
+// the real visitor's _fbp/_fbc cookies plus IP and user agent; this script has
+// no browser context, so it sends a SYNTHETIC browser id in Meta's _fbp format
+// (fb.1.<ms>.<random>) alongside a placeholder IP and user agent.
+//
+// Nothing here identifies a real person — that is the point. It exercises the
+// transport, not the matching, and keeps the script compliant with
+// docs/decisions/0003-meta-pixel-data-handling.md.
+const syntheticFbp = `fb.1.${Date.now()}.${Math.floor(Math.random() * 9e9) + 1e9}`;
+
 const body = {
   data: [
     {
@@ -56,8 +67,12 @@ const body = {
       event_id: eventId,
       event_source_url: "https://drmed.ph/schedule",
       action_source: "website",
-      // Intentionally empty of personal data — matches what the app sends.
-      user_data: {},
+      user_data: {
+        fbp: syntheticFbp,
+        client_ip_address: "203.0.113.10", // TEST-NET-3, reserved for documentation
+        client_user_agent:
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+      },
       custom_data: { content_name: "verification_script", content_category: "booking" },
     },
   ],
