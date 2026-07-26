@@ -82,7 +82,15 @@ If it fails: a `190` means the token is expired or belongs to another pixel; a
 This is the step worth the effort — it is what stops one booking being counted
 twice.
 
-1. Local site, DevTools open. Accept cookies.
+> **Do this on a deployed preview URL, not localhost.** The live pixel restricts
+> which domains may send events. On `localhost:3000` the script loads and
+> initialises, then the console logs *"1564717654419936 is unavailable on this
+> website due to it's traffic permission settings"* and **no events are sent** —
+> so the browser half of this test silently produces nothing. Either run it
+> against a Vercel preview deployment, or add the test origin under Events
+> Manager → your pixel → Settings → **Domains / traffic permissions**.
+
+1. Deployed preview site, DevTools open. Accept cookies.
 2. In the console, capture the id the browser will send:
    ```js
    const seen = [];
