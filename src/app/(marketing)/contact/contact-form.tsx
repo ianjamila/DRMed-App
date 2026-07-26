@@ -1,11 +1,18 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect, useRef } from "react";
 import {
   StableInput,
   StableTextarea,
 } from "@/components/forms/stable-fields";
+import { metaTrack } from "@/lib/analytics/meta-pixel";
+import { newEventId } from "@/lib/analytics/event-id";
 import { submitContactMessage, type ContactResult } from "./actions";
+
+// Corporate/HMO inquiries are a higher-intent B2B lead than a general
+// question — fired as a distinct Meta event so Ads can optimize for them
+// separately (see Channel roles: "Meta Lead-gen → corporate only").
+const CORPORATE_SUBJECT = "Corporate / HMO";
 
 // Subject options for the select (C15 enhancement).
 const SUBJECT_OPTIONS = [
@@ -32,6 +39,31 @@ export function ContactForm() {
     FormData
   >(submitContactMessage, null);
 
+  // event_id is shared with the server-side CAPI event (submitContactMessage)
+  // via a hidden FormData field so Meta de-dupes the two instead of
+  // double-counting. isCorporate decides Lead vs Contact on both sides.
+  const trackedRef = useRef(false);
+  const pendingEventRef = useRef<{ id: string; isCorporate: boolean } | null>(null);
+
+  const submitWithTracking = (formData: FormData) => {
+    const id = newEventId();
+    const isCorporate = formData.get("subject") === CORPORATE_SUBJECT;
+    formData.set("event_id", id);
+    pendingEventRef.current = { id, isCorporate };
+    return formAction(formData);
+  };
+
+  useEffect(() => {
+    if (!state?.ok || trackedRef.current || !pendingEventRef.current) return;
+    trackedRef.current = true;
+    const { id, isCorporate } = pendingEventRef.current;
+    if (isCorporate) {
+      metaTrack("Lead", { content_name: "corporate_quote_request" }, id);
+    } else {
+      metaTrack("Contact", { content_name: "contact_form" }, id);
+    }
+  }, [state]);
+
   if (state?.ok) {
     return (
       <div className="rounded-[16px] border border-[color:var(--color-brand-cyan)] bg-[color:var(--color-warm-bg)] p-8">
@@ -47,7 +79,7 @@ export function ContactForm() {
   }
 
   return (
-    <form action={formAction} className="grid gap-4">
+    <form action={submitWithTracking} className="grid gap-4">
       {/* Honeypot — hidden from real users via aria-hidden + tabindex. */}
       <div
         aria-hidden="true"

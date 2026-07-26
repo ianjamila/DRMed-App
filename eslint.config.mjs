@@ -16,6 +16,9 @@ const eslintConfig = defineConfig([
     "design-handoff/**",
     // Nested git worktrees are gitignored stale-branch copies — not in lint scope.
     ".worktrees/**",
+    // Marketing-kit dashboards are standalone JSX artifacts pasted into
+    // external viewers — not part of the app build, not on app lint rules.
+    "DRMed-marketing-kit/**",
   ]),
 ]);
 

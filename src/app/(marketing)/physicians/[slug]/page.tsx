@@ -13,6 +13,7 @@ import { physicianPhotoUrl } from "@/lib/physicians/photo";
 import { formatSchedule } from "@/lib/physicians/format-schedule";
 import { Reveal } from "@/components/marketing/motion";
 import { PillLink } from "@/components/marketing/ui";
+import { TrackedTelLink } from "@/components/marketing/tracked-tel-link";
 
 export const revalidate = 300;
 
@@ -248,12 +249,13 @@ export default async function PhysicianPage({ params }: PageProps) {
               )}
               <p className="mt-4 text-xs text-[color:var(--color-ink-soft)]">
                 Schedules may change without notice. Call{" "}
-                <a
+                <TrackedTelLink
                   href={`tel:${CONTACT.phone.mobileE164}`}
+                  label="physician_profile"
                   className="font-bold text-[color:var(--color-brand-navy)] hover:text-[color:var(--color-brand-cyan-text)]"
                 >
                   {CONTACT.phone.mobile}
-                </a>{" "}
+                </TrackedTelLink>{" "}
                 to confirm availability.
               </p>
             </div>
@@ -326,19 +328,21 @@ export default async function PhysicianPage({ params }: PageProps) {
                       Phone
                     </p>
                     <p className="mt-1 text-[14px] leading-relaxed">
-                      <a
+                      <TrackedTelLink
                         href={`tel:${CONTACT.phone.mobileE164}`}
+                        label="physician_profile"
                         className="text-[color:var(--color-ink-mid)] hover:text-[color:var(--color-brand-navy)]"
                       >
                         {CONTACT.phone.mobile}
-                      </a>
+                      </TrackedTelLink>
                       {" · "}
-                      <a
+                      <TrackedTelLink
                         href={`tel:${CONTACT.phone.landlineE164}`}
+                        label="physician_profile"
                         className="text-[color:var(--color-ink-mid)] hover:text-[color:var(--color-brand-navy)]"
                       >
                         {CONTACT.phone.landline}
-                      </a>
+                      </TrackedTelLink>
                     </p>
                   </div>
                 </div>

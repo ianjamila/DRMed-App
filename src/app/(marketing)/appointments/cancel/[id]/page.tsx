@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { CONTACT } from "@/lib/marketing/site";
 import { CancelButton } from "./cancel-button";
+import { TrackedTelLink } from "@/components/marketing/tracked-tel-link";
 
 export const metadata = {
   title: "Cancel appointment — drmed.ph",
@@ -96,12 +97,13 @@ export default async function CancelAppointmentPage({ params }: Props) {
           <p className="text-sm text-[color:var(--color-brand-text-mid)]">
             This appointment can no longer be cancelled from the link.
             Please call{" "}
-            <a
+            <TrackedTelLink
               href={`tel:${CONTACT.phone.mobileE164}`}
+              label="cancel_appointment"
               className="font-bold text-[color:var(--color-brand-cyan)] hover:underline"
             >
               {CONTACT.phone.mobile}
-            </a>
+            </TrackedTelLink>
             .
           </p>
         )}

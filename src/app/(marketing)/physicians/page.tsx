@@ -12,6 +12,7 @@ import { JsonLd } from "@/components/marketing/json-ld";
 import { physiciansItemListLd } from "@/lib/marketing/structured-data";
 import { pageMetadata } from "@/lib/marketing/metadata";
 import { CONTACT } from "@/lib/marketing/site";
+import { TrackedTelLink } from "@/components/marketing/tracked-tel-link";
 
 export const metadata = pageMetadata({
   title: "Our Physicians & Schedules",
@@ -134,19 +135,21 @@ export default async function PhysiciansPage() {
             />
             <p>
               Schedules may change without prior notice. Kindly call{" "}
-              <a
+              <TrackedTelLink
                 href={`tel:${CONTACT.phone.mobileE164}`}
+                label="physicians_page"
                 className="font-bold text-[color:var(--color-brand-navy)] hover:text-[color:var(--color-brand-cyan-text)]"
               >
                 {CONTACT.phone.mobile}
-              </a>{" "}
+              </TrackedTelLink>{" "}
               or{" "}
-              <a
+              <TrackedTelLink
                 href={`tel:${CONTACT.phone.landlineE164}`}
+                label="physicians_page"
                 className="font-bold text-[color:var(--color-brand-navy)] hover:text-[color:var(--color-brand-cyan-text)]"
               >
                 {CONTACT.phone.landline}
-              </a>{" "}
+              </TrackedTelLink>{" "}
               to confirm availability before booking.
             </p>
           </div>

@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { CONTACT, SITE, SOCIAL } from "@/lib/marketing/site";
 import { NewsletterForm } from "./newsletter-form";
+import { CookiePreferencesLink } from "./cookie-consent";
+import { TrackedTelLink } from "@/components/marketing/tracked-tel-link";
 
 export function MarketingFooter() {
   return (
@@ -47,20 +49,22 @@ export function MarketingFooter() {
           </p>
           <p className="mt-3 text-sm text-white/70">
             Mobile:{" "}
-            <a
+            <TrackedTelLink
               href={`tel:${CONTACT.phone.mobileE164}`}
+              label="footer"
               className="text-white/70 hover:text-white"
             >
               {CONTACT.phone.mobile}
-            </a>
+            </TrackedTelLink>
             <br />
             Tel:{" "}
-            <a
+            <TrackedTelLink
               href={`tel:${CONTACT.phone.landlineE164}`}
+              label="footer"
               className="text-white/70 hover:text-white"
             >
               {CONTACT.phone.landline}
-            </a>
+            </TrackedTelLink>
             <br />
             <a
               href={`mailto:${CONTACT.email}`}
@@ -139,6 +143,11 @@ export function MarketingFooter() {
               <Link href="/terms" className="text-white/70 hover:text-white">
                 Terms of Use
               </Link>
+            </li>
+            <li>
+              {/* Renders nothing until a consent choice is on record, so it
+                  never sits next to the banner on a first visit. */}
+              <CookiePreferencesLink className="text-left text-white/70 hover:text-white" />
             </li>
             <li>
               <a

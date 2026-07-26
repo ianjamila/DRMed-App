@@ -3,6 +3,8 @@
 import * as React from "react";
 import { useActionState } from "react";
 import { Input } from "@/components/ui/input";
+import { metaTrack } from "@/lib/analytics/meta-pixel";
+import { newEventId } from "@/lib/analytics/event-id";
 import { submitRegistrationAction, type RegistrationResult } from "./actions";
 
 // The text/email/tel/date fields use the shared <Input> (h-11 + focus ring,
@@ -30,6 +32,35 @@ export function RegisterForm() {
     marketing_consent: false,
   });
 
+  // "App adoption from ads" event — only for genuinely NEW registrations
+  // (matched === false). An existing patient re-discovering their DRM-ID via
+  // this page isn't new adoption, so that branch intentionally doesn't fire.
+  //
+  // The dedup id is a random per-submission UUID generated below and echoed by
+  // the server-side CAPI event (submitRegistrationAction). It is deliberately
+  // NOT the patient's DRM-ID — that is a clinic patient identifier and must
+  // never be handed to a third-party ad platform (RA 10173).
+  const trackedRef = React.useRef(false);
+  const eventIdRef = React.useRef<string | null>(null);
+
+  const submitWithTracking = (formData: FormData) => {
+    const id = newEventId();
+    eventIdRef.current = id;
+    formData.set("event_id", id);
+    return formAction(formData);
+  };
+
+  React.useEffect(() => {
+    if (!(state?.ok && state.matched === false) || trackedRef.current) return;
+    if (!eventIdRef.current) return;
+    trackedRef.current = true;
+    metaTrack(
+      "CompleteRegistration",
+      { content_name: "patient_self_registration" },
+      eventIdRef.current,
+    );
+  }, [state]);
+
   if (state?.ok && state.matched === false) {
     return (
       <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-6 text-center">
@@ -55,7 +86,7 @@ export function RegisterForm() {
   }
 
   return (
-    <form action={formAction} className="flex flex-col gap-4">
+    <form action={submitWithTracking} className="flex flex-col gap-4">
       {/* Honeypot — hidden from humans, bots fill it. */}
       <input
         type="text"

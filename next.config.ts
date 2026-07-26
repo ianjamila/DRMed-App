@@ -11,11 +11,12 @@ const isProd = process.env.NODE_ENV === "production";
 // blast radius stays small.
 const cspDirectives: string[] = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline'" + (isProd ? "" : " 'unsafe-eval'"),
+  "script-src 'self' 'unsafe-inline' https://connect.facebook.net" +
+    (isProd ? "" : " 'unsafe-eval'"),
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob: https://*.supabase.co",
+  "img-src 'self' data: blob: https://*.supabase.co https://www.facebook.com",
   "font-src 'self' data:",
-  "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.resend.com",
+  "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.resend.com https://www.facebook.com",
   "frame-ancestors 'none'",
   "form-action 'self'",
   "base-uri 'self'",
