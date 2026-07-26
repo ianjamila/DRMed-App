@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createPatientClient } from "@/lib/supabase/patient";
+import { createStorageSignedUrl } from "@/lib/storage/signed-url";
 import { requirePatientProfile } from "@/lib/auth/require-patient";
 import { DownloadButton } from "./download-button";
 import { PackageCard, type PackageComponentRow } from "./package-card";
@@ -70,13 +71,17 @@ interface PortalData {
 }
 
 async function loadResults(patientId: string): Promise<PortalData> {
-  const admin = createAdminClient();
+  // Patient-scoped client: the patient RLS policies enforce every read below
+  // (own visits, own test_requests, released results only). The explicit
+  // .eq("patient_id", …) / .eq("visits.patient_id", …) filters stay as
+  // defense-in-depth on top of RLS.
+  const db = await createPatientClient(patientId);
 
   // All visits for this patient — used for the "still in progress" hint.
   // Package headers are excluded from the pending count: a header sits
   // in `in_progress` until every component releases, but from the
   // patient's perspective the *components* are what's pending.
-  const { data: visits } = await admin
+  const { data: visits } = await db
     .from("visits")
     .select(
       `
@@ -111,7 +116,7 @@ async function loadResults(patientId: string): Promise<PortalData> {
   // surfaces even before components release), plus every non-cancelled
   // component of those headers so the card can show progress. We do the
   // patient-id filter via the visits!inner join.
-  const { data: trRaw } = await admin
+  const { data: trRaw } = await db
     .from("test_requests")
     .select(
       `
@@ -159,7 +164,7 @@ async function loadResults(patientId: string): Promise<PortalData> {
     .map((c) => c.id);
   const componentResultSet = new Set<string>();
   if (allComponentIds.length > 0) {
-    const { data: compJunctionsRaw } = await admin
+    const { data: compJunctionsRaw } = await db
       .from("result_test_requests")
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .select("test_request_id, results!inner(storage_path)" as any)
@@ -245,7 +250,7 @@ async function loadResults(patientId: string): Promise<PortalData> {
   const standalones: ReleasedRow[] = [];
   if (standaloneIds.length > 0) {
     // Walk result_test_requests to find which results cover these test_requests.
-    const { data: junctionsRaw } = await admin
+    const { data: junctionsRaw } = await db
       .from("result_test_requests")
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .select("result_id, test_request_id, results!inner(id, storage_path, report_group_id, report_groups(name))" as any)
@@ -366,8 +371,11 @@ async function loadResults(patientId: string): Promise<PortalData> {
 }
 
 async function loadUploads(patientId: string): Promise<UploadRow[]> {
-  const admin = createAdminClient();
-  const { data: atts } = await admin
+  // Attachment + appointment reads go through the patient-scoped client (RLS:
+  // appointment_attachments/appointments patient-self). Thumbnail signing stays
+  // service-role via the storage helper — buckets have no patient policy.
+  const db = await createPatientClient(patientId);
+  const { data: atts } = await db
     .from("appointment_attachments")
     .select("id, booking_group_id, filename, mime_type, size_bytes, created_at, storage_path")
     .eq("patient_id", patientId)
@@ -377,7 +385,7 @@ async function loadUploads(patientId: string): Promise<UploadRow[]> {
 
   // Representative appointment per booking_group_id, for a context label.
   const groupIds = [...new Set(atts.map((a) => a.booking_group_id))];
-  const { data: appts } = await admin
+  const { data: appts } = await db
     .from("appointments")
     .select("booking_group_id, scheduled_at, services ( name )")
     .in("booking_group_id", groupIds);
@@ -407,10 +415,10 @@ async function loadUploads(patientId: string): Promise<UploadRow[]> {
   for (const a of atts) {
     let thumbUrl: string | null = null;
     if (IMG.has(a.mime_type)) {
-      const { data: signed } = await admin.storage
-        .from("lab-request-forms")
-        .createSignedUrl(a.storage_path, 60 * 5);
-      thumbUrl = signed?.signedUrl ?? null;
+      thumbUrl = await createStorageSignedUrl(
+        "lab-request-forms",
+        a.storage_path,
+      );
     }
     rows.push({
       id: a.id,
