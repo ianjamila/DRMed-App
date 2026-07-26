@@ -102,6 +102,53 @@ care is never conditioned on this choice.
 - Anyone adding a new event **must** re-check this ADR. The risky change is not
   a new event type; it is adding a field to an existing one.
 
+## Outcome: Meta blocks the conversion events (measured 2026-07-27)
+
+**The conversion measurement this was built for does not work, and cannot be
+made to work by changing our code.**
+
+On 2026-07-07 Meta reviewed `drmed.ph`, categorised it **Health & wellness
+provider**, rejected the category request, and applied two restrictions:
+
+- the data source is in a **core setup**
+- it is **blocked from sharing certain standard events**
+
+Measured against the live dataset on 2026-07-27, sending each event through the
+Conversions API with a valid token and test event code:
+
+| Event | API response | Arrived in Events Manager |
+|---|---|---|
+| `PageView` | `events_received: 1` | **Yes** (3/3 rounds) |
+| `Contact` | `events_received: 1` | No |
+| `Lead` | `events_received: 1` | No |
+| `CompleteRegistration` | `events_received: 1` | No |
+| `Schedule` | `events_received: 1` | No |
+
+Note the trap: **the API returns success for blocked events.** Meta accepts at
+ingestion and drops at processing, with no error and nothing in `messages`. A
+`200` from the Graph API is not evidence an event landed — only the Test Events
+view is. Anyone debugging "why are there no Schedule conversions" should start
+here rather than in the application code.
+
+The Test Events filter was confirmed wide open (Standard **and** Custom events
+ticked) before concluding this, and `PageView` is reported as a *Custom event*
+rather than a standard one — consistent with core setup stripping standard-event
+semantics.
+
+Consequences:
+
+- `META_CAPI_ACCESS_TOKEN` is deliberately **not set in production**. With every
+  conversion event blocked, the server leg has nothing to contribute.
+- Campaign→booking attribution is served by the first-party UTM cookie instead
+  (`src/lib/analytics/attribution.ts` → booking audit metadata), which is
+  unaffected by any of this.
+- The tracking code is kept rather than deleted: it is written, tested, and
+  inert without a token, so re-enabling is a config change if the category is
+  ever reviewed differently.
+- A further category review can be requested 30 days after the decision (from
+  ~2026-08-06). A clinic is accurately categorised as a health provider, so a
+  reversal should not be planned around.
+
 ## Verification
 
 - Automated: `npm test` covers the consent gate, the event-id contract, and

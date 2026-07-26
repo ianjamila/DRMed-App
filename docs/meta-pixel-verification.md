@@ -46,6 +46,19 @@ probe "http://localhost:3000/staff/login?$U"  "drmed_cookie_consent=granted"  # 
 
 ---
 
+## ⚠️ Result of Part 2, run 2026-07-27
+
+Part 2 **was completed**. The token works and the server transport is sound —
+but Meta blocks every conversion event for this dataset. Only `PageView`
+arrives; `Schedule`, `Contact`, `Lead` and `CompleteRegistration` are dropped
+silently after returning `events_received: 1`.
+
+See [ADR-0003](decisions/0003-meta-pixel-data-handling.md) § "Outcome" for the
+measurements and what follows from them. `META_CAPI_ACCESS_TOKEN` is
+intentionally not set in production.
+
+The steps below remain valid if the dataset's category is ever re-reviewed.
+
 ## Part 2 — Live, against Events Manager
 
 > Needs `META_CAPI_ACCESS_TOKEN` and `META_TEST_EVENT_CODE`. **Not yet done** —
