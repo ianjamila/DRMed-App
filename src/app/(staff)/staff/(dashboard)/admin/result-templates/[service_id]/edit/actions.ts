@@ -30,32 +30,75 @@ export async function saveTemplateAndParamsAction(
 
   const admin = createAdminClient();
 
-  // Verify the service exists.
-  const { data: svc } = await admin
-    .from("services")
-    .select("id, code, name")
-    .eq("id", data.service_id)
-    .maybeSingle();
-  if (!svc) return { ok: false, error: "Service not found." };
+  // Resolve the target — a service or a report group. groupServiceIds doubles
+  // as the validation set for per-param service_ids.
+  let targetLabel: { code: string; name: string };
+  let groupServiceIds: Set<string> | null = null;
 
-  // Upsert the template row (one per service_id).
+  if (data.target.kind === "service") {
+    const { data: svc } = await admin
+      .from("services")
+      .select("id, code, name")
+      .eq("id", data.target.id)
+      .maybeSingle();
+    if (!svc) return { ok: false, error: "Service not found." };
+    targetLabel = { code: svc.code, name: svc.name };
+  } else {
+    const { data: grp } = await admin
+      .from("report_groups")
+      .select("id, code, name")
+      .eq("id", data.target.id)
+      .maybeSingle();
+    if (!grp) return { ok: false, error: "Report group not found." };
+    targetLabel = { code: grp.code, name: grp.name };
+
+    const { data: groupSvcs } = await admin
+      .from("services")
+      .select("id")
+      .eq("report_group_id", data.target.id);
+    groupServiceIds = new Set((groupSvcs ?? []).map((s) => s.id));
+    for (const p of data.params) {
+      for (const sid of p.service_ids ?? []) {
+        if (!groupServiceIds.has(sid)) {
+          return {
+            ok: false,
+            error: `"${p.parameter_name}" maps a service that is not in the ${grp.name} group.`,
+          };
+        }
+      }
+    }
+  }
+
+  // Upsert the template row — keyed by service_id or report_group_id.
+  const targetColumn =
+    data.target.kind === "service" ? "service_id" : "report_group_id";
   const { data: existing } = await admin
     .from("result_templates")
     .select("id")
-    .eq("service_id", data.service_id)
+    .eq(targetColumn, data.target.id)
     .maybeSingle();
 
   let templateId = existing?.id ?? null;
   if (!templateId) {
     const { data: created, error: insErr } = await admin
       .from("result_templates")
-      .insert({
-        service_id: data.service_id,
-        layout: data.layout,
-        header_notes: data.header_notes,
-        footer_notes: data.footer_notes,
-        is_active: data.is_active,
-      })
+      .insert(
+        data.target.kind === "service"
+          ? {
+              service_id: data.target.id,
+              layout: data.layout,
+              header_notes: data.header_notes,
+              footer_notes: data.footer_notes,
+              is_active: data.is_active,
+            }
+          : {
+              report_group_id: data.target.id,
+              layout: data.layout,
+              header_notes: data.header_notes,
+              footer_notes: data.footer_notes,
+              is_active: data.is_active,
+            },
+      )
       .select("id")
       .single();
     if (insErr || !created) {
@@ -110,10 +153,11 @@ export async function saveTemplateAndParamsAction(
         error: `Cannot delete params already used in finalised results (${refCount} value rows reference them). Mark the template inactive instead.`,
       };
     }
-    const { error: delErr } = await admin
-      .from("result_template_params")
-      .delete()
-      .in("id", toDelete);
+    // 0119 guard: raw deletes are blocked; the RPC sets the opt-in flag and
+    // deletes in one transaction. Mapping rows cascade away with the param.
+    const { error: delErr } = await admin.rpc("admin_delete_template_params", {
+      param_ids: toDelete,
+    });
     if (delErr) {
       return { ok: false, error: `Could not delete params: ${delErr.message}` };
     }
@@ -239,6 +283,42 @@ export async function saveTemplateAndParamsAction(
         totalRangesInserted += 1;
       }
     }
+
+    // Group targets: reconcile report_group_service_params for this param.
+    if (data.target.kind === "group") {
+      const desired = new Set(p.service_ids ?? []);
+      const { data: existingMap } = await admin
+        .from("report_group_service_params")
+        .select("service_id")
+        .eq("parameter_id", paramId);
+      const have = new Set((existingMap ?? []).map((r) => r.service_id));
+      const removeIds = [...have].filter((id) => !desired.has(id));
+      const addIds = [...desired].filter((id) => !have.has(id));
+      if (removeIds.length > 0) {
+        const { error: mDelErr } = await admin
+          .from("report_group_service_params")
+          .delete()
+          .eq("parameter_id", paramId)
+          .in("service_id", removeIds);
+        if (mDelErr) {
+          return {
+            ok: false,
+            error: `Could not unmap services from "${p.parameter_name}": ${mDelErr.message}`,
+          };
+        }
+      }
+      if (addIds.length > 0) {
+        const { error: mInsErr } = await admin
+          .from("report_group_service_params")
+          .insert(addIds.map((service_id) => ({ service_id, parameter_id: paramId })));
+        if (mInsErr) {
+          return {
+            ok: false,
+            error: `Could not map services to "${p.parameter_name}": ${mInsErr.message}`,
+          };
+        }
+      }
+    }
   }
 
   const h = await headers();
@@ -249,8 +329,9 @@ export async function saveTemplateAndParamsAction(
     resource_type: "result_template",
     resource_id: templateId,
     metadata: {
-      service_id: data.service_id,
-      service_code: svc.code,
+      target_kind: data.target.kind,
+      target_id: data.target.id,
+      target_code: targetLabel.code,
       layout: data.layout,
       param_count: data.params.length,
       params_deleted: toDelete.length,
@@ -263,6 +344,10 @@ export async function saveTemplateAndParamsAction(
   });
 
   revalidatePath("/staff/admin/result-templates");
-  revalidatePath(`/staff/admin/result-templates/${data.service_id}/edit`);
+  if (data.target.kind === "service") {
+    revalidatePath(`/staff/admin/result-templates/${data.target.id}/edit`);
+  } else {
+    revalidatePath(`/staff/admin/result-templates/group/${data.target.id}/edit`);
+  }
   return { ok: true, templateId };
 }
