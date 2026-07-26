@@ -28,7 +28,7 @@ begin
   if coalesce(current_setting('app.allow_template_param_delete', true), '') <> 'on' then
     raise exception
       'Deleting result_template_params requires explicit opt-in. Use the admin UI / admin_delete_* RPCs, or SET LOCAL app.allow_template_param_delete = ''on'' inside a migration.'
-      using errcode = 'P0001';
+      using errcode = 'P0041';
   end if;
   return old;
 end;
@@ -60,7 +60,7 @@ begin
       'remaining_count', (select count(*) from public.result_template_params p
                            where p.template_id = d.template_id),
       'deleted_names',   d.names,
-      'db_role',         current_user
+      'db_role',         session_user
     )
   from (
     select template_id,
@@ -98,6 +98,12 @@ begin
 end;
 $$;
 
+-- No is_active / result_values reference checks at the SQL layer — this RPC
+-- trusts its caller (service_role only). Callers must confirm the template
+-- is safe to remove (inactive, no longer the live template for its service /
+-- report_group) and that no result_values still reference its params before
+-- calling. The only DB-level backstop is the result_values FK on
+-- result_template_params, which will simply block the delete outright.
 create or replace function public.admin_delete_result_template(p_template_id uuid)
 returns void
 language plpgsql
