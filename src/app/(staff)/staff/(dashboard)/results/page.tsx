@@ -1,7 +1,11 @@
 import Link from "next/link";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { todayManilaISODate } from "@/lib/dates/manila";
+import {
+  isISODate,
+  manilaRangeUtc,
+  todayManilaISODate,
+} from "@/lib/dates/manila";
 import { sectionsForRole } from "@/lib/auth/role-sections";
 import { matchesAllTokens } from "@/lib/patients/search";
 import { PageHeader } from "@/components/staff/page-header";
@@ -39,8 +43,6 @@ const STATUS_BADGE: Record<string, string> = {
   cancelled: "bg-red-50 text-red-700 border-red-200",
 };
 
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-
 interface SearchProps {
   searchParams: Promise<{
     status?: string;
@@ -76,8 +78,8 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
   const page = Math.max(1, Number(sp.page) || 1);
   const offset = (page - 1) * PAGE_SIZE;
   const todayISO = todayManilaISODate();
-  const start = sp.start && DATE_RE.test(sp.start) ? sp.start : "";
-  const end = sp.end && DATE_RE.test(sp.end) ? sp.end : "";
+  const start = isISODate(sp.start) ? sp.start : "";
+  const end = isISODate(sp.end) ? sp.end : "";
   const q = sp.q?.trim() ?? "";
 
   const admin = createAdminClient();
@@ -100,8 +102,13 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
   if (status !== "all") {
     query = query.in("status", STATUS_FILTER_TO_DB[status]);
   }
-  if (start) query = query.gte("requested_at", `${start}T00:00:00`);
-  if (end) query = query.lte("requested_at", `${end}T23:59:59`);
+  // Manila calendar days, half-open. The old naive `${start}T00:00:00` bounds
+  // carried no offset, so Postgres read them in the server's UTC zone and every
+  // boundary landed 8 hours early — a test requested at 07:00 Manila fell into
+  // the previous day, and `T23:59:59` dropped the last second outright.
+  const { fromIso, toIso } = manilaRangeUtc(start, end);
+  if (fromIso) query = query.gte("requested_at", fromIso);
+  if (toIso) query = query.lt("requested_at", toIso);
 
   // Section gate per role: admin + pathologist see everything (null), medtech
   // sees lab-bench sections, xray sees imaging sections, reception sees nothing.

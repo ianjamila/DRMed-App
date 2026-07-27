@@ -77,16 +77,11 @@ const TEST_STATUS_STYLE: Record<string, string> = {
 
 type QueueFilter = "mine" | "all" | "pending_release" | "released_today";
 
-// Cap on rows pulled per view. The queue is a live worklist, so it has never
-// paginated — but a date filter can reach back into a busy past day, and a
-// silently truncated list reads as "that's everything". Hitting the cap is
-// surfaced in the UI instead.
-const ROW_LIMIT: Record<QueueFilter, number> = {
-  all: 100,
-  mine: 100,
-  pending_release: 100,
-  released_today: 200,
-};
+// Rows per page. The queue is a live worklist that rarely fills one page, so
+// the pager stays hidden day to day — but the date filter can reach back into a
+// busy past day, and a hard cap there silently truncated the list. One size for
+// every tab, so switching tabs doesn't resize the page under you.
+const PAGE_SIZE = 100;
 
 /** Everything a free-text search should be able to hit on one queue card. */
 function cardHaystack(card: QueueCard): string {
@@ -104,6 +99,7 @@ interface SearchProps {
     end?: string;
     q?: string;
     visit?: string;
+    page?: string;
   }>;
 }
 
@@ -114,6 +110,8 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   const end = isISODate(params.end) ? params.end : "";
   const q = params.q?.trim() ?? "";
   const visit = params.visit?.trim() ?? "";
+  const page = Math.max(1, Number(params.page) || 1);
+  const offset = (page - 1) * PAGE_SIZE;
   const todayISO = todayManilaISODate();
 
   const session = await requireActiveStaff();
@@ -127,7 +125,6 @@ export default async function QueuePage({ searchParams }: SearchProps) {
 
   const dateColumn = filter === "released_today" ? "released_at" : "requested_at";
   const hasDateRange = Boolean(start || end);
-  const rowLimit = ROW_LIMIT[filter];
 
   let query = supabase
     .from("test_requests")
@@ -141,6 +138,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           patients!inner ( id, drm_id, first_name, last_name )
         )
       `,
+      { count: "exact" },
     )
     // Soft-deleted lines — and every line of a soft-deleted visit — are out
     // of the worklist (0125).
@@ -156,7 +154,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
     )
     .eq("is_package_header", false)
     .order(dateColumn, { ascending: filter !== "released_today" })
-    .limit(rowLimit);
+    .range(offset, offset + PAGE_SIZE - 1);
 
   // The date filter acts on whichever timestamp the tab is about: when a test
   // was released on the "Released today" tab, when it was requested elsewhere.
@@ -199,7 +197,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
     query = query.ilike("visits.visit_number", visitFilter.pattern);
   }
 
-  const { data: rows } = await query;
+  const { data: rows, count } = await query;
   const queueTitle = queueTitleForRole(session.role);
 
   // -------------------------------------------------------------------------
@@ -330,14 +328,20 @@ export default async function QueuePage({ searchParams }: SearchProps) {
       : a.requestedAt.localeCompare(b.requestedAt),
   );
 
-  const hasFilters = hasDateRange || Boolean(q) || Boolean(visit);
+  // `q` is applied after the fetch, so it can only narrow the page in hand —
+  // everything else is a real DB filter and counts against the whole table.
+  const hasServerFilters = hasDateRange || Boolean(visit);
+  const hasFilters = hasServerFilters || Boolean(q);
   // A range that ends before today can't gain rows, so live refreshes would
   // only interrupt someone reading history. An open-ended `start` still runs up
   // to now, so that stays live.
   const viewingHistory = Boolean(end) && end < todayISO;
-  // The cap is on test_request rows, before the chemistry fold — so compare
-  // against the raw row count, not the card count.
-  const capped = (rows ?? []).length >= rowLimit;
+
+  // Paging counts test_request rows (pre-fold), which is what the range applies
+  // to — a page of rows can fold into fewer chemistry cards.
+  const total = count ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
 
   function buildHref(overrides: Record<string, string | null>): string {
     const params = new URLSearchParams();
@@ -347,6 +351,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
       end,
       q,
       visit,
+      page: page > 1 ? String(page) : "",
     };
     for (const [k, v] of Object.entries({ ...base, ...overrides })) {
       if (v) params.set(k, v);
@@ -371,7 +376,8 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         subtitle={
           <>
             Tests requested or in progress, oldest first.
-            {hasFilters ? ` · ${matched.length} matching` : null}
+            {hasServerFilters ? ` · ${total} matching` : null}
+            {q ? ` · ${matched.length} on this page match “${q}”` : null}
             {filter === "released_today" && hasDateRange
               ? " · showing the dates you picked, not just today"
               : null}
@@ -380,22 +386,22 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         actions={
           <nav className="flex gap-2 text-sm">
             <FilterTab
-              href={buildHref({ filter: "" })}
+              href={buildHref({ filter: "", page: null })}
               label="All"
               active={filter === "all"}
             />
             <FilterTab
-              href={buildHref({ filter: "pending_release" })}
+              href={buildHref({ filter: "pending_release", page: null })}
               label="Pending release"
               active={filter === "pending_release"}
             />
             <FilterTab
-              href={buildHref({ filter: "released_today" })}
+              href={buildHref({ filter: "released_today", page: null })}
               label="Released today"
               active={filter === "released_today"}
             />
             <FilterTab
-              href={buildHref({ filter: "mine" })}
+              href={buildHref({ filter: "mine", page: null })}
               label="Mine"
               active={filter === "mine"}
             />
@@ -483,7 +489,13 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           </button>
           {hasFilters ? (
             <Link
-              href={buildHref({ start: null, end: null, q: null, visit: null })}
+              href={buildHref({
+                start: null,
+                end: null,
+                q: null,
+                visit: null,
+                page: null,
+              })}
               className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-4 py-1.5 text-sm text-[color:var(--color-brand-text-soft)] transition-colors hover:border-[color:var(--color-brand-cyan)]"
             >
               Clear filters
@@ -502,13 +514,15 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         </p>
       ) : null}
 
-      {capped ? (
+      {/* The search box filters the fetched page, so say so rather than let a
+          page-1 miss read as "not in the queue". */}
+      {q && totalPages > 1 ? (
         <p
           role="status"
           className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
         >
-          Showing the first {rowLimit} tests only — narrow the dates, patient or
-          visit # to be sure you&apos;re seeing everything.
+          The search box only looks at the {PAGE_SIZE} tests on this page. Narrow
+          the dates or use Visit # to search the whole queue.
         </p>
       ) : null}
 
@@ -699,6 +713,52 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           </tbody>
         </table>
       </Panel>
+
+      {totalPages > 1 ? (
+        <nav
+          className="mt-6 flex flex-wrap items-center justify-between gap-3"
+          aria-label="Queue pages"
+        >
+          <p className="text-sm text-[color:var(--color-brand-text-soft)]">
+            Page {safePage} of {totalPages} · {total} test
+            {total === 1 ? "" : "s"}
+          </p>
+          <div className="flex gap-2">
+            {safePage > 1 ? (
+              <Link
+                href={buildHref({
+                  page: safePage > 2 ? String(safePage - 1) : null,
+                })}
+                className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-4 py-1.5 text-sm transition-colors hover:border-[color:var(--color-brand-cyan)]"
+              >
+                ← Previous
+              </Link>
+            ) : (
+              <span
+                aria-disabled="true"
+                className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-4 py-1.5 text-sm text-[color:var(--color-brand-text-soft)] opacity-50"
+              >
+                ← Previous
+              </span>
+            )}
+            {safePage < totalPages ? (
+              <Link
+                href={buildHref({ page: String(safePage + 1) })}
+                className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-4 py-1.5 text-sm transition-colors hover:border-[color:var(--color-brand-cyan)]"
+              >
+                Next →
+              </Link>
+            ) : (
+              <span
+                aria-disabled="true"
+                className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-4 py-1.5 text-sm text-[color:var(--color-brand-text-soft)] opacity-50"
+              >
+                Next →
+              </span>
+            )}
+          </div>
+        </nav>
+      ) : null}
     </div>
   );
 }
