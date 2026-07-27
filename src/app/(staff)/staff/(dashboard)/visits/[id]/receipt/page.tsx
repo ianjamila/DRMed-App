@@ -6,6 +6,8 @@ import { formatPhp } from "@/lib/marketing/format";
 import { CONTACT, SITE } from "@/lib/marketing/site";
 import { getPatientConsentState } from "@/lib/consent/gate";
 import { formatPatientName } from "@/lib/patients/format-name";
+import { shouldPrintReceipt } from "@/lib/visits/receipt-policy";
+import { NoReceiptNotice } from "@/components/staff/no-receipt-notice";
 import { PrintButton } from "./print-button";
 
 export const metadata = {
@@ -14,6 +16,94 @@ export const metadata = {
 
 interface Props {
   params: Promise<{ id: string }>;
+}
+
+/**
+ * Portal access without a bill.
+ *
+ * A consultation-only visit prints no receipt, so its Secure PIN never
+ * reaches the patient at the counter. When reception deliberately issues one
+ * from the visit page, this is what they hand over: the same portal block the
+ * full receipt carries, on its own, with no service lines or totals.
+ */
+function PortalAccessSlip({
+  visitId,
+  patientName,
+  drmId,
+  plainPin,
+}: {
+  visitId: string;
+  patientName: string;
+  drmId: string;
+  plainPin: string;
+}) {
+  return (
+    <div className="receipt-print mx-auto max-w-2xl px-4 py-8 sm:px-6 lg:px-8 print:p-0">
+      <div className="mb-4 flex items-center justify-between gap-2 print:hidden">
+        <Link
+          href={`/staff/visits/${visitId}`}
+          className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
+        >
+          ← Visit
+        </Link>
+        <PrintButton hasFlash />
+      </div>
+
+      <article className="receipt-sheet rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-8 print:border-0 print:p-0 print:text-xs">
+        <header className="border-b border-[color:var(--color-brand-bg-mid)] pb-4 print:pb-2">
+          {/* eslint-disable-next-line @next/next/no-img-element -- plain img prints reliably */}
+          <img src="/logo.png" alt="DRMed" className="mb-2 h-14 w-auto print:mb-1 print:h-10" />
+          <p className="font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)] print:text-lg">
+            {SITE.name}
+          </p>
+          <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+            {CONTACT.phone.mobile} · {CONTACT.phone.landline} · {CONTACT.email}
+          </p>
+          <p className="mt-2 inline-block rounded bg-[color:var(--color-brand-bg)] px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)]">
+            Patient portal access
+          </p>
+        </header>
+
+        <div className="py-4 text-sm print:py-2">
+          <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+            Patient
+          </p>
+          <p className="mt-0.5 font-semibold text-[color:var(--color-brand-navy)]">
+            {patientName}
+          </p>
+        </div>
+
+        <div className="rounded-xl border-2 border-dashed border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-bg)] p-5 print:break-inside-avoid print:p-3">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div>
+              <p className="text-xs text-[color:var(--color-brand-text-soft)]">DRM-ID</p>
+              <p className="font-mono text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+                {drmId}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-[color:var(--color-brand-text-soft)]">Secure PIN</p>
+              <p className="font-mono text-lg font-extrabold tracking-widest text-[color:var(--color-brand-navy)]">
+                {plainPin}
+              </p>
+            </div>
+          </div>
+          <p className="mt-3 text-xs text-[color:var(--color-brand-text-soft)]">
+            Sign in at{" "}
+            <strong>{SITE.url.replace(/^https?:\/\//, "")}/portal</strong> to view
+            results when ready. PIN is valid for 60 days and replaces any earlier
+            one. Keep it private — anyone with this PIN can view the patient&apos;s
+            lab results.
+          </p>
+        </div>
+
+        <p className="mt-4 text-xs text-[color:var(--color-brand-text-soft)] print:mt-2">
+          This slip is portal access only — it is not a receipt and shows no
+          charges.
+        </p>
+      </article>
+    </div>
+  );
 }
 
 export default async function ReceiptPage({ params }: Props) {
@@ -30,9 +120,9 @@ export default async function ReceiptPage({ params }: Props) {
           senior_pwd_id_kind, senior_pwd_id_number
         ),
         test_requests (
-          id,
+          id, deleted_at,
           base_price_php, discount_kind, discount_amount_php, final_price_php,
-          services ( code, name, price_php )
+          services ( code, name, price_php, kind )
         )
       `,
     )
@@ -52,18 +142,63 @@ export default async function ReceiptPage({ params }: Props) {
     const base = tr.base_price_php ?? svc?.price_php ?? 0;
     const discount = tr.discount_amount_php ?? 0;
     const final = tr.final_price_php ?? base - discount;
-    return { id: tr.id, svc, base, discount, final, discountKind: tr.discount_kind };
+    return {
+      id: tr.id,
+      svc,
+      base,
+      discount,
+      final,
+      discountKind: tr.discount_kind,
+      deleted: tr.deleted_at !== null,
+    };
   });
+
+  // Plain PIN — present only on the redirect from createVisit, or from a
+  // deliberate re-issue. The cookie is read here (server component is
+  // read-only) and cleared right after mount by ClearPinOnMount.
+  const plainPin = await peekVisitPinFlash(visit.id);
+
+  // Item 1 / decision 4: consultation-only visits print no bill. The button
+  // that links here is hidden for them, but the URL is guessable and stale
+  // links exist — explain rather than 404. The one exception is a freshly
+  // re-issued PIN: reception asked for portal access on purpose, so print the
+  // PIN on its own slip (no billing lines) rather than swallowing it.
+  if (
+    !shouldPrintReceipt(
+      lines
+        .filter((l) => !l.deleted)
+        .map((l) => l.svc?.kind)
+        .filter((kind): kind is string => Boolean(kind)),
+    )
+  ) {
+    if (plainPin) {
+      return (
+        <PortalAccessSlip
+          visitId={visit.id}
+          patientName={formatPatientName(patient)}
+          drmId={patient.drm_id}
+          plainPin={plainPin}
+        />
+      );
+    }
+    return (
+      <NoReceiptNotice
+        title={`No receipt for visit #${visit.visit_number}`}
+        backHref={`/staff/visits/${visit.id}`}
+        secondaryHref={
+          visit.visit_group_id
+            ? `/staff/visits/group/${visit.visit_group_id}/receipt`
+            : undefined
+        }
+        secondaryLabel="Print the lab slip for this patient visit →"
+      />
+    );
+  }
 
   const subtotal = lines.reduce((s, l) => s + Number(l.base), 0);
   const totalDiscount = lines.reduce((s, l) => s + Number(l.discount), 0);
   const total = lines.reduce((s, l) => s + Number(l.final), 0);
   const hasSeniorPwdLine = lines.some((l) => l.discountKind === "senior_pwd_20");
-
-  // Plain PIN — present only on the redirect from createVisit. The cookie
-  // is read here (server component is read-only) and cleared right after
-  // mount by ClearPinOnMount.
-  const plainPin = await peekVisitPinFlash(visit.id);
 
   return (
     <div className="receipt-print mx-auto max-w-2xl px-4 py-8 sm:px-6 lg:px-8 print:p-0">

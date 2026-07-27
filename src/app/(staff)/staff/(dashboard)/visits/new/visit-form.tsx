@@ -16,7 +16,8 @@ import {
   StableTextarea,
 } from "@/components/forms/stable-fields";
 import { formatPhp } from "@/lib/marketing/format";
-import { defaultClinicFee } from "@/lib/visits/consultation-fee";
+import { defaultClinicFee, doctorLineBase } from "@/lib/visits/consultation-fee";
+import { isConsultOnlyOrder } from "@/lib/visits/receipt-policy";
 import { isSeniorPwdEligible, seniorPwdDiscount } from "@/lib/pricing/senior";
 import {
   createVisitAction,
@@ -81,6 +82,7 @@ interface LineState {
   // Doctor procedure lines:
   procedureDescription: string;
   hmoApprovedAmount: string;
+  procedureFee: string; // counter-typed fee; blank = the catalog price
   consultFee: string; // manual consultation fee (doctor_consultation only)
 }
 
@@ -323,6 +325,7 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [], in
         doctorPf: "",
         procedureDescription: "",
         hmoApprovedAmount: "",
+        procedureFee: "",
         consultFee: "",
       }
     );
@@ -338,13 +341,18 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [], in
       .filter((s) => selected.has(s.id))
       .map((s) => {
         const ls = getLine(s.id);
-        const base =
-          s.kind === "doctor_consultation"
-            ? (() => {
-                const n = Number(ls.consultFee);
-                return Number.isFinite(n) && n >= 0 ? n : 0;
-              })()
-            : basePriceFor(s, hmoSelectedFor(s.kind));
+        // Same rule the create action applies, from the same helper: doctor
+        // lines are counter-typed, everything else is catalog-priced.
+        const base = doctorLineBase({
+          kind: s.kind,
+          typedRaw:
+            s.kind === "doctor_consultation"
+              ? ls.consultFee
+              : s.kind === "doctor_procedure"
+                ? ls.procedureFee
+                : "",
+          catalogPrice: basePriceFor(s, hmoSelectedFor(s.kind)),
+        });
         const discount = discountFor(s, base, ls.discountKind, ls.customDiscount);
         const final = Math.max(0, base - discount);
         return { service: s, base, discount, final, ls };
@@ -353,6 +361,15 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [], in
   }, [services, selected, doctorHmoSelected, labHmoSelected, lineState]);
 
   const total = lines.reduce((sum, l) => sum + l.final, 0);
+
+  // Receipt policy preview (item 1 / decision 4) — same helper the create
+  // action and the receipt pages use, so the form can't promise a slip the
+  // server then withholds.
+  const selectedKinds = lines.map((l) => l.service.kind);
+  const consultOnlyOrder = isConsultOnlyOrder(selectedKinds);
+  const doctorLinesAreConsultOnly = isConsultOnlyOrder(
+    selectedKinds.filter((kind) => DOCTOR_KINDS.has(kind)),
+  );
 
   return (
     <form action={formAction} className="grid gap-6">
@@ -650,6 +667,11 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [], in
               // pf_split → 100; rent_paying / shareholder → 0.
               const selectedPhysician = physicians.find((p) => p.id === attendingPhysicianId);
               const cfAuto = (isConsult || isProcedure) ? defaultClinicFee(selectedPhysician?.compensation_arrangement) : 0;
+              // Procedures are counter-priced but start from the price list —
+              // the box is prefilled so reception only types when the case
+              // differs (the create action applies the same fallback).
+              const catalogPrice = basePriceFor(s, hmoSelectedFor(s.kind));
+              const procedureFeeDefault = isProcedure ? String(catalogPrice) : "";
               const clinicFeeDefault = (isConsult || isProcedure) ? String(cfAuto) : "";
               const doctorPfDefault = (isConsult || isProcedure)
                 ? String(Math.max(0, final - cfAuto))
@@ -794,6 +816,30 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [], in
 
                   {isProcedure ? (
                     <div className="mt-2 grid grid-cols-12 gap-2 rounded-md bg-[color:var(--color-brand-bg)] px-2 py-2">
+                      <div className="col-span-12 sm:col-span-4">
+                        <Label
+                          htmlFor={`procedure_fee__${s.id}`}
+                          className="text-[10px]"
+                        >
+                          Procedure fee (₱)
+                        </Label>
+                        <input
+                          id={`procedure_fee__${s.id}`}
+                          name={`procedure_fee__${s.id}`}
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={ls.procedureFee || procedureFeeDefault}
+                          onChange={(e) =>
+                            updateLine(s.id, { procedureFee: e.target.value })
+                          }
+                          className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 font-mono text-xs focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+                        />
+                        <p className="mt-0.5 text-[10px] text-[color:var(--color-brand-text-soft)]">
+                          Starts at the price list ({formatPhp(catalogPrice)}) —
+                          type over it when this case differs.
+                        </p>
+                      </div>
                       <div className="col-span-12 sm:col-span-8">
                         <Label
                           htmlFor={`procedure_description__${s.id}`}
@@ -936,8 +982,18 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [], in
       {doctorSelectedCount > 0 && labSelectedCount > 0 ? (
         <p className="rounded-lg border border-dashed border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-bg)] px-3 py-2 text-xs text-[color:var(--color-brand-navy)]">
           This order has both Doctor and Lab &amp; Services items — it will create{" "}
-          <strong>two visits and two receipts</strong> (one for the doctor&apos;s
-          professional fee, one for lab &amp; services).
+          <strong>two visits</strong> (one for the doctor&apos;s professional
+          fee, one for lab &amp; services)
+          {doctorLinesAreConsultOnly
+            ? ", and print the lab slip only — consultation slips aren't printed."
+            : " and two receipts."}
+        </p>
+      ) : null}
+
+      {consultOnlyOrder ? (
+        <p className="rounded-lg border border-dashed border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-bg)] px-3 py-2 text-xs text-[color:var(--color-brand-navy)]">
+          Consultation only — <strong>no receipt prints</strong>. Send the
+          patient in to the doctor; record the payment from the visit page.
         </p>
       ) : null}
 
@@ -960,8 +1016,9 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [], in
       </div>
 
       <p className="text-xs text-[color:var(--color-brand-text-soft)]">
-        After save, a 60-day Secure PIN is issued and shown ONCE on the
-        printable receipt. The patient uses it to access lab results online.
+        {consultOnlyOrder
+          ? "A 60-day Secure PIN is still issued, but consultation-only visits print no receipt to show it on — re-issue it from the patient page if the patient later needs portal access."
+          : "After save, a 60-day Secure PIN is issued and shown ONCE on the printable receipt. The patient uses it to access lab results online."}
       </p>
     </form>
   );

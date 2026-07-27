@@ -8,6 +8,46 @@ export function defaultClinicFee(arrangement: string | undefined | null): number
   return 100; // pf_split (and unknown) → clinic keeps ₱100
 }
 
+interface DoctorLineBaseInput {
+  kind: string;
+  /** Raw counter-typed fee (`consult_fee__…` / `procedure_fee__…`). */
+  typedRaw: string;
+  /** Catalog price for the line, already resolved cash-vs-HMO by the caller. */
+  catalogPrice: number;
+}
+
+/**
+ * Base price of one order line before discounts.
+ *
+ * Both doctor kinds are priced at the counter (partner revisions item 3) —
+ * the catalog row exists to name the service, not to fix its price. They
+ * differ in what an EMPTY box means:
+ *
+ * - `doctor_consultation` — blank is ₱0. Consultation services carry no
+ *   meaningful catalog price, and the create action rejects a ₱0 consult
+ *   outright, so a blank box surfaces as "enter a fee" rather than silently
+ *   billing a number nobody typed.
+ * - `doctor_procedure` — blank falls back to the catalog price. Procedures
+ *   are admin-entered services WITH a real price; the free-entry box is an
+ *   override for the ones that vary by case, not a demand to retype the usual
+ *   amount every visit.
+ *
+ * Everything else (lab tests, packages, imaging) ignores the typed value.
+ */
+export function doctorLineBase({
+  kind,
+  typedRaw,
+  catalogPrice,
+}: DoctorLineBaseInput): number {
+  if (kind !== "doctor_consultation" && kind !== "doctor_procedure") {
+    return catalogPrice;
+  }
+  const fallback = kind === "doctor_consultation" ? 0 : catalogPrice;
+  if (typedRaw.trim() === "") return fallback;
+  const typed = Number(typedRaw);
+  return Number.isFinite(typed) && typed >= 0 ? typed : fallback;
+}
+
 interface SplitInput {
   finalPrice: number;
   arrangement: string | undefined | null;

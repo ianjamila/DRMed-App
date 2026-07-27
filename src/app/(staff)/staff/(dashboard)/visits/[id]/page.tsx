@@ -23,7 +23,12 @@ import {
   visitDeletability,
   QUEUE_DELETE_ROLES,
 } from "@/lib/visits/deletion";
+import {
+  CONSULT_ONLY_RECEIPT_NOTE,
+  shouldPrintReceipt,
+} from "@/lib/visits/receipt-policy";
 import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
+import { ReissuePinButton } from "@/components/staff/reissue-pin-button";
 
 export const metadata = {
   title: "Visit — staff",
@@ -31,6 +36,9 @@ export const metadata = {
 
 interface Props {
   params: Promise<{ id: string }>;
+  // `created=consult` is set by the create action when it skips the receipt
+  // for a consultation-only visit (item 1 / decision 4).
+  searchParams: Promise<{ created?: string }>;
 }
 
 const PAYMENT_STATUS_STYLE: Record<string, string> = {
@@ -68,8 +76,9 @@ const DISCOUNT_KIND_LABEL: Record<string, string> = {
   custom: "Custom",
 };
 
-export default async function VisitDetailPage({ params }: Props) {
+export default async function VisitDetailPage({ params, searchParams }: Props) {
   const { id } = await params;
+  const { created } = await searchParams;
   const session = await requireActiveStaff();
   const isAdmin = session.role === "admin";
   const supabase = await createClient();
@@ -194,6 +203,19 @@ export default async function VisitDetailPage({ params }: Props) {
       }
     }
   }
+
+  // Item 1 / decision 4: no receipt for a consultation-only visit. Deleted
+  // lines don't count — a visit whose lab line was removed from the queue is
+  // a consultation visit now.
+  // Mirrors the role check inside reissuePatientPinAction.
+  const canIssuePin = session.role === "reception" || session.role === "admin";
+  const printsReceipt = shouldPrintReceipt(
+    (tests ?? [])
+      .filter((t) => t.deleted_at === null)
+      .map((t) => (Array.isArray(t.services) ? t.services[0] : t.services))
+      .map((svc) => svc?.kind)
+      .filter((kind): kind is string => Boolean(kind)),
+  );
 
   const isPaid = visit.payment_status === "paid" || visit.payment_status === "waived";
   const balance = Number(visit.total_php) - Number(visit.paid_php);
@@ -325,12 +347,23 @@ export default async function VisitDetailPage({ params }: Props) {
         </div>
         {visitDeleted ? null : (
           <div className="flex flex-wrap items-center gap-2">
-            <Link
-              href={`/staff/visits/${visit.id}/receipt`}
-              className="rounded-md border border-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-navy)] hover:text-white"
-            >
-              Receipt
-            </Link>
+            {printsReceipt ? (
+              <Link
+                href={`/staff/visits/${visit.id}/receipt`}
+                className="rounded-md border border-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-navy)] hover:text-white"
+              >
+                Receipt
+              </Link>
+            ) : canIssuePin ? (
+              // No receipt to carry the PIN (item 1) — this is the deliberate
+              // path for a consultation patient who wants portal access.
+              <ReissuePinButton
+                patientId={patient.id}
+                visitId={visit.id}
+                label="Issue portal PIN"
+                confirmText="Issue a Secure PIN for this visit and print the portal slip? Any earlier PIN for this visit stops working immediately."
+              />
+            ) : null}
             <Link
               href={`/staff/payments/new?visit_id=${visit.id}`}
               className="rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
@@ -347,6 +380,21 @@ export default async function VisitDetailPage({ params }: Props) {
           </div>
         )}
       </header>
+
+      {created === "consult" && !visitDeleted ? (
+        <section className="mt-4 rounded-xl border border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-bg)] p-4">
+          <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
+            Visit created
+          </p>
+          <p className="mt-1 text-sm text-[color:var(--color-brand-navy)]">
+            {CONSULT_ONLY_RECEIPT_NOTE} Send the patient in to the doctor —
+            record the payment here when they settle at the counter.
+            {canIssuePin
+              ? " If they need the online portal anyway, use “Issue portal PIN” above."
+              : ""}
+          </p>
+        </section>
+      ) : null}
 
       {visitDeleted ? (
         <section className="mt-6 rounded-xl border border-red-200 bg-red-50 p-5">
@@ -750,7 +798,8 @@ export default async function VisitDetailPage({ params }: Props) {
                           </span>
                         ) : null}
                       </p>
-                      {isConsult && (t.clinic_fee_php != null || t.doctor_pf_php != null) ? (
+                      {(isConsult || isProcedure) &&
+                      (t.clinic_fee_php != null || t.doctor_pf_php != null) ? (
                         <p className="mt-1 text-[10px] text-[color:var(--color-brand-text-soft)]">
                           Clinic fee {formatPhp(Number(t.clinic_fee_php ?? 0))} ·
                           PF {formatPhp(Number(t.doctor_pf_php ?? 0))}

@@ -6,6 +6,8 @@ import { formatPhp } from "@/lib/marketing/format";
 import { CONTACT, SITE } from "@/lib/marketing/site";
 import { getPatientConsentState } from "@/lib/consent/gate";
 import { formatPatientName } from "@/lib/patients/format-name";
+import { shouldPrintReceipt } from "@/lib/visits/receipt-policy";
+import { NoReceiptNotice } from "@/components/staff/no-receipt-notice";
 import { PrintButton } from "./print-button";
 
 export const metadata = { title: "Combined receipt — staff" };
@@ -30,7 +32,7 @@ export default async function GroupReceiptPage({ params }: Props) {
           senior_pwd_id_kind, senior_pwd_id_number
         ),
         test_requests (
-          id, base_price_php, discount_kind, discount_amount_php, final_price_php,
+          id, deleted_at, base_price_php, discount_kind, discount_amount_php, final_price_php,
           services ( code, name, price_php, kind )
         )
       `,
@@ -46,9 +48,13 @@ export default async function GroupReceiptPage({ params }: Props) {
   if (!patient) notFound();
 
   const consent = await getPatientConsentState(patient.id);
-  const plainPin = await peekVisitGroupPinFlash(groupId);
 
   // Order the slips: Doctor / PF first, then Lab & Services.
+  //
+  // Item 1 / decision 4: a slip whose every (live) line is a consultation is
+  // dropped — that is the doctor slip the clinic asked us to stop printing.
+  // The lab half of the same encounter still prints, and it carries the
+  // portal PIN block below, so nothing is lost by suppressing this one.
   const slips = visits
     .map((v) => {
       const lines = (v.test_requests ?? []).map((tr) => {
@@ -56,12 +62,41 @@ export default async function GroupReceiptPage({ params }: Props) {
         const base = tr.base_price_php ?? svc?.price_php ?? 0;
         const discount = tr.discount_amount_php ?? 0;
         const final = tr.final_price_php ?? base - discount;
-        return { id: tr.id, svc, base, discount, final, discountKind: tr.discount_kind };
+        return {
+          id: tr.id,
+          svc,
+          base,
+          discount,
+          final,
+          discountKind: tr.discount_kind,
+          deleted: tr.deleted_at !== null,
+        };
       });
       const isDoctor = lines.some((l) => l.svc && DOCTOR_KINDS.has(l.svc.kind));
-      return { visit: v, lines, isDoctor };
+      const prints = shouldPrintReceipt(
+        lines
+          .filter((l) => !l.deleted)
+          .map((l) => l.svc?.kind)
+          .filter((kind): kind is string => Boolean(kind)),
+      );
+      return { visit: v, lines, isDoctor, prints };
     })
+    .filter((slip) => slip.prints)
     .sort((a, b) => Number(b.isDoctor) - Number(a.isDoctor));
+
+  // Every half suppressed — reachable when the lab half was deleted from the
+  // queue and only the consultation survives. Say so instead of rendering a
+  // slip-less page whose only content is the portal PIN.
+  if (slips.length === 0) {
+    return (
+      <NoReceiptNotice
+        title="No receipt for this patient visit"
+        backHref={`/staff/visits/${visits[0]!.id}`}
+      />
+    );
+  }
+
+  const plainPin = await peekVisitGroupPinFlash(groupId);
 
   return (
     <div className="receipt-print mx-auto max-w-2xl px-4 py-8 sm:px-6 lg:px-8 print:p-0">
@@ -212,7 +247,9 @@ export default async function GroupReceiptPage({ params }: Props) {
         </div>
         <p className="mt-3 text-xs text-[color:var(--color-brand-text-soft)]">
           Sign in at <strong>{SITE.url.replace(/^https?:\/\//, "")}/portal</strong> to view
-          results when ready. One PIN covers both receipts. Valid for 60 days.
+          results when ready.{" "}
+          {slips.length > 1 ? "One PIN covers both receipts. " : ""}Valid for 60
+          days.
         </p>
       </div>
     </div>
