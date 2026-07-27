@@ -16,6 +16,7 @@ import {
   type TemplateParam,
 } from "@/lib/results/types";
 import { loadTemplateParams } from "@/lib/results/loaders";
+import { labQueueGate } from "@/lib/visits/lab-gate";
 
 export const metadata = {
   title: "Test — staff",
@@ -51,7 +52,7 @@ export default async function QueueTestDetailPage({ params }: Props) {
         deleted_at, delete_reason,
         services!inner ( id, code, name, turnaround_hours, requires_signoff, is_send_out ),
         visits!inner (
-          id, visit_number, deleted_at,
+          id, visit_number, deleted_at, payment_status, hmo_provider_id,
           patients!inner ( id, drm_id, first_name, last_name, phone, sex, birthdate )
         ),
         results ( id, uploaded_at, file_size_bytes, notes, generation_kind, finalised_at, control_no, amended_at, amendment_count, image_filename )
@@ -149,6 +150,10 @@ export default async function QueueTestDetailPage({ params }: Props) {
 
   const result = Array.isArray(test.results) ? test.results[0] : test.results;
   const ownedByMe = test.assigned_to === user?.id;
+  // Payment gate (item 10): a 'requested' test on a visit still waiting for
+  // payment shows a notice instead of the Claim button. The claim Server
+  // Action enforces the same rule, so this is UX, not the guard.
+  const claimGate = labQueueGate(visit);
   const claimable = test.status === "requested";
   const editable =
     ["in_progress", "result_uploaded"].includes(test.status) &&
@@ -337,14 +342,23 @@ export default async function QueueTestDetailPage({ params }: Props) {
 
       <section className="mt-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
         {claimable ? (
-          <div>
-            <p className="text-sm text-[color:var(--color-brand-text-mid)]">
-              This test is unassigned. Claim it to start working on it.
-            </p>
-            <div className="mt-4">
-              <ClaimButton testRequestId={test.id} />
+          claimGate.ok ? (
+            <div>
+              <p className="text-sm text-[color:var(--color-brand-text-mid)]">
+                This test is unassigned. Claim it to start working on it.
+              </p>
+              <div className="mt-4">
+                <ClaimButton testRequestId={test.id} />
+              </div>
             </div>
-          </div>
+          ) : (
+            <p
+              role="status"
+              className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+            >
+              {claimGate.hint}
+            </p>
+          )
         ) : null}
 
         {canStructured ? (

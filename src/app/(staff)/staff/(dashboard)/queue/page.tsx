@@ -16,6 +16,7 @@ import {
 import { matchesAllTokens } from "@/lib/patients/search";
 import { visitNumberFilter } from "@/lib/visits/visit-number-filter";
 import { testDeletability } from "@/lib/visits/deletion";
+import { LAB_QUEUE_GATE_VISITS_OR } from "@/lib/visits/lab-gate";
 import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
 
 // ---------------------------------------------------------------------------
@@ -155,6 +156,16 @@ export default async function QueuePage({ searchParams }: SearchProps) {
     .eq("is_package_header", false)
     .order(dateColumn, { ascending: filter !== "released_today" })
     .range(offset, offset + PAGE_SIZE - 1);
+
+  // Payment gate (item 10, decision 1): the worklist tabs hide every test of a
+  // visit that's still waiting for payment — fully paid, waived, or HMO-billed
+  // visits only. Applied in the query so paging counts stay honest. "Pending
+  // release" and "Released today" are records of completed work, not claimable
+  // work, so they stay ungated (release itself is trigger-enforced on payment).
+  const worklistTab = filter === "all" || filter === "mine";
+  if (worklistTab) {
+    query = query.or(LAB_QUEUE_GATE_VISITS_OR, { foreignTable: "visits" });
+  }
 
   // The date filter acts on whichever timestamp the tab is about: when a test
   // was released on the "Released today" tab, when it was requested elsewhere.
@@ -376,6 +387,9 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         subtitle={
           <>
             Tests requested or in progress, oldest first.
+            {worklistTab
+              ? " Visits waiting for payment appear once they're paid or HMO-covered."
+              : null}
             {hasServerFilters ? ` · ${total} matching` : null}
             {q ? ` · ${matched.length} on this page match “${q}”` : null}
             {filter === "released_today" && hasDateRange

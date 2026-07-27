@@ -7,6 +7,7 @@ import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { translatePgError } from "@/lib/accounting/pg-errors";
+import { labQueueGate } from "@/lib/visits/lab-gate";
 
 export type ClaimResult = { ok: true } | { ok: false; error: string };
 
@@ -21,7 +22,9 @@ export async function claimTestAction(
   // queue list already filters is_package_header=false.
   const { data: testRequest } = await supabase
     .from("test_requests")
-    .select("id, is_package_header, visits!inner ( deleted_at )")
+    .select(
+      "id, is_package_header, visits!inner ( deleted_at, payment_status, hmo_provider_id )",
+    )
     .eq("id", testRequestId)
     .maybeSingle();
 
@@ -38,6 +41,12 @@ export async function claimTestAction(
       ok: false,
       error: "Package headers cannot be claimed — they have no work.",
     };
+  }
+  // Payment gate (item 10, decision 1): the queue hides these rows, but a
+  // stale tab or direct link must not start lab work on an unpaid visit.
+  const gate = labQueueGate(testRequest.visits);
+  if (!gate.ok) {
+    return { ok: false, error: gate.hint };
   }
 
   // Only claim if currently 'requested' — concurrency-safe.
