@@ -1,4 +1,4 @@
--- 0120_employee_leave_balance_authz.sql
+-- 0123_employee_leave_balance_authz.sql
 --
 -- Add an authorization check to public.employee_leave_balance().
 --
@@ -129,28 +129,28 @@ begin
 
   -- (1) still SECURITY DEFINER — it has to be, the caller cannot read the table
   if v_secdef is not true then
-    raise exception '0120: employee_leave_balance is no longer SECURITY DEFINER';
+    raise exception '0123: employee_leave_balance is no longer SECURITY DEFINER';
   end if;
 
   -- (2) the body actually carries the check
   if v_lang <> 'plpgsql' or v_src not like '%42501%' then
-    raise exception '0120: employee_leave_balance body has no authorization check (lang=%, src missing 42501)', v_lang;
+    raise exception '0123: employee_leave_balance body has no authorization check (lang=%, src missing 42501)', v_lang;
   end if;
 
   -- (3) authenticated MUST keep EXECUTE or the no-overdraw trigger breaks (FACT 2)
   if not has_function_privilege('authenticated', 'public.employee_leave_balance(uuid, text, date)', 'EXECUTE') then
-    raise exception '0120: employee_leave_balance lost authenticated EXECUTE — staff leave-record writes would fail';
+    raise exception '0123: employee_leave_balance lost authenticated EXECUTE — staff leave-record writes would fail';
   end if;
 
   -- (4) service_role MUST keep EXECUTE or payslip PDFs and the admin payroll
   --     pages break
   if not has_function_privilege('service_role', 'public.employee_leave_balance(uuid, text, date)', 'EXECUTE') then
-    raise exception '0120: employee_leave_balance lost service_role EXECUTE — the admin client would fail';
+    raise exception '0123: employee_leave_balance lost service_role EXECUTE — the admin client would fail';
   end if;
 
   -- (5) anon must NOT have it (0118 state preserved)
   if has_function_privilege('anon', 'public.employee_leave_balance(uuid, text, date)', 'EXECUTE') then
-    raise exception '0120: employee_leave_balance is anon-executable — 0118 state was lost';
+    raise exception '0123: employee_leave_balance is anon-executable — 0118 state was lost';
   end if;
 end
 $verify$;
