@@ -10,15 +10,16 @@ import { QuickLinks } from "./_components/quick-links";
 import { ActivityStrip, type ActivityItem } from "./_components/activity-strip";
 import { formatPeso, formatTime, relativeAge } from "./_components/format";
 
-// Quicklinks mirror the reorganized sidebar groups (Front desk / Billing /
-// Services). Sell gift code and Registration link are parked in the sidebar's
-// "Hidden tabs" — now an admin-only section (partner revision 8), so reception
-// no longer sees them in the sidebar at all — and are deliberately not
-// surfaced here either. The pages themselves stay reachable by URL, and the
-// "Gift codes sold" stat card below still deep-links to the sell page for the
-// rare counter sale. Cash drawer was restored to Front desk (revisions 2/9)
-// and carries End of day as its second tab; My payslips moved to the sidebar's
-// Personal section (revision 8) so every role keeps payslip access.
+// Quicklinks mirror the sidebar groups (Front desk / Billing / Services /
+// Personal). Cash drawer was restored to Front desk (revisions 2/9) and
+// carries End of day as its second tab.
+//
+// Partner revision 8 made the sidebar's "Hidden tabs" section admin-only, so
+// reception no longer sees Sell gift code or Registration link there at all.
+// Sell gift code is therefore surfaced here as reception's ONE deliberate
+// doorway to the rare counter sale — without it they'd have to type the URL.
+// Registration link stays parked (it only saves counter time; patients get the
+// link from the website).
 const QUICK_GROUPS: { label: string; items: { href: string; label: string }[] }[] = [
   {
     label: "Front desk",
@@ -29,6 +30,7 @@ const QUICK_GROUPS: { label: string; items: { href: string; label: string }[] }[
       { href: "/staff/visits/queue", label: "Reception Queue" },
       { href: "/staff/inquiries", label: "Inquiries" },
       { href: "/staff/payments/cash-drawer", label: "Cash drawer" },
+      { href: "/staff/gift-codes/sell", label: "Sell gift code" },
     ],
   },
   {
@@ -44,6 +46,16 @@ const QUICK_GROUPS: { label: string; items: { href: string; label: string }[] }[
     items: [
       { href: "/staff/visits/new?filter=lab", label: "New lab request" },
       { href: "/staff/visits/new?filter=imaging", label: "New imaging request" },
+    ],
+  },
+  {
+    // Mirrors the sidebar's Personal section. My payslips moved there in
+    // revision 8 so every role keeps payslip access; staff check it on payday,
+    // so it earns a dashboard shortcut too.
+    label: "Personal",
+    items: [
+      { href: "/staff/payslips", label: "My payslips" },
+      { href: "/staff/profile", label: "My profile" },
     ],
   },
 ];

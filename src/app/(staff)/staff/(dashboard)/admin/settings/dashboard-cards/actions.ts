@@ -4,16 +4,24 @@ import { revalidatePath } from "next/cache";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
-import { DASHBOARD_CARDS, ALL_ROLES, type DashboardRole } from "@/lib/dashboards/cards";
+import {
+  DASHBOARD_CARDS,
+  ALL_ROLES,
+  matchesCardDefault,
+  type DashboardRole,
+} from "@/lib/dashboards/cards";
 
 interface ActionResult {
   ok: boolean;
   error?: string;
 }
 
-// Toggle visibility for one (role, card_id). Persists via upsert.
-// If visible=true (the default), the row is deleted so the absence-means-visible
-// invariant holds — keeps the table small.
+// Toggle visibility for one (role, card_id). The table stores genuine
+// overrides only: when the requested state already matches the card's own
+// default the row is deleted, otherwise it's upserted. For an ordinary card
+// that reproduces the old "absence means visible" behaviour; for a
+// `defaultHidden` card it means absence reads as hidden and turning it on
+// stores an explicit visible=true.
 export async function setCardVisibility(
   role: DashboardRole,
   cardId: string,
@@ -24,13 +32,14 @@ export async function setCardVisibility(
   if (!ALL_ROLES.includes(role)) {
     return { ok: false, error: "Invalid role." };
   }
-  if (!DASHBOARD_CARDS.find((c) => c.id === cardId)) {
+  const card = DASHBOARD_CARDS.find((c) => c.id === cardId);
+  if (!card) {
     return { ok: false, error: "Unknown card id." };
   }
 
   const admin = createAdminClient();
 
-  if (visible) {
+  if (matchesCardDefault(card, visible)) {
     const { error } = await admin
       .from("dashboard_card_prefs")
       .delete()
@@ -42,7 +51,7 @@ export async function setCardVisibility(
       {
         role,
         card_id: cardId,
-        visible: false,
+        visible,
         updated_by: session.user_id,
         updated_at: new Date().toISOString(),
       },

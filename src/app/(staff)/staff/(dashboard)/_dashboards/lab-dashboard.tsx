@@ -45,6 +45,10 @@ function buildQuickLinks(role: Role): QuickLink[] {
   if (role === "admin") {
     links.push({ href: "/staff/admin/result-templates", label: "Result templates" });
   }
+  // Every role draws a payslip, and they're checked on payday — worth a
+  // shortcut off the bench. Lives in the sidebar's Personal section since
+  // partner revision 8 moved it out of the now-admin-only "Hidden tabs".
+  links.push({ href: "/staff/payslips", label: "My payslips" });
   return links;
 }
 

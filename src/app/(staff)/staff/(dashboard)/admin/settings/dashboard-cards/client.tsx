@@ -10,6 +10,9 @@ interface CardItem {
   label: string;
   group: "snapshot" | "operations" | "money" | "people" | "attention";
   sensitive: boolean;
+  // Ships off for this role. Badged so an admin can tell "nobody turned this
+  // off" from "someone turned this off".
+  defaultHidden: boolean;
   visible: boolean;
 }
 
@@ -103,6 +106,14 @@ export function DashboardCardSettingsClient({
                           {c.sensitive ? (
                             <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-900">
                               Sensitive
+                            </span>
+                          ) : null}
+                          {c.defaultHidden ? (
+                            <span
+                              title="This card ships off for this role. Turn it on to add it to the dashboard."
+                              className="rounded-full bg-[color:var(--color-brand-bg-mid)] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]"
+                            >
+                              Off by default
                             </span>
                           ) : null}
                         </div>
