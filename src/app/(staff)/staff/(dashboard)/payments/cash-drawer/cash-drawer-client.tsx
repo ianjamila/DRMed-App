@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { recordCashAdjustmentAction, voidCashAdjustmentAction }
   from "./actions";
 import { PaymentsTabs } from "../_components/payments-tabs";
+import { friendlyManilaDate } from "@/lib/dates/manila";
 import type { Database } from "@/types/database";
 
 type Adjustment = Database["public"]["Tables"]["eod_cash_adjustments"]["Row"];
@@ -14,21 +15,6 @@ type Staff = { id: string; full_name: string; role: string };
 
 const PESO = (n: number) =>
   new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format(n);
-
-const friendlyManilaDate = (isoDate: string) => {
-  const d = new Date(`${isoDate}T12:00:00+08:00`);
-  const weekday = new Intl.DateTimeFormat("en-US", {
-    weekday: "long",
-    timeZone: "Asia/Manila",
-  }).format(d);
-  const longDate = new Intl.DateTimeFormat("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-    timeZone: "Asia/Manila",
-  }).format(d);
-  return `${weekday}, ${longDate}`;
-};
 
 // Plain-English labels for the stored `kind` codes, so reception never sees
 // raw values like "petty_cash" or "float_topup".

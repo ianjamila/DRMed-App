@@ -2,7 +2,12 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
-import { todayManilaISODate } from "@/lib/dates/manila";
+import {
+  friendlyManilaDate,
+  isISODate,
+  shiftISODate,
+  todayManilaISODate,
+} from "@/lib/dates/manila";
 import { formatPatientName } from "@/lib/patients/format-name";
 import { paymentStatusLabel } from "@/lib/ui/payment-status";
 import { RealtimeRefresher } from "@/components/staff/realtime-refresher";
@@ -24,8 +29,9 @@ export const metadata = {
   title: "Reception Queue — staff",
 };
 
-// Today-scoped, live reception worklist. Payment and test-status changes drive
-// the buckets, so the page must always render the current row of the DB.
+// Day-scoped, live reception worklist — today by default, any past day via the
+// picker. Payment and test-status changes drive the buckets, so the page must
+// always render the current row of the DB.
 export const dynamic = "force-dynamic";
 
 const PHP = new Intl.NumberFormat("en-PH", {
@@ -49,11 +55,27 @@ const STAGE_TABS: { value: QueueStage; label: string }[] = [
   { value: "completed", label: "Completed" },
 ];
 
-const STAGE_EMPTY: Record<QueueStage, string> = {
+const STAGE_EMPTY_TODAY: Record<QueueStage, string> = {
   waiting: "No visits waiting for payment. The counter's all caught up.",
   processing: "Nothing in processing — no lab or imaging work outstanding.",
   completed: "No completed visits yet today.",
 };
+
+// Past days read as history, not as a worklist — the copy has to follow.
+const STAGE_EMPTY_PAST: Record<QueueStage, string> = {
+  waiting: "No visits were left waiting for payment on this day.",
+  processing: "No visit was still in processing on this day.",
+  completed: "No visits were completed on this day.",
+};
+
+// Stage tabs and the day picker each have to carry the other's selection, or
+// switching one silently resets the other. `date` is omitted when it's today so
+// the default view keeps a clean /staff/visits/queue?stage=… URL.
+function queueHref(stage: QueueStage, date: string, today: string): string {
+  const params = new URLSearchParams({ stage });
+  if (date !== today) params.set("date", date);
+  return `/staff/visits/queue?${params.toString()}`;
+}
 
 type QueueTestRow = {
   id: string;
@@ -103,7 +125,7 @@ function flattenTests(v: QueueVisitRow): QueueTestLike[] {
 }
 
 interface SearchProps {
-  searchParams: Promise<{ stage?: string }>;
+  searchParams: Promise<{ stage?: string; date?: string }>;
 }
 
 export default async function VisitsQueuePage({ searchParams }: SearchProps) {
@@ -118,7 +140,14 @@ export default async function VisitsQueuePage({ searchParams }: SearchProps) {
       ? sp.stage
       : "waiting";
 
+  // The picker only ever looks backwards: a visit_date is stamped when the
+  // visit is created, so there is nothing to see ahead of today.
   const today = todayManilaISODate();
+  const date = isISODate(sp.date) && sp.date <= today ? sp.date : today;
+  const isToday = date === today;
+  const prevDate = shiftISODate(date, -1);
+  const nextDate = shiftISODate(date, 1);
+
   const supabase = await createClient();
 
   const { data } = await supabase
@@ -130,7 +159,7 @@ export default async function VisitsQueuePage({ searchParams }: SearchProps) {
         test_requests ( id, status, is_package_header, services ( section, kind, name ) )
       `,
     )
-    .eq("visit_date", today)
+    .eq("visit_date", date)
     .order("created_at", { ascending: true })
     .returns<QueueVisitRow[]>();
 
@@ -157,24 +186,27 @@ export default async function VisitsQueuePage({ searchParams }: SearchProps) {
 
   return (
     <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
-      <RealtimeRefresher
-        channelName="visits-queue"
-        subscriptions={[
-          { table: "visits", event: "UPDATE" },
-          { table: "visits", event: "INSERT" },
-          { table: "payments", event: "INSERT" },
-          { table: "test_requests", event: "UPDATE" },
-          { table: "test_requests", event: "INSERT" },
-        ]}
-      />
+      {/* Live updates only matter for today — a past day can't change under you. */}
+      {isToday ? (
+        <RealtimeRefresher
+          channelName="visits-queue"
+          subscriptions={[
+            { table: "visits", event: "UPDATE" },
+            { table: "visits", event: "INSERT" },
+            { table: "payments", event: "INSERT" },
+            { table: "test_requests", event: "UPDATE" },
+            { table: "test_requests", event: "INSERT" },
+          ]}
+        />
+      ) : null}
 
       <header className="mb-4">
         <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
           Reception Queue
         </h1>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
-          Today&apos;s visits ({today}) · {visits.length} total — pay, process,
-          done.
+          {isToday ? "Today's visits" : "Visits"} ({friendlyManilaDate(date)}) ·{" "}
+          {visits.length} total — pay, process, done.
         </p>
       </header>
 
@@ -182,13 +214,84 @@ export default async function VisitsQueuePage({ searchParams }: SearchProps) {
         <VisitsTabs />
       </div>
 
+      <form
+        className="mb-4 flex flex-wrap items-end gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4"
+        action="/staff/visits/queue"
+      >
+        {/* Keep the open stage tab when the day changes. */}
+        <input type="hidden" name="stage" value={stage} />
+        <div className="flex flex-col">
+          <label
+            htmlFor="date"
+            className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]"
+          >
+            Day
+          </label>
+          <input
+            type="date"
+            id="date"
+            name="date"
+            defaultValue={date}
+            max={today}
+            className="mt-1 rounded-md border border-[color:var(--color-brand-bg-mid)] px-2 py-1.5 text-sm"
+          />
+        </div>
+        <button
+          type="submit"
+          className="min-h-11 rounded-md border border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-cyan)] px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-[color:var(--color-brand-cyan-mid)]"
+        >
+          Show day
+        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            href={queueHref(stage, prevDate, today)}
+            className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-3 py-1.5 text-sm transition-colors hover:border-[color:var(--color-brand-cyan)]"
+          >
+            ← Previous day
+          </Link>
+          {isToday ? (
+            <span
+              aria-disabled="true"
+              className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-3 py-1.5 text-sm text-[color:var(--color-brand-text-soft)] opacity-50"
+            >
+              Next day →
+            </span>
+          ) : (
+            <Link
+              href={queueHref(stage, nextDate, today)}
+              className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-3 py-1.5 text-sm transition-colors hover:border-[color:var(--color-brand-cyan)]"
+            >
+              Next day →
+            </Link>
+          )}
+          {isToday ? null : (
+            <Link
+              href={queueHref(stage, today, today)}
+              className="min-h-11 rounded-md border border-[color:var(--color-brand-navy)] px-3 py-1.5 text-sm font-bold text-[color:var(--color-brand-navy)] transition-colors hover:bg-[color:var(--color-brand-navy)] hover:text-white"
+            >
+              Back to today
+            </Link>
+          )}
+        </div>
+      </form>
+
+      {isToday ? null : (
+        <p
+          role="status"
+          className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+        >
+          You&apos;re looking at a past day, not today&apos;s live queue. Rows
+          here don&apos;t refresh on their own.
+        </p>
+      )}
+
       <nav className={sectionTabsNavClass} aria-label="Queue stage">
         {STAGE_TABS.map((tab) => {
           const active = stage === tab.value;
           return (
             <Link
               key={tab.value}
-              href={`/staff/visits/queue?stage=${tab.value}`}
+              href={queueHref(tab.value, date, today)}
               className={sectionTabClass(active)}
               aria-current={active ? "page" : undefined}
             >
@@ -200,7 +303,7 @@ export default async function VisitsQueuePage({ searchParams }: SearchProps) {
 
       {rows.length === 0 ? (
         <Panel className="mt-6 p-8 text-center text-sm text-[color:var(--color-brand-text-soft)]">
-          {STAGE_EMPTY[stage]}
+          {(isToday ? STAGE_EMPTY_TODAY : STAGE_EMPTY_PAST)[stage]}
         </Panel>
       ) : (
         <>
