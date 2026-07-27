@@ -16,6 +16,9 @@ interface Props {
   enabledParamIds: string[];
   claimedBy: string | null;
   myStaffId: string;
+  /** Set when the visit is still waiting for payment (item 10) — replaces the
+   * claim button with a notice. Server action enforces the same gate. */
+  claimBlockedHint: string | null;
 }
 
 export function ConsolidatedForm(props: Props) {
@@ -181,18 +184,29 @@ export function ConsolidatedForm(props: Props) {
             <p className="text-sm text-[color:var(--color-brand-text-mid)]">
               {props.claimedBy
                 ? "This report is claimed by another medtech."
-                : "This report is unassigned. Claim it to start working on it."}
+                : props.claimBlockedHint
+                  ? "This report is unassigned."
+                  : "This report is unassigned. Claim it to start working on it."}
             </p>
             {!props.claimedBy ? (
-              <div className="mt-4">
-                <button
-                  onClick={handleClaim}
-                  disabled={pending}
-                  className="min-h-[44px] rounded-lg bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-60"
+              props.claimBlockedHint ? (
+                <p
+                  role="status"
+                  className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
                 >
-                  {pending ? "Claiming…" : "Claim this report"}
-                </button>
-              </div>
+                  {props.claimBlockedHint}
+                </p>
+              ) : (
+                <div className="mt-4">
+                  <button
+                    onClick={handleClaim}
+                    disabled={pending}
+                    className="min-h-[44px] rounded-lg bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-60"
+                  >
+                    {pending ? "Claiming…" : "Claim this report"}
+                  </button>
+                </div>
+              )
             ) : null}
           </div>
         ) : (

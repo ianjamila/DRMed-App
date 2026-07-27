@@ -7,6 +7,7 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
 import { audit } from "@/lib/audit/log";
 import { translatePgError } from "@/lib/accounting/pg-errors";
+import { labQueueGate } from "@/lib/visits/lab-gate";
 import {
   finaliseConsolidatedReport,
   type FinaliseResult,
@@ -24,6 +25,32 @@ export async function claimConsolidated(
     const session = await requireActiveStaff();
     const supabase = await createClient();
 
+    // Same defense-in-depth pre-read as claimTestAction: a stale tab must not
+    // start lab work on a deleted entry, a deleted visit, or a visit still
+    // waiting for payment (item 10, decision 1).
+    const { data: members } = await supabase
+      .from("test_requests")
+      .select(
+        "id, deleted_at, visits!inner ( deleted_at, payment_status, hmo_provider_id )",
+      )
+      .in("id", testRequestIds);
+    if (!members || members.length !== testRequestIds.length) {
+      return { ok: false, error: "Some tests in this report were not found." };
+    }
+    if (members.some((m) => m.visits.deleted_at !== null)) {
+      return { ok: false, error: "This visit was deleted from the queue." };
+    }
+    if (members.some((m) => m.deleted_at !== null)) {
+      return {
+        ok: false,
+        error: "Some tests in this report were deleted from the queue.",
+      };
+    }
+    for (const m of members) {
+      const gate = labQueueGate(m.visits);
+      if (!gate.ok) return { ok: false, error: gate.hint };
+    }
+
     // Only claim if every member is still 'requested' — concurrency-safe,
     // matching claimTestAction's semantics for single tests.
     const { data, error } = await supabase
@@ -35,6 +62,7 @@ export async function claimConsolidated(
       })
       .in("id", testRequestIds)
       .eq("status", "requested")
+      .is("deleted_at", null)
       .select("id");
     if (error) {
       return { ok: false, error: translatePgError(error) };

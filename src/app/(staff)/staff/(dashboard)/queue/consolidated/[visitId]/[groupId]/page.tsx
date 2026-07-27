@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
 import { deriveEnabledParamIds } from "@/lib/results/enabled-params";
+import { labQueueGate } from "@/lib/visits/lab-gate";
 import { ConsolidatedForm } from "./consolidated-form";
 
 export const metadata = {
@@ -44,7 +45,7 @@ export default async function ConsolidatedQueuePage({
       `
       id, status, assigned_to,
       services!inner(id, code, name, report_group_id),
-      visits!inner(id, visit_number, patient_id,
+      visits!inner(id, visit_number, patient_id, payment_status, hmo_provider_id,
                    patients!inner(drm_id, last_name, first_name, sex, birthdate))
     `,
     )
@@ -90,8 +91,17 @@ export default async function ConsolidatedQueuePage({
     ? myStaffId
     : (distinctAssignees[0] ?? null);
 
+  // Payment gate (item 10): an unclaimed report on a visit still waiting for
+  // payment shows a notice instead of the claim button. claimConsolidated
+  // enforces the same rule server-side, so this is UX, not the guard.
+  const firstVisit = Array.isArray(requests[0].visits)
+    ? requests[0].visits[0]
+    : requests[0].visits;
+  const claimGate = labQueueGate(firstVisit);
+
   return (
     <ConsolidatedForm
+      claimBlockedHint={claimGate.ok ? null : claimGate.hint}
       group={group}
       template={template as unknown as ConsolidatedFormTemplate}
       visit={requests[0].visits as unknown as ConsolidatedFormVisit}
