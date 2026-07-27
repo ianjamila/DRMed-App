@@ -7,6 +7,7 @@ import { audit } from "@/lib/audit/log";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { renderResultPdf } from "@/lib/results/render-pdf";
 import { loadResultDocumentInput } from "@/lib/results/loaders";
+import { deriveEnabledParamIds } from "@/lib/results/enabled-params";
 
 export interface FinaliseInput {
   visitId: string;
@@ -41,13 +42,58 @@ export async function finaliseConsolidatedReport(
   // the single-test flow; an admin who needs to take over uses reassign.
   const { data: claimRows } = await admin
     .from("test_requests")
-    .select("id, assigned_to")
+    .select("id, assigned_to, services!inner(id)")
     .in("id", input.testRequestIds);
   if (
     (claimRows ?? []).length !== input.testRequestIds.length ||
     (claimRows ?? []).some((r) => r.assigned_to !== session.user_id)
   ) {
     return { ok: false, error: "You haven't claimed this report." };
+  }
+
+  // Server-side re-validation of enablement. The client only submits values
+  // for fields it currently sees as enabled, but "enabled" is now a DB
+  // mapping (report_group_service_params, migration 0120) instead of a
+  // compile-time constant — an admin can edit the group mapping while a
+  // medtech has the form open. Recompute the enabled set from the DB right
+  // before persisting; if any submitted value falls outside it, refuse the
+  // write rather than silently dropping it (the medtech would otherwise
+  // believe an entered value was saved when it never was).
+  if (input.values.length > 0) {
+    const orderedServiceIds = (claimRows ?? []).map((r) => {
+      const svc = Array.isArray(r.services) ? r.services[0] : r.services;
+      return svc?.id ?? "";
+    });
+    const { data: template } = await admin
+      .from("result_templates")
+      .select("id, result_template_params(id)")
+      .eq("report_group_id", input.groupId)
+      .eq("is_active", true)
+      .single();
+    const templateParamIds = (template?.result_template_params ?? []).map(
+      (p: { id: string }) => p.id,
+    );
+    const { data: mapRows } =
+      templateParamIds.length > 0
+        ? await admin
+            .from("report_group_service_params")
+            .select("service_id, parameter_id")
+            .in("parameter_id", templateParamIds)
+        : { data: [] };
+    const enabledParamIds = deriveEnabledParamIds(
+      mapRows ?? [],
+      orderedServiceIds,
+    );
+    const hasStaleValue = input.values.some(
+      (v) => !enabledParamIds.has(v.parameter_id),
+    );
+    if (hasStaleValue) {
+      return {
+        ok: false,
+        error:
+          "The enabled fields for this report changed since the form was opened. Reload the page and review your entries before finalising.",
+      };
+    }
   }
 
   // Idempotency guard: if any of these test_requests are already linked to a

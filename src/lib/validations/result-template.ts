@@ -9,6 +9,15 @@ export const ResultLayoutEnum = z.enum([
 
 export const ParamInputTypeEnum = z.enum(["numeric", "free_text", "select"]);
 
+// Which row of result_templates a save targets. XOR-enforced in the DB
+// (result_templates_target_xor, 0051): service templates key by service_id,
+// consolidated group templates by report_group_id.
+export const TemplateTargetSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("service"), id: z.string().uuid() }),
+  z.object({ kind: z.literal("group"), id: z.string().uuid() }),
+]);
+export type TemplateTarget = z.infer<typeof TemplateTargetSchema>;
+
 const optionalText = (max: number) =>
   z
     .union([z.string(), z.null(), z.undefined()])
@@ -106,10 +115,17 @@ export const TemplateParamSchema = z.object({
   // Age-banded ranges (Slice 4c). Empty array when the param uses only its
   // default ref columns. Server sort_order = array index.
   ranges: z.array(ParamRangeSchema),
+  // Group targets only: which services enable this parameter on the
+  // consolidated encoding form (report_group_service_params rows). Null for
+  // service targets and for section headers.
+  service_ids: z
+    .array(z.string().uuid())
+    .nullish()
+    .transform((v) => v ?? null),
 });
 
 export const TemplateEditorPayloadSchema = z.object({
-  service_id: z.string().uuid(),
+  target: TemplateTargetSchema,
   layout: ResultLayoutEnum,
   header_notes: optionalText(500),
   footer_notes: optionalText(500),

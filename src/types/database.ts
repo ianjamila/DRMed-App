@@ -4459,6 +4459,46 @@ export type Database = {
         }
         Relationships: []
       }
+      report_group_service_params: {
+        Row: {
+          created_at: string
+          parameter_id: string
+          service_id: string
+        }
+        Insert: {
+          created_at?: string
+          parameter_id: string
+          service_id: string
+        }
+        Update: {
+          created_at?: string
+          parameter_id?: string
+          service_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "report_group_service_params_parameter_id_fkey"
+            columns: ["parameter_id"]
+            isOneToOne: false
+            referencedRelation: "result_template_params"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "report_group_service_params_service_id_fkey"
+            columns: ["service_id"]
+            isOneToOne: false
+            referencedRelation: "services"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "report_group_service_params_service_id_fkey"
+            columns: ["service_id"]
+            isOneToOne: false
+            referencedRelation: "v_daily_revenue_by_service"
+            referencedColumns: ["service_id"]
+          },
+        ]
+      }
       report_groups: {
         Row: {
           code: string
@@ -6007,6 +6047,14 @@ export type Database = {
       }
     }
     Functions: {
+      admin_delete_result_template: {
+        Args: { p_template_id: string }
+        Returns: undefined
+      }
+      admin_delete_template_params: {
+        Args: { param_ids: string[] }
+        Returns: number
+      }
       ap_create_bill_and_post: {
         Args: { p_actor_id: string; p_input: Json; p_request_id?: string }
         Returns: Json

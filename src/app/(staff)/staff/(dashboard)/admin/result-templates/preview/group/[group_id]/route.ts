@@ -1,8 +1,8 @@
-// GET /staff/admin/result-templates/preview/[service_id]
-// Renders a sample PDF for the template attached to `service_id`, populated
-// with synthesised placeholder values, and returns it inline so the browser
-// preview tab displays it directly. Admin-only — pathologists / medtechs use
-// the medtech queue flow to see real values.
+// GET /staff/admin/result-templates/preview/group/[group_id]
+// Sample PDF for a report-group (consolidated) template with synthesised
+// values. Mirrors the per-service preview route; populates
+// ResultDocumentInput.reportGroup — the same path real consolidated results
+// use — instead of `service`.
 
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
@@ -19,7 +19,7 @@ import type {
 export const runtime = "nodejs";
 
 interface Props {
-  params: Promise<{ service_id: string }>;
+  params: Promise<{ group_id: string }>;
 }
 
 export async function GET(_req: Request, { params }: Props) {
@@ -28,36 +28,42 @@ export async function GET(_req: Request, { params }: Props) {
     return new NextResponse("Forbidden", { status: 403 });
   }
 
-  const { service_id } = await params;
+  const { group_id } = await params;
   const supabase = await createClient();
 
-  const { data: service } = await supabase
-    .from("services")
+  const { data: group } = await supabase
+    .from("report_groups")
     .select("id, code, name")
-    .eq("id", service_id)
+    .eq("id", group_id)
     .maybeSingle();
-  if (!service) {
-    return new NextResponse("Service not found", { status: 404 });
+  if (!group) {
+    return new NextResponse("Report group not found", { status: 404 });
   }
 
   const { data: template } = await supabase
     .from("result_templates")
     .select("id, layout, header_notes, footer_notes")
-    .eq("service_id", service_id)
+    .eq("report_group_id", group_id)
     .maybeSingle();
   if (!template) {
     return new NextResponse(
-      "No template configured for this service yet.",
+      "No template configured for this report group yet.",
       { status: 404 },
     );
   }
 
-  const params2 = await loadTemplateParams(supabase, template.id);
-  const values = buildPreviewValues(params2);
+  const { data: services } = await supabase
+    .from("services")
+    .select("code, name, is_active")
+    .eq("report_group_id", group_id)
+    .order("code", { ascending: true });
+
+  const templateParams = await loadTemplateParams(supabase, template.id);
+  const values = buildPreviewValues(templateParams);
 
   const consultants = await loadConsultantSignatures();
   const performer = await resolvePerformer({
-    service: { code: service.code, kind: null },
+    service: { code: group.code, kind: null },
     finalisedByStaffId: null,
   });
 
@@ -67,9 +73,15 @@ export async function GET(_req: Request, { params }: Props) {
       header_notes: template.header_notes,
       footer_notes: template.footer_notes,
     },
-    params: params2,
+    params: templateParams,
     values,
-    service: { code: service.code, name: service.name },
+    reportGroup: {
+      code: group.code,
+      name: group.name,
+      orderedTests: (services ?? [])
+        .filter((s) => s.is_active)
+        .map((s) => ({ code: s.code, name: s.name })),
+    },
     patient: {
       drm_id: "DRM-PREVIEW",
       last_name: "DOE",
@@ -96,7 +108,7 @@ export async function GET(_req: Request, { params }: Props) {
     status: 200,
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `inline; filename="${service.code}-preview.pdf"`,
+      "Content-Disposition": `inline; filename="${group.code}-preview.pdf"`,
       "Cache-Control": "no-store",
     },
   });

@@ -110,6 +110,9 @@ export function translatePgError(err: PgError): string {
       // appointments_insert_slot_guarded raise; byte-identical to the
       // historical slot_taken conflict message in timing.ts.
       return "That slot was just taken. Please pick another time.";
+    case "P0041":
+      // 0121 guard: template param deletes require explicit opt-in.
+      return err.message ?? "Template parameter deletes must go through the admin tools.";
     default:
       return err.message ?? "Database error. Please try again.";
   }

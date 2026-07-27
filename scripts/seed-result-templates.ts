@@ -513,10 +513,11 @@ async function clearExistingTemplate(serviceId: string, label: string) {
       throw new Error(`clear result_values for ${label}: ${rvErr.message}`);
     }
   }
-  const { error: delErr } = await admin
-    .from("result_templates")
-    .delete()
-    .eq("id", priorTemplate.id);
+  // 0121 guards param deletes; this RPC opts in and cascades template → params
+  // in one transaction. A raw .delete() here would be blocked by the trigger.
+  const { error: delErr } = await admin.rpc("admin_delete_result_template", {
+    p_template_id: priorTemplate.id,
+  });
   if (delErr) {
     throw new Error(`delete template ${label}: ${delErr.message}`);
   }

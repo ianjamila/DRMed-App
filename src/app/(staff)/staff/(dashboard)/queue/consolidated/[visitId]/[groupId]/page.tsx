@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
+import { deriveEnabledParamIds } from "@/lib/results/enabled-params";
 import { ConsolidatedForm } from "./consolidated-form";
 
 export const metadata = {
@@ -52,6 +53,24 @@ export default async function ConsolidatedQueuePage({
     .in("status", ACTIVE_STATUSES);
   if (!requests || requests.length === 0) redirect("/staff/queue");
 
+  // Which params this visit's ordered services enable — from
+  // report_group_service_params (0120), not the old hardcoded map. Package
+  // headers legitimately have no rows; their components carry the encoding.
+  const orderedServiceIds = requests.map((r) => {
+    const svc = Array.isArray(r.services) ? r.services[0] : r.services;
+    return svc?.id ?? "";
+  });
+  const { data: mapRows } = await supabase
+    .from("report_group_service_params")
+    .select("service_id, parameter_id")
+    .in(
+      "parameter_id",
+      (template.result_template_params ?? []).map((p: { id: string }) => p.id),
+    );
+  const enabledParamIds = [
+    ...deriveEnabledParamIds(mapRows ?? [], orderedServiceIds),
+  ];
+
   // claimedBy resolution: if the signed-in user is the assigned_to on ANY
   // of the in-scope test_requests, the report is "claimed by me." Otherwise
   // if some other user is assigned to one, "claimed by another." Otherwise
@@ -78,6 +97,7 @@ export default async function ConsolidatedQueuePage({
         return svc?.code ?? "";
       })}
       testRequestIds={requests.map((r) => r.id)}
+      enabledParamIds={enabledParamIds}
       claimedBy={claimedBy}
       myStaffId={myStaffId}
     />

@@ -14,12 +14,21 @@ import type {
   ParamRangePayload,
   TemplateEditorPayload,
   TemplateParamPayload,
+  TemplateTarget,
 } from "@/lib/validations/result-template";
 
+export interface TemplateTargetInfo {
+  kind: TemplateTarget["kind"];
+  id: string;
+  code: string;
+  name: string;
+}
+
 interface Props {
-  serviceId: string;
-  serviceCode: string;
-  serviceName: string;
+  target: TemplateTargetInfo;
+  // Group targets only: services of the group, for the per-param mapping
+  // chips. Omit for service targets.
+  mappableServices?: { id: string; code: string }[];
   hasTemplate: boolean;
   // Initial values. Empty arrays / sane defaults when this is a brand-new template.
   initialLayout: TemplateEditorPayload["layout"];
@@ -61,6 +70,7 @@ function emptyParam(): TemplateParamPayload {
     abnormal_values: null,
     placeholder: null,
     ranges: [],
+    service_ids: null,
   };
 }
 
@@ -122,7 +132,7 @@ export function TemplateEditor(props: Props) {
     setFeedback(null);
     start(async () => {
       const payload: TemplateEditorPayload = {
-        service_id: props.serviceId,
+        target: { kind: props.target.kind, id: props.target.id },
         layout,
         header_notes: headerNotes.trim() || null,
         footer_notes: footerNotes.trim() || null,
@@ -139,10 +149,10 @@ export function TemplateEditor(props: Props) {
     <div className="grid gap-6">
       <header className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
         <p className="font-mono text-xs text-[color:var(--color-brand-text-soft)]">
-          {props.serviceCode}
+          {props.target.code}
         </p>
         <h2 className="mt-0.5 font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
-          {props.serviceName}
+          {props.target.name}
         </h2>
         <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
           {props.hasTemplate ? "Editing existing template." : "Creating a new template."}
@@ -233,6 +243,7 @@ export function TemplateEditor(props: Props) {
                 onRemove={() => removeParam(idx)}
                 onMoveUp={() => moveParam(idx, -1)}
                 onMoveDown={() => moveParam(idx, 1)}
+                mappableServices={props.mappableServices}
               />
             ))}
           </div>
@@ -265,7 +276,11 @@ export function TemplateEditor(props: Props) {
         </Link>
         {props.hasTemplate ? (
           <Link
-            href={`/staff/admin/result-templates/preview/${props.serviceId}`}
+            href={
+              props.target.kind === "service"
+                ? `/staff/admin/result-templates/preview/${props.target.id}`
+                : `/staff/admin/result-templates/preview/group/${props.target.id}`
+            }
             target="_blank"
             rel="noopener"
             className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-1.5 text-sm font-medium text-[color:var(--color-brand-text-mid)] hover:bg-[color:var(--color-brand-bg)]"
@@ -294,9 +309,19 @@ interface ParamRowProps {
   onRemove: () => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
+  mappableServices?: { id: string; code: string }[];
 }
 
-function ParamRow({ idx, total, p, onChange, onRemove, onMoveUp, onMoveDown }: ParamRowProps) {
+function ParamRow({
+  idx,
+  total,
+  p,
+  onChange,
+  onRemove,
+  onMoveUp,
+  onMoveDown,
+  mappableServices,
+}: ParamRowProps) {
   const isHeader = p.is_section_header;
   const isNumeric = p.input_type === "numeric";
   const isSelect = p.input_type === "select";
@@ -535,6 +560,53 @@ function ParamRow({ idx, total, p, onChange, onRemove, onMoveUp, onMoveDown }: P
           </div>
         ) : null}
       </div>
+
+      {mappableServices && !isHeader ? (
+        <div className="mt-3 border-t border-dashed border-[color:var(--color-brand-bg-mid)] pt-3">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+            Enabled by services ({(p.service_ids ?? []).length})
+          </p>
+          <p className="mt-0.5 text-[11px] text-[color:var(--color-brand-text-soft)]">
+            Medtechs can only type into this field when the visit ordered one
+            of the ticked services. A field no service enables is unreachable.
+          </p>
+          <div
+            role="group"
+            aria-label={`Services enabling ${p.parameter_name}`}
+            className="mt-2 flex flex-wrap gap-1.5"
+          >
+            {mappableServices.map((s) => {
+              const on = (p.service_ids ?? []).includes(s.id);
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => {
+                    const cur = new Set(p.service_ids ?? []);
+                    if (on) cur.delete(s.id);
+                    else cur.add(s.id);
+                    onChange({ service_ids: [...cur] });
+                  }}
+                  className={
+                    on
+                      ? "rounded-md bg-[color:var(--color-brand-navy)] px-2 py-1 font-mono text-[10px] font-bold text-white"
+                      : "rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 font-mono text-[10px] text-[color:var(--color-brand-text-mid)] hover:bg-[color:var(--color-brand-bg)]"
+                  }
+                >
+                  {s.code}
+                </button>
+              );
+            })}
+          </div>
+          {(p.service_ids ?? []).length === 0 ? (
+            <p className="mt-1.5 text-[11px] font-semibold text-amber-700">
+              ⚠ No service enables this field — medtechs will never be able to
+              fill it in.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
+import { translatePgError } from "@/lib/accounting/pg-errors";
 import {
   TemplateEditorPayloadSchema,
   type TemplateEditorPayload,
@@ -30,32 +31,81 @@ export async function saveTemplateAndParamsAction(
 
   const admin = createAdminClient();
 
-  // Verify the service exists.
-  const { data: svc } = await admin
-    .from("services")
-    .select("id, code, name")
-    .eq("id", data.service_id)
-    .maybeSingle();
-  if (!svc) return { ok: false, error: "Service not found." };
+  // Resolve the target — a service or a report group. groupServiceIds doubles
+  // as the validation set for per-param service_ids.
+  let targetLabel: { code: string; name: string };
+  let groupServiceIds: Set<string> | null = null;
 
-  // Upsert the template row (one per service_id).
+  if (data.target.kind === "service") {
+    const { data: svc } = await admin
+      .from("services")
+      .select("id, code, name")
+      .eq("id", data.target.id)
+      .maybeSingle();
+    if (!svc) return { ok: false, error: "Service not found." };
+    targetLabel = { code: svc.code, name: svc.name };
+  } else {
+    const { data: grp } = await admin
+      .from("report_groups")
+      .select("id, code, name")
+      .eq("id", data.target.id)
+      .maybeSingle();
+    if (!grp) return { ok: false, error: "Report group not found." };
+    targetLabel = { code: grp.code, name: grp.name };
+
+    const { data: groupSvcs } = await admin
+      .from("services")
+      .select("id, kind")
+      .eq("report_group_id", data.target.id);
+    // Billing headers (lab_package) can't enable fields — the UI already
+    // excludes them from the mappable-services list, so exclude them here
+    // too or a hand-crafted payload could map a service_id that isn't a
+    // real encoding target.
+    groupServiceIds = new Set(
+      (groupSvcs ?? []).filter((s) => s.kind !== "lab_package").map((s) => s.id),
+    );
+    for (const p of data.params) {
+      for (const sid of p.service_ids ?? []) {
+        if (!groupServiceIds.has(sid)) {
+          return {
+            ok: false,
+            error: `"${p.parameter_name}" maps a service that is not in the ${grp.name} group.`,
+          };
+        }
+      }
+    }
+  }
+
+  // Upsert the template row — keyed by service_id or report_group_id.
+  const targetColumn =
+    data.target.kind === "service" ? "service_id" : "report_group_id";
   const { data: existing } = await admin
     .from("result_templates")
     .select("id")
-    .eq("service_id", data.service_id)
+    .eq(targetColumn, data.target.id)
     .maybeSingle();
 
   let templateId = existing?.id ?? null;
   if (!templateId) {
     const { data: created, error: insErr } = await admin
       .from("result_templates")
-      .insert({
-        service_id: data.service_id,
-        layout: data.layout,
-        header_notes: data.header_notes,
-        footer_notes: data.footer_notes,
-        is_active: data.is_active,
-      })
+      .insert(
+        data.target.kind === "service"
+          ? {
+              service_id: data.target.id,
+              layout: data.layout,
+              header_notes: data.header_notes,
+              footer_notes: data.footer_notes,
+              is_active: data.is_active,
+            }
+          : {
+              report_group_id: data.target.id,
+              layout: data.layout,
+              header_notes: data.header_notes,
+              footer_notes: data.footer_notes,
+              is_active: data.is_active,
+            },
+      )
       .select("id")
       .single();
     if (insErr || !created) {
@@ -95,6 +145,23 @@ export async function saveTemplateAndParamsAction(
     .eq("template_id", templateId);
   const dbIds = new Set((dbParams ?? []).map((r) => r.id));
 
+  // Group targets only: batch-fetch every existing report_group_service_params
+  // row for the template's current params in ONE query, instead of one select
+  // per param inside the loop below (was an N+1 — a 20-param template meant 20
+  // round-trips just to read the current mapping state).
+  const existingMapByParam = new Map<string, Set<string>>();
+  if (data.target.kind === "group" && dbIds.size > 0) {
+    const { data: existingMapRows } = await admin
+      .from("report_group_service_params")
+      .select("service_id, parameter_id")
+      .in("parameter_id", [...dbIds]);
+    for (const m of existingMapRows ?? []) {
+      const set = existingMapByParam.get(m.parameter_id) ?? new Set<string>();
+      set.add(m.service_id);
+      existingMapByParam.set(m.parameter_id, set);
+    }
+  }
+
   const toDelete = [...dbIds].filter((id) => !incomingIds.has(id));
   if (toDelete.length > 0) {
     // result_values has FK to result_template_params.parameter_id without
@@ -110,12 +177,26 @@ export async function saveTemplateAndParamsAction(
         error: `Cannot delete params already used in finalised results (${refCount} value rows reference them). Mark the template inactive instead.`,
       };
     }
-    const { error: delErr } = await admin
-      .from("result_template_params")
-      .delete()
-      .in("id", toDelete);
+    // critical_alerts.parameter_id cascades on delete (unlike result_values,
+    // which is a plain FK the DB blocks) — block explicitly so acknowledged
+    // critical-value alert history isn't silently destroyed.
+    const { count: alertCount } = await admin
+      .from("critical_alerts")
+      .select("id", { count: "exact", head: true })
+      .in("parameter_id", toDelete);
+    if ((alertCount ?? 0) > 0) {
+      return {
+        ok: false,
+        error: `Cannot delete params with critical-value alert history (${alertCount} alert(s) reference them). Mark the template inactive instead.`,
+      };
+    }
+    // 0121 guard: raw deletes are blocked; the RPC sets the opt-in flag and
+    // deletes in one transaction. Mapping rows cascade away with the param.
+    const { error: delErr } = await admin.rpc("admin_delete_template_params", {
+      param_ids: toDelete,
+    });
     if (delErr) {
-      return { ok: false, error: `Could not delete params: ${delErr.message}` };
+      return { ok: false, error: translatePgError(delErr) };
     }
   }
 
@@ -124,6 +205,8 @@ export async function saveTemplateAndParamsAction(
   let totalRangesInserted = 0;
   let totalRangesUpdated = 0;
   let totalRangesDeleted = 0;
+  let mappingsAdded = 0;
+  let mappingsRemoved = 0;
 
   for (let i = 0; i < data.params.length; i++) {
     const p = data.params[i];
@@ -239,6 +322,42 @@ export async function saveTemplateAndParamsAction(
         totalRangesInserted += 1;
       }
     }
+
+    // Group targets: reconcile report_group_service_params for this param.
+    if (data.target.kind === "group") {
+      const desired = new Set(p.service_ids ?? []);
+      // Newly-created params (no `id` in the payload) can't have a prior
+      // mapping row — default to an empty set, which is correct for them.
+      const have = existingMapByParam.get(paramId) ?? new Set<string>();
+      const removeIds = [...have].filter((id) => !desired.has(id));
+      const addIds = [...desired].filter((id) => !have.has(id));
+      if (removeIds.length > 0) {
+        const { error: mDelErr } = await admin
+          .from("report_group_service_params")
+          .delete()
+          .eq("parameter_id", paramId)
+          .in("service_id", removeIds);
+        if (mDelErr) {
+          return {
+            ok: false,
+            error: `Could not unmap services from "${p.parameter_name}": ${mDelErr.message}`,
+          };
+        }
+        mappingsRemoved += removeIds.length;
+      }
+      if (addIds.length > 0) {
+        const { error: mInsErr } = await admin
+          .from("report_group_service_params")
+          .insert(addIds.map((service_id) => ({ service_id, parameter_id: paramId })));
+        if (mInsErr) {
+          return {
+            ok: false,
+            error: `Could not map services to "${p.parameter_name}": ${mInsErr.message}`,
+          };
+        }
+        mappingsAdded += addIds.length;
+      }
+    }
   }
 
   const h = await headers();
@@ -249,20 +368,27 @@ export async function saveTemplateAndParamsAction(
     resource_type: "result_template",
     resource_id: templateId,
     metadata: {
-      service_id: data.service_id,
-      service_code: svc.code,
+      target_kind: data.target.kind,
+      target_id: data.target.id,
+      target_code: targetLabel.code,
       layout: data.layout,
       param_count: data.params.length,
       params_deleted: toDelete.length,
       ranges_inserted: totalRangesInserted,
       ranges_updated: totalRangesUpdated,
       ranges_deleted: totalRangesDeleted,
+      mappings_added: mappingsAdded,
+      mappings_removed: mappingsRemoved,
     },
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),
   });
 
   revalidatePath("/staff/admin/result-templates");
-  revalidatePath(`/staff/admin/result-templates/${data.service_id}/edit`);
+  if (data.target.kind === "service") {
+    revalidatePath(`/staff/admin/result-templates/${data.target.id}/edit`);
+  } else {
+    revalidatePath(`/staff/admin/result-templates/group/${data.target.id}/edit`);
+  }
   return { ok: true, templateId };
 }
