@@ -286,15 +286,29 @@ export default async function EditGroupTemplatePage({ params }: Props) {
                 const isDelete = h.action === "result_template.params_deleted";
                 const isSupersededDelete =
                   h.action === "result_template.superseded_deleted";
+                const isDeactivated = h.action === "result_template.deactivated";
+                const isReactivated = h.action === "result_template.reactivated";
                 return (
                   <li key={h.id} className="flex items-baseline justify-between gap-3 py-2">
                     <div className="min-w-0">
-                      <p className={`text-sm font-medium ${isDelete || isSupersededDelete ? "text-red-700" : "text-[color:var(--color-brand-navy)]"}`}>
+                      <p
+                        className={`text-sm font-medium ${
+                          isDelete || isSupersededDelete || isDeactivated
+                            ? "text-red-700"
+                            : isReactivated
+                              ? "text-emerald-700"
+                              : "text-[color:var(--color-brand-navy)]"
+                        }`}
+                      >
                         {isSupersededDelete
                           ? `Deleted superseded ${String(meta.service_code ?? "?")} template — ${String(meta.param_count ?? "?")} parameter(s)`
                           : isDelete
                             ? `Deleted ${String(meta.deleted_count ?? "?")} parameter(s) — ${String(meta.remaining_count ?? "?")} remaining`
-                            : `Saved — ${String(meta.param_count ?? "?")} parameter(s)`}
+                            : isDeactivated
+                              ? `Template deactivated (${String(meta.param_count ?? "?")} params at the time)`
+                              : isReactivated
+                                ? `Template reactivated (${String(meta.param_count ?? "?")} params at the time)`
+                                : `Saved — ${String(meta.param_count ?? "?")} parameter(s)`}
                       </p>
                       <p className="text-xs text-[color:var(--color-brand-text-soft)]">
                         {h.actor_id
