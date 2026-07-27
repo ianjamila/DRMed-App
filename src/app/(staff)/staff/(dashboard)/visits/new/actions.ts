@@ -10,8 +10,9 @@ import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { generatePin, hashPin } from "@/lib/auth/pin";
 import { setVisitPinFlash } from "@/lib/auth/visit-pin-flash";
-import { splitDoctorFee } from "@/lib/visits/consultation-fee";
+import { doctorLineBase, splitDoctorFee } from "@/lib/visits/consultation-fee";
 import { isDoctorKind, partitionByCategory } from "@/lib/visits/order-lines";
+import { isConsultOnlyOrder } from "@/lib/visits/receipt-policy";
 import { isSeniorPwdEligible, seniorPwdDiscount } from "@/lib/pricing/senior";
 import type { Database } from "@/types/database";
 
@@ -133,21 +134,23 @@ export async function createVisitAction(
     const seniorPesoOff =
       s.senior_discount_php != null ? Number(s.senior_discount_php) : null;
 
-    // doctor_consultation: price is typed at the counter, not from the catalog.
-    const consultFeeRaw =
+    // Both doctor kinds are priced at the counter, not from the catalog
+    // (item 3). doctorLineBase owns the blank-box rule: a blank consult is ₱0
+    // (rejected below), a blank procedure falls back to its catalog price.
+    const typedFeeRaw =
       s.kind === "doctor_consultation"
         ? formData.get(`consult_fee__${service_id}`)?.toString() ?? ""
-        : "";
-    const consultFee = Number(consultFeeRaw);
+        : s.kind === "doctor_procedure"
+          ? formData.get(`procedure_fee__${service_id}`)?.toString() ?? ""
+          : "";
     const lineHmoSelected = isDoctorKind(s.kind) ? doctorHmoSelected : labHmoSelected;
-    const base =
-      s.kind === "doctor_consultation"
-        ? Number.isFinite(consultFee) && consultFee >= 0
-          ? consultFee
-          : 0
-        : lineHmoSelected && hmoPrice != null
-          ? hmoPrice
-          : cashPrice;
+    const catalogPrice =
+      lineHmoSelected && hmoPrice != null ? hmoPrice : cashPrice;
+    const base = doctorLineBase({
+      kind: s.kind,
+      typedRaw: typedFeeRaw,
+      catalogPrice,
+    });
 
     const rawKind = formData.get(`discount_kind__${service_id}`)?.toString() ?? "";
     const parsedKind = DiscountKindEnum.safeParse(rawKind);
@@ -204,21 +207,18 @@ export async function createVisitAction(
       const apNum = Number(apRaw);
       hmo_approved_amount_php =
         apRaw !== "" && Number.isFinite(apNum) && apNum >= 0 ? apNum : null;
-      // Procedure lines mirror consult lines: capture clinic_fee + doctor_pf split.
-      // Default clinic_fee=0 for procedures unless the form sends a value.
-      if (clinic_fee_php === null) {
-        // Procedures default clinic fee to 0 unless reception types one; PF is
-        // the remainder. (defaultClinicFee handles rent/shareholder = 0 too.)
-        const cfRaw = formData.get(`clinic_fee__${service_id}`)?.toString() ?? "";
-        const split = splitDoctorFee({
-          finalPrice: final_price_php,
-          arrangement: attendingArrangement,
-          clinicFeeRaw: cfRaw.trim() === "" ? "0" : cfRaw,
-          doctorPfRaw: formData.get(`doctor_pf__${service_id}`)?.toString() ?? "",
-        });
-        clinic_fee_php = split.clinic_fee_php;
-        doctor_pf_php = split.doctor_pf_php;
-      }
+      // Procedure lines mirror consult lines: capture clinic_fee + doctor_pf
+      // split. Procedures default clinic fee to ₱0 unless reception types one;
+      // PF is the remainder. (defaultClinicFee handles rent/shareholder = 0 too.)
+      const cfRaw = formData.get(`clinic_fee__${service_id}`)?.toString() ?? "";
+      const split = splitDoctorFee({
+        finalPrice: final_price_php,
+        arrangement: attendingArrangement,
+        clinicFeeRaw: cfRaw.trim() === "" ? "0" : cfRaw,
+        doctorPfRaw: formData.get(`doctor_pf__${service_id}`)?.toString() ?? "",
+      });
+      clinic_fee_php = split.clinic_fee_php;
+      doctor_pf_php = split.doctor_pf_php;
     }
 
     return {
@@ -237,20 +237,34 @@ export async function createVisitAction(
 
   // A consultation must have a positive (manual) fee and an attending physician
   // — release later requires the physician (P0034), and a ₱0 consult is a slip.
-  const hasConsult = lines.some(
-    (l) => services.find((s) => s.id === l.service_id)?.kind === "doctor_consultation",
-  );
-  if (hasConsult) {
+  const consultLines = lines.filter((l) => l.kind === "doctor_consultation");
+  if (consultLines.length > 0) {
     if (!parsed.data.attending_physician_id) {
       return { ok: false, error: "Select an attending physician for the consultation." };
     }
-    const badConsult = lines.some(
-      (l) =>
-        services.find((s) => s.id === l.service_id)?.kind === "doctor_consultation" &&
-        !(l.final_price_php > 0),
-    );
-    if (badConsult) {
+    if (consultLines.some((l) => !(l.final_price_php > 0))) {
       return { ok: false, error: "Enter a consultation fee greater than ₱0." };
+    }
+  }
+
+  // Procedures are counter-priced too (item 3), so the same ₱0 slip is
+  // possible. The physician check is narrower than the consult one: a
+  // procedure that pays the doctor nothing (fully absorbed by the clinic)
+  // needs no attending physician, but PF that accrues to nobody is money the
+  // clinic can never pay out.
+  const procedureLines = lines.filter((l) => l.kind === "doctor_procedure");
+  if (procedureLines.length > 0) {
+    if (procedureLines.some((l) => !(l.final_price_php > 0))) {
+      return { ok: false, error: "Enter a procedure fee greater than ₱0." };
+    }
+    if (
+      !parsed.data.attending_physician_id &&
+      procedureLines.some((l) => (l.doctor_pf_php ?? 0) > 0)
+    ) {
+      return {
+        ok: false,
+        error: "Select an attending physician for the procedure, or set its doctor PF to ₱0.",
+      };
     }
   }
 
@@ -444,12 +458,23 @@ export async function createVisitAction(
   }
 
   if (split && groupId) {
+    // A split order always has a lab half, so the combined receipt still
+    // prints (and still carries the PIN) — the group page suppresses just the
+    // consultation-only doctor slip.
     await setVisitPinFlash({ group_id: groupId, pin: plainPin });
     redirect(`/staff/visits/group/${groupId}/receipt`);
-  } else {
-    await setVisitPinFlash({ visit_id: created[0]!.visitId, pin: plainPin });
-    redirect(`/staff/visits/${created[0]!.visitId}/receipt`);
   }
+
+  // Item 1 / decision 4: a consultation-only visit prints nothing. Skip the
+  // PIN flash too — with no slip to print it on, the plain PIN would sit in a
+  // cookie no one ever reads. The visit_pins row stands, so admin can still
+  // re-issue if lab work is added to this patient later.
+  if (isConsultOnlyOrder(lines.map((l) => l.kind))) {
+    redirect(`/staff/visits/${created[0]!.visitId}?created=consult`);
+  }
+
+  await setVisitPinFlash({ visit_id: created[0]!.visitId, pin: plainPin });
+  redirect(`/staff/visits/${created[0]!.visitId}/receipt`);
 }
 
 // ---------------------------------------------------------------------------

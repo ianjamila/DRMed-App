@@ -24,6 +24,7 @@ import {
   type QueueTestLike,
 } from "@/lib/visits/queue-stage";
 import { visitDeletability } from "@/lib/visits/deletion";
+import { shouldPrintReceipt } from "@/lib/visits/receipt-policy";
 import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
 import { VisitsTabs } from "../_components/visits-tabs";
 
@@ -394,7 +395,16 @@ function ActionLink({
       </Link>
     );
   }
-  if (stage === "processing") {
+  // Item 1 / decision 4: a consultation-only visit has no slip to reprint, so
+  // the completed row falls back to the same "Open visit" link as Processing.
+  const printsReceipt = shouldPrintReceipt(
+    (visit.test_requests ?? [])
+      .filter((t) => t.deleted_at === null)
+      .map((t) => (Array.isArray(t.services) ? t.services[0] : t.services))
+      .map((svc) => svc?.kind)
+      .filter((kind): kind is string => Boolean(kind)),
+  );
+  if (stage === "processing" || !printsReceipt) {
     return (
       <Link
         href={`/staff/visits/${visit.id}`}

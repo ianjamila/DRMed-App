@@ -6,6 +6,8 @@ import { formatPhp } from "@/lib/marketing/format";
 import { CONTACT, SITE } from "@/lib/marketing/site";
 import { getPatientConsentState } from "@/lib/consent/gate";
 import { formatPatientName } from "@/lib/patients/format-name";
+import { shouldPrintReceipt } from "@/lib/visits/receipt-policy";
+import { NoReceiptNotice } from "@/components/staff/no-receipt-notice";
 import { PrintButton } from "./print-button";
 
 export const metadata = {
@@ -30,9 +32,9 @@ export default async function ReceiptPage({ params }: Props) {
           senior_pwd_id_kind, senior_pwd_id_number
         ),
         test_requests (
-          id,
+          id, deleted_at,
           base_price_php, discount_kind, discount_amount_php, final_price_php,
-          services ( code, name, price_php )
+          services ( code, name, price_php, kind )
         )
       `,
     )
@@ -52,8 +54,41 @@ export default async function ReceiptPage({ params }: Props) {
     const base = tr.base_price_php ?? svc?.price_php ?? 0;
     const discount = tr.discount_amount_php ?? 0;
     const final = tr.final_price_php ?? base - discount;
-    return { id: tr.id, svc, base, discount, final, discountKind: tr.discount_kind };
+    return {
+      id: tr.id,
+      svc,
+      base,
+      discount,
+      final,
+      discountKind: tr.discount_kind,
+      deleted: tr.deleted_at !== null,
+    };
   });
+
+  // Item 1 / decision 4: consultation-only visits print nothing. The button
+  // that links here is hidden for them, but the URL is guessable and stale
+  // links exist — explain rather than 404.
+  if (
+    !shouldPrintReceipt(
+      lines
+        .filter((l) => !l.deleted)
+        .map((l) => l.svc?.kind)
+        .filter((kind): kind is string => Boolean(kind)),
+    )
+  ) {
+    return (
+      <NoReceiptNotice
+        title={`No receipt for visit #${visit.visit_number}`}
+        backHref={`/staff/visits/${visit.id}`}
+        secondaryHref={
+          visit.visit_group_id
+            ? `/staff/visits/group/${visit.visit_group_id}/receipt`
+            : undefined
+        }
+        secondaryLabel="Print the lab slip for this patient visit →"
+      />
+    );
+  }
 
   const subtotal = lines.reduce((s, l) => s + Number(l.base), 0);
   const totalDiscount = lines.reduce((s, l) => s + Number(l.discount), 0);

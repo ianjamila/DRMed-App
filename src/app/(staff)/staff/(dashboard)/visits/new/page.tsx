@@ -82,7 +82,7 @@ export default async function NewVisitPage({ searchParams }: Props) {
       </h1>
       <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
         Visit number is auto-generated. PIN will be shown on the printed
-        receipt.
+        receipt — consultation-only visits print no receipt.
       </p>
 
       {!consent.current ? (
