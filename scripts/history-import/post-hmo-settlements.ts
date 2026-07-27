@@ -10,20 +10,21 @@
  * Idempotency: notes='xlsx HMO SETTLEMENT claim_id={uuid}'. Updates the
  * historic_hmo_claims row's journal_entry_id pointer on success.
  *
- *   npm run import:history:hmo-settlements -- --commit --confirm="I-mean-it"
+ *   npm run import:history:hmo-settlements -- --commit --confirm=<local | project ref>
  */
 import "../lib/load-env";
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "../../src/types/database";
-import { requireLocalOrExplicitProd } from "../lib/env-guard";
+import {
+  CONFIRM_FLAG,
+  expectedConfirmToken,
+  requireLocalOrExplicitProd,
+  requireTargetConfirmation,
+} from "../lib/env-guard";
 
-interface Args { commit: boolean; confirmed: boolean; }
+interface Args { commit: boolean; }
 function parseArgs(): Args {
-  const argv = process.argv.slice(2);
-  return {
-    commit: argv.includes("--commit"),
-    confirmed: argv.includes('--confirm="I-mean-it"') || argv.includes("--confirm=I-mean-it"),
-  };
+  return { commit: process.argv.slice(2).includes("--commit") };
 }
 
 function round2(n: number): number { return Math.round(n * 100) / 100; }
@@ -110,13 +111,13 @@ async function main() {
   }
 
   if (!args.commit) {
-    console.log(`\nDry-run. To commit:\n  npm run import:history:hmo-settlements -- --commit --confirm="I-mean-it"\n`);
+    console.log(
+      `\nDry-run. To commit:\n  npm run import:history:hmo-settlements -- --commit ${CONFIRM_FLAG}=${expectedConfirmToken()}\n` +
+        `\n${CONFIRM_FLAG} names the database above — it changes with the target.\n`,
+    );
     return;
   }
-  if (!args.confirmed) {
-    console.error('ERROR: --commit requires --confirm="I-mean-it".');
-    process.exit(3);
-  }
+  requireTargetConfirmation("import:history:hmo-settlements");
 
   const runStamp = new Date().toISOString();
   let posted = 0, failed = 0;

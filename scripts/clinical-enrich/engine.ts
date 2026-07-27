@@ -1,14 +1,19 @@
 import "../lib/load-env";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../../src/types/database";
-import { requireLocalOrExplicitProd } from "../lib/env-guard";
+import {
+  CONFIRM_FLAG,
+  expectedConfirmToken,
+  requireLocalOrExplicitProd,
+  requireTargetConfirmation,
+} from "../lib/env-guard";
 import { writeCsv } from "../clinical-backfill/report";
 import { readEnrichment } from "./lib/read-enrichment";
 import { resolveSurname } from "./lib/physician-map";
 import { classifyDiscount } from "./lib/discount-type";
 import { parseNewRepeat } from "./lib/new-repeat";
 
-interface Args { xlsx: string; commit: boolean; confirmed: boolean; }
+interface Args { xlsx: string; commit: boolean; }
 export function parseArgs(): Args {
   const argv = process.argv.slice(2);
   const xlsx = argv.find((a) => a.startsWith("--xlsx="))?.substring(7)
@@ -16,7 +21,6 @@ export function parseArgs(): Args {
   return {
     xlsx,
     commit: argv.includes("--commit"),
-    confirmed: argv.includes('--confirm="I-mean-it"') || argv.includes("--confirm=I-mean-it"),
   };
 }
 
@@ -55,6 +59,17 @@ interface LegacyTr {
 
 export async function run(): Promise<void> {
   const args = parseArgs();
+
+  // The dry-run reads committed visits/test_requests and writes an
+  // unmatched-doctors CSV, so the guard has to run in both modes — not only on
+  // the --commit path further down.
+  requireLocalOrExplicitProd("enrich:clinical", {
+    readOnly: !args.commit,
+    writes: args.commit
+      ? "updates imported visit/bill rows with physician, discount type and new/repeat"
+      : "reads legacy visits/test_requests and dumps unmatched physician surnames to tmp/",
+  });
+
   console.log(`Reading enrichment from ${args.xlsx}`);
   const sheet = await readEnrichment(args.xlsx);
   console.log(`  ${sheet.size} source rows indexed`);
@@ -156,14 +171,13 @@ export async function run(): Promise<void> {
   console.log(`\nUnmatched-doctors CSV: ${csv}`);
 
   if (!args.commit) {
-    console.log(`\nDry-run. To commit (dev): npm run enrich:clinical -- --commit --confirm="I-mean-it"\n`);
+    console.log(
+      `\nDry-run. To commit: npm run enrich:clinical -- --commit ${CONFIRM_FLAG}=${expectedConfirmToken()}\n` +
+        `${CONFIRM_FLAG} names the database above — it changes with the target.\n`,
+    );
     return;
   }
-  if (!args.confirmed) { console.error('\n--commit requires --confirm="I-mean-it".'); process.exit(3); }
-  requireLocalOrExplicitProd("enrich:clinical", {
-    writes:
-      "updates imported visit/bill rows with physician, discount type and new/repeat",
-  });
+  requireTargetConfirmation("enrich:clinical");
 
   let applied = 0;
   for (const [pid, ids] of visitPhys) applied += await applyByIds(admin, "visits", { attending_physician_id: pid }, ids);

@@ -6,7 +6,7 @@
 //
 // Flow:
 //   1. worksheet.ts  → partner fills clinical-cluster-resolutions.csv
-//   2. resolve.ts --commit --confirm --prod   ← merges duplicates (this file)
+//   2. resolve.ts --commit --confirm=<project ref> --prod  ← merges duplicates (this file)
 //   3. backfill:clinical:{lab,consult} --commit --resolutions=<file> --prod
 //      ← imports the 439 held rows (single-match for SAME, override for DISTINCT)
 //
@@ -14,16 +14,21 @@
 // FK reassignment + tombstoning + audit_log are identical to the dedup pass.
 //
 // Run (dry-run):  tsx --env-file=.env.local scripts/clinical-backfill/followups/resolve.ts --file=<path>
-// Run (commit):   ... --file=<path> --commit --confirm="I-mean-it" --prod
+// Run (commit):   ... --file=<path> --commit --confirm=<local | project ref> --prod
 import "../../lib/load-env";
 import { promises as fs } from "node:fs";
-import { requireLocalOrExplicitProd } from "../../lib/env-guard";
+import {
+  CONFIRM_FLAG,
+  expectedConfirmToken,
+  requireLocalOrExplicitProd,
+  requireTargetConfirmation,
+} from "../../lib/env-guard";
 import { adminClient, loadRows, mergeOne } from "../../patient-dedup/engine";
 import type { PatientRow } from "../../patient-dedup/lib/types";
 import { matchKey } from "../lib/names";
 import { parseResolutions } from "./resolutions";
 
-interface Args { file: string; commit: boolean; confirmed: boolean; }
+interface Args { file: string; commit: boolean; }
 function parseArgs(): Args {
   const argv = process.argv.slice(2);
   const file = argv.find((a) => a.startsWith("--file="))?.substring(7) ?? "";
@@ -31,7 +36,6 @@ function parseArgs(): Args {
   return {
     file,
     commit: argv.includes("--commit"),
-    confirmed: argv.includes('--confirm="I-mean-it"') || argv.includes("--confirm=I-mean-it"),
   };
 }
 
@@ -87,14 +91,14 @@ async function main(): Promise<void> {
   }
 
   if (!args.commit) {
-    console.log(`\nDry-run. To merge: ... --file=${args.file} --commit --confirm="I-mean-it" --prod`);
-    console.log(`Then import held rows: npm run backfill:clinical:lab -- --commit --confirm="I-mean-it" --resolutions=${args.file} --prod (and :consult)`);
+    const token = expectedConfirmToken();
+    const prod = process.argv.includes("--prod") ? " --prod" : "";
+    console.log(`\nDry-run. To merge: ... --file=${args.file} --commit ${CONFIRM_FLAG}=${token}${prod}`);
+    console.log(`Then import held rows: npm run backfill:clinical:lab -- --commit ${CONFIRM_FLAG}=${token} --resolutions=${args.file}${prod} (and :consult)`);
+    console.log(`${CONFIRM_FLAG} names the database above — it changes with the target.`);
     return;
   }
-  if (!args.confirmed) { console.error('\n--commit requires --confirm="I-mean-it".'); process.exit(3); }
-  requireLocalOrExplicitProd("clinical-backfill:resolve-merges", {
-    writes: "MERGES duplicate patient records per the partner's cluster decisions",
-  });
+  requireTargetConfirmation("clinical-backfill:resolve-merges");
 
   let merged = 0;
   for (const p of plans) {

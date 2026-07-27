@@ -4,10 +4,15 @@
 // in dry-run mode. Commit mode (Task 8) inserts with provenance.
 //
 //   npm run import:legacy -- --csv="$HOME/Downloads/CUSTOMER LIST - CUSTOMER LIST2.csv"
-//   npm run import:legacy -- --csv=... --commit --confirm="I-mean-it"
+//   npm run import:legacy -- --csv=... --commit --confirm=<local | project ref>
 
 import "./lib/load-env";
-import { requireLocalOrExplicitProd } from "./lib/env-guard";
+import {
+  CONFIRM_FLAG,
+  expectedConfirmToken,
+  requireLocalOrExplicitProd,
+  requireTargetConfirmation,
+} from "./lib/env-guard";
 import { promises as fs } from "node:fs";
 import { parse } from "csv-parse/sync";
 import { createClient } from "@supabase/supabase-js";
@@ -31,7 +36,6 @@ import type {
 interface Args {
   csv: string;
   commit: boolean;
-  confirmed: boolean;
 }
 
 function parseArgs(): Args {
@@ -42,11 +46,7 @@ function parseArgs(): Args {
     process.exit(2);
   }
   const commit = args.includes("--commit");
-  const confirmFlag = args.find((a) => a.startsWith("--confirm="));
-  const confirmed =
-    confirmFlag === '--confirm="I-mean-it"' ||
-    confirmFlag === "--confirm=I-mean-it";
-  return { csv, commit, confirmed };
+  return { csv, commit };
 }
 
 /**
@@ -371,17 +371,14 @@ async function main() {
 
   if (!args.commit) {
     console.log(
-      '\nDry-run complete. Review the preflight CSV, then re-run with --commit --confirm="I-mean-it".\n',
+      `\nDry-run complete. Review the preflight CSV, then re-run with:\n` +
+        `  --commit ${CONFIRM_FLAG}=${expectedConfirmToken()}\n` +
+        `\n${CONFIRM_FLAG} names the database above — it changes with the target.\n`,
     );
     return;
   }
 
-  if (!args.confirmed) {
-    console.error(
-      '\nERROR: --commit requires --confirm="I-mean-it" exactly.',
-    );
-    process.exit(3);
-  }
+  requireTargetConfirmation("import:legacy");
 
   const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;

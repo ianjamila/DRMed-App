@@ -10,20 +10,21 @@
 // are no longer on LEGACY-LAB).
 //
 // Run (dry-run): tsx --env-file=.env.local scripts/clinical-backfill/followups/repoint-services.ts
-// Run (commit):  ... --commit --confirm="I-mean-it" --prod
+// Run (commit):  ... --commit --confirm=<local | project ref> --prod
 import "../../lib/load-env";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../../../src/types/database";
-import { requireLocalOrExplicitProd } from "../../lib/env-guard";
+import {
+  CONFIRM_FLAG,
+  expectedConfirmToken,
+  requireLocalOrExplicitProd,
+  requireTargetConfirmation,
+} from "../../lib/env-guard";
 import { SAFE_AUTO } from "./service-aliases";
 
-interface Args { commit: boolean; confirmed: boolean; }
+interface Args { commit: boolean; }
 function parseArgs(): Args {
-  const argv = process.argv.slice(2);
-  return {
-    commit: argv.includes("--commit"),
-    confirmed: argv.includes('--confirm="I-mean-it"') || argv.includes("--confirm=I-mean-it"),
-  };
+  return { commit: process.argv.slice(2).includes("--commit") };
 }
 function adminClient(): SupabaseClient<Database> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -34,6 +35,16 @@ function adminClient(): SupabaseClient<Database> {
 
 async function main(): Promise<void> {
   const args = parseArgs();
+
+  // The dry-run below counts real `test_requests` against whatever database is
+  // configured, so the guard belongs here rather than on the --commit path.
+  requireLocalOrExplicitProd("clinical-backfill:repoint-services", {
+    readOnly: !args.commit,
+    writes: args.commit
+      ? "rewrites `test_requests.service_id` off the LEGACY-LAB shell service"
+      : "counts LEGACY-LAB `test_requests` rows and reads the service catalogue",
+  });
+
   const admin = adminClient();
 
   // resolve LEGACY-LAB + every safe-auto target code to a service_id
@@ -74,13 +85,14 @@ async function main(): Promise<void> {
   console.log(`\nRows to re-point: ${total} (of ${legacyTotal ?? "?"} currently on LEGACY-LAB)`);
 
   if (!args.commit) {
-    console.log(`\nDry-run. To re-point: ... --commit --confirm="I-mean-it" --prod`);
+    console.log(
+      `\nDry-run. To re-point: ... --commit ${CONFIRM_FLAG}=${expectedConfirmToken()}` +
+        `${process.argv.includes("--prod") ? " --prod" : ""}\n` +
+        `${CONFIRM_FLAG} names the database above — it changes with the target.`,
+    );
     return;
   }
-  if (!args.confirmed) { console.error('\n--commit requires --confirm="I-mean-it".'); process.exit(3); }
-  requireLocalOrExplicitProd("clinical-backfill:repoint-services", {
-    writes: "rewrites `bill_lines.service_id` off the LEGACY-LAB shell service",
-  });
+  requireTargetConfirmation("clinical-backfill:repoint-services");
 
   let moved = 0;
   const byAlias: Record<string, number> = {};

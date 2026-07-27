@@ -98,17 +98,50 @@ export function hostOf(url: string | undefined | null): string | null {
 }
 
 /**
- * `qhptbmafrosgibooelpp` out of `qhptbmafrosgibooelpp.supabase.co`.
+ * `qhptbmafrosgibooelpp` out of a Supabase HOST, in either of the two shapes
+ * this project uses:
+ *
+ *   qhptbmafrosgibooelpp.supabase.co       REST endpoint
+ *   db.qhptbmafrosgibooelpp.supabase.co    direct Postgres (SUPABASE_DB_URL)
  *
  * Pooler hosts (`aws-0-<region>.pooler.supabase.com`) deliberately return null:
  * their subdomain is a REGION, and the project ref lives in the connection
  * username (`postgres.<ref>`). Printing the region as a project ref would name
- * the wrong thing in a banner whose whole job is to say which database.
+ * the wrong thing in a banner whose whole job is to say which database. Use
+ * `supabaseProjectRefFromUrl` to cover that case too.
  */
 export function supabaseProjectRef(host: string | null): string | null {
   if (!host) return null;
-  const m = /^([a-z0-9]+)\.supabase\.(?:co|in)$/i.exec(host);
-  return m ? m[1] : null;
+  const direct = /^([a-z0-9]+)\.supabase\.(?:co|in)$/i.exec(host);
+  if (direct) return direct[1].toLowerCase();
+  const viaDb = /^db\.([a-z0-9]+)\.supabase\.(?:co|in)$/i.exec(host);
+  return viaDb ? viaDb[1].toLowerCase() : null;
+}
+
+/**
+ * Project ref for a whole connection URL, falling back to the pooler's
+ * `postgres.<ref>` username when the host alone cannot name the project.
+ *
+ * This is what the confirmation token below is built from, so it has to cover
+ * every URL shape an operator might actually be pointed at — a wipe run whose
+ * expected token came out as the host string rather than the ref would still be
+ * safe, but it would ask them to type something far less recognisable.
+ */
+export function supabaseProjectRefFromUrl(
+  url: string | undefined | null,
+): string | null {
+  const fromHost = supabaseProjectRef(hostOf(url));
+  if (fromHost) return fromHost;
+
+  const host = hostOf(url);
+  if (!host || !/(^|\.)pooler\.supabase\.com$/i.test(host)) return null;
+  try {
+    const username = decodeURIComponent(new URL(url as string).username);
+    const m = /^postgres\.([a-z0-9]+)$/i.exec(username);
+    return m ? m[1].toLowerCase() : null;
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -143,12 +176,13 @@ export function classifyTargets(env: ScriptEnv): EnvTarget[] {
   for (const { name, label } of TARGET_ENV_VARS) {
     const value = env[name];
     if (!value || !value.trim()) continue;
-    const host = hostOf(value.trim());
+    const raw = value.trim();
+    const host = hostOf(raw);
     out.push({
       varName: name,
       label,
       host,
-      projectRef: supabaseProjectRef(host),
+      projectRef: supabaseProjectRefFromUrl(raw),
       isLocal: isLocalHost(host),
     });
   }
@@ -338,6 +372,208 @@ function countdown(seconds: number, scriptName: string): void {
     Atomics.wait(buffer, 0, 0, 1000);
   }
   process.stdout.write("\r".padEnd(60, " ") + "\r");
+}
+
+// ---------------------------------------------------------------------------
+// Typed target confirmation (destructive scripts)
+// ---------------------------------------------------------------------------
+//
+// `--confirm="I-mean-it"` proves the operator meant to run a destructive
+// command. It says nothing about WHICH database they are pointed at, and it is
+// the same eleven characters every time, so it becomes muscle memory — exactly
+// the reflex the flag was supposed to interrupt.
+//
+// For the two scripts that destroy or rewrite patient data, the confirmation
+// token is instead derived from the RESOLVED target: the Supabase project ref
+// when the target is remote, the literal `local` when it is the local stack.
+// You cannot type it without having read what the guard banner just printed,
+// and a token memorised from a prod run does not work against local (or the
+// reverse).
+
+export const CONFIRM_FLAG = "--confirm";
+export const LOCAL_CONFIRM_TOKEN = "local";
+
+export type ConfirmTokenKind = "local" | "project-ref" | "host";
+
+export interface ConfirmTokenResolution {
+  /** The exact string the operator must type, or null when unresolvable. */
+  token: string | null;
+  kind: ConfirmTokenKind | null;
+  /** Why no token could be resolved. Null when one was. */
+  error: string | null;
+}
+
+/** The single identity a non-local target names, for token + mismatch checks. */
+function identityOf(t: EnvTarget): string | null {
+  return t.projectRef ?? t.host;
+}
+
+/**
+ * Work out what the operator has to type for THIS run.
+ *
+ * Fails rather than guessing when the two target vars disagree. That case is
+ * not hypothetical: `wipe:operational` reads its row counts over the REST
+ * endpoint but TRUNCATEs over `SUPABASE_DB_URL`, so a half-updated env file
+ * would print reassuring counts from one database while emptying another.
+ */
+export function resolveConfirmToken(
+  targets: readonly EnvTarget[],
+): ConfirmTokenResolution {
+  if (targets.length === 0) {
+    return {
+      token: null,
+      kind: null,
+      error: "no database target is configured",
+    };
+  }
+
+  const nonLocal = targets.filter((t) => !t.isLocal);
+  if (nonLocal.length === 0) {
+    return { token: LOCAL_CONFIRM_TOKEN, kind: "local", error: null };
+  }
+
+  const unnameable = nonLocal.filter((t) => identityOf(t) === null);
+  if (unnameable.length > 0) {
+    return {
+      token: null,
+      kind: null,
+      error: `${unnameable
+        .map((t) => t.varName)
+        .join(" and ")} could not be parsed as a URL, so the target cannot be named`,
+    };
+  }
+
+  const identities = [...new Set(nonLocal.map((t) => identityOf(t) as string))];
+  if (identities.length > 1) {
+    return {
+      token: null,
+      kind: null,
+      error: `the configured targets name different databases — ${nonLocal
+        .map((t) => `${t.varName} → ${identityOf(t)}`)
+        .join(", ")}`,
+    };
+  }
+
+  return {
+    token: identities[0],
+    kind: nonLocal[0].projectRef ? "project-ref" : "host",
+    error: null,
+  };
+}
+
+/**
+ * The token THIS run requires, for printing in dry-run hints. Falls back to a
+ * `<target>` placeholder when the environment is too broken to name one — the
+ * real check ({@link checkTargetConfirmation}) reports why in that case.
+ */
+export function expectedConfirmToken(env: ScriptEnv = process.env): string {
+  return resolveConfirmToken(classifyTargets(env)).token ?? "<target>";
+}
+
+/** `--confirm=foo` / `--confirm="foo"` → `foo`. Null when the flag is absent. */
+export function parseConfirmFlag(argv: readonly string[]): string | null {
+  const prefix = `${CONFIRM_FLAG}=`;
+  const hit = argv.find((a) => a.startsWith(prefix));
+  if (hit === undefined) return null;
+  return hit.slice(prefix.length).replace(/^["']|["']$/g, "").trim();
+}
+
+export interface ConfirmCheck {
+  ok: boolean;
+  expected: string | null;
+  provided: string | null;
+  /** Ready-to-print explanation. Empty string when `ok`. */
+  message: string;
+}
+
+function describeExpectation(
+  kind: ConfirmTokenKind,
+  token: string,
+): string {
+  switch (kind) {
+    case "local":
+      return `the local Supabase stack — type \`${CONFIRM_FLAG}=${token}\``;
+    case "project-ref":
+      return `Supabase project \`${token}\` — type \`${CONFIRM_FLAG}=${token}\``;
+    case "host":
+      return `host \`${token}\` (no Supabase project ref could be derived) — type \`${CONFIRM_FLAG}=${token}\``;
+  }
+}
+
+/**
+ * Pure form of the check, so the wording is unit-testable without a process.
+ * Comparison is case-insensitive: the point is that the operator read the
+ * target, not that they matched its capitalisation.
+ */
+export function checkTargetConfirmation(opts: {
+  scriptName: string;
+  env: ScriptEnv;
+  argv: readonly string[];
+}): ConfirmCheck {
+  const targets = classifyTargets(opts.env);
+  const resolution = resolveConfirmToken(targets);
+  const provided = parseConfirmFlag(opts.argv);
+
+  if (resolution.token === null || resolution.kind === null) {
+    return {
+      ok: false,
+      expected: null,
+      provided,
+      message: [
+        ``,
+        `[${opts.scriptName}] cannot confirm the target: ${resolution.error}.`,
+        ``,
+        ...targets.map(describeTarget),
+        ``,
+        `Fix the environment before re-running — no writes were performed.`,
+        ``,
+      ].join("\n"),
+    };
+  }
+
+  if (provided !== null && provided.toLowerCase() === resolution.token) {
+    return { ok: true, expected: resolution.token, provided, message: "" };
+  }
+
+  const got =
+    provided === null
+      ? `(${CONFIRM_FLAG} was not given)`
+      : `"${provided}"`;
+
+  return {
+    ok: false,
+    expected: resolution.token,
+    provided,
+    message: [
+      ``,
+      `[${opts.scriptName}] --commit needs you to name the target you are pointed at.`,
+      ``,
+      ...targets.map(describeTarget),
+      ``,
+      `  expected   ${CONFIRM_FLAG}=${resolution.token}`,
+      `  got        ${got}`,
+      ``,
+      `This is ${describeExpectation(resolution.kind, resolution.token)}.`,
+      `No writes were performed.`,
+      ``,
+    ].join("\n"),
+  };
+}
+
+/**
+ * Abort unless the operator typed the token matching the resolved target.
+ * Call this on the `--commit` path only, AFTER `requireLocalOrExplicitProd`
+ * has printed which database is in play.
+ */
+export function requireTargetConfirmation(scriptName: string): void {
+  const check = checkTargetConfirmation({
+    scriptName,
+    env: process.env,
+    argv: process.argv,
+  });
+  if (check.ok) return;
+  console.error(check.message);
+  process.exit(3);
 }
 
 // ---------------------------------------------------------------------------

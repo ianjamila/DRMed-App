@@ -2,17 +2,22 @@ import { describe, expect, it } from "vitest";
 import { sep } from "node:path";
 
 import {
+  checkTargetConfirmation,
   classifyTargets,
   evaluateEnvGuard,
+  expectedConfirmToken,
   findMainWorktreeRoot,
   formatBlockMessage,
   formatLoadSummary,
   formatProdWarning,
   hostOf,
   isLocalHost,
+  parseConfirmFlag,
   planEnvFiles,
   readProdOptIn,
+  resolveConfirmToken,
   supabaseProjectRef,
+  supabaseProjectRefFromUrl,
   type EnvFileIo,
 } from "./env-guard";
 
@@ -101,6 +106,43 @@ describe("supabaseProjectRef", () => {
   it("does not mistake a pooler REGION for a project ref", () => {
     // aws-0-ap-southeast-1 is the region; the ref lives in the username.
     expect(supabaseProjectRef("aws-0-ap-southeast-1.pooler.supabase.com")).toBeNull();
+  });
+
+  it("reads the ref out of a direct Postgres host", () => {
+    // This is the shape SUPABASE_DB_URL actually takes in .env.local.
+    expect(supabaseProjectRef("db.qhptbmafrosgibooelpp.supabase.co")).toBe(
+      "qhptbmafrosgibooelpp",
+    );
+  });
+});
+
+describe("supabaseProjectRefFromUrl", () => {
+  it("covers both hosted shapes", () => {
+    expect(supabaseProjectRefFromUrl(PROD_URL)).toBe("qhptbmafrosgibooelpp");
+    expect(
+      supabaseProjectRefFromUrl(
+        "postgresql://postgres:pw@db.qhptbmafrosgibooelpp.supabase.co:5432/postgres",
+      ),
+    ).toBe("qhptbmafrosgibooelpp");
+  });
+
+  it("falls back to the pooler username, where the ref actually lives", () => {
+    expect(
+      supabaseProjectRefFromUrl(
+        "postgresql://postgres.qhptbmafrosgibooelpp:pw@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres",
+      ),
+    ).toBe("qhptbmafrosgibooelpp");
+  });
+
+  it("is null when nothing names a project", () => {
+    expect(supabaseProjectRefFromUrl(LOCAL_URL)).toBeNull();
+    expect(
+      supabaseProjectRefFromUrl(
+        "postgresql://someone:pw@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres",
+      ),
+    ).toBeNull();
+    expect(supabaseProjectRefFromUrl("not a url")).toBeNull();
+    expect(supabaseProjectRefFromUrl(undefined)).toBeNull();
   });
 });
 
@@ -245,6 +287,168 @@ describe("message formatting", () => {
     expect(formatProdWarning("x", allowed, undefined)).toContain(
       "does not declare what it writes",
     );
+  });
+});
+
+describe("parseConfirmFlag", () => {
+  it("reads the value with or without quotes, and null when absent", () => {
+    expect(parseConfirmFlag(["--commit", "--confirm=local"])).toBe("local");
+    expect(parseConfirmFlag(['--confirm="local"'])).toBe("local");
+    expect(parseConfirmFlag(["--confirm='local'"])).toBe("local");
+    expect(parseConfirmFlag(["--commit"])).toBeNull();
+  });
+
+  it("returns an empty string for a bare --confirm=, not null", () => {
+    // Distinguishing "typed nothing" from "did not type the flag" lets the
+    // caller say which mistake was made.
+    expect(parseConfirmFlag(["--confirm="])).toBe("");
+  });
+});
+
+describe("resolveConfirmToken", () => {
+  const tokenFor = (env: Record<string, string>) =>
+    resolveConfirmToken(classifyTargets(env));
+
+  it("is the literal `local` for a local-only target", () => {
+    expect(tokenFor({ NEXT_PUBLIC_SUPABASE_URL: LOCAL_URL })).toEqual({
+      token: "local",
+      kind: "local",
+      error: null,
+    });
+  });
+
+  it("is the project ref when the target is hosted", () => {
+    expect(tokenFor({ NEXT_PUBLIC_SUPABASE_URL: PROD_URL })).toEqual({
+      token: "qhptbmafrosgibooelpp",
+      kind: "project-ref",
+      error: null,
+    });
+  });
+
+  it("agrees across the REST and direct-Postgres spellings of one project", () => {
+    const r = tokenFor({
+      NEXT_PUBLIC_SUPABASE_URL: PROD_URL,
+      SUPABASE_DB_URL:
+        "postgresql://postgres:pw@db.qhptbmafrosgibooelpp.supabase.co:5432/postgres",
+    });
+    expect(r.token).toBe("qhptbmafrosgibooelpp");
+  });
+
+  it("refuses when the two target vars name DIFFERENT databases", () => {
+    // wipe:operational counts rows over REST and TRUNCATEs over SUPABASE_DB_URL.
+    // A half-edited env file would report one database and empty another.
+    const r = tokenFor({
+      NEXT_PUBLIC_SUPABASE_URL: PROD_URL,
+      SUPABASE_DB_URL:
+        "postgresql://postgres:pw@db.otherprojectref00000.supabase.co:5432/postgres",
+    });
+    expect(r.token).toBeNull();
+    expect(r.error).toContain("different databases");
+  });
+
+  it("treats a local REST endpoint plus a remote DB URL as the remote target", () => {
+    const r = tokenFor({
+      NEXT_PUBLIC_SUPABASE_URL: LOCAL_URL,
+      SUPABASE_DB_URL:
+        "postgresql://postgres:pw@db.qhptbmafrosgibooelpp.supabase.co:5432/postgres",
+    });
+    expect(r.token).toBe("qhptbmafrosgibooelpp");
+  });
+
+  it("falls back to the host when no project ref can be derived", () => {
+    const r = tokenFor({ NEXT_PUBLIC_SUPABASE_URL: "https://staging.drmed.ph" });
+    expect(r).toEqual({ token: "staging.drmed.ph", kind: "host", error: null });
+  });
+
+  it("has no token at all when nothing is configured or nothing parses", () => {
+    expect(tokenFor({}).error).toContain("no database target");
+    expect(tokenFor({ NEXT_PUBLIC_SUPABASE_URL: "127.0.0.1:54321" }).error).toContain(
+      "could not be parsed",
+    );
+  });
+});
+
+describe("checkTargetConfirmation", () => {
+  const check = (env: Record<string, string>, argv: string[]) =>
+    checkTargetConfirmation({ scriptName: "wipe:operational", env, argv });
+
+  it("passes only when the typed token matches the resolved target", () => {
+    const env = { NEXT_PUBLIC_SUPABASE_URL: PROD_URL };
+    expect(check(env, ["--commit", "--confirm=qhptbmafrosgibooelpp"]).ok).toBe(true);
+    expect(check(env, ["--commit", "--confirm=local"]).ok).toBe(false);
+    expect(check(env, ["--commit"]).ok).toBe(false);
+  });
+
+  it("does not accept the old fixed passphrase", () => {
+    // The whole point: a value that is the same on every target is not a
+    // statement about which database you are pointed at.
+    const r = check({ NEXT_PUBLIC_SUPABASE_URL: PROD_URL }, [
+      "--commit",
+      '--confirm="I-mean-it"',
+    ]);
+    expect(r.ok).toBe(false);
+    expect(r.expected).toBe("qhptbmafrosgibooelpp");
+  });
+
+  it("does not accept a prod token while pointed at local, or the reverse", () => {
+    expect(
+      check({ NEXT_PUBLIC_SUPABASE_URL: LOCAL_URL }, [
+        "--confirm=qhptbmafrosgibooelpp",
+      ]).ok,
+    ).toBe(false);
+    expect(
+      check({ NEXT_PUBLIC_SUPABASE_URL: PROD_URL }, ["--confirm=local"]).ok,
+    ).toBe(false);
+  });
+
+  it("ignores capitalisation — reading the target is the point, not typing case", () => {
+    expect(
+      check({ NEXT_PUBLIC_SUPABASE_URL: PROD_URL }, [
+        "--confirm=QHPTBMAFROSGIBOOELPP",
+      ]).ok,
+    ).toBe(true);
+  });
+
+  it("names the host, the expectation and what was actually typed", () => {
+    const msg = check({ NEXT_PUBLIC_SUPABASE_URL: PROD_URL }, [
+      "--commit",
+      "--confirm=local",
+    ]).message;
+    expect(msg).toContain("qhptbmafrosgibooelpp.supabase.co");
+    expect(msg).toContain("--confirm=qhptbmafrosgibooelpp");
+    expect(msg).toContain('got        "local"');
+    expect(msg).toContain("No writes were performed.");
+  });
+
+  it("says the flag was missing rather than showing an empty value", () => {
+    const msg = check({ NEXT_PUBLIC_SUPABASE_URL: LOCAL_URL }, ["--commit"])
+      .message;
+    expect(msg).toContain("--confirm was not given");
+  });
+
+  it("reports the mismatch instead of a token when the targets disagree", () => {
+    const r = check(
+      {
+        NEXT_PUBLIC_SUPABASE_URL: PROD_URL,
+        SUPABASE_DB_URL:
+          "postgresql://postgres:pw@db.otherprojectref00000.supabase.co:5432/postgres",
+      },
+      ["--commit", "--confirm=qhptbmafrosgibooelpp"],
+    );
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain("different databases");
+  });
+});
+
+describe("expectedConfirmToken", () => {
+  it("is what the dry-run hint should tell the operator to type", () => {
+    expect(expectedConfirmToken({ NEXT_PUBLIC_SUPABASE_URL: LOCAL_URL })).toBe(
+      "local",
+    );
+    expect(expectedConfirmToken({ NEXT_PUBLIC_SUPABASE_URL: PROD_URL })).toBe(
+      "qhptbmafrosgibooelpp",
+    );
+    expect(expectedConfirmToken({})).toBe("<target>");
   });
 });
 

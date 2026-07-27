@@ -19,6 +19,10 @@
  * Within the lab-tests block, section is inferred from the test name with a
  * coarse pattern match. Admin can refine via the prices page afterwards.
  *
+ * Positional inference cannot express a test that sits in the CSV's lab block
+ * but is actually sent out, so SERVICE_OVERRIDES below carries those cases —
+ * see the comment there for why that list is load-bearing rather than cosmetic.
+ *
  * After CSV upsert, 6 packages listed only on drmed.ph (Annual Physical Exam,
  * Diabetic Health, etc.) are added with their `includes` lists as descriptions.
  */
@@ -219,6 +223,70 @@ function blockFor(rowNum: number): Block | null {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Per-code corrections to the positional inference
+// ---------------------------------------------------------------------------
+//
+// WHY THIS EXISTS — READ BEFORE REMOVING AN ENTRY
+//
+// This importer upserts `section`, `is_send_out` and `send_out_lab` by code, so
+// it OVERWRITES those columns on every run. Where a migration has since
+// reclassified a service, re-running `npm run import:tests` silently undid that
+// migration and put the service back in the wrong section.
+//
+// That is exactly what happened to NA (Sodium): migration 0116 moved it from
+// in-house chemistry to a Hi Precision send-out, and the CSV still lists it in
+// the lab-tests block, so `inferLabSection` classified it back to `chemistry`
+// on the next import. The consequence is not cosmetic — `is_send_out` is what
+// puts a test on the send-out COGS path and keeps the structured-entry form off
+// the lab queue for it.
+//
+// The rule: when a migration changes one of the columns this importer writes,
+// the same state belongs here too, so the catalogue is reproducible from the
+// importer alone. A fresh database gets its `services` rows from this script,
+// not from migrations (0116's UPDATE matches nothing on an empty catalogue),
+// which makes this list the actual source of truth for those columns.
+//
+// Columns NOT listed here — `send_out_unit_cost_php` above all — are absent
+// from the upsert payload on purpose, so PostgREST leaves whatever is already
+// in the row alone. Never add a cost figure to this file: it feeds COGS and the
+// general ledger, and the clinic enters real ones through the admin UI.
+
+interface ServiceOverride {
+  section?: ServiceSection;
+  is_send_out?: boolean;
+  send_out_lab?: string | null;
+  /**
+   * `vendors.name` to resolve into `services.send_out_vendor_id` after the
+   * upsert. Skipped with a warning when the vendor row does not exist — the AP
+   * vendor list is master data entered through the app, and inventing a row
+   * here would create a payee out of a test-catalogue import.
+   */
+  sendOutVendor?: string;
+  /** Why this override exists. Printed on every run. */
+  reason: string;
+}
+
+const SERVICE_OVERRIDES: Record<string, ServiceOverride> = {
+  NA: {
+    section: "send_out",
+    is_send_out: true,
+    send_out_lab: "Hi Precision",
+    sendOutVendor: "Hi Precision",
+    reason:
+      "Sodium is run by an outside lab, not on the bench — reclassified by migration 0116",
+  },
+};
+
+function applyOverride(row: ServiceRow): ServiceOverride | null {
+  const override = SERVICE_OVERRIDES[row.code];
+  if (!override) return null;
+  if (override.section !== undefined) row.section = override.section;
+  if (override.is_send_out !== undefined) row.is_send_out = override.is_send_out;
+  if (override.send_out_lab !== undefined) row.send_out_lab = override.send_out_lab;
+  return override;
+}
+
 interface ParsedRow {
   __row: number;
   name: string;
@@ -392,7 +460,7 @@ async function main() {
       section = inferLabSection(cleanedName);
     }
 
-    services.push({
+    const row: ServiceRow = {
       code,
       name: cleanedName,
       description: CSV_PACKAGE_DESCRIPTIONS[code] ?? null,
@@ -403,7 +471,17 @@ async function main() {
       section,
       is_send_out: !!block.isSendOut,
       send_out_lab: block.sendOutLab ?? null,
-    });
+    };
+
+    const override = applyOverride(row);
+    if (override) {
+      console.log(
+        `  override ${row.code}: ${row.section}` +
+          `${row.is_send_out ? ` / send-out via ${row.send_out_lab}` : ""} — ${override.reason}`,
+      );
+    }
+
+    services.push(row);
   }
 
   // Add website-only packages (skip if their code already came from CSV).
@@ -421,18 +499,112 @@ async function main() {
   console.log("Counts by section:", counts);
 
   // Upsert in batches so we don't blow request limits on a 200+ row import.
+  //
+  // Split by whether we actually HAVE a description. PostgREST's ON CONFLICT DO
+  // UPDATE only touches the columns present in the payload, so omitting
+  // `description` for the rows that have none leaves whatever is in the row
+  // alone. Sending `description: null` for them — which is what this script used
+  // to do — wiped the clinical copy that `npm run import:descriptions` writes,
+  // because that script is fill-NULL-only and never puts it back on a re-run.
+  //
+  // Ownership, so this does not get re-broken: this importer owns `description`
+  // only for the package codes it has real copy for (CSV_PACKAGE_DESCRIPTIONS +
+  // WEBSITE_ONLY_PACKAGES). Every other test's description belongs to
+  // import:descriptions and to the admin edit page. The two batches cannot be
+  // merged: PostgREST rejects a batch whose objects do not all share keys.
+  const described = services.filter((s) => s.description !== null);
+  const undescribed: Omit<ServiceRow, "description">[] = services
+    .filter((s) => s.description === null)
+    .map((s) => {
+      const rest = { ...s } as Partial<ServiceRow>;
+      delete rest.description;
+      return rest as Omit<ServiceRow, "description">;
+    });
+
+  await upsertBatches("with description", described);
+  await upsertBatches("description untouched", undescribed);
+
+  console.log(
+    `✓ Upserted ${services.length} services (idempotent) — ` +
+      `${described.length} with copy, ${undescribed.length} left as they were.`,
+  );
+
+  await linkSendOutVendors(new Set(services.map((s) => s.code)));
+}
+
+/** Chunked upsert on `code`. Every row in `rows` must carry the same keys. */
+async function upsertBatches(
+  label: string,
+  rows: readonly (ServiceRow | Omit<ServiceRow, "description">)[],
+): Promise<void> {
   const BATCH = 50;
-  for (let i = 0; i < services.length; i += BATCH) {
-    const batch = services.slice(i, i + BATCH);
+  for (let i = 0; i < rows.length; i += BATCH) {
+    const batch = rows.slice(i, i + BATCH);
     const { error } = await admin
       .from("services")
-      .upsert(batch, { onConflict: "code" });
+      // The row shape is built above and validated by ServiceRow; the generated
+      // Insert type cannot express "the same keys, minus description".
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .upsert(batch as any, { onConflict: "code" });
     if (error) {
-      console.error(`upsert batch ${i / BATCH + 1} failed:`, error);
+      console.error(`upsert (${label}) batch ${i / BATCH + 1} failed:`, error);
       process.exit(1);
     }
   }
-  console.log(`✓ Upserted ${services.length} services (idempotent).`);
+}
+
+/**
+ * Point overridden send-outs at their `vendors` row.
+ *
+ * Kept out of the upsert payload deliberately: `send_out_vendor_id` is set for
+ * NA and for the 11 tests migration 0117 costed, and is NULL for the rest. A
+ * blanket upsert would have to send a value for every row, which would wipe
+ * those. This pass only ever writes the codes that ask for a vendor by name.
+ */
+async function linkSendOutVendors(importedCodes: Set<string>): Promise<void> {
+  const wanted = Object.entries(SERVICE_OVERRIDES).filter(
+    ([code, o]) => o.sendOutVendor && importedCodes.has(code),
+  ) as [string, ServiceOverride & { sendOutVendor: string }][];
+  if (wanted.length === 0) return;
+
+  const names = [...new Set(wanted.map(([, o]) => o.sendOutVendor))];
+  const { data: vendors, error } = await admin
+    .from("vendors")
+    .select("id, name")
+    .in("name", names);
+  if (error) {
+    console.error(`vendor lookup failed: ${error.message}`);
+    process.exit(1);
+  }
+  const idByName = new Map((vendors ?? []).map((v) => [v.name, v.id]));
+
+  for (const [code, o] of wanted) {
+    const vendorId = idByName.get(o.sendOutVendor);
+    if (!vendorId) {
+      // Expected on a fresh database — `vendors` is entered through the AP UI,
+      // never seeded. The service is still a correctly-flagged send-out; it
+      // simply is not attributed to a payee yet, which is the same state the
+      // other 82 send-outs are in.
+      console.warn(
+        `  ! ${code}: no vendors row named "${o.sendOutVendor}" — left send_out_vendor_id unset.`,
+      );
+      continue;
+    }
+    const { error: updErr, count } = await admin
+      .from("services")
+      .update({ send_out_vendor_id: vendorId }, { count: "exact" })
+      .eq("code", code)
+      .is("send_out_vendor_id", null);
+    if (updErr) {
+      console.error(`  ! ${code}: could not set send_out_vendor_id: ${updErr.message}`);
+      process.exit(1);
+    }
+    console.log(
+      count
+        ? `  ✓ ${code}: send_out_vendor_id → ${o.sendOutVendor}`
+        : `  ✓ ${code}: send_out_vendor_id already set — left alone`,
+    );
+  }
 }
 
 main().catch((err) => {

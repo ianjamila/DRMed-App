@@ -2,7 +2,7 @@
  * 12.B history import — LAB SERVICE tab.
  *
  *   npm run import:history:lab-services -- --year=2025                         # dry-run
- *   npm run import:history:lab-services -- --year=2025 --commit --confirm="I-mean-it"
+ *   npm run import:history:lab-services -- --year=2025 --commit --confirm=<local | project ref>
  *
  * GROSS revenue model: labs don't have doctor PFs, so the clinic books the
  * full FINAL price as revenue (4100 Lab Tests Sales Revenue).
@@ -40,7 +40,12 @@ import path from "node:path";
 import ExcelJS from "exceljs";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../../src/types/database";
-import { requireLocalOrExplicitProd } from "../lib/env-guard";
+import {
+  CONFIRM_FLAG,
+  expectedConfirmToken,
+  requireLocalOrExplicitProd,
+  requireTargetConfirmation,
+} from "../lib/env-guard";
 
 const XLSX_PATH_DEFAULT = `${process.env.HOME ?? ""}/Downloads/DR MED MASTERSHEET.xlsx`;
 
@@ -48,7 +53,6 @@ interface Args {
   xlsx: string;
   year: number;
   commit: boolean;
-  confirmed: boolean;
   toDate: string | null;
 }
 
@@ -66,15 +70,12 @@ function parseArgs(): Args {
     process.exit(2);
   }
   const commit = argv.includes("--commit");
-  const confirmed =
-    argv.includes('--confirm="I-mean-it"') ||
-    argv.includes("--confirm=I-mean-it");
   const toDate = argv.find((a) => a.startsWith("--to-date="))?.substring(10) ?? null;
   if (toDate && !/^\d{4}-\d{2}-\d{2}$/.test(toDate)) {
     console.error(`ERROR: --to-date must be YYYY-MM-DD, got ${toDate}`);
     process.exit(2);
   }
-  return { xlsx, year, commit, confirmed, toDate };
+  return { xlsx, year, commit, toDate };
 }
 
 function excelSerialToISO(serial: number): string {
@@ -528,13 +529,13 @@ async function main() {
   console.log(`\nExclusion CSV: ${exclusionsPath}`);
 
   if (!args.commit) {
-    console.log(`\nDry-run. To commit on dev:\n  npm run import:history:lab-services -- --year=${args.year} --commit --confirm="I-mean-it"\n`);
+    console.log(
+      `\nDry-run. To commit:\n  npm run import:history:lab-services -- --year=${args.year} --commit ${CONFIRM_FLAG}=${expectedConfirmToken()}\n` +
+        `\n${CONFIRM_FLAG} names the database above — it changes with the target.\n`,
+    );
     return;
   }
-  if (!args.confirmed) {
-    console.error('\nERROR: --commit requires --confirm="I-mean-it".');
-    process.exit(3);
-  }
+  requireTargetConfirmation("import:history:lab-services");
   await commit(args.year, classified);
 }
 
