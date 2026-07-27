@@ -5,9 +5,11 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import {
   isItemActive,
+  isSectionActive,
   isSubgroupActive,
   visibleNavFor,
   type StaffNavItem,
+  type StaffNavSection,
   type StaffNavSubgroup,
   type StaffRole,
 } from "./staff-nav-config";
@@ -102,39 +104,104 @@ function Subgroup({
   );
 }
 
+// The links of a section — flat items first, then any collapsible subgroups.
+// Shared by the plain and the collapsible section shells so both render the
+// contents identically.
+function SectionBody({
+  section,
+  pathname,
+}: {
+  section: StaffNavSection;
+  pathname: string;
+}) {
+  const hasItems = Boolean(section.items && section.items.length > 0);
+  return (
+    <>
+      {section.items && section.items.length > 0 ? (
+        <ul className="flex flex-col gap-0.5">
+          {section.items.map((item) => (
+            <li key={item.href}>
+              <NavLink item={item} active={isItemActive(item, pathname)} />
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {section.subgroups && section.subgroups.length > 0 ? (
+        <div className={`flex flex-col gap-1 ${hasItems ? "mt-2" : ""}`}>
+          {section.subgroups.map((group) => (
+            <Subgroup key={group.heading} group={group} pathname={pathname} />
+          ))}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+// A whole section rendered as a collapsed-by-default <details> (partner
+// revision 8, "Hidden tabs"). Same auto-expand trick as Subgroup: <details> is
+// uncontrolled, so keying on the open state remounts it when the user
+// navigates into or out of the section.
+function CollapsibleSection({
+  section,
+  pathname,
+}: {
+  section: StaffNavSection;
+  pathname: string;
+}) {
+  const containsActive = isSectionActive(section, pathname);
+  return (
+    <details
+      key={`${section.heading}:${containsActive ? "open" : "closed"}`}
+      open={containsActive}
+      className="group/section"
+    >
+      <summary
+        className="flex cursor-pointer list-none items-center justify-between rounded-md px-3 pb-2 pt-0.5 text-[10px] font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)] hover:text-[color:var(--color-brand-navy)]"
+        aria-label={`Toggle ${section.heading}`}
+      >
+        <span>{section.heading}</span>
+        <svg
+          aria-hidden="true"
+          viewBox="0 0 12 12"
+          className="h-3 w-3 transition-transform group-open/section:rotate-90"
+        >
+          <path
+            d="M4 2l4 4-4 4"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            fill="none"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </summary>
+      <SectionBody section={section} pathname={pathname} />
+    </details>
+  );
+}
+
 export function StaffNav({ role }: Props) {
   const pathname = usePathname();
   const sections = visibleNavFor(role);
 
   return (
     <nav className="flex flex-col gap-6">
-      {sections.map((section) => (
-        <div key={section.heading}>
-          <p className="px-3 pb-2 text-[10px] font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-            {section.heading}
-          </p>
-          {section.items && section.items.length > 0 ? (
-            <ul className="flex flex-col gap-0.5">
-              {section.items.map((item) => (
-                <li key={item.href}>
-                  <NavLink item={item} active={isItemActive(item, pathname)} />
-                </li>
-              ))}
-            </ul>
-          ) : null}
-          {section.subgroups && section.subgroups.length > 0 ? (
-            <div className={`flex flex-col gap-1 ${section.items && section.items.length > 0 ? "mt-2" : ""}`}>
-              {section.subgroups.map((group) => (
-                <Subgroup
-                  key={group.heading}
-                  group={group}
-                  pathname={pathname}
-                />
-              ))}
-            </div>
-          ) : null}
-        </div>
-      ))}
+      {sections.map((section) =>
+        section.collapsible ? (
+          <CollapsibleSection
+            key={section.heading}
+            section={section}
+            pathname={pathname}
+          />
+        ) : (
+          <div key={section.heading}>
+            <p className="px-3 pb-2 text-[10px] font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+              {section.heading}
+            </p>
+            <SectionBody section={section} pathname={pathname} />
+          </div>
+        ),
+      )}
     </nav>
   );
 }

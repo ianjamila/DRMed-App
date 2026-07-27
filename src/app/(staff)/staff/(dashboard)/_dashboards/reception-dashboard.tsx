@@ -11,9 +11,14 @@ import { ActivityStrip, type ActivityItem } from "./_components/activity-strip";
 import { formatPeso, formatTime, relativeAge } from "./_components/format";
 
 // Quicklinks mirror the reorganized sidebar groups (Front desk / Billing /
-// Services). Sell gift code, End of day, and Registration link live under the
-// sidebar's "Hidden tabs" and are deliberately not surfaced here; Cash drawer
-// was restored to Front desk per the 2026-07-27 partner revisions (items 2/9).
+// Services). Sell gift code, End of day, and Registration link are parked in
+// the sidebar's "Hidden tabs" — now an admin-only section (partner revision 8),
+// so reception no longer sees them in the sidebar at all — and are deliberately
+// not surfaced here either. The pages themselves stay reachable by URL, and the
+// "Gift codes sold" stat card below still deep-links to the sell page for the
+// rare counter sale. Cash drawer was restored to Front desk (revisions 2/9);
+// My payslips moved to the sidebar's Personal section (revision 8) so every
+// role keeps payslip access.
 const QUICK_GROUPS: { label: string; items: { href: string; label: string }[] }[] = [
   {
     label: "Front desk",
