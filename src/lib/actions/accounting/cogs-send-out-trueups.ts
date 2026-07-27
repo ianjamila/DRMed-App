@@ -6,6 +6,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { audit } from "@/lib/audit/log";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { SendOutTrueupCreateSchema } from "@/lib/validations/accounting";
+import { manilaRangeUtc } from "@/lib/dates/manila";
 
 type ActionResult<T = unknown> =
   | { ok: true; data: T }
@@ -23,12 +24,25 @@ export async function createSendOutTrueup(
   const admin = createAdminClient();
 
   // Compute accrued total server-side from cogs_send_out_entries.
-  const { data: entries, error: entErr } = await admin
+  //
+  // The period is a pair of Manila calendar days, but `accrued_at` is a
+  // timestamptz and the DB runs in UTC — a bare `period_start_date` and a naive
+  // `${period_end_date}T23:59:59` were both read as UTC, putting each bound 8
+  // hours early. An entry accrued between 00:00 and 08:00 Manila on the closing
+  // day fell OUT of the period (and one on the morning after the start day fell
+  // in), so the variance this action books could be computed against the wrong
+  // set of entries. Half-open Manila bounds, same as every other date filter.
+  const { fromIso, toIso } = manilaRangeUtc(
+    data.period_start_date,
+    data.period_end_date,
+  );
+  let entriesQuery = admin
     .from("cogs_send_out_entries")
     .select("id, unit_cost_php, accrued_at, trueup_id, voided_at")
-    .eq("vendor_id", data.vendor_id)
-    .gte("accrued_at", data.period_start_date)
-    .lte("accrued_at", `${data.period_end_date}T23:59:59`);
+    .eq("vendor_id", data.vendor_id);
+  if (fromIso) entriesQuery = entriesQuery.gte("accrued_at", fromIso);
+  if (toIso) entriesQuery = entriesQuery.lt("accrued_at", toIso);
+  const { data: entries, error: entErr } = await entriesQuery;
   if (entErr) return { ok: false, error: translatePgError(entErr) };
 
   const openEntries = (entries ?? []).filter((e) => !e.trueup_id && !e.voided_at);
