@@ -63,6 +63,14 @@
 --
 -- Idempotent: the WHERE clause stops matching once applied, and each row is
 -- addressed by service code.
+--
+-- REPLAY SAFETY (added 2026-07-27): the service catalogue and the vendors list
+-- are seeded by scripts, never by a migration, so on a database built from
+-- migrations alone `services` is EMPTY. The UPDATE below then matches nothing
+-- and the post-condition — which demanded all 11 codes end up costed — aborted
+-- the replay, the same defect 0116 had. The completeness check now applies only
+-- to codes that are actually IN the catalogue, so an empty catalogue is a no-op
+-- while a genuine partial backfill still fails loudly.
 -- =============================================================================
 
 update public.services s
@@ -94,6 +102,10 @@ declare
   v_missing text;
   v_bad_vendor int;
 begin
+  -- Only codes that EXIST in the catalogue are held to the completeness bar.
+  -- A code that is absent has nothing to backfill (fresh replay, or a service
+  -- since removed); a code that is present but uncosted is a real partial
+  -- backfill and still aborts.
   select string_agg(c.code, ', ' order by c.code) into v_missing
     from (values
       ('PERIPHERAL_SMEAR'),('EGFR'),('PAP_SMEAR'),('RPR_WITH_TITER_DILUTION'),
@@ -101,14 +113,33 @@ begin
       ('GENE_EXPERT'),('CT_NG_CHLAMYDIA_GONORRHEA_SWAB_AG'),
       ('CT_NG_CHLAMYDIA_GONORRHEA_URINE_AG'),('HBV_DNA')
     ) as c(code)
-    left join public.services s
-      on s.code = c.code and s.is_send_out
-     and s.send_out_unit_cost_php is not null
-     and s.send_out_unit_cost_php > 0
-   where s.id is null;
+   where exists (select 1 from public.services x where x.code = c.code)
+     and not exists (
+       select 1
+         from public.services s
+        where s.code = c.code
+          and s.is_send_out
+          and s.send_out_unit_cost_php is not null
+          and s.send_out_unit_cost_php > 0
+     );
 
   if v_missing is not null then
     raise exception 'send-out cost backfill incomplete for: %', v_missing;
+  end if;
+
+  -- Note when there was simply nothing to cost. On a database built from
+  -- migrations alone `services` holds only the CONSULT anchor row inserted by
+  -- 0090, so test "emptiness" by the absence of these 11 codes, not by the
+  -- table being literally empty.
+  if not exists (
+    select 1 from public.services
+     where code in ('PERIPHERAL_SMEAR','EGFR','PAP_SMEAR','RPR_WITH_TITER_DILUTION',
+                    'ESTRADIOL','VITAMIN_D_CMIA','ANTI_THYROXINE_PEROXIDASE_ANTI_TPO_AMA',
+                    'GENE_EXPERT','CT_NG_CHLAMYDIA_GONORRHEA_SWAB_AG',
+                    'CT_NG_CHLAMYDIA_GONORRHEA_URINE_AG','HBV_DNA')
+  ) then
+    raise notice
+      '0117: none of the 11 costed send-out codes are in the catalogue — nothing to cost. This is expected on a database built from migrations alone; the catalogue is seeded separately by scripts/seed-services.ts.';
   end if;
 
   select count(*) into v_bad_vendor
