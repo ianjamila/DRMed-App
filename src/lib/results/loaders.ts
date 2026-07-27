@@ -90,8 +90,6 @@ export async function loadTemplateParams(
 // loadResultDocumentInput
 // ---------------------------------------------------------------------------
 
-import { createAdminClient } from "@/lib/supabase/admin";
-import { loadConsultantSignatures, resolvePerformer } from "./signatures";
 import {
   normalisePatientSex,
   type ResultDocumentInput,
@@ -149,6 +147,15 @@ interface TemplateRow {
 export async function loadResultDocumentInput(
   resultId: string,
 ): Promise<ResultDocumentInput> {
+  // Both imports are deferred to call time (rather than module scope) so that
+  // importing loadTemplateParams alone — e.g. from scripts/smoke-render-results.ts
+  // running under tsx outside Next.js — doesn't transitively load "server-only"
+  // via @/lib/supabase/admin or ./signatures (which also imports it). Matches
+  // the lazy-admin-client pattern in staff/payslips/page.tsx.
+  const { createAdminClient } = await import("@/lib/supabase/admin");
+  const { loadConsultantSignatures, resolvePerformer } = await import(
+    "./signatures"
+  );
   const admin = createAdminClient();
 
   const { data: results, error: rErr } = await admin
