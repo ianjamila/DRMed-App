@@ -12,6 +12,7 @@
  *
  *   npm run import:history:hmo-settlements -- --commit --confirm="I-mean-it"
  */
+import "../lib/load-env";
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "../../src/types/database";
 import { requireLocalOrExplicitProd } from "../lib/env-guard";
@@ -36,7 +37,11 @@ async function main() {
     console.error("ERROR: NEXT_PUBLIC_SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY required.");
     process.exit(2);
   }
-  if (args.commit) requireLocalOrExplicitProd("import:history:hmo-settlements");
+  if (args.commit)
+    requireLocalOrExplicitProd("import:history:hmo-settlements", {
+      writes:
+        "posts settlement journal entries and stamps `historic_hmo_claims.journal_entry_id`",
+    });
 
   const admin = createClient<Database>(SUPABASE_URL, SERVICE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },

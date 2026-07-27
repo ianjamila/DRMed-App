@@ -15,6 +15,7 @@
 //
 // Run (dry-run):  tsx --env-file=.env.local scripts/clinical-backfill/followups/resolve.ts --file=<path>
 // Run (commit):   ... --file=<path> --commit --confirm="I-mean-it" --prod
+import "../../lib/load-env";
 import { promises as fs } from "node:fs";
 import { requireLocalOrExplicitProd } from "../../lib/env-guard";
 import { adminClient, loadRows, mergeOne } from "../../patient-dedup/engine";
@@ -36,6 +37,16 @@ function parseArgs(): Args {
 
 async function main(): Promise<void> {
   const args = parseArgs();
+
+  // loadRows() below reads live patient identities in both modes, so guard here
+  // rather than only on the --commit path further down.
+  requireLocalOrExplicitProd("clinical-backfill:resolve-merges", {
+    readOnly: !args.commit,
+    writes: args.commit
+      ? "MERGES duplicate patient records per the partner's cluster decisions"
+      : "live patient identities (DRM-ID, name) for the merge preview",
+  });
+
   const { resolutions, errors } = parseResolutions(await fs.readFile(args.file, "utf8"));
   if (errors.length) { console.error("Resolution file errors:\n  " + errors.join("\n  ")); process.exit(4); }
 
@@ -81,7 +92,9 @@ async function main(): Promise<void> {
     return;
   }
   if (!args.confirmed) { console.error('\n--commit requires --confirm="I-mean-it".'); process.exit(3); }
-  requireLocalOrExplicitProd("clinical-backfill:resolve-merges");
+  requireLocalOrExplicitProd("clinical-backfill:resolve-merges", {
+    writes: "MERGES duplicate patient records per the partner's cluster decisions",
+  });
 
   let merged = 0;
   for (const p of plans) {

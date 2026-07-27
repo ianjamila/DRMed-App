@@ -34,6 +34,7 @@
  *   - JEs: source_kind='history_import' + notes contains 'xlsx DOCTOR CONSULTATION r{N}'.
  *   - historic_hmo_claims: unique (source_tab, source_row) — ON CONFLICT DO NOTHING.
  */
+import "../lib/load-env";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import ExcelJS from "exceljs";
@@ -359,7 +360,9 @@ async function writeExclusionCsv(year: number, classified: ClassifiedRow[]): Pro
 // ---------------------------------------------------------------------------
 
 async function commit(year: number, classified: ClassifiedRow[]): Promise<void> {
-  requireLocalOrExplicitProd("import:history:doctor-cons");
+  requireLocalOrExplicitProd("import:history:doctor-cons", {
+    writes: "inserts historic consultation visits, bills and journal entries",
+  });
   const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!SUPABASE_URL || !SERVICE_KEY) {

@@ -13,6 +13,7 @@
  *
  *   npm run seed:physicians
  */
+import "./lib/load-env";
 import { createClient } from "@supabase/supabase-js";
 import type { Database, TablesInsert } from "../src/types/database";
 import { requireLocalOrExplicitProd } from "./lib/env-guard";
@@ -202,7 +203,9 @@ if (!SUPABASE_URL || !SERVICE_KEY) {
   process.exit(1);
 }
 
-requireLocalOrExplicitProd("seed:physicians");
+requireLocalOrExplicitProd("seed:physicians", {
+  writes: "upserts `physicians` rows by slug and REPLACES their `physician_schedules`",
+});
 
 const admin = createClient<Database>(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },

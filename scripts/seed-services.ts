@@ -6,6 +6,7 @@
  *
  * Replace prices to match the actual lab list whenever ready.
  */
+import "./lib/load-env";
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "../src/types/database";
 import { requireLocalOrExplicitProd } from "./lib/env-guard";
@@ -20,7 +21,9 @@ if (!SUPABASE_URL || !SERVICE_KEY) {
   process.exit(1);
 }
 
-requireLocalOrExplicitProd("seed:services");
+requireLocalOrExplicitProd("seed:services", {
+  writes: "upserts `services` rows by code — names, prices, turnaround, kind",
+});
 
 const admin = createClient<Database>(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },

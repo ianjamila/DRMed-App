@@ -1,4 +1,5 @@
-import "dotenv/config";
+import "./lib/load-env";
+import { requireLocalOrExplicitProd } from "./lib/env-guard";
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "../src/types/database";
 
@@ -15,6 +16,10 @@ function createAdminClient() {
 }
 
 async function main() {
+  requireLocalOrExplicitProd("smoke-12C-actions", {
+    writes: "creates cash-shift / EOD fixture rows",
+  });
+
   const admin = createAdminClient();
   const { data: staff } = await admin
     .from("staff_profiles").select("id").eq("is_active", true).limit(1).single();

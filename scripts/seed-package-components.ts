@@ -18,6 +18,7 @@
  * INCLUDED("CBC") free-text placeholders — those are replaced by real
  * component services here.
  */
+import "./lib/load-env";
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "../src/types/database";
 import { requireLocalOrExplicitProd } from "./lib/env-guard";
@@ -32,7 +33,9 @@ if (!SUPABASE_URL || !SERVICE_KEY) {
   process.exit(1);
 }
 
-requireLocalOrExplicitProd("seed:package-components");
+requireLocalOrExplicitProd("seed:package-components", {
+  writes: "upserts `package_components` rows (package → component mapping)",
+});
 
 const admin = createClient<Database>(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },

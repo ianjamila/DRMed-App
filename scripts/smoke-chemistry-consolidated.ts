@@ -16,6 +16,8 @@
  *   npm run smoke:chemistry
  */
 
+import "./lib/load-env";
+import { requireLocalOrExplicitProd } from "./lib/env-guard";
 import { writeFileSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "../src/types/database";
@@ -34,6 +36,10 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const CONSULTANT_PATHOLOGIST_STAFF_ID =
   process.env.CONSULTANT_PATHOLOGIST_STAFF_ID;
+
+requireLocalOrExplicitProd("smoke:chemistry", {
+  writes: "creates a fixture Chemistry visit with 3 test requests and a result",
+});
 
 if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
   console.error(

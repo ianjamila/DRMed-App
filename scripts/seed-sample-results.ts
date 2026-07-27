@@ -6,12 +6,15 @@
  *
  * Run against LOCAL only — refuses prod via the env-guard.
  */
+import "./lib/load-env";
 import { createClient } from "@supabase/supabase-js";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { Database } from "../src/types/database";
 import { requireLocalOrExplicitProd } from "./lib/env-guard";
 
-requireLocalOrExplicitProd("seed-sample-results");
+requireLocalOrExplicitProd("seed-sample-results", {
+  writes: "creates sample `results` rows and links them to test requests",
+});
 
 const admin = createClient<Database>(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,

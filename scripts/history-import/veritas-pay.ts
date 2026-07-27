@@ -26,6 +26,7 @@
  * source_kind='history_import'; notes='xlsx VERITAS PAY r{N} | SOA={SOA}';
  * idempotent via notes-row marker, per-year fetch.
  */
+import "../lib/load-env";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import ExcelJS from "exceljs";
@@ -212,7 +213,9 @@ async function writeCsv(year: number, rows: RawRow[]): Promise<string> {
 }
 
 async function commit(year: number, rows: RawRow[]): Promise<void> {
-  requireLocalOrExplicitProd("import:history:veritas-pay");
+  requireLocalOrExplicitProd("import:history:veritas-pay", {
+    writes: "inserts settlement journal entries for the VERITAS PAY tab",
+  });
   const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!SUPABASE_URL || !SERVICE_KEY) {

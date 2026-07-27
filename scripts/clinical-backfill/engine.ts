@@ -1,3 +1,4 @@
+import "../lib/load-env";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../../src/types/database";
 import { requireLocalOrExplicitProd } from "../lib/env-guard";
@@ -59,6 +60,17 @@ interface BuiltVisit {
 
 export async function run(cfg: TabConfig): Promise<void> {
   const args = parseArgs();
+
+  // The dry-run reads the live patient catalog and writes names into the
+  // tmp/clinical-*-new-patients CSVs, so guard before any DB access — commit()
+  // has its own stronger guard for the write path.
+  requireLocalOrExplicitProd(`backfill:clinical:${cfg.isConsult ? "consult" : "lab"}`, {
+    readOnly: !args.commit,
+    writes: args.commit
+      ? "inserts historic patients, visits, bills and test requests from the mastersheet"
+      : "the live patient catalog, written into the tmp/ dry-run CSVs",
+  });
+
   console.log(`Reading ${cfg.sheetName} from ${args.xlsx}`);
   const rows = await loadTab(args.xlsx, cfg);
   console.log(`  ${rows.length} rows read`);
@@ -218,7 +230,13 @@ async function commit(
   svcIndex: ReturnType<typeof buildServiceIndex>,
   resolvedLegacyLabId: string,
 ): Promise<void> {
-  requireLocalOrExplicitProd(`backfill:clinical:${cfg.isConsult ? "consult" : "lab"}`);
+  requireLocalOrExplicitProd(
+    `backfill:clinical:${cfg.isConsult ? "consult" : "lab"}`,
+    {
+      writes:
+        "inserts historic patients, visits, bills and test requests from the mastersheet",
+    },
+  );
   const systemUserId = await ensureSystemUser(admin);
 
   // ensure generic legacy-lab service exists (lab tab only)

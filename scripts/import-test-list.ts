@@ -22,6 +22,7 @@
  * After CSV upsert, 6 packages listed only on drmed.ph (Annual Physical Exam,
  * Diabetic Health, etc.) are added with their `includes` lists as descriptions.
  */
+import "./lib/load-env";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import Papa from "papaparse";
@@ -42,7 +43,9 @@ if (!SUPABASE_URL || !SERVICE_KEY) {
   process.exit(1);
 }
 
-requireLocalOrExplicitProd("import-test-list");
+requireLocalOrExplicitProd("import-test-list", {
+  writes: "upserts ~150 `services` rows by code from the test-list CSV",
+});
 
 const admin = createClient<Database>(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },

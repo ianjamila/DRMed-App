@@ -58,8 +58,29 @@ Compliance target: **Philippine Data Privacy Act (RA 10173)**. Locale: en-PH, As
 | `npm run db:reset` | Reset local Supabase to migrations (destroys local data) |
 | `supabase db push` | Apply migrations to the linked remote Supabase project |
 | `supabase start` | Run a local Supabase stack for testing migrations |
-| `npm run seed:test` / `seed:services` / `seed:templates` / etc. | Idempotent seed scripts (require `.env.local`) |
+| `npm run seed:test` / `seed:services` / `seed:templates` / etc. | Idempotent seed scripts — target the **local** stack by default (see below) |
 | `npm run smoke:results` | Render-pipeline smoke test for result PDF templates |
+
+### `scripts/` runners target LOCAL by default — this is load-bearing
+
+Everything under `scripts/` builds a service-role client (RLS bypassed). They
+read `.env.development.local` via `scripts/lib/load-env.ts`, **not**
+`.env.local` — every `.env.local` in this repo points at the production
+project, so the old `--env-file=.env.local` default meant `npm run
+seed:services` rewrote the live price list and `npm run dedup:patients
+-- --commit` merged real patients.
+
+- Local run: `npm run seed:services` — nothing extra, works from any worktree
+  (the loader falls back to the main checkout's `.env.development.local`).
+- Deliberate remote run: `SEED_ALLOW_PROD=1 npm run seed:services` or
+  `npm run seed:services -- --prod`.
+- `requireLocalOrExplicitProd()` independently refuses any non-local
+  `NEXT_PUBLIC_SUPABASE_URL` **or** `SUPABASE_DB_URL` without that opt-in, and
+  prints host + project ref + what the script writes before proceeding.
+
+When adding a script that touches the database: `import "./lib/load-env"` first,
+then call `requireLocalOrExplicitProd("<npm script name>", { writes: "…" })`
+before the first query.
 
 Unit tests run on **vitest** (`npm test` / `npm run test:watch`). Single
 file: `npx vitest run src/lib/appointments/timing.test.ts`. Single test by

@@ -19,6 +19,11 @@
  * data — see docs/decisions/meta-pixel-data-handling.md.
  */
 
+// No database guard here — this script never touches Supabase. It still goes
+// through the shared loader so it picks up META_* from the same env files as
+// everything else in scripts/.
+import "./lib/load-env";
+
 const GRAPH_API_VERSION = "v21.0";
 
 function arg(name: string): string | undefined {

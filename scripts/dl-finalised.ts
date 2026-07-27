@@ -1,7 +1,14 @@
+import "./lib/load-env";
+import { requireLocalOrExplicitProd } from "./lib/env-guard";
 import { createClient } from "@supabase/supabase-js";
 import { writeFileSync } from "node:fs";
 
 async function main() {
+  requireLocalOrExplicitProd("dl-finalised", {
+    readOnly: true,
+    writes: "a patient result PDF from the `results` storage bucket",
+  });
+
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY!;
   const admin = createClient(url, key, { auth: { persistSession: false } });

@@ -5,6 +5,8 @@
  *
  *   npm run smoke:results
  */
+import "./lib/load-env";
+import { requireLocalOrExplicitProd } from "./lib/env-guard";
 import { writeFileSync } from "node:fs";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../src/types/database";
@@ -29,6 +31,11 @@ if (!SUPABASE_URL || !SERVICE_KEY) {
 
 const admin = createClient<Database>(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
+});
+
+requireLocalOrExplicitProd("smoke:results", {
+  readOnly: true,
+  writes: "result templates and staff signatures (renders PDFs to /tmp)",
 });
 
 async function loadSignatureForStaff(

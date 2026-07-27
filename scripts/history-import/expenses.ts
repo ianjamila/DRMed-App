@@ -25,6 +25,7 @@
  * source_kind='history_import' (added in migration 0074) so admins can filter
  * these out of normal accounting views and mass-reverse if needed.
  */
+import "../lib/load-env";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import ExcelJS from "exceljs";
@@ -459,7 +460,9 @@ async function writeCsv(proposed: ProposedJE[], year: number): Promise<string> {
 // ---------------------------------------------------------------------------
 
 async function commit(year: number, proposed: ProposedJE[]): Promise<void> {
-  requireLocalOrExplicitProd("import:history:expenses");
+  requireLocalOrExplicitProd("import:history:expenses", {
+    writes: "inserts journal entries and lines for the EXPENSES tab",
+  });
 
   const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;

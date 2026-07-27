@@ -4,6 +4,7 @@
  *
  *   npx tsx --env-file=.env.development.local scripts/seed-screenshot-data.ts
  */
+import "./lib/load-env";
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "../src/types/database";
 import { requireLocalOrExplicitProd } from "./lib/env-guard";
@@ -11,7 +12,9 @@ import { generatePin, hashPin } from "../src/lib/auth/pin";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-requireLocalOrExplicitProd("seed-screenshot-data");
+requireLocalOrExplicitProd("seed-screenshot-data", {
+  writes: "creates demo staff users, patients and visits",
+});
 
 const admin = createClient<Database>(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },

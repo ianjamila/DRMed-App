@@ -1,3 +1,4 @@
+import "../lib/load-env";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../../src/types/database";
 import { requireLocalOrExplicitProd } from "../lib/env-guard";
@@ -159,7 +160,10 @@ export async function run(): Promise<void> {
     return;
   }
   if (!args.confirmed) { console.error('\n--commit requires --confirm="I-mean-it".'); process.exit(3); }
-  requireLocalOrExplicitProd("enrich:clinical");
+  requireLocalOrExplicitProd("enrich:clinical", {
+    writes:
+      "updates imported visit/bill rows with physician, discount type and new/repeat",
+  });
 
   let applied = 0;
   for (const [pid, ids] of visitPhys) applied += await applyByIds(admin, "visits", { attending_physician_id: pid }, ids);

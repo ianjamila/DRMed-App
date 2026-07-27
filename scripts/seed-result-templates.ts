@@ -40,6 +40,7 @@
  * Reference: drmed.ph LAB RESULTS FORM Sheet
  *   1UZrH4EYAkXiu5gMMQUJoAddpSqqwTmfrk1k8ykaqikQ
  */
+import "./lib/load-env";
 import { createClient } from "@supabase/supabase-js";
 import type { Database, TablesInsert } from "../src/types/database";
 import { requireLocalOrExplicitProd } from "./lib/env-guard";
@@ -54,7 +55,10 @@ if (!SUPABASE_URL || !SERVICE_KEY) {
   process.exit(1);
 }
 
-requireLocalOrExplicitProd("seed:templates");
+requireLocalOrExplicitProd("seed:templates", {
+  writes:
+    "DELETES and re-inserts `result_templates` + params for the seeded service codes",
+});
 
 const admin = createClient<Database>(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },

@@ -10,6 +10,8 @@
 //
 // Idempotent: a content-hash check skips re-upload when the file is unchanged.
 
+import "./lib/load-env";
+import { requireLocalOrExplicitProd } from "./lib/env-guard";
 import { readFileSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -29,6 +31,11 @@ if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
 
 const admin = createClient<Database>(SUPABASE_URL, SERVICE_ROLE_KEY, {
   auth: { autoRefreshToken: false, persistSession: false },
+});
+
+requireLocalOrExplicitProd("seed:signatures", {
+  writes:
+    "uploads PNGs to the `signatures` bucket, sets `staff_profiles.signature_path`, and creates missing auth users / staff_profiles",
 });
 
 const SIG_DIR = join(process.cwd(), "scripts", "seed", "signatures");
