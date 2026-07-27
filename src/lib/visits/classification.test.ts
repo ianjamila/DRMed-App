@@ -5,10 +5,19 @@ import {
   combinePaymentStatus,
   foldVisitGroups,
   isVisitClass,
-  kindPredicateFor,
+  isVisitView,
+  kindPredicateForSet,
+  parseVisitClasses,
+  serialiseVisitClasses,
+  summariseClasses,
+  summaryTotals,
+  toggleVisitClass,
   DOCTOR_KIND_VALUES,
   VISIT_CLASS_LABEL,
+  type VisitClass,
 } from "./classification";
+
+const set = (...c: VisitClass[]) => new Set<VisitClass>(c);
 
 describe("classifyKind", () => {
   it("names the two doctor kinds", () => {
@@ -28,30 +37,169 @@ describe("classifyKind", () => {
   });
 });
 
-describe("kindPredicateFor", () => {
-  it("matches the doctor classes by enumeration", () => {
-    expect(kindPredicateFor("consult")).toEqual({
-      negated: false,
+describe("kindPredicateForSet", () => {
+  it("applies no predicate for nothing selected or everything selected", () => {
+    expect(kindPredicateForSet(set())).toEqual({ mode: "none" });
+    expect(kindPredicateForSet(set("lab", "consult", "procedure"))).toEqual({
+      mode: "none",
+    });
+  });
+
+  it("matches single doctor classes by enumeration", () => {
+    expect(kindPredicateForSet(set("consult"))).toEqual({
+      mode: "in",
       kinds: ["doctor_consultation"],
     });
-    expect(kindPredicateFor("procedure")).toEqual({
-      negated: false,
+    expect(kindPredicateForSet(set("procedure"))).toEqual({
+      mode: "in",
       kinds: ["doctor_procedure"],
     });
   });
 
+  it("unions the enumerated kinds when both doctor classes are selected", () => {
+    expect(kindPredicateForSet(set("consult", "procedure"))).toEqual({
+      mode: "in",
+      kinds: ["doctor_consultation", "doctor_procedure"],
+    });
+  });
+
   it("matches lab as the complement, so it stays in step with classifyKind", () => {
-    const lab = kindPredicateFor("lab");
-    expect(lab.negated).toBe(true);
-    expect([...lab.kinds].sort()).toEqual([...DOCTOR_KIND_VALUES].sort());
+    const p = kindPredicateForSet(set("lab"));
+    expect(p.mode).toBe("notIn");
+    expect(p.mode === "notIn" ? [...p.kinds].sort() : []).toEqual(
+      [...DOCTOR_KIND_VALUES].sort(),
+    );
+  });
+
+  it("excludes only the unselected doctor class when lab is combined with one", () => {
+    expect(kindPredicateForSet(set("lab", "consult"))).toEqual({
+      mode: "notIn",
+      kinds: ["doctor_procedure"],
+    });
+    expect(kindPredicateForSet(set("lab", "procedure"))).toEqual({
+      mode: "notIn",
+      kinds: ["doctor_consultation"],
+    });
+  });
+
+  // `NOT IN ()` is a syntax error — the all-selected case must collapse to none.
+  it("never emits an empty NOT IN", () => {
+    for (const s of [
+      set("lab", "consult", "procedure"),
+      set("lab", "consult"),
+      set("lab", "procedure"),
+      set("lab"),
+    ]) {
+      const p = kindPredicateForSet(s);
+      if (p.mode === "notIn") expect(p.kinds.length).toBeGreaterThan(0);
+    }
   });
 
   // The bug this guards: an allow-list `lab` filter would silently exclude any
   // kind added to the catalog later, while the badge still called it Lab Tests.
   it("agrees with classifyKind for a kind nobody enumerated", () => {
-    const lab = kindPredicateFor("lab");
+    const p = kindPredicateForSet(set("lab"));
     expect(classifyKind("imaging_xray")).toBe("lab");
-    expect(lab.kinds.includes("imaging_xray")).toBe(false);
+    expect(p.mode === "notIn" && p.kinds.includes("imaging_xray")).toBe(false);
+  });
+});
+
+describe("chip param round-trip", () => {
+  it("parses a comma list, ignoring junk", () => {
+    expect([...parseVisitClasses("lab,consult")]).toEqual(["lab", "consult"]);
+    expect([...parseVisitClasses("lab, bogus ,procedure")]).toEqual([
+      "lab",
+      "procedure",
+    ]);
+    expect([...parseVisitClasses(undefined)]).toEqual([]);
+    expect([...parseVisitClasses("")]).toEqual([]);
+  });
+
+  it("serialises in display order, and collapses all-selected to empty", () => {
+    expect(serialiseVisitClasses(set("consult", "lab"))).toBe("lab,consult");
+    expect(serialiseVisitClasses(set("lab", "consult", "procedure"))).toBe("");
+    expect(serialiseVisitClasses(set())).toBe("");
+  });
+
+  it("round-trips any partial selection", () => {
+    for (const s of [set("lab"), set("consult"), set("lab", "procedure")]) {
+      expect(parseVisitClasses(serialiseVisitClasses(s))).toEqual(s);
+    }
+  });
+
+  it("toggles additively without mutating the input", () => {
+    const base = set("lab");
+    expect([...toggleVisitClass(base, "consult")]).toEqual(["lab", "consult"]);
+    expect([...toggleVisitClass(base, "lab")]).toEqual([]);
+    expect([...base]).toEqual(["lab"]);
+  });
+});
+
+describe("isVisitView", () => {
+  it("accepts the three views and rejects anything else", () => {
+    expect(isVisitView("active")).toBe(true);
+    expect(isVisitView("deleted")).toBe(true);
+    expect(isVisitView("all")).toBe(true);
+    expect(isVisitView("lab")).toBe(false);
+    expect(isVisitView(undefined)).toBe(false);
+  });
+});
+
+describe("summariseClasses", () => {
+  it("returns all three classes in display order", () => {
+    expect(summariseClasses([]).map((r) => r.class)).toEqual([
+      "lab",
+      "consult",
+      "procedure",
+    ]);
+  });
+
+  // The RPC GROUPs, so a class with no lines is absent, not zero. Procedures
+  // are absent on every real query today — the strip must still show them.
+  it("fills an absent class with zeros rather than dropping it", () => {
+    const rows = summariseClasses([
+      { class: "lab", visits: 6915, lines: 18187, revenue_php: 12077902.49 },
+      { class: "consult", visits: 7352, lines: 7402, revenue_php: 249578 },
+    ]);
+    expect(rows.find((r) => r.class === "procedure")).toEqual({
+      class: "procedure",
+      visits: 0,
+      lines: 0,
+      revenuePhp: 0,
+    });
+    expect(rows.find((r) => r.class === "lab")?.revenuePhp).toBe(12077902.49);
+  });
+
+  it("ignores an unrecognised class name from SQL", () => {
+    const rows = summariseClasses([
+      { class: "something_new", visits: 5, lines: 5, revenue_php: 100 },
+    ]);
+    expect(rows.every((r) => r.visits === 0)).toBe(true);
+  });
+
+  it("coerces string numerics (numeric comes back as text over PostgREST)", () => {
+    const rows = summariseClasses([
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- numeric arrives as a string
+      { class: "lab", visits: "3" as any, lines: "4" as any, revenue_php: "12.50" as any },
+    ]);
+    expect(rows[0]).toEqual({ class: "lab", visits: 3, lines: 4, revenuePhp: 12.5 });
+  });
+});
+
+describe("summaryTotals", () => {
+  it("sums lines and revenue", () => {
+    const rows = summariseClasses([
+      { class: "lab", visits: 10, lines: 20, revenue_php: 100 },
+      { class: "consult", visits: 5, lines: 5, revenue_php: 50 },
+    ]);
+    expect(summaryTotals(rows)).toEqual({ lines: 25, revenuePhp: 150 });
+  });
+
+  // One visit can hold both a consult and a lab line, so per-class visit
+  // counts overlap and must not be added together.
+  it("does not expose a summed visit count", () => {
+    const totals = summaryTotals(summariseClasses([]));
+    expect(Object.keys(totals).sort()).toEqual(["lines", "revenuePhp"]);
   });
 });
 

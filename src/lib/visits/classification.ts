@@ -49,17 +49,96 @@ export function classifyKind(kind: string): VisitClass {
   return "lab";
 }
 
+/** The enumerated `services.kind` values belonging to a doctor class. */
+function kindsOf(cls: VisitClass): readonly string[] {
+  if (cls === "consult") return [...CONSULT_KINDS];
+  if (cls === "procedure") return [...PROCEDURE_KINDS];
+  return [];
+}
+
 /**
- * How to express a class as a PostgREST predicate on `services.kind`.
- * `lab` is the complement, so it negates — see the module note above.
+ * How to express a SET of selected classes as a PostgREST predicate on
+ * `services.kind`.
+ *
+ * The chips are multi-select, so this has to handle every subset:
+ *
+ * - nothing selected, or all three → no predicate at all ("All")
+ * - `lab` not selected → match the enumerated kinds of the chosen doctor
+ *   classes: `kind IN (…)`
+ * - `lab` selected → `lab` is the complement, so exclude the doctor kinds
+ *   whose class was NOT chosen: `kind NOT IN (…)`. With lab + both doctor
+ *   classes there is nothing left to exclude, which collapses to "no
+ *   predicate" — never to an empty `NOT IN ()`, which isn't valid SQL.
  */
-export function kindPredicateFor(cls: VisitClass): {
-  negated: boolean;
-  kinds: readonly string[];
-} {
-  if (cls === "consult") return { negated: false, kinds: [...CONSULT_KINDS] };
-  if (cls === "procedure") return { negated: false, kinds: [...PROCEDURE_KINDS] };
-  return { negated: true, kinds: DOCTOR_KIND_VALUES };
+export type KindPredicate =
+  | { mode: "none" }
+  | { mode: "in"; kinds: readonly string[] }
+  | { mode: "notIn"; kinds: readonly string[] };
+
+export function kindPredicateForSet(
+  selected: ReadonlySet<VisitClass>,
+): KindPredicate {
+  if (selected.size === 0 || selected.size === VISIT_CLASSES.length) {
+    return { mode: "none" };
+  }
+  if (!selected.has("lab")) {
+    return {
+      mode: "in",
+      kinds: VISIT_CLASSES.filter((c) => selected.has(c)).flatMap((c) => [
+        ...kindsOf(c),
+      ]),
+    };
+  }
+  const excluded = VISIT_CLASSES.filter((c) => !selected.has(c)).flatMap((c) => [
+    ...kindsOf(c),
+  ]);
+  return excluded.length === 0 ? { mode: "none" } : { mode: "notIn", kinds: excluded };
+}
+
+/** Parse the `kind` query param (`"lab,consult"`) into a set of classes. */
+export function parseVisitClasses(raw: string | undefined): Set<VisitClass> {
+  const out = new Set<VisitClass>();
+  for (const part of (raw ?? "").split(",")) {
+    const t = part.trim();
+    if (isVisitClass(t)) out.add(t);
+  }
+  return out;
+}
+
+/** Serialise a class set back to a `kind` param, in stable display order. */
+export function serialiseVisitClasses(
+  selected: ReadonlySet<VisitClass>,
+): string {
+  if (selected.size === 0 || selected.size === VISIT_CLASSES.length) return "";
+  return VISIT_CLASSES.filter((c) => selected.has(c)).join(",");
+}
+
+/** Toggle one chip, returning a new set (chips are additive, not exclusive). */
+export function toggleVisitClass(
+  selected: ReadonlySet<VisitClass>,
+  cls: VisitClass,
+): Set<VisitClass> {
+  const next = new Set(selected);
+  if (next.has(cls)) next.delete(cls);
+  else next.add(cls);
+  return next;
+}
+
+// ---------------------------------------------------------------------------
+// Deleted-visit view
+// ---------------------------------------------------------------------------
+
+export const VISIT_VIEWS = ["active", "deleted", "all"] as const;
+export type VisitView = (typeof VISIT_VIEWS)[number];
+
+export const VISIT_VIEW_LABEL: Record<VisitView, string> = {
+  active: "Active",
+  deleted: "Deleted",
+  all: "All",
+};
+
+export function isVisitView(value: string | null | undefined): value is VisitView {
+  return (VISIT_VIEWS as readonly string[]).includes(value ?? "");
 }
 
 /** Distinct classes present in a set of lines, in stable display order. */
@@ -67,6 +146,67 @@ export function classesForKinds(kinds: readonly string[]): VisitClass[] {
   const seen = new Set<VisitClass>();
   for (const k of kinds) seen.add(classifyKind(k));
   return VISIT_CLASSES.filter((c) => seen.has(c));
+}
+
+// ---------------------------------------------------------------------------
+// Revenue summary (0126 `visits_classification_summary`)
+// ---------------------------------------------------------------------------
+
+export interface ClassSummaryRow {
+  class: VisitClass;
+  visits: number;
+  lines: number;
+  revenuePhp: number;
+}
+
+/** A raw row as the RPC returns it — `class` is untyped text from SQL. */
+export interface RawClassSummaryRow {
+  class: string;
+  visits: number;
+  lines: number;
+  revenue_php: number;
+}
+
+/**
+ * Normalise the RPC result into one row per class, in display order.
+ *
+ * The function GROUPs, so a class with no lines is simply ABSENT from the
+ * result — `doctor_procedure` has no seeded services yet, so it is absent on
+ * every real query today. The strip still has to show it at zero, otherwise
+ * the reader can't tell "nothing booked" from "column missing".
+ */
+export function summariseClasses(
+  rows: readonly RawClassSummaryRow[] | null | undefined,
+): ClassSummaryRow[] {
+  const byClass = new Map<VisitClass, RawClassSummaryRow>();
+  for (const r of rows ?? []) {
+    if (isVisitClass(r.class)) byClass.set(r.class, r);
+  }
+  return VISIT_CLASSES.map((c) => {
+    const r = byClass.get(c);
+    return {
+      class: c,
+      visits: Number(r?.visits ?? 0),
+      lines: Number(r?.lines ?? 0),
+      revenuePhp: Number(r?.revenue_php ?? 0),
+    };
+  });
+}
+
+/**
+ * Grand total across classes. Visit counts are NOT summed — one visit can hold
+ * both a consult and a lab line, so it is counted under both classes and
+ * adding them would overstate the total. Revenue and line counts are
+ * line-level and do sum cleanly.
+ */
+export function summaryTotals(rows: readonly ClassSummaryRow[]): {
+  lines: number;
+  revenuePhp: number;
+} {
+  return {
+    lines: rows.reduce((s, r) => s + r.lines, 0),
+    revenuePhp: rows.reduce((s, r) => s + r.revenuePhp, 0),
+  };
 }
 
 // ---------------------------------------------------------------------------

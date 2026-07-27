@@ -6227,6 +6227,15 @@ export type Database = {
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
       staff_role: { Args: never; Returns: string }
+      visits_classification_summary: {
+        Args: { p_deleted?: string; p_end?: string; p_start?: string }
+        Returns: {
+          class: string
+          lines: number
+          revenue_php: number
+          visits: number
+        }[]
+      }
     }
     Enums: {
       account_normal_balance: "debit" | "credit"
