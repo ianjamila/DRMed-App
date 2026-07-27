@@ -10,6 +10,11 @@ export interface CardDef {
   roles: readonly DashboardRole[];
   group: "snapshot" | "operations" | "money" | "people" | "attention";
   sensitive?: boolean;
+  // Ships OFF for the roles above — the card is real and supported, it just
+  // isn't worth dashboard space by default. Admin can turn it on per role from
+  // Dashboard settings like any other card; the stored preference always wins
+  // over this default. See hiddenCardIdsFor().
+  defaultHidden?: boolean;
 }
 
 // Stable card-id registry. The id is what's stored in
@@ -22,7 +27,11 @@ export const DASHBOARD_CARDS: readonly CardDef[] = [
   { id: "reception.pending_release",   label: "Pending release",   roles: ["reception"], group: "snapshot" },
   { id: "reception.walk_ins_waiting",  label: "Walk-ins waiting",  roles: ["reception"], group: "snapshot" },
   { id: "reception.open_inquiries",    label: "Open inquiries",    roles: ["reception"], group: "snapshot" },
-  { id: "reception.gift_codes_sold",   label: "Gift codes sold",   roles: ["reception"], group: "snapshot" },
+  // Off by default since partner revision 8 sent "Sell gift code" to the
+  // admin-only Hidden tabs section: counter sales are rare enough that a
+  // standing tile (usually reading 0) isn't worth the space. Reception reaches
+  // the sell page from the Front desk quicklink instead.
+  { id: "reception.gift_codes_sold",   label: "Gift codes sold",   roles: ["reception"], group: "snapshot", defaultHidden: true },
   { id: "reception.cash_drawer",       label: "Cash drawer",       roles: ["reception"], group: "snapshot", sensitive: true },
   { id: "reception.strip_appointments", label: "Strip: next appointments", roles: ["reception"], group: "attention" },
   { id: "reception.strip_unpaid",       label: "Strip: today's unpaid",    roles: ["reception"], group: "attention", sensitive: true },
@@ -69,6 +78,36 @@ export const DASHBOARD_CARDS: readonly CardDef[] = [
 
 export function cardsForRole(role: DashboardRole): readonly CardDef[] {
   return DASHBOARD_CARDS.filter((c) => c.roles.includes(role));
+}
+
+// Resolves stored preferences against the registry's defaults into the set of
+// card ids that must NOT render for `role`. `prefs` are the rows for that role
+// only. Precedence: a stored row always wins; with no stored row the card's
+// `defaultHidden` decides. Rows for ids no longer in the registry are still
+// honoured so a retired card can't come back through the back door.
+export function hiddenCardIdsFor(
+  role: DashboardRole,
+  prefs: readonly { card_id: string; visible: boolean }[],
+): Set<string> {
+  const stored = new Map<string, boolean>();
+  for (const p of prefs) stored.set(p.card_id, p.visible);
+
+  const hidden = new Set<string>();
+  for (const [cardId, visible] of stored) {
+    if (!visible) hidden.add(cardId);
+  }
+  for (const card of DASHBOARD_CARDS) {
+    if (card.defaultHidden && card.roles.includes(role) && !stored.has(card.id)) {
+      hidden.add(card.id);
+    }
+  }
+  return hidden;
+}
+
+// True when `visible` is what the card would do on its own, i.e. no stored row
+// is needed. Keeps dashboard_card_prefs to genuine overrides only.
+export function matchesCardDefault(card: CardDef, visible: boolean): boolean {
+  return visible === !card.defaultHidden;
 }
 
 export const ROLE_LABELS: Record<DashboardRole, string> = {

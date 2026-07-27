@@ -43,6 +43,15 @@ export type StaffNavSection = {
   heading: string;
   items?: StaffNavItem[];
   subgroups?: StaffNavSubgroup[];
+  // Render the whole section as a collapsed-by-default <details>, the way
+  // subgroups already render. Auto-expands when the current route is inside
+  // it (see isSectionActive) so the user's location is never buried.
+  collapsible?: boolean;
+  // Hard admin gate applied on top of each item's own `roles`. Items keep
+  // their real role lists (that's the record of who the page is FOR, and what
+  // comes back if the section is ever unparked), but while this flag is set
+  // the section — and everything in it — is dropped for every non-admin role.
+  adminOnly?: boolean;
 };
 
 export const STAFF_NAV: StaffNavSection[] = [
@@ -528,24 +537,32 @@ export const STAFF_NAV: StaffNavSection[] = [
         label: "My profile",
         roles: ["reception", "medtech", "pathologist", "admin", "xray_technician"],
       },
+      {
+        // Moved out of "Hidden tabs" when that section went admin-only
+        // (partner revision 8): payslips are self-service for EVERY role, so
+        // they belong in the per-user Personal section, not the parked one.
+        href: "/staff/payslips",
+        label: "My payslips",
+        description: "Your own payslip history — open a pay period to see gross pay, overtime, deductions (SSS, PhilHealth, Pag-IBIG, tax, loans) and net pay, and download the PDF.",
+        roles: ["reception", "medtech", "pathologist", "admin", "xray_technician"],
+      },
     ],
   },
   {
-    // Top-level, per-role-visible "parked" section. Items here are real and
-    // reachable but de-emphasized: either not part of the live workflow yet
-    // (Sign-off, Patient receivables) or deliberately moved off reception's
-    // main nav per partner feedback (My payslips, Sell gift code, Registration
-    // link). Cash drawer moved back OUT to Front desk (partner revision 2/9).
-    // Each item keeps its own roles, so the section renders different contents
-    // per role and is dropped entirely for roles with nothing parked.
+    // Top-level "parked" section — real, reachable pages that are deliberately
+    // de-emphasized: either not part of the live workflow yet (Sign-off,
+    // Patient receivables) or moved off the everyday nav per partner feedback
+    // (Sell gift code, Registration link).
+    //
+    // Partner revision 8: the section is now ADMIN-ONLY and collapsed by
+    // default, so day-to-day roles never see the parked clutter. Two items
+    // moved OUT first so nobody lost access to something they need — Cash
+    // drawer back to Front desk (revisions 2/9) and My payslips to Personal
+    // (all roles draw a payslip). Everything left here is admin housekeeping.
     heading: "Hidden tabs",
+    adminOnly: true,
+    collapsible: true,
     items: [
-      {
-        href: "/staff/payslips",
-        label: "My payslips",
-        description: "Your own payslip history.",
-        roles: ["reception", "medtech", "pathologist", "admin", "xray_technician"],
-      },
       {
         href: "/staff/gift-codes/sell",
         label: "Sell gift code",
@@ -577,10 +594,13 @@ export const STAFF_NAV: StaffNavSection[] = [
 // Filters items + subgroups inside each section by role, drops empty
 // subgroups, then drops sections that ended up with no visible content.
 // A section may carry items, subgroups, or both — preserves whichever
-// has content for the renderer.
+// has content for the renderer. `adminOnly` sections are dropped wholesale
+// for non-admins regardless of what their items' own roles say; `collapsible`
+// is carried through so the renderer knows to wrap the section in <details>.
 export function visibleNavFor(role: StaffRole): StaffNavSection[] {
   const filtered: StaffNavSection[] = [];
   for (const section of STAFF_NAV) {
+    if (section.adminOnly && role !== "admin") continue;
     const items = section.items
       ? section.items.filter((i) => i.roles.includes(role))
       : [];
@@ -597,6 +617,8 @@ export function visibleNavFor(role: StaffRole): StaffNavSection[] {
       heading: section.heading,
       ...(items.length > 0 ? { items } : {}),
       ...(subgroups.length > 0 ? { subgroups } : {}),
+      ...(section.collapsible ? { collapsible: true } : {}),
+      ...(section.adminOnly ? { adminOnly: true } : {}),
     });
   }
   return filtered;
@@ -629,4 +651,18 @@ export function isSubgroupActive(
   pathname: string,
 ): boolean {
   return subgroup.items.some((item) => isItemActive(item, pathname));
+}
+
+// Same idea one level up: true if the current path lives anywhere inside the
+// section (flat items or nested subgroups). Drives auto-expand for
+// `collapsible` sections so a collapsed-by-default section still opens itself
+// when the user is on one of its pages.
+export function isSectionActive(
+  section: StaffNavSection,
+  pathname: string,
+): boolean {
+  return (
+    (section.items?.some((item) => isItemActive(item, pathname)) ?? false) ||
+    (section.subgroups?.some((g) => isSubgroupActive(g, pathname)) ?? false)
+  );
 }

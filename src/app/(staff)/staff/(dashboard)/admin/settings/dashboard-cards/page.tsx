@@ -5,6 +5,7 @@ import {
   ALL_ROLES,
   DASHBOARD_CARDS,
   ROLE_LABELS,
+  hiddenCardIdsFor,
   type DashboardRole,
 } from "@/lib/dashboards/cards";
 import { DashboardCardSettingsClient } from "./client";
@@ -38,19 +39,17 @@ export default async function DashboardCardSettingsPage({
     .select("role, card_id, visible");
   const prefRows: PrefRow[] = data ?? [];
 
-  // Hidden set per role
-  const hiddenByRole: Record<DashboardRole, Set<string>> = {
-    reception: new Set(),
-    medtech: new Set(),
-    xray_technician: new Set(),
-    pathologist: new Set(),
-    admin: new Set(),
-  };
-  for (const p of prefRows) {
-    if (!p.visible && ALL_ROLES.includes(p.role as DashboardRole)) {
-      hiddenByRole[p.role as DashboardRole].add(p.card_id);
-    }
-  }
+  // Effective hidden set per role: stored overrides resolved against the
+  // registry's defaultHidden flags, exactly as the dashboards resolve them.
+  const hiddenByRole = Object.fromEntries(
+    ALL_ROLES.map((r) => [
+      r,
+      hiddenCardIdsFor(
+        r,
+        prefRows.filter((p) => p.role === r),
+      ),
+    ]),
+  ) as Record<DashboardRole, Set<string>>;
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
@@ -114,6 +113,7 @@ export default async function DashboardCardSettingsPage({
             label: c.label,
             group: c.group,
             sensitive: !!c.sensitive,
+            defaultHidden: !!c.defaultHidden,
             visible: !hiddenByRole[role].has(c.id),
           }),
         )}

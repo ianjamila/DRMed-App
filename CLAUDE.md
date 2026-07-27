@@ -86,7 +86,11 @@ Unit tests run on **vitest** (`npm test` / `npm run test:watch`). Single
 file: `npx vitest run src/lib/appointments/timing.test.ts`. Single test by
 name: `npx vitest run -t "reuses an existing patient"`. Coverage is the pure
 logic only (no DB / no RSC) — modules under test must not `import "server-only"`.
-The smoke scripts above still cover the render pipeline + integration paths.
+`*.test.tsx` is also picked up, for the few *client* components worth asserting
+markup on (e.g. the staff sidebar's collapsed-by-default sections): render them
+with `react-dom/server`'s `renderToStaticMarkup` and stub their browser hooks —
+still no DOM, still no RSC. The smoke scripts above still cover the render
+pipeline + integration paths.
 
 ## Architecture — the things that aren't obvious from file structure
 

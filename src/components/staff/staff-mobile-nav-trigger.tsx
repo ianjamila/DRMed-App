@@ -12,9 +12,11 @@ import {
 } from "@/components/ui/mobile-drawer";
 import {
   isItemActive,
+  isSectionActive,
   isSubgroupActive,
   visibleNavFor,
   type StaffNavItem,
+  type StaffNavSection,
   type StaffNavSubgroup,
   type StaffRole,
 } from "./staff-nav-config";
@@ -106,6 +108,94 @@ function MobileSubgroup({
   );
 }
 
+// The links of a section — flat items first, then collapsible subgroups.
+// Shared by the plain and collapsible section shells.
+function MobileSectionBody({
+  section,
+  pathname,
+  onClick,
+}: {
+  section: StaffNavSection;
+  pathname: string;
+  onClick: () => void;
+}) {
+  const hasItems = Boolean(section.items && section.items.length > 0);
+  return (
+    <>
+      {section.items && section.items.length > 0 ? (
+        <ul className="flex flex-col gap-0.5">
+          {section.items.map((item) => (
+            <MobileNavLink
+              key={item.href}
+              item={item}
+              active={isItemActive(item, pathname)}
+              onClick={onClick}
+            />
+          ))}
+        </ul>
+      ) : null}
+      {section.subgroups && section.subgroups.length > 0 ? (
+        <div className={`flex flex-col gap-1 ${hasItems ? "mt-2" : ""}`}>
+          {section.subgroups.map((group) => (
+            <MobileSubgroup
+              key={group.heading}
+              group={group}
+              pathname={pathname}
+              onClick={onClick}
+            />
+          ))}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+// Mobile mirror of the desktop CollapsibleSection (partner revision 8).
+function MobileCollapsibleSection({
+  section,
+  pathname,
+  onClick,
+}: {
+  section: StaffNavSection;
+  pathname: string;
+  onClick: () => void;
+}) {
+  const containsActive = isSectionActive(section, pathname);
+  return (
+    <details
+      key={`${section.heading}:${containsActive ? "open" : "closed"}`}
+      open={containsActive}
+      className="group/mobsection"
+    >
+      <summary
+        className="flex cursor-pointer list-none items-center justify-between rounded-md px-3 pb-2 pt-0.5 text-[10px] font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)] hover:text-[color:var(--color-brand-navy)]"
+        aria-label={`Toggle ${section.heading}`}
+      >
+        <span>{section.heading}</span>
+        <svg
+          aria-hidden="true"
+          viewBox="0 0 12 12"
+          className="h-3 w-3 transition-transform group-open/mobsection:rotate-90"
+        >
+          <path
+            d="M4 2l4 4-4 4"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            fill="none"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </summary>
+      <MobileSectionBody
+        section={section}
+        pathname={pathname}
+        onClick={onClick}
+      />
+    </details>
+  );
+}
+
 // Mobile-only hamburger + slide-in drawer for the staff portal. Mirrors
 // the desktop sidebar's nav so reception can navigate from a phone, and
 // closes itself on route change.
@@ -154,37 +244,27 @@ export function StaffMobileNavTrigger({ role, email, fullName }: Props) {
         </div>
 
         <nav className="flex flex-1 flex-col gap-6 overflow-y-auto px-3 py-4">
-          {sections.map((section) => (
-            <div key={section.heading}>
-              <p className="px-3 pb-2 text-[10px] font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-                {section.heading}
-              </p>
-              {section.items && section.items.length > 0 ? (
-                <ul className="flex flex-col gap-0.5">
-                  {section.items.map((item) => (
-                    <MobileNavLink
-                      key={item.href}
-                      item={item}
-                      active={isItemActive(item, pathname)}
-                      onClick={close}
-                    />
-                  ))}
-                </ul>
-              ) : null}
-              {section.subgroups && section.subgroups.length > 0 ? (
-                <div className={`flex flex-col gap-1 ${section.items && section.items.length > 0 ? "mt-2" : ""}`}>
-                  {section.subgroups.map((group) => (
-                    <MobileSubgroup
-                      key={group.heading}
-                      group={group}
-                      pathname={pathname}
-                      onClick={close}
-                    />
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          ))}
+          {sections.map((section) =>
+            section.collapsible ? (
+              <MobileCollapsibleSection
+                key={section.heading}
+                section={section}
+                pathname={pathname}
+                onClick={close}
+              />
+            ) : (
+              <div key={section.heading}>
+                <p className="px-3 pb-2 text-[10px] font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+                  {section.heading}
+                </p>
+                <MobileSectionBody
+                  section={section}
+                  pathname={pathname}
+                  onClick={close}
+                />
+              </div>
+            ),
+          )}
         </nav>
 
         <div className="border-t border-[color:var(--color-brand-bg-mid)] p-4">
