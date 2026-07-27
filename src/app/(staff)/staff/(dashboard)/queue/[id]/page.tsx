@@ -48,9 +48,10 @@ export default async function QueueTestDetailPage({ params }: Props) {
       `
         id, status, requested_at, started_at, completed_at, assigned_to,
         is_package_header, parent_id, package_completed_at, final_price_php,
+        deleted_at, delete_reason,
         services!inner ( id, code, name, turnaround_hours, requires_signoff, is_send_out ),
         visits!inner (
-          id, visit_number,
+          id, visit_number, deleted_at,
           patients!inner ( id, drm_id, first_name, last_name, phone, sex, birthdate )
         ),
         results ( id, uploaded_at, file_size_bytes, notes, generation_kind, finalised_at, control_no, amended_at, amendment_count, image_filename )
@@ -66,6 +67,33 @@ export default async function QueueTestDetailPage({ params }: Props) {
   if (!svc || !visit) notFound();
   const patient = Array.isArray(visit.patients) ? visit.patients[0] : visit.patients;
   if (!patient) notFound();
+
+  // Soft-deleted (0125): no work happens on this entry. Point at the visit
+  // page, which owns the deleted-entries panel and the Restore action.
+  if (test.deleted_at !== null || visit.deleted_at !== null) {
+    return (
+      <div className="mx-auto max-w-screen-md px-4 py-16 text-center sm:px-6">
+        <p className="text-xs font-bold uppercase tracking-wider text-red-700">
+          Deleted from the queue
+        </p>
+        <h1 className="mt-2 font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
+          {svc.name}
+        </h1>
+        <p className="mt-2 text-sm text-[color:var(--color-brand-text-mid)]">
+          {visit.deleted_at !== null
+            ? "The whole visit was deleted from the queue."
+            : "This test was deleted from the queue."}
+          {test.delete_reason ? ` Reason: ${test.delete_reason}` : ""}
+        </p>
+        <Link
+          href={`/staff/visits/${visit.id}`}
+          className="mt-4 inline-block rounded-md border border-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-navy)] hover:text-white"
+        >
+          Open visit #{visit.visit_number} →
+        </Link>
+      </div>
+    );
+  }
 
   // 12.5 T6: If this service belongs to a report_group, redirect to the
   // consolidated form instead of showing the single-test workflow.

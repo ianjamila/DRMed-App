@@ -45,6 +45,8 @@ export async function claimTestAction(
     })
     .eq("id", testRequestId)
     .eq("status", "requested")
+    // A queue-deleted line (0125) is not claimable even via a stale link.
+    .is("deleted_at", null)
     .select("id, visit_id")
     .maybeSingle();
 
@@ -173,6 +175,7 @@ export async function reassignTestAction(
     .update({ assigned_to: newAssigneeId })
     .eq("id", testRequestId)
     .in("status", ["in_progress", "result_uploaded"])
+    .is("deleted_at", null)
     .select("id, visit_id")
     .maybeSingle();
 

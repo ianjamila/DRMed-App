@@ -18,6 +18,12 @@ import { countResultViews } from "@/lib/results/viewed-count";
 import { isConsentGateRequired, getPatientConsentState } from "@/lib/consent/gate";
 import { paymentStatusLabel } from "@/lib/ui/payment-status";
 import { Panel } from "@/components/ui/panel";
+import {
+  testDeletability,
+  visitDeletability,
+  QUEUE_DELETE_ROLES,
+} from "@/lib/visits/deletion";
+import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
 
 export const metadata = {
   title: "Visit — staff",
@@ -74,6 +80,7 @@ export default async function VisitDetailPage({ params }: Props) {
       `
         id, visit_number, visit_date, payment_status,
         total_php, paid_php, notes, created_at,
+        deleted_at, deleted_by, delete_reason,
         visit_group_id,
         hmo_provider_id, hmo_approval_date, hmo_authorization_no,
         patients!inner ( id, drm_id, first_name, last_name, preferred_release_medium ),
@@ -126,6 +133,7 @@ export default async function VisitDetailPage({ params }: Props) {
           base_price_php, discount_kind, discount_amount_php, final_price_php,
           clinic_fee_php, doctor_pf_php,
           procedure_description, hmo_approved_amount_php,
+          deleted_at, deleted_by, delete_reason,
           parent_id, is_package_header, package_completed_at,
           services!inner ( id, code, name, kind, section, price_php )
         `,
@@ -190,12 +198,25 @@ export default async function VisitDetailPage({ params }: Props) {
   const activePayments = (payments ?? []).filter((p) => !p.voided_at);
   const voidedPayments = (payments ?? []).filter((p) => p.voided_at);
 
+  const visitDeleted = visit.deleted_at !== null;
+  const canManageDeletion = QUEUE_DELETE_ROLES.has(session.role);
+  const canDeleteVisit = visitDeletability(session.role, {
+    payment_status: visit.payment_status,
+    deleted_at: visit.deleted_at,
+    test_statuses: (tests ?? [])
+      .filter((t) => t.deleted_at === null)
+      .map((t) => t.status),
+  }).ok;
+
   // Section gate: hide tests outside this role's sections (medtech sees
   // lab bench, xray sees imaging, reception sees none, admin + pathologist
   // see everything). Package headers are visible if ANY of their
   // components are accessible — we don't want a half-visible package.
   const allowedSections = sectionsForRole(session.role); // null = unrestricted
-  const rawRows = tests ?? [];
+  // Soft-deleted lines (0125) leave the operational pipeline entirely and
+  // render in their own "Deleted entries" panel below with a Restore action.
+  const deletedTestRows = (tests ?? []).filter((t) => t.deleted_at !== null);
+  const rawRows = (tests ?? []).filter((t) => t.deleted_at === null);
   const isVisible = (r: { services: { section?: string | null } | { section?: string | null }[] | null }) => {
     if (allowedSections === null) return true;
     if (allowedSections.length === 0) return false;
@@ -252,6 +273,24 @@ export default async function VisitDetailPage({ params }: Props) {
   );
   const viewedCountRecord = Object.fromEntries(viewedCountByTrId);
 
+  // Names for the "deleted by" lines (banner + deleted-entries panel). The
+  // service-role client resolves them the same way the PF badge block does.
+  const deleterIds = Array.from(
+    new Set(
+      [visit.deleted_by, ...deletedTestRows.map((t) => t.deleted_by)].filter(
+        (v): v is string => !!v,
+      ),
+    ),
+  );
+  const deleterNameById = new Map<string, string>();
+  if (deleterIds.length > 0) {
+    const { data: deleters } = await createAdminClient()
+      .from("staff_profiles")
+      .select("id, full_name")
+      .in("id", deleterIds);
+    for (const d of deleters ?? []) deleterNameById.set(d.id, d.full_name);
+  }
+
   return (
     <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
       <Link
@@ -282,21 +321,64 @@ export default async function VisitDetailPage({ params }: Props) {
             {patient.last_name}, {patient.first_name}
           </h1>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Link
-            href={`/staff/visits/${visit.id}/receipt`}
-            className="rounded-md border border-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-navy)] hover:text-white"
-          >
-            Receipt
-          </Link>
-          <Link
-            href={`/staff/payments/new?visit_id=${visit.id}`}
-            className="rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
-          >
-            Record payment
-          </Link>
-        </div>
+        {visitDeleted ? null : (
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href={`/staff/visits/${visit.id}/receipt`}
+              className="rounded-md border border-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-navy)] hover:text-white"
+            >
+              Receipt
+            </Link>
+            <Link
+              href={`/staff/payments/new?visit_id=${visit.id}`}
+              className="rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
+            >
+              Record payment
+            </Link>
+            {canDeleteVisit ? (
+              <QueueDeleteDialog
+                visitId={visit.id}
+                mode="delete"
+                entryLabel={`visit #${visit.visit_number}`}
+              />
+            ) : null}
+          </div>
+        )}
       </header>
+
+      {visitDeleted ? (
+        <section className="mt-6 rounded-xl border border-red-200 bg-red-50 p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wider text-red-700">
+                Deleted from the queue
+              </p>
+              <p className="mt-1 text-sm text-red-900">
+                {visit.deleted_by
+                  ? (deleterNameById.get(visit.deleted_by) ?? "Staff")
+                  : "Staff"}{" "}
+                deleted this visit
+                {visit.deleted_at
+                  ? ` on ${new Date(visit.deleted_at).toLocaleString("en-PH", { timeZone: "Asia/Manila" })}`
+                  : ""}
+                . Nothing is billed and it no longer appears in any queue.
+              </p>
+              {visit.delete_reason ? (
+                <p className="mt-1 text-sm text-red-900">
+                  Reason: {visit.delete_reason}
+                </p>
+              ) : null}
+            </div>
+            {canManageDeletion ? (
+              <QueueDeleteDialog
+                visitId={visit.id}
+                mode="restore"
+                entryLabel={`visit #${visit.visit_number}`}
+              />
+            ) : null}
+          </div>
+        </section>
+      ) : null}
 
       <section className="mt-6 grid gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5 sm:grid-cols-4">
         <Field label="Total" value={formatPhp(visit.total_php)} />
@@ -319,7 +401,7 @@ export default async function VisitDetailPage({ params }: Props) {
               {paymentStatusLabel(visit.payment_status)}
             </span>
           </p>
-          {isAdmin && !isPaid ? (
+          {isAdmin && !isPaid && !visitDeleted ? (
             <WaiveBalanceDialog
               visitId={visit.id}
               balanceLabel={formatPhp(balance > 0 ? balance : 0)}
@@ -435,6 +517,20 @@ export default async function VisitDetailPage({ params }: Props) {
                                 | "pickup"
                                 | null
                             }
+                          />
+                        ) : null}
+                        {testDeletability(session.role, {
+                          status: h.status,
+                          deleted_at: null,
+                          parent_id: h.parent_id,
+                          visit_payment_status: visit.payment_status,
+                          visit_deleted_at: visit.deleted_at,
+                        }).ok ? (
+                          <QueueDeleteDialog
+                            visitId={visit.id}
+                            testRequestIds={[h.id]}
+                            mode="delete"
+                            entryLabel={`the ${svc.name} package`}
                           />
                         ) : null}
                       </div>
@@ -731,6 +827,22 @@ export default async function VisitDetailPage({ params }: Props) {
                             | null
                         }
                       />
+                      {testDeletability(session.role, {
+                        status: t.status,
+                        deleted_at: null,
+                        parent_id: t.parent_id,
+                        visit_payment_status: visit.payment_status,
+                        visit_deleted_at: visit.deleted_at,
+                      }).ok ? (
+                        <div className="mt-1.5 flex justify-end">
+                          <QueueDeleteDialog
+                            visitId={visit.id}
+                            testRequestIds={[t.id]}
+                            mode="delete"
+                            entryLabel={svc.name}
+                          />
+                        </div>
+                      ) : null}
                     </td>
                   </tr>
                 );
@@ -775,6 +887,68 @@ export default async function VisitDetailPage({ params }: Props) {
         viewedCountById={viewedCountRecord}
       />
       </SelectionProvider>
+
+      {deletedTestRows.length > 0 ? (
+        <details className="mt-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] px-4 py-3">
+          <summary className="cursor-pointer text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+            Deleted entries ({deletedTestRows.length})
+          </summary>
+          <ul className="mt-2 space-y-2 text-xs">
+            {deletedTestRows.map((t) => {
+              const svc = Array.isArray(t.services) ? t.services[0] : t.services;
+              const price =
+                t.final_price_php != null ? Number(t.final_price_php) : null;
+              return (
+                <li
+                  key={t.id}
+                  className="flex flex-wrap items-start justify-between gap-2 rounded-md bg-white px-3 py-2"
+                >
+                  <div>
+                    <span className="font-semibold text-[color:var(--color-brand-text-mid)] line-through">
+                      {svc?.name ?? "—"}
+                    </span>
+                    {t.is_package_header ? (
+                      <span className="ml-1 text-[color:var(--color-brand-text-soft)]">
+                        (package)
+                      </span>
+                    ) : t.parent_id ? (
+                      <span className="ml-1 text-[color:var(--color-brand-text-soft)]">
+                        (package component)
+                      </span>
+                    ) : null}
+                    {price != null && price > 0 ? (
+                      <span className="ml-2 font-mono text-[color:var(--color-brand-text-soft)] line-through">
+                        {formatPhp(price)}
+                      </span>
+                    ) : null}
+                    <p className="mt-0.5 text-[color:var(--color-brand-text-soft)]">
+                      Deleted
+                      {t.deleted_by
+                        ? ` by ${deleterNameById.get(t.deleted_by) ?? "staff"}`
+                        : ""}
+                      {t.deleted_at
+                        ? ` on ${new Date(t.deleted_at).toLocaleString("en-PH", { timeZone: "Asia/Manila" })}`
+                        : ""}
+                      {t.delete_reason ? ` — ${t.delete_reason}` : ""}
+                    </p>
+                  </div>
+                  {/* Components ride their header's restore; a deleted visit
+                      must be restored first (its own banner has the button). */}
+                  {canManageDeletion && !visitDeleted && t.parent_id === null ? (
+                    <QueueDeleteDialog
+                      visitId={visit.id}
+                      testRequestIds={[t.id]}
+                      mode="restore"
+                      entryLabel={svc?.name ?? "this entry"}
+                      size="compact"
+                    />
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        </details>
+      ) : null}
 
       <section className="mt-8">
         <h2 className="mb-3 font-heading text-xl font-extrabold text-[color:var(--color-brand-navy)]">

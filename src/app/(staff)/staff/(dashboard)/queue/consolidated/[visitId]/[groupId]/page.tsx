@@ -50,7 +50,10 @@ export default async function ConsolidatedQueuePage({
     )
     .eq("visit_id", visitId)
     .eq("services.report_group_id", groupId)
-    .in("status", ACTIVE_STATUSES);
+    .in("status", ACTIVE_STATUSES)
+    // Soft-deleted lines / visits (0125) are out of the encode form.
+    .is("deleted_at", null)
+    .is("visits.deleted_at", null);
   if (!requests || requests.length === 0) redirect("/staff/queue");
 
   // Which params this visit's ordered services enable — from

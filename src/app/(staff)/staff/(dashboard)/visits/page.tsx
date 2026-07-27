@@ -87,6 +87,7 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
       `,
       { count: "exact" },
     )
+    .is("deleted_at", null)
     .order("visit_date", { ascending: false })
     .order("created_at", { ascending: false })
     .range(offset, offset + PAGE_SIZE - 1);

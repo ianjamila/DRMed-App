@@ -37,6 +37,8 @@ export default async function ReceiptPage({ params }: Props) {
       `,
     )
     .eq("id", id)
+    // A deleted visit has no bill — nothing to print (0125).
+    .is("deleted_at", null)
     .maybeSingle();
 
   if (!visit) notFound();

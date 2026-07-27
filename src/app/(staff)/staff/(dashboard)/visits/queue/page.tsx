@@ -23,6 +23,8 @@ import {
   type QueueStage,
   type QueueTestLike,
 } from "@/lib/visits/queue-stage";
+import { visitDeletability } from "@/lib/visits/deletion";
+import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
 import { VisitsTabs } from "../_components/visits-tabs";
 
 export const metadata = {
@@ -80,6 +82,7 @@ function queueHref(stage: QueueStage, date: string, today: string): string {
 type QueueTestRow = {
   id: string;
   status: string;
+  deleted_at: string | null;
   is_package_header: boolean;
   services:
     | { section: string | null; kind: string; name: string }
@@ -113,7 +116,11 @@ type QueueEntry = {
 };
 
 function flattenTests(v: QueueVisitRow): QueueTestLike[] {
-  return (v.test_requests ?? []).map((t) => {
+  // Soft-deleted lines are not part of the visit's workload or bill (0125) —
+  // drop them before the stage helpers ever see them.
+  return (v.test_requests ?? [])
+    .filter((t) => t.deleted_at === null)
+    .map((t) => {
     const svc = Array.isArray(t.services) ? t.services[0] : t.services;
     return {
       status: t.status,
@@ -156,10 +163,11 @@ export default async function VisitsQueuePage({ searchParams }: SearchProps) {
       `
         id, visit_number, visit_date, payment_status, total_php, paid_php, created_at,
         patients!inner ( id, drm_id, first_name, middle_name, last_name ),
-        test_requests ( id, status, is_package_header, services ( section, kind, name ) )
+        test_requests ( id, status, deleted_at, is_package_header, services ( section, kind, name ) )
       `,
     )
     .eq("visit_date", date)
+    .is("deleted_at", null)
     .order("created_at", { ascending: true })
     .returns<QueueVisitRow[]>();
 
@@ -326,7 +334,12 @@ export default async function VisitsQueuePage({ searchParams }: SearchProps) {
               </thead>
               <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
                 {rows.map((entry) => (
-                  <QueueRow key={entry.visit.id} entry={entry} stage={stage} />
+                  <QueueRow
+                    key={entry.visit.id}
+                    entry={entry}
+                    stage={stage}
+                    canDelete={canDeleteEntry(session.role, entry)}
+                  />
                 ))}
               </tbody>
             </table>
@@ -335,7 +348,12 @@ export default async function VisitsQueuePage({ searchParams }: SearchProps) {
           {/* Mobile cards */}
           <div className="mt-6 space-y-3 md:hidden">
             {rows.map((entry) => (
-              <QueueCard key={entry.visit.id} entry={entry} stage={stage} />
+              <QueueCard
+                key={entry.visit.id}
+                entry={entry}
+                stage={stage}
+                canDelete={canDeleteEntry(session.role, entry)}
+              />
             ))}
           </div>
         </>
@@ -347,6 +365,16 @@ export default async function VisitsQueuePage({ searchParams }: SearchProps) {
 function balanceOf(v: QueueVisitRow): number {
   const b = Number(v.total_php) - Number(v.paid_php);
   return b > 0 ? b : 0;
+}
+
+// Delete shows only where decision 6 allows it: unpaid visits, reception or
+// admin. The page already excludes soft-deleted visits from the query.
+function canDeleteEntry(role: string, entry: QueueEntry): boolean {
+  return visitDeletability(role, {
+    payment_status: entry.visit.payment_status,
+    deleted_at: null,
+    test_statuses: entry.tests.map((t) => t.status),
+  }).ok;
 }
 
 function ActionLink({
@@ -446,7 +474,15 @@ function PatientCell({ visit }: { visit: QueueVisitRow }) {
   );
 }
 
-function QueueRow({ entry, stage }: { entry: QueueEntry; stage: QueueStage }) {
+function QueueRow({
+  entry,
+  stage,
+  canDelete,
+}: {
+  entry: QueueEntry;
+  stage: QueueStage;
+  canDelete: boolean;
+}) {
   const { visit } = entry;
   const status = visit.payment_status;
   return (
@@ -487,12 +523,29 @@ function QueueRow({ entry, stage }: { entry: QueueEntry; stage: QueueStage }) {
       </td>
       <td className="px-4 py-3 text-right">
         <ActionLink visit={visit} stage={stage} />
+        {canDelete ? (
+          <div className="mt-1.5 flex justify-end">
+            <QueueDeleteDialog
+              visitId={visit.id}
+              mode="delete"
+              entryLabel={`visit #${String(visit.visit_number).padStart(4, "0")}`}
+            />
+          </div>
+        ) : null}
       </td>
     </tr>
   );
 }
 
-function QueueCard({ entry, stage }: { entry: QueueEntry; stage: QueueStage }) {
+function QueueCard({
+  entry,
+  stage,
+  canDelete,
+}: {
+  entry: QueueEntry;
+  stage: QueueStage;
+  canDelete: boolean;
+}) {
   const { visit } = entry;
   const status = visit.payment_status;
   return (
@@ -546,6 +599,15 @@ function QueueCard({ entry, stage }: { entry: QueueEntry; stage: QueueStage }) {
         </div>
         <ActionLink visit={visit} stage={stage} />
       </div>
+      {canDelete ? (
+        <div className="mt-2 flex justify-end">
+          <QueueDeleteDialog
+            visitId={visit.id}
+            mode="delete"
+            entryLabel={`visit #${String(visit.visit_number).padStart(4, "0")}`}
+          />
+        </div>
+      ) : null}
     </article>
   );
 }

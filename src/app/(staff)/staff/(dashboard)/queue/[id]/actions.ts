@@ -104,6 +104,9 @@ async function prepareStructured(
       `,
     )
     .eq("id", testRequestId)
+    // Queue-deleted lines (0125) accept no result work.
+    .is("deleted_at", null)
+    .is("visits.deleted_at", null)
     .maybeSingle();
 
   if (!tr) return { ok: false, error: "Test not found." };
@@ -742,6 +745,8 @@ export async function uploadResultAction(
       `,
     )
     .eq("id", testRequestId)
+    .is("deleted_at", null)
+    .is("visits.deleted_at", null)
     .maybeSingle();
 
   if (!testRequest) return { ok: false, error: "Test not found." };

@@ -28,6 +28,8 @@ export async function reissuePatientPinAction(
     .from("visits")
     .select("id, visit_number")
     .eq("patient_id", patientId)
+    // Don't hang a re-issued PIN off a queue-deleted visit (0125).
+    .is("deleted_at", null)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();

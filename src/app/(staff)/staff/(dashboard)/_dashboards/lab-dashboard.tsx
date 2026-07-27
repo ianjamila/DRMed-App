@@ -113,27 +113,33 @@ async function loadLabStats(
     show("lab.my_unclaimed") && (role === "medtech" || role === "xray_technician")
       ? supabase
           .from("test_requests")
-          .select("id, services!inner(section)", { count: "exact", head: true })
+          .select("id, services!inner(section), visits!inner(id)", { count: "exact", head: true })
           .in("status", ["requested", "in_progress"])
           .is("assigned_to", null)
           .in("services.section", sectionList)
+          .is("deleted_at", null)
+          .is("visits.deleted_at", null)
       : SKIP_COUNT;
 
   const myClaimedPromise =
     show("lab.my_claimed") && (role === "medtech" || role === "xray_technician")
       ? supabase
           .from("test_requests")
-          .select("id", { count: "exact", head: true })
+          .select("id, visits!inner(id)", { count: "exact", head: true })
           .eq("assigned_to", userId)
           .in("status", ["requested", "in_progress"])
+          .is("deleted_at", null)
+          .is("visits.deleted_at", null)
       : SKIP_COUNT;
 
   const readyForSignoffPromise =
     show("lab.ready_for_signoff") && role === "pathologist"
       ? supabase
           .from("test_requests")
-          .select("id", { count: "exact", head: true })
+          .select("id, visits!inner(id)", { count: "exact", head: true })
           .eq("status", "ready_for_release")
+          .is("deleted_at", null)
+          .is("visits.deleted_at", null)
       : SKIP_COUNT;
 
   const criticalAlertsPromise =
@@ -148,9 +154,11 @@ async function loadLabStats(
     show("lab.send_out_awaiting") && role === "medtech"
       ? supabase
           .from("test_requests")
-          .select("id, services!inner(is_send_out)", { count: "exact", head: true })
+          .select("id, services!inner(is_send_out), visits!inner(id)", { count: "exact", head: true })
           .in("status", ["requested", "in_progress"])
           .eq("services.is_send_out", true)
+          .is("deleted_at", null)
+          .is("visits.deleted_at", null)
       : SKIP_COUNT;
 
   const releasedTodayPromise =
@@ -175,6 +183,7 @@ async function loadLabStats(
           .in("status", ["requested", "in_progress"])
           .is("assigned_to", null)
           .in("services.section", sectionList)
+          .is("deleted_at", null)
           .order("requested_at", { ascending: true })
           .limit(5)
           .returns<QueueRow[]>()
@@ -198,6 +207,7 @@ async function loadLabStats(
           .from("test_requests")
           .select("id, patients ( first_name, last_name ), services ( name )")
           .eq("status", "ready_for_release")
+          .is("deleted_at", null)
           .order("requested_at", { ascending: true })
           .limit(5)
           .returns<SignoffRow[]>()

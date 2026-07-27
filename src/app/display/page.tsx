@@ -66,6 +66,8 @@ async function loadDisplayData(): Promise<{
         `,
       )
       .eq("status", "in_progress")
+      .is("deleted_at", null)
+      .is("visits.deleted_at", null)
       .order("started_at", { ascending: false })
       .limit(6),
     admin
@@ -80,6 +82,8 @@ async function loadDisplayData(): Promise<{
         `,
       )
       .eq("status", "requested")
+      .is("deleted_at", null)
+      .is("visits.deleted_at", null)
       .order("requested_at", { ascending: true })
       .limit(8),
     admin

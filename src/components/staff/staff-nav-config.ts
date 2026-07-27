@@ -370,6 +370,12 @@ export const STAFF_NAV: StaffNavSection[] = [
             roles: ["admin"],
           },
           {
+            href: "/staff/admin/reports/deleted-entries",
+            label: "Deleted queue entries",
+            description: "Every visit or test deleted from the queues — who deleted it, why, what it was worth, and whether it was restored. Only unpaid entries can be deleted; paid ones need a payment void first.",
+            roles: ["admin"],
+          },
+          {
             href: "/staff/admin/reports/patients-without-consent",
             label: "Patients without consent",
             description: "Active patients with no data-privacy consent on file — clear this list before enabling the consent gate, or their releases will block.",

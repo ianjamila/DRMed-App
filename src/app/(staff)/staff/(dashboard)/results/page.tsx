@@ -92,6 +92,8 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
       `,
       { count: "exact" },
     )
+    .is("deleted_at", null)
+    .is("visits.deleted_at", null)
     .order("requested_at", { ascending: false })
     .range(offset, offset + PAGE_SIZE - 1);
 

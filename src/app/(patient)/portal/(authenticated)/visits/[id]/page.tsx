@@ -37,9 +37,11 @@ export default async function PatientVisitDetailPage({ params }: Props) {
   const { data: visitRaw } = await db
     .from("visits")
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .select("id, patient_id, visit_number, visit_date, payment_status, test_requests(id, status, released_at, legacy_import_run_id, services!inner(name, code), result_test_requests(result_id, results!inner(id, storage_path)))" as any)
+    .select("id, patient_id, visit_number, visit_date, payment_status, test_requests(id, status, released_at, deleted_at, legacy_import_run_id, services!inner(name, code), result_test_requests(result_id, results!inner(id, storage_path)))" as any)
     .eq("id", id)
     .eq("patient_id", patient.patient_id)
+    // Queue-deleted visits (0125) are not part of the patient's record view.
+    .is("deleted_at", null)
     .maybeSingle();
 
   if (!visitRaw) notFound();
@@ -48,6 +50,7 @@ export default async function PatientVisitDetailPage({ params }: Props) {
     id: string;
     status: string;
     released_at: string | null;
+    deleted_at: string | null;
     legacy_import_run_id: string | null;
     services: { name: string; code: string } | { name: string; code: string }[] | null;
     result_test_requests: {
@@ -66,10 +69,12 @@ export default async function PatientVisitDetailPage({ params }: Props) {
   const visit = visitRaw as unknown as VisitShape;
 
   // Patients only see released tests per the plan; group counts for context.
-  const releasedTests = (visit.test_requests ?? []).filter(
-    (t) => t.status === "released",
+  // Queue-deleted lines (0125) are neither released nor pending — invisible.
+  const activeTests = (visit.test_requests ?? []).filter(
+    (t) => t.deleted_at === null,
   );
-  const pendingCount = (visit.test_requests ?? []).filter(
+  const releasedTests = activeTests.filter((t) => t.status === "released");
+  const pendingCount = activeTests.filter(
     (t) => t.status !== "released" && t.status !== "cancelled",
   ).length;
 

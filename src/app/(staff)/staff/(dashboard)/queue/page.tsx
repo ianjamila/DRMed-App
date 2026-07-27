@@ -15,6 +15,8 @@ import {
 } from "@/lib/dates/manila";
 import { matchesAllTokens } from "@/lib/patients/search";
 import { visitNumberFilter } from "@/lib/visits/visit-number-filter";
+import { testDeletability } from "@/lib/visits/deletion";
+import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
 
 // ---------------------------------------------------------------------------
 // Queue card types — after the grouping fold
@@ -33,6 +35,7 @@ type QueueCardSingle = {
   status: string;
   claimedBy: string | null;
   href: string;
+  canDelete: boolean;
 };
 
 type QueueCardGrouped = {
@@ -50,6 +53,11 @@ type QueueCardGrouped = {
   status: string;
   claimedBy: string | null;
   href: string;
+  // All member test ids — the group deletes as one bulk action.
+  memberIds: string[];
+  // Only when EVERY member is deletable (a package component in the panel
+  // makes the whole group non-deletable; the package deletes from the visit).
+  canDelete: boolean;
 };
 
 type QueueCard = QueueCardSingle | QueueCardGrouped;
@@ -125,15 +133,19 @@ export default async function QueuePage({ searchParams }: SearchProps) {
     .from("test_requests")
     .select(
       `
-        id, status, requested_at, released_at, assigned_to, started_at, visit_id,
+        id, status, requested_at, released_at, assigned_to, started_at, visit_id, parent_id,
         services!inner ( id, code, name, turnaround_hours, section, report_group_id,
           report_groups ( code, name ) ),
         visits!inner (
-          id, visit_number,
+          id, visit_number, payment_status,
           patients!inner ( id, drm_id, first_name, last_name )
         )
       `,
     )
+    // Soft-deleted lines — and every line of a soft-deleted visit — are out
+    // of the worklist (0125).
+    .is("deleted_at", null)
+    .is("visits.deleted_at", null)
     .in(
       "status",
       filter === "pending_release"
@@ -211,12 +223,25 @@ export default async function QueuePage({ searchParams }: SearchProps) {
       ? svc.report_groups[0]
       : svc.report_groups;
 
+    // Decision 6: reception + admin, unpaid visits, no released result, and
+    // package components only via their header (from the visit page). The
+    // query already excluded soft-deleted rows/visits.
+    const rowDeletable = testDeletability(session.role, {
+      status: r.status,
+      deleted_at: null,
+      parent_id: r.parent_id,
+      visit_payment_status: visit.payment_status,
+      visit_deleted_at: null,
+    }).ok;
+
     if (svc.report_group_id && rg) {
       const key = `${r.visit_id}|${svc.report_group_id}`;
       const existing = groupedAcc.get(key);
       const test = { code: svc.code, name: svc.name };
       if (existing) {
         existing.orderedTests.push(test);
+        existing.memberIds.push(r.id);
+        existing.canDelete = existing.canDelete && rowDeletable;
         existing.label = `${rg.name} (${existing.orderedTests.length} tests)`;
         if (statusRank(r.status) < statusRank(existing.status)) {
           existing.status = r.status;
@@ -247,6 +272,8 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           status: r.status,
           claimedBy: r.assigned_to,
           href: `/staff/queue/consolidated/${r.visit_id}/${svc.report_group_id}`,
+          memberIds: [r.id],
+          canDelete: rowDeletable,
         });
       }
     } else {
@@ -264,6 +291,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         status: r.status,
         claimedBy: r.assigned_to,
         href: `/staff/queue/${r.id}`,
+        canDelete: rowDeletable,
       });
     }
   }
@@ -576,6 +604,16 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                             Open →
                           </Link>
                         )}
+                        {card.canDelete ? (
+                          <div className="mt-1.5 flex justify-end">
+                            <QueueDeleteDialog
+                              visitId={card.visitId}
+                              testRequestIds={[card.testRequestId]}
+                              mode="delete"
+                              entryLabel={card.label}
+                            />
+                          </div>
+                        ) : null}
                       </td>
                     </tr>
                   );
@@ -643,6 +681,16 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                       >
                         Open →
                       </Link>
+                      {card.canDelete ? (
+                        <div className="mt-1.5 flex justify-end">
+                          <QueueDeleteDialog
+                            visitId={card.visitId}
+                            testRequestIds={card.memberIds}
+                            mode="delete"
+                            entryLabel={card.label}
+                          />
+                        </div>
+                      ) : null}
                     </td>
                   </tr>
                 );
