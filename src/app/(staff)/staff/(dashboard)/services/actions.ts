@@ -21,7 +21,6 @@ function parseForm(formData: FormData) {
     description: formData.get("description") ?? "",
     price_php: formData.get("price_php"),
     hmo_price_php: formData.get("hmo_price_php") ?? "",
-    senior_discount_php: formData.get("senior_discount_php") ?? "",
     turnaround_hours: formData.get("turnaround_hours") ?? "",
     kind: formData.get("kind"),
     section: formData.get("section") ?? "",
@@ -122,7 +121,7 @@ export async function updateServiceAction(
   // Pre-read so audit metadata can record before/after for any price column.
   const { data: prior } = await supabase
     .from("services")
-    .select("code, price_php, hmo_price_php, senior_discount_php")
+    .select("code, price_php, hmo_price_php")
     .eq("id", serviceId)
     .maybeSingle();
 
@@ -157,8 +156,7 @@ export async function updateServiceAction(
   const priceChanged =
     !!prior &&
     (Number(prior.price_php) !== parsed.data.price_php ||
-      (prior.hmo_price_php ?? null) !== parsed.data.hmo_price_php ||
-      (prior.senior_discount_php ?? null) !== parsed.data.senior_discount_php);
+      (prior.hmo_price_php ?? null) !== parsed.data.hmo_price_php);
 
   const h = await headers();
   await audit({
@@ -174,7 +172,6 @@ export async function updateServiceAction(
           after: {
             price_php: parsed.data.price_php,
             hmo_price_php: parsed.data.hmo_price_php,
-            senior_discount_php: parsed.data.senior_discount_php,
           },
         }
       : { code: parsed.data.code },

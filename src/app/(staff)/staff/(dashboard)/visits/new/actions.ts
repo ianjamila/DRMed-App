@@ -13,16 +13,9 @@ import { setVisitPinFlash } from "@/lib/auth/visit-pin-flash";
 import { doctorLineBase, splitDoctorFee } from "@/lib/visits/consultation-fee";
 import { isDoctorKind, partitionByCategory } from "@/lib/visits/order-lines";
 import { isConsultOnlyOrder } from "@/lib/visits/receipt-policy";
-import { isSeniorPwdEligible, seniorPwdDiscount } from "@/lib/pricing/senior";
+import { isSeniorPwdEligible } from "@/lib/pricing/senior";
+import { lineDiscount } from "@/lib/pricing/discounts";
 import type { Database } from "@/types/database";
-
-const DiscountKindEnum = z.enum([
-  "senior_pwd_20",
-  "pct_10",
-  "pct_5",
-  "other_pct_20",
-  "custom",
-]);
 
 const optionalUuid = z
   .union([z.string(), z.null(), z.undefined()])
@@ -102,13 +95,33 @@ export async function createVisitAction(
   const { data: services, error: svcErr } = await supabase
     .from("services")
     .select(
-      "id, kind, code, name, price_php, hmo_price_php, senior_discount_php, senior_pwd_eligible",
+      "id, kind, code, name, price_php, hmo_price_php, senior_pwd_eligible",
     )
     .in("id", parsed.data.service_ids);
 
   if (svcErr || !services || services.length !== parsed.data.service_ids.length) {
     return { ok: false, error: "One or more services could not be found." };
   }
+
+  // Active rows from the admin-managed discount catalog. Codes not in this
+  // list (retired, or garbage from a stale client) fall back to no discount.
+  const { data: discountRows } = await supabase
+    .from("discount_types")
+    .select("code, label, kind, percent, amount_php, is_statutory")
+    .eq("active", true);
+  const discountByCode = new Map(
+    (discountRows ?? []).map((d) => [
+      d.code,
+      {
+        code: d.code,
+        label: d.label,
+        kind: d.kind as "percent" | "fixed" | "custom",
+        percent: d.percent != null ? Number(d.percent) : null,
+        amount_php: d.amount_php != null ? Number(d.amount_php) : null,
+        is_statutory: d.is_statutory,
+      },
+    ]),
+  );
 
   // The doctor-fee split depends on the attending physician's compensation
   // arrangement (rent_paying / shareholder → clinic keeps ₱0; pf_split → ₱100).
@@ -131,8 +144,6 @@ export async function createVisitAction(
     const s = services.find((x) => x.id === service_id)!;
     const cashPrice = Number(s.price_php);
     const hmoPrice = s.hmo_price_php != null ? Number(s.hmo_price_php) : null;
-    const seniorPesoOff =
-      s.senior_discount_php != null ? Number(s.senior_discount_php) : null;
 
     // Both doctor kinds are priced at the counter, not from the catalog
     // (item 3). doctorLineBase owns the blank-box rule: a blank consult is ₱0
@@ -152,32 +163,23 @@ export async function createVisitAction(
       catalogPrice,
     });
 
+    // Discount codes come from the admin-managed discount_types catalog;
+    // anything not in the active list (retired code, stale client) means no
+    // discount. The server recomputes the amount from the catalog rate — and
+    // a statutory Senior/PWD code posted against an ineligible service (e.g.
+    // a lab package, from a crafted or stale client) is dropped entirely so
+    // the line records no discount kind, not a ₱0 senior discount.
     const rawKind = formData.get(`discount_kind__${service_id}`)?.toString() ?? "";
-    const parsedKind = DiscountKindEnum.safeParse(rawKind);
-    const discount_kind = parsedKind.success ? parsedKind.data : null;
-
-    let discount_amount_php = 0;
-    if (discount_kind === "senior_pwd_20") {
-      // Source of truth for senior/PWD eligibility: ineligible services
-      // (e.g. lab packages) get 0 even if a stale client posted the discount.
-      discount_amount_php = seniorPwdDiscount({
-        base,
-        seniorDiscountPhp: seniorPesoOff,
-        eligible: isSeniorPwdEligible(s),
-      });
-    } else if (discount_kind === "pct_10") {
-      discount_amount_php = Math.round(base * 0.1 * 100) / 100;
-    } else if (discount_kind === "pct_5") {
-      discount_amount_php = Math.round(base * 0.05 * 100) / 100;
-    } else if (discount_kind === "other_pct_20") {
-      discount_amount_php = Math.round(base * 0.2 * 100) / 100;
-    } else if (discount_kind === "custom") {
-      const raw = formData.get(`custom_discount__${service_id}`)?.toString() ?? "";
-      const n = Number(raw);
-      if (Number.isFinite(n) && n >= 0) {
-        discount_amount_php = Math.min(n, base);
-      }
-    }
+    const posted = discountByCode.get(rawKind) ?? null;
+    const discountType =
+      posted?.is_statutory && !isSeniorPwdEligible(s) ? null : posted;
+    const discount_kind = discountType?.code ?? null;
+    const discount_amount_php = lineDiscount({
+      discountType,
+      base,
+      customRaw: formData.get(`custom_discount__${service_id}`)?.toString() ?? "",
+      seniorPwdEligible: isSeniorPwdEligible(s),
+    });
 
     const final_price_php = Math.max(0, base - discount_amount_php);
 

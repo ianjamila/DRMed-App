@@ -18,7 +18,12 @@ import {
 import { formatPhp } from "@/lib/marketing/format";
 import { defaultClinicFee, doctorLineBase } from "@/lib/visits/consultation-fee";
 import { isConsultOnlyOrder } from "@/lib/visits/receipt-policy";
-import { isSeniorPwdEligible, seniorPwdDiscount } from "@/lib/pricing/senior";
+import { isSeniorPwdEligible } from "@/lib/pricing/senior";
+import {
+  type DiscountTypeLite,
+  discountOptionsFor,
+  lineDiscount,
+} from "@/lib/pricing/discounts";
 import {
   createVisitAction,
   getPackageComponentsAction,
@@ -32,7 +37,6 @@ export interface ServiceLite {
   kind: string;
   price_php: number;
   hmo_price_php: number | null;
-  senior_discount_php: number | null;
   senior_pwd_eligible: boolean | null;
   section: string | null;
 }
@@ -62,19 +66,13 @@ interface Props {
   hmoProviders: HmoProviderLite[];
   physicians?: PhysicianLite[];
   initialCategory?: "lab" | "imaging";
+  /** Active rows from the admin-managed discount_types catalog, sorted. */
+  discountTypes: DiscountTypeLite[];
 }
 
-// Discount kinds match the test_requests.discount_kind check constraint.
-type DiscountKind =
-  | ""
-  | "senior_pwd_20"
-  | "pct_10"
-  | "pct_5"
-  | "other_pct_20"
-  | "custom";
-
 interface LineState {
-  discountKind: DiscountKind;
+  // discount_types.code of the selected discount; "" = no discount.
+  discountKind: string;
   customDiscount: string; // raw input; parsed at submit time
   // Doctor consultation lines:
   clinicFee: string;          // default "100" when kind is doctor_consultation
@@ -85,15 +83,6 @@ interface LineState {
   procedureFee: string; // counter-typed fee; blank = the catalog price
   consultFee: string; // manual consultation fee (doctor_consultation only)
 }
-
-const DISCOUNT_OPTIONS: { value: DiscountKind; label: string }[] = [
-  { value: "", label: "No discount" },
-  { value: "senior_pwd_20", label: "Senior / PWD 20%" },
-  { value: "pct_10", label: "10% off" },
-  { value: "pct_5", label: "5% off" },
-  { value: "other_pct_20", label: "Other 20% off" },
-  { value: "custom", label: "Custom amount (₱)" },
-];
 
 type ServiceTab = "doctor" | "lab";
 type LabCategory = "all" | "lab" | "imaging";
@@ -123,35 +112,27 @@ function basePriceFor(s: ServiceLite, hmoSelected: boolean): number {
 function discountFor(
   s: ServiceLite,
   base: number,
-  kind: DiscountKind,
+  discountType: DiscountTypeLite | null,
   customRaw: string,
 ): number {
-  switch (kind) {
-    case "senior_pwd_20":
-      // Shared helper: curated peso amount when set, else statutory 20% —
-      // and 0 for senior/PWD-ineligible services (e.g. lab packages).
-      return seniorPwdDiscount({
-        base,
-        seniorDiscountPhp: s.senior_discount_php,
-        eligible: isSeniorPwdEligible(s),
-      });
-    case "pct_10":
-      return Math.round(base * 0.1 * 100) / 100;
-    case "pct_5":
-      return Math.round(base * 0.05 * 100) / 100;
-    case "other_pct_20":
-      return Math.round(base * 0.2 * 100) / 100;
-    case "custom": {
-      const n = Number(customRaw);
-      if (!Number.isFinite(n) || n < 0) return 0;
-      return Math.min(n, base);
-    }
-    default:
-      return 0;
-  }
+  // Shared arithmetic with the create action: percent / fixed / counter-typed
+  // custom, statutory Senior/PWD gated on eligibility (lab packages get 0).
+  return lineDiscount({
+    discountType,
+    base,
+    customRaw,
+    seniorPwdEligible: isSeniorPwdEligible(s),
+  });
 }
 
-export function VisitForm({ services, patient, hmoProviders, physicians = [], initialCategory }: Props) {
+export function VisitForm({
+  services,
+  patient,
+  hmoProviders,
+  physicians = [],
+  initialCategory,
+  discountTypes,
+}: Props) {
   const router = useRouter();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [doctorHmoProviderId, setDoctorHmoProviderId] = useState<string>("");
@@ -335,6 +316,11 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [], in
     setLineState((prev) => ({ ...prev, [id]: { ...getLine(id), ...patch } }));
   }
 
+  const discountByCode = useMemo(
+    () => new Map(discountTypes.map((d) => [d.code, d])),
+    [discountTypes],
+  );
+
   // Per-line computed values, recomputed when HMO / discount / selection changes.
   const lines = useMemo(() => {
     return services
@@ -353,12 +339,17 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [], in
                 : "",
           catalogPrice: basePriceFor(s, hmoSelectedFor(s.kind)),
         });
-        const discount = discountFor(s, base, ls.discountKind, ls.customDiscount);
+        const discount = discountFor(
+          s,
+          base,
+          discountByCode.get(ls.discountKind) ?? null,
+          ls.customDiscount,
+        );
         const final = Math.max(0, base - discount);
         return { service: s, base, discount, final, ls };
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [services, selected, doctorHmoSelected, labHmoSelected, lineState]);
+  }, [services, selected, doctorHmoSelected, labHmoSelected, lineState, discountByCode]);
 
   const total = lines.reduce((sum, l) => sum + l.final, 0);
 
@@ -677,10 +668,11 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [], in
                 ? String(Math.max(0, final - cfAuto))
                 : "";
               // Senior/PWD-ineligible services (e.g. lab packages) don't offer
-              // the 20% senior discount at all.
-              const lineDiscountOptions = isSeniorPwdEligible(s)
-                ? DISCOUNT_OPTIONS
-                : DISCOUNT_OPTIONS.filter((o) => o.value !== "senior_pwd_20");
+              // the statutory senior discount at all.
+              const lineDiscountOptions = discountOptionsFor(
+                discountTypes,
+                isSeniorPwdEligible(s),
+              );
               return (
                 <div
                   key={s.id}
@@ -706,18 +698,19 @@ export function VisitForm({ services, patient, hmoProviders, physicians = [], in
                         value={ls.discountKind}
                         onChange={(e) =>
                           updateLine(s.id, {
-                            discountKind: e.target.value as DiscountKind,
+                            discountKind: e.target.value,
                           })
                         }
                         className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1.5 text-xs focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
                       >
+                        <option value="">No discount</option>
                         {lineDiscountOptions.map((o) => (
-                          <option key={o.value} value={o.value}>
+                          <option key={o.code} value={o.code}>
                             {o.label}
                           </option>
                         ))}
                       </select>
-                      {ls.discountKind === "custom" ? (
+                      {discountByCode.get(ls.discountKind)?.kind === "custom" ? (
                         <input
                           name={`custom_discount__${s.id}`}
                           type="number"

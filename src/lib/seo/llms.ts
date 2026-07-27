@@ -43,7 +43,6 @@ async function loadLlmsData(): Promise<LlmsData> {
         description: s.description,
         price_php: s.price_php,
         hmo_price_php: s.hmo_price_php,
-        senior_discount_php: s.senior_discount_php,
         turnaround_hours: s.turnaround_hours,
         section: s.section,
         fasting_required: s.fasting_required,

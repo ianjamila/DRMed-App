@@ -8,7 +8,6 @@ export interface LlmsService {
   description: string | null;
   price_php: number;
   hmo_price_php: number | null;
-  senior_discount_php: number | null;
   turnaround_hours: number | null;
   section: string | null;
   fasting_required: boolean;
@@ -197,8 +196,6 @@ export function buildLlmsFullTxt(data: LlmsData): string {
         lines.push(`- URL: ${site.url}/all-services/${s.code.toLowerCase()}`);
         lines.push(`- Price: ${formatPhp(s.price_php)}`);
         if (s.hmo_price_php != null) lines.push(`- HMO price: ${formatPhp(s.hmo_price_php)}`);
-        if (s.senior_discount_php != null)
-          lines.push(`- Senior/PWD discount: ${formatPhp(s.senior_discount_php)}`);
         if (s.turnaround_hours != null) lines.push(`- Turnaround: ${s.turnaround_hours} hours`);
         lines.push(`- Fasting required: ${s.fasting_required ? "Yes" : "No"}`);
         if (s.description) lines.push("", collapse(s.description));

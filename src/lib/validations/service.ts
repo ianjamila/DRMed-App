@@ -60,7 +60,6 @@ export const ServiceSchema = z.object({
     .transform((v) => Number(v))
     .pipe(z.number().nonnegative("Price must be 0 or greater.")),
   hmo_price_php: optionalNumber,
-  senior_discount_php: optionalNumber,
   turnaround_hours: z
     .string()
     .or(z.literal(""))

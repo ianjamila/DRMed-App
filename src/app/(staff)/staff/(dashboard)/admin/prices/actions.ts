@@ -27,7 +27,6 @@ const PriceUpdateSchema = z.object({
     message: "DRMed price is required.",
   }),
   hmo_price_php: priceField,
-  senior_discount_php: priceField,
 });
 
 export type PriceUpdateResult =
@@ -45,13 +44,12 @@ export async function updateServicePricesAction(
       error: parsed.error.issues[0]?.message ?? "Invalid input.",
     };
   }
-  const { service_id, price_php, hmo_price_php, senior_discount_php } =
-    parsed.data;
+  const { service_id, price_php, hmo_price_php } = parsed.data;
 
   const supabase = await createClient();
   const { data: prior } = await supabase
     .from("services")
-    .select("code, price_php, hmo_price_php, senior_discount_php")
+    .select("code, price_php, hmo_price_php")
     .eq("id", service_id)
     .maybeSingle();
 
@@ -59,8 +57,7 @@ export async function updateServicePricesAction(
 
   const changed =
     Number(prior.price_php) !== price_php ||
-    (prior.hmo_price_php ?? null) !== hmo_price_php ||
-    (prior.senior_discount_php ?? null) !== senior_discount_php;
+    (prior.hmo_price_php ?? null) !== hmo_price_php;
 
   if (!changed) return { ok: true };
 
@@ -69,7 +66,6 @@ export async function updateServicePricesAction(
     .update({
       price_php: price_php as number,
       hmo_price_php,
-      senior_discount_php,
     })
     .eq("id", service_id);
 
@@ -85,7 +81,7 @@ export async function updateServicePricesAction(
     metadata: {
       code: prior.code,
       before: prior,
-      after: { price_php, hmo_price_php, senior_discount_php },
+      after: { price_php, hmo_price_php },
     },
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),

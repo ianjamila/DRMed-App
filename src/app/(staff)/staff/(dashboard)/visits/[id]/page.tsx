@@ -68,14 +68,6 @@ const PAYMENT_METHOD_LABEL: Record<string, string> = {
   maybank: "Maybank",
 };
 
-const DISCOUNT_KIND_LABEL: Record<string, string> = {
-  senior_pwd_20: "Sr/PWD",
-  pct_10: "10% off",
-  pct_5: "5% off",
-  other_pct_20: "Other 20%",
-  custom: "Custom",
-};
-
 export default async function VisitDetailPage({ params, searchParams }: Props) {
   const { id } = await params;
   const { created } = await searchParams;
@@ -135,7 +127,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
     getPatientConsentState(patient.id),
   ]);
 
-  const [{ data: tests }, { data: payments }] = await Promise.all([
+  const [{ data: tests }, { data: payments }, { data: discountRows }] = await Promise.all([
     supabase
       .from("test_requests")
       .select(
@@ -157,7 +149,14 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
       .select("id, amount_php, method, reference_number, received_at, notes, voided_at, voided_by, void_reason")
       .eq("visit_id", id)
       .order("received_at", { ascending: false }),
+    // Labels for recorded discount codes — includes retired (inactive) rows
+    // so historical lines still render their name.
+    supabase.from("discount_types").select("code, label"),
   ]);
+
+  const discountLabelByCode = new Map(
+    (discountRows ?? []).map((d) => [d.code, d.label]),
+  );
 
   // Which test_requests have a released PDF in storage. Single query keyed
   // by test_request_id so the TestAction component can render a "View PDF"
@@ -754,7 +753,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                     ? Number(t.final_price_php)
                     : base - discount;
                 const discountLabel = t.discount_kind
-                  ? DISCOUNT_KIND_LABEL[t.discount_kind] ?? t.discount_kind
+                  ? discountLabelByCode.get(t.discount_kind) ?? t.discount_kind
                   : null;
                 const isConsult = svc.kind === "doctor_consultation";
                 const isProcedure = svc.kind === "doctor_procedure";
