@@ -60,6 +60,17 @@ interface BuiltVisit {
 
 export async function run(cfg: TabConfig): Promise<void> {
   const args = parseArgs();
+
+  // The dry-run reads the live patient catalog and writes names into the
+  // tmp/clinical-*-new-patients CSVs, so guard before any DB access — commit()
+  // has its own stronger guard for the write path.
+  requireLocalOrExplicitProd(`backfill:clinical:${cfg.isConsult ? "consult" : "lab"}`, {
+    readOnly: !args.commit,
+    writes: args.commit
+      ? "inserts historic patients, visits, bills and test requests from the mastersheet"
+      : "the live patient catalog, written into the tmp/ dry-run CSVs",
+  });
+
   console.log(`Reading ${cfg.sheetName} from ${args.xlsx}`);
   const rows = await loadTab(args.xlsx, cfg);
   console.log(`  ${rows.length} rows read`);

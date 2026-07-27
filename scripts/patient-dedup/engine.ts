@@ -96,11 +96,14 @@ export async function run(): Promise<void> {
   if (args.commit && !args.confirmed) {
     console.error('\n--commit requires --confirm="I-mean-it".'); process.exit(3);
   }
-  if (args.commit)
-    requireLocalOrExplicitProd("dedup:patients", {
-      writes:
-        "MERGES patient records — sets `patients.merged_into_id` and repoints their visits",
-    });
+  // The dry-run reads live patient identities and dumps them to tmp/*.csv, so the
+  // guard has to run before the first query — not only on the --commit path.
+  requireLocalOrExplicitProd("dedup:patients", {
+    readOnly: !args.commit,
+    writes: args.commit
+      ? "MERGES patient records — sets `patients.merged_into_id` and repoints their visits"
+      : "live patient identities (DRM-ID, name, DOB, phone) written to the tmp/ dedup CSVs",
+  });
 
   const admin = adminClient();
   const rows = await loadRows(admin);

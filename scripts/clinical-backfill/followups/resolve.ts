@@ -37,6 +37,16 @@ function parseArgs(): Args {
 
 async function main(): Promise<void> {
   const args = parseArgs();
+
+  // loadRows() below reads live patient identities in both modes, so guard here
+  // rather than only on the --commit path further down.
+  requireLocalOrExplicitProd("clinical-backfill:resolve-merges", {
+    readOnly: !args.commit,
+    writes: args.commit
+      ? "MERGES duplicate patient records per the partner's cluster decisions"
+      : "live patient identities (DRM-ID, name) for the merge preview",
+  });
+
   const { resolutions, errors } = parseResolutions(await fs.readFile(args.file, "utf8"));
   if (errors.length) { console.error("Resolution file errors:\n  " + errors.join("\n  ")); process.exit(4); }
 
