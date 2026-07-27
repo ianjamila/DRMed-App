@@ -21,7 +21,7 @@ import {
 import { VisitsTabs } from "../_components/visits-tabs";
 
 export const metadata = {
-  title: "Queue — staff",
+  title: "Reception Queue — staff",
 };
 
 // Today-scoped, live reception worklist. Payment and test-status changes drive
@@ -170,7 +170,7 @@ export default async function VisitsQueuePage({ searchParams }: SearchProps) {
 
       <header className="mb-4">
         <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Queue
+          Reception Queue
         </h1>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
           Today&apos;s visits ({today}) · {visits.length} total — pay, process,

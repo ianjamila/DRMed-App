@@ -6,7 +6,6 @@ import { DownloadButton } from "./download-button";
 import { PackageCard, type PackageComponentRow } from "./package-card";
 import { LabRequestUploads, type UploadRow } from "./lab-request-uploads";
 import { Panel } from "@/components/ui/panel";
-import { reviewLink } from "@/lib/seo/review";
 
 export const metadata = {
   title: "Your results — drmed.ph",
@@ -647,25 +646,11 @@ export default async function PatientPortalPage() {
         )}
       </div>
 
-      {!nothingToShow ? (
-        <section className="mt-8 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
-          <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
-            Enjoying DRMed?
-          </h2>
-          <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
-            A quick Google review helps other families find trustworthy,
-            affordable care.
-          </p>
-          <a
-            href={reviewLink("portal")}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="mt-3 inline-block rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
-          >
-            Leave us a Google review
-          </a>
-        </section>
-      ) : null}
+      {/* The "Leave us a Google review" card was removed from the portal per
+          the 2026-07-27 partner revisions (item 21) — patients shouldn't be
+          asked for a review while collecting medical results. The tracked
+          /review?src=portal link itself is left intact so any review link
+          already shared elsewhere keeps working. */}
 
       {visitsWithPending.length > 0 ? (
         <section className="mt-8 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
@@ -710,23 +695,12 @@ export default async function PatientPortalPage() {
         </section>
       ) : null}
 
-      <section className="mt-8 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
-        <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
-          Download a copy of your data
-        </h2>
-        <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
-          Under the Philippine Data Privacy Act (RA 10173) you have the
-          right to a copy of the data we hold about you. The export
-          includes your contact info, visits, payments, appointments, and
-          all your released result PDFs in a single ZIP.
-        </p>
-        <a
-          href="/portal/data-export"
-          className="mt-3 inline-block rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
-        >
-          Download my data (ZIP)
-        </a>
-      </section>
+      {/* "Download a copy of your data" card hidden per the 2026-07-27 partner
+          revisions (item 21, locked decision 3). The RA 10173 right-to-copy
+          capability itself is NOT removed: /portal/data-export still works for
+          an authenticated patient, so the clinic can service a formal written
+          request by handing the patient the link. Only the self-service button
+          is off. Restore this section to re-enable self-service export. */}
 
       <p className="mt-8 text-xs text-[color:var(--color-brand-text-soft)]">
         🔒 Each download generates a 5-minute one-time link and is logged for

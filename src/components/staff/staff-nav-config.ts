@@ -82,14 +82,8 @@ export const STAFF_NAV: StaffNavSection[] = [
         roles: ["reception", "admin"],
       },
       {
-        href: "/staff/registration",
-        label: "Registration link",
-        description: "Share the public pre-registration page with patients — show the QR to scan, copy the link to text them, or print a desk poster. Registration is optional; it just saves counter time on arrival.",
-        roles: ["reception", "admin"],
-      },
-      {
         href: "/staff/visits/queue",
-        label: "Queue",
+        label: "Reception Queue",
         description: "Today's live front-desk worklist in three stages: Waiting for payment (record the payment), Processing (lab/imaging still working on results) and Completed (paid, nothing outstanding — print the patient's billing). Updates on its own as payments come in and tests finish.",
         roles: ["reception", "admin"],
       },
@@ -99,6 +93,15 @@ export const STAFF_NAV: StaffNavSection[] = [
         description: "Inquiries that came in through the website chat or Messenger but haven't been converted into a real appointment yet. Follow up here to book them or close the thread.",
         roles: ["reception", "admin"],
       },
+      {
+        href: "/staff/payments/cash-drawer",
+        label: "Cash drawer",
+        // Lands on the Cash drawer tab; End of day is the second tab on the
+        // same page. activePrefix keeps this item lit on the eod route too.
+        activePrefix: "/staff/payments/eod",
+        description: "Your shift cash workspace — start your drawer with a counted amount of starting cash, then count it again at End of day to see the difference.",
+        roles: ["reception", "admin"],
+      },
     ],
   },
   {
@@ -106,11 +109,11 @@ export const STAFF_NAV: StaffNavSection[] = [
     items: [
       {
         href: "/staff/visits",
-        label: "Billing & receipts",
+        label: "Visits",
         // /staff/visits is the visit archive (every visit ever); each visit
         // opens to its printable A5 billing. excludePrefixes keeps this item
         // from lighting on /staff/visits/new (Services) or /staff/visits/queue
-        // (the Front-desk Queue item owns that route).
+        // (the Front-desk Reception Queue item owns that route).
         excludePrefixes: ["/staff/visits/new", "/staff/visits/queue"],
         description: "Every visit ever, searchable by date / patient / status. Open a visit to print its patient billing (A5) and re-issue receipts. This is the record side of billing — to start a new charge, use New lab/imaging request under Services.",
         roles: ["reception", "admin"],
@@ -531,7 +534,8 @@ export const STAFF_NAV: StaffNavSection[] = [
     // Top-level, per-role-visible "parked" section. Items here are real and
     // reachable but de-emphasized: either not part of the live workflow yet
     // (Sign-off, Patient receivables) or deliberately moved off reception's
-    // main nav per partner feedback (My payslips, Sell gift code, Cash drawer).
+    // main nav per partner feedback (My payslips, Sell gift code, Registration
+    // link). Cash drawer moved back OUT to Front desk (partner revision 2/9).
     // Each item keeps its own roles, so the section renders different contents
     // per role and is dropped entirely for roles with nothing parked.
     heading: "Hidden tabs",
@@ -549,12 +553,9 @@ export const STAFF_NAV: StaffNavSection[] = [
         roles: ["reception", "admin"],
       },
       {
-        href: "/staff/payments/cash-drawer",
-        label: "Cash drawer",
-        // Lands on the Cash drawer tab; End of day is the second tab on the
-        // same page. activePrefix keeps this item lit on the eod route too.
-        activePrefix: "/staff/payments/eod",
-        description: "Your shift cash workspace (Cash drawer + End of day). Parked here while the clinic counts cash manually at end of day; admins keep access for when the in-app drawer is re-enabled.",
+        href: "/staff/registration",
+        label: "Registration link",
+        description: "Share the public pre-registration page with patients — show the QR to scan, copy the link to text them, or print a desk poster. Parked here because registration is optional; it just saves counter time on arrival.",
         roles: ["reception", "admin"],
       },
       {
