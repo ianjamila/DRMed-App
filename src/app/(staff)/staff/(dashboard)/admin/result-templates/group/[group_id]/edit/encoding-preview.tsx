@@ -58,7 +58,11 @@ export function EncodingPreview(props: {
         unsaved mapping changes.
       </p>
 
-      <div className="mt-3 flex flex-wrap gap-1.5">
+      <div
+        role="group"
+        aria-label="Ordered services for this preview"
+        className="mt-3 flex flex-wrap gap-1.5"
+      >
         {props.services.map((s) => {
           const on = ordered.has(s.id);
           return (

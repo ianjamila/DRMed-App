@@ -570,7 +570,11 @@ function ParamRow({
             Medtechs can only type into this field when the visit ordered one
             of the ticked services. A field no service enables is unreachable.
           </p>
-          <div className="mt-2 flex flex-wrap gap-1.5">
+          <div
+            role="group"
+            aria-label={`Services enabling ${p.parameter_name}`}
+            className="mt-2 flex flex-wrap gap-1.5"
+          >
             {mappableServices.map((s) => {
               const on = (p.service_ids ?? []).includes(s.id);
               return (
