@@ -4,52 +4,30 @@ import { reportError } from "@/lib/observability/report-error";
 import { audit } from "@/lib/audit/log";
 import { sendEmail } from "@/lib/notifications/email";
 import { renderEmailShell, emailParagraph, emailButton } from "@/lib/notifications/branded-email";
+import {
+  deriveTemplateHealthFindings,
+  type TemplateHealthGroup,
+} from "@/lib/results/template-health";
 import type { Json } from "@/types/database";
 
 // Daily scan for report-group template drift — the class of failure that let
 // the CHEMISTRY group template silently lose 13 of 14 params and sit broken
 // for ~2 months (0115/0121/0122 all trace back to that incident). Read-only:
-// this route never mutates state, it only detects and reports.
+// this route never mutates state, it only detects and reports. The five
+// checks themselves live in the pure, unit-tested
+// src/lib/results/template-health.ts (deriveTemplateHealthFindings) — this
+// route is just data-fetch -> derive -> audit/notify.
 //
-// Checks (report_groups + their result_templates / result_template_params /
-// report_group_service_params):
-//   1. Active group template with 0 params      — encoding form is broken.
-//   2. Active template w/ params but zero report_group_service_params rows
-//      across the whole group                   — every field disabled.
-//   3. An individual active, non-lab_package grouped service with zero
-//      mapping rows to its group's active template params
-//                                                 — this service enables nothing.
-//   4. Group template inactive while the group still has active services
-//                                                 — consolidated queue form
-//                                                    will not load for them.
-//   5. A param of an active group template enabled by no service (informational)
-//                                                 — unreachable field.
-//
-// Mirrors dedup-digest's shape exactly: CRON_SECRET auth, admin client,
-// {ok, ...} JSON response, one audit_log row + admin email only when there
-// is something to report (silent + no writes when everything is healthy).
+// Auth follows data-retention/sync-accounting's stricter guard (explicit
+// 500 when CRON_SECRET itself isn't configured, then 401 on a bad/missing
+// bearer token) — dedup-digest skips the former and goes straight to the
+// 401 check. The admin-notification mechanism mirrors dedup-digest exactly:
+// active admins resolved via staff_profiles + auth.users emails, sendEmail
+// with the shared branded shell, one audit_log row, only when there is
+// something to report (silent + no writes when everything is healthy).
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-
-interface Finding {
-  type:
-    | "template_zero_params"
-    | "group_zero_mappings"
-    | "service_zero_mappings"
-    | "template_inactive_active_services"
-    | "unreachable_param";
-  severity: "error" | "warning" | "info";
-  group_id: string;
-  group_code: string;
-  group_name: string;
-  template_id: string | null;
-  service_id?: string;
-  service_code?: string;
-  param_id?: string;
-  param_name?: string;
-  message: string;
-}
 
 export async function GET(request: Request) {
   const secret = process.env.CRON_SECRET;
@@ -93,13 +71,23 @@ export async function GET(request: Request) {
     const { data: paramRows } = templateIds.length
       ? await admin
           .from("result_template_params")
-          .select("id, template_id, parameter_name")
+          .select("id, template_id, parameter_name, gender")
           .in("template_id", templateIds)
-      : { data: [] as { id: string; template_id: string; parameter_name: string }[] };
-    const paramsByTemplate = new Map<string, { id: string; parameter_name: string }[]>();
+      : {
+          data: [] as {
+            id: string;
+            template_id: string;
+            parameter_name: string;
+            gender: string | null;
+          }[],
+        };
+    const paramsByTemplate = new Map<
+      string,
+      { id: string; parameter_name: string; gender: string | null }[]
+    >();
     for (const p of paramRows ?? []) {
       const arr = paramsByTemplate.get(p.template_id) ?? [];
-      arr.push({ id: p.id, parameter_name: p.parameter_name });
+      arr.push({ id: p.id, parameter_name: p.parameter_name, gender: p.gender });
       paramsByTemplate.set(p.template_id, arr);
     }
     const paramIds = (paramRows ?? []).map((p) => p.id);
@@ -110,112 +98,31 @@ export async function GET(request: Request) {
           .select("service_id, parameter_id")
           .in("parameter_id", paramIds)
       : { data: [] as { service_id: string; parameter_id: string }[] };
-    const mappedServiceIdsByParam = new Map<string, Set<string>>();
-    const mappedParamCountByService = new Map<string, number>();
-    for (const m of mapRows ?? []) {
-      const set = mappedServiceIdsByParam.get(m.parameter_id) ?? new Set<string>();
-      set.add(m.service_id);
-      mappedServiceIdsByParam.set(m.parameter_id, set);
-      mappedParamCountByService.set(
-        m.service_id,
-        (mappedParamCountByService.get(m.service_id) ?? 0) + 1,
-      );
-    }
 
-    const findings: Finding[] = [];
-
-    for (const g of groupList) {
+    const groupsInput: TemplateHealthGroup[] = groupList.map((g) => {
       const tpl = templateByGroup.get(g.id) ?? null;
-      const members = serviceList.filter((s) => s.report_group_id === g.id);
-      const activeMembers = members.filter((s) => s.is_active);
-      const params = tpl ? (paramsByTemplate.get(tpl.id) ?? []) : [];
+      return {
+        id: g.id,
+        code: g.code,
+        name: g.name,
+        template: tpl ? { id: tpl.id, is_active: tpl.is_active } : null,
+        params: tpl ? (paramsByTemplate.get(tpl.id) ?? []) : [],
+        services: serviceList
+          .filter((s) => s.report_group_id === g.id)
+          .map((s) => ({
+            id: s.id,
+            code: s.code,
+            name: s.name,
+            is_active: s.is_active,
+            kind: s.kind,
+          })),
+      };
+    });
 
-      // 1. Active template, 0 params — encoding form broken.
-      if (tpl && tpl.is_active && params.length === 0) {
-        findings.push({
-          type: "template_zero_params",
-          severity: "error",
-          group_id: g.id,
-          group_code: g.code,
-          group_name: g.name,
-          template_id: tpl.id,
-          message: `${g.name}: active group template has 0 parameters — the encoding form is broken.`,
-        });
-      }
-
-      // 2. Active template with params but zero mappings across the whole group.
-      const groupHasAnyMapping = members.some(
-        (m) => (mappedParamCountByService.get(m.id) ?? 0) > 0,
-      );
-      if (tpl && tpl.is_active && params.length > 0 && !groupHasAnyMapping) {
-        findings.push({
-          type: "group_zero_mappings",
-          severity: "error",
-          group_id: g.id,
-          group_code: g.code,
-          group_name: g.name,
-          template_id: tpl.id,
-          message: `${g.name}: no service is mapped to this template's fields — every field on the consolidated encoding form is disabled.`,
-        });
-      }
-
-      // 3. Individual active, non-lab_package service with zero mappings to
-      // its group's active template. Only meaningful once the template
-      // itself has params and is active — checks 1/2 already cover the
-      // fully-broken cases and would otherwise be redundant with this one.
-      if (tpl && tpl.is_active && params.length > 0) {
-        for (const svc of members) {
-          if (!svc.is_active || svc.kind === "lab_package") continue;
-          const enabledCount = mappedParamCountByService.get(svc.id) ?? 0;
-          if (enabledCount === 0) {
-            findings.push({
-              type: "service_zero_mappings",
-              severity: "warning",
-              group_id: g.id,
-              group_code: g.code,
-              group_name: g.name,
-              template_id: tpl.id,
-              service_id: svc.id,
-              service_code: svc.code,
-              message: `${svc.code} (${g.name}): this orderable service enables no fields on the consolidated form.`,
-            });
-          }
-        }
-      }
-
-      // 4. Template inactive while the group still has active services.
-      if (tpl && !tpl.is_active && activeMembers.length > 0) {
-        findings.push({
-          type: "template_inactive_active_services",
-          severity: "error",
-          group_id: g.id,
-          group_code: g.code,
-          group_name: g.name,
-          template_id: tpl.id,
-          message: `${g.name}: template is inactive but ${activeMembers.length} service(s) in the group are active — the consolidated queue form will not load.`,
-        });
-      }
-
-      // 5. Informational: a param of an active template enabled by no service.
-      if (tpl && tpl.is_active && params.length > 0) {
-        for (const p of params) {
-          const enabledBy = mappedServiceIdsByParam.get(p.id)?.size ?? 0;
-          if (enabledBy === 0) {
-            findings.push({
-              type: "unreachable_param",
-              severity: "info",
-              group_id: g.id,
-              group_code: g.code,
-              group_name: g.name,
-              template_id: tpl.id,
-              param_id: p.id,
-              param_name: p.parameter_name,
-              message: `${g.name}: "${p.parameter_name}" is not enabled by any service — unreachable field.`,
-            });
-          }
-        }
-      }
-    }
+    const findings = deriveTemplateHealthFindings({
+      groups: groupsInput,
+      links: mapRows ?? [],
+    });
 
     const counts: Record<string, number> = {};
     for (const f of findings) counts[f.type] = (counts[f.type] ?? 0) + 1;
@@ -224,8 +131,8 @@ export async function GET(request: Request) {
       return NextResponse.json({ ok: true, findings: 0, counts });
     }
 
-    // audit() requires resource_id? no — it's optional/nullable, but keep the
-    // row anchored to the first finding's template for easy cross-reference.
+    // resource_id is nullable on audit() — anchor the row to the first
+    // finding's template for easy cross-reference.
     await audit({
       actor_id: null,
       actor_type: "system",
