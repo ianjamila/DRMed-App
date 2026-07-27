@@ -36,6 +36,7 @@ export default async function GroupReceiptPage({ params }: Props) {
       `,
     )
     .eq("visit_group_id", groupId)
+    .is("deleted_at", null)
     .order("visit_number", { ascending: true });
 
   if (!visits || visits.length === 0) notFound();

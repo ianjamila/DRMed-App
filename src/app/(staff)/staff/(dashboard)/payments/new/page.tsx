@@ -29,6 +29,9 @@ export default async function NewPaymentPage({ searchParams }: Props) {
       `,
     )
     .eq("id", visit_id)
+    // Payments against deleted visits are blocked in the DB (P0045) — don't
+    // offer the form in the first place.
+    .is("deleted_at", null)
     .maybeSingle();
 
   if (!visit) {

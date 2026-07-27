@@ -113,6 +113,17 @@ export function translatePgError(err: PgError): string {
     case "P0041":
       // 0121 guard: template param deletes require explicit opt-in.
       return err.message ?? "Template parameter deletes must go through the admin tools.";
+    // PR H — queue entry soft delete (0125)
+    case "P0042":
+      return "Only unpaid entries can be deleted. Void the recorded payments first (or, for a waived visit, ask an admin).";
+    case "P0043":
+      return "This entry has a released result and cannot be deleted. Undo the release first.";
+    case "P0044":
+      return "This test is part of a package — delete the whole package instead.";
+    case "P0045":
+      return "This visit was deleted from the queue. Restore it before recording a payment.";
+    case "P0046":
+      return "This visit was deleted from the queue. Restore it before changing its payment status.";
     default:
       return err.message ?? "Database error. Please try again.";
   }

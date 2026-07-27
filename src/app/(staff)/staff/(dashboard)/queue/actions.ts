@@ -21,12 +21,17 @@ export async function claimTestAction(
   // queue list already filters is_package_header=false.
   const { data: testRequest } = await supabase
     .from("test_requests")
-    .select("id, is_package_header")
+    .select("id, is_package_header, visits!inner ( deleted_at )")
     .eq("id", testRequestId)
     .maybeSingle();
 
   if (!testRequest) {
     return { ok: false, error: "Test not found." };
+  }
+  // Whole-visit deletes don't cascade deleted_at onto lines — check the
+  // parent here so a stale tab can't claim work on a deleted visit.
+  if (testRequest.visits.deleted_at !== null) {
+    return { ok: false, error: "This visit was deleted from the queue." };
   }
   if (testRequest.is_package_header) {
     return {
@@ -45,6 +50,8 @@ export async function claimTestAction(
     })
     .eq("id", testRequestId)
     .eq("status", "requested")
+    // A queue-deleted line (0125) is not claimable even via a stale link.
+    .is("deleted_at", null)
     .select("id, visit_id")
     .maybeSingle();
 
@@ -173,6 +180,7 @@ export async function reassignTestAction(
     .update({ assigned_to: newAssigneeId })
     .eq("id", testRequestId)
     .in("status", ["in_progress", "result_uploaded"])
+    .is("deleted_at", null)
     .select("id, visit_id")
     .maybeSingle();
 

@@ -5331,6 +5331,9 @@ export type Database = {
           clinic_fee_php: number | null
           completed_at: string | null
           created_at: string
+          delete_reason: string | null
+          deleted_at: string | null
+          deleted_by: string | null
           discount_amount_php: number
           discount_kind: string | null
           doctor_pf_php: number | null
@@ -5372,6 +5375,9 @@ export type Database = {
           clinic_fee_php?: number | null
           completed_at?: string | null
           created_at?: string
+          delete_reason?: string | null
+          deleted_at?: string | null
+          deleted_by?: string | null
           discount_amount_php?: number
           discount_kind?: string | null
           doctor_pf_php?: number | null
@@ -5413,6 +5419,9 @@ export type Database = {
           clinic_fee_php?: number | null
           completed_at?: string | null
           created_at?: string
+          delete_reason?: string | null
+          deleted_at?: string | null
+          deleted_by?: string | null
           discount_amount_php?: number
           discount_kind?: string | null
           doctor_pf_php?: number | null
@@ -5623,6 +5632,9 @@ export type Database = {
           attending_physician_id: string | null
           created_at: string
           created_by: string | null
+          delete_reason: string | null
+          deleted_at: string | null
+          deleted_by: string | null
           hmo_approval_date: string | null
           hmo_authorization_no: string | null
           hmo_provider_id: string | null
@@ -5644,6 +5656,9 @@ export type Database = {
           attending_physician_id?: string | null
           created_at?: string
           created_by?: string | null
+          delete_reason?: string | null
+          deleted_at?: string | null
+          deleted_by?: string | null
           hmo_approval_date?: string | null
           hmo_authorization_no?: string | null
           hmo_provider_id?: string | null
@@ -5665,6 +5680,9 @@ export type Database = {
           attending_physician_id?: string | null
           created_at?: string
           created_by?: string | null
+          delete_reason?: string | null
+          deleted_at?: string | null
+          deleted_by?: string | null
           hmo_approval_date?: string | null
           hmo_authorization_no?: string | null
           hmo_provider_id?: string | null

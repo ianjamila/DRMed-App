@@ -42,8 +42,11 @@ export async function finaliseConsolidatedReport(
   // the single-test flow; an admin who needs to take over uses reassign.
   const { data: claimRows } = await admin
     .from("test_requests")
-    .select("id, assigned_to, services!inner(id)")
-    .in("id", input.testRequestIds);
+    .select("id, assigned_to, services!inner(id), visits!inner(id)")
+    .in("id", input.testRequestIds)
+    // A queue-deleted line (0125) can't be finalised, even mid-edit.
+    .is("deleted_at", null)
+    .is("visits.deleted_at", null);
   if (
     (claimRows ?? []).length !== input.testRequestIds.length ||
     (claimRows ?? []).some((r) => r.assigned_to !== session.user_id)

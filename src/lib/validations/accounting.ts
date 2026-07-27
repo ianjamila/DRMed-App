@@ -56,6 +56,10 @@ export const WaiveBalanceSchema = z.object({
   reason: z.string().trim().min(1, "Reason is required.").max(500),
 });
 
+export const QueueDeleteReasonSchema = z.object({
+  reason: z.string().trim().min(1, "Reason is required.").max(500),
+});
+
 export const UpdatePaymentMethodMapSchema = z.object({
   account_id: z.string().uuid(),
   notes: z.string().trim().max(500).nullable().optional(),

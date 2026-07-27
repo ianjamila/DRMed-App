@@ -85,10 +85,12 @@ async function loadResults(patientId: string): Promise<PortalData> {
     .select(
       `
         id, visit_number, visit_date,
-        test_requests ( id, status, is_package_header )
+        test_requests ( id, status, is_package_header, deleted_at )
       `,
     )
     .eq("patient_id", patientId)
+    // Queue-deleted visits (0125) never had work done — nothing is pending.
+    .is("deleted_at", null)
     .order("visit_date", { ascending: false });
 
   const visitsWithPending: VisitWithPending[] = [];
@@ -97,6 +99,7 @@ async function loadResults(patientId: string): Promise<PortalData> {
     const pending = trs.filter(
       (t) =>
         t.is_package_header !== true &&
+        t.deleted_at === null &&
         t.status !== "released" &&
         t.status !== "cancelled",
     ).length;
@@ -126,6 +129,8 @@ async function loadResults(patientId: string): Promise<PortalData> {
       `,
     )
     .eq("visits.patient_id", patientId)
+    .is("deleted_at", null)
+    .is("visits.deleted_at", null)
     .order("is_package_header", { ascending: false })
     .order("created_at", { ascending: true });
 

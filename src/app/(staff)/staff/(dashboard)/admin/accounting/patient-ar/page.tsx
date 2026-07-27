@@ -96,6 +96,7 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
       `,
     )
     .in("payment_status", ["unpaid", "partial"])
+    .is("deleted_at", null)
     .order("visit_date", { ascending: true })
     .limit(500);
 

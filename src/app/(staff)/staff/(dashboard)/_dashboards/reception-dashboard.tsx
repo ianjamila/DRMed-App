@@ -189,6 +189,7 @@ async function loadReceptionStats(show: (id: string) => boolean) {
           .from("visits")
           .select("id", { count: "exact", head: true })
           .eq("visit_date", today)
+          .is("deleted_at", null)
       : SKIP_COUNT,
     show("reception.unpaid_balance")
       ? supabase
@@ -196,12 +197,15 @@ async function loadReceptionStats(show: (id: string) => boolean) {
           .select("total_php, paid_php")
           .eq("visit_date", today)
           .in("payment_status", ["unpaid", "partial"])
+          .is("deleted_at", null)
       : SKIP_DATA,
     show("reception.pending_release")
       ? supabase
           .from("test_requests")
-          .select("id", { count: "exact", head: true })
+          .select("id, visits!inner ( id )", { count: "exact", head: true })
           .eq("status", "ready_for_release")
+          .is("deleted_at", null)
+          .is("visits.deleted_at", null)
       : SKIP_COUNT,
     show("reception.walk_ins_waiting")
       ? supabase
@@ -243,6 +247,7 @@ async function loadReceptionStats(show: (id: string) => boolean) {
           )
           .eq("visit_date", today)
           .in("payment_status", ["unpaid", "partial"])
+          .is("deleted_at", null)
           .order("created_at", { ascending: false })
           .limit(5)
           .returns<VisitRow[]>()
@@ -265,6 +270,8 @@ async function loadReceptionStats(show: (id: string) => boolean) {
           .select("id, services!inner ( kind, section ), visits!inner ( visit_date )")
           .eq("is_package_header", false)
           .eq("visits.visit_date", today)
+          .is("deleted_at", null)
+          .is("visits.deleted_at", null)
           .returns<OrderRow[]>()
       : SKIP_DATA,
   ]);

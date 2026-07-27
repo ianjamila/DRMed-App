@@ -68,6 +68,9 @@ export default async function PatientDetailPage({ params }: Props) {
     .from("visits")
     .select("id, visit_number, visit_date, payment_status, total_php, paid_php")
     .eq("patient_id", id)
+    // Queue-deleted visits (0125) live in the admin deleted-entries report,
+    // not the patient's visit history.
+    .is("deleted_at", null)
     .order("visit_date", { ascending: false });
 
   return (

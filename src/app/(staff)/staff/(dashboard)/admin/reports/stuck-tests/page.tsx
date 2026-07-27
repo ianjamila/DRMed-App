@@ -108,6 +108,9 @@ export default async function StuckTestsPage({ searchParams }: SearchProps) {
     ])
     .eq("is_package_header", false)
     .lt("requested_at", cutoff)
+    // A deleted line isn't stuck — it's not owed at all (0125).
+    .is("deleted_at", null)
+    .is("visits.deleted_at", null)
     .order("requested_at", { ascending: true })
     .limit(500);
 
@@ -144,6 +147,8 @@ export default async function StuckTestsPage({ searchParams }: SearchProps) {
     )
     .eq("is_package_header", true)
     .eq("status", "ready_for_release")
+    .is("deleted_at", null)
+    .is("visits.deleted_at", null)
     .order("requested_at", { ascending: true })
     .limit(100);
 

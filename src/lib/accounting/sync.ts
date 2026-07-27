@@ -239,6 +239,10 @@ async function fetchConsultRows(
     .from("test_requests")
     .select(TEST_REQUEST_SELECT)
     .in("services.kind", CONSULT_KINDS)
+    // Watermark keys off visit creation, not payment/release — without this
+    // filter a soft-deleted (0125) consult would still export to the sheet.
+    .is("deleted_at", null)
+    .is("visits.deleted_at", null)
     .gt("visits.created_at", watermark)
     .order("visits(created_at)", { ascending: true })
     .returns<RawTestRequest[]>();
@@ -280,6 +284,8 @@ async function fetchProcedureRows(
     .from("test_requests")
     .select(TEST_REQUEST_SELECT)
     .in("services.kind", PROCEDURE_KINDS)
+    .is("deleted_at", null)
+    .is("visits.deleted_at", null)
     .gt("visits.created_at", watermark)
     .order("visits(created_at)", { ascending: true })
     .returns<RawTestRequest[]>();

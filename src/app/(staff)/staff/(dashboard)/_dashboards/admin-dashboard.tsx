@@ -76,12 +76,15 @@ async function loadAdminStats(show: (id: string) => boolean) {
           .from("visits")
           .select("id", { count: "exact", head: true })
           .eq("visit_date", today)
+          .is("deleted_at", null)
       : SKIP_COUNT,
     show("admin.queue_total")
       ? supabase
           .from("test_requests")
-          .select("id", { count: "exact", head: true })
+          .select("id, visits!inner ( id )", { count: "exact", head: true })
           .in("status", ["requested", "in_progress"])
+          .is("deleted_at", null)
+          .is("visits.deleted_at", null)
       : SKIP_COUNT,
     show("admin.released_today")
       ? supabase
@@ -127,6 +130,7 @@ async function loadAdminStats(show: (id: string) => boolean) {
           .select("total_php, paid_php")
           .in("payment_status", ["unpaid", "partial"])
           .is("hmo_provider_id", null)
+          .is("deleted_at", null)
           .returns<PatientArRow[]>()
       : SKIP_DATA,
     show("admin.hmo_unbilled_aged")
