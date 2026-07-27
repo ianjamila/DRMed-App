@@ -87,6 +87,14 @@ create trigger trg_discount_types_statutory_guard
   before update or delete on public.discount_types
   for each row execute function public.guard_statutory_discount();
 
+-- At most ONE statutory row can ever exist. The seed below occupies the slot
+-- and the guard trigger blocks deleting it, so a second statutory row (with a
+-- made-up rate) can never be inserted — even via the REST API with an admin
+-- session, which the insert RLS policy would otherwise allow.
+create unique index discount_types_one_statutory_idx
+  on public.discount_types(is_statutory)
+  where is_statutory;
+
 -- ---------------------------------------------------------------------------
 -- RLS: all staff read (the new-visit form needs the active list); admin
 -- writes. Patients never see this table — public pages compute the statutory

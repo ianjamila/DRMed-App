@@ -27,6 +27,12 @@ interface Props {
   initial?: DiscountTypeDefaults;
 }
 
+// The accounting Sheets export routes these codes into columns literally
+// titled "Discount 10%" / "Discount 5%" / "Other Discounts 20%"
+// (src/lib/accounting/mappers.ts). Re-rating one makes those column headers
+// lie, so the edit form warns — prefer adding a new discount instead.
+const SHEET_MAPPED_CODES = new Set(["pct_10", "pct_5", "other_pct_20"]);
+
 export function DiscountTypeForm({ initial }: Props) {
   const router = useRouter();
   const isEdit = Boolean(initial?.id);
@@ -62,6 +68,14 @@ export function DiscountTypeForm({ initial }: Props) {
         <p className="rounded-lg border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] px-3 py-2 text-sm text-[color:var(--color-brand-text-soft)]">
           This is the counter-typed discount — reception enters the peso amount
           per line, so it has no rate of its own.
+        </p>
+      ) : null}
+      {isEdit && initial?.code && SHEET_MAPPED_CODES.has(initial.code) ? (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          This discount feeds a named column in the accounting spreadsheet
+          export (e.g. &quot;Discount 10%&quot;). Changing its rate would make
+          that column&apos;s label misleading — if the clinic needs a different
+          rate, add a new discount instead and deactivate this one.
         </p>
       ) : null}
 

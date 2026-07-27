@@ -166,10 +166,13 @@ export async function createVisitAction(
     // Discount codes come from the admin-managed discount_types catalog;
     // anything not in the active list (retired code, stale client) means no
     // discount. The server recomputes the amount from the catalog rate — and
-    // statutory Senior/PWD gives 0 to ineligible services (e.g. lab packages)
-    // even if a stale client posted it.
+    // a statutory Senior/PWD code posted against an ineligible service (e.g.
+    // a lab package, from a crafted or stale client) is dropped entirely so
+    // the line records no discount kind, not a ₱0 senior discount.
     const rawKind = formData.get(`discount_kind__${service_id}`)?.toString() ?? "";
-    const discountType = discountByCode.get(rawKind) ?? null;
+    const posted = discountByCode.get(rawKind) ?? null;
+    const discountType =
+      posted?.is_statutory && !isSeniorPwdEligible(s) ? null : posted;
     const discount_kind = discountType?.code ?? null;
     const discount_amount_php = lineDiscount({
       discountType,
