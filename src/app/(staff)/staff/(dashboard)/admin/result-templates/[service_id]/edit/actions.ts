@@ -145,6 +145,23 @@ export async function saveTemplateAndParamsAction(
     .eq("template_id", templateId);
   const dbIds = new Set((dbParams ?? []).map((r) => r.id));
 
+  // Group targets only: batch-fetch every existing report_group_service_params
+  // row for the template's current params in ONE query, instead of one select
+  // per param inside the loop below (was an N+1 — a 20-param template meant 20
+  // round-trips just to read the current mapping state).
+  const existingMapByParam = new Map<string, Set<string>>();
+  if (data.target.kind === "group" && dbIds.size > 0) {
+    const { data: existingMapRows } = await admin
+      .from("report_group_service_params")
+      .select("service_id, parameter_id")
+      .in("parameter_id", [...dbIds]);
+    for (const m of existingMapRows ?? []) {
+      const set = existingMapByParam.get(m.parameter_id) ?? new Set<string>();
+      set.add(m.service_id);
+      existingMapByParam.set(m.parameter_id, set);
+    }
+  }
+
   const toDelete = [...dbIds].filter((id) => !incomingIds.has(id));
   if (toDelete.length > 0) {
     // result_values has FK to result_template_params.parameter_id without
@@ -309,11 +326,9 @@ export async function saveTemplateAndParamsAction(
     // Group targets: reconcile report_group_service_params for this param.
     if (data.target.kind === "group") {
       const desired = new Set(p.service_ids ?? []);
-      const { data: existingMap } = await admin
-        .from("report_group_service_params")
-        .select("service_id")
-        .eq("parameter_id", paramId);
-      const have = new Set((existingMap ?? []).map((r) => r.service_id));
+      // Newly-created params (no `id` in the payload) can't have a prior
+      // mapping row — default to an empty set, which is correct for them.
+      const have = existingMapByParam.get(paramId) ?? new Set<string>();
       const removeIds = [...have].filter((id) => !desired.has(id));
       const addIds = [...desired].filter((id) => !have.has(id));
       if (removeIds.length > 0) {
