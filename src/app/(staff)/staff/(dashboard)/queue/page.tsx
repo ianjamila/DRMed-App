@@ -7,6 +7,14 @@ import { ClaimButton } from "./claim-button";
 import { sectionTabClass } from "@/components/staff/section-tabs-style";
 import { PageHeader } from "@/components/staff/page-header";
 import { Panel } from "@/components/ui/panel";
+import {
+  isISODate,
+  manilaDayWindowUtc,
+  manilaRangeUtc,
+  todayManilaISODate,
+} from "@/lib/dates/manila";
+import { matchesAllTokens } from "@/lib/patients/search";
+import { visitNumberFilter } from "@/lib/visits/visit-number-filter";
 
 // ---------------------------------------------------------------------------
 // Queue card types — after the grouping fold
@@ -16,6 +24,7 @@ type QueueCardSingle = {
   testRequestId: string;
   visitId: string;
   requestedAt: string;
+  releasedAt: string | null;
   label: string;
   code: string;
   visitNumber: string;
@@ -34,6 +43,7 @@ type QueueCardGrouped = {
   label: string;
   orderedTests: Array<{ code: string; name: string }>;
   requestedAt: string;
+  releasedAt: string | null;
   visitNumber: string;
   patientName: string;
   patientDrmId: string;
@@ -57,15 +67,46 @@ const TEST_STATUS_STYLE: Record<string, string> = {
   in_progress: "bg-sky-100 text-sky-900",
 };
 
+type QueueFilter = "mine" | "all" | "pending_release" | "released_today";
+
+// Cap on rows pulled per view. The queue is a live worklist, so it has never
+// paginated — but a date filter can reach back into a busy past day, and a
+// silently truncated list reads as "that's everything". Hitting the cap is
+// surfaced in the UI instead.
+const ROW_LIMIT: Record<QueueFilter, number> = {
+  all: 100,
+  mine: 100,
+  pending_release: 100,
+  released_today: 200,
+};
+
+/** Everything a free-text search should be able to hit on one queue card. */
+function cardHaystack(card: QueueCard): string {
+  const tests =
+    card.kind === "grouped"
+      ? `${card.groupCode} ${card.orderedTests.map((t) => `${t.code} ${t.name}`).join(" ")}`
+      : card.code;
+  return `${card.patientName} ${card.patientDrmId} ${card.visitNumber} ${card.label} ${tests}`;
+}
+
 interface SearchProps {
   searchParams: Promise<{
-    filter?: "mine" | "all" | "pending_release" | "released_today";
+    filter?: QueueFilter;
+    start?: string;
+    end?: string;
+    q?: string;
+    visit?: string;
   }>;
 }
 
 export default async function QueuePage({ searchParams }: SearchProps) {
   const params = await searchParams;
   const filter = params.filter ?? "all";
+  const start = isISODate(params.start) ? params.start : "";
+  const end = isISODate(params.end) ? params.end : "";
+  const q = params.q?.trim() ?? "";
+  const visit = params.visit?.trim() ?? "";
+  const todayISO = todayManilaISODate();
 
   const session = await requireActiveStaff();
   const supabase = await createClient();
@@ -76,11 +117,15 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   // pathologist see everything.
   const allowedSections = sectionsForRole(session.role);
 
+  const dateColumn = filter === "released_today" ? "released_at" : "requested_at";
+  const hasDateRange = Boolean(start || end);
+  const rowLimit = ROW_LIMIT[filter];
+
   let query = supabase
     .from("test_requests")
     .select(
       `
-        id, status, requested_at, assigned_to, started_at, visit_id,
+        id, status, requested_at, released_at, assigned_to, started_at, visit_id,
         services!inner ( id, code, name, turnaround_hours, section, report_group_id,
           report_groups ( code, name ) ),
         visits!inner (
@@ -98,25 +143,48 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           : ["requested", "in_progress"],
     )
     .eq("is_package_header", false)
-    .order(
-      filter === "released_today" ? "released_at" : "requested_at",
-      { ascending: filter !== "released_today" },
-    )
-    .limit(filter === "released_today" ? 200 : 100);
+    .order(dateColumn, { ascending: filter !== "released_today" })
+    .limit(rowLimit);
 
-  if (filter === "released_today") {
-    const today = new Date();
-    const startOfDayLocal = new Date(today);
-    startOfDayLocal.setHours(0, 0, 0, 0);
-    query = query.gte("released_at", startOfDayLocal.toISOString());
+  // The date filter acts on whichever timestamp the tab is about: when a test
+  // was released on the "Released today" tab, when it was requested elsewhere.
+  // Bounds are Manila calendar days — a naive `${date}T00:00:00` would be read
+  // in the DB's UTC zone and shift every boundary by 8 hours.
+  const { fromIso, toIso } = manilaRangeUtc(start, end);
+  if (fromIso) query = query.gte(dateColumn, fromIso);
+  if (toIso) query = query.lt(dateColumn, toIso);
+
+  // "Released today" keeps its implicit day window only while no explicit range
+  // is set — an explicit range is the staffer overriding the tab.
+  if (filter === "released_today" && !hasDateRange) {
+    const { startIso, endIso } = manilaDayWindowUtc(0);
+    query = query.gte("released_at", startIso).lt("released_at", endIso);
   }
 
-  if (allowedSections !== null && allowedSections.length > 0) {
-    query = query.in("services.section", allowedSections);
+  // Section gate per role. `[]` means "no access" (reception) — it has to force
+  // an empty result set, not fall through unfiltered, which is how the sibling
+  // /staff/results gate is written. Guarding only on `length > 0` skipped the
+  // filter entirely and showed reception every section's worklist.
+  if (allowedSections !== null) {
+    if (allowedSections.length === 0) {
+      // Force an empty result set without breaking the query shape.
+      query = query.eq("id", "00000000-0000-0000-0000-000000000000");
+    } else {
+      query = query.in("services.section", allowedSections);
+    }
   }
 
   if (filter === "mine" && user) {
     query = query.eq("assigned_to", user.id);
+  }
+
+  // Visit # filters server-side on the embedded visit, so it finds a test even
+  // when the unfiltered queue would have run past the row cap before reaching it.
+  const visitFilter = visitNumberFilter(visit);
+  if (visitFilter?.kind === "exact") {
+    query = query.in("visits.visit_number", visitFilter.values);
+  } else if (visitFilter?.kind === "contains") {
+    query = query.ilike("visits.visit_number", visitFilter.pattern);
   }
 
   const { data: rows } = await query;
@@ -155,9 +223,13 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         }
         // Treat the card as unclaimed if any member is unclaimed.
         if (!r.assigned_to) existing.claimedBy = null;
-        // Keep earliest requested_at for display.
+        // Keep earliest requested_at for display, latest released_at — the
+        // group isn't fully released until its last member is.
         if (r.requested_at < existing.requestedAt) {
           existing.requestedAt = r.requested_at;
+        }
+        if (r.released_at && (!existing.releasedAt || r.released_at > existing.releasedAt)) {
+          existing.releasedAt = r.released_at;
         }
       } else {
         groupedAcc.set(key, {
@@ -168,6 +240,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           label: `${rg.name} (1 test)`,
           orderedTests: [test],
           requestedAt: r.requested_at,
+          releasedAt: r.released_at,
           visitNumber: visit.visit_number,
           patientName,
           patientDrmId: patient.drm_id,
@@ -182,6 +255,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         testRequestId: r.id,
         visitId: r.visit_id,
         requestedAt: r.requested_at,
+        releasedAt: r.released_at,
         label: svc.name,
         code: svc.code,
         visitNumber: visit.visit_number,
@@ -195,12 +269,20 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   }
   cards.push(...groupedAcc.values());
 
+  // Free-text search runs after the fold, not in the query: an ILIKE across the
+  // patients join is awkward in PostgREST (the same reason /staff/results
+  // post-filters), and folding first lets one typed test code match the whole
+  // consolidated chemistry card it belongs to.
+  const matched = q
+    ? cards.filter((c) => matchesAllTokens(cardHaystack(c), q))
+    : cards;
+
   // Admins see who holds each in-progress claim so stuck claims are visible
   // straight from the list (unclaim/reassign lives on the detail page).
   const claimerNames = new Map<string, string>();
   if (session.role === "admin") {
     const claimerIds = Array.from(
-      new Set(cards.map((c) => c.claimedBy).filter((v): v is string => !!v)),
+      new Set(matched.map((c) => c.claimedBy).filter((v): v is string => !!v)),
     );
     if (claimerIds.length > 0) {
       const { data: claimers } = await supabase
@@ -210,44 +292,197 @@ export default async function QueuePage({ searchParams }: SearchProps) {
       for (const p of claimers ?? []) claimerNames.set(p.id, p.full_name);
     }
   }
-  // Sort by requestedAt ascending (oldest first) — mirrors the query order
-  // but ensures grouped cards (which may have been inserted after single
-  // cards) sort consistently.
-  cards.sort((a, b) => a.requestedAt.localeCompare(b.requestedAt));
+  // Re-apply the query's own ordering: grouped cards are appended after the
+  // single ones, so the fold loses it. "Released today" reads newest-released
+  // first (that's also the order its 200-row cap selects by); every other tab
+  // is a worklist and reads oldest-requested first.
+  matched.sort((a, b) =>
+    filter === "released_today"
+      ? (b.releasedAt ?? "").localeCompare(a.releasedAt ?? "")
+      : a.requestedAt.localeCompare(b.requestedAt),
+  );
+
+  const hasFilters = hasDateRange || Boolean(q) || Boolean(visit);
+  // A range that ends before today can't gain rows, so live refreshes would
+  // only interrupt someone reading history. An open-ended `start` still runs up
+  // to now, so that stays live.
+  const viewingHistory = Boolean(end) && end < todayISO;
+  // The cap is on test_request rows, before the chemistry fold — so compare
+  // against the raw row count, not the card count.
+  const capped = (rows ?? []).length >= rowLimit;
+
+  function buildHref(overrides: Record<string, string | null>): string {
+    const params = new URLSearchParams();
+    const base: Record<string, string> = {
+      filter: filter === "all" ? "" : filter,
+      start,
+      end,
+      q,
+      visit,
+    };
+    for (const [k, v] of Object.entries({ ...base, ...overrides })) {
+      if (v) params.set(k, v);
+    }
+    const qs = params.toString();
+    return `/staff/queue${qs ? `?${qs}` : ""}`;
+  }
 
   return (
     <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
-      <RealtimeRefresher
-        channelName="queue-page"
-        subscriptions={[
-          { table: "test_requests", event: "INSERT" },
-          { table: "test_requests", event: "UPDATE" },
-        ]}
-      />
+      {viewingHistory ? null : (
+        <RealtimeRefresher
+          channelName="queue-page"
+          subscriptions={[
+            { table: "test_requests", event: "INSERT" },
+            { table: "test_requests", event: "UPDATE" },
+          ]}
+        />
+      )}
       <PageHeader
         title={queueTitle}
-        subtitle="Tests requested or in progress, oldest first."
+        subtitle={
+          <>
+            Tests requested or in progress, oldest first.
+            {hasFilters ? ` · ${matched.length} matching` : null}
+            {filter === "released_today" && hasDateRange
+              ? " · showing the dates you picked, not just today"
+              : null}
+          </>
+        }
         actions={
           <nav className="flex gap-2 text-sm">
-            <FilterTab href="/staff/queue" label="All" active={filter === "all"} />
             <FilterTab
-              href="/staff/queue?filter=pending_release"
+              href={buildHref({ filter: "" })}
+              label="All"
+              active={filter === "all"}
+            />
+            <FilterTab
+              href={buildHref({ filter: "pending_release" })}
               label="Pending release"
               active={filter === "pending_release"}
             />
             <FilterTab
-              href="/staff/queue?filter=released_today"
+              href={buildHref({ filter: "released_today" })}
               label="Released today"
               active={filter === "released_today"}
             />
             <FilterTab
-              href="/staff/queue?filter=mine"
+              href={buildHref({ filter: "mine" })}
               label="Mine"
               active={filter === "mine"}
             />
           </nav>
         }
       />
+
+      <form
+        className="mb-6 grid grid-cols-1 gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4 sm:grid-cols-2 lg:grid-cols-4"
+        action="/staff/queue"
+      >
+        {/* Keep the open tab when filters are applied. */}
+        <input type="hidden" name="filter" value={filter === "all" ? "" : filter} />
+        <div className="flex flex-col">
+          <label
+            htmlFor="start"
+            className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]"
+          >
+            {filter === "released_today" ? "Released from" : "Requested from"}
+          </label>
+          <input
+            type="date"
+            id="start"
+            name="start"
+            defaultValue={start}
+            max={todayISO}
+            className="mt-1 rounded-md border border-[color:var(--color-brand-bg-mid)] px-2 py-1.5 text-sm"
+          />
+        </div>
+        <div className="flex flex-col">
+          <label
+            htmlFor="end"
+            className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]"
+          >
+            …to
+          </label>
+          <input
+            type="date"
+            id="end"
+            name="end"
+            defaultValue={end}
+            max={todayISO}
+            className="mt-1 rounded-md border border-[color:var(--color-brand-bg-mid)] px-2 py-1.5 text-sm"
+          />
+        </div>
+        <div className="flex flex-col">
+          <label
+            htmlFor="q"
+            className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]"
+          >
+            Patient / test search
+          </label>
+          <input
+            type="text"
+            id="q"
+            name="q"
+            defaultValue={q}
+            placeholder="e.g. Castillo, CBC, DRM-0123"
+            className="mt-1 rounded-md border border-[color:var(--color-brand-bg-mid)] px-2 py-1.5 text-sm"
+          />
+        </div>
+        <div className="flex flex-col">
+          <label
+            htmlFor="visit"
+            className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]"
+          >
+            Visit #
+          </label>
+          <input
+            type="text"
+            id="visit"
+            name="visit"
+            defaultValue={visit}
+            inputMode="numeric"
+            placeholder="e.g. 37 or 0037"
+            className="mt-1 rounded-md border border-[color:var(--color-brand-bg-mid)] px-2 py-1.5 text-sm"
+          />
+        </div>
+        <div className="col-span-full flex flex-wrap gap-2">
+          <button
+            type="submit"
+            className="min-h-11 rounded-md border border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-cyan)] px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-[color:var(--color-brand-cyan-mid)]"
+          >
+            Apply
+          </button>
+          {hasFilters ? (
+            <Link
+              href={buildHref({ start: null, end: null, q: null, visit: null })}
+              className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-4 py-1.5 text-sm text-[color:var(--color-brand-text-soft)] transition-colors hover:border-[color:var(--color-brand-cyan)]"
+            >
+              Clear filters
+            </Link>
+          ) : null}
+        </div>
+      </form>
+
+      {viewingHistory ? (
+        <p
+          role="status"
+          className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+        >
+          You&apos;re looking at past dates, not the live queue. Rows here
+          don&apos;t refresh on their own.
+        </p>
+      ) : null}
+
+      {capped ? (
+        <p
+          role="status"
+          className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+        >
+          Showing the first {rowLimit} tests only — narrow the dates, patient or
+          visit # to be sure you&apos;re seeing everything.
+        </p>
+      ) : null}
 
       <Panel className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -262,17 +497,19 @@ export default async function QueuePage({ searchParams }: SearchProps) {
             </tr>
           </thead>
           <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
-            {cards.length === 0 ? (
+            {matched.length === 0 ? (
               <tr>
                 <td
                   colSpan={6}
                   className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]"
                 >
-                  Queue is empty.
+                  {hasFilters
+                    ? "No queued tests match these filters."
+                    : "Queue is empty."}
                 </td>
               </tr>
             ) : (
-              cards.map((card) => {
+              matched.map((card) => {
                 if (card.kind === "single") {
                   return (
                     <tr
