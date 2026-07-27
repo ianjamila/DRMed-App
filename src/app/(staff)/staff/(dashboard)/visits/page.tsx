@@ -505,14 +505,21 @@ function VisitNumbers({ row }: { row: ArchiveRow }) {
       {row.split && row.groupId ? (
         <span className="mt-1 block font-sans text-[10px] font-semibold uppercase tracking-wider">
           <span className="text-[color:var(--color-brand-text-soft)]">
-            Split visit ·{" "}
+            Split visit
           </span>
-          <Link
-            href={`/staff/visits/group/${row.groupId}/receipt`}
-            className="text-[color:var(--color-brand-cyan)] hover:underline"
-          >
-            Combined receipt
-          </Link>
+          {/* Nothing left to print once every surviving half is a
+              consultation (item 1) — don't offer a dead link. */}
+          {row.printsReceipt ? (
+            <>
+              <span className="text-[color:var(--color-brand-text-soft)]"> · </span>
+              <Link
+                href={`/staff/visits/group/${row.groupId}/receipt`}
+                className="text-[color:var(--color-brand-cyan)] hover:underline"
+              >
+                Combined receipt
+              </Link>
+            </>
+          ) : null}
         </span>
       ) : null}
       {row.deleted ? (

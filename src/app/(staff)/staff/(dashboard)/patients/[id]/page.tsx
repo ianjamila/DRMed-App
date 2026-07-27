@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { formatPhp } from "@/lib/marketing/format";
 import { formatPhoneLocal } from "@/lib/format/phone";
-import { ReissuePinButton } from "./reissue-pin-button";
+import { ReissuePinButton } from "@/components/staff/reissue-pin-button";
 import { VerifyIdentityButton } from "./verify-identity-button";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { getPatientConsentState } from "@/lib/consent/gate";

@@ -28,6 +28,7 @@ import {
   shouldPrintReceipt,
 } from "@/lib/visits/receipt-policy";
 import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
+import { ReissuePinButton } from "@/components/staff/reissue-pin-button";
 
 export const metadata = {
   title: "Visit — staff",
@@ -206,6 +207,8 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
   // Item 1 / decision 4: no receipt for a consultation-only visit. Deleted
   // lines don't count — a visit whose lab line was removed from the queue is
   // a consultation visit now.
+  // Mirrors the role check inside reissuePatientPinAction.
+  const canIssuePin = session.role === "reception" || session.role === "admin";
   const printsReceipt = shouldPrintReceipt(
     (tests ?? [])
       .filter((t) => t.deleted_at === null)
@@ -351,6 +354,15 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
               >
                 Receipt
               </Link>
+            ) : canIssuePin ? (
+              // No receipt to carry the PIN (item 1) — this is the deliberate
+              // path for a consultation patient who wants portal access.
+              <ReissuePinButton
+                patientId={patient.id}
+                visitId={visit.id}
+                label="Issue portal PIN"
+                confirmText="Issue a Secure PIN for this visit and print the portal slip? Any earlier PIN for this visit stops working immediately."
+              />
             ) : null}
             <Link
               href={`/staff/payments/new?visit_id=${visit.id}`}
@@ -377,6 +389,9 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
           <p className="mt-1 text-sm text-[color:var(--color-brand-navy)]">
             {CONSULT_ONLY_RECEIPT_NOTE} Send the patient in to the doctor —
             record the payment here when they settle at the counter.
+            {canIssuePin
+              ? " If they need the online portal anyway, use “Issue portal PIN” above."
+              : ""}
           </p>
         </section>
       ) : null}

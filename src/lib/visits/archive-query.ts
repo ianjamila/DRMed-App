@@ -22,6 +22,7 @@ import {
   type VisitClass,
   type VisitView,
 } from "./classification";
+import { shouldPrintReceipt } from "./receipt-policy";
 
 type AnyClient = SupabaseClient<Database>;
 
@@ -65,6 +66,13 @@ export interface ArchiveRow {
   split: boolean;
   /** Set when the row is a split encounter — links to the combined receipt. */
   groupId: string | null;
+  /**
+   * Whether the combined receipt still has a slip to print. False once every
+   * surviving half is consultation-only (partner revisions item 1) — e.g. the
+   * lab half was deleted from the queue — so the row can hide the link rather
+   * than send reception to a "no receipt" page.
+   */
+  printsReceipt: boolean;
   members: ArchiveVisit[];
   patient: ArchiveVisit["patients"];
   visitDate: string;
@@ -233,6 +241,11 @@ export async function fetchArchiveWindow(
         key: f.key,
         split: f.split,
         groupId: f.split ? f.members[0]!.visit_group_id : null,
+        // The group receipt page only renders live visits, so a deleted half
+        // can't keep the link alive on its own.
+        printsReceipt: f.members
+          .filter((m) => m.deleted_at === null)
+          .some((m) => shouldPrintReceipt(kindsByVisit.get(m.id) ?? [])),
         members: f.members,
         patient: f.members[0]!.patients,
         visitDate: f.members[0]!.visit_date,
