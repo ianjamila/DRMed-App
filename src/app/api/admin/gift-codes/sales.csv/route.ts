@@ -1,17 +1,9 @@
 import { NextResponse } from "next/server";
+import { escapeCell } from "@/lib/csv/escape";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-function escapeCell(v: unknown): string {
-  if (v === null || v === undefined) return "";
-  const s = String(v);
-  if (s.includes(",") || s.includes('"') || s.includes("\n") || s.includes("\r")) {
-    return `"${s.replace(/"/g, '""')}"`;
-  }
-  return s;
-}
 
 function manilaDate(iso: string): string {
   return new Intl.DateTimeFormat("sv-SE", {

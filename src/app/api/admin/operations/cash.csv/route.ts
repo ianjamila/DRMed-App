@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { escapeCell } from "@/lib/csv/escape";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
@@ -8,15 +9,6 @@ import {
   type CollectionRow,
   type HmoReceivedRow,
 } from "@/lib/operations/cash-report";
-
-function escapeCell(v: unknown): string {
-  if (v === null || v === undefined) return "";
-  const s = String(v);
-  if (s.includes(",") || s.includes('"') || s.includes("\n") || s.includes("\r")) {
-    return `"${s.replace(/"/g, '""')}"`;
-  }
-  return s;
-}
 
 export async function GET(req: NextRequest) {
   await requireAdminStaff();
