@@ -499,11 +499,17 @@ export async function waiveVisitBalanceAction(
 
   const { data: visit } = await supabase
     .from("visits")
-    .select("payment_status, total_php, paid_php")
+    .select("payment_status, total_php, paid_php, deleted_at")
     .eq("id", visitId)
     .maybeSingle();
   if (!visit) {
     return { ok: false, error: "Visit not found." };
+  }
+  if (visit.deleted_at !== null) {
+    return {
+      ok: false,
+      error: "This visit was deleted from the queue. Restore it before waiving.",
+    };
   }
   if (visit.payment_status === "waived") {
     return { ok: false, error: "This visit's balance is already waived." };
@@ -514,11 +520,14 @@ export async function waiveVisitBalanceAction(
 
   // Status filter keeps the write race-safe: a concurrent payment that flips
   // the visit to 'paid' makes this UPDATE match 0 rows instead of clobbering.
+  // The deleted_at filter closes the same race against a concurrent queue
+  // delete (0125's P0046 trigger backstops it in the DB).
   const { data: updated, error } = await supabase
     .from("visits")
     .update({ payment_status: "waived" })
     .eq("id", visitId)
     .in("payment_status", ["unpaid", "partial"])
+    .is("deleted_at", null)
     .select("id");
 
   if (error) return { ok: false, error: translatePgError(error) };

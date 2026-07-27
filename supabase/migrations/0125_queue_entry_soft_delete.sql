@@ -22,6 +22,7 @@
 --   P0043 — entry has a released result
 --   P0044 — package component deleted directly (delete the whole package)
 --   P0045 — payment recorded against a deleted visit
+--   P0046 — payment_status changed on a deleted visit (e.g. a stale waive)
 
 -- ---------------------------------------------------------------------------
 -- Columns (pattern: 0050 staff_profiles soft delete, plus required reason)
@@ -216,7 +217,40 @@ create trigger trg_queue_delete_cascade
 
 -- ---------------------------------------------------------------------------
 -- No money against deleted visits
+--
+-- Two guards. Payments: P0045 on insert. payment_status: P0046 on any change
+-- while the row is deleted — without it, a stale waive form could set
+-- payment_status='waived' on a deleted visit, and a later restore would bring
+-- the visit back releasable with zero pesos ever collected (restore itself is
+-- deliberately unguarded because a deleted visit is otherwise frozen unpaid).
+-- recalc_visit_payment never fires for deleted visits (no payment can be
+-- inserted, and any surviving payments were already voided pre-delete), so
+-- this blocks only manual writes.
 -- ---------------------------------------------------------------------------
+create or replace function public.enforce_no_status_change_on_deleted_visit()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if old.deleted_at is not null
+     and new.deleted_at is not null
+     and new.payment_status is distinct from old.payment_status then
+    raise exception 'visit is deleted — restore it before changing its payment status'
+      using errcode = 'P0046';
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function public.enforce_no_status_change_on_deleted_visit() from public, anon, authenticated;
+
+create trigger trg_visits_deleted_status_guard
+  before update of payment_status on public.visits
+  for each row
+  execute function public.enforce_no_status_change_on_deleted_visit();
+
 create or replace function public.enforce_no_payment_on_deleted_visit()
 returns trigger
 language plpgsql

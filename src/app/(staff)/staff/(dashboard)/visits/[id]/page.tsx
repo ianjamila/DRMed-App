@@ -98,7 +98,9 @@ export default async function VisitDetailPage({ params }: Props) {
       .from("visits")
       .select("id, visit_number, test_requests ( services ( kind ) )")
       .eq("visit_group_id", visit.visit_group_id)
-      .neq("id", visit.id);
+      .neq("id", visit.id)
+      // Don't link to a sibling that was itself deleted from the queue.
+      .is("deleted_at", null);
     const s = sibs?.[0];
     if (s) {
       const isDoctor = (s.test_requests ?? []).some((tr) => {

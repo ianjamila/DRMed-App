@@ -122,6 +122,8 @@ export function translatePgError(err: PgError): string {
       return "This test is part of a package — delete the whole package instead.";
     case "P0045":
       return "This visit was deleted from the queue. Restore it before recording a payment.";
+    case "P0046":
+      return "This visit was deleted from the queue. Restore it before changing its payment status.";
     default:
       return err.message ?? "Database error. Please try again.";
   }
