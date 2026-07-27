@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
+import { formatPhp } from "@/lib/marketing/format";
+import { defaultClinicFee } from "@/lib/visits/consultation-fee";
 import { RecomputeClinicFeeButton } from "./recompute-clinic-fee-button";
 
 export const metadata = { title: "Physicians — staff" };
@@ -13,7 +15,9 @@ export default async function PhysiciansAdminPage() {
 
   const { data: physicians } = await admin
     .from("physicians")
-    .select("id, slug, full_name, specialty, group_label, is_active, display_order")
+    .select(
+      "id, slug, full_name, specialty, group_label, is_active, display_order, compensation_arrangement, default_consultation_fee_php, clinic_cut_php",
+    )
     .order("is_active", { ascending: false })
     .order("display_order", { ascending: true })
     .order("full_name", { ascending: true });
@@ -87,6 +91,9 @@ interface Row {
   group_label: string | null;
   is_active: boolean;
   display_order: number;
+  compensation_arrangement: string | null;
+  default_consultation_fee_php: number | null;
+  clinic_cut_php: number | null;
 }
 
 const UNGROUPED_LABEL = "Ungrouped";
@@ -133,6 +140,16 @@ function Section({
               <ul className="divide-y divide-[color:var(--color-brand-bg-mid)] rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
                 {g.rows.map((p) => {
                   const blocks = counts.get(p.id) ?? 0;
+                  const clinicCutPhp =
+                    p.clinic_cut_php != null ? Number(p.clinic_cut_php) : null;
+                  const defaultConsultFeePhp =
+                    p.default_consultation_fee_php != null
+                      ? Number(p.default_consultation_fee_php)
+                      : null;
+                  const cut = defaultClinicFee(
+                    p.compensation_arrangement,
+                    clinicCutPhp,
+                  );
                   return (
                     <li
                       key={p.id}
@@ -154,6 +171,14 @@ function Section({
                               by appointment only
                             </span>
                           )}
+                        </p>
+                        <p className="mt-0.5 text-xs text-[color:var(--color-brand-text-soft)]">
+                          {defaultConsultFeePhp != null
+                            ? `Consult ${formatPhp(defaultConsultFeePhp)}`
+                            : "No default consult fee"}
+                          {" · "}
+                          Cut {formatPhp(cut)}
+                          {clinicCutPhp == null ? " (arrangement default)" : ""}
                         </p>
                       </div>
                       <Link

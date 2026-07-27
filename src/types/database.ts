@@ -4339,8 +4339,10 @@ export type Database = {
       physicians: {
         Row: {
           bio: string | null
+          clinic_cut_php: number | null
           compensation_arrangement: string
           created_at: string
+          default_consultation_fee_php: number | null
           display_order: number
           full_name: string
           group_label: string | null
@@ -4353,8 +4355,10 @@ export type Database = {
         }
         Insert: {
           bio?: string | null
+          clinic_cut_php?: number | null
           compensation_arrangement?: string
           created_at?: string
+          default_consultation_fee_php?: number | null
           display_order?: number
           full_name: string
           group_label?: string | null
@@ -4367,8 +4371,10 @@ export type Database = {
         }
         Update: {
           bio?: string | null
+          clinic_cut_php?: number | null
           compensation_arrangement?: string
           created_at?: string
+          default_consultation_fee_php?: number | null
           display_order?: number
           full_name?: string
           group_label?: string | null
@@ -5997,6 +6003,7 @@ export type Database = {
       v_ops_daily_doctor: {
         Row: {
           business_date: string | null
+          clinic_cut_php: number | null
           compensation_arrangement: string | null
           consult_count: number | null
           full_name: string | null

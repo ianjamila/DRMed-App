@@ -124,16 +124,19 @@ export async function createVisitAction(
   );
 
   // The doctor-fee split depends on the attending physician's compensation
-  // arrangement (rent_paying / shareholder → clinic keeps ₱0; pf_split → ₱100).
+  // arrangement (rent_paying / shareholder → clinic keeps ₱0; pf_split → ₱100)
+  // — or their per-doctor clinic_cut_php override when one is configured.
   let attendingArrangement: string | null = null;
+  let attendingClinicCutPhp: number | null = null;
   if (parsed.data.attending_physician_id) {
     const physAdmin = createAdminClient();
     const { data: phys } = await physAdmin
       .from("physicians")
-      .select("compensation_arrangement")
+      .select("compensation_arrangement, clinic_cut_php")
       .eq("id", parsed.data.attending_physician_id)
       .maybeSingle();
     attendingArrangement = phys?.compensation_arrangement ?? null;
+    attendingClinicCutPhp = phys?.clinic_cut_php != null ? Number(phys.clinic_cut_php) : null;
   }
 
   // Snapshot pricing per line — same arithmetic as the client form so the
@@ -194,6 +197,7 @@ export async function createVisitAction(
         arrangement: attendingArrangement,
         clinicFeeRaw: formData.get(`clinic_fee__${service_id}`)?.toString() ?? "",
         doctorPfRaw: formData.get(`doctor_pf__${service_id}`)?.toString() ?? "",
+        clinicCutPhp: attendingClinicCutPhp,
       });
       clinic_fee_php = split.clinic_fee_php;
       doctor_pf_php = split.doctor_pf_php;

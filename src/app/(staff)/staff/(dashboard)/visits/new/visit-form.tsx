@@ -5,6 +5,7 @@ import {
   useDeferredValue,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { useRouter } from "next/navigation";
@@ -58,6 +59,10 @@ export interface PhysicianLite {
   full_name: string;
   specialty: string;
   compensation_arrangement: string;
+  /** Prefills the consult fee input when this physician is selected. NULL = no default. */
+  default_consultation_fee_php?: number | null;
+  /** Per-doctor override of the clinic's cut. NULL = arrangement default. */
+  clinic_cut_php?: number | null;
 }
 
 interface Props {
@@ -315,6 +320,54 @@ export function VisitForm({
   function updateLine(id: string, patch: Partial<LineState>) {
     setLineState((prev) => ({ ...prev, [id]: { ...getLine(id), ...patch } }));
   }
+
+  // Consult-fee prefill: when the attending physician changes, prefill every
+  // doctor_consultation line's fee box from the new physician's
+  // default_consultation_fee_php — but only if reception hasn't already typed
+  // something deliberate. "Deliberate" is: the box is non-empty AND doesn't
+  // just equal the PREVIOUSLY selected physician's default (which we set
+  // ourselves, so it's not something reception typed). Blank stays blank when
+  // the new physician has no default configured.
+  const prevPhysicianIdRef = useRef<string>(attendingPhysicianId);
+  const prevDefaultFeeStrRef = useRef<string>("");
+  useEffect(() => {
+    if (attendingPhysicianId === prevPhysicianIdRef.current) return;
+    const newPhysician = physicians.find((p) => p.id === attendingPhysicianId);
+    const newDefaultStr =
+      newPhysician?.default_consultation_fee_php != null
+        ? String(newPhysician.default_consultation_fee_php)
+        : "";
+    const prevDefaultStr = prevDefaultFeeStrRef.current;
+
+    setLineState((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const s of services) {
+        if (s.kind !== "doctor_consultation") continue;
+        const current = prev[s.id]?.consultFee ?? "";
+        if (current === "" || current === prevDefaultStr) {
+          const base = prev[s.id] ?? {
+            discountKind: "",
+            customDiscount: "",
+            clinicFee: "",
+            doctorPf: "",
+            procedureDescription: "",
+            hmoApprovedAmount: "",
+            procedureFee: "",
+            consultFee: "",
+          };
+          if (base.consultFee !== newDefaultStr) {
+            next[s.id] = { ...base, consultFee: newDefaultStr };
+            changed = true;
+          }
+        }
+      }
+      return changed ? next : prev;
+    });
+
+    prevPhysicianIdRef.current = attendingPhysicianId;
+    prevDefaultFeeStrRef.current = newDefaultStr;
+  }, [attendingPhysicianId, physicians, services]);
 
   const discountByCode = useMemo(
     () => new Map(discountTypes.map((d) => [d.code, d])),
@@ -657,7 +710,12 @@ export function VisitForm({
               // Auto-default clinic_fee based on selected physician's compensation arrangement.
               // pf_split → 100; rent_paying / shareholder → 0.
               const selectedPhysician = physicians.find((p) => p.id === attendingPhysicianId);
-              const cfAuto = (isConsult || isProcedure) ? defaultClinicFee(selectedPhysician?.compensation_arrangement) : 0;
+              const cfAuto = (isConsult || isProcedure)
+                ? defaultClinicFee(
+                    selectedPhysician?.compensation_arrangement,
+                    selectedPhysician?.clinic_cut_php,
+                  )
+                : 0;
               // Procedures are counter-priced but start from the price list —
               // the box is prefilled so reception only types when the case
               // differs (the create action applies the same fallback).
@@ -802,7 +860,7 @@ export function VisitForm({
                       <p className="col-span-12 sm:col-span-6 self-end text-[10px] text-[color:var(--color-brand-text-soft)]">
                         {selectedPhysician && cfAuto === 0
                           ? `Defaulted to ₱0 clinic fee (${selectedPhysician.compensation_arrangement.replace("_", "-")} arrangement).`
-                          : "Defaults: clinic fee ₱100, doctor PF = final − clinic fee. Both editable."}
+                          : `Defaults: clinic fee ${formatPhp(cfAuto)}, doctor PF = final − clinic fee. Both editable.`}
                       </p>
                     </div>
                   ) : null}

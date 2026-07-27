@@ -25,6 +25,8 @@ export interface PhysicianDefaults {
   is_active?: boolean;
   display_order?: number;
   compensation_arrangement?: string | null;
+  default_consultation_fee_php?: number | string | null;
+  clinic_cut_php?: number | string | null;
 }
 
 interface Props {
@@ -140,6 +142,40 @@ export function PhysicianForm({ initial }: Props) {
         <p className="text-xs text-[color:var(--color-brand-text-soft)]">
           Rent-paying and shareholder doctors keep 100% of consult amount by default.
         </p>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-1.5">
+          <Label htmlFor="default_consultation_fee_php">
+            Default consultation fee (₱)
+          </Label>
+          <StableInput
+            id="default_consultation_fee_php"
+            name="default_consultation_fee_php"
+            type="number"
+            min="0"
+            step="0.01"
+            defaultValue={initial?.default_consultation_fee_php?.toString() ?? ""}
+          />
+          <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+            Prefills the consult fee on new visits. Leave blank for no default.
+          </p>
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="clinic_cut_php">Clinic cut (₱)</Label>
+          <StableInput
+            id="clinic_cut_php"
+            name="clinic_cut_php"
+            type="number"
+            min="0"
+            step="0.01"
+            defaultValue={initial?.clinic_cut_php?.toString() ?? ""}
+          />
+          <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+            Clinic&apos;s share of each consult fee. Leave blank to use the
+            arrangement default (₱100 PF-split, ₱0 rent-paying/shareholder).
+          </p>
+        </div>
       </div>
 
       <label className="flex items-center gap-2 text-sm">
