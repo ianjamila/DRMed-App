@@ -80,7 +80,15 @@ seed:services` rewrote the live price list and `npm run dedup:patients
 
 When adding a script that touches the database: `import "./lib/load-env"` first,
 then call `requireLocalOrExplicitProd("<npm script name>", { writes: "…" })`
-before the first query.
+**before the client is built** — not just before the `--commit` path, since a
+dry-run that reads live rows is still a live read. `npm test` enforces this:
+`scripts/lib/guard-coverage.test.ts` walks each runner's module graph and fails
+when a service-role client is reachable before the guard.
+
+`wipe:operational` and `dedup:patients` additionally require `--confirm=<target>`
+alongside `--commit`, where `<target>` is `local` or the Supabase project ref —
+never a fixed passphrase. Reuse `requireTargetConfirmation()` from
+`scripts/lib/env-guard.ts` rather than inventing another confirm flag.
 
 Unit tests run on **vitest** (`npm test` / `npm run test:watch`). Single
 file: `npx vitest run src/lib/appointments/timing.test.ts`. Single test by

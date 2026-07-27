@@ -7,8 +7,13 @@
  * ⚠️  HIGH-RISK DESTRUCTIVE SCRIPT — defaults to dry-run. ⚠️
  *
  * Usage:
- *   npm run wipe:operational                               # dry-run (safe)
- *   npm run wipe:operational -- --commit --confirm="I-mean-it"  # executes wipe
+ *   npm run wipe:operational                          # dry-run (safe)
+ *   npm run wipe:operational -- --commit --confirm=local
+ *
+ * The --confirm value is not a fixed passphrase: it is the database you are
+ * actually pointed at. `local` for the local Supabase stack, the Supabase
+ * PROJECT REF for anything remote — printed by the guard banner right above.
+ * A value memorised from one target will not work against another.
  *
  * Required env vars:
  *   NEXT_PUBLIC_SUPABASE_URL      — Supabase REST endpoint (for row counts)
@@ -25,7 +30,13 @@
  */
 
 import "./lib/load-env";
-import { requireLocalOrExplicitProd } from "./lib/env-guard";
+import {
+  CONFIRM_FLAG,
+  expectedConfirmToken,
+  parseConfirmFlag,
+  requireLocalOrExplicitProd,
+  requireTargetConfirmation,
+} from "./lib/env-guard";
 import { createClient } from "@supabase/supabase-js";
 import pg from "pg";
 import type { Database } from "../src/types/database";
@@ -92,14 +103,14 @@ const WIPE_TABLES: string[] = [
 
 const args = process.argv.slice(2);
 const hasCommit = args.includes("--commit");
-const confirmArg = args.find((a) => a.startsWith("--confirm="));
-const confirmValue = confirmArg ? confirmArg.slice("--confirm=".length).replace(/^"|"$/g, "") : null;
-const REQUIRED_CONFIRM = "I-mean-it";
+const confirmArg = args.find((a) => a.startsWith(`${CONFIRM_FLAG}=`));
+const confirmValue = parseConfirmFlag(args);
 
-// Before ANY connection is opened. The `--commit --confirm` pair proves the
-// operator meant to wipe; it says nothing about WHICH database they are
-// pointed at, and this script TRUNCATEs over SUPABASE_DB_URL rather than the
-// REST endpoint — so the guard has to check that URL too (it does).
+// Before ANY connection is opened. `--commit` proves the operator meant to
+// wipe; on its own it says nothing about WHICH database they are pointed at,
+// and this script TRUNCATEs over SUPABASE_DB_URL rather than the REST endpoint
+// — so the guard has to check that URL too (it does), and `--confirm` has to
+// name the resolved target rather than repeat a fixed passphrase.
 requireLocalOrExplicitProd("wipe:operational", {
   writes:
     "TRUNCATEs every operational table — patients, visits, payments, results, journal entries, audit_log",
@@ -278,43 +289,27 @@ async function main() {
   await printRowCounts(admin, "PRE-WIPE ROW COUNTS (current state)");
 
   // Step 2 — Dry-run gate.
-  const isCommit = hasCommit && confirmValue === REQUIRED_CONFIRM;
-
-  if (!isCommit) {
-    // Diagnose exactly which flag is wrong so the user knows what to fix.
-    if (!hasCommit && !confirmArg) {
-      console.log("\n[DRY-RUN] No writes performed.");
-      console.log(
-        "\nTo execute the wipe, re-run with BOTH flags:\n" +
-          '  npm run wipe:operational -- --commit --confirm="I-mean-it"'
-      );
-    } else if (!hasCommit && confirmArg) {
-      console.log("\n[DRY-RUN] --confirm provided but --commit is missing.");
-      console.log(
-        '  To execute: npm run wipe:operational -- --commit --confirm="I-mean-it"'
-      );
-    } else if (hasCommit && confirmValue !== REQUIRED_CONFIRM) {
-      console.error(
-        `\n[ABORT] --commit provided but --confirm value is wrong.` +
-          `\n  Got:      "${confirmValue}"` +
-          `\n  Expected: "${REQUIRED_CONFIRM}"` +
-          "\n  No writes performed."
-      );
-      process.exit(3);
-    } else {
-      // hasCommit but no --confirm at all
-      console.error(
-        `\n[ABORT] --commit provided but --confirm="I-mean-it" is missing.` +
-          "\n  No writes performed."
-      );
-      process.exit(3);
-    }
+  if (!hasCommit) {
+    const expected = expectedConfirmToken();
+    console.log(
+      confirmArg
+        ? `\n[DRY-RUN] ${CONFIRM_FLAG} provided but --commit is missing. No writes performed.`
+        : "\n[DRY-RUN] No writes performed.",
+    );
+    console.log(
+      "\nTo execute the wipe, re-run with BOTH flags:\n" +
+        `  npm run wipe:operational -- --commit ${CONFIRM_FLAG}=${expected}\n` +
+        `\n${CONFIRM_FLAG} names the database above — it changes with the target.`,
+    );
     process.exit(0);
   }
 
+  // Exits 3 with a full explanation unless --confirm names the resolved target.
+  requireTargetConfirmation("wipe:operational");
+
   // Step 3 — Execute the wipe.
   console.log(
-    "\n[COMMIT] Both --commit and --confirm=\"I-mean-it\" provided. Executing wipe..."
+    `\n[COMMIT] --commit and ${CONFIRM_FLAG}=${confirmValue} provided. Executing wipe...`,
   );
   const sql = buildWipeSql();
   await executeWipe(sql, dbUrl);

@@ -2,19 +2,21 @@
 import "../lib/load-env";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../../src/types/database";
-import { requireLocalOrExplicitProd } from "../lib/env-guard";
+import {
+  CONFIRM_FLAG,
+  expectedConfirmToken,
+  requireLocalOrExplicitProd,
+  requireTargetConfirmation,
+} from "../lib/env-guard";
 import { writeCsv } from "../clinical-backfill/report";
 import { clusterByName } from "./lib/cluster";
 import { planCluster } from "./lib/plan";
 import type { PatientRow, ClusterPlan } from "./lib/types";
 
-interface Args { commit: boolean; confirmed: boolean; }
+interface Args { commit: boolean; }
 export function parseArgs(): Args {
   const argv = process.argv.slice(2);
-  return {
-    commit: argv.includes("--commit"),
-    confirmed: argv.includes('--confirm="I-mean-it"') || argv.includes("--confirm=I-mean-it"),
-  };
+  return { commit: argv.includes("--commit") };
 }
 
 export function adminClient(): SupabaseClient<Database> {
@@ -93,9 +95,6 @@ async function writeReports(plans: ClusterPlan[]): Promise<void> {
 
 export async function run(): Promise<void> {
   const args = parseArgs();
-  if (args.commit && !args.confirmed) {
-    console.error('\n--commit requires --confirm="I-mean-it".'); process.exit(3);
-  }
   // The dry-run reads live patient identities and dumps them to tmp/*.csv, so the
   // guard has to run before the first query — not only on the --commit path.
   requireLocalOrExplicitProd("dedup:patients", {
@@ -104,6 +103,10 @@ export async function run(): Promise<void> {
       ? "MERGES patient records — sets `patients.merged_into_id` and repoints their visits"
       : "live patient identities (DRM-ID, name, DOB, phone) written to the tmp/ dedup CSVs",
   });
+  // Merges are irreversible from the CLI, so --commit has to name the database
+  // it is about to merge in — checked after the guard so the banner above has
+  // already printed the project ref the operator needs to type.
+  if (args.commit) requireTargetConfirmation("dedup:patients");
 
   const admin = adminClient();
   const rows = await loadRows(admin);
@@ -114,7 +117,12 @@ export async function run(): Promise<void> {
   await writeReports(plans);
 
   if (!args.commit) {
-    console.log(`\nDry-run. To commit against prod: npm run dedup:patients -- --commit --confirm="I-mean-it" --prod\n`);
+    console.log(
+      `\nDry-run. To commit against this target:\n` +
+        `  npm run dedup:patients -- --commit ${CONFIRM_FLAG}=${expectedConfirmToken()}` +
+        `${process.argv.includes("--prod") ? " --prod" : ""}\n` +
+        `\n${CONFIRM_FLAG} names the database above — it changes with the target.\n`,
+    );
     return;
   }
 

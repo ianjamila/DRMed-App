@@ -111,6 +111,31 @@ Working in a git worktree? None of the worktrees carry their own
 `.env.development.local`; the loader falls back to the main checkout's copy
 automatically.
 
+`npm test` enforces all of this: `scripts/lib/guard-coverage.test.ts` reads
+every file under `scripts/` as a module graph and fails when a runner can reach
+a service-role client without `requireLocalOrExplicitProd` having run first. A
+new script that forgets the guard fails CI rather than production.
+
+#### Destructive runners name their target
+
+`wipe:operational` and `dedup:patients` need `--commit` **and** a `--confirm`
+value that identifies the database they are pointed at — `local` for the local
+stack, the Supabase **project ref** for anything remote:
+
+```bash
+npm run wipe:operational                                   # dry-run, prints the token
+npm run wipe:operational -- --commit --confirm=local       # local stack
+npm run dedup:patients -- --prod --commit --confirm=qhptbmafrosgibooelpp
+```
+
+This replaced a fixed `--confirm="I-mean-it"` passphrase. A constant is the
+same eleven characters on every target, so it becomes muscle memory; a token
+you can only produce by reading the guard banner is a statement about *which*
+database you are about to change. A prod token does not work against local, or
+the reverse, and a run whose REST endpoint and `SUPABASE_DB_URL` name different
+projects is refused outright rather than counting rows in one database and
+truncating another.
+
 The service-role key (`SUPABASE_SERVICE_ROLE_KEY`) bypasses Row Level Security and must NEVER be exposed to the browser. It is only imported by `src/lib/supabase/admin.ts` and only used in Server Actions, Route Handlers, and Edge Functions.
 
 ### Consultant staff IDs (Phase 12.5 — required in production)

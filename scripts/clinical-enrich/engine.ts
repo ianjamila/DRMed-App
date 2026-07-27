@@ -55,6 +55,17 @@ interface LegacyTr {
 
 export async function run(): Promise<void> {
   const args = parseArgs();
+
+  // The dry-run reads committed visits/test_requests and writes an
+  // unmatched-doctors CSV, so the guard has to run in both modes — not only on
+  // the --commit path further down.
+  requireLocalOrExplicitProd("enrich:clinical", {
+    readOnly: !args.commit,
+    writes: args.commit
+      ? "updates imported visit/bill rows with physician, discount type and new/repeat"
+      : "reads legacy visits/test_requests and dumps unmatched physician surnames to tmp/",
+  });
+
   console.log(`Reading enrichment from ${args.xlsx}`);
   const sheet = await readEnrichment(args.xlsx);
   console.log(`  ${sheet.size} source rows indexed`);
@@ -160,10 +171,6 @@ export async function run(): Promise<void> {
     return;
   }
   if (!args.confirmed) { console.error('\n--commit requires --confirm="I-mean-it".'); process.exit(3); }
-  requireLocalOrExplicitProd("enrich:clinical", {
-    writes:
-      "updates imported visit/bill rows with physician, discount type and new/repeat",
-  });
 
   let applied = 0;
   for (const [pid, ids] of visitPhys) applied += await applyByIds(admin, "visits", { attending_physician_id: pid }, ids);

@@ -29,13 +29,13 @@ if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
   process.exit(1);
 }
 
-const admin = createClient<Database>(SUPABASE_URL, SERVICE_ROLE_KEY, {
-  auth: { autoRefreshToken: false, persistSession: false },
-});
-
 requireLocalOrExplicitProd("seed:signatures", {
   writes:
     "uploads PNGs to the `signatures` bucket, sets `staff_profiles.signature_path`, and creates missing auth users / staff_profiles",
+});
+
+const admin = createClient<Database>(SUPABASE_URL, SERVICE_ROLE_KEY, {
+  auth: { autoRefreshToken: false, persistSession: false },
 });
 
 const SIG_DIR = join(process.cwd(), "scripts", "seed", "signatures");

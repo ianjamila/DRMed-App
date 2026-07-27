@@ -29,13 +29,13 @@ if (!SUPABASE_URL || !SERVICE_KEY) {
   process.exit(1);
 }
 
-const admin = createClient<Database>(SUPABASE_URL, SERVICE_KEY, {
-  auth: { persistSession: false, autoRefreshToken: false },
-});
-
 requireLocalOrExplicitProd("smoke:results", {
   readOnly: true,
   writes: "result templates and staff signatures (renders PDFs to /tmp)",
+});
+
+const admin = createClient<Database>(SUPABASE_URL, SERVICE_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false },
 });
 
 async function loadSignatureForStaff(

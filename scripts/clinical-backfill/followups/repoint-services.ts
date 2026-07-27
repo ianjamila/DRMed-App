@@ -34,6 +34,16 @@ function adminClient(): SupabaseClient<Database> {
 
 async function main(): Promise<void> {
   const args = parseArgs();
+
+  // The dry-run below counts real `test_requests` against whatever database is
+  // configured, so the guard belongs here rather than on the --commit path.
+  requireLocalOrExplicitProd("clinical-backfill:repoint-services", {
+    readOnly: !args.commit,
+    writes: args.commit
+      ? "rewrites `test_requests.service_id` off the LEGACY-LAB shell service"
+      : "counts LEGACY-LAB `test_requests` rows and reads the service catalogue",
+  });
+
   const admin = adminClient();
 
   // resolve LEGACY-LAB + every safe-auto target code to a service_id
@@ -78,9 +88,6 @@ async function main(): Promise<void> {
     return;
   }
   if (!args.confirmed) { console.error('\n--commit requires --confirm="I-mean-it".'); process.exit(3); }
-  requireLocalOrExplicitProd("clinical-backfill:repoint-services", {
-    writes: "rewrites `bill_lines.service_id` off the LEGACY-LAB shell service",
-  });
 
   let moved = 0;
   const byAlias: Record<string, number> = {};
