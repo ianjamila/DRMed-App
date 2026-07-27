@@ -112,10 +112,8 @@ export default async function QueueTestDetailPage({ params }: Props) {
         serviceCode={svc.code}
         serviceName={svc.name}
         visitId={visit.id}
-        visitNumber={visit.visit_number}
         patientFirstName={patient.first_name}
         patientLastName={patient.last_name}
-        patientDrmId={patient.drm_id}
         components={components}
       />
     );
@@ -271,11 +269,10 @@ export default async function QueueTestDetailPage({ params }: Props) {
           <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             Patient
           </p>
+          {/* DRM-ID + visit number deliberately omitted from result entry —
+              partner revision 11: the bench identifies the patient by name. */}
           <p className="mt-0.5 font-semibold text-[color:var(--color-brand-navy)]">
             {patient.last_name}, {patient.first_name}
-          </p>
-          <p className="font-mono text-xs text-[color:var(--color-brand-text-soft)]">
-            {patient.drm_id} · Visit #{visit.visit_number}
           </p>
           {patient.phone ? (
             <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
@@ -490,10 +487,8 @@ function PackageHeaderSummary({
   serviceCode,
   serviceName,
   visitId,
-  visitNumber,
   patientFirstName,
   patientLastName,
-  patientDrmId,
   components,
 }: {
   headerStatus: string;
@@ -502,10 +497,8 @@ function PackageHeaderSummary({
   serviceCode: string;
   serviceName: string;
   visitId: string;
-  visitNumber: number;
   patientFirstName: string;
   patientLastName: string;
-  patientDrmId: string;
   components: PackageComponentSummary[];
 }) {
   return (
@@ -543,11 +536,10 @@ function PackageHeaderSummary({
           <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             Patient
           </p>
+          {/* DRM-ID + visit number deliberately omitted from result entry —
+              partner revision 11: the bench identifies the patient by name. */}
           <p className="mt-0.5 font-semibold text-[color:var(--color-brand-navy)]">
             {patientLastName}, {patientFirstName}
-          </p>
-          <p className="font-mono text-xs text-[color:var(--color-brand-text-soft)]">
-            {patientDrmId} · Visit #{visitNumber}
           </p>
         </div>
         <div>

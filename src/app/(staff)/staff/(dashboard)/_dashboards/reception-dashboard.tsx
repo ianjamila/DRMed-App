@@ -11,8 +11,9 @@ import { ActivityStrip, type ActivityItem } from "./_components/activity-strip";
 import { formatPeso, formatTime, relativeAge } from "./_components/format";
 
 // Quicklinks mirror the reorganized sidebar groups (Front desk / Billing /
-// Services). Sell gift code, Cash drawer, and End of day were dropped per
-// partner feedback — they now live under the sidebar's "Hidden tabs".
+// Services). Sell gift code, End of day, and Registration link live under the
+// sidebar's "Hidden tabs" and are deliberately not surfaced here; Cash drawer
+// was restored to Front desk per the 2026-07-27 partner revisions (items 2/9).
 const QUICK_GROUPS: { label: string; items: { href: string; label: string }[] }[] = [
   {
     label: "Front desk",
@@ -20,15 +21,15 @@ const QUICK_GROUPS: { label: string; items: { href: string; label: string }[] }[
       { href: "/staff/patients/new", label: "New patient" },
       { href: "/staff/patients", label: "Patients" },
       { href: "/staff/appointments", label: "Appointments" },
-      { href: "/staff/registration", label: "Registration link" },
-      { href: "/staff/visits/queue", label: "Queue" },
+      { href: "/staff/visits/queue", label: "Reception Queue" },
       { href: "/staff/inquiries", label: "Inquiries" },
+      { href: "/staff/payments/cash-drawer", label: "Cash drawer" },
     ],
   },
   {
     label: "Billing",
     items: [
-      { href: "/staff/visits", label: "Billing & receipts" },
+      { href: "/staff/visits", label: "Visits" },
       { href: "/staff/quote", label: "Quick quote" },
       { href: "/staff/payments/petty-cash", label: "Petty cash" },
     ],

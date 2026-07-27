@@ -156,11 +156,10 @@ export function ConsolidatedForm(props: Props) {
         <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
           {props.group.name}
         </h1>
+        {/* DRM-ID + visit number deliberately omitted from result entry —
+            partner revision 11: the bench identifies the patient by name. */}
         <p className="mt-1 font-semibold text-[color:var(--color-brand-navy)]">
           {props.visit.patients.last_name}, {props.visit.patients.first_name}
-        </p>
-        <p className="font-mono text-xs text-[color:var(--color-brand-text-soft)]">
-          {props.visit.patients.drm_id} · Visit #{props.visit.visit_number}
         </p>
         <div className="mt-1 flex flex-wrap items-baseline gap-x-1.5 gap-y-1 text-sm text-[color:var(--color-brand-text-soft)]">
           <span>Ordered:</span>
