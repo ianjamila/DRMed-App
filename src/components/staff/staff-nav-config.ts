@@ -443,6 +443,12 @@ export const STAFF_NAV: StaffNavSection[] = [
             roles: ["admin"],
           },
           {
+            href: "/staff/admin/discounts",
+            label: "Discounts",
+            description: "The discounts reception can apply per line on a new visit — add your own (percent off or a fixed peso amount), rename, or retire them. Senior / PWD is statutory: fixed at 20% by law and always available.",
+            roles: ["admin"],
+          },
+          {
             href: "/staff/admin/result-templates",
             label: "Result templates",
             description: "The blueprints behind every lab result PDF. For each test, you set up the parameters (e.g., for a CBC: WBC, RBC, hemoglobin) and the normal/abnormal reference ranges by age and sex. Edit a template here when a manufacturer changes the reference range or you add a new test.",

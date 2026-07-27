@@ -31,31 +31,42 @@ export default async function NewVisitPage({ searchParams }: Props) {
   const supabase = await createClient();
 
   const admin = createAdminClient();
-  const [{ data: patient }, { data: services }, { data: hmoProviders }, { data: physicians }] =
-    await Promise.all([
-      supabase
-        .from("patients")
-        .select("id, drm_id, first_name, last_name")
-        .eq("id", patient_id)
-        .maybeSingle(),
-      supabase
-        .from("services")
-        .select(
-          "id, code, name, kind, price_php, hmo_price_php, senior_discount_php, senior_pwd_eligible, section",
-        )
-        .eq("is_active", true)
-        .order("name", { ascending: true }),
-      supabase
-        .from("hmo_providers")
-        .select("id, name")
-        .eq("is_active", true)
-        .order("name", { ascending: true }),
-      admin
-        .from("physicians")
-        .select("id, full_name, specialty, compensation_arrangement, is_active")
-        .eq("is_active", true)
-        .order("full_name", { ascending: true }),
-    ]);
+  const [
+    { data: patient },
+    { data: services },
+    { data: hmoProviders },
+    { data: physicians },
+    { data: discountTypes },
+  ] = await Promise.all([
+    supabase
+      .from("patients")
+      .select("id, drm_id, first_name, last_name")
+      .eq("id", patient_id)
+      .maybeSingle(),
+    supabase
+      .from("services")
+      .select(
+        "id, code, name, kind, price_php, hmo_price_php, senior_pwd_eligible, section",
+      )
+      .eq("is_active", true)
+      .order("name", { ascending: true }),
+    supabase
+      .from("hmo_providers")
+      .select("id, name")
+      .eq("is_active", true)
+      .order("name", { ascending: true }),
+    admin
+      .from("physicians")
+      .select("id, full_name, specialty, compensation_arrangement, is_active")
+      .eq("is_active", true)
+      .order("full_name", { ascending: true }),
+    supabase
+      .from("discount_types")
+      .select("code, label, kind, percent, amount_php, is_statutory")
+      .eq("active", true)
+      .order("sort_order", { ascending: true })
+      .order("label", { ascending: true }),
+  ]);
 
   if (!patient) {
     redirect("/staff/visits/new");
@@ -111,10 +122,16 @@ export default async function NewVisitPage({ searchParams }: Props) {
             kind: s.kind,
             price_php: Number(s.price_php),
             hmo_price_php: s.hmo_price_php != null ? Number(s.hmo_price_php) : null,
-            senior_discount_php:
-              s.senior_discount_php != null ? Number(s.senior_discount_php) : null,
             senior_pwd_eligible: s.senior_pwd_eligible,
             section: s.section ?? null,
+          }))}
+          discountTypes={(discountTypes ?? []).map((d) => ({
+            code: d.code,
+            label: d.label,
+            kind: d.kind as "percent" | "fixed" | "custom",
+            percent: d.percent != null ? Number(d.percent) : null,
+            amount_php: d.amount_php != null ? Number(d.amount_php) : null,
+            is_statutory: d.is_statutory,
           }))}
           initialCategory={initialCategory}
           hmoProviders={hmoProviders ?? []}

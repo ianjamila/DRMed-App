@@ -23,7 +23,6 @@ export interface PriceRow {
   description: string | null;
   price_php: number;
   hmo_price_php: number | null;
-  senior_discount_php: number | null;
   is_active: boolean;
   is_send_out: boolean;
   last_changed_at: string | null;
@@ -94,7 +93,7 @@ export function PricesTable({ rows }: Props) {
   const [edits, setEdits] = useState<
     Record<
       string,
-      { price: string; hmo: string; senior: string }
+      { price: string; hmo: string }
     >
   >({});
   const [savingId, setSavingId] = useState<string | null>(null);
@@ -102,7 +101,7 @@ export function PricesTable({ rows }: Props) {
   const [errorById, setErrorById] = useState<Record<string, string | null>>({});
   const [confirming, setConfirming] = useState<{
     row: PriceRow;
-    next: { price: number; hmo: number | null; senior: number | null };
+    next: { price: number; hmo: number | null };
   } | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -129,14 +128,13 @@ export function PricesTable({ rows }: Props) {
       edits[r.id] ?? {
         price: toInputValue(r.price_php),
         hmo: toInputValue(r.hmo_price_php),
-        senior: toInputValue(r.senior_discount_php),
       }
     );
   }
 
-  function patchEdit(id: string, patch: Partial<{ price: string; hmo: string; senior: string }>) {
+  function patchEdit(id: string, patch: Partial<{ price: string; hmo: string }>) {
     setEdits((prev) => {
-      const cur = prev[id] ?? { price: "", hmo: "", senior: "" };
+      const cur = prev[id] ?? { price: "", hmo: "" };
       return { ...prev, [id]: { ...cur, ...patch } };
     });
   }
@@ -147,8 +145,7 @@ export function PricesTable({ rows }: Props) {
     const ePrice = nullableNumber(e.price);
     return (
       ePrice !== r.price_php ||
-      nullableNumber(e.hmo) !== r.hmo_price_php ||
-      nullableNumber(e.senior) !== r.senior_discount_php
+      nullableNumber(e.hmo) !== r.hmo_price_php
     );
   }
 
@@ -168,7 +165,6 @@ export function PricesTable({ rows }: Props) {
       next: {
         price: ePrice,
         hmo: nullableNumber(e.hmo),
-        senior: nullableNumber(e.senior),
       },
     });
   }
@@ -181,7 +177,6 @@ export function PricesTable({ rows }: Props) {
       service_id: r.id,
       price_php: next.price,
       hmo_price_php: next.hmo,
-      senior_discount_php: next.senior,
     });
     setSavingId(null);
     setConfirming(null);
@@ -240,7 +235,6 @@ export function PricesTable({ rows }: Props) {
               <th className="px-4 py-3">Type</th>
               <th className="px-4 py-3 w-32">DRMed (₱)</th>
               <th className="px-4 py-3 w-32">HMO (₱)</th>
-              <th className="px-4 py-3 w-32">Senior disc. (₱)</th>
               <th className="px-4 py-3">Last changed</th>
               <th className="px-4 py-3 w-24" aria-label="save" />
             </tr>
@@ -249,7 +243,7 @@ export function PricesTable({ rows }: Props) {
             {filtered.length === 0 ? (
               <tr>
                 <td
-                  colSpan={8}
+                  colSpan={7}
                   className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]"
                 >
                   No services match your filters.
@@ -358,25 +352,6 @@ export function PricesTable({ rows }: Props) {
                           />
                         )}
                       </td>
-                      <td className="px-4 py-2 align-middle">
-                        {r.kind === "doctor_consultation" ? (
-                          <span className="text-xs text-[color:var(--color-brand-text-soft)]">
-                            —
-                          </span>
-                        ) : (
-                          <input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            placeholder="—"
-                            value={edit.senior}
-                            onChange={(e) =>
-                              patchEdit(r.id, { senior: e.target.value })
-                            }
-                            className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 text-right text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none focus:ring-1 focus:ring-[color:var(--color-brand-cyan)]"
-                          />
-                        )}
-                      </td>
                       <td className="px-4 py-2 align-middle text-xs text-[color:var(--color-brand-text-mid)]">
                         {r.last_changed_at ? (
                           <>
@@ -410,7 +385,7 @@ export function PricesTable({ rows }: Props) {
                     </tr>
                     {err ? (
                       <tr className="bg-red-50">
-                        <td colSpan={8} className="px-4 py-2 text-xs text-red-700">
+                        <td colSpan={7} className="px-4 py-2 text-xs text-red-700">
                           {err}
                         </td>
                       </tr>
@@ -418,14 +393,13 @@ export function PricesTable({ rows }: Props) {
                     {expanded ? (
                       <tr>
                         <td
-                          colSpan={8}
+                          colSpan={7}
                           className="bg-[color:var(--color-brand-bg)]/40 px-4 py-3"
                         >
                           <ServiceHistoryPanel
                             serviceId={r.id}
                             currentPrice={r.price_php}
                             currentHmo={r.hmo_price_php}
-                            currentSenior={r.senior_discount_php}
                           />
                         </td>
                       </tr>
@@ -439,9 +413,9 @@ export function PricesTable({ rows }: Props) {
       </Panel>
 
       <p className="text-xs text-[color:var(--color-brand-text-soft)]">
-        Tip: leave HMO or Senior empty if the service isn&apos;t HMO billable
-        or has no senior discount. Saved changes are recorded in price history
-        with your name automatically.
+        Tip: leave HMO empty if the service isn&apos;t HMO billable. Senior /
+        PWD is a flat statutory 20% managed on the Discounts page. Saved
+        changes are recorded in price history with your name automatically.
         {isPending ? " Refreshing…" : ""}
       </p>
 
@@ -460,7 +434,7 @@ export function PricesTable({ rows }: Props) {
 
 interface ConfirmProps {
   row: PriceRow;
-  next: { price: number; hmo: number | null; senior: number | null };
+  next: { price: number; hmo: number | null };
   saving: boolean;
   onCancel: () => void;
   onConfirm: () => void;
@@ -470,7 +444,6 @@ function ConfirmModal({ row, next, saving, onCancel, onConfirm }: ConfirmProps) 
   const lines: { label: string; before: number | null; after: number | null }[] = [
     { label: "DRMed", before: row.price_php, after: next.price },
     { label: "HMO", before: row.hmo_price_php, after: next.hmo },
-    { label: "Senior disc.", before: row.senior_discount_php, after: next.senior },
   ];
   const changedLines = lines.filter((l) => (l.before ?? null) !== (l.after ?? null));
 

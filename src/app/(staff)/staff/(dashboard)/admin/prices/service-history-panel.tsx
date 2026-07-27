@@ -17,7 +17,6 @@ interface Props {
   serviceId: string;
   currentPrice: number;
   currentHmo: number | null;
-  currentSenior: number | null;
 }
 
 export function ServiceHistoryPanel({ serviceId }: Props) {

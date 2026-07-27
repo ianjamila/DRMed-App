@@ -17,7 +17,7 @@ export default async function PricesAdminPage() {
   const { data: services } = await supabase
     .from("services")
     .select(
-      "id, code, name, kind, section, description, price_php, hmo_price_php, senior_discount_php, is_active, is_send_out",
+      "id, code, name, kind, section, description, price_php, hmo_price_php, is_active, is_send_out",
     )
     .order("section", { ascending: true, nullsFirst: false })
     .order("name", { ascending: true });
@@ -28,7 +28,7 @@ export default async function PricesAdminPage() {
   const { data: history } = await admin
     .from("service_price_history")
     .select(
-      "service_id, price_php, hmo_price_php, senior_discount_php, effective_from, changed_by",
+      "service_id, price_php, hmo_price_php, effective_from, changed_by",
     )
     .order("effective_from", { ascending: false });
 
@@ -77,8 +77,6 @@ export default async function PricesAdminPage() {
       description: s.description,
       price_php: Number(s.price_php),
       hmo_price_php: s.hmo_price_php != null ? Number(s.hmo_price_php) : null,
-      senior_discount_php:
-        s.senior_discount_php != null ? Number(s.senior_discount_php) : null,
       is_active: s.is_active,
       is_send_out: s.is_send_out,
       last_changed_at: last?.effective_from ?? null,
@@ -91,7 +89,7 @@ export default async function PricesAdminPage() {
     <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
       <PageHeader
         title="Prices"
-        subtitle="Edit DRMed, HMO, and Senior/PWD pricing for every service. Each change is recorded automatically — click any row to see its full history."
+        subtitle="Edit DRMed and HMO pricing for every service. Senior/PWD is a flat statutory 20% managed on the Discounts page. Each change is recorded automatically — click any row to see its full history."
       />
 
       <PricesTable rows={rows} />

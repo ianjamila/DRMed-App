@@ -124,6 +124,9 @@ export function translatePgError(err: PgError): string {
       return "This visit was deleted from the queue. Restore it before recording a payment.";
     case "P0046":
       return "This visit was deleted from the queue. Restore it before changing its payment status.";
+    // PR G — discount types
+    case "P0047":
+      return err.message ?? "Senior/PWD is a statutory 20% discount and cannot be changed, disabled, or deleted.";
     default:
       return err.message ?? "Database error. Please try again.";
   }

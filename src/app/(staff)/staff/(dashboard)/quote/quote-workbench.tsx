@@ -15,7 +15,6 @@ export interface QuoteService {
   name: string;
   price_php: number;
   hmo_price_php: number | null;
-  senior_discount_php: number | null;
   senior_pwd_eligible: boolean | null;
   turnaround_hours: number | null;
   kind: string;
@@ -27,7 +26,6 @@ export interface QuoteService {
 function seniorPriceOf(s: QuoteService): number | null {
   return seniorPwdPrice({
     base: s.price_php,
-    seniorDiscountPhp: s.senior_discount_php,
     eligible: isSeniorPwdEligible(s),
   });
 }
@@ -36,7 +34,6 @@ function seniorPriceOf(s: QuoteService): number | null {
 function seniorDiscountOf(s: QuoteService): number {
   return seniorPwdDiscount({
     base: s.price_php,
-    seniorDiscountPhp: s.senior_discount_php,
     eligible: isSeniorPwdEligible(s),
   });
 }

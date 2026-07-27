@@ -1392,6 +1392,48 @@ export type Database = {
           },
         ]
       }
+      discount_types: {
+        Row: {
+          active: boolean
+          amount_php: number | null
+          code: string
+          created_at: string
+          id: string
+          is_statutory: boolean
+          kind: string
+          label: string
+          percent: number | null
+          sort_order: number
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          amount_php?: number | null
+          code: string
+          created_at?: string
+          id?: string
+          is_statutory?: boolean
+          kind: string
+          label: string
+          percent?: number | null
+          sort_order?: number
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          amount_php?: number | null
+          code?: string
+          created_at?: string
+          id?: string
+          is_statutory?: boolean
+          kind?: string
+          label?: string
+          percent?: number | null
+          sort_order?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       doctor_pf_disbursements: {
         Row: {
           batch_number: number
@@ -5475,6 +5517,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "v_ops_daily_doctor"
             referencedColumns: ["physician_id"]
+          },
+          {
+            foreignKeyName: "test_requests_discount_kind_fkey"
+            columns: ["discount_kind"]
+            isOneToOne: false
+            referencedRelation: "discount_types"
+            referencedColumns: ["code"]
           },
           {
             foreignKeyName: "test_requests_hmo_provider_id_fkey"

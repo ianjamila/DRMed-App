@@ -2,9 +2,11 @@
  * Senior / PWD pricing — the single source of truth shared by the quote
  * workbench, the new-visit form, and the visit-create Server Action.
  *
- * Rules (RA 9994 / RA 10754):
- *  - Eligible services get the lab's curated peso discount when set, otherwise
- *    the statutory 20% off the line's base price.
+ * Rules (RA 9994 / RA 10754, policy locked 2026-05-26 with migration 0067):
+ *  - Eligible services get a flat statutory 20% off the line's base price.
+ *    There is NO per-service override — the old `services.senior_discount_php`
+ *    column caused the 0067 data bug (169 services discounted 80–116%) and is
+ *    deliberately not read anywhere anymore.
  *  - Ineligible services (e.g. lab packages — already bundled at a discount)
  *    get NO senior/PWD discount. Eligibility is the `senior_pwd_eligible`
  *    column on `services`, which defaults to true.
@@ -13,7 +15,7 @@
  * in both client components and Server Actions.
  */
 
-/** Statutory senior-citizen / PWD discount rate when no peso amount is curated. */
+/** Statutory senior-citizen / PWD discount rate. */
 export const SENIOR_PWD_RATE = 0.2;
 
 /**
@@ -30,25 +32,16 @@ export function isSeniorPwdEligible(s: {
 interface SeniorArgs {
   /** The line's base price (cash or HMO, post-consult-fee) the discount applies to. */
   base: number;
-  /** Curated peso discount on the service, or null to use the statutory rate. */
-  seniorDiscountPhp: number | null;
   /** Whether the service is senior/PWD eligible. */
   eligible: boolean;
 }
 
 /** Peso discount for a senior/PWD line. Always 0 for ineligible services. */
-export function seniorPwdDiscount({
-  base,
-  seniorDiscountPhp,
-  eligible,
-}: SeniorArgs): number {
+export function seniorPwdDiscount({ base, eligible }: SeniorArgs): number {
   if (!eligible) return 0;
-  const off =
-    seniorDiscountPhp != null
-      ? seniorDiscountPhp
-      : Math.round(base * SENIOR_PWD_RATE * 100) / 100;
+  const off = Math.round(base * SENIOR_PWD_RATE * 100) / 100;
   // Never negative, never more than the base.
-  return Math.min(Math.max(0, off), base);
+  return Math.min(Math.max(0, off), Math.max(0, base));
 }
 
 /**

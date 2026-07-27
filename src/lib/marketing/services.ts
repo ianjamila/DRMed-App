@@ -32,7 +32,6 @@ export type PublicService = {
   description: string | null;
   price_php: number;
   hmo_price_php: number | null;
-  senior_discount_php: number | null;
   turnaround_hours: number | null;
   kind: ServiceKind;
   section: ServiceSection | null;
@@ -45,7 +44,7 @@ export type PublicService = {
 };
 
 const PUBLIC_SELECT =
-  "id, code, name, description, price_php, hmo_price_php, senior_discount_php, turnaround_hours, kind, section, is_send_out, send_out_lab, fasting_required, requires_time_slot, specialty_code, image_url" as const;
+  "id, code, name, description, price_php, hmo_price_php, turnaround_hours, kind, section, is_send_out, send_out_lab, fasting_required, requires_time_slot, specialty_code, image_url" as const;
 
 // Default listing image per package code, served from /public/photos/packages.
 // Every active lab_package has an entry so Merchant/Shopping + Product JSON-LD
@@ -91,7 +90,6 @@ function rowToPublic(s: {
   description: string | null;
   price_php: number;
   hmo_price_php: number | null;
-  senior_discount_php: number | null;
   turnaround_hours: number | null;
   kind: string;
   section: string | null;

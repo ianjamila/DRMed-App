@@ -25,67 +25,34 @@ describe("isSeniorPwdEligible", () => {
 });
 
 describe("seniorPwdDiscount", () => {
-  it("uses the curated peso amount when the service has one", () => {
-    expect(
-      seniorPwdDiscount({ base: 500, seniorDiscountPhp: 120, eligible: true }),
-    ).toBe(120);
+  it("applies the statutory 20%", () => {
+    expect(seniorPwdDiscount({ base: 500, eligible: true })).toBe(100);
   });
 
-  it("falls back to the statutory 20% when no peso amount is set", () => {
-    expect(
-      seniorPwdDiscount({ base: 500, seniorDiscountPhp: null, eligible: true }),
-    ).toBe(100);
+  it("rounds the 20% to two decimals", () => {
+    expect(seniorPwdDiscount({ base: 333.33, eligible: true })).toBe(66.67);
   });
 
-  it("rounds the 20% fallback to two decimals", () => {
-    // 333 * 0.2 = 66.6 → already 2dp; use a value that needs rounding.
-    expect(
-      seniorPwdDiscount({ base: 333.33, seniorDiscountPhp: null, eligible: true }),
-    ).toBe(66.67);
-  });
-
-  it("caps the discount at the base price", () => {
-    expect(
-      seniorPwdDiscount({ base: 80, seniorDiscountPhp: 200, eligible: true }),
-    ).toBe(80);
-  });
-
-  it("returns 0 for an ineligible service even with a peso amount", () => {
-    expect(
-      seniorPwdDiscount({ base: 500, seniorDiscountPhp: 120, eligible: false }),
-    ).toBe(0);
+  it("returns 0 for an ineligible service", () => {
+    expect(seniorPwdDiscount({ base: 500, eligible: false })).toBe(0);
   });
 
   it("never returns a negative discount", () => {
-    expect(
-      seniorPwdDiscount({ base: 100, seniorDiscountPhp: -50, eligible: true }),
-    ).toBe(0);
+    expect(seniorPwdDiscount({ base: -100, eligible: true })).toBe(0);
   });
 });
 
 describe("seniorPwdPrice", () => {
-  it("returns base minus the curated discount when eligible", () => {
-    expect(
-      seniorPwdPrice({ base: 500, seniorDiscountPhp: 120, eligible: true }),
-    ).toBe(380);
-  });
-
-  it("returns the 20%-off price when eligible without a peso amount", () => {
-    expect(
-      seniorPwdPrice({ base: 500, seniorDiscountPhp: null, eligible: true }),
-    ).toBe(400);
+  it("returns the 20%-off price when eligible", () => {
+    expect(seniorPwdPrice({ base: 500, eligible: true })).toBe(400);
   });
 
   it("returns null when ineligible so callers can show 'Not applicable'", () => {
-    expect(
-      seniorPwdPrice({ base: 500, seniorDiscountPhp: 120, eligible: false }),
-    ).toBeNull();
+    expect(seniorPwdPrice({ base: 500, eligible: false })).toBeNull();
   });
 
   it("never returns a negative price", () => {
-    expect(
-      seniorPwdPrice({ base: 80, seniorDiscountPhp: 200, eligible: true }),
-    ).toBe(0);
+    expect(seniorPwdPrice({ base: 0, eligible: true })).toBe(0);
   });
 });
 

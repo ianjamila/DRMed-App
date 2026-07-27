@@ -56,7 +56,6 @@ interface ServiceDefaults {
   description: string | null;
   price_php: number | string;
   hmo_price_php: number | string | null;
-  senior_discount_php: number | string | null;
   senior_pwd_eligible: boolean;
   turnaround_hours: number | null;
   kind: string;
@@ -99,7 +98,7 @@ export function ServiceForm({ initial, vendors = [] }: Props) {
   const [imageUrl, setImageUrl] = useState(initial?.image_url ?? "");
   const showImagePreview = /^(https?:\/\/|\/)/.test(imageUrl.trim());
   const [confirming, setConfirming] = useState<{
-    next: { price: number | null; hmo: number | null; senior: number | null };
+    next: { price: number | null; hmo: number | null };
   } | null>(null);
 
   // Intercept submit to surface a confirmation when any price field has changed.
@@ -113,17 +112,12 @@ export function ServiceForm({ initial, vendors = [] }: Props) {
     const next = {
       price: n(fd.get("price_php") as string),
       hmo: n(fd.get("hmo_price_php") as string),
-      senior: n(fd.get("senior_discount_php") as string),
     };
     const prior = {
       price: n(initial.price_php),
       hmo: n(initial.hmo_price_php),
-      senior: n(initial.senior_discount_php),
     };
-    const changed =
-      next.price !== prior.price ||
-      next.hmo !== prior.hmo ||
-      next.senior !== prior.senior;
+    const changed = next.price !== prior.price || next.hmo !== prior.hmo;
     if (changed) {
       e.preventDefault();
       setConfirming({ next });
@@ -233,22 +227,6 @@ export function ServiceForm({ initial, vendors = [] }: Props) {
             />
             <p className="text-xs text-[color:var(--color-brand-text-soft)]">
               Leave blank if not HMO billable.
-            </p>
-          </div>
-          <div className="grid gap-1.5">
-            <Label htmlFor="senior_discount_php">
-              Senior discount (PHP, optional)
-            </Label>
-            <StableInput
-              id="senior_discount_php"
-              name="senior_discount_php"
-              type="number"
-              step="0.01"
-              min="0"
-              defaultValue={initial?.senior_discount_php?.toString() ?? ""}
-            />
-            <p className="text-xs text-[color:var(--color-brand-text-soft)]">
-              Peso amount, not a percentage.
             </p>
           </div>
           <label className="flex items-start gap-2 text-sm sm:col-span-3">
@@ -481,18 +459,6 @@ export function ServiceForm({ initial, vendors = [] }: Props) {
                 →{" "}
                 {confirming.next.hmo != null
                   ? formatPhp(confirming.next.hmo)
-                  : "—"}
-              </dd>
-              <dt className="text-[color:var(--color-brand-text-soft)]">
-                Senior disc.
-              </dt>
-              <dd className="text-right font-semibold">
-                {n(initial?.senior_discount_php) != null
-                  ? formatPhp(n(initial?.senior_discount_php)!)
-                  : "—"}{" "}
-                →{" "}
-                {confirming.next.senior != null
-                  ? formatPhp(confirming.next.senior)
                   : "—"}
               </dd>
             </dl>

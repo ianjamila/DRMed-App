@@ -23,7 +23,6 @@ const DATA: LlmsData = {
       description: "Measures   red and white\ncells and platelets.",
       price_php: 350,
       hmo_price_php: 300,
-      senior_discount_php: 70,
       turnaround_hours: 24,
       section: "hematology",
       fasting_required: false,
@@ -93,10 +92,9 @@ describe("buildLlmsFullTxt", () => {
     expect(out).toContain("14.6705639, 121.0389717");
   });
 
-  it("renders full service detail with HMO/senior prices and turnaround", () => {
+  it("renders full service detail with HMO price and turnaround", () => {
     expect(out).toContain("#### Complete Blood Count");
     expect(out).toContain(`HMO price: ${formatPhp(300)}`);
-    expect(out).toContain(`Senior/PWD discount: ${formatPhp(70)}`);
     expect(out).toContain("Turnaround: 24 hours");
     expect(out).toContain("Fasting required: No");
   });
