@@ -18,7 +18,13 @@ function render(role: Parameters<typeof StaffNav>[0]["role"], path: string) {
 
 // <details open> serializes as `<details open=""...>`; a collapsed one has no
 // `open` attribute at all. Grab just the opening tag of the section that owns
-// the given link so we can tell the two apart.
+// the given link so we can tell the two apart. Callers test it with
+// isOpen() rather than a bare substring check — a class name containing
+// "open" would otherwise read as an expanded section.
+function isOpen(detailsTag: string | null): boolean {
+  return detailsTag !== null && /<details\b[^>]*\sopen(=|\s|>)/.test(detailsTag);
+}
+
 function detailsTagContaining(html: string, href: string): string | null {
   let from = 0;
   let last: string | null = null;
@@ -46,25 +52,25 @@ describe("Hidden tabs section (partner revision 8)", () => {
     expect(html).toContain("Hidden tabs");
     const tag = detailsTagContaining(html, "/staff/registration");
     expect(tag).not.toBeNull();
-    expect(tag).not.toContain("open");
+    expect(isOpen(tag)).toBe(false);
   });
 
   it("auto-expands when the admin is on one of its pages", () => {
     const html = render("admin", "/staff/registration");
     const tag = detailsTagContaining(html, "/staff/registration");
-    expect(tag).toContain("open");
+    expect(isOpen(tag)).toBe(true);
   });
 
   it("auto-expands on a nested route inside one of its pages", () => {
     const html = render("admin", "/staff/signoff/some-test-id");
     const tag = detailsTagContaining(html, "/staff/signoff");
-    expect(tag).toContain("open");
+    expect(isOpen(tag)).toBe(true);
   });
 
   it("stays collapsed when the admin is elsewhere", () => {
     const html = render("admin", "/staff/visits/queue");
     const tag = detailsTagContaining(html, "/staff/registration");
-    expect(tag).not.toContain("open");
+    expect(isOpen(tag)).toBe(false);
   });
 
   it("is absent entirely for reception", () => {
@@ -104,6 +110,6 @@ describe("plain sections are unchanged", () => {
   it("keeps admin subgroups collapsible and auto-expanding", () => {
     const html = render("admin", "/staff/admin/payroll/runs");
     const tag = detailsTagContaining(html, "/staff/admin/payroll/runs");
-    expect(tag).toContain("open");
+    expect(isOpen(tag)).toBe(true);
   });
 });

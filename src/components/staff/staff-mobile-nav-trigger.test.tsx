@@ -34,7 +34,13 @@ function render(
 }
 
 // <details open> serializes as `<details open="" …>`; a collapsed one carries
-// no `open` attribute. Return the opening tag of the section owning `href`.
+// no `open` attribute. Return the opening tag of the section owning `href`,
+// and test it with isOpen() rather than a bare substring check — a class name
+// containing "open" would otherwise read as an expanded section.
+function isOpen(detailsTag: string | null): boolean {
+  return detailsTag !== null && /<details\b[^>]*\sopen(=|\s|>)/.test(detailsTag);
+}
+
 function detailsTagContaining(html: string, href: string): string | null {
   let from = 0;
   let last: string | null = null;
@@ -61,13 +67,13 @@ describe("mobile drawer — Hidden tabs (partner revision 8)", () => {
     expect(html).toContain("Hidden tabs");
     const tag = detailsTagContaining(html, "/staff/registration");
     expect(tag).not.toBeNull();
-    expect(tag).not.toContain("open");
+    expect(isOpen(tag)).toBe(false);
   });
 
   it("auto-expands when the admin is inside it", () => {
     const html = render("admin", "/staff/gift-codes/sell");
-    expect(detailsTagContaining(html, "/staff/gift-codes/sell")).toContain(
-      "open",
+    expect(isOpen(detailsTagContaining(html, "/staff/gift-codes/sell"))).toBe(
+      true,
     );
   });
 
