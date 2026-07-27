@@ -499,20 +499,58 @@ async function main() {
   console.log("Counts by section:", counts);
 
   // Upsert in batches so we don't blow request limits on a 200+ row import.
+  //
+  // Split by whether we actually HAVE a description. PostgREST's ON CONFLICT DO
+  // UPDATE only touches the columns present in the payload, so omitting
+  // `description` for the rows that have none leaves whatever is in the row
+  // alone. Sending `description: null` for them — which is what this script used
+  // to do — wiped the clinical copy that `npm run import:descriptions` writes,
+  // because that script is fill-NULL-only and never puts it back on a re-run.
+  //
+  // Ownership, so this does not get re-broken: this importer owns `description`
+  // only for the package codes it has real copy for (CSV_PACKAGE_DESCRIPTIONS +
+  // WEBSITE_ONLY_PACKAGES). Every other test's description belongs to
+  // import:descriptions and to the admin edit page. The two batches cannot be
+  // merged: PostgREST rejects a batch whose objects do not all share keys.
+  const described = services.filter((s) => s.description !== null);
+  const undescribed: Omit<ServiceRow, "description">[] = services
+    .filter((s) => s.description === null)
+    .map((s) => {
+      const rest = { ...s } as Partial<ServiceRow>;
+      delete rest.description;
+      return rest as Omit<ServiceRow, "description">;
+    });
+
+  await upsertBatches("with description", described);
+  await upsertBatches("description untouched", undescribed);
+
+  console.log(
+    `✓ Upserted ${services.length} services (idempotent) — ` +
+      `${described.length} with copy, ${undescribed.length} left as they were.`,
+  );
+
+  await linkSendOutVendors(new Set(services.map((s) => s.code)));
+}
+
+/** Chunked upsert on `code`. Every row in `rows` must carry the same keys. */
+async function upsertBatches(
+  label: string,
+  rows: readonly (ServiceRow | Omit<ServiceRow, "description">)[],
+): Promise<void> {
   const BATCH = 50;
-  for (let i = 0; i < services.length; i += BATCH) {
-    const batch = services.slice(i, i + BATCH);
+  for (let i = 0; i < rows.length; i += BATCH) {
+    const batch = rows.slice(i, i + BATCH);
     const { error } = await admin
       .from("services")
-      .upsert(batch, { onConflict: "code" });
+      // The row shape is built above and validated by ServiceRow; the generated
+      // Insert type cannot express "the same keys, minus description".
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .upsert(batch as any, { onConflict: "code" });
     if (error) {
-      console.error(`upsert batch ${i / BATCH + 1} failed:`, error);
+      console.error(`upsert (${label}) batch ${i / BATCH + 1} failed:`, error);
       process.exit(1);
     }
   }
-  console.log(`✓ Upserted ${services.length} services (idempotent).`);
-
-  await linkSendOutVendors(new Set(services.map((s) => s.code)));
 }
 
 /**

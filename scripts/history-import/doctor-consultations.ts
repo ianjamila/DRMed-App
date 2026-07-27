@@ -2,7 +2,7 @@
  * 12.B history import — DOCTOR CONSULTATION tab.
  *
  *   npm run import:history:doctor-cons -- --year=2023                          # dry-run
- *   npm run import:history:doctor-cons -- --year=2023 --commit --confirm="I-mean-it"
+ *   npm run import:history:doctor-cons -- --year=2023 --commit --confirm=<local | project ref>
  *
  * NET revenue model: the clinic recognises only CLINIC FEE (col M) as revenue.
  * Doctor PF (col Q — mislabeled "DISCOUNTS AMOUNT" in the xlsx) passed through
@@ -40,7 +40,12 @@ import path from "node:path";
 import ExcelJS from "exceljs";
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "../../src/types/database";
-import { requireLocalOrExplicitProd } from "../lib/env-guard";
+import {
+  CONFIRM_FLAG,
+  expectedConfirmToken,
+  requireLocalOrExplicitProd,
+  requireTargetConfirmation,
+} from "../lib/env-guard";
 
 const XLSX_PATH_DEFAULT = `${process.env.HOME ?? ""}/Downloads/DR MED MASTERSHEET.xlsx`;
 
@@ -52,7 +57,6 @@ interface Args {
   xlsx: string;
   year: number;
   commit: boolean;
-  confirmed: boolean;
 }
 
 function parseArgs(): Args {
@@ -69,10 +73,7 @@ function parseArgs(): Args {
     process.exit(2);
   }
   const commit = argv.includes("--commit");
-  const confirmed =
-    argv.includes('--confirm="I-mean-it"') ||
-    argv.includes("--confirm=I-mean-it");
-  return { xlsx, year, commit, confirmed };
+  return { xlsx, year, commit };
 }
 
 // ---------------------------------------------------------------------------
@@ -534,13 +535,13 @@ async function main() {
   console.log(`\nExclusion CSV: ${exclusionsPath}`);
 
   if (!args.commit) {
-    console.log(`\nDry-run. To commit on dev:\n  npm run import:history:doctor-cons -- --year=${args.year} --commit --confirm="I-mean-it"\n`);
+    console.log(
+      `\nDry-run. To commit:\n  npm run import:history:doctor-cons -- --year=${args.year} --commit ${CONFIRM_FLAG}=${expectedConfirmToken()}\n` +
+        `\n${CONFIRM_FLAG} names the database above — it changes with the target.\n`,
+    );
     return;
   }
-  if (!args.confirmed) {
-    console.error('\nERROR: --commit requires --confirm="I-mean-it".');
-    process.exit(3);
-  }
+  requireTargetConfirmation("import:history:doctor-cons");
   await commit(args.year, classified);
 }
 

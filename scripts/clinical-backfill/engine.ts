@@ -1,7 +1,12 @@
 import "../lib/load-env";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../../src/types/database";
-import { requireLocalOrExplicitProd } from "../lib/env-guard";
+import {
+  CONFIRM_FLAG,
+  expectedConfirmToken,
+  requireLocalOrExplicitProd,
+  requireTargetConfirmation,
+} from "../lib/env-guard";
 import type { RawRow, TabConfig } from "./lib/types";
 import { loadTab } from "./lib/xlsx";
 import { classifyRow, type Window } from "./lib/classify";
@@ -18,7 +23,7 @@ import { writeCsv } from "./report";
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const WINDOW: Window = { start: "2023-12-01", cutoverExclusive: "2026-05-26" };
 
-interface Args { xlsx: string; commit: boolean; confirmed: boolean; resolutions?: string; }
+interface Args { xlsx: string; commit: boolean; resolutions?: string; }
 export function parseArgs(): Args {
   const argv = process.argv.slice(2);
   const xlsx = argv.find((a) => a.startsWith("--xlsx="))?.substring(7)
@@ -26,7 +31,6 @@ export function parseArgs(): Args {
   return {
     xlsx,
     commit: argv.includes("--commit"),
-    confirmed: argv.includes('--confirm="I-mean-it"') || argv.includes("--confirm=I-mean-it"),
     resolutions: argv.find((a) => a.startsWith("--resolutions="))?.substring(14),
   };
 }
@@ -217,10 +221,14 @@ export async function run(cfg: TabConfig): Promise<void> {
   console.log(`\nCSVs:\n  ${csvs.join("\n  ")}`);
 
   if (!args.commit) {
-    console.log(`\nDry-run. To commit (dev): npm run ${cfg.isConsult ? "backfill:clinical:consult" : "backfill:clinical:lab"} -- --commit --confirm="I-mean-it"\n`);
+    const script = cfg.isConsult ? "backfill:clinical:consult" : "backfill:clinical:lab";
+    console.log(
+      `\nDry-run. To commit: npm run ${script} -- --commit ${CONFIRM_FLAG}=${expectedConfirmToken()}\n` +
+        `${CONFIRM_FLAG} names the database above — it changes with the target.\n`,
+    );
     return;
   }
-  if (!args.confirmed) { console.error('\n--commit requires --confirm="I-mean-it".'); process.exit(3); }
+  requireTargetConfirmation(cfg.isConsult ? "backfill:clinical:consult" : "backfill:clinical:lab");
   await commit(cfg, admin, visitArr, newPatients, svcIndex, legacyLabId);
 }
 

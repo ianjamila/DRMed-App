@@ -85,10 +85,11 @@ dry-run that reads live rows is still a live read. `npm test` enforces this:
 `scripts/lib/guard-coverage.test.ts` walks each runner's module graph and fails
 when a service-role client is reachable before the guard.
 
-`wipe:operational` and `dedup:patients` additionally require `--confirm=<target>`
-alongside `--commit`, where `<target>` is `local` or the Supabase project ref —
-never a fixed passphrase. Reuse `requireTargetConfirmation()` from
-`scripts/lib/env-guard.ts` rather than inventing another confirm flag.
+Every runner with a `--commit` mode additionally requires `--confirm=<target>`,
+where `<target>` is `local` or the Supabase project ref — never a fixed
+passphrase. Reuse `requireTargetConfirmation()` from `scripts/lib/env-guard.ts`
+rather than inventing another confirm flag; the dry-run branch should print
+`expectedConfirmToken()` so the operator can copy it.
 
 Unit tests run on **vitest** (`npm test` / `npm run test:watch`). Single
 file: `npx vitest run src/lib/appointments/timing.test.ts`. Single test by
