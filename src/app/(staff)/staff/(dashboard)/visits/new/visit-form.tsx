@@ -708,14 +708,19 @@ export function VisitForm({
               const isConsult = s.kind === "doctor_consultation";
               const isProcedure = s.kind === "doctor_procedure";
               // Auto-default clinic_fee based on selected physician's compensation arrangement.
-              // pf_split → 100; rent_paying / shareholder → 0.
+              // pf_split → 100; rent_paying / shareholder → 0. The per-doctor
+              // clinic_cut_php override applies to consult lines only — it's a
+              // consultation-fee override and must not bleed into procedure
+              // lines, which always use the plain arrangement-based default.
               const selectedPhysician = physicians.find((p) => p.id === attendingPhysicianId);
-              const cfAuto = (isConsult || isProcedure)
+              const cfAuto = isConsult
                 ? defaultClinicFee(
                     selectedPhysician?.compensation_arrangement,
                     selectedPhysician?.clinic_cut_php,
                   )
-                : 0;
+                : isProcedure
+                  ? defaultClinicFee(selectedPhysician?.compensation_arrangement)
+                  : 0;
               // Procedures are counter-priced but start from the price list —
               // the box is prefilled so reception only types when the case
               // differs (the create action applies the same fallback).

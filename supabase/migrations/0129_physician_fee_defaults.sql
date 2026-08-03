@@ -69,3 +69,56 @@ where tr.status = 'released' and s.kind = 'doctor_consultation'
 group by business_date, ph.id, ph.full_name, ph.specialty, ph.compensation_arrangement, ph.clinic_cut_php;
 
 alter view public.v_ops_daily_doctor owner to postgres;
+
+-- ---------------------------------------------------------------------------
+-- Generalize recompute_clinic_fee_for_unreleased() (0065/0066) eligibility
+-- from "arrangement in ('rent_paying', 'shareholder')" to "effective clinic
+-- cut is zero" — coalesce(p.clinic_cut_php, arrangement default) = 0. This is
+-- a NO-OP for all data backfilled above: rent_paying/shareholder physicians
+-- were just backfilled to clinic_cut_php = 0 (still zero, still scrubbed) and
+-- pf_split physicians were backfilled to clinic_cut_php = 100 (still nonzero,
+-- still left alone). It only extends the scrub to a physician explicitly
+-- configured with clinic_cut_php = 0 regardless of arrangement (e.g. a
+-- pf_split doctor whose admin-set cut is 0). It must NOT touch nonzero-cut
+-- physicians — that would overwrite hand-typed clinic fees. Everything else
+-- about the function (definer/search_path/body) is unchanged from 0066.
+-- ---------------------------------------------------------------------------
+create or replace function public.recompute_clinic_fee_for_unreleased()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_affected int;
+begin
+  with target_ids as (
+    select tr.id
+    from public.test_requests tr
+    join public.visits v on v.id = tr.visit_id
+    left join public.physicians p
+      on p.id = coalesce(tr.attending_physician_id, v.attending_physician_id)
+    where coalesce(
+            p.clinic_cut_php,
+            case when p.compensation_arrangement in ('rent_paying', 'shareholder') then 0 else 100 end
+          ) = 0
+      and tr.clinic_fee_php > 0
+      and not exists (
+        select 1 from public.journal_entries je
+        where je.source_kind = 'test_request'
+          and je.source_id = tr.id
+          and je.status = 'posted'
+      )
+  ),
+  updated as (
+    update public.test_requests tr2
+      set clinic_fee_php = 0,
+          doctor_pf_php = tr2.final_price_php
+      where tr2.id in (select id from target_ids)
+      returning tr2.id
+  )
+  select count(*) into v_affected from updated;
+
+  return jsonb_build_object('rows_affected', v_affected);
+end;
+$$;
