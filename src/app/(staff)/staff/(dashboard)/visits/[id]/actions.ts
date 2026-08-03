@@ -562,14 +562,34 @@ export async function waiveVisitBalanceAction(
 // on kind in ('doctor_consultation','doctor_procedure') identically).
 type DoctorLineKind = "doctor_consultation" | "doctor_procedure";
 
+// Everything that varies by kind, in one place — a future third wrapper
+// only has to add an entry here, not pass a hand-matched string triple.
+const KIND_COPY: Record<
+  DoctorLineKind,
+  {
+    wrongKindError: string;
+    auditAction: "consultation.completed" | "procedure.completed";
+    notPendingError: string;
+  }
+> = {
+  doctor_consultation: {
+    wrongKindError: "This action is only for consultations.",
+    auditAction: "consultation.completed",
+    notPendingError: "This consultation is no longer pending.",
+  },
+  doctor_procedure: {
+    wrongKindError: "This action is only for procedures.",
+    auditAction: "procedure.completed",
+    notPendingError: "This procedure is no longer pending.",
+  },
+};
+
 async function markDoctorLineDoneAction(
   testRequestId: string,
   visitId: string,
   expectedKind: DoctorLineKind,
-  wrongKindError: string,
-  auditAction: "consultation.completed" | "procedure.completed",
-  notPendingError: string,
 ): Promise<ReleaseResult> {
+  const { wrongKindError, auditAction, notPendingError } = KIND_COPY[expectedKind];
   const session = await requireActiveStaff();
   const supabase = await createClient();
 
@@ -632,26 +652,12 @@ export async function markConsultationDoneAction(
   testRequestId: string,
   visitId: string,
 ): Promise<ReleaseResult> {
-  return markDoctorLineDoneAction(
-    testRequestId,
-    visitId,
-    "doctor_consultation",
-    "This action is only for consultations.",
-    "consultation.completed",
-    "This consultation is no longer pending.",
-  );
+  return markDoctorLineDoneAction(testRequestId, visitId, "doctor_consultation");
 }
 
 export async function markProcedureDoneAction(
   testRequestId: string,
   visitId: string,
 ): Promise<ReleaseResult> {
-  return markDoctorLineDoneAction(
-    testRequestId,
-    visitId,
-    "doctor_procedure",
-    "This action is only for procedures.",
-    "procedure.completed",
-    "This procedure is no longer pending.",
-  );
+  return markDoctorLineDoneAction(testRequestId, visitId, "doctor_procedure");
 }
