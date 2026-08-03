@@ -556,14 +556,23 @@ export async function waiveVisitBalanceAction(
   return { ok: true };
 }
 
-export async function markConsultationDoneAction(
+// Both doctor kinds skip the lab queue and go straight from
+// requested/in_progress to released — there's no result to upload, and
+// releasing is what fires PF accrual (bridge_test_request_released branches
+// on kind in ('doctor_consultation','doctor_procedure') identically).
+type DoctorLineKind = "doctor_consultation" | "doctor_procedure";
+
+async function markDoctorLineDoneAction(
   testRequestId: string,
   visitId: string,
+  expectedKind: DoctorLineKind,
+  wrongKindError: string,
+  auditAction: "consultation.completed" | "procedure.completed",
+  notPendingError: string,
 ): Promise<ReleaseResult> {
   const session = await requireActiveStaff();
   const supabase = await createClient();
 
-  // This action is only for consultation lines — releasing fires PF accrual.
   // Guard server-side so a future/mis-wired caller can't release another kind.
   const { data: tr } = await supabase
     .from("test_requests")
@@ -572,8 +581,8 @@ export async function markConsultationDoneAction(
     .eq("visit_id", visitId)
     .maybeSingle();
   const svc = Array.isArray(tr?.services) ? tr?.services[0] : tr?.services;
-  if (!tr || svc?.kind !== "doctor_consultation") {
-    return { ok: false, error: "This action is only for consultations." };
+  if (!tr || svc?.kind !== expectedKind) {
+    return { ok: false, error: wrongKindError };
   }
 
   const now = new Date().toISOString();
@@ -592,7 +601,7 @@ export async function markConsultationDoneAction(
     .select("id");
 
   if (error) {
-    // Payment gate (visit not paid) or P0034 (consult has no attending
+    // Payment gate (visit not paid) or P0034 (line has no attending
     // physician) → friendly text.
     return { ok: false, error: translatePgError(error) };
   }
@@ -600,14 +609,14 @@ export async function markConsultationDoneAction(
     // 0 rows matched — a concurrent action (e.g. a bulk package release)
     // already completed it. Never audit a write that didn't happen.
     revalidatePath(`/staff/visits/${visitId}`);
-    return { ok: false, error: "This consultation is no longer pending." };
+    return { ok: false, error: notPendingError };
   }
 
   const h = await headers();
   await audit({
     actor_id: session.user_id,
     actor_type: "staff",
-    action: "consultation.completed",
+    action: auditAction,
     resource_type: "test_request",
     resource_id: testRequestId,
     metadata: { visit_id: visitId },
@@ -617,4 +626,32 @@ export async function markConsultationDoneAction(
 
   revalidatePath(`/staff/visits/${visitId}`);
   return { ok: true };
+}
+
+export async function markConsultationDoneAction(
+  testRequestId: string,
+  visitId: string,
+): Promise<ReleaseResult> {
+  return markDoctorLineDoneAction(
+    testRequestId,
+    visitId,
+    "doctor_consultation",
+    "This action is only for consultations.",
+    "consultation.completed",
+    "This consultation is no longer pending.",
+  );
+}
+
+export async function markProcedureDoneAction(
+  testRequestId: string,
+  visitId: string,
+): Promise<ReleaseResult> {
+  return markDoctorLineDoneAction(
+    testRequestId,
+    visitId,
+    "doctor_procedure",
+    "This action is only for procedures.",
+    "procedure.completed",
+    "This procedure is no longer pending.",
+  );
 }

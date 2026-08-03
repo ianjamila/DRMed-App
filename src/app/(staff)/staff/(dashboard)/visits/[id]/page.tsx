@@ -1214,8 +1214,15 @@ function TestAction({
   }
 
   if (status === "requested" || status === "in_progress") {
-    if (kind === "doctor_consultation") {
-      return <MarkDoneButton testRequestId={testRequestId} visitId={visitId} paid={paid} />;
+    if (kind === "doctor_consultation" || kind === "doctor_procedure") {
+      return (
+        <MarkDoneButton
+          testRequestId={testRequestId}
+          visitId={visitId}
+          paid={paid}
+          kind={kind}
+        />
+      );
     }
     const hint = status === "requested" ? "Awaiting claim" : "Awaiting result";
     return (
