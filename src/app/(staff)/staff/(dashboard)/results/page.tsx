@@ -9,30 +9,19 @@ import {
 import { sectionsForRole } from "@/lib/auth/role-sections";
 import { matchesAllTokens } from "@/lib/patients/search";
 import { PageHeader } from "@/components/staff/page-header";
+import { labQueueGate } from "@/lib/visits/lab-gate";
+import {
+  RESULT_STATUSES,
+  RESULT_STATUS_LABEL,
+  parseResultStatusFilter,
+  resultStatusSpec,
+  type ResultStatusFilter,
+} from "@/lib/results/status-filter";
 
 export const metadata = { title: "Results — staff" };
 export const dynamic = "force-dynamic";
 
 const PAGE_SIZE = 50;
-
-const STATUSES = ["all", "released", "ready", "in_progress", "cancelled"] as const;
-type StatusFilter = (typeof STATUSES)[number];
-
-const STATUS_LABEL: Record<StatusFilter, string> = {
-  all: "All",
-  released: "Released",
-  ready: "Ready for release",
-  in_progress: "In progress",
-  cancelled: "Cancelled",
-};
-
-// Status values come from test_requests.status. Map filter → underlying values.
-const STATUS_FILTER_TO_DB: Record<Exclude<StatusFilter, "all">, string[]> = {
-  released: ["released"],
-  ready: ["result_uploaded", "ready_for_release"],
-  in_progress: ["requested", "in_progress"],
-  cancelled: ["cancelled"],
-};
 
 const STATUS_BADGE: Record<string, string> = {
   released: "bg-emerald-50 text-emerald-700 border-emerald-200",
@@ -62,6 +51,8 @@ interface ResultRow {
   visits: {
     id: string;
     visit_number: string;
+    payment_status: string;
+    hmo_provider_id: string | null;
     patients: { first_name: string; last_name: string; drm_id: string } | null;
   } | null;
   services: { code: string; name: string; kind: string; section: string | null } | null;
@@ -72,9 +63,8 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
   const allowedSections = sectionsForRole(staff.role); // null = unrestricted
   const sp = await searchParams;
 
-  const status: StatusFilter = STATUSES.includes(sp.status as StatusFilter)
-    ? (sp.status as StatusFilter)
-    : "all";
+  const status: ResultStatusFilter = parseResultStatusFilter(sp.status);
+  const spec = resultStatusSpec(status);
   const page = Math.max(1, Number(sp.page) || 1);
   const offset = (page - 1) * PAGE_SIZE;
   const todayISO = todayManilaISODate();
@@ -89,18 +79,26 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
     .select(
       `
         id, status, released_at, completed_at, requested_at,
-        visits!inner ( id, visit_number, patients!inner ( first_name, last_name, drm_id ) ),
+        visits!inner ( id, visit_number, payment_status, hmo_provider_id,
+          patients!inner ( first_name, last_name, drm_id ) ),
         services!inner ( code, name, kind, section )
       `,
       { count: "exact" },
     )
     .is("deleted_at", null)
     .is("visits.deleted_at", null)
-    .order("requested_at", { ascending: false })
+    .order("requested_at", { ascending: spec?.oldestFirst === true })
     .range(offset, offset + PAGE_SIZE - 1);
 
-  if (status !== "all") {
-    query = query.in("status", STATUS_FILTER_TO_DB[status]);
+  if (spec) {
+    query = query.in("status", spec.statuses);
+    // Unclaimed and In progress cover the same statuses and are told apart by
+    // who holds the test — see lib/results/status-filter.ts.
+    if (spec.assignee === "unclaimed") {
+      query = query.is("assigned_to", null);
+    } else if (spec.assignee === "claimed") {
+      query = query.not("assigned_to", "is", null);
+    }
   }
   // Manila calendar days, half-open. The old naive `${start}T00:00:00` bounds
   // carried no offset, so Postgres read them in the server's UTC zone and every
@@ -180,11 +178,11 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
     <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
       <PageHeader
         title="Results"
-        subtitle={<>Archive of every test request — created, in progress, ready for release, released, or cancelled.{hasFilters ? ` · ${total} matching` : ` · ${total} total`}</>}
+        subtitle={<>Archive of every test request — unclaimed, in progress, ready for release, released, or cancelled.{hasFilters ? ` · ${total} matching` : ` · ${total} total`}</>}
       />
 
       <nav className="mb-4 flex flex-wrap gap-2">
-        {STATUSES.map((s) => {
+        {RESULT_STATUSES.map((s) => {
           const active = s === status;
           return (
             <Link
@@ -196,7 +194,7 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
                   : "border-[color:var(--color-brand-bg-mid)] bg-white text-[color:var(--color-brand-navy)] hover:border-[color:var(--color-brand-cyan)]"
               }`}
             >
-              {STATUS_LABEL[s]}
+              {RESULT_STATUS_LABEL[s]}
             </Link>
           );
         })}
@@ -267,7 +265,9 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
       <section className="overflow-hidden rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
         {filtered.length === 0 ? (
           <p className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]">
-            No results match this filter.
+            {status === "unclaimed" && !start && !end && !q
+              ? "Nothing is waiting to be picked up — every test in progress has someone on it."
+              : "No results match this filter."}
           </p>
         ) : (
           <div className="overflow-x-auto">
@@ -285,7 +285,7 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
-                {groupByVisit(filtered, hasPdfByTrId).map((g) => {
+                {groupByVisit(filtered, hasPdfByTrId, spec?.oldestFirst === true).map((g) => {
                   const pat = g.patient;
                   const patientLabel = pat
                     ? `${pat.last_name}, ${pat.first_name}`
@@ -334,6 +334,21 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
                             ))}
                           </div>
                         )}
+                        {/* Why an unclaimed test is still sitting there: the lab
+                            queue hides every line of a visit that hasn't been
+                            paid, waived, or billed to an HMO (item 10), so this
+                            work isn't waiting on the bench — it's waiting on
+                            reception. */}
+                        {status === "unclaimed" && g.awaitingPayment ? (
+                          <div className="mt-1">
+                            {/* Bordered, unlike the sibling status badges, so it
+                                doesn't read as another amber `in_progress`
+                                chip on the one tab where both can appear. */}
+                            <span className="inline-block rounded-md border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                              awaiting payment
+                            </span>
+                          </div>
+                        ) : null}
                       </td>
                       <td className="px-4 py-3 text-xs text-[color:var(--color-brand-text-soft)]">
                         {formatDateTime(g.requestedAt)}
@@ -434,9 +449,19 @@ interface VisitGroup {
   requestedAt: string;
   completedAt: string | null;
   releasedAt: string | null;
+  /**
+   * The visit hasn't cleared the lab-queue payment gate, so the bench can't
+   * even see these rows — only meaningful on the Unclaimed tab, where it
+   * separates "nobody has got to it" from "the queue is hiding it".
+   */
+  awaitingPayment: boolean;
 }
 
-function groupByVisit(rows: ResultRow[], hasPdfByTrId: Map<string, boolean>): VisitGroup[] {
+function groupByVisit(
+  rows: ResultRow[],
+  hasPdfByTrId: Map<string, boolean>,
+  oldestFirst: boolean,
+): VisitGroup[] {
   const groups = new Map<string, VisitGroup>();
   for (const r of rows) {
     const visit = r.visits;
@@ -468,13 +493,17 @@ function groupByVisit(rows: ResultRow[], hasPdfByTrId: Map<string, boolean>): Vi
         requestedAt: r.requested_at,
         completedAt: r.completed_at,
         releasedAt: r.released_at,
+        awaitingPayment: !labQueueGate(visit).ok,
       });
     }
   }
-  // newest first by requested_at
-  return Array.from(groups.values()).sort((a, b) =>
-    a.requestedAt < b.requestedAt ? 1 : -1,
-  );
+  // Same direction the query ordered rows in, so the fold doesn't undo the
+  // tab's sort: oldest-first on the Unclaimed worklist, newest-first elsewhere.
+  return Array.from(groups.values()).sort((a, b) => {
+    if (a.requestedAt === b.requestedAt) return 0;
+    const newestFirst = a.requestedAt < b.requestedAt ? 1 : -1;
+    return oldestFirst ? -newestFirst : newestFirst;
+  });
 }
 
 type StatusSummary =
