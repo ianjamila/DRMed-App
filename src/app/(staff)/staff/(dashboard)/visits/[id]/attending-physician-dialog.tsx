@@ -11,10 +11,10 @@ interface PhysicianOption {
 // Item 23 gap 3: the visit-level "Assign/Change physician" affordance —
 // same inline-expand pattern as undo-release-dialog / waive-balance-dialog.
 // Fixes the P0034 dead-end: intake lets a doctor line through with no
-// physician, but the release trigger requires coalesce(test_requests.
-// attending_physician_id, visits.attending_physician_id) to be non-null, and
-// until this component there was no UI anywhere to set it after the visit
-// was created.
+// physician, but for PF-accruing lines (zero-PF lines are exempt since 0131)
+// the release trigger requires coalesce(test_requests.attending_physician_id,
+// visits.attending_physician_id) to be non-null, and until this component
+// there was no UI anywhere to set it after the visit was created.
 export function AttendingPhysicianDialog({
   visitId,
   currentPhysicianId,

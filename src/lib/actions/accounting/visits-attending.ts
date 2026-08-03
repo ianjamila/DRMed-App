@@ -4,9 +4,10 @@
  * Sets a visit's attending physician after intake (partner revisions item
  * 23 / audit gap 3).
  *
- * Intake legitimately allows zero-PF procedures with no physician, but the
- * COGS/PF release trigger (P0034, migration 0064) raises for ANY doctor line
- * whose coalesce(test_requests.attending_physician_id, visits.attending_
+ * Intake legitimately allows zero-PF procedures with no physician. The
+ * COGS/PF release trigger (P0034, migration 0064; zero-PF lines exempt
+ * since 0131) raises for any PF-accruing doctor line whose
+ * coalesce(test_requests.attending_physician_id, visits.attending_
  * physician_id) is null at release time. Before this action there was no UI
  * anywhere to fix that after the visit was created — this is the fix. A
  * former per-line sibling (setLineAttendingPhysician) was dead code (no

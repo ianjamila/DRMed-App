@@ -707,20 +707,19 @@ export function VisitForm({
             {lines.map(({ service: s, base, discount, final, ls }) => {
               const isConsult = s.kind === "doctor_consultation";
               const isProcedure = s.kind === "doctor_procedure";
-              // Auto-default clinic_fee based on selected physician's compensation arrangement.
-              // pf_split → 100; rent_paying / shareholder → 0. The per-doctor
-              // clinic_cut_php override applies to consult lines only — it's a
-              // consultation-fee override and must not bleed into procedure
-              // lines, which always use the plain arrangement-based default.
+              // Auto-default clinic_fee. Consults: from the selected physician's
+              // compensation arrangement (pf_split → 100; rent_paying /
+              // shareholder → 0), with the per-doctor clinic_cut_php override.
+              // Procedures: always ₱0 — the whole fee accrues to the doctor
+              // unless reception types a split; the arrangement default is a
+              // consultation split and must not bleed into procedure lines.
               const selectedPhysician = physicians.find((p) => p.id === attendingPhysicianId);
               const cfAuto = isConsult
                 ? defaultClinicFee(
                     selectedPhysician?.compensation_arrangement,
                     selectedPhysician?.clinic_cut_php,
                   )
-                : isProcedure
-                  ? defaultClinicFee(selectedPhysician?.compensation_arrangement)
-                  : 0;
+                : 0;
               // Procedures are counter-priced but start from the price list —
               // the box is prefilled so reception only types when the case
               // differs (the create action applies the same fallback).
@@ -981,11 +980,11 @@ export function VisitForm({
                           className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 font-mono text-xs focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
                         />
                       </div>
-                      {selectedPhysician && (cfAuto === 0) ? (
-                        <p className="col-span-12 self-end text-[10px] text-amber-700">
-                          Defaulted to ₱0 clinic fee ({selectedPhysician.compensation_arrangement.replace("_", "-")} arrangement).
-                        </p>
-                      ) : null}
+                      <p className="col-span-12 self-end text-[10px] text-[color:var(--color-brand-text-soft)]">
+                        Procedures default to ₱0 clinic fee — the full fee goes
+                        to the doctor. Type a clinic fee only when this case
+                        splits differently.
+                      </p>
                     </div>
                   ) : null}
                 </div>

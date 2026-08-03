@@ -230,9 +230,18 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
     .filter((kind): kind is string => Boolean(kind));
   const printsReceipt = shouldPrintReceipt(activeTestKinds);
   // Item 23 gap 3: the release trigger (P0034) requires an attending
-  // physician for every doctor line. A visit with doctor lines and no
-  // physician set is the dead end this UI fixes — surface the CTA loudly.
+  // physician for doctor lines that accrue PF (zero-PF lines are exempt
+  // since 0131 — nobody to accrue to). A visit with PF-carrying doctor
+  // lines and no physician set is the dead end this UI fixes — surface
+  // the CTA loudly. Zero-PF doctor lines still show the section so the
+  // physician can be recorded, just without the release-blocked warning.
   const hasDoctorLines = activeTestKinds.some(isDoctorKind);
+  const hasPfDoctorLines = (tests ?? [])
+    .filter((t) => t.deleted_at === null)
+    .some((t) => {
+      const svc = Array.isArray(t.services) ? t.services[0] : t.services;
+      return svc?.kind != null && isDoctorKind(svc.kind) && Number(t.doctor_pf_php ?? 0) > 0;
+    });
   // Mirrors the role gate inside setVisitAttendingPhysician.
   const canAssignPhysician = session.role === "reception" || session.role === "admin";
 
@@ -496,15 +505,15 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                 currentPhysicianId={visit.attending_physician_id}
                 currentPhysicianName={attendingPhysician?.full_name ?? null}
                 physicians={physicians ?? []}
-                prominent={!attendingPhysician && hasDoctorLines}
+                prominent={!attendingPhysician && hasPfDoctorLines}
               />
             ) : null}
           </div>
-          {!attendingPhysician && hasDoctorLines ? (
+          {!attendingPhysician && hasPfDoctorLines ? (
             <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
-              This visit has consult/procedure lines with no attending
-              physician on record — releasing them will be blocked until one
-              is assigned.
+              This visit has consult/procedure lines that accrue doctor PF
+              but no attending physician on record — releasing them will be
+              blocked until one is assigned.
             </p>
           ) : null}
           <p className="mt-2 text-[10px] text-[color:var(--color-brand-text-soft)]">
