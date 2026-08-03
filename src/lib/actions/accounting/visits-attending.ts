@@ -11,8 +11,9 @@
  * anywhere to fix that after the visit was created — this is the fix. A
  * former per-line sibling (setLineAttendingPhysician) was dead code (no
  * caller, no UI) and was removed rather than wired up; test_requests.
- * attending_physician_id and the trigger's COALESCE stay as-is for any line
- * that still carries a line-level override from data prior to this change.
+ * attending_physician_id and the trigger's COALESCE stay as-is, but note no
+ * writer has ever populated that column — the per-line override is schema
+ * capacity only, not live data.
  */
 
 import { revalidatePath } from "next/cache";

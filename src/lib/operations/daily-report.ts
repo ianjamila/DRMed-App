@@ -221,6 +221,8 @@ export interface DoctorRollupRow {
   arrangement: string | null;
   /** rent_paying | shareholder → clinic keeps ₱0 of the consult, by design. */
   clinicZeroByDesign: boolean;
+  /** ₱0 comes from an explicit clinic_cut_php = 0 override, not the arrangement default. */
+  clinicZeroByOverride: boolean;
   consultCount: number;
   salesGross: number;
   pfCollected: number;
@@ -263,6 +265,9 @@ export function buildDoctorRollup(rows: DoctorRow[]): SpecialtyGroup[] {
         name: r.full_name ?? UNATTRIBUTED,
         arrangement: r.compensation_arrangement,
         clinicZeroByDesign: clinicKeepsZero(r.compensation_arrangement, r.clinic_cut_php),
+        clinicZeroByOverride:
+          clinicKeepsZero(r.compensation_arrangement, r.clinic_cut_php) &&
+          defaultClinicFee(r.compensation_arrangement) !== 0,
         consultCount: 0,
         salesGross: 0,
         pfCollected: 0,

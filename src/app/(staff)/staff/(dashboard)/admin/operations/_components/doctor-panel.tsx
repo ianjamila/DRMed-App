@@ -68,7 +68,7 @@ export function DoctorPanel({ groups }: { groups: SpecialtyGroup[] }) {
                             className="ml-2 bg-amber-100 text-amber-800"
                             title="Clinic keeps ₱0 of the consult — the fee passes to the doctor"
                           >
-                            {arrangementLabel(d.arrangement)}
+                            {d.clinicZeroByOverride ? "₱0 override" : arrangementLabel(d.arrangement)}
                           </Badge>
                         )}
                       </TableCell>

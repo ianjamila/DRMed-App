@@ -197,6 +197,18 @@ describe("buildDoctorRollup — per-doctor clinic_cut_php override", () => {
   it("a nonzero clinic_cut_php flips a rent_paying doctor OFF clinic-₱0-by-design", () => {
     expect(doctors.find((d) => d.name === "Dr Reyes")!.clinicZeroByDesign).toBe(false);
   });
+  it("marks the override-driven zero (pf_split + cut 0) as clinicZeroByOverride", () => {
+    expect(doctors.find((d) => d.name === "Dr Santos")!.clinicZeroByOverride).toBe(true);
+  });
+  it("an arrangement-default zero (rent_paying, no override) is NOT clinicZeroByOverride", () => {
+    const rentDefault = buildDoctorRollup([
+      { business_date: "2023-12-04", physician_id: "p5", full_name: "Dr Uy", specialty: "Pediatrics",
+        compensation_arrangement: "rent_paying", clinic_cut_php: null, consult_count: 1, sales_gross: "500.00", pf_collected: "500.00" },
+    ]);
+    const uy = rentDefault[0].doctors.find((d) => d.name === "Dr Uy")!;
+    expect(uy.clinicZeroByDesign).toBe(true);
+    expect(uy.clinicZeroByOverride).toBe(false);
+  });
 });
 
 describe("groupDaysByMonth", () => {
