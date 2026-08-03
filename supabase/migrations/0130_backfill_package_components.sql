@@ -118,9 +118,11 @@
 --                   where pc.package_service_id = tr.service_id) as has_config
 --     from public.test_requests tr
 --     join public.services s on s.id = tr.service_id
+--     join public.visits v on v.id = tr.visit_id
 --    where tr.is_package_header = true
 --      and tr.status <> 'cancelled'
 --      and tr.deleted_at is null
+--      and v.deleted_at is null
 --      and not exists (select 1 from public.test_requests c where c.parent_id = tr.id);
 --
 --   -- Population B candidates (legacy flat packages, in-flight, no result):
@@ -259,6 +261,15 @@ end $$;
 -- second line of defense against a future regression re-introducing orphans,
 -- e.g. a bug reintroducing a header without its components in the same
 -- migration run.) Trivially passes on an empty/fresh database.
+--
+-- MUST mirror Population A's candidate predicate exactly (same join, same
+-- filters), or the guard false-positives on a header Population A correctly
+-- (and intentionally) left alone. Concretely: a header under a soft-deleted
+-- visit is skipped by Population A's `join visits v ... v.deleted_at is
+-- null` — without the same join/filter here, the guard would still see that
+-- header (zero children, config present) and abort the whole migration over
+-- a row nothing was ever meant to touch. Bug found in spec review 2026-08-03;
+-- reproduced on the local stack before this fix.
 -- ---------------------------------------------------------------------------
 do $$
 declare
@@ -267,9 +278,11 @@ begin
   select string_agg(tr.id::text, ', ')
     into v_offenders
     from public.test_requests tr
+    join public.visits v on v.id = tr.visit_id
    where tr.is_package_header = true
      and tr.status <> 'cancelled'
      and tr.deleted_at is null
+     and v.deleted_at is null
      and exists (
        select 1 from public.package_components pc
         where pc.package_service_id = tr.service_id
