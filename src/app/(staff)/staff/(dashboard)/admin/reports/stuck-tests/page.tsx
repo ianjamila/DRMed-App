@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { formatPhp } from "@/lib/marketing/format";
 import { Panel } from "@/components/ui/panel";
 import { PageHeader } from "@/components/staff/page-header";
 
@@ -128,6 +129,58 @@ export default async function StuckTestsPage({ searchParams }: SearchProps) {
       .in("id", claimerIds);
     for (const p of profs ?? []) claimerNames.set(p.id, p.full_name);
   }
+
+  // Zero-child package headers — 0130's Population-A predicates, live:
+  // is_package_header = true, status in (in_progress, ready_for_release),
+  // not soft-deleted, visit not soft-deleted, and NO row has parent_id =
+  // header.id. Since the atomic visit-creation fix these can no longer be
+  // minted (header + components go in as one statement), so anything here is
+  // either pre-fix damage 0130 missed or a regression. The embed hint is the
+  // parent_id COLUMN (self-referential FK), and `.is("components", null)`
+  // makes the left-joined embed an anti-join.
+  const { data: orphanRaw } = await admin
+    .from("test_requests")
+    .select(
+      `
+        id, status, requested_at, visit_id,
+        services!inner ( code, name ),
+        visits!inner (
+          visit_number, payment_status,
+          patients!inner ( first_name, last_name, drm_id )
+        ),
+        components:test_requests!parent_id ( id )
+      `,
+    )
+    .eq("is_package_header", true)
+    .in("status", ["in_progress", "ready_for_release"])
+    .is("deleted_at", null)
+    .is("visits.deleted_at", null)
+    .is("components", null)
+    .order("requested_at", { ascending: true })
+    .limit(100);
+
+  const orphanHeaders = orphanRaw ?? [];
+
+  // Visits with NO test_request rows at all — the one partial-write shape the
+  // atomic insert still permits (a crash between the visit insert and the
+  // single test_requests insert). Older than an hour so a request in flight
+  // right now can't false-positive.
+  const { data: emptyVisitsRaw } = await admin
+    .from("visits")
+    .select(
+      `
+        id, visit_number, created_at, total_php, payment_status,
+        patients!inner ( first_name, last_name, drm_id ),
+        lines:test_requests ( id )
+      `,
+    )
+    .is("deleted_at", null)
+    .is("lines", null)
+    .lt("created_at", cutoffIso(1 / 24))
+    .order("created_at", { ascending: true })
+    .limit(100);
+
+  const emptyVisits = emptyVisitsRaw ?? [];
 
   // Second table: package HEADERS sitting at ready_for_release on paid
   // visits whose components are all terminal with ≥1 released — the Visit
@@ -401,6 +454,186 @@ export default async function StuckTestsPage({ searchParams }: SearchProps) {
                         <p className="font-mono text-xs text-[color:var(--color-brand-text-soft)]">
                           {svc?.code ?? "—"}
                         </p>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </Panel>
+      </section>
+
+      <section className="mt-8">
+        <h2 className="mb-2 font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+          Package headers with no test lines
+        </h2>
+        <p className="mb-3 text-sm text-[color:var(--color-brand-text-soft)]">
+          Package orders whose individual tests were never created — usually a
+          visit creation that was interrupted partway. Results can never be
+          entered against these, so they will sit forever unless repaired.
+          Since visit creation became a single all-or-nothing step this list
+          should always be empty; anything appearing here needs its components
+          backfilled (the 0130 migration shape) — investigate.
+        </p>
+        <Panel className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+              <tr>
+                <th className="px-4 py-3">Age</th>
+                <th className="px-4 py-3">Visit</th>
+                <th className="px-4 py-3">Patient</th>
+                <th className="px-4 py-3">Package</th>
+                <th className="px-4 py-3">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
+              {orphanHeaders.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={5}
+                    className="px-4 py-6 text-center text-sm text-[color:var(--color-brand-text-soft)]"
+                  >
+                    None — every package order has its test lines.
+                  </td>
+                </tr>
+              ) : (
+                orphanHeaders.map((h) => {
+                  const svc = pluckOne(h.services);
+                  const visit = pluckOne(h.visits);
+                  const patient = visit ? pluckOne(visit.patients) : null;
+                  return (
+                    <tr key={h.id} className="hover:bg-[color:var(--color-brand-bg)]">
+                      <td className="px-4 py-3">
+                        <p className="font-semibold text-[color:var(--color-brand-navy)]">
+                          {ageDays(h.requested_at)}d
+                        </p>
+                        <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+                          {manila(h.requested_at)}
+                        </p>
+                      </td>
+                      <td className="px-4 py-3">
+                        <Link
+                          href={`/staff/visits/${h.visit_id}`}
+                          className="font-semibold text-[color:var(--color-brand-navy)] hover:text-[color:var(--color-brand-cyan)]"
+                        >
+                          #{visit?.visit_number ?? "?"}
+                        </Link>
+                      </td>
+                      <td className="px-4 py-3">
+                        <p className="font-semibold text-[color:var(--color-brand-navy)]">
+                          {patient
+                            ? `${patient.last_name}, ${patient.first_name}`
+                            : "—"}
+                        </p>
+                        <p className="font-mono text-xs text-[color:var(--color-brand-text-soft)]">
+                          {patient?.drm_id ?? "—"}
+                        </p>
+                      </td>
+                      <td className="px-4 py-3">
+                        <Link
+                          href={`/staff/queue/${h.id}`}
+                          className="font-semibold text-[color:var(--color-brand-navy)] hover:text-[color:var(--color-brand-cyan)]"
+                        >
+                          {svc?.name ?? "(unknown)"}
+                        </Link>
+                        <p className="font-mono text-xs text-[color:var(--color-brand-text-soft)]">
+                          {svc?.code ?? "—"}
+                        </p>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={`rounded-md px-2 py-0.5 text-xs font-semibold ${
+                            TEST_STATUS_STYLE[h.status] ?? ""
+                          }`}
+                        >
+                          {h.status.replace(/_/g, " ")}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </Panel>
+      </section>
+
+      <section className="mt-8">
+        <h2 className="mb-2 font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+          Visits with no services at all
+        </h2>
+        <p className="mb-3 text-sm text-[color:var(--color-brand-text-soft)]">
+          Visits carrying zero service lines — the leftover of a visit
+          creation that was interrupted between saving the visit and saving
+          its services (only visits older than an hour are listed, so one
+          being created right now never shows). The patient was likely
+          re-entered a moment later, so these are usually safe to delete from
+          the visit page — but check for a duplicate visit first.
+        </p>
+        <Panel className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+              <tr>
+                <th className="px-4 py-3">Age</th>
+                <th className="px-4 py-3">Visit</th>
+                <th className="px-4 py-3">Patient</th>
+                <th className="px-4 py-3">Total</th>
+                <th className="px-4 py-3">Visit payment</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
+              {emptyVisits.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={5}
+                    className="px-4 py-6 text-center text-sm text-[color:var(--color-brand-text-soft)]"
+                  >
+                    None — every visit has service lines.
+                  </td>
+                </tr>
+              ) : (
+                emptyVisits.map((v) => {
+                  const patient = pluckOne(v.patients);
+                  return (
+                    <tr key={v.id} className="hover:bg-[color:var(--color-brand-bg)]">
+                      <td className="px-4 py-3">
+                        <p className="font-semibold text-[color:var(--color-brand-navy)]">
+                          {ageDays(v.created_at)}d
+                        </p>
+                        <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+                          {manila(v.created_at)}
+                        </p>
+                      </td>
+                      <td className="px-4 py-3">
+                        <Link
+                          href={`/staff/visits/${v.id}`}
+                          className="font-semibold text-[color:var(--color-brand-navy)] hover:text-[color:var(--color-brand-cyan)]"
+                        >
+                          #{v.visit_number}
+                        </Link>
+                      </td>
+                      <td className="px-4 py-3">
+                        <p className="font-semibold text-[color:var(--color-brand-navy)]">
+                          {patient
+                            ? `${patient.last_name}, ${patient.first_name}`
+                            : "—"}
+                        </p>
+                        <p className="font-mono text-xs text-[color:var(--color-brand-text-soft)]">
+                          {patient?.drm_id ?? "—"}
+                        </p>
+                      </td>
+                      <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
+                        {formatPhp(v.total_php)}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={`rounded-md px-2 py-0.5 text-xs font-semibold ${
+                            PAYMENT_STYLE[v.payment_status] ?? ""
+                          }`}
+                        >
+                          {v.payment_status.replace(/_/g, " ")}
+                        </span>
                       </td>
                     </tr>
                   );

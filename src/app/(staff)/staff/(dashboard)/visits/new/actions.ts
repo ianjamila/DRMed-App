@@ -448,7 +448,7 @@ export async function createVisitAction(
         patient_id: parsed.data.patient_id,
         action: "package.decomposed",
         resource_type: "test_request",
-        resource_id: c.headerIdsForAudit[i] ?? null,
+        resource_id: c.headerIdsForAudit[i]!,
         metadata: {
           visit_id: c.visitId,
           package_service_id: d.headerLine.service_id,
@@ -520,16 +520,67 @@ interface OneVisitResult {
   visitNumber: string;
   hmo: VisitHmo;
   decompositions: PackageDecomposition[];
-  headerIdsForAudit: Array<string | null>;
+  headerIdsForAudit: string[];
 }
+
+// Every row in the single bulk insert must carry this exact key set:
+// PostgREST fills keys missing from *some* rows of a batch with NULL (not the
+// column default), so a row omitting e.g. `id` or `status` would insert NULL
+// and violate NOT NULL — uniformity is mandatory, not stylistic.
+type TestRequestInsertRow = Required<
+  Pick<
+    Database["public"]["Tables"]["test_requests"]["Insert"],
+    | "id"
+    | "visit_id"
+    | "service_id"
+    | "requested_by"
+    | "base_price_php"
+    | "discount_kind"
+    | "discount_amount_php"
+    | "final_price_php"
+    | "hmo_provider_id"
+    | "hmo_approval_date"
+    | "hmo_authorization_no"
+    | "receptionist_remarks"
+    | "clinic_fee_php"
+    | "doctor_pf_php"
+    | "procedure_description"
+    | "hmo_approved_amount_php"
+    | "parent_id"
+    | "is_package_header"
+    | "status"
+  >
+>;
 
 // Creates a single visit and all its test_requests (incl. package
 // decomposition). Throws Error on any failure; the caller rolls back.
+//
+// All test_request rows — package headers, standalone lines, and package
+// components — go in as ONE multi-row insert with client-generated UUIDs, so
+// a crash can never leave a header committed without its components (the
+// orphaned-header window 0130 had to repair). Headers are ordered before
+// components in the array: tg_test_request_parent_is_header (0040) validates
+// each child against rows already inserted earlier in the same statement, so
+// array order is load-bearing (verified on the local stack — child-before-
+// header raises "parent_id does not exist").
 async function createOneVisit(
   supabase: SupabaseClient<Database>,
   input: OneVisitInput,
 ): Promise<OneVisitResult> {
   const totalPhp = input.lines.reduce((sum, l) => sum + l.final_price_php, 0);
+
+  // Pure read — resolve package compositions before writing anything, so a
+  // misconfigured package aborts with zero rows to clean up.
+  const decompositionResult = await loadPackageDecompositionsForLines(
+    supabase,
+    input.lines,
+    input.services,
+  );
+  if (!decompositionResult.ok) {
+    throw new Error(decompositionResult.error);
+  }
+  const decompositions = decompositionResult.decompositions;
+  const packageServiceIds = new Set(decompositions.map((d) => d.headerLine.service_id));
 
   const { data: visit, error: visitErr } = await supabase
     .from("visits")
@@ -550,127 +601,96 @@ async function createOneVisit(
     throw new Error(visitErr?.message ?? "Could not create visit.");
   }
 
-  const decompositionResult = await loadPackageDecompositionsForLines(
-    supabase,
-    input.lines,
-    input.services,
-  );
-  if (!decompositionResult.ok) {
-    await deleteVisitCascade(supabase, visit.id);
-    throw new Error(decompositionResult.error);
-  }
-  const decompositions = decompositionResult.decompositions;
-  const packageServiceIds = new Set(decompositions.map((d) => d.headerLine.service_id));
+  const lineRow = (
+    l: OneVisitInput["lines"][number],
+  ): Omit<TestRequestInsertRow, "id" | "parent_id" | "is_package_header" | "status"> => ({
+    visit_id: visit.id,
+    service_id: l.service_id,
+    requested_by: input.createdBy,
+    base_price_php: l.base_price_php,
+    discount_kind: l.discount_kind,
+    discount_amount_php: l.discount_amount_php,
+    final_price_php: l.final_price_php,
+    hmo_provider_id: input.hmo.hmo_provider_id,
+    hmo_approval_date: input.hmo.hmo_approval_date,
+    hmo_authorization_no: input.hmo.hmo_authorization_no,
+    receptionist_remarks: input.receptionistRemarks,
+    clinic_fee_php: l.clinic_fee_php,
+    doctor_pf_php: l.doctor_pf_php,
+    procedure_description: l.procedure_description,
+    hmo_approved_amount_php: l.hmo_approved_amount_php,
+  });
 
-  const headerRows = input.lines
-    .filter((l) => packageServiceIds.has(l.service_id))
-    .map((l) => ({
-      visit_id: visit.id,
-      service_id: l.service_id,
-      requested_by: input.createdBy,
-      base_price_php: l.base_price_php,
-      discount_kind: l.discount_kind,
-      discount_amount_php: l.discount_amount_php,
-      final_price_php: l.final_price_php,
-      hmo_provider_id: input.hmo.hmo_provider_id,
-      hmo_approval_date: input.hmo.hmo_approval_date,
-      hmo_authorization_no: input.hmo.hmo_authorization_no,
-      receptionist_remarks: input.receptionistRemarks,
-      clinic_fee_php: l.clinic_fee_php,
-      doctor_pf_php: l.doctor_pf_php,
-      procedure_description: l.procedure_description,
-      hmo_approved_amount_php: l.hmo_approved_amount_php,
-      is_package_header: true as const,
-      status: "in_progress" as const,
-    }));
-
-  const standaloneRows = input.lines
-    .filter((l) => !packageServiceIds.has(l.service_id))
-    .map((l) => ({
-      visit_id: visit.id,
-      service_id: l.service_id,
-      requested_by: input.createdBy,
-      base_price_php: l.base_price_php,
-      discount_kind: l.discount_kind,
-      discount_amount_php: l.discount_amount_php,
-      final_price_php: l.final_price_php,
-      hmo_provider_id: input.hmo.hmo_provider_id,
-      hmo_approval_date: input.hmo.hmo_approval_date,
-      hmo_authorization_no: input.hmo.hmo_authorization_no,
-      receptionist_remarks: input.receptionistRemarks,
-      clinic_fee_php: l.clinic_fee_php,
-      doctor_pf_php: l.doctor_pf_php,
-      procedure_description: l.procedure_description,
-      hmo_approved_amount_php: l.hmo_approved_amount_php,
-      is_package_header: false as const,
-    }));
-
-  const headerRowsBySvcId = new Map<string, string[]>();
-  if (headerRows.length > 0) {
-    const headerInserts = await supabase
-      .from("test_requests")
-      .insert(headerRows)
-      .select("id, service_id");
-    if (headerInserts.error || !headerInserts.data) {
-      await deleteVisitCascade(supabase, visit.id);
-      throw new Error(`Failed to create package header rows: ${headerInserts.error?.message}`);
-    }
-    for (const row of headerInserts.data) {
-      const arr = headerRowsBySvcId.get(row.service_id) ?? [];
-      arr.push(row.id);
-      headerRowsBySvcId.set(row.service_id, arr);
-    }
+  // Pair each decomposition with its package line (queued per service so
+  // duplicate package lines pair up in order) and mint the header UUID here,
+  // client-side — components reference it before anything is inserted.
+  const packageLinesBySvc = new Map<string, OneVisitInput["lines"]>();
+  for (const l of input.lines) {
+    if (!packageServiceIds.has(l.service_id)) continue;
+    const queue = packageLinesBySvc.get(l.service_id) ?? [];
+    queue.push(l);
+    packageLinesBySvc.set(l.service_id, queue);
   }
 
-  const headerIdsForAudit: Array<string | null> = [];
-  // Same explicit shape the original action used, so the mixed
-  // [...standaloneRows, ...componentRows] insert keeps type-checking.
-  const componentRows: Array<{
-    visit_id: string;
-    service_id: string;
-    requested_by: string;
-    base_price_php: number;
-    discount_amount_php: number;
-    final_price_php: number;
-    hmo_provider_id: string | null;
-    hmo_approval_date: string | null;
-    hmo_authorization_no: string | null;
-    parent_id: string;
-    is_package_header: false;
-  }> = [];
+  const headerRows: TestRequestInsertRow[] = [];
+  const componentRows: TestRequestInsertRow[] = [];
+  const headerIdsForAudit: string[] = [];
   for (const d of decompositions) {
-    const headerIdQueue = headerRowsBySvcId.get(d.headerLine.service_id) ?? [];
-    const headerId = headerIdQueue.shift();
-    if (!headerId) {
-      await deleteVisitCascade(supabase, visit.id);
-      throw new Error(`Internal error: missing header row for service ${d.headerLine.service_id}`);
+    const line = packageLinesBySvc.get(d.headerLine.service_id)?.shift();
+    if (!line) {
+      throw new Error(
+        `Internal error: missing package line for service ${d.headerLine.service_id}`,
+      );
     }
-    headerRowsBySvcId.set(d.headerLine.service_id, headerIdQueue);
+    const headerId = crypto.randomUUID();
     headerIdsForAudit.push(headerId);
+    headerRows.push({
+      ...lineRow(line),
+      id: headerId,
+      parent_id: null,
+      is_package_header: true,
+      // tg_header_auto_promote (0040) flips this to ready_for_release on insert.
+      status: "in_progress",
+    });
     for (const componentServiceId of d.componentServiceIds) {
       componentRows.push({
-        visit_id: visit.id,
+        ...lineRow(line),
+        id: crypto.randomUUID(),
         service_id: componentServiceId,
-        requested_by: input.createdBy,
+        // Components are ₱0 rows — the header carries the package price.
         base_price_php: 0,
+        discount_kind: null,
         discount_amount_php: 0,
         final_price_php: 0,
-        hmo_provider_id: input.hmo.hmo_provider_id,
-        hmo_approval_date: input.hmo.hmo_approval_date,
-        hmo_authorization_no: input.hmo.hmo_authorization_no,
+        receptionist_remarks: null,
+        clinic_fee_php: null,
+        doctor_pf_php: null,
+        procedure_description: null,
+        hmo_approved_amount_php: null,
         parent_id: headerId,
         is_package_header: false,
+        status: "requested",
       });
     }
   }
 
-  const allLeafRows = [...standaloneRows, ...componentRows];
-  if (allLeafRows.length > 0) {
-    const { error: leafErr } = await supabase.from("test_requests").insert(allLeafRows);
-    if (leafErr) {
-      await deleteVisitCascade(supabase, visit.id);
-      throw new Error(`Visit created but tests failed: ${leafErr.message}`);
-    }
+  const standaloneRows: TestRequestInsertRow[] = input.lines
+    .filter((l) => !packageServiceIds.has(l.service_id))
+    .map((l) => ({
+      ...lineRow(l),
+      id: crypto.randomUUID(),
+      parent_id: null,
+      is_package_header: false,
+      status: "requested",
+    }));
+
+  // ONE statement for every test_request row. Headers MUST precede the
+  // component rows that reference them (see function comment).
+  const allRows = [...headerRows, ...standaloneRows, ...componentRows];
+  const { error: insertErr } = await supabase.from("test_requests").insert(allRows);
+  if (insertErr) {
+    await deleteVisitCascade(supabase, visit.id);
+    throw new Error(`Visit created but tests failed: ${insertErr.message}`);
   }
 
   return {
