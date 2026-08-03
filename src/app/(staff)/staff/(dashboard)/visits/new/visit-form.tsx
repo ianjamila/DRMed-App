@@ -564,7 +564,7 @@ export function VisitForm({
                 ))}
               </select>
               <p className="text-xs text-[color:var(--color-brand-text-soft)]">
-                Required at release time for consults and procedures. Per-line override available below.
+                Required at release time for consults and procedures.
               </p>
             </div>
           </fieldset>

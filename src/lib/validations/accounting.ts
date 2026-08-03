@@ -726,15 +726,9 @@ export const VisitAttendingSchema = z.object({
   attending_physician_id: z.string().uuid().nullable(),
 });
 
-export const TestRequestAttendingSchema = z.object({
-  test_request_id: z.string().uuid(),
-  attending_physician_id: z.string().uuid().nullable(),
-});
-
 export type PfDisbursementCreate = z.infer<typeof PfDisbursementCreateSchema>;
 export type PfBulkPayout = z.infer<typeof PfBulkPayoutSchema>;
 export type SendOutTrueupCreate = z.infer<typeof SendOutTrueupCreateSchema>;
 export type CompensationArrangement = z.infer<typeof CompensationArrangementSchema>;
 export type SendOutConfig = z.infer<typeof SendOutConfigSchema>;
 export type VisitAttending = z.infer<typeof VisitAttendingSchema>;
-export type TestRequestAttending = z.infer<typeof TestRequestAttendingSchema>;
