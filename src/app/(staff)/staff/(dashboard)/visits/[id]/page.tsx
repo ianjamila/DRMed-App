@@ -28,6 +28,7 @@ import {
   CONSULT_ONLY_RECEIPT_NOTE,
   shouldPrintReceipt,
 } from "@/lib/visits/receipt-policy";
+import { isDoctorKind } from "@/lib/visits/order-lines";
 import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
 import { ReissuePinButton } from "@/components/staff/reissue-pin-button";
 
@@ -231,9 +232,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
   // Item 23 gap 3: the release trigger (P0034) requires an attending
   // physician for every doctor line. A visit with doctor lines and no
   // physician set is the dead end this UI fixes — surface the CTA loudly.
-  const hasDoctorLines = activeTestKinds.some(
-    (kind) => kind === "doctor_consultation" || kind === "doctor_procedure",
-  );
+  const hasDoctorLines = activeTestKinds.some(isDoctorKind);
   // Mirrors the role gate inside setVisitAttendingPhysician.
   const canAssignPhysician = session.role === "reception" || session.role === "admin";
 

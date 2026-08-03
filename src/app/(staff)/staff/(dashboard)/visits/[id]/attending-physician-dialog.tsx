@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { setVisitAttendingPhysician } from "@/lib/actions/accounting/visits-attending";
 
-interface PhysicianLite {
+interface PhysicianOption {
   id: string;
   full_name: string;
 }
@@ -28,7 +28,7 @@ export function AttendingPhysicianDialog({
   // Active physicians only, ordered like the new-visit picker. If the
   // visit's current physician has since been deactivated, they're appended
   // below so the dropdown never silently drops the recorded name.
-  physicians: PhysicianLite[];
+  physicians: PhysicianOption[];
   // When true, renders as a loud CTA instead of the subtle "Change" link —
   // used when the visit has doctor lines and no physician set yet.
   prominent?: boolean;
@@ -71,7 +71,7 @@ export function AttendingPhysicianDialog({
         onClick={() => setOpen(true)}
         className={
           prominent
-            ? "min-h-[44px] rounded-md bg-amber-500 px-3 text-xs font-bold uppercase tracking-wider text-white hover:bg-amber-600"
+            ? "min-h-[44px] rounded-md bg-amber-700 px-3 text-xs font-bold uppercase tracking-wider text-white hover:bg-amber-800"
             : "text-xs font-semibold text-[color:var(--color-brand-text-soft)] hover:underline"
         }
       >
