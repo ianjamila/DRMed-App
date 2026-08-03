@@ -2,8 +2,21 @@
 // imports so this is unit-testable. Shared by the visit form (defaults for
 // display) and the visit-creation action (authoritative snapshot).
 
-/** Clinic's cut of a doctor fee, defaulted from the physician's arrangement. */
-export function defaultClinicFee(arrangement: string | undefined | null): number {
+/**
+ * Clinic's cut of a doctor fee.
+ *
+ * `clinicCutPhp` is the physician's per-doctor override (partner revisions
+ * item — physicians.clinic_cut_php). When it's a finite number ≥ 0 it wins
+ * outright; otherwise (null/undefined/negative/NaN) this falls back to the
+ * arrangement-based default it has always used.
+ */
+export function defaultClinicFee(
+  arrangement: string | undefined | null,
+  clinicCutPhp?: number | null,
+): number {
+  if (Number.isFinite(clinicCutPhp) && (clinicCutPhp as number) >= 0) {
+    return clinicCutPhp as number;
+  }
   if (arrangement === "rent_paying" || arrangement === "shareholder") return 0;
   return 100; // pf_split (and unknown) → clinic keeps ₱100
 }
@@ -53,20 +66,24 @@ interface SplitInput {
   arrangement: string | undefined | null;
   clinicFeeRaw: string; // raw form value; "" means "use the default"
   doctorPfRaw: string;  // raw form value; "" means "remainder"
+  /** Per-doctor clinic-cut override (physicians.clinic_cut_php). */
+  clinicCutPhp?: number | null;
 }
 
 /**
  * Split a doctor line's final price into clinic_fee + doctor_pf.
- * Empty/invalid clinic-fee input falls back to the arrangement default;
- * empty/invalid PF input falls back to (final − clinic fee), floored at 0.
+ * Empty/invalid clinic-fee input falls back to the default — the per-doctor
+ * clinicCutPhp override when set, else the arrangement default; empty/invalid
+ * PF input falls back to (final − clinic fee), floored at 0.
  */
 export function splitDoctorFee({
   finalPrice,
   arrangement,
   clinicFeeRaw,
   doctorPfRaw,
+  clinicCutPhp,
 }: SplitInput): { clinic_fee_php: number; doctor_pf_php: number } {
-  const cfDefault = defaultClinicFee(arrangement);
+  const cfDefault = defaultClinicFee(arrangement, clinicCutPhp);
   const cfNum = clinicFeeRaw.trim() === "" ? cfDefault : Number(clinicFeeRaw);
   const clinic_fee_php = Number.isFinite(cfNum) && cfNum >= 0 ? cfNum : cfDefault;
 

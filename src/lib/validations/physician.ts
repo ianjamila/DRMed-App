@@ -9,6 +9,15 @@ const optionalText = (max: number) =>
     })
     .pipe(z.string().max(max).nullable());
 
+const optionalNonNegativeNumber = z
+  .union([z.string(), z.number(), z.null(), z.undefined()])
+  .transform((v) => {
+    if (v == null || v === "") return null;
+    const n = typeof v === "number" ? v : Number(v);
+    return Number.isFinite(n) ? n : null;
+  })
+  .pipe(z.number().min(0).nullable());
+
 const slug = z
   .string()
   .trim()
@@ -37,6 +46,8 @@ const PhysicianFields = {
     .union([z.string(), z.null(), z.undefined()])
     .transform((v) => (v ?? "pf_split").toString().trim() || "pf_split")
     .pipe(z.enum(["pf_split", "rent_paying", "shareholder"])),
+  default_consultation_fee_php: optionalNonNegativeNumber,
+  clinic_cut_php: optionalNonNegativeNumber,
 };
 
 export const PhysicianCreateSchema = z.object(PhysicianFields);

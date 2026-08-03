@@ -14,6 +14,22 @@ describe("defaultClinicFee", () => {
     expect(defaultClinicFee("rent_paying")).toBe(0);
     expect(defaultClinicFee("shareholder")).toBe(0);
   });
+
+  it("a per-doctor override wins over the arrangement default", () => {
+    expect(defaultClinicFee("pf_split", 250)).toBe(250);
+    expect(defaultClinicFee("rent_paying", 50)).toBe(50);
+    expect(defaultClinicFee("pf_split", 0)).toBe(0);
+  });
+  it("falls back to the arrangement default when the override is null/undefined", () => {
+    expect(defaultClinicFee("pf_split", null)).toBe(100);
+    expect(defaultClinicFee("pf_split", undefined)).toBe(100);
+    expect(defaultClinicFee("rent_paying", null)).toBe(0);
+  });
+  it("ignores a negative or NaN override and falls back to the arrangement default", () => {
+    expect(defaultClinicFee("pf_split", -5)).toBe(100);
+    expect(defaultClinicFee("pf_split", NaN)).toBe(100);
+    expect(defaultClinicFee("rent_paying", -1)).toBe(0);
+  });
 });
 
 describe("doctorLineBase", () => {
@@ -85,5 +101,50 @@ describe("splitDoctorFee", () => {
     expect(
       splitDoctorFee({ finalPrice: 500, arrangement: "pf_split", clinicFeeRaw: "abc", doctorPfRaw: "" }),
     ).toEqual({ clinic_fee_php: 100, doctor_pf_php: 400 });
+  });
+
+  it("uses the per-doctor clinicCutPhp override as the default when the fee input is blank", () => {
+    expect(
+      splitDoctorFee({
+        finalPrice: 800,
+        arrangement: "pf_split",
+        clinicFeeRaw: "",
+        doctorPfRaw: "",
+        clinicCutPhp: 250,
+      }),
+    ).toEqual({ clinic_fee_php: 250, doctor_pf_php: 550 });
+  });
+  it("falls back to the arrangement default when clinicCutPhp is null/undefined", () => {
+    expect(
+      splitDoctorFee({
+        finalPrice: 500,
+        arrangement: "pf_split",
+        clinicFeeRaw: "",
+        doctorPfRaw: "",
+        clinicCutPhp: null,
+      }),
+    ).toEqual({ clinic_fee_php: 100, doctor_pf_php: 400 });
+  });
+  it("ignores a negative or NaN clinicCutPhp override", () => {
+    expect(
+      splitDoctorFee({
+        finalPrice: 500,
+        arrangement: "pf_split",
+        clinicFeeRaw: "",
+        doctorPfRaw: "",
+        clinicCutPhp: -10,
+      }),
+    ).toEqual({ clinic_fee_php: 100, doctor_pf_php: 400 });
+  });
+  it("an explicit typed clinic-fee input still wins over clinicCutPhp", () => {
+    expect(
+      splitDoctorFee({
+        finalPrice: 800,
+        arrangement: "pf_split",
+        clinicFeeRaw: "150",
+        doctorPfRaw: "",
+        clinicCutPhp: 250,
+      }),
+    ).toEqual({ clinic_fee_php: 150, doctor_pf_php: 650 });
   });
 });

@@ -28,6 +28,8 @@ function readForm(formData: FormData) {
     is_active: formData.get("is_active"),
     display_order: formData.get("display_order"),
     compensation_arrangement: formData.get("compensation_arrangement"),
+    default_consultation_fee_php: formData.get("default_consultation_fee_php"),
+    clinic_cut_php: formData.get("clinic_cut_php"),
   };
 }
 

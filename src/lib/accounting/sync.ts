@@ -142,8 +142,22 @@ interface RawTestRequest {
     } | null;
     hmo_providers: { name: string } | null;
     payments: Array<{ method: string | null; reference_number: string | null }> | null;
+    physicians: { full_name: string } | null;
   } | null;
   services: { name: string; kind: string } | null;
+  physicians: { full_name: string } | null;
+}
+
+// Doctor resolution mirrors the DB's own rule (migration 0066's trigger):
+// coalesce(test_requests.attending_physician_id, visits.attending_physician_id)
+// → physicians.full_name. The line-level physician (rare override) wins;
+// otherwise fall back to whoever is attending the visit. (The reporting view
+// in 0093 uses only the visit-level column, without the per-line override.)
+function resolveDoctorConsultant(
+  linePhysician: { full_name: string } | null,
+  visitPhysician: { full_name: string } | null,
+): string | null {
+  return linePhysician?.full_name ?? visitPhysician?.full_name ?? null;
 }
 
 function fullName(p: { first_name: string; middle_name: string | null; last_name: string } | null): string {
@@ -178,9 +192,11 @@ const TEST_REQUEST_SELECT = `
     visit_date, visit_number, payment_status, hmo_approval_date, created_at,
     patients!inner ( first_name, middle_name, last_name ),
     hmo_providers ( name ),
-    payments ( method, reference_number )
+    payments ( method, reference_number ),
+    physicians!visits_attending_physician_id_fkey ( full_name )
   ),
-  services!inner ( name, kind )
+  services!inner ( name, kind ),
+  physicians!test_requests_attending_physician_id_fkey ( full_name )
 `;
 
 const LAB_KINDS = ["lab_test", "lab_package", "vaccine", "home_service"];
@@ -261,7 +277,7 @@ async function fetchConsultRows(
       patient_full_name: fullName(tr.visits.patients),
       hmo_provider_name: tr.visits.hmo_providers?.name ?? null,
       hmo_approval_date: tr.visits.hmo_approval_date,
-      doctor_consultant: null,
+      doctor_consultant: resolveDoctorConsultant(tr.physicians, tr.visits.physicians),
       base_price_php: tr.base_price_php,
       discount_kind: tr.discount_kind,
       discount_amount_php: tr.discount_amount_php,
@@ -304,7 +320,7 @@ async function fetchProcedureRows(
       hmo_provider_name: tr.visits.hmo_providers?.name ?? null,
       hmo_approval_date: tr.visits.hmo_approval_date,
       procedure_description: tr.procedure_description,
-      doctor_consultant: null,
+      doctor_consultant: resolveDoctorConsultant(tr.physicians, tr.visits.physicians),
       hmo_approved_amount_php: tr.hmo_approved_amount_php,
     };
     rows.push(mapProcedureRow(source));

@@ -51,7 +51,7 @@ export default async function OperationsDailyReportPage({
       .lte("business_date", to),
     admin
       .from("v_ops_daily_doctor")
-      .select("business_date, physician_id, full_name, specialty, compensation_arrangement, consult_count, sales_gross, pf_collected")
+      .select("business_date, physician_id, full_name, specialty, compensation_arrangement, clinic_cut_php, consult_count, sales_gross, pf_collected")
       .gte("business_date", from)
       .lte("business_date", to),
     admin

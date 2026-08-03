@@ -179,6 +179,38 @@ describe("buildDoctorRollup", () => {
   });
 });
 
+describe("buildDoctorRollup — per-doctor clinic_cut_php override", () => {
+  const rows: DoctorRow[] = [
+    // pf_split arrangement (clinic keeps ₱100 by default) but overridden to ₱0.
+    { business_date: "2023-12-04", physician_id: "p3", full_name: "Dr Santos", specialty: "Pediatrics",
+      compensation_arrangement: "pf_split", clinic_cut_php: "0.00", consult_count: 1, sales_gross: "500.00", pf_collected: "500.00" },
+    // rent_paying arrangement (clinic keeps ₱0 by default) but overridden to ₱50.
+    { business_date: "2023-12-04", physician_id: "p4", full_name: "Dr Reyes", specialty: "Pediatrics",
+      compensation_arrangement: "rent_paying", clinic_cut_php: "50.00", consult_count: 1, sales_gross: "500.00", pf_collected: "450.00" },
+  ];
+  const groups = buildDoctorRollup(rows);
+  const doctors = groups.find((g) => g.specialty === "Pediatrics")!.doctors;
+
+  it("a clinic_cut_php of 0 flips a pf_split doctor to clinic-₱0-by-design", () => {
+    expect(doctors.find((d) => d.name === "Dr Santos")!.clinicZeroByDesign).toBe(true);
+  });
+  it("a nonzero clinic_cut_php flips a rent_paying doctor OFF clinic-₱0-by-design", () => {
+    expect(doctors.find((d) => d.name === "Dr Reyes")!.clinicZeroByDesign).toBe(false);
+  });
+  it("marks the override-driven zero (pf_split + cut 0) as clinicZeroByOverride", () => {
+    expect(doctors.find((d) => d.name === "Dr Santos")!.clinicZeroByOverride).toBe(true);
+  });
+  it("an arrangement-default zero (rent_paying, no override) is NOT clinicZeroByOverride", () => {
+    const rentDefault = buildDoctorRollup([
+      { business_date: "2023-12-04", physician_id: "p5", full_name: "Dr Uy", specialty: "Pediatrics",
+        compensation_arrangement: "rent_paying", clinic_cut_php: null, consult_count: 1, sales_gross: "500.00", pf_collected: "500.00" },
+    ]);
+    const uy = rentDefault[0].doctors.find((d) => d.name === "Dr Uy")!;
+    expect(uy.clinicZeroByDesign).toBe(true);
+    expect(uy.clinicZeroByOverride).toBe(false);
+  });
+});
+
 describe("groupDaysByMonth", () => {
   it("groups consecutive days into chronological months", () => {
     const g = groupDaysByMonth(["2026-01-30", "2026-01-31", "2026-02-01"]);

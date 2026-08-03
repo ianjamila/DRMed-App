@@ -1,6 +1,8 @@
 // Pure pivot + formatting helpers for the Operations daily report (B1.1).
 // NO "server-only" import — unit-tested with vitest and shared with the CSV route.
 
+import { defaultClinicFee } from "@/lib/visits/consultation-fee";
+
 export type Section = "lab" | "consult";
 
 // Raw channel keys as stored by v_ops_daily_channel: payments.method values,
@@ -206,6 +208,8 @@ export interface DoctorRow {
   full_name: string | null;
   specialty: string | null;
   compensation_arrangement: string | null;
+  /** Per-doctor clinic-cut override (physicians.clinic_cut_php via v_ops_daily_doctor). */
+  clinic_cut_php?: number | string | null;
   consult_count: number | string;
   sales_gross: number | string;
   pf_collected: number | string;
@@ -217,6 +221,8 @@ export interface DoctorRollupRow {
   arrangement: string | null;
   /** rent_paying | shareholder → clinic keeps ₱0 of the consult, by design. */
   clinicZeroByDesign: boolean;
+  /** ₱0 comes from an explicit clinic_cut_php = 0 override, not the arrangement default. */
+  clinicZeroByOverride: boolean;
   consultCount: number;
   salesGross: number;
   pfCollected: number;
@@ -232,9 +238,19 @@ export interface SpecialtyGroup {
 
 const UNATTRIBUTED = "Unattributed";
 
-/** Mirrors defaultClinicFee() in lib/visits/consultation-fee.ts. */
-function clinicKeepsZero(arrangement: string | null): boolean {
-  return arrangement === "rent_paying" || arrangement === "shareholder";
+/**
+ * Clinic keeps ₱0 of the consult when the EFFECTIVE default clinic fee is
+ * zero — either because the physician's clinic_cut_php override is 0, or
+ * (with no override) their arrangement defaults to 0 (rent_paying /
+ * shareholder). Shares the single source of truth with the visit form and
+ * create action: defaultClinicFee() in lib/visits/consultation-fee.ts.
+ */
+function clinicKeepsZero(
+  arrangement: string | null,
+  clinicCutPhp?: number | string | null,
+): boolean {
+  const cut = clinicCutPhp == null ? null : num(clinicCutPhp);
+  return defaultClinicFee(arrangement, cut) === 0;
 }
 
 export function buildDoctorRollup(rows: DoctorRow[]): SpecialtyGroup[] {
@@ -248,7 +264,10 @@ export function buildDoctorRollup(rows: DoctorRow[]): SpecialtyGroup[] {
         physicianId: r.physician_id,
         name: r.full_name ?? UNATTRIBUTED,
         arrangement: r.compensation_arrangement,
-        clinicZeroByDesign: clinicKeepsZero(r.compensation_arrangement),
+        clinicZeroByDesign: clinicKeepsZero(r.compensation_arrangement, r.clinic_cut_php),
+        clinicZeroByOverride:
+          clinicKeepsZero(r.compensation_arrangement, r.clinic_cut_php) &&
+          defaultClinicFee(r.compensation_arrangement) !== 0,
         consultCount: 0,
         salesGross: 0,
         pfCollected: 0,

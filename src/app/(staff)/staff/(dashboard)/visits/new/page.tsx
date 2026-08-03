@@ -57,7 +57,9 @@ export default async function NewVisitPage({ searchParams }: Props) {
       .order("name", { ascending: true }),
     admin
       .from("physicians")
-      .select("id, full_name, specialty, compensation_arrangement, is_active")
+      .select(
+        "id, full_name, specialty, compensation_arrangement, default_consultation_fee_php, clinic_cut_php, is_active",
+      )
       .eq("is_active", true)
       .order("full_name", { ascending: true }),
     supabase
@@ -140,6 +142,11 @@ export default async function NewVisitPage({ searchParams }: Props) {
             full_name: p.full_name,
             specialty: p.specialty,
             compensation_arrangement: p.compensation_arrangement,
+            default_consultation_fee_php:
+              p.default_consultation_fee_php != null
+                ? Number(p.default_consultation_fee_php)
+                : null,
+            clinic_cut_php: p.clinic_cut_php != null ? Number(p.clinic_cut_php) : null,
           }))}
         />
       </Panel>

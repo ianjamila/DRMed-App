@@ -13,6 +13,7 @@ import { RowSelectCheckbox } from "./row-select-checkbox";
 import { BulkActionBar } from "./bulk-action-bar";
 import { UndoReleaseDialog } from "./undo-release-dialog";
 import { WaiveBalanceDialog } from "./waive-balance-dialog";
+import { AttendingPhysicianDialog } from "./attending-physician-dialog";
 import { VoidPaymentDialog } from "../../payments/[id]/void/void-payment-dialog";
 import { countResultViews } from "@/lib/results/viewed-count";
 import { isConsentGateRequired, getPatientConsentState } from "@/lib/consent/gate";
@@ -27,6 +28,7 @@ import {
   CONSULT_ONLY_RECEIPT_NOTE,
   shouldPrintReceipt,
 } from "@/lib/visits/receipt-policy";
+import { isDoctorKind } from "@/lib/visits/order-lines";
 import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
 import { ReissuePinButton } from "@/components/staff/reissue-pin-button";
 
@@ -84,8 +86,10 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
         deleted_at, deleted_by, delete_reason,
         visit_group_id,
         hmo_provider_id, hmo_approval_date, hmo_authorization_no,
+        attending_physician_id,
         patients!inner ( id, drm_id, first_name, last_name, preferred_release_medium ),
-        hmo_providers ( id, name )
+        hmo_providers ( id, name ),
+        physicians ( id, full_name )
       `,
     )
     .eq("id", id)
@@ -117,6 +121,9 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
   const hmo = Array.isArray(visit.hmo_providers)
     ? visit.hmo_providers[0]
     : visit.hmo_providers;
+  const attendingPhysician = Array.isArray(visit.physicians)
+    ? visit.physicians[0]
+    : visit.physicians;
 
   // Consent release-gate state for this patient. When the gate is on and
   // consent is missing, the Release button is hard-disabled (the DB trigger
@@ -127,11 +134,12 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
     getPatientConsentState(patient.id),
   ]);
 
-  const [{ data: tests }, { data: payments }, { data: discountRows }] = await Promise.all([
-    supabase
-      .from("test_requests")
-      .select(
-        `
+  const [{ data: tests }, { data: payments }, { data: discountRows }, { data: physicians }] =
+    await Promise.all([
+      supabase
+        .from("test_requests")
+        .select(
+          `
           id, status, requested_at, completed_at, released_at, release_medium,
           base_price_php, discount_kind, discount_amount_php, final_price_php,
           clinic_fee_php, doctor_pf_php,
@@ -140,19 +148,26 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
           parent_id, is_package_header, package_completed_at,
           services!inner ( id, code, name, kind, section, price_php )
         `,
-      )
-      .eq("visit_id", id)
-      .order("is_package_header", { ascending: false })
-      .order("requested_at", { ascending: true }),
-    supabase
-      .from("payments")
-      .select("id, amount_php, method, reference_number, received_at, notes, voided_at, voided_by, void_reason")
-      .eq("visit_id", id)
-      .order("received_at", { ascending: false }),
-    // Labels for recorded discount codes — includes retired (inactive) rows
-    // so historical lines still render their name.
-    supabase.from("discount_types").select("code, label"),
-  ]);
+        )
+        .eq("visit_id", id)
+        .order("is_package_header", { ascending: false })
+        .order("requested_at", { ascending: true }),
+      supabase
+        .from("payments")
+        .select("id, amount_php, method, reference_number, received_at, notes, voided_at, voided_by, void_reason")
+        .eq("visit_id", id)
+        .order("received_at", { ascending: false }),
+      // Labels for recorded discount codes — includes retired (inactive) rows
+      // so historical lines still render their name.
+      supabase.from("discount_types").select("code, label"),
+      // Active physicians for the "Assign/Change physician" picker — same
+      // roster + ordering as the new-visit form's attending-physician select.
+      supabase
+        .from("physicians")
+        .select("id, full_name")
+        .eq("is_active", true)
+        .order("full_name", { ascending: true }),
+    ]);
 
   const discountLabelByCode = new Map(
     (discountRows ?? []).map((d) => [d.code, d.label]),
@@ -208,13 +223,18 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
   // a consultation visit now.
   // Mirrors the role check inside reissuePatientPinAction.
   const canIssuePin = session.role === "reception" || session.role === "admin";
-  const printsReceipt = shouldPrintReceipt(
-    (tests ?? [])
-      .filter((t) => t.deleted_at === null)
-      .map((t) => (Array.isArray(t.services) ? t.services[0] : t.services))
-      .map((svc) => svc?.kind)
-      .filter((kind): kind is string => Boolean(kind)),
-  );
+  const activeTestKinds = (tests ?? [])
+    .filter((t) => t.deleted_at === null)
+    .map((t) => (Array.isArray(t.services) ? t.services[0] : t.services))
+    .map((svc) => svc?.kind)
+    .filter((kind): kind is string => Boolean(kind));
+  const printsReceipt = shouldPrintReceipt(activeTestKinds);
+  // Item 23 gap 3: the release trigger (P0034) requires an attending
+  // physician for every doctor line. A visit with doctor lines and no
+  // physician set is the dead end this UI fixes — surface the CTA loudly.
+  const hasDoctorLines = activeTestKinds.some(isDoctorKind);
+  // Mirrors the role gate inside setVisitAttendingPhysician.
+  const canAssignPhysician = session.role === "reception" || session.role === "admin";
 
   const isPaid = visit.payment_status === "paid" || visit.payment_status === "waived";
   const balance = Number(visit.total_php) - Number(visit.paid_php);
@@ -458,6 +478,41 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
           ) : null}
         </div>
       </section>
+
+      {hasDoctorLines || attendingPhysician ? (
+        <section className="mt-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+                Attending physician
+              </p>
+              <p className="mt-1 font-semibold text-[color:var(--color-brand-navy)]">
+                {attendingPhysician?.full_name ?? "— None set —"}
+              </p>
+            </div>
+            {canAssignPhysician && !visitDeleted ? (
+              <AttendingPhysicianDialog
+                visitId={visit.id}
+                currentPhysicianId={visit.attending_physician_id}
+                currentPhysicianName={attendingPhysician?.full_name ?? null}
+                physicians={physicians ?? []}
+                prominent={!attendingPhysician && hasDoctorLines}
+              />
+            ) : null}
+          </div>
+          {!attendingPhysician && hasDoctorLines ? (
+            <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+              This visit has consult/procedure lines with no attending
+              physician on record — releasing them will be blocked until one
+              is assigned.
+            </p>
+          ) : null}
+          <p className="mt-2 text-[10px] text-[color:var(--color-brand-text-soft)]">
+            Changing the physician affects PF accrual only for lines released
+            after the change — already-released lines keep their recorded PF.
+          </p>
+        </section>
+      ) : null}
 
       {hmo ? (
         <section className="mt-6 rounded-xl border border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-bg)] p-5">
@@ -1214,8 +1269,15 @@ function TestAction({
   }
 
   if (status === "requested" || status === "in_progress") {
-    if (kind === "doctor_consultation") {
-      return <MarkDoneButton testRequestId={testRequestId} visitId={visitId} paid={paid} />;
+    if (kind === "doctor_consultation" || kind === "doctor_procedure") {
+      return (
+        <MarkDoneButton
+          testRequestId={testRequestId}
+          visitId={visitId}
+          paid={paid}
+          kind={kind}
+        />
+      );
     }
     const hint = status === "requested" ? "Awaiting claim" : "Awaiting result";
     return (
