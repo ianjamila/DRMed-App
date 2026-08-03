@@ -32,20 +32,33 @@
 -- whichever population turns out to be absent.
 --
 -- POPULATION A — orphaned Phase-14 headers (the actual, likely, root cause):
---   is_package_header = true, status <> 'cancelled', not soft-deleted (0125),
---   with zero rows having parent_id = header.id. For each, one component
---   test_request is inserted per package_components row configured for the
---   header's service_id, mirroring createOneVisit's componentRows shape
---   exactly: base_price_php/discount_amount_php/final_price_php = 0, HMO
---   fields copied from the header, parent_id = header.id,
---   is_package_header = false, status left at its table default ('requested').
---   requested_at is copied from the header so the component sits at its
---   original order time in queue ordering, not "now". Order-time validation
---   (loadPackageDecompositionsForLines) guarantees package_components existed
---   when the header was created, so a header found with NO config today means
---   the config was deleted afterward — that is surfaced as a hard failure
---   (RAISE EXCEPTION), not silently skipped, because skipping would leave a
---   dead-end header with no way to ever resolve it.
+--   is_package_header = true, status IN ('in_progress','ready_for_release'),
+--   not soft-deleted (0125), with zero rows having parent_id = header.id.
+--   Narrowed to these two statuses (not "status <> 'cancelled'") because they
+--   are the only statuses an orphaned header can legitimately hold today: Leg
+--   A/B auto-release (0109) require at least one RELEASED child before a
+--   header can reach 'released' itself, and releaseTestAction is never routed
+--   a package header by the UI — so a zero-child header simply cannot have
+--   organically reached 'released'. Backfilling pending ('requested')
+--   components under an already-'released' header would create a confusing
+--   "completed package growing new pending work" state; see the anomaly
+--   sweep below for what happens if one is found anyway. For each in-scope
+--   header, one component test_request is inserted per package_components
+--   row configured for the header's service_id — the same shape
+--   createOneVisit's componentRows insert uses (base_price_php/
+--   discount_amount_php/final_price_php = 0, HMO fields copied from the
+--   header, parent_id = header.id, is_package_header = false, status left at
+--   its table default 'requested'), PLUS a copied requested_at: live
+--   createOneVisit relies on the requested_at column's now() default because
+--   it inserts in real time, but this backfill runs long after the fact, so
+--   it copies the header's own requested_at onto each component to keep
+--   queue ordering historically sane instead of dating them "now". Order-time
+--   validation (loadPackageDecompositionsForLines) guarantees
+--   package_components existed when the header was created, so a header
+--   found with NO config today means the config was deleted afterward — that
+--   is surfaced as a hard failure (RAISE EXCEPTION), not silently skipped,
+--   because skipping would leave a dead-end header with no way to ever
+--   resolve it.
 --
 -- POPULATION B — true pre-0040 legacy flat packages (defensive; §5.9 says this
 -- population should not exist, but we cannot verify against prod):
@@ -120,7 +133,7 @@
 --     join public.services s on s.id = tr.service_id
 --     join public.visits v on v.id = tr.visit_id
 --    where tr.is_package_header = true
---      and tr.status <> 'cancelled'
+--      and tr.status in ('in_progress', 'ready_for_release')
 --      and tr.deleted_at is null
 --      and v.deleted_at is null
 --      and not exists (select 1 from public.test_requests c where c.parent_id = tr.id);
@@ -142,7 +155,13 @@
 -- NOT COVERED: released/completed legacy packages (kept exactly as-is, per
 -- §5.9's own design intent); cancelled headers/rows (no result entry is ever
 -- expected of a cancelled test); soft-deleted rows (0125) (already excluded
--- from operational queues, restoring is a separate, already-guarded flow).
+-- from operational queues, restoring is a separate, already-guarded flow);
+-- zero-child headers whose status is neither 'in_progress'/'ready_for_release'
+-- (in scope for Population A) nor 'cancelled' (never in scope) — these are
+-- surfaced via RAISE NOTICE in the anomaly sweep at the end of this file
+-- rather than backfilled, since that combination should not be reachable
+-- today and blindly adding pending work under it would be worse than leaving
+-- it alone.
 -- =============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -159,7 +178,7 @@ begin
       from public.test_requests tr
       join public.visits v on v.id = tr.visit_id
      where tr.is_package_header = true
-       and tr.status <> 'cancelled'
+       and tr.status in ('in_progress', 'ready_for_release')
        and tr.deleted_at is null
        and v.deleted_at is null
        and not exists (
@@ -254,22 +273,26 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------------
--- Postcondition guard: zero non-cancelled, non-deleted headers with zero
--- children remain among services that HAVE package_components config. (A
--- header whose config is genuinely absent already aborted the migration in
--- the Population A loop above, so it cannot reach here — this guard is a
--- second line of defense against a future regression re-introducing orphans,
--- e.g. a bug reintroducing a header without its components in the same
--- migration run.) Trivially passes on an empty/fresh database.
+-- Postcondition guard: zero in-progress/ready-for-release, non-deleted
+-- headers with zero children remain among services that HAVE
+-- package_components config. (A header whose config is genuinely absent
+-- already aborted the migration in the Population A loop above, so it cannot
+-- reach here — this guard is a second line of defense against a future
+-- regression re-introducing orphans, e.g. a bug reintroducing a header
+-- without its components in the same migration run.) Trivially passes on an
+-- empty/fresh database.
 --
 -- MUST mirror Population A's candidate predicate exactly (same join, same
--- filters), or the guard false-positives on a header Population A correctly
--- (and intentionally) left alone. Concretely: a header under a soft-deleted
--- visit is skipped by Population A's `join visits v ... v.deleted_at is
--- null` — without the same join/filter here, the guard would still see that
--- header (zero children, config present) and abort the whole migration over
--- a row nothing was ever meant to touch. Bug found in spec review 2026-08-03;
--- reproduced on the local stack before this fix.
+-- filters, same status set), or the guard false-positives on a header
+-- Population A correctly (and intentionally) left alone. Concretely: a
+-- header under a soft-deleted visit is skipped by Population A's `join
+-- visits v ... v.deleted_at is null` — without the same join/filter here,
+-- the guard would still see that header (zero children, config present) and
+-- abort the whole migration over a row nothing was ever meant to touch. Bug
+-- found in spec review 2026-08-03; reproduced on the local stack before this
+-- fix. The status set was narrowed from "<> 'cancelled'" to
+-- ('in_progress','ready_for_release') in the same review pass, for the same
+-- reason it was narrowed in Population A above — keep both in lockstep.
 -- ---------------------------------------------------------------------------
 do $$
 declare
@@ -280,7 +303,7 @@ begin
     from public.test_requests tr
     join public.visits v on v.id = tr.visit_id
    where tr.is_package_header = true
-     and tr.status <> 'cancelled'
+     and tr.status in ('in_progress', 'ready_for_release')
      and tr.deleted_at is null
      and v.deleted_at is null
      and exists (
@@ -296,4 +319,38 @@ begin
       '0130 postcondition failed: header(s) still have zero component rows despite having package_components config: %',
       v_offenders;
   end if;
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- Anomaly sweep: zero-child headers whose status is OUTSIDE the expected set
+-- ('in_progress', 'ready_for_release', 'cancelled') — e.g. a zero-child
+-- header somehow marked 'released' or 'result_uploaded'. Population A
+-- deliberately does not touch these (see the narrowed filter above — the
+-- theory is this should never happen, so backfilling pending components
+-- under it would be worse than leaving it alone), and the postcondition
+-- guard above does not fail on them either (same status set, so they're
+-- outside its scope too). NOTICE only, never an exception: this is a data
+-- anomaly worth an operator's attention during the push, not a reason to
+-- block the deploy. Trivially empty on a fresh/empty database.
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  v_anomaly record;
+begin
+  for v_anomaly in
+    select tr.id, tr.visit_id, tr.status
+      from public.test_requests tr
+      join public.visits v on v.id = tr.visit_id
+     where tr.is_package_header = true
+       and tr.status not in ('in_progress', 'ready_for_release', 'cancelled')
+       and tr.deleted_at is null
+       and v.deleted_at is null
+       and not exists (
+         select 1 from public.test_requests c where c.parent_id = tr.id
+       )
+  loop
+    raise notice
+      '0130 anomaly: zero-child package header % (visit %) has unexpected status % — outside (in_progress, ready_for_release, cancelled). Not backfilled by this migration (see Population A''s narrowed status filter); investigate how a childless header reached this status.',
+      v_anomaly.id, v_anomaly.visit_id, v_anomaly.status;
+  end loop;
 end $$;
