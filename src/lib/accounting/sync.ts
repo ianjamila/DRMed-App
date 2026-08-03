@@ -148,10 +148,11 @@ interface RawTestRequest {
   physicians: { full_name: string } | null;
 }
 
-// Doctor resolution mirrors the DB's own rule (migration 0066, view 0093):
+// Doctor resolution mirrors the DB's own rule (migration 0066's trigger):
 // coalesce(test_requests.attending_physician_id, visits.attending_physician_id)
 // → physicians.full_name. The line-level physician (rare override) wins;
-// otherwise fall back to whoever is attending the visit.
+// otherwise fall back to whoever is attending the visit. (The reporting view
+// in 0093 uses only the visit-level column, without the per-line override.)
 function resolveDoctorConsultant(
   linePhysician: { full_name: string } | null,
   visitPhysician: { full_name: string } | null,
