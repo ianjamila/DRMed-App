@@ -1,5 +1,3 @@
-import "server-only";
-
 import type { SheetRow } from "./types";
 
 // =============================================================================
@@ -8,7 +6,9 @@ import type { SheetRow } from "./types";
 // Column orders mirror reception's existing sheets. They're a best-effort match
 // from the IMPLEMENTATION_PLAN spec; the first cron run should be diffed
 // against the live sheet and adjusted if anything is off-by-one. Keep these
-// pure so the admin UI can preview a row without hitting Sheets.
+// pure so the admin UI can preview a row without hitting Sheets, and so they're
+// unit-testable (vitest disallows `server-only` in tested modules — see
+// mappers.test.ts and vitest.config.ts).
 // =============================================================================
 
 // ---- Lab Services ----------------------------------------------------------
@@ -77,7 +77,7 @@ export interface ConsultRowSource {
   patient_full_name: string;
   hmo_provider_name: string | null;
   hmo_approval_date: string | null;
-  doctor_consultant: string | null; // not yet captured; left blank pending Phase 9
+  doctor_consultant: string | null; // resolved from the attending physician (line-level override, else visit-level)
   base_price_php: number | null;
   discount_kind: string | null;
   discount_amount_php: number;
@@ -123,7 +123,7 @@ export interface ProcedureRowSource {
   hmo_provider_name: string | null;
   hmo_approval_date: string | null;
   procedure_description: string | null;
-  doctor_consultant: string | null; // not yet captured; left blank pending Phase 9
+  doctor_consultant: string | null; // resolved from the attending physician (line-level override, else visit-level)
   hmo_approved_amount_php: number | null;
 }
 
