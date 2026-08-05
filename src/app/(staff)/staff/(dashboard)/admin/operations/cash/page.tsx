@@ -53,7 +53,7 @@ export default async function CashCollectedPage({
       .lte("received_date", to),
     admin
       .from("eod_close_records")
-      .select("business_date,expected_cash_php,counted_cash_php,variance_php")
+      .select("business_date,expected_cash_php,counted_cash_php,variance_php,counted_denominations")
       .eq("status", "closed")
       .gte("business_date", from)
       .lte("business_date", to),

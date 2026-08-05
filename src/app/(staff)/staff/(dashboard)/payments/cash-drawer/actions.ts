@@ -7,6 +7,11 @@ import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import {
+  DENOMINATION_KEYS,
+  denominationsTotal,
+  type DenominationCounts,
+} from "@/lib/accounting/cash-denominations";
+import {
   RecordCashAdjustmentSchema,
   VoidCashAdjustmentSchema,
   CloseEodSchema,
@@ -159,21 +164,38 @@ export async function voidCashAdjustmentAction(
   return { ok: true, data: undefined };
 }
 
+/**
+ * Close the day.
+ *
+ * Since PR N the denomination grid is the source of truth: the caller sends the
+ * piece counts and the peso total is DERIVED here via `denominationsTotal`. The
+ * figure the EOD screen shows is display-only — it comes from the same module,
+ * so the two can't disagree — and the P0048 DB guard re-checks the tie, which
+ * makes it enforceable against any future writer, not just this action.
+ */
 export async function closeEodAction(
   business_date: string,
   shift_id: string,
-  counted_cash_php: number,
+  counted_denominations: DenominationCounts,
   variance_reason: string | null,
 ): Promise<ActionResult<{ close_id: string; variance_php: number }>> {
   const session = await requireActiveStaff();
   if (!reception(session.role)) return { ok: false, error: "Forbidden." };
 
   const parsed = CloseEodSchema.safeParse({
-    business_date, shift_id, counted_cash_php, variance_reason,
+    business_date, shift_id, counted_denominations, variance_reason,
   });
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
   }
+
+  // Drop zero/absent piles so the stored jsonb records only what was counted.
+  const counts: DenominationCounts = {};
+  for (const key of DENOMINATION_KEYS) {
+    const pieces = parsed.data.counted_denominations[key];
+    if (pieces) counts[key] = pieces;
+  }
+  const counted = denominationsTotal(counts);
 
   const admin = createAdminClient();
 
@@ -189,7 +211,10 @@ export async function closeEodAction(
     cash_payouts_php: number;
     expected_cash_php: number;
   };
-  const variance = Number(parsed.data.counted_cash_php) - Number(s.expected_cash_php);
+  // Round to centavos before it goes near the DB: `eod_close_variance_matches`
+  // asserts variance_php = counted_cash_php - expected_cash_php in exact
+  // numeric(14,2), so a float tail here would be a constraint violation.
+  const variance = Math.round((counted - Number(s.expected_cash_php)) * 100) / 100;
   if (variance !== 0 && !parsed.data.variance_reason) {
     return { ok: false, error: "A reason is required when variance is not zero." };
   }
@@ -204,7 +229,8 @@ export async function closeEodAction(
       cash_payments_php: s.cash_payments_php,
       cash_payouts_php: s.cash_payouts_php,
       expected_cash_php: s.expected_cash_php,
-      counted_cash_php: parsed.data.counted_cash_php,
+      counted_cash_php: counted,
+      counted_denominations: counts,
       variance_php: variance,
       variance_reason: variance === 0 ? null : parsed.data.variance_reason,
       closed_by: session.user_id,
@@ -232,7 +258,8 @@ export async function closeEodAction(
       business_date: parsed.data.business_date,
       shift_id: parsed.data.shift_id,
       expected_php: s.expected_cash_php,
-      counted_php: parsed.data.counted_cash_php,
+      counted_php: counted,
+      counted_denominations: counts,
       variance_php: variance,
       variance_je_id: je?.id ?? null,
       has_reason: !!parsed.data.variance_reason,

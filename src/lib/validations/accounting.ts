@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { isOnOrBeforeTodayManila, todayManilaISODate } from "@/lib/dates/manila";
+import { DENOMINATION_KEYS, type DenominationKey } from "@/lib/accounting/cash-denominations";
 
 const accountCodeSchema = z
   .string()
@@ -272,13 +273,39 @@ export const VoidCashAdjustmentSchema = z.object({
 });
 export type VoidCashAdjustmentInput = z.infer<typeof VoidCashAdjustmentSchema>;
 
+/**
+ * Piece counts for the end-of-day till count, keyed by denomination slug.
+ *
+ * The 100,000-piece per-row cap keeps the derived peso total inside the intent
+ * of the old free-typed 10M cap (11 rows × 100k pieces of ₱1,000 is far past
+ * anything a clinic till holds, but any single realistic pile is well under it).
+ */
+const denominationCountsSchema = z
+  .object(
+    Object.fromEntries(
+      DENOMINATION_KEYS.map((key) => [
+        key,
+        z.coerce.number().int().min(0).max(100_000).optional(),
+      ]),
+    ) as Record<DenominationKey, z.ZodOptional<z.ZodNumber>>,
+  )
+  // Strict rather than the default strip: an unrecognised slug means the caller
+  // and the denomination table disagree, and silently dropping the pile would
+  // understate the till. The DB guard rejects it too (P0048) — this just fails
+  // earlier with a clearer message.
+  .strict();
+
+// NOTE: `counted_cash_php` is deliberately ABSENT. Since PR N the grid is the
+// source of truth and the action derives the peso total server-side from
+// `counted_denominations` — accepting a client-supplied total here would leave
+// an ignored field that the next reader would reasonably assume is consumed.
 export const CloseEodSchema = z
   .object({
     business_date: z
       .string()
       .refine(isOnOrBeforeTodayManila, "business_date must be a date on or before today"),
     shift_id: z.string().uuid(),
-    counted_cash_php: z.coerce.number().min(0).max(10_000_000),
+    counted_denominations: denominationCountsSchema,
     variance_reason: z.string().trim().max(1000).nullable().optional(),
   });
 export type CloseEodInput = z.infer<typeof CloseEodSchema>;

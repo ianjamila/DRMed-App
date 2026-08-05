@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
@@ -9,6 +10,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+import { formatDenominationSummary } from "@/lib/accounting/cash-denominations";
 import type { CashReconRow } from "@/lib/operations/cash-report";
 
 const PESO = (n: number) =>
@@ -51,25 +53,41 @@ export function CashReconPanel({ rows }: { rows: CashReconRow[] }) {
                 <TableBody>
                   {rows
                     .filter((r) => r.reconciled)
-                    .map((r) => (
-                      <TableRow key={r.day}>
-                        <TableCell className="px-3 py-1">{r.day}</TableCell>
-                        <TableCell className="px-3 py-1 text-right font-mono tabular-nums">
-                          {PESO(r.expected)}
-                        </TableCell>
-                        <TableCell className="px-3 py-1 text-right font-mono tabular-nums">
-                          {PESO(r.counted)}
-                        </TableCell>
-                        <TableCell
-                          className={cn(
-                            "px-3 py-1 text-right font-mono tabular-nums",
-                            r.variance < 0 && "text-destructive",
-                          )}
-                        >
-                          {PESO(r.variance)}
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    .map((r) => {
+                      const summary = formatDenominationSummary(r.denominations);
+                      return (
+                        <Fragment key={r.day}>
+                          <TableRow>
+                            <TableCell className="px-3 py-1">{r.day}</TableCell>
+                            <TableCell className="px-3 py-1 text-right font-mono tabular-nums">
+                              {PESO(r.expected)}
+                            </TableCell>
+                            <TableCell className="px-3 py-1 text-right font-mono tabular-nums">
+                              {PESO(r.counted)}
+                            </TableCell>
+                            <TableCell
+                              className={cn(
+                                "px-3 py-1 text-right font-mono tabular-nums",
+                                r.variance < 0 && "text-destructive",
+                              )}
+                            >
+                              {PESO(r.variance)}
+                            </TableCell>
+                          </TableRow>
+                          {/* How the till was counted. One line — no expander
+                              needed. Closes from before the count sheet shipped
+                              carry no breakdown and say so. */}
+                          <TableRow className="hover:bg-transparent">
+                            <TableCell
+                              colSpan={4}
+                              className="px-3 pb-2 pt-0 text-[11px] text-muted-foreground"
+                            >
+                              {summary || "Denomination count not recorded"}
+                            </TableCell>
+                          </TableRow>
+                        </Fragment>
+                      );
+                    })}
                 </TableBody>
               </Table>
             </div>

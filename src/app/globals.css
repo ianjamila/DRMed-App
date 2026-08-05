@@ -416,3 +416,29 @@
     width: 100%;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * EOD cash count sheet — A5 paper (PR N).
+ *
+ * Its own named `@page` for the same reason the receipt has one: a named page
+ * applies only where the `page` property points at it, so this cannot leak A5
+ * onto the consent form or any other print surface. The sheet is the in-app
+ * counterpart of the paper count sheet reception already files, so it wants the
+ * same small format as the receipts it sits beside in the folder.
+ * ------------------------------------------------------------------------- */
+@page cash-count {
+  size: A5;
+  margin: 10mm;
+}
+
+.cash-count-print {
+  page: cash-count;
+}
+
+@media print {
+  /* Fill the A5 content box instead of the on-screen max-width cap. */
+  .cash-count-print .cash-count-sheet {
+    max-width: none;
+    width: 100%;
+  }
+}
