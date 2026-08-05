@@ -1,4 +1,5 @@
 import { Fragment } from "react";
+import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
@@ -76,13 +77,40 @@ export function CashReconPanel({ rows }: { rows: CashReconRow[] }) {
                           </TableRow>
                           {/* How the till was counted. One line — no expander
                               needed. Closes from before the count sheet shipped
-                              carry no breakdown and say so. */}
+                              carry no breakdown and say so.
+
+                              The count-sheet link is here so an admin chasing a
+                              variance can open the signed sheet straight from
+                              the row, instead of navigating to the EOD page for
+                              that date first. It shows even without a
+                              breakdown — the sheet still carries the totals,
+                              the reason and the closer. */}
                           <TableRow className="hover:bg-transparent">
                             <TableCell
                               colSpan={4}
                               className="px-3 pb-2 pt-0 text-[11px] text-muted-foreground"
                             >
-                              {summary || "Denomination count not recorded"}
+                              <span className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                                <span>{summary || "Denomination count not recorded"}</span>
+                                {r.closeIds.length > 0 && (
+                                  <span className="flex shrink-0 flex-wrap gap-x-3">
+                                    {r.closeIds.map((id, i) => (
+                                      <Link
+                                        key={id}
+                                        href={`/staff/payments/eod/${id}/count-sheet`}
+                                        className="font-medium text-[color:var(--color-brand-cyan)] hover:underline"
+                                      >
+                                        {/* A day can hold more than one close
+                                            (multi-shift, or a re-close after a
+                                            reopen), so number them rather than
+                                            render identical links. */}
+                                        Count sheet
+                                        {r.closeIds.length > 1 ? ` ${i + 1}` : ""}
+                                      </Link>
+                                    ))}
+                                  </span>
+                                )}
+                              </span>
                             </TableCell>
                           </TableRow>
                         </Fragment>

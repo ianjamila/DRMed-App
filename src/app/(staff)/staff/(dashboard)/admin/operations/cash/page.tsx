@@ -10,6 +10,7 @@ import {
   type EodCloseRow,
 } from "@/lib/operations/cash-report";
 import { enumerateDays } from "@/lib/operations/daily-report";
+import { buildDenominationTrend } from "@/lib/accounting/denomination-trends";
 import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { OperationsTabs } from "../_components/operations-tabs";
@@ -18,6 +19,7 @@ import { CashSummaryCards } from "./_components/cash-summary-cards";
 import { CollectionsMatrix } from "./_components/collections-matrix";
 import { CreditCardPanel } from "./_components/credit-card-panel";
 import { CashReconPanel } from "./_components/cash-recon-panel";
+import { DenominationTrendPanel } from "./_components/denomination-trend-panel";
 
 const BASE = "/staff/admin/operations/cash";
 
@@ -53,7 +55,7 @@ export default async function CashCollectedPage({
       .lte("received_date", to),
     admin
       .from("eod_close_records")
-      .select("business_date,expected_cash_php,counted_cash_php,variance_php,counted_denominations")
+      .select("id,business_date,expected_cash_php,counted_cash_php,variance_php,counted_denominations")
       .eq("status", "closed")
       .gte("business_date", from)
       .lte("business_date", to),
@@ -85,6 +87,13 @@ export default async function CashCollectedPage({
     (eodRes.data ?? []) as EodCloseRow[],
     days,
   );
+  // Trends run off the reconciled days only — a day with no close has no count
+  // to trend, and counting it as "balanced" would flatter the numbers.
+  const trend = buildDenominationTrend(
+    reconRows
+      .filter((r) => r.reconciled)
+      .map((r) => ({ day: r.day, variance: r.variance, denominations: r.denominations })),
+  );
 
   const csvHref = `/api/admin/operations/cash.csv?from=${from}&to=${to}`;
 
@@ -106,6 +115,7 @@ export default async function CashCollectedPage({
       <CollectionsMatrix matrix={matrix} />
       <CreditCardPanel panel={creditCard} days={days} />
       <CashReconPanel rows={reconRows} />
+      <DenominationTrendPanel trend={trend} />
     </div>
   );
 }

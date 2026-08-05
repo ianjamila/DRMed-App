@@ -112,6 +112,8 @@ export function buildCreditCardPanel(rows: CollectionRow[], days: string[]): Cre
 }
 
 export interface EodCloseRow {
+  /** Close id — only the page selects it, to link at the printable count sheet. */
+  id?: string;
   business_date: string;
   expected_cash_php: string | number | null;
   counted_cash_php: string | number | null;
@@ -131,14 +133,29 @@ export interface CashReconRow {
    * failed `parseDenominations`.
    */
   denominations: DenominationCounts | null;
+  /**
+   * Ids of the closes behind this row, in the order they came back — one per
+   * shift. Empty when the caller didn't select ids (the CSV route doesn't need
+   * them). Drives the "count sheet" links on the reconciliation panel.
+   */
+  closeIds: string[];
 }
 export function buildCashReconRows(eod: EodCloseRow[], days: string[]): CashReconRow[] {
   return days.map((day) => {
     const forDay = eod.filter((e) => e.business_date === day);
     if (forDay.length === 0) {
-      return { day, reconciled: false, expected: 0, counted: 0, variance: 0, denominations: null };
+      return {
+        day,
+        reconciled: false,
+        expected: 0,
+        counted: 0,
+        variance: 0,
+        denominations: null,
+        closeIds: [],
+      };
     }
     return {
+      closeIds: forDay.map((e) => e.id).filter((id): id is string => !!id),
       day,
       reconciled: true,
       expected: forDay.reduce((s, e) => s + num(e.expected_cash_php), 0),

@@ -145,6 +145,23 @@ describe("buildCashReconRows", () => {
     expect(rows[0].denominations).toEqual({ bill_500: 1 });
   });
 
+  it("carries the close ids for the count-sheet links, one per shift", () => {
+    const eod: EodCloseRow[] = [
+      { id: "close-a", business_date: "2026-05-23", expected_cash_php: "1000", counted_cash_php: "1000", variance_php: "0" },
+      { id: "close-b", business_date: "2026-05-23", expected_cash_php: "2000", counted_cash_php: "2000", variance_php: "0" },
+    ];
+    expect(buildCashReconRows(eod, ["2026-05-23"])[0].closeIds).toEqual(["close-a", "close-b"]);
+  });
+
+  it("leaves closeIds empty when the caller didn't select ids (the CSV route)", () => {
+    const eod: EodCloseRow[] = [
+      { business_date: "2026-05-23", expected_cash_php: "1000", counted_cash_php: "1000", variance_php: "0" },
+    ];
+    const rows = buildCashReconRows(eod, ["2026-05-22", "2026-05-23"]);
+    expect(rows.find((r) => r.day === "2026-05-23")!.closeIds).toEqual([]);
+    expect(rows.find((r) => r.day === "2026-05-22")!.closeIds).toEqual([]);
+  });
+
   it("degrades a malformed stored breakdown to null rather than throwing", () => {
     const eod: EodCloseRow[] = [
       {
