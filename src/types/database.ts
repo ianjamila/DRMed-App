@@ -2007,6 +2007,7 @@ export type Database = {
           closed_at: string
           closed_by: string
           counted_cash_php: number
+          counted_denominations: Json | null
           created_at: string
           expected_cash_php: number
           id: string
@@ -2026,6 +2027,7 @@ export type Database = {
           closed_at?: string
           closed_by: string
           counted_cash_php: number
+          counted_denominations?: Json | null
           created_at?: string
           expected_cash_php: number
           id?: string
@@ -2045,6 +2047,7 @@ export type Database = {
           closed_at?: string
           closed_by?: string
           counted_cash_php?: number
+          counted_denominations?: Json | null
           created_at?: string
           expected_cash_php?: number
           id?: string
@@ -6201,6 +6204,7 @@ export type Database = {
         Args: { p_end: string; p_start: string }
         Returns: Json
       }
+      cash_denomination_total_php: { Args: { p: Json }; Returns: number }
       cash_drawer_state: {
         Args: { p_business_date: string; p_shift_id: string }
         Returns: Json

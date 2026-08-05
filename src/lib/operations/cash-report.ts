@@ -1,6 +1,11 @@
 // Pure pivot + formatting helpers for the Operations Cash & cards report (B1.2).
 // NO "server-only" import — vitest-tested + shared with the CSV route.
 import { channelLabel, num, type Section } from "./daily-report";
+import {
+  mergeDenominations,
+  parseDenominations,
+  type DenominationCounts,
+} from "@/lib/accounting/cash-denominations";
 
 export const CASH_METHOD_ORDER = ["cash", "gcash", "bpi", "bank_transfer", "card"] as const;
 const SECTION_TITLES: Record<Section, string> = { lab: "Lab", consult: "Consult" } as const;
@@ -107,10 +112,14 @@ export function buildCreditCardPanel(rows: CollectionRow[], days: string[]): Cre
 }
 
 export interface EodCloseRow {
+  /** Close id — only the page selects it, to link at the printable count sheet. */
+  id?: string;
   business_date: string;
   expected_cash_php: string | number | null;
   counted_cash_php: string | number | null;
   variance_php: string | number | null;
+  /** jsonb piece counts (PR N). NULL on closes that predate the count sheet. */
+  counted_denominations?: unknown;
 }
 export interface CashReconRow {
   day: string;
@@ -118,17 +127,46 @@ export interface CashReconRow {
   expected: number;
   counted: number;
   variance: number;
+  /**
+   * Denomination piece counts for the day, summed across shifts. Null when no
+   * close that day recorded one — either a legacy close, or stored jsonb that
+   * failed `parseDenominations`.
+   */
+  denominations: DenominationCounts | null;
+  /**
+   * Ids of the closes behind this row, in the order they came back — one per
+   * shift. Empty when the caller didn't select ids (the CSV route doesn't need
+   * them). Drives the "count sheet" links on the reconciliation panel.
+   */
+  closeIds: string[];
 }
 export function buildCashReconRows(eod: EodCloseRow[], days: string[]): CashReconRow[] {
   return days.map((day) => {
     const forDay = eod.filter((e) => e.business_date === day);
-    if (forDay.length === 0) return { day, reconciled: false, expected: 0, counted: 0, variance: 0 };
+    if (forDay.length === 0) {
+      return {
+        day,
+        reconciled: false,
+        expected: 0,
+        counted: 0,
+        variance: 0,
+        denominations: null,
+        closeIds: [],
+      };
+    }
     return {
+      closeIds: forDay.map((e) => e.id).filter((id): id is string => !!id),
       day,
       reconciled: true,
       expected: forDay.reduce((s, e) => s + num(e.expected_cash_php), 0),
       counted: forDay.reduce((s, e) => s + num(e.counted_cash_php), 0),
       variance: forDay.reduce((s, e) => s + num(e.variance_php), 0),
+      // A day can hold more than one close (multi-shift, or a re-close after a
+      // reopen). Fold the breakdowns together so the sub-row describes the day.
+      denominations: forDay.reduce<DenominationCounts | null>(
+        (acc, e) => mergeDenominations(acc, parseDenominations(e.counted_denominations)),
+        null,
+      ),
     };
   });
 }

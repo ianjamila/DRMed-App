@@ -99,4 +99,81 @@ describe("buildCashReconRows", () => {
     expect(rows[0].expected).toBe(3000);
     expect(rows[0].variance).toBe(-5);
   });
+
+  it("merges the denomination breakdowns of every close on a day", () => {
+    const eod: EodCloseRow[] = [
+      {
+        business_date: "2026-05-23",
+        expected_cash_php: "1000",
+        counted_cash_php: "1000",
+        variance_php: "0",
+        counted_denominations: { bill_500: 2 },
+      },
+      {
+        business_date: "2026-05-23",
+        expected_cash_php: "2000",
+        counted_cash_php: "2000",
+        variance_php: "0",
+        counted_denominations: { bill_500: 3, coin_20: 25 },
+      },
+    ];
+    const rows = buildCashReconRows(eod, ["2026-05-23"]);
+    expect(rows[0].denominations).toEqual({ bill_500: 5, coin_20: 25 });
+  });
+
+  it("leaves the breakdown null for legacy closes and for unreconciled days", () => {
+    const eod: EodCloseRow[] = [
+      { business_date: "2026-05-23", expected_cash_php: "5000", counted_cash_php: "5000", variance_php: "0" },
+    ];
+    const rows = buildCashReconRows(eod, ["2026-05-22", "2026-05-23"]);
+    expect(rows.find((r) => r.day === "2026-05-23")!.denominations).toBeNull();
+    expect(rows.find((r) => r.day === "2026-05-22")!.denominations).toBeNull();
+  });
+
+  it("keeps the recorded breakdown when one close of a day predates PR N", () => {
+    const eod: EodCloseRow[] = [
+      { business_date: "2026-05-23", expected_cash_php: "1000", counted_cash_php: "1000", variance_php: "0" },
+      {
+        business_date: "2026-05-23",
+        expected_cash_php: "500",
+        counted_cash_php: "500",
+        variance_php: "0",
+        counted_denominations: { bill_500: 1 },
+      },
+    ];
+    const rows = buildCashReconRows(eod, ["2026-05-23"]);
+    expect(rows[0].denominations).toEqual({ bill_500: 1 });
+  });
+
+  it("carries the close ids for the count-sheet links, one per shift", () => {
+    const eod: EodCloseRow[] = [
+      { id: "close-a", business_date: "2026-05-23", expected_cash_php: "1000", counted_cash_php: "1000", variance_php: "0" },
+      { id: "close-b", business_date: "2026-05-23", expected_cash_php: "2000", counted_cash_php: "2000", variance_php: "0" },
+    ];
+    expect(buildCashReconRows(eod, ["2026-05-23"])[0].closeIds).toEqual(["close-a", "close-b"]);
+  });
+
+  it("leaves closeIds empty when the caller didn't select ids (the CSV route)", () => {
+    const eod: EodCloseRow[] = [
+      { business_date: "2026-05-23", expected_cash_php: "1000", counted_cash_php: "1000", variance_php: "0" },
+    ];
+    const rows = buildCashReconRows(eod, ["2026-05-22", "2026-05-23"]);
+    expect(rows.find((r) => r.day === "2026-05-23")!.closeIds).toEqual([]);
+    expect(rows.find((r) => r.day === "2026-05-22")!.closeIds).toEqual([]);
+  });
+
+  it("degrades a malformed stored breakdown to null rather than throwing", () => {
+    const eod: EodCloseRow[] = [
+      {
+        business_date: "2026-05-23",
+        expected_cash_php: "1000",
+        counted_cash_php: "1000",
+        variance_php: "0",
+        counted_denominations: { bill_5000: 1 },
+      },
+    ];
+    const rows = buildCashReconRows(eod, ["2026-05-23"]);
+    expect(rows[0].reconciled).toBe(true);
+    expect(rows[0].denominations).toBeNull();
+  });
 });

@@ -127,6 +127,9 @@ export function translatePgError(err: PgError): string {
     // PR G — discount types
     case "P0047":
       return err.message ?? "Senior/PWD is a statutory 20% discount and cannot be changed, disabled, or deleted.";
+    // PR N — EOD cash denomination count (0132)
+    case "P0048":
+      return err.message ?? "The denomination counts don't add up to the counted total. Re-check the count sheet.";
     default:
       return err.message ?? "Database error. Please try again.";
   }
