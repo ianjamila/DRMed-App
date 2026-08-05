@@ -12,6 +12,7 @@ import {
   type EodCloseRow,
 } from "@/lib/operations/cash-report";
 import { CASH_DENOMINATIONS } from "@/lib/accounting/cash-denominations";
+import { buildDenominationTrend } from "@/lib/accounting/denomination-trends";
 
 export async function GET(req: NextRequest) {
   await requireAdminStaff();
@@ -108,6 +109,80 @@ export async function GET(req: NextRequest) {
     reconLine(
       `${denom.full_label} (pieces)`,
       (d) => byDay.get(d)?.denominations?.[denom.key] ?? 0,
+    );
+  }
+
+  // ---- Cash count trends ---------------------------------------------------
+  // Only the parts that are NOT already derivable from the rows above. The
+  // panel's "what the till usually holds" table is deliberately omitted: days
+  // counted, totals and averages all fall straight out of summing the
+  // per-denomination piece rows already in this sheet, so exporting them again
+  // would add bulk and no information.
+  //
+  // What ISN'T derivable is the variance attribution — it needs the
+  // divisibility logic in `denomination-trends.ts` — so that is what ships.
+  const trend = buildDenominationTrend(
+    reconRows
+      .filter((r) => r.reconciled)
+      .map((r) => ({ day: r.day, variance: r.variance, denominations: r.denominations })),
+  );
+
+  // Range-wide figures: no per-day value to give, so the day cells stay empty
+  // and the figure sits under Total. Labels carry their unit.
+  const trendStat = (label: string, value: number) => {
+    lines.push(
+      ["Cash count trends", label, ...days.map(() => ""), value].map(escapeCell).join(","),
+    );
+  };
+  trendStat("Days closed", trend.closedDays);
+  trendStat("Days with a denomination count", trend.countedDays);
+  trendStat("Days counted exactly", trend.balancedDays);
+  trendStat("Days short", trend.shortDays);
+  trendStat("Days over", trend.overDays);
+  trendStat("Net difference (pesos)", trend.netVariancePhp);
+
+  // Per-day attribution. This one DOES fit the day columns: for each off day,
+  // the biggest note or coin whose value divides the difference exactly, and
+  // how many of them it works out to. Arithmetic, not a claim about which pile
+  // was actually miscounted — see denomination-trends.ts.
+  const attributionByDay = new Map(trend.offDays.map((o) => [o.day, o]));
+  const attrLine = (label: string, pick: (day: string) => number | string) => {
+    lines.push(
+      ["Difference explanation", label, ...days.map(pick), ""].map(escapeCell).join(","),
+    );
+  };
+  // Both cells key off valuePhp, not off `pieces`. A day no pile explains has
+  // pieces === 0, and `?? ""` would let that 0 through — printing "0 pieces"
+  // beside a blank denomination, which reads as a real answer instead of "no
+  // whole-pile explanation". Blank both, or fill both.
+  attrLine("Fits a note / coin of (pesos)", (d) => attributionByDay.get(d)?.valuePhp ?? "");
+  attrLine("…this many pieces", (d) => {
+    const a = attributionByDay.get(d);
+    return a?.valuePhp == null ? "" : a.pieces;
+  });
+
+  // And the same attribution rolled up over the range — the "we are short a
+  // ₱1,000 note more often than not" signal.
+  for (const b of trend.buckets) {
+    lines.push(
+      [
+        "Difference explanation",
+        `${b.label} — days`,
+        ...days.map(() => ""),
+        b.days,
+      ]
+        .map(escapeCell)
+        .join(","),
+    );
+    lines.push(
+      [
+        "Difference explanation",
+        `${b.label} — net pesos`,
+        ...days.map(() => ""),
+        b.netPhp,
+      ]
+        .map(escapeCell)
+        .join(","),
     );
   }
 
