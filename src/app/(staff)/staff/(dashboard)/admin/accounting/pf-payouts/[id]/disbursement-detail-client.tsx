@@ -10,6 +10,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { voidPfDisbursement } from "@/lib/actions/accounting/pf-disbursements";
+import { formatPfBasis, formatPfMethod } from "@/lib/accounting/pf-labels";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -62,24 +63,6 @@ function getName(ref: PhysicianRef | StaffRef): string {
   if (!ref) return "(unknown)";
   if (Array.isArray(ref)) return ref[0]?.full_name ?? "(unknown)";
   return ref.full_name;
-}
-
-function formatMethod(m: string): string {
-  switch (m) {
-    case "cash": return "Cash";
-    case "gcash": return "GCash";
-    case "bank_transfer": return "Bank transfer";
-    default: return m;
-  }
-}
-
-function formatBasis(b: string): string {
-  switch (b) {
-    case "cash_at_release": return "Cash — accrued at release";
-    case "hmo_at_settlement": return "HMO — accrued at settlement";
-    case "clawback": return "Clawback";
-    default: return b;
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -149,14 +132,22 @@ export function DisbursementDetailClient({
               </span>
             )}
           </div>
-          {!isVoided && (
-            <button
-              onClick={() => setShowVoid(true)}
-              className="rounded-md border border-red-300 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-100 transition-colors"
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href={`/staff/admin/accounting/pf-payouts/${d.id}/slip`}
+              className="rounded-md border border-[color:var(--color-brand-cyan)] bg-white px-4 py-2 text-sm font-semibold text-[color:var(--color-brand-cyan)] transition-colors hover:bg-[color:var(--color-brand-bg)]"
             >
-              Void disbursement
-            </button>
-          )}
+              Print acknowledgment slip
+            </Link>
+            {!isVoided && (
+              <button
+                onClick={() => setShowVoid(true)}
+                className="rounded-md border border-red-300 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-100 transition-colors"
+              >
+                Void disbursement
+              </button>
+            )}
+          </div>
         </div>
       </header>
 
@@ -166,7 +157,7 @@ export function DisbursementDetailClient({
           {[
             ["Doctor", getName(d.physicians)],
             ["Date", d.posted_date],
-            ["Method", formatMethod(d.method)],
+            ["Method", formatPfMethod(d.method)],
             ["Total", PHP.format(Number(d.total_php))],
             ["Recorded by", getName(d.recorded_by_staff)],
             ["Recorded at", new Date(d.recorded_at).toLocaleString("en-PH", { timeZone: "Asia/Manila" })],
@@ -226,7 +217,7 @@ export function DisbursementDetailClient({
                       {e.test_request_id.slice(0, 8)}…
                     </td>
                     <td className="px-4 py-3 text-[color:var(--color-brand-text-soft)]">
-                      {formatBasis(e.recognition_basis)}
+                      {formatPfBasis(e.recognition_basis)}
                     </td>
                     <td className="px-4 py-3 text-[color:var(--color-brand-text-soft)]">
                       {e.recognized_at
