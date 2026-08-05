@@ -61,12 +61,22 @@ export function PhysicianForm({ initial }: Props) {
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="grid gap-1.5">
           <Label htmlFor="slug">Slug</Label>
+          {/*
+            The dash MUST stay escaped. Browsers compile `pattern` with the
+            RegExp `v` flag, where a bare trailing `-` inside a character class
+            is a syntax error — and an uncompilable pattern is ignored
+            outright, so the field silently stops validating in the browser.
+            Moving the dash to the front doesn't help (`v` rejects that too);
+            `\-` is the only form valid under both `u` and `v`. Mirrors the
+            server-side rule in lib/validations/physician.ts, which uses a
+            plain regex literal and was never affected.
+          */}
           <StableInput
             id="slug"
             name="slug"
             required
             maxLength={80}
-            pattern="[a-z0-9-]+"
+            pattern="[a-z0-9\-]+"
             defaultValue={initial?.slug ?? ""}
             placeholder="juan-dela-cruz"
           />

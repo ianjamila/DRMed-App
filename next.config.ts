@@ -9,14 +9,54 @@ const isProd = process.env.NODE_ENV === "production";
 // resist nonce-based replacement. Phase 8 ships strict everywhere else
 // (frame-ancestors, form-action, base-uri, object-src) so the residual XSS
 // blast radius stays small.
+// A local Supabase stack answers on http://127.0.0.1:54321, which
+// `https://*.supabase.co` does not cover — so in dev every REST fetch, every
+// realtime socket and every storage image was blocked outright, filling the
+// console with CSP errors on each page. Derived from the env var rather than
+// hardcoded so a non-default `supabase start` port still works, and gated on
+// the host actually being loopback so a dev server pointed at the remote
+// project (or any prod build) widens nothing.
+const localSupabase: { origin: string; ws: string } | null = (() => {
+  if (isProd) return null;
+  const raw = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    if (!["127.0.0.1", "localhost", "[::1]", "::1"].includes(url.hostname)) {
+      return null;
+    }
+    const scheme = url.protocol === "https:" ? "wss:" : "ws:";
+    return { origin: url.origin, ws: `${scheme}//${url.host}` };
+  } catch {
+    return null;
+  }
+})();
+
+// `ws:` is only a meaningful source in connect-src, so img-src takes the
+// http origin alone rather than a directive full of sources it can't use.
+const withLocalSupabase = (
+  directive: string,
+  ...sources: (keyof NonNullable<typeof localSupabase>)[]
+): string =>
+  localSupabase
+    ? `${directive} ${sources.map((k) => localSupabase[k]).join(" ")}`
+    : directive;
+
 const cspDirectives: string[] = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline' https://connect.facebook.net" +
     (isProd ? "" : " 'unsafe-eval'"),
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob: https://*.supabase.co https://www.facebook.com",
+  withLocalSupabase(
+    "img-src 'self' data: blob: https://*.supabase.co https://www.facebook.com",
+    "origin",
+  ),
   "font-src 'self' data:",
-  "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.resend.com https://www.facebook.com",
+  withLocalSupabase(
+    "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.resend.com https://www.facebook.com",
+    "origin",
+    "ws",
+  ),
   "frame-ancestors 'none'",
   "form-action 'self'",
   "base-uri 'self'",
