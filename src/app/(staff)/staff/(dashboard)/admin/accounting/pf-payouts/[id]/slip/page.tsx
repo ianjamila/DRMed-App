@@ -226,7 +226,7 @@ export default async function PfPayoutSlipPage({
   };
 
   return (
-    <div className="payout-slip-print mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8 print:max-w-none print:p-0">
+    <div className="payout-slip-print mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8 print:p-0">
       <div className="mb-4 flex items-center justify-between gap-2 print:hidden">
         <Link
           href={`/staff/admin/accounting/pf-payouts/${disb.id}`}
