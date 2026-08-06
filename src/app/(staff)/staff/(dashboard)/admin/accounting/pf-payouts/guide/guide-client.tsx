@@ -61,7 +61,12 @@ export function PayDoctorsGuide() {
             you paid, then <strong>Confirm</strong>.
           </li>
           <li>
-            <strong>5.</strong> Repeat for each doctor. Paid doctors move to the{" "}
+            <strong>5.</strong> Click <strong>Print slip</strong> on that payment
+            and have the doctor sign it. Two pages print — give the doctor one
+            and keep the signed one in your file.
+          </li>
+          <li>
+            <strong>6.</strong> Repeat for each doctor. Paid doctors move to the{" "}
             <strong>Already paid</strong> tab.
           </li>
         </ol>

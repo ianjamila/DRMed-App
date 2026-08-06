@@ -11,6 +11,7 @@ import {
 import { createPfDisbursement } from "@/lib/actions/accounting/pf-disbursements";
 import { createBulkPfPayoutCash } from "@/lib/actions/accounting/pf-bulk-payout";
 import { todayManilaISODate } from "@/lib/dates/manila";
+import { formatPfMethod } from "@/lib/accounting/pf-labels";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -81,15 +82,6 @@ const PHP = new Intl.NumberFormat("en-PH", {
   currency: "PHP",
   minimumFractionDigits: 2,
 });
-
-function formatMethod(m: string): string {
-  switch (m) {
-    case "cash": return "Cash";
-    case "gcash": return "GCash";
-    case "bank_transfer": return "Bank transfer";
-    default: return m;
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Root client component
@@ -643,18 +635,27 @@ function HistoryTab({ disbursements }: { disbursements: HistoryDisbursement[] })
                 </td>
                 <td className="px-4 py-3">{physName}</td>
                 <td className="px-4 py-3 text-[color:var(--color-brand-text-soft)]">
-                  {formatMethod(d.method)}
+                  {formatPfMethod(d.method)}
                 </td>
                 <td className="px-4 py-3 text-right font-mono">
                   {PHP.format(Number(d.total_php))}
                 </td>
                 <td className="px-4 py-3 text-right">
-                  <Link
-                    href={`/staff/admin/accounting/pf-payouts/${d.id}`}
-                    className="text-[color:var(--color-brand-cyan)] hover:underline text-xs font-medium"
-                  >
-                    View
-                  </Link>
+                  <div className="flex items-center justify-end gap-3">
+                    <Link
+                      href={`/staff/admin/accounting/pf-payouts/${d.id}`}
+                      className="text-[color:var(--color-brand-cyan)] hover:underline text-xs font-medium"
+                    >
+                      View
+                    </Link>
+                    <Link
+                      href={`/staff/admin/accounting/pf-payouts/${d.id}/slip`}
+                      className="text-[color:var(--color-brand-cyan)] hover:underline text-xs font-medium"
+                      aria-label={`Print acknowledgment slip for ${batchLabel}`}
+                    >
+                      Print slip
+                    </Link>
+                  </div>
                 </td>
               </tr>
             );

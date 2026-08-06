@@ -442,3 +442,36 @@
     width: 100%;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * Doctor PF payout acknowledgment slip — A4 (partner revisions item 23, gap 5).
+ *
+ * Its own named page, not the A5 receipt one: the slip itemises every cleared
+ * fee entry and carries two signature blocks, so A5 would wrap the table and
+ * push the signatures onto a second sheet. Each copy (doctor's / clinic file)
+ * gets its own page via `break-after`, and the last one doesn't force a
+ * trailing blank sheet.
+ * ------------------------------------------------------------------------- */
+@page payout-slip {
+  size: A4;
+  margin: 12mm;
+}
+
+.payout-slip-print {
+  page: payout-slip;
+}
+
+@media print {
+  .payout-slip-print .payout-slip-sheet {
+    max-width: none;
+    width: 100%;
+  }
+
+  .payout-slip-print .payout-slip-copy {
+    break-after: page;
+  }
+
+  .payout-slip-print .payout-slip-copy:last-child {
+    break-after: auto;
+  }
+}
