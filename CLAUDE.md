@@ -18,6 +18,13 @@ Key reference artifacts:
 - `IMPLEMENTATION_PLAN.md` — original phase plan (historical; cross-check before relying on it)
 - `README.md` — operational setup
 - `.env.example` — env-var inventory
+- `docs/superpowers/specs/` and `docs/superpowers/audits/` — design specs and audits for
+  every post-1.0 programme (partner revisions, release lifecycle, group templates, EOD
+  denomination count…). Read the spec before re-deriving a design decision.
+
+Migration ledger: **prod head = 0132**, repo↔prod in sync (2026-09-02). There is ONE
+Supabase project (= prod, ref `qhptbmafrosgibooelpp`); there is no staging project — the
+local stack is staging.
 
 ## Domain skills — consult these before re-exploring
 
@@ -25,12 +32,17 @@ There are `drmed-*` Agent skills that already map the tricky subsystems. They
 auto-trigger on relevant keywords, but check the matching one first rather than
 rediscovering a surface from scratch:
 
-- **drmed-migrations** — schema changes, Supabase migrations, RLS policy + audit-row + payment-gating checklist, the migration workflow.
-- **drmed-payments** — payments, the payment-gating trigger, visit payment status, refunds/voids, cash drawer + EOD, HMO billing, the accounting GL bridge.
-- **drmed-result-templates** — lab result templates, structured result entry, the PDF render pipeline, sign-off / release.
-- **drmed-rls-and-auth** — staff vs patient auth, RLS, audit logging, MFA, signed URLs, RA 10173 — the most compliance-sensitive surface.
-- **drmed-staff-ui** — staff-portal "chrome": sidebar nav config, the shared `SectionTabs`, dashboard cards.
-- **drmed-booking-and-intake** — appointments/booking/registration: the shared booking core (`lib/appointments/{timing,create}`, `lib/patients/resolve`), public `/schedule`, staff "+ New appointment" slide-over, `/register` self-reg + reception QR poster.
+- **drmed-migrations** — schema changes, Supabase migrations, RLS policy + audit-row + payment-gating + function-ACL checklist, applying to prod, P-code registry.
+- **drmed-payments** — the whole money flow: pricing (discounts, doctor fees), payments, the release + lab-queue payment gates, voids, soft-delete of unpaid entries, cash drawer / EOD denomination count, HMO, PF payouts, the GL bridge.
+- **drmed-result-templates** — lab result templates, the consolidated chemistry group template, structured result entry, lab queue / results archive worklists, the PDF render pipeline, sign-off / release.
+- **drmed-rls-and-auth** — staff vs patient auth, the portal patient client (JWT claim → RLS), audit logging, MFA, signed URLs, rate-limit buckets, function ACLs, RA 10173 — the most compliance-sensitive surface.
+- **drmed-staff-ui** — staff-portal "chrome": sidebar nav config, the shared `SectionTabs`, page headers + filter chips, dashboard cards, printable slips.
+- **drmed-booking-and-intake** — appointments/booking/registration: the shared booking core (`src/lib/appointments/{timing,create}.ts`, `src/lib/patients/resolve.ts`), public `/schedule`, staff "+ New appointment" slide-over, `/register` self-reg + reception QR poster.
+
+The `drmed-*` skills are git-tracked under `.claude/skills/` — update the matching skill in
+the same PR that moves a file it cites. The other folders under `.claude/skills/` (ads,
+copywriting, seo…) and `.agents/` are an **untracked third-party marketing skill pack**, not
+project documentation.
 
 ## Project at a glance
 
@@ -52,14 +64,19 @@ Compliance target: **Philippine Data Privacy Act (RA 10173)**. Locale: en-PH, As
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm test` | Run vitest unit tests once |
 | `npm run test:watch` | Vitest in watch mode |
-| `npm run db:types` | Regenerate `src/types/database.ts` from the local Supabase project — run after every migration |
-| `npm run db:types:remote` | Same, but against the live DB via `SUPABASE_DB_URL` |
+| `npm run db:types` | Regenerate `src/types/database.ts` from the local Supabase project — run after every migration that changes columns/RPCs |
+| `npm run db:types:remote` | Same, against the live DB via `SUPABASE_DB_URL` — **currently unusable** (`SUPABASE_DB_URL` is commented out in `.env.local`; no password on file) |
 | `npm run db:diff -- <name>` | Generate a new migration from local schema changes |
-| `npm run db:reset` | Reset local Supabase to migrations (destroys local data) |
-| `supabase db push` | Apply migrations to the linked remote Supabase project |
-| `supabase start` | Run a local Supabase stack for testing migrations |
-| `npm run seed:test` / `seed:services` / `seed:templates` / etc. | Idempotent seed scripts — target the **local** stack by default (see below) |
-| `npm run smoke:results` | Render-pipeline smoke test for result PDF templates |
+| `npm run db:reset` | Reset local Supabase to migrations + `supabase/seed.sql` (destroys local data) |
+| `supabase db push` | Apply migrations to the linked remote project — **the user runs this** (`! cd ~/Claude/DRMed && /opt/homebrew/bin/supabase db push`); Claude-run pushes and MCP DDL are blocked by the auto-mode classifier |
+| `supabase start` | Run a local Supabase stack (needs Docker) — the only "staging" |
+| `npm run seed:test` / `seed:services` / `seed:physicians` / `seed:hmo` / `seed:templates` / `seed:signatures` / etc. | Idempotent seed scripts — target the **local** stack by default (see below) |
+| `npm run smoke:results` / `smoke:chemistry` / `smoke:dashboards` | Render-pipeline / consolidated-chemistry / dashboard smoke tests |
+
+There is **no PR-triggered CI** — `.github/workflows/` holds only the scheduled
+`db-backup.yml`. The Vercel preview build is the only automated gate, so run
+`npm test && npm run typecheck && npm run lint` locally before pushing. Vercel deploys
+`main` automatically: **a migration must be on prod before its app PR merges.**
 
 ### `scripts/` runners target LOCAL by default — this is load-bearing
 
@@ -110,27 +127,35 @@ This is the single most important invariant in the codebase:
 - **Staff** authenticate via **Supabase Auth** (email + password, optional TOTP). Sessions are managed by Supabase. Middleware additionally verifies an active `staff_profiles` row.
 - **Patients** do **NOT** have Supabase Auth accounts. They authenticate with **DRM-ID + receipt PIN** (8-char, bcrypt-hashed, scoped to a visit, 60-day expiry). Sessions are short-lived signed JWTs (HS256, `PATIENT_SESSION_SECRET`) in `HttpOnly` `Secure` `SameSite=Strict` cookies named `drmed_patient_session`.
 
-Because patients aren't Postgres-authenticated, the patient portal bridges to RLS via a Postgres function `set_patient_context(patient_id uuid)` that sets `app.current_patient_id`. RLS policies for patient queries read `current_setting('app.current_patient_id')`. The server **must** call this function at the start of every patient request — RLS is the source of truth for access, not application code.
+Because patients aren't Postgres-authenticated, the portal bridges to RLS with a **patient-scoped client** (`src/lib/supabase/patient.ts`, `createPatientClient(patientId)`, migration 0114): it mints a 5-minute anon-role JWT carrying a `patient_id` claim (signed with `SUPABASE_JWT_SECRET`), and `current_patient_id()` reads that claim inside every patient RLS policy. **Every portal read uses this client** — `src/lib/portal/portal-scoping.test.ts` fails if a portal file imports the admin client without being allowlisted. The older `set_patient_context()` function still exists but nothing calls it. RLS is the source of truth for access, not application code.
 
-Never use Supabase Auth for patients, and never grant patients direct storage access — they only get 5-minute signed URLs from a Server Action that audit-logs the access.
+Never use Supabase Auth for patients, and never grant patients direct storage access — they only get 5-minute signed URLs (`src/lib/storage/signed-url.ts`) from a Server Action that audit-logs the access.
 
 ### Payment-gating is enforced in the database
 
 A Postgres trigger on `test_requests` blocks any transition to `status = 'released'` unless the parent `visits.payment_status = 'paid'`. The UI also enforces this, but **the trigger is the source of truth**. Never bypass it; never use the service-role client to short-circuit it.
 
-Other DB-side automation to be aware of:
-- `payments` insert recalculates `visits.paid_php` and `visits.payment_status`.
+Other DB-side automation to be aware of (details and P-codes in the `drmed-migrations` / `drmed-payments` skills):
+- `payments` insert (and void, 0111) recalculates `visits.paid_php` and `visits.payment_status`; `'waived'` is preserved.
 - Linking a result to a test (insert on `result_test_requests`) auto-flips `test_requests.status` from `in_progress` → `result_uploaded` (or `ready_for_release` when no pathologist sign-off is configured). For structured results the same flip also happens when `results.finalised_at` transitions from NULL → not-NULL.
+- Release also fires the GL bridge (`bridge_test_request_released`: revenue JE + doctor PF accrual; P0034 when a PF-carrying doctor line has no attending physician) and the consent gate (`enforce_consent_before_release`, ships OFF).
+- **Soft delete (0125):** `visits` and `test_requests` carry `deleted_at/by/reason`; guard triggers P0042–P0046 decide deletability (only `unpaid`) and block payments/status changes on deleted visits. **Every read of those tables filters `deleted_at is null`.**
+- Package headers (0040) auto-promote to `ready_for_release`; components are ₱0 rows with `parent_id`. Multi-row inserts list headers before components.
+- The statutory Senior/PWD discount row is locked at 20% (P0047, 0128); the EOD denomination breakdown must tie to the counted total (P0048, 0132).
+- Every `raise exception` with a `P00NN` code needs a translation in `src/lib/accounting/pg-errors.ts` (in use: P0001–P0034, P0040–P0048; next free P0049).
 
 ### Three Supabase clients with strict separation
 
 - `src/lib/supabase/client.ts` — browser client (anon key)
 - `src/lib/supabase/server.ts` — server-component client with cookie handling via `@supabase/ssr`
-- `src/lib/supabase/admin.ts` — service-role client. Bypasses RLS. **Server-only.** Only imported by Server Actions, Route Handlers, and Edge Functions. Never import this from a client component or anywhere that ships to the browser.
+- `src/lib/supabase/admin.ts` — service-role client. Bypasses RLS. **Server-only.** Only imported by Server Actions, Route Handlers, and Edge Functions. Never import this from a client component or anywhere that ships to the browser. Never import it at module scope from `src/lib/results/` (it breaks `smoke:results` under tsx — lazy-import inside the function instead).
+- `src/lib/supabase/patient.ts` — the fourth client: patient-scoped anon JWT for portal reads (see above).
+
+Prefer the RLS-scoped server client for staff reads and exports; reach for the admin client only for audit writes, storage, and RPCs that are service_role-only by design. **SQL functions in `public` default to service_role-only since 0119** — grant `authenticated`/`anon` explicitly only when a JWT genuinely calls one, and check what 0118 left before restating grants on a re-created function.
 
 ### Audit logging is mandatory
 
-Every write action in the staff portal, every patient result view/download, every PIN attempt (success and failure), and every payment record **must** insert an `audit_log` row. RA 10173 compliance depends on this. Audit-log inserts happen via the service-role client from server code.
+Every write action in the staff portal, every patient result view/download, every PIN attempt (success and failure), every payment record, every deletion/restore (with a reason), and **every print or export that discloses patient data** (receipts, slips, count sheets, CSVs — `*_printed` / `*_viewed` / `*.exported` actions) **must** insert an `audit_log` row. RA 10173 compliance depends on this. Audit-log inserts happen via the service-role client from server code.
 
 ### Server Components by default
 
@@ -154,19 +179,41 @@ All Server Actions return `{ ok: true, data } | { ok: false, error }`. User-faci
 | Concern | Location |
 |---|---|
 | Staff auth gates (`requireSignedInStaff`, `requireActiveStaff`, `requireAdminStaff`) | `src/lib/auth/require-staff.ts`, `require-admin.ts` |
+| Role → lab sections (`sectionsForRole`; `[]` means NO access, never "no filter") | `src/lib/auth/role-sections.ts` |
 | Patient auth gate + PIN handling | `src/lib/auth/require-patient.ts`, `pin.ts`, `patient-session.ts` |
-| Three Supabase clients (browser / server / admin) | `src/lib/supabase/{client,server,admin}.ts` |
+| Four Supabase clients (browser / server / admin / patient) | `src/lib/supabase/{client,server,admin,patient}.ts` |
+| Patient storage signed URLs (single service-role choke point) | `src/lib/storage/signed-url.ts` |
 | Audit-log writer — call from every write action | `src/lib/audit/log.ts` (`audit()`) |
 | Server Action helpers (`ipAndAgent`, `firstIssue`) | `src/lib/server/action-helpers.ts` |
 | PG error → user-facing message translator | `src/lib/accounting/pg-errors.ts` (`translatePgError`) |
-| Manila/PHT datetime helpers | `src/lib/dates/manila.ts` (`todayManilaISODate`, etc.) |
-| Rate-limit checker | `src/lib/rate-limit/check.ts` |
+| Manila/PHT date helpers (`todayManilaISODate`, `isISODate`, `shiftISODate`, `manilaRangeUtc`, `friendlyManilaDate`) | `src/lib/dates/manila.ts` |
+| Rate-limit checker (per-bucket) | `src/lib/rate-limit/check.ts` |
+| Pure visit-domain rules (classification, deletability, lab payment gate, receipt policy, doctor-fee split, visit # search) | `src/lib/visits/{classification,deletion,lab-gate,receipt-policy,consultation-fee,visit-number-filter}.ts` |
+| Discount arithmetic (form preview AND server recompute) | `src/lib/pricing/discounts.ts` |
+| Shared visit actions (queue delete/restore, PIN re-issue) | `src/lib/actions/visits/{queue-deletion,reissue-pin}.ts` |
+| Cash denominations, amount-in-words, PF labels | `src/lib/accounting/{cash-denominations,amount-in-words,pf-labels}.ts` |
+| CSV escaping (one copy) | `src/lib/csv/escape.ts` |
+| Results-archive tab config, template drift checks | `src/lib/results/{status-filter,template-health}.ts` |
+| Shared staff components (page header, section tabs, nav config, delete dialog, no-receipt notice, PIN re-issue button) | `src/components/staff/` |
 | Migrations (sequential numbering) | `supabase/migrations/` |
+| Script env guard (local by default, `--prod` opt-in, `--confirm=<target>`) | `scripts/lib/{load-env,env-guard}.ts` |
 
 ## Out of scope (by design)
 
-- Patient self-service password reset — patients must visit reception for a new PIN.
-- PHIC / HMO billing integration.
+- Patient self-service password reset — patients must visit reception for a new PIN (reception can re-issue and print a portal-access slip).
+- External PHIC / HMO claims integration. HMO claims and AR are tracked internally under `/staff/admin/accounting/{hmo-claims,patient-ar}`; nothing is submitted electronically.
+- Doctor-facing logins / PF statements — doctors are not auth users; they sign a printed acknowledgment slip instead.
+
+## Cross-cutting rules learned the hard way
+
+- **Dates:** the DB runs in UTC and the clinic in Asia/Manila. Every date filter is a half-open Manila window from `manilaRangeUtc` (`gte` start, `lt` next day) — never a naive `${d}T00:00:00` / `T23:59:59` string (read as UTC, 8 hours early). DB `date` defaults use `(now() at time zone 'Asia/Manila')::date`, never `current_date`.
+- **PostgREST limits:** aggregates are disabled (`PGRST123`) and a bare select caps at 1000 rows — real aggregates need a SQL function (`visits_classification_summary` is the model); exports chunk with `.range()`. Multi-row inserts NULL-fill keys missing from some rows (not column defaults) — send a uniform key set.
+- **Soft delete:** filter `deleted_at is null` on `visits` / `test_requests` in every read surface (queues, results, dashboards, receipts, exports, portal, sheet export). Deletability is `payment_status = 'unpaid'` only.
+- **Role sections:** `sectionsForRole(role) === []` is a deny. The lab queue once treated it as "no filter" and showed reception every section.
+- **Exports** run under the RLS-scoped server client with an admin gate, a row ceiling, and an audit row — never the service-role client.
+- **Print surfaces** each append a named `@page` + `@media print` block at the tail of `src/app/globals.css`; two print PRs in flight always conflict there and the resolution is keep both.
+- **`<input pattern>`** is compiled with the RegExp `v` flag — a bare trailing `-` in a class makes the whole pattern silently ignored; write `[a-z0-9\-]+`.
+- **A repo-wide guard must cover read paths too**, not only `--commit` branches (a dry-run that reads prod PII is still a disclosure).
 
 ## Conventions
 
@@ -177,8 +224,10 @@ All Server Actions return `{ ok: true, data } | { ok: false, error }`. User-faci
 
 ## Schema changes — order of operations
 
-1. Create the migration locally: `supabase db diff -f <name>` (writes to `supabase/migrations/`).
-2. Test against a local Supabase instance: `supabase start`, then verify.
-3. Open a PR — preview will fail if the migration hasn't been applied to the linked project.
-4. Apply to staging Supabase, verify, then production via `supabase db push`.
-5. Regenerate types: `npm run db:types`.
+1. Create the migration locally: `npm run db:diff -- <name>` (or hand-write it for function/trigger/policy changes — the diff is noisy for those). Next number = last file + 1; `git fetch` first, parallel sessions have taken numbers before.
+2. Replay on a fresh local stack: `supabase start && npm run db:reset` — the full history must apply to an empty DB (data migrations guard, never `raise`, on missing rows).
+3. `npm test && npm run typecheck && npm run lint`; add a `pg-errors.ts` translation for every new P-code; restate function ACLs explicitly (see `drmed-migrations`).
+4. Open the PR. The Vercel preview build fails if the migration hasn't been applied to the linked project.
+5. Apply to prod **before merging**: ask the user to run `! cd ~/Claude/DRMed && /opt/homebrew/bin/supabase db push` (it stamps the ledger with the real `00NN` version). If MCP `execute_sql` is used instead, wrap in `begin; … commit;` and insert the `schema_migrations` row by hand; never MCP `apply_migration` (timestamp version → `db push` re-applies it).
+6. Verify on prod (ledger head, objects, grants), merge, confirm the Vercel production deploy landed — merge ≠ deploy.
+7. Regenerate types: `npm run db:types` (empty diff for CHECK/trigger/function-only changes is expected).

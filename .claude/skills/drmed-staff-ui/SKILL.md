@@ -1,6 +1,6 @@
 ---
 name: drmed-staff-ui
-description: Use when working on DRMed staff-portal UI "chrome" — the sidebar navigation, in-page section tabs, or dashboard summary cards. Trigger whenever the user mentions staff-nav-config, STAFF_NAV, StaffNavItem, StaffNavSection, sidebar nav, nav item, sidebar section/subgroup, visibleNavFor, isItemActive, activePrefix, exact match nav, section tabs, SectionTabs, section-tabs-style, sectionTabClass, tab bar, VisitsTabs, BillsTabs, StatementTabs, PaymentsTabs, the cyan-vs-navy tab style, dashboard card, dashboard cards, cards.ts, DASHBOARD_CARDS, CardDef, StatCard, dashboard_card_prefs, dashboard settings, dashboard-cards, role dashboard, admin-dashboard / reception-dashboard / lab-dashboard, or the (dashboard) home page. ALSO trigger on "add a sidebar item", "add / move / rename a nav link", "consolidate these sidebar items", "add a tab to this page", "make these tabs consistent", "the tabs jump when switching", "add a dashboard card", "hide a card for a role", or any plain-language relabel of a staff page. This is the UI-plumbing surface — money/result/RLS logic lives in drmed-payments / drmed-result-templates / drmed-rls-and-auth, not here.
+description: Use when working on DRMed staff-portal UI "chrome" — the sidebar navigation, in-page section tabs, page headers and filter chips, dashboard summary cards, or printable slips. Trigger whenever the user mentions staff-nav-config, STAFF_NAV, StaffNavItem, StaffNavSection, adminOnly, collapsible, Hidden tabs, isSectionActive, sidebar nav, nav item, sidebar section/subgroup, visibleNavFor, isItemActive, activePrefix, exact match nav, section tabs, SectionTabs, section-tabs-style, sectionTabClass, tab bar, VisitsTabs, BillsTabs, StatementTabs, PaymentsTabs, the cyan-vs-navy tab style, PageHeader, filter chips, multi-select chips, dashboard card, dashboard cards, cards.ts, DASHBOARD_CARDS, CardDef, defaultHidden, hiddenCardIdsFor, StatCard, dashboard_card_prefs, dashboard settings, dashboard-cards, role dashboard, admin-dashboard / reception-dashboard / lab-dashboard, the (dashboard) home page, print button, print slip, count sheet, @page, @media print, globals.css, or mobile layout at 390px. ALSO trigger on "add a sidebar item", "add / move / rename a nav link", "consolidate these sidebar items", "add a tab to this page", "make these tabs consistent", "the tabs jump when switching", "add a dashboard card", "hide a card for a role", "make this printable", or any plain-language relabel of a staff page. This is the UI-plumbing surface — money/result/RLS logic lives in drmed-payments / drmed-result-templates / drmed-rls-and-auth, not here.
 ---
 
 # DRMed staff-portal UI wiring (nav · tabs · dashboard cards)
@@ -18,6 +18,8 @@ The three "chrome" systems every staff page hangs off of: the **sidebar nav conf
 | Tab styling for non-component bars | `src/components/staff/section-tabs-style.ts` |
 | Per-area tab wrappers | `…/payments/_components/payments-tabs.tsx`, `…/admin/accounting/ap/_components/bills-tabs.tsx`, `…/visits/_components/visits-tabs.tsx`, `…/admin/accounting/financial-statements/_components/statement-tabs.tsx` |
 | Fixed-position tab bar via layout | `…/admin/accounting/ap/layout.tsx` |
+| Page header (title, subtitle, actions slot) | `src/components/staff/page-header.tsx` (`PageHeader`) — the lab queue and Visits archive are the models for header + filter chips |
+| Print buttons (client `window.print()` wrappers) | `…/visits/[id]/receipt/print-button.tsx`, `…/payments/eod/[closeId]/count-sheet/print-button.tsx`, `…/admin/accounting/pf-payouts/[id]/slip/slip-print-button.tsx` |
 | Dashboard card registry | `src/lib/dashboards/cards.ts` |
 | Card visibility loader | `src/lib/dashboards/card-prefs.ts` (`loadHiddenCardIds`) |
 | Role dashboards | `src/app/(staff)/staff/(dashboard)/page.tsx` → `_dashboards/{reception,lab,admin}-dashboard.tsx` |
@@ -28,7 +30,9 @@ Roles everywhere: `reception`, `medtech`, `xray_technician`, `pathologist`, `adm
 
 ## 1 · Sidebar navigation — `staff-nav-config.ts`
 
-`STAFF_NAV: StaffNavSection[]` drives the whole sidebar. A **section** has a `heading` and either flat `items`, collapsible `subgroups` (`{heading, items}`), or both. An **item** is a `StaffNavItem`:
+`STAFF_NAV: StaffNavSection[]` drives the whole sidebar. A **section** has a `heading` and either flat `items`, collapsible `subgroups` (`{heading, items}`), or both, plus two optional flags: `adminOnly` (the whole section is dropped for non-admins regardless of item roles) and `collapsible` (rendered as a collapsed-by-default `<details>`; `isSectionActive()` opens it when a child is active). Current sections in order: Overview · Front desk · Billing · Services · Lab · Admin (subgroups Pay doctors, Payroll, Books & reports, Operations, Catalog & setup, Admin tools) · Personal · **Hidden tabs** (`adminOnly + collapsible` — parked pages the partner may want back; don't add live features there).
+
+An **item** is a `StaffNavItem`:
 
 ```ts
 { href, label, description?, exact?, activePrefix?, roles }
@@ -71,8 +75,8 @@ interface SectionTab { href: string; label: string; exact?: boolean; excludePref
 
 The home dashboard at `/staff` routes by role to a `_dashboards/*-dashboard.tsx`, which renders summary `StatCard`s.
 
-- **Registry** — `src/lib/dashboards/cards.ts`: `DASHBOARD_CARDS: CardDef[]`, where `CardDef = { id, label, roles, group, sensitive? }`. `group` is one of `'snapshot' | 'operations' | 'money' | 'people' | 'attention'`. The `id` (e.g. `admin.pf_to_pay`) is stored in `dashboard_card_prefs.card_id` — **renaming a `label` is safe; renaming an `id` drops any saved visibility override.** `cardsForRole(role)` filters.
-- **Visibility** — table `dashboard_card_prefs (role, card_id, visible)` (migration `0068`). No row = visible (the default), so a new card needs no migration. A `visible=false` row hides it. `loadHiddenCardIds(role)` returns the hidden set; the settings UI at `/staff/admin/settings/dashboard-cards` loops `DASHBOARD_CARDS` per role.
+- **Registry** — `src/lib/dashboards/cards.ts`: `DASHBOARD_CARDS: CardDef[]`, where `CardDef = { id, label, roles, group, sensitive?, defaultHidden? }`. `group` is one of `'snapshot' | 'operations' | 'money' | 'people' | 'attention'`. The `id` (e.g. `admin.pf_to_pay`) is stored in `dashboard_card_prefs.card_id` — **renaming a `label` is safe; renaming an `id` drops any saved visibility override.** `cardsForRole(role)` filters.
+- **Visibility** — table `dashboard_card_prefs (role, card_id, visible)` (migration `0068`). No row = the card's default (`defaultHidden ? hidden : visible`), so a new card needs no migration; a stored pref always wins, so admin can re-enable a default-hidden card from Dashboard settings. `loadHiddenCardIds(role)` (card-prefs.ts) applies `hiddenCardIdsFor()` / `matchesCardDefault()` from cards.ts; the settings UI at `/staff/admin/settings/dashboard-cards` loops `DASHBOARD_CARDS` per role. Example: reception's "Gift codes sold" ships `defaultHidden: true`.
 - **Render + data** — each dashboard builds `show = (id) => !hidden.has(id)`, then runs ONE `Promise.all` of queries each gated by `show("id") ? query : SKIP_COUNT/SKIP_DATA` (hidden cards cost no query), aggregates into a `stats` object, and renders `{show("id") && <StatCard … />}`. `StatCard` props: `label`, `value`, `hint`, `href`, `accent` (`'default' | 'warn' | 'good'`) — it's text-only, there is no icon slot.
 
 **To add an admin card** (e.g. the "Doctors to pay" card):
@@ -81,6 +85,19 @@ The home dashboard at `/staff` routes by role to a `_dashboards/*-dashboard.tsx`
 3. Render `{show("your.id") && <StatCard label=… value=… hint=… href=… accent=… />}` next to a sibling card.
 
 No migration is required — absence of a prefs row means visible.
+
+## 4 · List pages — header, filter chips, paging
+
+The lab queue (`/staff/queue`) and the Visits archive (`/staff/visits`) are the reference list pages: `PageHeader` on top, status tabs via `SectionTabs`, filter chips that round-trip through search params (multi-select chips serialise to a comma list — see `parseVisitClasses` / `serialiseVisitClasses` in `src/lib/visits/classification.ts`), a date picker with prev/next/"Back to today", and real paging (`count: "exact"` + `.range()`, one page size for every tab so the page doesn't resize when switching). Tab links and Clear reset to page 1; page links keep the filters. When a search can only run post-fetch (an ILIKE across an embed isn't expressible in one PostgREST query), say so in the subtitle rather than implying a miss means "not in the list".
+
+## 5 · Printable slips
+
+Every print surface follows the same shape (receipts, portal-access slip, EOD count sheet, PF payout slip):
+
+- A server page under the resource's route (`…/receipt`, `…/count-sheet`, `…/slip`) that gates with the right `require*Staff()`, **audit-logs the view/print** (the slip discloses patient data), and renders the sheet plus a small client `print-button.tsx` that calls `window.print()`.
+- Its own **named `@page`** + `@media print` block appended at the **tail of `src/app/globals.css`** (`receipt` A5, `cash-count` A5, `payout-slip` A4 — pick A4 when an itemised table plus signature blocks would spill at A5). Print media hides the nav/shell; multiple copies use `break-after: page`.
+- Because every print PR appends at the same spot in `globals.css`, two print PRs in flight always conflict there — the resolution is keep both blocks.
+- Don't "fix" print width with `print:max-w-none`: `max-width` never widens an element, and in paged media the page area is the containing block, so the cap never binds.
 
 ## Theme
 
@@ -99,3 +116,7 @@ The partner cares strongly about this:
 - Adding a new `layout.tsx` or route can make `npm run typecheck` flag a stale generated route-manifest validator (`LayoutRoutes`/`Route` mismatch under `.next/dev/types`). It's a **false positive** that clears on `npm run build`; your source files are fine.
 - Internal navigation must use `next/link` `<Link>`, not `<a>` (eslint `@next/next/no-html-link-for-pages`).
 - New pages must work at 390×844 (mobile-first) before shipping — reuse the mobile drawer; tables need `overflow-x-auto`.
+- Server → client props must be serialisable data (no functions); route params are async in Next 16 (`await params`).
+- Browsers compile an `<input pattern>` with the RegExp `v` flag: a bare trailing `-` in a character class is a syntax error and the whole pattern is then **silently ignored**. Escape it (`[a-z0-9\-]+`); moving it to the front also fails under `v`.
+- Reception sees no per-test rows on the visit page (`sectionsForRole("reception") === []`), so per-line affordances there are effectively admin-only; reception acts on whole visits from the reception queue.
+- The nav config and the mobile trigger have vitest coverage (`staff-nav-config.test.ts`, `staff-nav.test.tsx`, rendered with `renderToStaticMarkup`) — extend them when adding sections/flags.

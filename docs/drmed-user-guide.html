@@ -1,0 +1,1114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DRMed User Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&family=Public+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    color-scheme: light;
+    /* DRMed brand — mirrors src/app/globals.css */
+    --navy: #284570;
+    --cyan: #06aef1;
+    --cyan-deep: #0b8fc6;
+    --ground: #f5f8fc;
+    --paper: #ffffff;
+    --paper-2: #eef3f9;
+    --ink: #1a2537;
+    --ink-2: #3b475a;
+    --muted: #64708a;
+    --line: #d7e1ed;
+    --line-2: #e6edf5;
+    --accent: var(--navy);
+    --accent-soft: #e4edf8;
+    --link: var(--cyan-deep);
+    /* role hues */
+    --r-reception: #0b8fc6; --r-reception-soft: #e0f3fc;
+    --r-lab: #1b7f5f;       --r-lab-soft: #e1f4ec;
+    --r-admin: #284570;     --r-admin-soft: #e4ebf5;
+    --r-patient: #a3520f;   --r-patient-soft: #fbeee0;
+    --r-path: #5b3fa8;      --r-path-soft: #ece6f8;
+    /* callouts */
+    --tip: #1b7f5f;  --tip-soft: #e6f5ee;
+    --warn: #a8600a; --warn-soft: #fdf1df;
+    --stop: #b3263f; --stop-soft: #fbe6ea;
+    --why: #284570;  --why-soft: #e9eff8;
+    --kbd-bg: #ffffff; --kbd-line: #b9c8da;
+    --shadow: 0 1px 2px rgba(26,37,55,.06), 0 6px 20px -10px rgba(26,37,55,.18);
+    --heading: "Montserrat", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
+    --sans: "Public Sans", "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --ground: #0f1620; --paper: #161f2c; --paper-2: #1d2837;
+      --ink: #e8eef6; --ink-2: #c5cfdc; --muted: #8e9bb0;
+      --line: #2a3648; --line-2: #222d3d;
+      --accent: #8fc5ff; --accent-soft: #1c2a3f; --link: #4cc3f5;
+      --r-reception: #4cc3f5; --r-reception-soft: #12303f;
+      --r-lab: #4fc79c; --r-lab-soft: #123329;
+      --r-admin: #9fc0ee; --r-admin-soft: #1c2a3f;
+      --r-patient: #f0a866; --r-patient-soft: #3a2712;
+      --r-path: #b39cf0; --r-path-soft: #27203d;
+      --tip: #4fc79c; --tip-soft: #12302a;
+      --warn: #f0b35a; --warn-soft: #3a2a10;
+      --stop: #f27d93; --stop-soft: #3d1a22;
+      --why: #9fc0ee; --why-soft: #1c2a3f;
+      --kbd-bg: #222d3d; --kbd-line: #3b4a60;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --ground: #0f1620; --paper: #161f2c; --paper-2: #1d2837;
+    --ink: #e8eef6; --ink-2: #c5cfdc; --muted: #8e9bb0;
+    --line: #2a3648; --line-2: #222d3d;
+    --accent: #8fc5ff; --accent-soft: #1c2a3f; --link: #4cc3f5;
+    --r-reception: #4cc3f5; --r-reception-soft: #12303f;
+    --r-lab: #4fc79c; --r-lab-soft: #123329;
+    --r-admin: #9fc0ee; --r-admin-soft: #1c2a3f;
+    --r-patient: #f0a866; --r-patient-soft: #3a2712;
+    --r-path: #b39cf0; --r-path-soft: #27203d;
+    --tip: #4fc79c; --tip-soft: #12302a;
+    --warn: #f0b35a; --warn-soft: #3a2a10;
+    --stop: #f27d93; --stop-soft: #3d1a22;
+    --why: #9fc0ee; --why-soft: #1c2a3f;
+    --kbd-bg: #222d3d; --kbd-line: #3b4a60;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  body {
+    margin: 0; background: var(--ground); color: var(--ink-2);
+    font-family: var(--sans); font-size: 16px; line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--link); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+
+  .layout { display: grid; grid-template-columns: 272px minmax(0, 1fr); max-width: 1240px; margin: 0 auto; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+
+  /* ---------- TOC ---------- */
+  .toc {
+    position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto;
+    padding: 36px 20px 40px 28px; border-right: 1px solid var(--line); background: var(--ground);
+  }
+  @media (max-width: 900px) { .toc { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 24px 20px; } }
+  .toc-brand { font-family: var(--heading); font-weight: 800; font-size: 20px; color: var(--ink); margin: 0; letter-spacing: -0.01em; }
+  .toc-brand span { color: var(--cyan); }
+  .toc-tag { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 2px 0 22px; }
+  .toc ol { list-style: none; margin: 0; padding: 0; }
+  .toc > ol > li { margin: 0 0 4px; }
+  .toc > ol > li > a { font-weight: 600; color: var(--ink); }
+  .toc a { display: block; padding: 5px 8px; border-radius: 6px; font-size: 13.5px; color: var(--ink-2); text-decoration: none; line-height: 1.35; }
+  .toc a:hover { background: var(--paper-2); color: var(--ink); }
+  .toc a.active { background: var(--accent-soft); color: var(--accent); }
+  .toc ol ol { padding-left: 10px; margin: 2px 0 6px; border-left: 1px solid var(--line-2); }
+  .toc ol ol a { font-size: 12.5px; color: var(--muted); padding: 3px 8px; }
+  .toc-role-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+  .toc li[hidden] { display: none; }
+
+  /* ---------- Role filter ---------- */
+  .filter { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 18px; }
+  .filter button {
+    font: 600 12px/1 var(--sans); padding: 7px 10px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--paper); color: var(--ink-2);
+  }
+  .filter button[aria-pressed="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  .filter-note { font-size: 12px; color: var(--muted); margin: -8px 0 16px; }
+
+  /* ---------- Main ---------- */
+  main { padding: 56px 64px 96px; max-width: 900px; min-width: 0; }
+  @media (max-width: 900px) { main { padding: 32px 20px 64px; } }
+
+  .cover { margin-bottom: 56px; }
+  .eyebrow { font-size: 11px; letter-spacing: .16em; text-transform: uppercase; font-weight: 700; color: var(--cyan-deep); margin-bottom: 14px; }
+  h1 { font-family: var(--heading); font-weight: 800; font-size: clamp(36px, 5vw, 54px); line-height: 1.04; letter-spacing: -0.02em; color: var(--ink); margin: 0 0 16px; text-wrap: balance; }
+  .lede { font-size: 18.5px; line-height: 1.5; color: var(--ink-2); max-width: 640px; margin: 0 0 26px; }
+  .meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px 28px; padding-top: 22px; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+  .meta strong { display: block; color: var(--ink); font-weight: 600; margin-bottom: 2px; }
+
+  section.chapter { padding-top: 36px; margin-bottom: 64px; border-top: 1px solid var(--line); scroll-margin-top: 20px; }
+  section.sub { margin-bottom: 44px; scroll-margin-top: 20px; }
+  .chapter-num { font-family: var(--mono); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+  h2 { font-family: var(--heading); font-weight: 700; font-size: 34px; line-height: 1.1; letter-spacing: -0.015em; color: var(--ink); margin: 0 0 14px; text-wrap: balance; }
+  h3 { font-family: var(--heading); font-weight: 700; font-size: 20px; color: var(--ink); margin: 36px 0 10px; letter-spacing: -0.005em; text-wrap: balance; }
+  h4 { font-family: var(--sans); font-weight: 700; font-size: 14px; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-2); margin: 22px 0 8px; }
+  p { margin: 0 0 14px; max-width: 70ch; }
+  ul, ol { margin: 0 0 16px; padding-left: 22px; max-width: 72ch; }
+  li { margin-bottom: 5px; }
+  .intro { font-size: 17px; color: var(--ink-2); }
+  hr { border: 0; border-top: 1px solid var(--line-2); margin: 28px 0; }
+
+  /* who / where strip under each chapter title */
+  .strip { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; font-size: 13px; color: var(--muted); margin: 0 0 22px; }
+  .strip b { color: var(--ink-2); font-weight: 600; }
+
+  /* role pills */
+  .pill { display: inline-block; font-size: 11.5px; font-weight: 700; letter-spacing: .03em; padding: 3px 9px; border-radius: 999px; line-height: 1.3; white-space: nowrap; }
+  .pill.reception { background: var(--r-reception-soft); color: var(--r-reception); }
+  .pill.lab { background: var(--r-lab-soft); color: var(--r-lab); }
+  .pill.admin { background: var(--r-admin-soft); color: var(--r-admin); }
+  .pill.patient { background: var(--r-patient-soft); color: var(--r-patient); }
+  .pill.path { background: var(--r-path-soft); color: var(--r-path); }
+
+  /* UI vocabulary */
+  kbd.ui {
+    font: 600 13px/1.2 var(--sans); color: var(--ink); background: var(--kbd-bg);
+    border: 1px solid var(--kbd-line); border-bottom-width: 2px; border-radius: 6px; padding: 2px 7px; white-space: nowrap;
+  }
+  code.route, code.id { font-family: var(--mono); font-size: 12.5px; background: var(--paper-2); border: 1px solid var(--line-2); border-radius: 5px; padding: 1px 6px; color: var(--ink); white-space: nowrap; }
+  code.id { color: var(--accent); }
+  .status { font-family: var(--mono); font-size: 12px; padding: 1px 7px; border-radius: 5px; background: var(--paper-2); border: 1px solid var(--line-2); color: var(--ink-2); white-space: nowrap; }
+  .tab { font-weight: 600; color: var(--ink); }
+  q, .said { font-style: italic; color: var(--ink-2); }
+
+  /* steps */
+  ol.steps { list-style: none; padding: 0; margin: 14px 0 22px; counter-reset: step; max-width: none; }
+  ol.steps > li { counter-increment: step; position: relative; padding: 0 0 18px 48px; margin: 0; }
+  ol.steps > li::before {
+    content: counter(step); position: absolute; left: 0; top: 0; width: 32px; height: 32px; border-radius: 50%;
+    background: var(--accent); color: var(--paper); font: 700 14px/32px var(--heading); text-align: center;
+  }
+  ol.steps > li:not(:last-child)::after { content: ""; position: absolute; left: 15.5px; top: 34px; bottom: 2px; border-left: 1px dashed var(--line); }
+  ol.steps > li > p:first-child, ol.steps > li > .step-title { margin: 3px 0 4px; }
+  .step-title { font-weight: 600; color: var(--ink); }
+  ol.steps ul { margin: 6px 0 4px; }
+  ol.steps p { margin-bottom: 6px; }
+
+  /* callouts */
+  .note { display: grid; grid-template-columns: auto 1fr; gap: 0 12px; padding: 12px 16px; border-radius: 8px; margin: 14px 0 20px; max-width: 72ch; border: 1px solid transparent; }
+  .note .k { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; padding-top: 3px; }
+  .note p { margin: 0 0 6px; } .note p:last-child { margin: 0; }
+  .note.tip  { background: var(--tip-soft);  border-color: color-mix(in srgb, var(--tip) 25%, transparent);  } .note.tip .k  { color: var(--tip); }
+  .note.warn { background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 30%, transparent); } .note.warn .k { color: var(--warn); }
+  .note.stop { background: var(--stop-soft); border-color: color-mix(in srgb, var(--stop) 28%, transparent); } .note.stop .k { color: var(--stop); }
+  .note.why  { background: var(--why-soft);  border-color: color-mix(in srgb, var(--why) 22%, transparent);  } .note.why .k  { color: var(--why); }
+
+  /* tables */
+  .tbl-wrap { overflow-x: auto; margin: 12px 0 22px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--line-2); }
+  th { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 700; background: var(--paper-2); }
+  tr:last-child td { border-bottom: 0; }
+  td.num { font-variant-numeric: tabular-nums; text-align: right; }
+  .matrix td:not(:first-child) { text-align: center; }
+  .yes { color: var(--tip); font-weight: 700; } .no { color: var(--line); }
+
+  /* journey strip */
+  .journey { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin: 22px 0 8px; counter-reset: j; }
+  .journey div { counter-increment: j; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 12px 12px 10px; position: relative; box-shadow: var(--shadow); }
+  .journey div::before { content: counter(j); font: 700 11px/1 var(--mono); color: var(--muted); display: block; margin-bottom: 8px; }
+  .journey b { display: block; font-family: var(--heading); font-size: 13.5px; color: var(--ink); line-height: 1.25; margin-bottom: 6px; }
+  .journey small { display: block; font-size: 12px; color: var(--muted); line-height: 1.35; margin-bottom: 8px; }
+  .journey-cap { font-size: 12.5px; color: var(--muted); margin-bottom: 26px; }
+
+  /* status ladder */
+  .ladder { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 8px 0 18px; }
+  .ladder .status { font-size: 12.5px; padding: 4px 9px; }
+  .ladder .arrow { color: var(--muted); font-size: 13px; }
+
+  /* screen card */
+  .screen { border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 8px; background: var(--paper); padding: 12px 16px; margin: 10px 0 18px; font-size: 14px; }
+  .screen .where { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .screen dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 6px 0 0; }
+  .screen dt { color: var(--muted); font-size: 12.5px; padding-top: 2px; }
+  .screen dd { margin: 0; }
+
+  /* two-col defs */
+  .defs { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 8px 0 18px; font-size: 14.5px; max-width: 72ch; }
+  .defs dt { font-weight: 600; color: var(--ink); }
+  .defs dd { margin: 0; }
+  @media (max-width: 560px) { .defs, .screen dl { grid-template-columns: 1fr; } }
+
+  footer.end { border-top: 1px solid var(--line); padding-top: 20px; font-size: 13px; color: var(--muted); }
+
+  /* print */
+  @media print {
+    body { background: #fff; color: #111; font-size: 11.5pt; }
+    .layout { display: block; max-width: none; }
+    .toc, .filter, .filter-note { display: none !important; }
+    main { padding: 0; max-width: none; }
+    section.chapter { break-before: page; border-top: 0; padding-top: 0; }
+    .note, .screen, .journey div, .tbl-wrap { break-inside: avoid; box-shadow: none; }
+    a { color: inherit; text-decoration: none; }
+    [data-role][hidden] { display: block !important; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+<nav class="toc" aria-label="Contents">
+  <p class="toc-brand">drmed<span>.</span>ph</p>
+  <p class="toc-tag">User guide · v2.0</p>
+  <div class="filter" role="group" aria-label="Show chapters for">
+    <button type="button" data-filter="all" aria-pressed="true">All roles</button>
+    <button type="button" data-filter="reception">Reception</button>
+    <button type="button" data-filter="lab">Lab</button>
+    <button type="button" data-filter="admin">Admin</button>
+    <button type="button" data-filter="patient">Patients</button>
+  </div>
+  <p class="filter-note">Pick a role to hide chapters you don't need.</p>
+  <ol id="toc-list">
+    <li data-role="all"><a href="#flow">1 · How a visit flows</a></li>
+    <li data-role="all"><a href="#start">2 · Getting started</a>
+      <ol>
+        <li><a href="#start-login">Signing in</a></li>
+        <li><a href="#start-mfa">Two-step sign-in</a></li>
+        <li><a href="#start-sidebar">Your sidebar</a></li>
+        <li><a href="#start-dashboard">Dashboard &amp; phone</a></li>
+      </ol></li>
+    <li data-role="reception"><a href="#rec"><span class="toc-role-dot" style="background:var(--r-reception)"></span>3 · Reception</a>
+      <ol>
+        <li><a href="#rec-before">Before they arrive</a></li>
+        <li><a href="#rec-register">Register a new patient</a></li>
+        <li><a href="#rec-find">Returning patients</a></li>
+        <li><a href="#rec-visit">Create the visit</a></li>
+        <li><a href="#rec-receipt">Receipt &amp; Secure PIN</a></li>
+        <li><a href="#rec-pay">Take payment</a></li>
+        <li><a href="#rec-queue">Reception Queue</a></li>
+        <li><a href="#rec-release">When the result is ready</a></li>
+        <li><a href="#rec-fix">Fix-ups</a></li>
+        <li><a href="#rec-cash">Cash drawer &amp; End of day</a></li>
+        <li><a href="#rec-other">Quote, inquiries, gift codes</a></li>
+      </ol></li>
+    <li data-role="lab"><a href="#lab"><span class="toc-role-dot" style="background:var(--r-lab)"></span>4 · Lab &amp; imaging</a>
+      <ol>
+        <li><a href="#lab-see">What you see</a></li>
+        <li><a href="#lab-queue">The queue</a></li>
+        <li><a href="#lab-enter">Enter a result</a></li>
+        <li><a href="#lab-chem">Chemistry panel</a></li>
+        <li><a href="#lab-upload">Upload a PDF result</a></li>
+        <li><a href="#lab-imaging">Imaging reports</a></li>
+        <li><a href="#lab-after">Release, undo, amend</a></li>
+        <li><a href="#lab-critical">Critical alerts</a></li>
+        <li><a href="#lab-path">Pathologists</a></li>
+        <li><a href="#lab-results">Results archive</a></li>
+      </ol></li>
+    <li data-role="admin"><a href="#adm"><span class="toc-role-dot" style="background:var(--r-admin)"></span>5 · Admin</a>
+      <ol>
+        <li><a href="#adm-setup">Setting up the clinic</a></li>
+        <li><a href="#adm-daily">Daily &amp; weekly</a></li>
+        <li><a href="#adm-doctors">Paying doctors</a></li>
+        <li><a href="#adm-people">People &amp; access</a></li>
+        <li><a href="#adm-patients">Patient tools</a></li>
+        <li><a href="#adm-books">Books, payroll &amp; marketing</a></li>
+      </ol></li>
+    <li data-role="patient"><a href="#pt"><span class="toc-role-dot" style="background:var(--r-patient)"></span>6 · Patients</a>
+      <ol>
+        <li><a href="#pt-portal">Viewing results online</a></li>
+        <li><a href="#pt-book">Booking &amp; registering online</a></li>
+        <li><a href="#pt-privacy">Privacy consent</a></li>
+      </ol></li>
+    <li data-role="all"><a href="#faq">7 · Common questions</a></li>
+    <li data-role="all"><a href="#limits">8 · Known limitations</a></li>
+    <li data-role="all"><a href="#glossary">9 · Glossary</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="cover">
+  <div class="eyebrow">drmed.ph · Staff &amp; patient guide</div>
+  <h1>How to run the clinic on drmed.ph</h1>
+  <p class="lede">A step-by-step walk-through of every screen, from a new patient at the counter to the result in their phone. Written for the people doing the work, in the words the screens actually use.</p>
+  <div class="meta">
+    <div><strong>Audience</strong>Reception · Medtech · X-ray · Pathologist · Admin · Patients</div>
+    <div><strong>Covers</strong>Everything live in production as of the September 2026 release</div>
+    <div><strong>Version</strong>2.0 · 2 September 2026</div>
+    <div><strong>Replaces</strong>Staff User Guide v1.0 (22 May 2026)</div>
+  </div>
+</header>
+
+<!-- ============================================================ -->
+<section class="chapter" id="flow" data-role="all">
+  <div class="chapter-num">Chapter 1</div>
+  <h2>How a visit flows</h2>
+  <p class="intro">One patient, one trip to the clinic, eight hand-offs. Every chapter in this guide is one of these boxes in more detail. Reading this page first makes everything else obvious.</p>
+
+  <div class="journey">
+    <div><b>Register</b><small>Patient gets a permanent DRM-ID. At the counter, or online before coming in.</small><span class="pill reception">Reception</span></div>
+    <div><b>Create the visit</b><small>Pick the tests, consult or procedure. A Secure PIN is issued.</small><span class="pill reception">Reception</span></div>
+    <div><b>Print the receipt</b><small>Shows charges, DRM-ID and the PIN. The PIN appears once.</small><span class="pill reception">Reception</span></div>
+    <div><b>Take payment</b><small>Cash, e-wallet, card, HMO. Lab work opens once paid or HMO-covered.</small><span class="pill reception">Reception</span></div>
+    <div><b>Run the tests</b><small>Claim from the queue, enter values or upload the PDF, finalise.</small><span class="pill lab">Lab</span></div>
+    <div><b>Release</b><small>The lab releases from the visit page: email, or a printed copy for the counter. Blocked until the visit is paid.</small><span class="pill lab">Lab</span> <span class="pill admin">Admin</span></div>
+    <div><b>Patient views online</b><small>DRM-ID + PIN at drmed.ph/portal. PIN lasts 60 days.</small><span class="pill patient">Patient</span></div>
+    <div><b>Close the day</b><small>Count the drawer by denomination. Admin pays doctors, reviews reports.</small><span class="pill reception">Reception</span> <span class="pill admin">Admin</span></div>
+  </div>
+  <p class="journey-cap">Doctor consultations follow the same path but skip the lab: after the patient has seen the doctor, Admin or the pathologist marks the consultation done, and a consult-only visit prints no receipt.</p>
+
+  <h3>Two gates you will bump into</h3>
+  <p>The system enforces two rules in the database itself. No button, role or password gets around them, so it is worth knowing them by heart.</p>
+  <dl class="defs">
+    <dt>Lab gate</dt><dd>A test does not appear on the lab bench until the visit is <span class="status">paid</span>, <span class="status">waived</span>, or billed to an HMO. Until then it sits in the reception queue under <span class="tab">Waiting for payment</span>, and the lab sees an <q>awaiting payment</q> chip on the results archive.</dd>
+    <dt>Release gate</dt><dd>A finished result cannot be released to the patient until the visit is paid or waived. There is no HMO exception here: an HMO-billed visit passes the lab gate but stays <span class="status">unpaid</span> until Admin records the HMO settlement or waives the balance. See <a href="#limits">Known limitations</a>.</dd>
+  </dl>
+
+  <h3>The life of a test</h3>
+  <p>Every test line on a visit moves along this ladder. The words are the ones you will see in status chips.</p>
+  <div class="ladder">
+    <span class="status">requested</span><span class="arrow">→</span>
+    <span class="status">in progress</span><span class="arrow">→</span>
+    <span class="status">ready for release</span><span class="arrow">→</span>
+    <span class="status">released</span>
+  </div>
+  <dl class="defs">
+    <dt>requested</dt><dd>Reception has billed it. Nobody has picked it up yet.</dd>
+    <dt>in progress</dt><dd>A medtech or x-ray tech has claimed it and is working on it.</dd>
+    <dt>ready for release</dt><dd>Finalised. Reception can release it once the visit is paid.</dd>
+    <dt>released</dt><dd>The patient can see and download it in the portal.</dd>
+    <dt>cancelled / deleted</dt><dd>Removed from the queue by reception before payment. Nothing is billed for it, and it can be restored.</dd>
+  </dl>
+  <div class="note why"><span class="k">Also</span><div><p>A status called <span class="status">result uploaded</span> exists for tests that require a pathologist's sign-off before release. No service uses it today and the sign-off screen is not yet built. Leave <q>Requires sign-off</q> off on every service until it is. See <a href="#limits">Known limitations</a>.</p></div></div>
+
+  <h3>The life of a visit's money</h3>
+  <dl class="defs">
+    <dt><span class="status">unpaid</span></dt><dd>Nothing recorded yet. The visit can still be deleted from the queue.</dd>
+    <dt><span class="status">partial</span></dt><dd>Some payment recorded, balance outstanding.</dd>
+    <dt><span class="status">paid</span></dt><dd>Fully settled. Lab and release both open.</dd>
+    <dt><span class="status">waived</span></dt><dd>Admin decided not to collect. Treated as paid. Cannot be deleted.</dd>
+  </dl>
+  <p>Payments are never edited or deleted. A wrong payment is <b>voided</b> (with a reason) and a fresh one recorded. Every void, every release, every print and every download is written to the audit log, because the Data Privacy Act (RA 10173) requires it.</p>
+
+  <h3>Three identifiers</h3>
+  <dl class="defs">
+    <dt><code class="id">DRM-0001</code></dt><dd>The patient's permanent DRM-ID. Assigned once, printed on every receipt, used to sign in to the portal.</dd>
+    <dt>Visit #</dt><dd>A running number per visit. Patients quote it when they call. Search it with or without leading zeros.</dd>
+    <dt>Secure PIN</dt><dd>Eight characters, issued per visit, valid 60 days, shown on the printed receipt only until it is printed. Only the newest PIN works: a new visit issues a new PIN which replaces the old one.</dd>
+  </dl>
+</section>
+
+<!-- ============================================================ -->
+<section class="chapter" id="start" data-role="all">
+  <div class="chapter-num">Chapter 2</div>
+  <h2>Getting started</h2>
+  <div class="strip"><span><b>Who:</b> every staff member</span><span><b>Where:</b> <code class="route">drmed.ph/staff</code></span></div>
+
+  <section class="sub" id="start-login">
+    <h3>2.1 Signing in</h3>
+    <ol class="steps">
+      <li><p class="step-title">Open <code class="route">drmed.ph/staff/login</code>.</p><p>Patients use a different door, <code class="route">drmed.ph/portal</code>. Don't mix them up when helping someone at the counter.</p></li>
+      <li><p class="step-title">Enter your work email and password, then <kbd class="ui">Sign in</kbd>.</p><p>You land on the dashboard for your role.</p></li>
+    </ol>
+    <div class="note warn"><span class="k">No reset link</span><div><p>There is no self-service <q>Forgot password</q> for staff. Ask an Admin to reset it under <kbd class="ui">Staff users</kbd>. Too many wrong attempts in a row lock sign-in for a few minutes.</p></div></div>
+  </section>
+
+  <section class="sub" id="start-mfa">
+    <h3>2.2 Two-step sign-in (MFA)</h3>
+    <p>A 6-digit code from an authenticator app on top of your password. Required for Admins. Optional but recommended for everyone else, and once you have set it up it is always asked for.</p>
+    <ol class="steps">
+      <li><p class="step-title">After signing in, go to <code class="route">/staff/mfa</code>.</p></li>
+      <li><p class="step-title">Scan the QR code with Google Authenticator, Microsoft Authenticator, 1Password or similar.</p></li>
+      <li><p class="step-title">Type the 6-digit code the app shows and verify.</p></li>
+    </ol>
+    <div class="note stop"><span class="k">Lost phone</span><div><p>Tell an Admin immediately. They remove your factor so you can sign in and enrol the new phone. There are no recovery codes.</p></div></div>
+  </section>
+
+  <section class="sub" id="start-sidebar">
+    <h3>2.3 Your sidebar</h3>
+    <p>The left sidebar shows only what your role can use. Hover any item with a small <b>i</b> for a plain-English description. This is the full list; the tick marks show who sees it.</p>
+    <div class="tbl-wrap"><table class="matrix">
+      <thead><tr><th>Sidebar item</th><th>Reception</th><th>Medtech</th><th>X-ray</th><th>Pathologist</th><th>Admin</th></tr></thead>
+      <tbody>
+        <tr><td colspan="6"><b>Overview</b></td></tr>
+        <tr><td>Dashboard</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+        <tr><td colspan="6"><b>Front desk</b></td></tr>
+        <tr><td>New patient registration</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
+        <tr><td>Patients</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
+        <tr><td>Appointments</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
+        <tr><td>Reception Queue</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
+        <tr><td>Inquiries</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
+        <tr><td>Cash drawer (with End of day tab)</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
+        <tr><td colspan="6"><b>Billing</b></td></tr>
+        <tr><td>Visits (queue · new · archive)</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
+        <tr><td>Quick quote</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
+        <tr><td>Petty cash</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
+        <tr><td colspan="6"><b>Services</b></td></tr>
+        <tr><td>New lab request · New imaging request</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
+        <tr><td colspan="6"><b>Lab</b></td></tr>
+        <tr><td>Queue</td><td class="no">·</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+        <tr><td>Critical alerts</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+        <tr><td>Results</td><td class="no">·</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+        <tr><td colspan="6"><b>Admin</b> (six collapsible groups: Pay doctors · Payroll · Books &amp; reports · Operations · Catalog &amp; setup · Admin tools)</td></tr>
+        <tr><td>Inventory (under Operations)</td><td class="no">·</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">·</td><td class="yes">✓</td></tr>
+        <tr><td>Everything else under Admin</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
+        <tr><td colspan="6"><b>Personal</b></td></tr>
+        <tr><td>My profile · My payslips</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+        <tr><td colspan="6"><b>Hidden tabs</b> (Admin only; parked pages: Sell gift code · Registration link · Sign-off · Patient receivables)</td></tr>
+      </tbody>
+    </table></div>
+    <div class="note tip"><span class="k">Shortcut</span><div><p>The <kbd class="ui">New lab request</kbd> and <kbd class="ui">New imaging request</kbd> items open the New visit screen with the right tab already filtered. They are the fastest way to start a walk-in.</p></div></div>
+  </section>
+
+  <section class="sub" id="start-dashboard">
+    <h3>2.4 Dashboard and phone</h3>
+    <p>Your dashboard shows summary cards for your role: today's visits and queue for reception, your claimed and unclaimed tests for the lab, money and exceptions for admin. Each card is a link. Admin chooses which cards each role sees under <kbd class="ui">Dashboard settings</kbd>.</p>
+    <p>Every screen works on a phone. The sidebar folds into the <b>☰</b> menu top-left, tables scroll sideways, and buttons are thumb-sized. Session timeouts are normal; sign in again and continue.</p>
+    <p>Under <b>Personal</b>, <kbd class="ui">My profile</kbd> holds your name and contact details and <kbd class="ui">My payslips</kbd> shows your own payslips only.</p>
+  </section>
+</section>
+
+<!-- ============================================================ -->
+<section class="chapter" id="rec" data-role="reception">
+  <div class="chapter-num">Chapter 3</div>
+  <h2>Reception</h2>
+  <div class="strip"><span class="pill reception">Reception</span><span class="pill admin">Admin</span><span><b>Where:</b> the <b>Front desk</b>, <b>Billing</b> and <b>Services</b> groups of the sidebar</span></div>
+  <p class="intro">Reception is the front door and the cashier. Almost every patient touches your screens twice: on arrival, to register and pay, and again when they come back for their result. The centre of your day is the <b>Reception Queue</b>; the screen you will use most carefully is <b>New visit</b>. Results themselves are released by the lab team, not by reception (3.8).</p>
+
+  <!-- 3.1 -->
+  <section class="sub" id="rec-before">
+    <h3>3.1 Before the patient arrives</h3>
+    <p>Patients can book and even register themselves online. Nothing requires them to. A pure walk-in with no online step must always work, and it does.</p>
+
+    <h4>Appointments</h4>
+    <div class="screen"><div class="where">Sidebar › Front desk › <kbd class="ui">Appointments</kbd> · <code class="route">/staff/appointments</code></div>
+      <dl><dt>Tabs</dt><dd><span class="tab">All</span> · <span class="tab">Consultations</span> · <span class="tab">Home service</span></dd>
+      <dt>Sections</dt><dd><span class="tab">Pending callback</span> · <span class="tab">Today</span> · <span class="tab">Next 30 days</span></dd>
+      <dt>Row actions</dt><dd><kbd class="ui">Mark arrived</kbd> · <kbd class="ui">No-show</kbd> · <kbd class="ui">Cancel</kbd> · <kbd class="ui">↶ Revert</kbd> · <kbd class="ui">+ Start visit</kbd></dd></dl></div>
+    <p>Every booking made on the public <code class="route">/schedule</code> page lands here, one row per service. Bookings for a doctor who has no published schedule, and all home-service requests, arrive as <span class="status">pending callback</span>: the patient has been told you will call within one working day to agree a time.</p>
+    <ol class="steps">
+      <li><p class="step-title">Work the <span class="tab">Pending callback</span> section first thing.</p><p>Call the patient, agree the time, and confirm the booking.</p></li>
+      <li><p class="step-title">When a booked patient walks in, click <kbd class="ui">Mark arrived</kbd> on their row.</p><p>Only a confirmed booking can be marked arrived. Grouped multi-service bookings show one button for all of them.</p></li>
+      <li><p class="step-title">Click <kbd class="ui">+ Start visit</kbd>.</p><p>It opens New visit with the patient already picked. The button appears only after <q>arrived</q> and only if the booking has a patient record. A walk-in booking taken by phone has no record yet, so register the patient first (3.2) and start the visit from their page.</p></li>
+    </ol>
+
+    <h4>Taking a booking by phone</h4>
+    <ol class="steps">
+      <li><p class="step-title">Click <kbd class="ui">+ New appointment</kbd> in the page header.</p><p>A panel slides in from the right. Its note says it: for a walk-in who is ready now, create the visit instead.</p></li>
+      <li><p class="step-title">Choose the patient mode: <kbd class="ui">Existing</kbd>, <kbd class="ui">New</kbd> or <kbd class="ui">Walk-in</kbd>.</p>
+        <ul><li><b>Existing</b>: search by name, phone or DRM-ID. Their upcoming bookings show so you don't double-book.</li>
+        <li><b>New</b>: a short form. Email is needed so the system can match duplicates and send the confirmation.</li>
+        <li><b>Walk-in</b>: just a name and phone. No patient record is created; you register them when they arrive.</li></ul></li>
+      <li><p class="step-title">Pick the booking type and services.</p><p><kbd class="ui">Diagnostic package</kbd>, <kbd class="ui">Lab request</kbd>, <kbd class="ui">Doctor appointment</kbd> or <kbd class="ui">Home service</kbd>. Doctor appointments need a physician and a slot; packages and most lab tests need no time.</p></li>
+      <li><p class="step-title">If an amber <q>⚠ Scheduling conflict</q> box appears, read it, then either change the slot or click <kbd class="ui">Book anyway</kbd>.</p><p>You may override closures, doctor hours and taken slots. The override is recorded with your name.</p></li>
+      <li><p class="step-title">Tick <q>Send confirmation (SMS + email)</q> if the patient wants one, then <kbd class="ui">Create</kbd>.</p></li>
+    </ol>
+    <div class="note tip"><span class="k">In practice</span><div><p>Confirmations go out by email. The SMS channel exists in the software but has never been switched on, so tell patients to watch their inbox, not their texts.</p></div></div>
+
+    <h4>Let patients register themselves</h4>
+    <p>The <kbd class="ui">Registration link</kbd> button in the Appointments header shows a QR code that opens the public <code class="route">/register</code> form. <kbd class="ui">Copy link</kbd> to send it by chat, or <kbd class="ui">Open printable poster →</kbd> for a counter poster. Patients who register or book online arrive in your Patients list flagged <b>Pre-registered · verify</b>. Check their ID at the counter (3.3).</p>
+  </section>
+
+  <!-- 3.2 -->
+  <section class="sub" id="rec-register">
+    <h3>3.2 Register a new patient</h3>
+    <div class="screen"><div class="where">Sidebar › Front desk › <kbd class="ui">New patient registration</kbd> · <code class="route">/staff/patients/new</code></div>
+      <dl><dt>Page says</dt><dd><q>DRM-ID is auto-generated on save. After creation you can start a visit.</q></dd>
+      <dt>Required</dt><dd>First name · Last name · Birthdate</dd>
+      <dt>Ends with</dt><dd><kbd class="ui">Create patient</kbd> → the patient's page</dd></dl></div>
+    <ol class="steps">
+      <li><p class="step-title">Search first. Type the surname or phone into <kbd class="ui">Patients</kbd> before creating anyone.</p><p>Seven thousand patients already exist. Duplicates cost admin a merge later.</p></li>
+      <li><p class="step-title">Fill in <b>Identity</b>: First name, Last name, Middle name (optional), Birthdate, Sex, Phone, Email.</p><p>Birthdate is typed as <code class="id">YYYY-MM-DD</code>. Email is optional but must be a real address if given.</p><p>As you type, the form may show <q>Possible existing patient(s):</q> with an <b>exact match</b> badge and a <kbd class="ui">Use this patient</kbd> shortcut. Use it. If you insist on creating a second record for an exact match, the system asks you to confirm.</p></li>
+      <li><p class="step-title">Fill in <b>Marketing &amp; preferences</b>.</p><p><b>Referral source</b> (and <b>Referred by doctor</b> when relevant) and <b>Preferred result release</b>: Physical pickup at clinic, Email, Viber, GCash or Pickup at counter. The release dialog later defaults to this choice.</p></li>
+      <li><p class="step-title">Record the <b>Senior / PWD ID</b> if they have one: <b>ID kind</b> (Senior Citizen or PWD) and <b>ID number</b>.</p><p>This is captured once so you never re-ask. The 20% statutory discount on a visit prints the ID number on the receipt from here.</p></li>
+      <li><p class="step-title">Have them sign the printed registration &amp; consent form, then tick <b>Data privacy consent (RA 10173)</b> and choose who signed: Patient, Guardian or Representative.</p><p>The form to print is on the patient's page (<kbd class="ui">Print form</kbd>). Consent is recorded once and stays on file.</p></li>
+      <li><p class="step-title">Click <kbd class="ui">Create patient</kbd>.</p><p>The patient's DRM-ID is assigned (for example <code class="id">DRM-7052</code>) and you land on their page. Click <kbd class="ui">+ Start visit</kbd> to continue.</p></li>
+    </ol>
+    <div class="note why"><span class="k">Why consent matters</span><div><p>Admin can switch on a <b>consent gate</b> that blocks result release for any patient without consent on file. It is off today, and only a handful of existing patients have consent recorded, so capture it at every registration and every first visit of a returning patient. It takes one tick.</p></div></div>
+  </section>
+
+  <!-- 3.3 -->
+  <section class="sub" id="rec-find">
+    <h3>3.3 Returning and pre-registered patients</h3>
+    <div class="screen"><div class="where">Sidebar › Front desk › <kbd class="ui">Patients</kbd> · <code class="route">/staff/patients</code></div>
+      <dl><dt>Search box</dt><dd>DRM-ID, name, phone or email. Filters as you type; several words narrow the list.</dd>
+      <dt>Status column</dt><dd><b>Verified</b> or <b>Pre-registered · verify</b></dd>
+      <dt>Patient page buttons</dt><dd><kbd class="ui">Edit</kbd> · <kbd class="ui">Re-issue PIN</kbd> · <kbd class="ui">+ Start visit</kbd> · <kbd class="ui">Mark identity verified</kbd></dd></dl></div>
+    <ol class="steps">
+      <li><p class="step-title">Find the patient and open their page.</p><p>You see their identity details, preferences, the <b>Consent</b> panel and a <b>Visits</b> table with every past visit and its payment status.</p></li>
+      <li><p class="step-title">If the page shows <q>Pre-registered — verify identity at counter</q>, check a valid ID against the details, fix anything wrong with <kbd class="ui">Edit</kbd>, then click <kbd class="ui">Mark identity verified</kbd>.</p><p>A warning banner also appears when the birthdate was never confirmed. Confirm it now; reference ranges on lab results depend on age and sex.</p></li>
+      <li><p class="step-title">Check the <b>Consent</b> panel.</p><p><q>On file</q> with a date means done. <q>Not on file</q>: click <kbd class="ui">Print form</kbd>, have it signed, then <kbd class="ui">Capture signature</kbd>. Only Admin can <kbd class="ui">Withdraw consent</kbd>.</p></li>
+      <li><p class="step-title">Click <kbd class="ui">+ Start visit</kbd>.</p></li>
+    </ol>
+  </section>
+
+  <!-- 3.4 -->
+  <section class="sub" id="rec-visit">
+    <h3>3.4 Create the visit</h3>
+    <div class="screen"><div class="where">Sidebar › Services › <kbd class="ui">New lab request</kbd> / <kbd class="ui">New imaging request</kbd>, or <kbd class="ui">+ Start visit</kbd> on a patient · <code class="route">/staff/visits/new</code></div>
+      <dl><dt>Tabs</dt><dd><span class="tab">Doctor</span> · <span class="tab">Lab &amp; Services</span> (with sub-chips <span class="tab">All</span> / <span class="tab">Lab</span> / <span class="tab">Imaging</span>)</dd>
+      <dt>Ends with</dt><dd><kbd class="ui">Create visit &amp; issue PIN</kbd></dd>
+      <dt>Not here</dt><dd>Payment. You take it on the next screen.</dd></dl></div>
+    <p>A visit is one trip to the clinic. It bundles every test, package, consultation or procedure the patient is having today. If you open the screen without a patient it first asks you to pick one: search, click <kbd class="ui">Start visit →</kbd>, or <kbd class="ui">+ New patient</kbd> to register.</p>
+    <ol class="steps">
+      <li><p class="step-title">Confirm the <b>Patient</b> card at the top is the right person.</p></li>
+      <li><p class="step-title">Under <b>Select services</b>, tick each test, package, consult or procedure.</p>
+        <ul><li>Use the <span class="tab">Lab &amp; Services</span> tab for tests, imaging and packages; <span class="tab">Doctor</span> for consultations and procedures. Each tab shows a count of what you have ticked.</li>
+        <li>A package row lists what it <b>Includes</b>. Tick the package, not its parts.</li>
+        <li>There is no quantity box. A service is on the visit or it isn't.</li></ul></li>
+      <li><p class="step-title">Apply <b>Line discounts</b> where they apply.</p><p>Each line has a dropdown starting at <q>No discount</q>. The choices are whatever Admin set up under Discounts, including the statutory Senior / PWD 20%. A senior discount on a service that is not eligible for it is simply ignored, so you cannot over-discount by mistake.</p></li>
+      <li><p class="step-title">For an HMO patient, fill in the HMO block.</p><p>There are two, because lab work and doctor fees are often approved separately: <b>Lab &amp; Services HMO</b> and <b>Doctor / PF HMO</b>. Pick the <b>Provider</b> (the default is <q>— Cash / no HMO —</q>), then enter the <b>Approval date</b> and <b>Authorization no.</b> from the LOA. An HMO visit reaches the lab without a cash payment.</p></li>
+      <li><p class="step-title">For a consultation or procedure, pick the <b>Attending physician</b> and check the fee.</p>
+        <ul><li><b>Consultation fee (₱)</b> pre-fills from the doctor's default. It must be above zero.</li>
+        <li>A procedure pre-fills its catalog price; you may type a <b>Procedure description</b> and an <b>HMO approved (₱)</b> amount.</li>
+        <li>The physician is required whenever the doctor earns a professional fee (PF) from the line. If you skip it the release will be blocked later, so pick it now.</li></ul></li>
+      <li><p class="step-title">Click <kbd class="ui">Create visit &amp; issue PIN</kbd>.</p><p>The system assigns a visit number, creates one line per service, and issues a 60-day Secure PIN. You are taken to the receipt.</p></li>
+    </ol>
+    <div class="note warn"><span class="k">Doctor + lab on the same day</span><div><p>If you tick lines on both tabs, the system creates <b>two visits</b> that share one receipt: one for the doctor, one for the lab. They are folded together in the archive and the queue, but each has its own visit number and payment status. This keeps the doctor's fee separate from lab revenue.</p></div></div>
+    <div class="note tip"><span class="k">Consult-only visits</span><div><p>A visit with only a consultation prints no receipt. You land on the visit page with a note explaining why. If the patient will need portal access (for a later lab visit on the same account they get a new PIN anyway), use <kbd class="ui">Issue portal PIN</kbd> on the visit page, which prints a portal-access slip with no charges on it.</p></div></div>
+  </section>
+
+  <!-- 3.5 -->
+  <section class="sub" id="rec-receipt">
+    <h3>3.5 The receipt and the Secure PIN</h3>
+    <div class="screen"><div class="where"><code class="route">/staff/visits/[visit]/receipt</code> · also <kbd class="ui">Receipt</kbd> on any visit page and <kbd class="ui">Print billing</kbd> in the queue</div>
+      <dl><dt>Shows</dt><dd>Clinic header · patient and DRM-ID · consent on file or not · every line and discount · totals · the <b>Patient Portal Access</b> box</dd>
+      <dt>Portal box</dt><dd>DRM-ID · <b>Secure PIN</b> · <q>Sign in at drmed.ph/portal to view results when ready. PIN is valid for 60 days.</q></dd></dl></div>
+    <ol class="steps">
+      <li><p class="step-title">Print it straight away and hand it to the patient.</p><p>The PIN stays on screen only until you click <kbd class="ui">Print</kbd>, or for five minutes, whichever comes first. After that the box reads <q>Already viewed — re-issue from admin if needed.</q> Nobody, including Admin, can look it up later.</p></li>
+      <li><p class="step-title">Point to the portal box and say the two things that matter.</p><p><q>Your results will be at drmed.ph/portal. Sign in with this DRM-ID and this PIN. The PIN works for 60 days.</q></p></li>
+      <li><p class="step-title">If they lose it, they come back with an ID and you re-issue.</p><p>Open the patient's page, click <kbd class="ui">Re-issue PIN</kbd>. A new PIN for their latest visit replaces the old one and prints on a portal-access slip. See 3.9.</p></li>
+    </ol>
+    <div class="note stop"><span class="k">Never</span><div><p>Never write the PIN anywhere else, read it over the phone to a caller you cannot identify, or send it by chat. Anyone holding the DRM-ID and PIN can read that patient's results.</p></div></div>
+  </section>
+
+  <!-- 3.6 -->
+  <section class="sub" id="rec-pay">
+    <h3>3.6 Take payment</h3>
+    <div class="screen"><div class="where"><kbd class="ui">Record payment</kbd> on the visit page or in the Reception Queue · <code class="route">/staff/payments/new</code></div>
+      <dl><dt>Shows</dt><dd>Total · Paid · Balance</dd>
+      <dt>Method</dt><dd>Cash · GCash · Maya · Card · Bank transfer · Gift code</dd>
+      <dt>Fields</dt><dd><b>Amount (PHP)</b> (pre-filled with the balance) · <b>Reference number (optional)</b> · or <b>Gift code</b></dd>
+      <dt>Ends with</dt><dd><kbd class="ui">Record payment</kbd> or <kbd class="ui">Redeem code</kbd></dd></dl></div>
+    <ol class="steps">
+      <li><p class="step-title">From the visit page (or the queue's <span class="tab">Waiting for payment</span> tab) click <kbd class="ui">Record payment</kbd>.</p></li>
+      <li><p class="step-title">Choose the method. Enter the amount received and, for e-wallet, card or bank, the reference number.</p><p>You may record less than the balance. The visit shows <span class="status">partial</span> until the rest is paid.</p></li>
+      <li><p class="step-title">Click <kbd class="ui">Record payment</kbd>.</p><p>The visit flips to <span class="status">paid</span> the moment the balance reaches zero. The lab bench sees the tests immediately; nothing else needs clicking.</p></li>
+    </ol>
+    <h4>HMO visits</h4>
+    <p>An HMO-billed visit skips the lab gate, so the tests run without a cash payment. The patient still pays any co-pay or non-covered lines now. The visit itself stays <span class="status">unpaid</span> until Admin records the HMO settlement under <kbd class="ui">HMO claims</kbd> or waives the balance, and until then the lab cannot release the result. Agree the standing rule for HMO patients with Admin before go-live; see <a href="#limits">Known limitations</a>.</p>
+    <h4>Undoing a payment</h4>
+    <ol class="steps">
+      <li><p class="step-title">Open the visit, find the payment under <b>Payments</b>, click <kbd class="ui">Void</kbd>.</p></li>
+      <li><p class="step-title">Type the reason and confirm.</p><p>The dialog reminds you that a reversal is booked automatically. The payment stays visible under <b>Voided payments</b>, the balance re-opens, and a gift code used for it becomes usable again.</p></li>
+      <li><p class="step-title">Record the correct payment.</p><p>A void is never un-voided.</p></li>
+    </ol>
+    <p><b>Waiving</b> a balance (deciding not to collect) is Admin-only: <kbd class="ui">Waive balance</kbd> → <kbd class="ui">Confirm waive</kbd> on the visit page. A waived visit releases like a paid one but can no longer be deleted.</p>
+  </section>
+
+  <!-- 3.7 -->
+  <section class="sub" id="rec-queue">
+    <h3>3.7 The Reception Queue</h3>
+    <div class="screen"><div class="where">Sidebar › Front desk › <kbd class="ui">Reception Queue</kbd> · <code class="route">/staff/visits/queue</code></div>
+      <dl><dt>Stages</dt><dd><span class="tab">Waiting for payment</span> · <span class="tab">Processing</span> · <span class="tab">Completed</span></dd>
+      <dt>Row actions</dt><dd><kbd class="ui">Record payment</kbd> · <kbd class="ui">Open visit</kbd> · <kbd class="ui">Print billing</kbd></dd></dl></div>
+    <p>This is today's worklist. It updates on its own as payments land and tests finish.</p>
+    <dl class="defs">
+      <dt>Waiting for payment</dt><dd>Visits created but not yet paid. The lab cannot see these. Collect and <kbd class="ui">Record payment</kbd>.</dd>
+      <dt>Processing</dt><dd>Paid or waived, and the lab or imaging still owes at least one result. The row itself lists what is outstanding, which is all you need to answer <q>is it ready?</q></dd>
+      <dt>Completed</dt><dd>Paid and every lab and imaging line released. <kbd class="ui">Print billing</kbd> reprints the receipt (without the PIN).</dd>
+    </dl>
+    <div class="note why"><span class="k">Why the visit page shows no tests</span><div><p>By clinic policy, reception does not see individual test lines or result PDFs. On a visit page you see the patient, the payments, the receipt and PIN buttons, the attending physician and the HMO details, but not the tests. Use the Reception Queue row for progress, and leave releasing to the lab.</p></div></div>
+    <p>The related <kbd class="ui">Visits</kbd> item in the Billing group has three tabs: <span class="tab">Reception Queue</span>, <span class="tab">New visit</span> and <span class="tab">Archive</span>. The archive filters by <span class="tab">Lab Tests</span> / <span class="tab">Doctor Consults</span> / <span class="tab">Doctor Procedures</span>, shows <span class="tab">Active</span> or <span class="tab">Deleted</span> entries, and searches by visit number. Admin can <kbd class="ui">Export CSV</kbd> from it.</p>
+  </section>
+
+  <!-- 3.8 -->
+  <section class="sub" id="rec-release">
+    <h3>3.8 When the result is ready</h3>
+    <p>Releasing a result (making it visible to the patient, and emailing them if they asked) is done by the medtech or x-ray tech who finished it, or by Admin, from the visit page. Reception's part is everything around it.</p>
+    <ol class="steps">
+      <li><p class="step-title">Watch the Reception Queue. A visit moves from <span class="tab">Processing</span> to <span class="tab">Completed</span> when the last result is released.</p><p>If a patient asks by phone, search the visit number in the queue or the Visits archive and read the row.</p></li>
+      <li><p class="step-title">If the patient wants a printed copy at the counter, ask the lab to print it when they release.</p><p>Reception cannot open result PDFs. The lab chooses <q>Physical</q> or <q>Pickup</q> as the release method, prints the PDF and hands it to you.</p></li>
+      <li><p class="step-title">If the patient wants it by email, nothing more is needed.</p><p>The lab releases with <q>Email</q> and the patient receives <q>Your DRMed lab result is ready</q> with the portal link. They sign in with the DRM-ID and PIN from their receipt.</p></li>
+      <li><p class="step-title">If the lab says a release is blocked, fix the cause on your side.</p>
+        <ul><li><q>Visit must be paid before results can be released</q>: record the payment, or ask Admin to waive.</li>
+        <li><q>Patient data-privacy consent is not on file</q>: print and capture consent on the patient's page (3.3).</li>
+        <li><q>An attending physician is required…</q>: click <kbd class="ui">Assign physician</kbd> in the <b>Attending physician</b> section of the visit. The page warns you in amber beforehand.</li></ul></li>
+      <li><p class="step-title">For a consultation or procedure, tell Admin (or the pathologist) once the patient has seen the doctor.</p><p>They click <kbd class="ui">Mark consultation done</kbd> or <kbd class="ui">Mark procedure done</kbd> on the visit. That is what accrues the doctor's professional fee. Reception cannot see doctor lines on the visit page.</p></li>
+    </ol>
+    <div class="note warn"><span class="k">Dashboard card</span><div><p>The <b>Pending release</b> card on the reception dashboard opens the lab queue, which is always empty for reception. Use the Reception Queue's Processing tab instead.</p></div></div>
+  </section>
+
+  <!-- 3.9 -->
+  <section class="sub" id="rec-fix">
+    <h3>3.9 Fix-ups on the visit page</h3>
+    <dl class="defs">
+      <dt>Wrong test billed, not yet paid</dt><dd><kbd class="ui">Delete</kbd> the visit and give a reason, then create it again correctly. Nothing is billed for a deleted visit; it moves to <b>Deleted entries</b> and to Admin's <b>Deleted queue entries</b> report, and <kbd class="ui">Restore</kbd> brings it back. Removing a single line instead of the whole visit needs Admin, who can see the lines. Once any payment is recorded, deletion is no longer possible: void the payment first.</dd>
+      <dt>Patient lost the receipt / PIN</dt><dd>Open the patient's page, <kbd class="ui">Re-issue PIN</kbd>. A fresh 60-day PIN for their latest visit prints on a <b>Patient portal access</b> slip. The old PIN stops working. (The visit page's <kbd class="ui">Issue portal PIN</kbd> appears only on consult-only visits, which never had a receipt.)</dd>
+      <dt>Forgot the doctor</dt><dd><b>Attending physician</b> section → <kbd class="ui">Assign physician</kbd> (or <kbd class="ui">Change</kbd>).</dd>
+      <dt>Result needs correcting after release</dt><dd>Tell the lab. They undo the release, amend with a reason, and release again (4.7). If the patient had already opened it, phone them.</dd>
+      <dt>Wrong patient entirely</dt><dd>If unpaid, delete the visit and create it again under the right patient. If paid, void the payment first.</dd>
+    </dl>
+  </section>
+
+  <!-- 3.10 -->
+  <section class="sub" id="rec-cash">
+    <h3>3.10 Cash drawer and End of day</h3>
+    <div class="screen"><div class="where">Sidebar › Front desk › <kbd class="ui">Cash drawer</kbd> · <code class="route">/staff/payments/cash-drawer</code> · tab <span class="tab">End of day</span> = <code class="route">/staff/payments/eod</code></div>
+      <dl><dt>Drawer shows</dt><dd><b>Starting cash</b> · <b>Cash received today</b> · <b>Cash paid out</b> · <b>Cash you should have now</b></dd>
+      <dt>Drawer buttons</dt><dd><kbd class="ui">+ Pay out cash</kbd> · <kbd class="ui">+ Add cash to drawer</kbd> · <kbd class="ui">+ Remove cash from drawer</kbd> · <kbd class="ui">Count &amp; close day →</kbd></dd></dl></div>
+    <h4>During the day</h4>
+    <ol class="steps">
+      <li><p class="step-title">At the start of the shift, check <b>Starting cash</b> matches what is physically in the drawer.</p><p>Use <kbd class="ui">+ Add cash to drawer</kbd> if the float was topped up.</p></li>
+      <li><p class="step-title">Whenever cash leaves the drawer for something other than change, record it with <kbd class="ui">+ Pay out cash</kbd>.</p><p>Courier fees, a staff cash advance, a salary payout. Petty-cash purchases have their own screen (below).</p></li>
+    </ol>
+    <h4>Closing</h4>
+    <ol class="steps">
+      <li><p class="step-title">Click <kbd class="ui">Count &amp; close day →</kbd>. The page is titled <q>Close &amp; count cash</q> with today's date.</p></li>
+      <li><p class="step-title">Count the drawer by denomination and type each count into the <b>Bills</b> and <b>Coins</b> columns.</p><p>Bills: ₱1,000 · ₱500 · ₱200 · ₱100 · ₱50 · ₱20. Coins: ₱20 · ₱10 · ₱5 · ₱1 · 25¢. The ₱20 bill and ₱20 coin are separate rows.</p></li>
+      <li><p class="step-title">Read <b>Cash you actually counted</b> and <b>Difference (over / short)</b>. They are calculated from your counts; you never type a total.</p></li>
+      <li><p class="step-title">If the difference is not zero, type the <b>Reason for the difference</b>. It is required.</p></li>
+      <li><p class="step-title">Click <kbd class="ui">Close day</kbd>, then print the <b>End-of-day cash count</b> sheet and sign it (<b>Counted by</b> / <b>Witness</b>).</p></li>
+    </ol>
+    <h4>Petty cash</h4>
+    <p>Sidebar › Billing › <kbd class="ui">Petty cash</kbd>. Record a small purchase: <b>Date</b>, <b>What was it for?</b> (Office Supplies, Lab Supplies, Maintenance &amp; Repair, Travel, Permits, Utilities, Telecommunication/Internet, Marketing), <b>Amount (₱)</b>, <b>Paid to</b>, <b>Note</b>, then <kbd class="ui">Record petty cash</kbd>. Keep the paper receipt for Admin.</p>
+  </section>
+
+  <!-- 3.11 -->
+  <section class="sub" id="rec-other">
+    <h3>3.11 Quick quote, inquiries and gift codes</h3>
+    <dl class="defs">
+      <dt>Quick quote</dt><dd>Billing › <kbd class="ui">Quick quote</kbd>. A searchable price list you can read out or copy into a chat reply. Nothing is saved. Press <kbd class="ui">Cmd/Ctrl + K</kbd> to jump to the search box.</dd>
+      <dt>Inquiries</dt><dd>Front desk › <kbd class="ui">Inquiries</kbd>. Log a phone or Messenger enquiry with <kbd class="ui">+ New inquiry</kbd> (caller, contact, channel, what they asked). When they decide to come in, open it and use <kbd class="ui">Book from inquiry</kbd>, which turns it into an appointment.</dd>
+      <dt>Sell a gift code</dt><dd>Type <code class="route">/staff/gift-codes/sell</code> (the sidebar item is parked). Enter buyer name and contact, payment method and reference, the code you are handing over, then <kbd class="ui">Record sale</kbd>. The recipient redeems it later as a payment method (3.6).</dd>
+    </dl>
+  </section>
+</section>
+
+<!-- ============================================================ -->
+<section class="chapter" id="lab" data-role="lab">
+  <div class="chapter-num">Chapter 4</div>
+  <h2>Lab &amp; imaging</h2>
+  <div class="strip"><span class="pill lab">Medtech</span><span class="pill lab">X-ray technician</span><span class="pill path">Pathologist</span><span class="pill admin">Admin</span><span><b>Where:</b> the <b>Lab</b> group of the sidebar</span></div>
+  <p class="intro">The lab team owns the queue: everything reception has billed and the patient has paid for, waiting to be done. You claim a test, enter the values or attach the report, finalise, and then release it to the patient. You never touch money and you never need the patient's DRM-ID; the bench works by name.</p>
+
+  <!-- 4.1 -->
+  <section class="sub" id="lab-see">
+    <h3>4.1 What you see</h3>
+    <p>Your queue is filtered to the sections your role covers. Nothing else exists as far as your screen is concerned.</p>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>Role</th><th>Queue title</th><th>Sections shown</th></tr></thead>
+      <tbody>
+        <tr><td>Medtech</td><td>Lab queue</td><td>Chemistry · Hematology · Immunology · Urinalysis · Microbiology · Send-outs</td></tr>
+        <tr><td>X-ray technician</td><td>Imaging queue</td><td>X-ray · Ultrasound · ECG</td></tr>
+        <tr><td>Pathologist</td><td>Queue</td><td>Everything</td></tr>
+        <tr><td>Admin</td><td>Queue</td><td>Everything, plus who claimed each test</td></tr>
+      </tbody>
+    </table></div>
+    <p>Your dashboard (<q>Lab bench</q>) has four cards under <b>My queue</b>: <b>Unclaimed in my sections</b>, <b>Claimed by me</b>, <b>Send-out awaiting result</b> and <b>Released today (mine)</b>, plus an <b>Oldest unclaimed</b> strip. Each is a link into the queue.</p>
+  </section>
+
+  <!-- 4.2 -->
+  <section class="sub" id="lab-queue">
+    <h3>4.2 The queue</h3>
+    <div class="screen"><div class="where">Sidebar › Lab › <kbd class="ui">Queue</kbd> · <code class="route">/staff/queue</code></div>
+      <dl><dt>Tabs</dt><dd><span class="tab">All</span> · <span class="tab">Pending release</span> · <span class="tab">Released today</span> · <span class="tab">Mine</span></dd>
+      <dt>Filters</dt><dd><b>Requested from</b> / <b>…to</b> · <b>Patient / test search</b> (name, test or DRM-ID) · <b>Visit #</b> · <kbd class="ui">Apply</kbd> · <kbd class="ui">Clear filters</kbd></dd>
+      <dt>Row button</dt><dd><kbd class="ui">Claim</kbd></dd></dl></div>
+    <p>Rows are oldest first. Each shows the patient, the test (code and name), the visit number and a status chip. A chemistry order shows as one row, for example <q>Chemistry Panel (3 tests)</q>, because the whole panel is reported on one form (4.4). Package headers never appear; only the tests inside them do.</p>
+    <ol class="steps">
+      <li><p class="step-title">Start on <span class="tab">All</span>. Pick the oldest row you can run.</p><p>The subtitle reminds you: <q>Visits waiting for payment appear once they're paid or HMO-covered.</q> If a patient says they have paid and the test is not here, reception has not recorded it yet.</p></li>
+      <li><p class="step-title">Click <kbd class="ui">Claim</kbd>.</p><p>The test becomes <span class="status">in progress</span> under your name, moves to your <span class="tab">Mine</span> tab, and the entry page opens. Claim only what you are about to run; a claimed test is invisible to colleagues as available work.</p></li>
+      <li><p class="step-title">Use <span class="tab">Mine</span> to get back to anything you left half-done.</p></li>
+    </ol>
+    <div class="note warn"><span class="k">Claimed the wrong one?</span><div><p>You cannot un-claim it yourself. Ask an Admin: on the test page they have an <b>Assignment (admin)</b> panel with <kbd class="ui">Unclaim</kbd> and <kbd class="ui">Reassign to…</kbd>.</p></div></div>
+  </section>
+
+  <!-- 4.3 -->
+  <section class="sub" id="lab-enter">
+    <h3>4.3 Enter a structured result</h3>
+    <div class="screen"><div class="where">A single test · <code class="route">/staff/queue/[test]</code></div>
+      <dl><dt>Heading</dt><dd>Service code, name and status chip; patient name, age and sex</dd>
+      <dt>Form</dt><dd><b>Enter result values</b>: one row per parameter, a <b>Blank</b> box on every row</dd>
+      <dt>Buttons</dt><dd><kbd class="ui">Save draft</kbd> · <kbd class="ui">Finalise &amp; generate PDF</kbd></dd></dl></div>
+    <p>Most tests have a structured template. The form is built from it: numbers, drop-downs or free text, with the unit and the reference range beside each field. Ranges are chosen for this patient's age and sex automatically, and rows that don't apply to their sex are hidden.</p>
+    <ol class="steps">
+      <li><p class="step-title">Type each value.</p>
+        <ul><li>A value outside the reference range turns the box red. That is the H / L flag which prints on the PDF. A drop-down answer listed as abnormal turns red the same way (flag A).</li>
+        <li>Dual-unit tests (two columns, <b>SI</b> and <b>Conv.</b>) convert automatically when you fill either side. Don't type both.</li>
+        <li>Didn't run a sub-test? Tick <b>Blank</b> on that row. It prints as a dash. Leaving it empty instead stops you finalising.</li></ul></li>
+      <li><p class="step-title">Click <kbd class="ui">Save draft</kbd> whenever you step away.</p><p>Drafts keep everything you typed. The test stays <span class="status">in progress</span>.</p></li>
+      <li><p class="step-title">When every row is filled or blanked, click <kbd class="ui">Finalise &amp; generate PDF</kbd>.</p><p>If anything is missing you get <q>Missing values for: …. Mark blank if you didn't run the sub-test.</q> On success: <q>✓ Saved. Control No. … — finalised.</q> The test becomes <span class="status">ready for release</span> and the PDF is generated with your name on it.</p></li>
+    </ol>
+    <div class="note stop"><span class="k">Finalise means finished</span><div><p>After finalising, the only way to change a value is an <b>amendment</b> with a written reason (4.7), and the original stays on record. Check the row against the analyser printout before you click.</p></div></div>
+    <div class="note why"><span class="k">Critical values</span><div><p>A numeric value beyond a critical threshold is recorded as a critical alert the moment you finalise. You will not see a pop-up; the pathologist and admin see it on their <b>Critical alerts</b> page (4.8). Tell them in person as well. That is a clinical duty, not a software one.</p></div></div>
+  </section>
+
+  <!-- 4.4 -->
+  <section class="sub" id="lab-chem">
+    <h3>4.4 The chemistry panel (one form for the whole order)</h3>
+    <div class="screen"><div class="where"><code class="route">/staff/queue/consolidated/[visit]/[group]</code> · opened automatically from any chemistry test</div>
+      <dl><dt>Heading</dt><dd>The report group name, then <b>Ordered:</b> and the service codes on this visit</dd>
+      <dt>Buttons</dt><dd><kbd class="ui">Claim this report</kbd> · <kbd class="ui">Finalise + release</kbd> · <kbd class="ui">Back to queue</kbd></dd></dl></div>
+    <p>Chemistry tests (FBS, lipid profile, creatinine, and so on) are reported together on one consolidated form so the patient gets one chemistry report, not six. Clicking any chemistry test in the queue lands you here.</p>
+    <ol class="steps">
+      <li><p class="step-title">Click <kbd class="ui">Claim this report</kbd>.</p><p>Until you claim, the value fields are hidden. If a colleague has it you see <q>This report is claimed by another medtech.</q></p></li>
+      <li><p class="step-title">Fill in the rows that are enabled.</p><p>The table columns are <b>Test / SI Result / SI Unit / Conv Result / Conv Unit</b>. Rows for tests not ordered on this visit are greyed out and skipped.</p></li>
+      <li><p class="step-title">Click <kbd class="ui">Finalise + release</kbd>.</p><p>This form releases straight to the patient if the visit is paid. If it isn't, you see <q>Report finalised — release deferred: visit not yet paid; results release automatically once payment is recorded</q>. Nothing is lost; go back to the queue.</p></li>
+    </ol>
+    <div class="note stop"><span class="k">Every field greyed out?</span><div><p>The screen will say so in plain words: it is a template configuration problem, not a data-entry one. Report it to Admin (the group template under Result templates has no fields mapped for the ordered tests). Don't work around it by typing into another test.</p></div></div>
+  </section>
+
+  <!-- 4.5 -->
+  <section class="sub" id="lab-upload">
+    <h3>4.5 Upload a PDF result (send-outs and tests without a template)</h3>
+    <p>Some tests come back as a report from a partner lab, and a few have no structured template yet. For these the test page shows an upload form instead: <q>Send-out test: attach the partner-lab PDF.</q> or <q>No structured template configured for this service yet — falling back to PDF upload.</q></p>
+    <ol class="steps">
+      <li><p class="step-title">Claim the test as usual. Send-outs wait on your queue and on the dashboard card <b>Send-out awaiting result</b> until the report arrives.</p></li>
+      <li><p class="step-title">Choose the <b>PDF result</b> file. PDF only, up to 10 MB.</p></li>
+      <li><p class="step-title">Add <b>Internal notes (optional)</b> if there is something reception should know. Notes are staff-only; the patient never sees them.</p></li>
+      <li><p class="step-title">Click <kbd class="ui">Upload result</kbd>.</p><p>The test moves to <span class="status">ready for release</span>.</p></li>
+    </ol>
+  </section>
+
+  <!-- 4.6 -->
+  <section class="sub" id="lab-imaging">
+    <h3>4.6 Imaging reports (X-ray, ultrasound, ECG)</h3>
+    <p>Imaging services use the <b>Imaging report</b> template: each finding is a free-text box with its own <b>Blank</b> tick, plus a required <b>Attached image</b>.</p>
+    <ol class="steps">
+      <li><p class="step-title">Claim the study from the Imaging queue and type the findings and impression.</p></li>
+      <li><p class="step-title">Attach the image or the radiologist's report: JPEG, PNG, WebP or PDF, up to 25 MB.</p><p>An image is embedded in the released PDF; a PDF is listed as a separate attachment. HEIC photos from an iPhone are not accepted; export as JPEG first.</p></li>
+      <li><p class="step-title">Click <kbd class="ui">Finalise &amp; generate PDF</kbd>.</p><p>Finalising without an attachment is refused: <q>Please attach an image before finalising.</q></p></li>
+    </ol>
+  </section>
+
+  <!-- 4.7 -->
+  <section class="sub" id="lab-after">
+    <h3>4.7 After finalising: release, undo, amend</h3>
+    <div class="screen"><div class="where">The visit page · <code class="route">/staff/visits/[visit]</code> · reached from the <span class="tab">Pending release</span> tab of your queue</div>
+      <dl><dt>Buttons</dt><dd><kbd class="ui">Release</kbd> per line · <kbd class="ui">Release all ready (N)</kbd> · <kbd class="ui">Release selected (N)</kbd> · <kbd class="ui">Unrelease selected (N)</kbd> · <kbd class="ui">Undo</kbd></dd>
+      <dt>You see</dt><dd>only the lines in your own sections; doctor lines are visible to Admin and pathologists</dd>
+      <dt>Blocked when</dt><dd>visit not paid or waived · consent gate on and consent missing · a PF-earning doctor line has no attending physician</dd></dl></div>
+    <p>The test page now shows a <b>Result on file</b> panel with <kbd class="ui">View / download result</kbd> (a 5-minute link; every view is logged) and <kbd class="ui">Amend result…</kbd>. The test is <span class="status">ready for release</span>. Releasing is what makes it visible to the patient, and it is your job, not reception's.</p>
+    <h4>Releasing</h4>
+    <ol class="steps">
+      <li><p class="step-title">Open the <span class="tab">Pending release</span> tab of your queue and click the visit number.</p><p>Lines are grouped under <b>Packages</b> and <b>Individual tests</b>.</p></li>
+      <li><p class="step-title">Click <kbd class="ui">Release</kbd> on the line, or <kbd class="ui">Release all ready (N)</kbd> for the lot.</p><p>Tick boxes and use <kbd class="ui">Release selected (N)</kbd> for a subset. Package components release individually; the package header follows on its own.</p></li>
+      <li><p class="step-title">Choose how the patient is receiving it: Physical, Email, Viber, GCash, Pickup or Other.</p><p>The choice defaults to the patient's preferred method from their profile. Email, Viber, GCash and Other send the patient a <q>Your DRMed lab result is ready</q> email with the portal link. Physical and Pickup send nothing: open the <b>PDF →</b> link, print it, and hand it to reception for the counter.</p></li>
+    </ol>
+    <h4>When the button is greyed out or refuses</h4>
+    <dl class="defs">
+      <dt><q>Visit must be paid before results can be released.</q></dt><dd>Reception has not recorded the payment. HMO visits stay unpaid until Admin settles or waives them (see <a href="#limits">Known limitations</a>).</dd>
+      <dt><q>Patient data-privacy consent is not on file — capture consent before releasing.</q></dt><dd>The consent gate is on. Reception captures consent on the patient's page.</dd>
+      <dt><q>An attending physician is required for consults and procedures that pay the doctor a PF…</q></dt><dd>Reception or Admin assigns the physician on the visit; then release again.</dd>
+    </dl>
+    <h4>Taking a release back</h4>
+    <p>Click <kbd class="ui">Undo</kbd> on a released line, type the reason, and <kbd class="ui">Confirm undo</kbd>. The result disappears from the portal and returns to <span class="status">ready for release</span> so you can amend it. If the patient already opened it, the dialog says so: undoing does not un-see it, so reception should call them.</p>
+    <h4>Amending a result</h4>
+    <ol class="steps">
+      <li><p class="step-title">If the result has already been released, <kbd class="ui">Undo</kbd> the release first.</p><p>Otherwise the patient can still download the wrong version while you fix it.</p></li>
+      <li><p class="step-title">Open the test, click <kbd class="ui">Amend result…</kbd>, correct the values, and write the reason (at least a sentence).</p></li>
+      <li><p class="step-title">Save. The panel now shows <b>Amended ×1</b>; the original PDF is kept for the audit trail.</p></li>
+      <li><p class="step-title">Release again, and ask reception to phone the patient if they had already seen the first version.</p></li>
+    </ol>
+  </section>
+
+  <!-- 4.8 -->
+  <section class="sub" id="lab-critical">
+    <h3>4.8 Critical alerts</h3>
+    <div class="screen"><div class="where">Sidebar › Lab › <kbd class="ui">Critical alerts</kbd> · <code class="route">/staff/critical-alerts</code> · Pathologist and Admin only</div>
+      <dl><dt>Columns</dt><dd>When · Patient · Parameter · <b>↑ High</b> / <b>↓ Low</b> · Observed vs threshold · <kbd class="ui">Open test →</kbd> · <kbd class="ui">Acknowledge</kbd></dd></dl></div>
+    <p>An alert is created automatically when a finalised numeric value crosses the critical threshold set on the template. The page lists unacknowledged alerts and, below, <b>Recently acknowledged</b>.</p>
+    <ol class="steps">
+      <li><p class="step-title">Open the test, confirm the value, and make sure the physician or patient callback is happening.</p></li>
+      <li><p class="step-title">Click <kbd class="ui">Acknowledge</kbd>.</p><p>Acknowledging records who saw it and when. It does not change the result.</p></li>
+    </ol>
+    <p>A medtech who opens this page sees <q>This page is for pathologists and admins — critical-value follow-up is a clinical responsibility.</q> Medtechs raise the alarm in person.</p>
+  </section>
+
+  <!-- 4.9 -->
+  <section class="sub" id="lab-path">
+    <h3>4.9 For pathologists</h3>
+    <p>You see every section in the queue and can claim, enter and finalise like a medtech. Your extra duties today are the <b>Critical alerts</b> page and reviewing amended results. Your dashboard adds <b>Critical alerts unacked</b>.</p>
+    <div class="note warn"><span class="k">Sign-off is not active yet</span><div><p>The system has a place for a formal pathologist sign-off step before release, but the screen is not built and the <q>Requires pathologist sign-off</q> setting on services is disabled. Results go from the bench straight to <span class="status">ready for release</span>. Your dashboard's <b>Ready for sign-off</b> card currently counts those ready-for-release tests. See <a href="#limits">Known limitations</a>.</p></div></div>
+  </section>
+
+  <!-- 4.10 -->
+  <section class="sub" id="lab-results">
+    <h3>4.10 The results archive</h3>
+    <div class="screen"><div class="where">Sidebar › Lab › <kbd class="ui">Results</kbd> · <code class="route">/staff/results</code></div>
+      <dl><dt>Tabs</dt><dd><span class="tab">All</span> · <span class="tab">Released</span> · <span class="tab">Ready for release</span> · <span class="tab">In progress</span> · <span class="tab">Unclaimed</span> · <span class="tab">Cancelled</span></dd>
+      <dt>Filters</dt><dd><b>Requested from</b> / <b>…to</b> · <b>Patient / service search</b></dd>
+      <dt>Per row</dt><dd>one line per visit with its tests, timestamps, a <b>PDF →</b> link per finished test, and a link to the visit</dd></dl></div>
+    <p>This is the look-up screen, not a work screen: nothing here releases or amends. Use it to find an old result, open or print its PDF, or spot tests nobody has picked up. <span class="tab">Unclaimed</span> is sorted oldest first; a row marked <b>awaiting payment</b> is one reception hasn't been paid for yet, which is why it isn't on your queue.</p>
+  </section>
+</section>
+
+<!-- ============================================================ -->
+<section class="chapter" id="adm" data-role="admin">
+  <div class="chapter-num">Chapter 5</div>
+  <h2>Admin</h2>
+  <div class="strip"><span class="pill admin">Admin</span><span><b>Where:</b> the <b>Admin</b> group of the sidebar, in six collapsible sub-groups</span></div>
+  <p class="intro">Admin can do everything reception and the lab can, and owns the settings behind them: the catalog and prices, the doctors and what they are paid, staff logins, the audit trail, and the books. This chapter is ordered the way a new clinic sets itself up, then the way a running clinic checks itself each day.</p>
+
+  <!-- 5.1 -->
+  <section class="sub" id="adm-setup">
+    <h3>5.1 Setting up the clinic (in this order)</h3>
+    <p>Each step depends on the one before it. All items are under <b>Admin › Catalog &amp; setup</b> unless noted.</p>
+    <ol class="steps">
+      <li><p class="step-title">Staff users <span class="pill admin">Admin tools</span></p><p><kbd class="ui">+ New staff user</kbd>: Email, Full name, Role (Reception · Medical Tech · X-ray Technician · Pathologist · Admin), Initial password (10 characters or more). After creating, edit the user to tick <b>Active</b> and record their <b>PRC license</b> (RMT, MD, RT or Pathologist, with number). Medtech licence numbers print on result PDFs.</p></li>
+      <li><p class="step-title">Enrol your own two-step sign-in.</p><p>Admins are sent to <code class="route">/staff/mfa</code> automatically. Other roles must type that address themselves; there is no link to it yet.</p></li>
+      <li><p class="step-title">Physicians</p><p><kbd class="ui">+ New physician</kbd>: Full name, Specialty, Group, then the money: <b>Compensation arrangement</b> (<q>PF split (standard)</q>, <q>Rent-paying (keeps full consult)</q> or <q>Shareholder (keeps full consult)</q>), <b>Default consultation fee (₱)</b> and <b>Clinic cut (₱)</b>. A blank clinic cut means ₱100 for PF-split doctors and ₱0 for the other two. Then edit the physician to add a photo and open <kbd class="ui">Schedule</kbd>: add <b>Recurring blocks</b> (day, start, end, valid from/until) and one-off <b>Overrides</b> (a date off, or changed hours). A doctor with no recurring blocks is <q>by appointment</q>: online bookings for them become pending callbacks.</p></li>
+      <li><p class="step-title">Services</p><p><kbd class="ui">+ New service</kbd>: Code, Name, Description, <b>DRMed price (PHP)</b>, <b>HMO price (PHP, optional)</b>, tick <b>Senior / PWD 20% discount applies</b> where the law applies, Turnaround (hours), <b>Kind</b> (Lab test · Lab package · Doctor consultation · Doctor procedure · Home service · Vaccine), <b>Section</b>, and <b>Send-out test</b> with the partner lab and unit cost when the test leaves the building. <b>Active</b> makes it visible on the website. Changing a price asks you to <kbd class="ui">Confirm price change</kbd> and keeps the history.</p></li>
+      <li><p class="step-title">Prices</p><p>A spreadsheet-style view of every service's <b>DRMed (₱)</b> and <b>HMO (₱)</b> price for bulk updates. Consultations show <q>priced at counter</q> because reception types the fee per visit.</p></li>
+      <li><p class="step-title">Discounts</p><p>The list reception sees on every visit line. The Senior / PWD row is <b>Statutory</b>, fixed at 20% by law and cannot be edited or switched off. <kbd class="ui">+ New discount</kbd> for promos: Label, Code, <b>Percent off</b> or <b>Fixed peso amount</b>, Active, Order. Retire a promo by unticking Active; never rely on deleting.</p></li>
+      <li><p class="step-title">HMO providers</p><p><kbd class="ui">+ New provider</kbd>: Provider name, Active, <b>Days to pay invoice</b>, contract dates, primary contact. This list feeds the two HMO drop-downs on New visit and the claims aging.</p></li>
+      <li><p class="step-title">Result templates</p><p>The index groups services into <b>Report groups (consolidated templates)</b>, <b>With template</b>, <b>Eligible without template</b> and <b>Send-out (templates not applicable)</b>, and warns about templates with zero parameters or no mapped services. Edit a template's <b>Layout</b> (Simple · Dual unit · Multi-section · Imaging report), header and footer notes, and its parameters (name, input type, units, reference ranges by sex and age band, allowed and abnormal values, critical thresholds). Use <kbd class="ui">Preview PDF</kbd> to see the printed result before it goes live. The chemistry panel is one <b>group</b> template; the per-service chemistry templates are switched off on purpose and changing them does nothing.</p></li>
+      <li><p class="step-title">Closures, consent gate, dashboard cards</p>
+        <ul><li><b>Closures</b> (Operations): add a date and reason; the public booking page hides that day. If bookings already exist, <kbd class="ui">Move to callback</kbd> first.</li>
+        <li><b>Consent gate</b> (Admin tools): <q>Require consent before result release</q>. Turn it on only after reception is capturing consent at every visit; today only a handful of patients have consent on file, so switching it on cold would block most releases.</li>
+        <li><b>Dashboard settings</b>: per role, tick which cards show. Cards marked <b>Sensitive</b> reveal money.</li></ul></li>
+      <li><p class="step-title">Gift codes and inventory (Operations)</p><p><b>Gift codes</b> › <kbd class="ui">+ Generate batch</kbd> (how many, face value, label) creates codes for reception to sell; the <kbd class="ui">Sales report</kbd> shows who bought what. <b>Inventory</b> › <kbd class="ui">+ New item</kbd> then record movements (Receive · Issue · Adjust · Expire · Count); the list flags <b>Low / out</b> and <b>Expiring ≤ 60d</b>. Medtechs and x-ray techs can see and post inventory too.</p></li>
+    </ol>
+  </section>
+
+  <!-- 5.2 -->
+  <section class="sub" id="adm-daily">
+    <h3>5.2 Daily and weekly checks</h3>
+    <p>Your dashboard is titled <q>Clinic command centre</q>. Its <b>Operations</b> row (revenue today, visits, queue, released today, possible duplicates) and <b>What needs attention</b> strip are the morning glance. Then:</p>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>Check</th><th>Where (Admin ›)</th><th>What you are looking for</th></tr></thead>
+      <tbody>
+        <tr><td>Yesterday's cash</td><td>Books &amp; reports › <b>Daily report</b>, tab <span class="tab">Cash &amp; cards</span></td><td>Each shift's counted cash, the denomination breakdown, and any <b>Difference</b> with its reason. <kbd class="ui">Export CSV</kbd> for the accountant.</td></tr>
+        <tr><td>Revenue</td><td>Books &amp; reports › <b>Daily revenue</b></td><td>Day-by-day totals by section and payment method. Pick From / To, <kbd class="ui">Apply</kbd>.</td></tr>
+        <tr><td>Doctors to pay</td><td>Pay doctors › <b>Pay doctors</b></td><td>See 5.3.</td></tr>
+        <tr><td>Lab turnaround</td><td>Books &amp; reports › <b>Lab turnaround time</b></td><td>Median hours from request to release per section and SLA breaches.</td></tr>
+        <tr><td>Things that got stuck</td><td>Books &amp; reports › <b>Stuck tests</b></td><td>Packages with no tests, visits with no lines, tests older than N days. Usually a reception slip that needs a delete or a call.</td></tr>
+        <tr><td>Undo and delete oversight</td><td>Books &amp; reports › <b>Undone releases</b> · <b>Deleted queue entries</b></td><td>Every release taken back (with whether the patient had already viewed it) and every queue entry deleted, by whom and why. These are your RA 10173 review screens.</td></tr>
+        <tr><td>Consent coverage</td><td>Books &amp; reports › <b>Patients without consent</b></td><td>Who still needs the form signed before you turn the consent gate on.</td></tr>
+        <tr><td>HMO money</td><td>Admin › <b>HMO claims</b> · Daily report › <span class="tab">HMO receivables</span></td><td>Unbilled claims, batches sent, aging by provider.</td></tr>
+        <tr><td>Who did what</td><td>Admin tools › <b>Audit log</b></td><td>Filter by action, DRM-ID, actor (Staff · Patient · System · Anonymous) and dates. Read-only by design.</td></tr>
+        <tr><td>Did the emails go out</td><td>Admin tools › <b>Emails sent</b></td><td>Every result-ready, booking, reminder, welcome and newsletter email with Sent / Failed / No email on file. <kbd class="ui">Failures only</kbd> is the useful button.</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- 5.3 -->
+  <section class="sub" id="adm-doctors">
+    <h3>5.3 Paying doctors (professional fees)</h3>
+    <div class="screen"><div class="where">Admin › Pay doctors › <kbd class="ui">Pay doctors</kbd> · <code class="route">/staff/admin/accounting/pf-payouts</code></div>
+      <dl><dt>Tabs</dt><dd><span class="tab">Ready to pay</span> · <span class="tab">Waiting on insurance</span> · <span class="tab">Already paid</span></dd>
+      <dt>Buttons</dt><dd><kbd class="ui">Pay this doctor</kbd> · <kbd class="ui">Pay everyone (cash only)</kbd> · <kbd class="ui">Print slip</kbd> · <kbd class="ui">Void disbursement</kbd> · <kbd class="ui">Print quick guide →</kbd></dd></dl></div>
+    <p>A consultation or procedure accrues the doctor's share (the PF) when someone clicks <kbd class="ui">Mark consultation done</kbd> or <kbd class="ui">Mark procedure done</kbd> on the visit page. Only Admin and pathologists can see doctor lines there, so this click is yours: do it once the patient has seen the doctor, and only after reception has recorded the fee, because the same payment gate applies. Cash-paid visits then land under <span class="tab">Ready to pay</span>; HMO-billed ones sit under <span class="tab">Waiting on insurance</span> until the claim is settled, then move across on their own.</p>
+    <ol class="steps">
+      <li><p class="step-title">Open <span class="tab">Ready to pay</span>. Each doctor shows the total owed and the visits behind it.</p></li>
+      <li><p class="step-title">Send the money (GCash, bank, or cash from the drawer), then click <kbd class="ui">Pay this doctor</kbd>, choose the method, <kbd class="ui">Confirm payment</kbd>.</p><p>Recording a payment does not move money. It records that you did. <kbd class="ui">Pay everyone (cash only)</kbd> batches every cash payout in one go.</p></li>
+      <li><p class="step-title">Print the <b>Professional fee payout acknowledgment</b> slip and have the doctor sign the clinic copy.</p><p>Two copies print: <b>Doctor's copy</b> and <b>Clinic file copy</b>, with the amount in words and a year-to-date line.</p></li>
+    </ol>
+    <p>A mistaken payout is voided from its detail page (<kbd class="ui">Void disbursement</kbd>, reason required). The slip then prints with a red <q>Voided — not valid for payment</q> banner. <b>Doctor pay (this year)</b> is the year-to-date summary per doctor: earned, confirmed, paid out, pending HMO settlement, still owed.</p>
+    <div class="note warn"><span class="k">Before go-live</span><div><p>All twenty active physicians still have no <b>Default consultation fee</b>. Until you enter one, reception must type the fee on every consultation. Set it once under Physicians.</p></div></div>
+  </section>
+
+  <!-- 5.4 -->
+  <section class="sub" id="adm-people">
+    <h3>5.4 People and access</h3>
+    <dl class="defs">
+      <dt>Reset a password</dt><dd>Staff users › open the user › <b>New password</b> › <kbd class="ui">Reset password</kbd>. Tell them in person; there is no email.</dd>
+      <dt>Someone leaves</dt><dd>Untick <b>Active</b>. Their history stays. <kbd class="ui">Delete user…</kbd> (type their full name to confirm) is a soft delete and can be <kbd class="ui">Restore</kbd>d.</dd>
+      <dt>Lost authenticator phone</dt><dd>Remove their MFA factor from their user page; they enrol again at <code class="route">/staff/mfa</code>.</dd>
+      <dt>Waive a balance</dt><dd>On the visit: <kbd class="ui">Waive balance</kbd> → <kbd class="ui">Confirm waive</kbd>. Admin-only, and irreversible in the sense that a waived visit can't be deleted.</dd>
+      <dt>Unclaim or reassign a test</dt><dd>Open the test from the queue; the <b>Assignment (admin)</b> panel has <kbd class="ui">Unclaim</kbd> and <kbd class="ui">Reassign to…</kbd>.</dd>
+      <dt>Withdraw a patient's consent</dt><dd>Patient page › Consent panel › <kbd class="ui">Withdraw consent</kbd>, with a reason. Their results stay; future releases are blocked if the gate is on.</dd>
+    </dl>
+  </section>
+
+  <!-- 5.5 -->
+  <section class="sub" id="adm-patients">
+    <h3>5.5 Patient tools</h3>
+    <dl class="defs">
+      <dt>Import patients</dt><dd>Paste CSV rows with <code class="id">first_name, last_name, birthdate</code> (plus optional middle name, sex, phone, email, address), up to 2,000 at a time. Tick <b>Mark imported rows as pre-registered</b> so reception verifies them at the counter.</dd>
+      <dt>Merge duplicate patients</dt><dd><b>Possible duplicate patients</b> lists likely pairs (<span class="tab">Probable+</span> or <span class="tab">Include weak</span>); <kbd class="ui">Merge into DRM-…</kbd> moves every visit and result to the surviving record and can be <kbd class="ui">Undo</kbd>ne within 30 days. For a pair the detector missed, the manual <b>Merge patient profiles</b> page takes <b>Keep this patient</b> and <b>Merge in this patient</b> and asks you to type <code class="id">MERGE</code>.</dd>
+      <dt>Visits archive export</dt><dd>Billing › Visits › <span class="tab">Archive</span> › <kbd class="ui">Export CSV</kbd>. Capped at 20,000 rows, logged as an export.</dd>
+    </dl>
+  </section>
+
+  <!-- 5.6 -->
+  <section class="sub" id="adm-books">
+    <h3>5.6 Books, payroll and marketing (orientation)</h3>
+    <p>These modules are used by the bookkeeper and keep their accounting vocabulary on purpose. Each has plain hints on screen. What you need to know to find things:</p>
+    <h4>Books &amp; reports</h4>
+    <dl class="defs">
+      <dt>Journal entries</dt><dd>The general ledger. Payments, releases, voids and payouts post entries automatically; <kbd class="ui">+ New journal entry</kbd> is for manual adjustments, optionally from a <b>Recurring monthly entries</b> template (rent, subscriptions).</dd>
+      <dt>Expenses</dt><dd>Accounts payable: <span class="tab">Quick expense</span> for a one-off bill, <span class="tab">Vendor bills</span>, <span class="tab">Bill payments</span>, <span class="tab">Vendors</span>, <span class="tab">Recurring</span>.</dd>
+      <dt>Outside-lab costs · performance</dt><dd>What send-outs cost versus what the partner lab invoiced, and how fast each vendor turns results around. <b>Unconfigured Send-out Services</b> lists send-outs with no cost set.</dd>
+      <dt>Financial statements</dt><dd><span class="tab">Income statement</span> · <span class="tab">Balance sheet</span> · <span class="tab">Cash flow</span> with prior-year comparison; <b>Budget vs actual</b> beside it.</dd>
+      <dt>Bank reconciliation · Monthly periods</dt><dd>Match statement lines to entries; close each month when done.</dd>
+      <dt>Chart of accounts · Payment routing · Cash routing</dt><dd>The account list, and the rules that say which account a GCash payment or a cash shortage lands in. Change only when you add a bank or a payment method.</dd>
+      <dt>External sync status</dt><dd>The daily 5 pm push of rows to the accountant's Google Sheet, with a re-run button.</dd>
+    </dl>
+    <h4>Payroll</h4>
+    <p><b>Employees</b> (salaried staff, government IDs) → <b>Pay periods</b> (semi-monthly) → <b>Run payroll</b>: create the run, <kbd class="ui">Import DTR</kbd> from the biometric export, review, finalise, mark paid. <b>Overtime slips</b>, <b>Leaves</b> and <b>Holidays</b> feed the computation; <b>Government rates</b> holds the SSS, PhilHealth, Pag-IBIG and tax tables; <b>Staff cash advances</b> are deducted from the next run. Every staff member sees only their own payslips under <b>My payslips</b>.</p>
+    <h4>Marketing and website</h4>
+    <p><b>Newsletter</b> composes and sends a campaign to subscribers (two-step confirm: <kbd class="ui">Send campaign</kbd> → <kbd class="ui">Yes, send to N</kbd>). <b>Marketing</b> has an <span class="tab">Ad performance</span> tracker and an <span class="tab">Ops tracker</span>, both stored in your browser only. <b>Search engines (IndexNow)</b> re-submits the site to Bing and friends after content changes. <b>Inquiries</b> (shared with reception) keeps website and Messenger leads until they are booked.</p>
+  </section>
+</section>
+
+<!-- ============================================================ -->
+<section class="chapter" id="pt" data-role="patient">
+  <div class="chapter-num">Chapter 6</div>
+  <h2>For patients</h2>
+  <div class="strip"><span class="pill patient">Patients</span><span class="pill reception">Reception (to read out)</span><span><b>Where:</b> <code class="route">drmed.ph/portal</code> · <code class="route">drmed.ph/schedule</code> · <code class="route">drmed.ph/register</code></span></div>
+  <p class="intro">Written so reception can read it aloud, print it, or paste it into a chat reply. Patients need only two things: their DRM-ID and the Secure PIN from their receipt.</p>
+
+  <!-- 6.1 -->
+  <section class="sub" id="pt-portal">
+    <h3>6.1 Viewing your results online</h3>
+    <ol class="steps">
+      <li><p class="step-title">Go to <code class="route">drmed.ph/portal</code> on any phone or computer.</p></li>
+      <li><p class="step-title">Type your <b>DRM-ID</b> (it looks like <code class="id">DRM-0001</code>) and the 8-character <b>Secure PIN</b> printed on your receipt, then tap <kbd class="ui">Access my results</kbd>.</p><p>The PIN is printed under <b>Patient Portal Access</b> on the receipt. It uses capital letters and digits only, and never 0, 1, O or I, so there is nothing to confuse.</p></li>
+      <li><p class="step-title">The first time, read the <b>Data Privacy Consent</b> notice, tick <q>I have read and understood this notice…</q>, and tap <kbd class="ui">I Agree</kbd>.</p><p>This appears only if you have not already signed the consent form at the clinic.</p></li>
+      <li><p class="step-title">Your released results are listed newest first. Tap <kbd class="ui">Download</kbd> to get the signed PDF.</p><p>Each download link works for 5 minutes and opens in a new tab. Tests still being processed are listed under <b>Still in progress</b>.</p></li>
+      <li><p class="step-title">Tap <kbd class="ui">Sign out</kbd> when you are done, especially on a shared device.</p></li>
+    </ol>
+    <h4>If something goes wrong</h4>
+    <dl class="defs">
+      <dt><q>Invalid DRM-ID or PIN.</q></dt><dd>Check the receipt again. If the receipt is more than 60 days old, the PIN has expired: visit reception with an ID and they will print a new one. PINs cannot be given over the phone.</dd>
+      <dt><q>Too many failed attempts. Try again in 15 minutes.</q></dt><dd>Five wrong PINs lock the account for 15 minutes. Wait, then try once, carefully.</dd>
+      <dt>Forgot the DRM-ID</dt><dd>Tap <kbd class="ui">Forgot your DRM-ID?</kbd> (<code class="route">drmed.ph/find-my-id</code>), enter last name, email and date of birth, and it is emailed to the address on file. If there is no email on file, reception can look it up.</dd>
+      <dt>Lost the receipt</dt><dd>Visit reception with an ID. They print a new portal-access slip with a fresh PIN for your latest visit.</dd>
+      <dt>The download won't open</dt><dd>The 5-minute link expired. Go back and tap <kbd class="ui">Download</kbd> again.</dd>
+      <dt>No results yet</dt><dd>Results appear only after the clinic releases them. If you asked for email delivery you will receive <q>Your DRMed lab result is ready</q> when that happens. Text messages are not sent.</dd>
+    </dl>
+    <div class="note stop"><span class="k">Keep it private</span><div><p>Anyone with your DRM-ID and PIN can read your results. Don't share a photo of the receipt.</p></div></div>
+  </section>
+
+  <!-- 6.2 -->
+  <section class="sub" id="pt-book">
+    <h3>6.2 Booking and registering online</h3>
+    <p>Both are optional. Walking in always works.</p>
+    <h4>Book at drmed.ph/schedule</h4>
+    <ol class="steps">
+      <li><p class="step-title">Answer <q>Have you visited DRMed before?</q></p><p><kbd class="ui">No, I'm new</kbd> registers you as part of the booking. <kbd class="ui">Yes, I have a DRM-ID</kbd> asks for the DRM-ID and last name so you skip retyping details.</p></li>
+      <li><p class="step-title">Choose what you are booking.</p>
+        <ul><li><b>Diagnostic Package</b>: no time slot. Just walk in during clinic hours.</li>
+        <li><b>Laboratory Request</b>: pick the tests; only ultrasound needs a time. You can upload the doctor's request form.</li>
+        <li><b>Doctor Appointment</b>: pick a specialty, a doctor and a slot. Some doctors are <q>by appointment</q>; the clinic calls you to confirm.</li>
+        <li><b>Home Service</b>: the clinic calls to confirm a time and the fee.</li></ul></li>
+      <li><p class="step-title">Fill in your details (new patients), review, tick the service agreement, and tap <kbd class="ui">Confirm booking</kbd> or <kbd class="ui">Submit request</kbd>.</p><p>You see <q>Booking confirmed.</q> or <q>Request received.</q> plus <b>Your DRM-ID</b> if you are new. An email confirmation follows, with a link to cancel. A reminder email arrives the day before.</p></li>
+    </ol>
+    <p>Signed-in portal users can also book from the <kbd class="ui">Book</kbd> link in the portal header without re-entering anything.</p>
+    <h4>Register ahead at drmed.ph/register</h4>
+    <p>Scan the QR poster at the counter or open the link. Enter name, birthdate, sex, phone and email, tick the privacy consent, tap <kbd class="ui">Register</kbd>. You get your DRM-ID on screen and by email. If you were already in the system the page says <q>We found your record.</q> and emails the DRM-ID instead of showing it. Reception checks your ID on arrival either way.</p>
+  </section>
+
+  <!-- 6.3 -->
+  <section class="sub" id="pt-privacy">
+    <h3>6.3 Privacy consent (RA 10173)</h3>
+    <p>The clinic asks for your consent once, under the Data Privacy Act of 2012, before processing your health information. You can give it three ways: by signing the printed form at reception, by ticking the box when you register online, or by accepting the notice the first time you sign in to the portal. You can withdraw it at any time by telling reception. Every view and download of your results is logged, and the clinic never sends results by text message.</p>
+  </section>
+</section>
+
+<!-- ============================================================ -->
+<section class="chapter" id="faq" data-role="all">
+  <div class="chapter-num">Chapter 7</div>
+  <h2>Common questions</h2>
+  <dl class="defs">
+    <dt>I can't find a patient.</dt><dd>Search by phone number or DRM-ID rather than name. Try one word at a time. Patients who booked online may be listed with their online spelling; check the <b>Pre-registered · verify</b> rows.</dd>
+    <dt>The test isn't on the lab queue.</dt><dd>The visit is <b>Waiting for payment</b>. Record the payment (or the HMO), and it appears at once.</dd>
+    <dt>I'm reception and the visit page shows no tests.</dt><dd>By policy. Reception sees payments, receipts, PIN and physician on a visit, never the test lines or PDFs. Read progress from the Reception Queue row; the lab releases.</dd>
+    <dt>The Release button is greyed out.</dt><dd>Hover it: it says either <q>Visit must be paid before release</q> or <q>Patient consent not on file</q>. Reception fixes that, then you release. If the message mentions an attending physician, reception assigns one on the visit.</dd>
+    <dt>The patient wants a printed result at the counter.</dt><dd>The lab prints the PDF when releasing (method Physical or Pickup) and hands it to reception. Reception cannot open result PDFs.</dd>
+    <dt>The patient lost their PIN.</dt><dd>Open the patient's page, click <kbd class="ui">Re-issue PIN</kbd>, print the slip. The old PIN stops working. Never read a PIN over the phone.</dd>
+    <dt>I recorded a payment on the wrong visit.</dt><dd>Void it (reason required) and record it on the right visit. Nothing is ever edited in place.</dd>
+    <dt>I need to remove a test that was billed by mistake.</dt><dd>If unpaid: <kbd class="ui">Delete</kbd> the line with a reason. If paid: void the payment first, delete, then re-record the payment for the corrected total.</dd>
+    <dt>A result is wrong and it's already released.</dt><dd>The lab clicks <kbd class="ui">Undo</kbd> on the line, amends with a reason, and releases again. Reception phones the patient if they had already opened it.</dd>
+    <dt>The chemistry form is all greyed out.</dt><dd>Template configuration problem. Tell Admin; don't work around it.</dd>
+    <dt>End of day won't close.</dt><dd>A non-zero <b>Difference</b> needs a <b>Reason for the difference</b>. Also check the ₱20 bill and ₱20 coin rows are in the right columns.</dd>
+    <dt>The doctor's fee isn't showing under Pay doctors.</dt><dd>Admin or the pathologist must click <kbd class="ui">Mark consultation done</kbd> on the visit (reception and medtechs cannot see doctor lines), and the visit must be paid. If the visit is HMO-billed, it waits under <b>Waiting on insurance</b>.</dd>
+    <dt>My phone shows no sidebar.</dt><dd>Tap <b>☰</b> at the top left.</dd>
+    <dt>The system says my session expired.</dt><dd>Sign in again. Draft results you saved are still there.</dd>
+  </dl>
+</section>
+
+<!-- ============================================================ -->
+<section class="chapter" id="limits" data-role="all">
+  <div class="chapter-num">Chapter 8</div>
+  <h2>Known limitations (September 2026)</h2>
+  <p class="intro">Things the screens hint at but don't do yet, so nobody wastes time looking for them.</p>
+  <dl class="defs">
+    <dt>HMO patients and release</dt><dd>An HMO-billed visit stays <span class="status">unpaid</span> until the HMO settles, which can take months, and the release gate has no HMO exception. Until the clinic decides a rule (Admin waives HMO visits on the day, or the gate is changed), HMO patients cannot receive results online. Raise this with Admin before go-live.</dd>
+    <dt>Reception and results</dt><dd>Reception sees no test lines or PDFs on a visit (clinic policy since May 2026). Releasing and printing results is the lab's job. The reception dashboard's <b>Pending release</b> card opens the lab queue, which is empty for reception.</dd>
+    <dt>Doctor lines</dt><dd>Consultation and procedure lines are visible only to Admin and pathologists, so only they can click <b>Mark consultation done</b>. Reception can still assign the physician and record the fee.</dd>
+    <dt>Appointments after arrival</dt><dd>An appointment stays at <q>arrived</q> after the visit is created; nothing marks it completed. The <b>Walk-ins waiting</b> dashboard count therefore grows over time.</dd>
+    <dt>Pathologist sign-off</dt><dd>The <b>Sign-off</b> page is a placeholder and the <q>Requires pathologist sign-off</q> setting on services is disabled. Results go from the bench straight to ready for release. Pathologists review via Critical alerts and amendments instead.</dd>
+    <dt>SMS</dt><dd>No text messages are sent to patients. Booking confirmations, reminders and result-ready notices are email only. Patients with no email get no automatic notice.</dd>
+    <dt>MFA for non-admins</dt><dd>Nothing links to the enrolment page; type <code class="route">/staff/mfa</code>. Once enrolled it is enforced.</dd>
+    <dt>Self-service unclaim</dt><dd>Only Admin can unclaim or reassign a test.</dd>
+    <dt>Doctor procedures</dt><dd>The catalog has no <q>Doctor procedure</q> services yet, so that path is untested in daily use. Add them under Services before billing procedures.</dd>
+    <dt>Report exports</dt><dd>The seven pages under Books &amp; reports have no CSV export; the Daily report tabs do.</dd>
+    <dt>Marketing trackers</dt><dd>Stored in the browser that entered them. They don't sync between computers.</dd>
+    <dt>Parked pages</dt><dd><b>Sell gift code</b>, <b>Registration link</b>, <b>Sign-off</b> and <b>Patient receivables</b> are under <b>Hidden tabs</b> (Admin only in the sidebar). Reception can still open Sell gift code and Registration link by typing the address.</dd>
+  </dl>
+</section>
+
+<!-- ============================================================ -->
+<section class="chapter" id="glossary" data-role="all">
+  <div class="chapter-num">Chapter 9</div>
+  <h2>Glossary</h2>
+  <dl class="defs">
+    <dt>Visit</dt><dd>One trip to the clinic. Bundles every test, consult or procedure done that day. Has a visit number and a payment status. A doctor-plus-lab day is two visits on one receipt.</dd>
+    <dt>Visit #</dt><dd>The running number per visit, printed on the receipt. Search it with or without leading zeros.</dd>
+    <dt>DRM-ID</dt><dd>The patient's permanent ID, e.g. <code class="id">DRM-0001</code>.</dd>
+    <dt>Secure PIN</dt><dd>8 characters, issued per visit, valid 60 days, printed once. With the DRM-ID it opens the portal.</dd>
+    <dt>Pre-registered</dt><dd>A patient who registered or booked online and hasn't shown an ID at the counter yet.</dd>
+    <dt>Lab gate</dt><dd>The rule that hides unpaid, non-HMO visits from the lab bench.</dd>
+    <dt>Release</dt><dd>Making a finished result visible to the patient. Needs a paid or waived visit.</dd>
+    <dt>Waived</dt><dd>Admin decided not to collect the balance. Counts as paid.</dd>
+    <dt>Void</dt><dd>Cancelling a recorded payment with a reason. The record stays, the balance re-opens.</dd>
+    <dt>Package</dt><dd>A bundle of tests sold at one price. On a visit it is a ₱0 header line with the tests underneath.</dd>
+    <dt>Report group</dt><dd>Several tests reported on one form and one PDF: the chemistry panel.</dd>
+    <dt>Send-out</dt><dd>A test run by a partner lab. The medtech uploads the partner's PDF.</dd>
+    <dt>HMO</dt><dd>The patient's health plan. An HMO visit reaches the lab unpaid; release still needs the visit marked paid or waived.</dd>
+    <dt>PF</dt><dd>Professional fee: the doctor's share of a consultation or procedure. Accrues when reception marks the line done; Admin pays it out.</dd>
+    <dt>Clinic cut</dt><dd>The clinic's share of a consultation fee for PF-split doctors.</dd>
+    <dt>Attending physician</dt><dd>The doctor recorded on a visit. Required whenever a line earns PF.</dd>
+    <dt>Critical alert</dt><dd>An automatic flag when a finalised value crosses a critical threshold. Acknowledged by a pathologist or admin.</dd>
+    <dt>Amendment</dt><dd>A correction to a finalised result, with a reason. The original is kept.</dd>
+    <dt>EOD</dt><dd>End of day: counting the drawer by denomination and closing the shift.</dd>
+    <dt>Audit log</dt><dd>The tamper-evident record of every action, view, print and download. Required by RA 10173.</dd>
+    <dt>Consent gate</dt><dd>An admin switch that blocks release for patients without consent on file. Off today.</dd>
+  </dl>
+</section>
+
+<footer class="end">
+  <p>drmed.ph User Guide · v2.0 · 2 September 2026 · Matches the production release at migration 0132. Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
+</footer>
+</main>
+</div>
+
+<script>
+(function () {
+  var buttons = document.querySelectorAll('.filter button');
+  var sections = document.querySelectorAll('main [data-role]');
+  var tocItems = document.querySelectorAll('#toc-list > li[data-role]');
+  function apply(role) {
+    buttons.forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.filter === role)); });
+    var show = function (r) { return role === 'all' || r === 'all' || r === role; };
+    sections.forEach(function (s) { s.hidden = !show(s.dataset.role); });
+    tocItems.forEach(function (li) { li.hidden = !show(li.dataset.role); });
+    try { localStorage.setItem('drmed-guide-role', role); } catch (e) {}
+  }
+  buttons.forEach(function (b) { b.addEventListener('click', function () { apply(b.dataset.filter); }); });
+  var saved = 'all';
+  try { saved = localStorage.getItem('drmed-guide-role') || 'all'; } catch (e) {}
+  if (location.hash) {
+    var target = document.querySelector(location.hash);
+    var owner = target && target.closest('[data-role]');
+    if (owner && owner.dataset.role !== 'all' && owner.dataset.role !== saved) saved = 'all';
+  }
+  apply(saved);
+
+  // scroll-spy
+  var links = Array.prototype.slice.call(document.querySelectorAll('.toc a[href^="#"]'));
+  var targets = links.map(function (a) { return document.querySelector(a.getAttribute('href')); }).filter(Boolean);
+  if ('IntersectionObserver' in window) {
+    var current = null;
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) { if (e.isIntersecting) current = e.target.id; });
+      if (!current) return;
+      links.forEach(function (a) { a.classList.toggle('active', a.getAttribute('href') === '#' + current); });
+    }, { rootMargin: '-10% 0px -75% 0px', threshold: 0 });
+    targets.forEach(function (t) { io.observe(t); });
+  }
+})();
+</script>
+
+</body>
+</html>

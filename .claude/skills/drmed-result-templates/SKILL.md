@@ -1,6 +1,6 @@
 ---
 name: drmed-result-templates
-description: Use when working on DRMed lab result templates, structured result entry, or the PDF rendering pipeline. Trigger whenever the user mentions result template, lab result, lab report, lab result PDF, lab report PDF, test result, result_templates, result_template_params, result_template_param_ranges, result_values, structured form, structured result entry, pathologist sign-off, requires_signoff, ready_for_release, result PDF, render PDF, renderResultPdf, renderOne, loadTemplateParams, buildPreviewValues, ResultDocument, pdf-document, @react-pdf/renderer, @pdf-lib/fontkit, smoke render, smoke:results, lab result, CBC, urinalysis, ROUTINE_PACKAGE, FBS, LIPID_PROFILE, age-banded ranges, reference ranges, abnormal_values, flag computation, compute_result_flag, critical alerts, dual unit, SI conversion, package summary, or any of the staff dashboard routes under /staff/(dashboard)/queue, /staff/(dashboard)/admin/result-templates, /staff/(dashboard)/signoff. Don't make Claude rediscover the 4-layout pipeline from scratch.
+description: Use when working on DRMed lab result templates, structured result entry, the consolidated chemistry (report-group) form, the lab queue / results archive worklists, or the PDF rendering pipeline. Trigger whenever the user mentions result template, lab result, lab report, lab result PDF, test result, result_templates, result_template_params, result_template_param_ranges, result_values, report_groups, report_group_service_params, group template, consolidated template, chemistry template, CHEMISTRY, consolidated form, claim this report, structured form, structured result entry, pathologist sign-off, requires_signoff, ready_for_release, unclaimed, in progress tab, results archive, status-filter, lab queue, claim test, claimTestAction, claimConsolidated, package header, is_package_header, stuck tests, template health, template-health cron, result PDF, render PDF, renderResultPdf, renderOne, loadTemplateParams, loadResultDocumentInput, buildPreviewValues, ResultDocument, pdf-document, @react-pdf/renderer, smoke render, smoke:results, smoke:chemistry, CBC, urinalysis, ROUTINE_PACKAGE, FBS, LIPID_PROFILE, age-banded ranges, reference ranges, abnormal_values, flag computation, critical alerts, dual unit, SI conversion, package summary, P0041, or any staff route under /staff/queue, /staff/results, /staff/admin/result-templates, /staff/signoff. Don't make Claude rediscover the 4-layout pipeline or the group-template indirection from scratch.
 ---
 
 # DRMed result templates & PDF render pipeline
@@ -15,26 +15,57 @@ The lab-result PDF generation stack — from the per-service template definition
 supabase/migrations/
 ├── 0007_result_templates_and_values.sql   ← schema (templates, params, values)
 ├── 0009_result_param_age_bands.sql        ← age-banded range overrides
-└── 0010_drop_compute_result_flag_trigger.sql ← moved flag computation to app (see below)
+├── 0010_drop_compute_result_flag_trigger.sql ← moved flag computation to app (see below)
+├── 0040_package_decomposition.sql         ← package headers; tg_test_request_parent_is_header
+├── 0051_consolidated_reports_and_signatures.sql / 0053_chemistry_seed.sql ← report_groups + the ONE consolidated CHEMISTRY template
+├── 0109_package_release_lifecycle.sql / 0110_undo_release.sql
+├── 0115_restore_chemistry_group_params.sql ← repaired the group template after a manual bulk delete
+└── 0120–0122                              ← report_group_service_params (which group params each service enables),
+                                             param-delete guardrails (P0041, audited), activation audit
 
 src/lib/results/
-├── loaders.ts              ← loadTemplateParams() — fetches params + age-banded ranges
+├── loaders.ts              ← loadTemplateParams(); loadResultDocumentInput() LAZY-imports the admin client (keep it that way — smoke:results runs under tsx)
 ├── preview-data.ts         ← buildPreviewValues() — synthesizes demo values for admin preview
 ├── render-pdf.ts           ← renderResultPdf() — wraps @react-pdf/renderer renderToBuffer
 ├── pdf-document.tsx        ← Server Component, ~37KB. The full layout engine.
+├── status-filter.ts        ← results-archive tab config as pure data (RESULT_STATUS_SPEC, parseResultStatusFilter)
+├── template-health.ts      ← 5 drift checks run daily by /api/cron/template-health (6am Manila)
 └── types.ts                ← ResultLayout, ParamValue, TemplateParam, EffectiveRange, ResultDocumentInput
 
 src/app/(staff)/staff/(dashboard)/
-├── queue/page.tsx                      ← medtech entry: test list
-├── queue/[id]/page.tsx                 ← detail: form + status + requires_signoff badge
+├── queue/page.tsx                      ← lab worklist: All / Mine / Pending release / Released today + date-range, patient/test search, visit #, paging
+├── queue/[id]/page.tsx                 ← single-test detail; REDIRECTS to the consolidated form when the service has a report_group_id
 ├── queue/[id]/structured-form.tsx      ← form UI for structured entry + finalize
-├── admin/result-templates/             ← admin CRUD for templates
-├── admin/result-templates/preview/[service_id]/route.ts ← admin preview endpoint
-└── signoff/page.tsx                    ← pathologist sign-off (placeholder, queued)
+├── queue/consolidated/[visitId]/[groupId]/ ← consolidated (chemistry) form — one report for every test in the group
+├── results/page.tsx                    ← results archive (status tabs incl. Unclaimed; Manila date bounds)
+├── admin/result-templates/[service_id]/edit ← per-service template editor
+├── admin/result-templates/group/[group_id]/edit ← GROUP template editor + per-service param mappings (PR #120)
+├── admin/result-templates/preview/[service_id]/route.ts, preview/group/[group_id] ← admin preview endpoints
+├── admin/reports/stuck-tests           ← orphan detectors: zero-child package headers, visits with no test lines
+└── signoff/page.tsx                    ← pathologist sign-off — still a placeholder ("UI to come")
 
 scripts/
-└── smoke-render-results.ts             ← npm run smoke:results — render 3 archetypes + package summary
+├── smoke-render-results.ts             ← npm run smoke:results — render 3 archetypes + package summary
+└── smoke-chemistry-consolidated.ts     ← npm run smoke:chemistry
 ```
+
+## Consolidated report-group templates (chemistry) — the indirection that fools everyone
+
+Chemistry does **not** use per-service templates. 0053 deactivated the 12 per-service chemistry templates and replaced them with ONE template where `service_id is null` and `report_group_id = CHEMISTRY`; the 12 services carry `services.report_group_id`. `queue/[id]/page.tsx` redirects unconditionally to `/staff/queue/consolidated/{visitId}/{groupId}` for any such service, so **reactivating a per-service chemistry template is a no-op** — it is unreachable either way.
+
+- Which group params a given service enables lives in `report_group_service_params` (0120; 19 mapping rows — gendered Creatinine/Uric Acid make 17 entries into 19 pairs). `LIPID_PROFILE_PACKAGE` has NO mappings by design (billing header; its ₱0 components carry the encoding).
+- Admin surface (PR #120): `/staff/admin/result-templates/group/[group_id]/edit` + preview. Deleting a param that has values is blocked (P0041) and audited in SQL; activation flips are audited (0122). The daily template-health cron alerts admins on drift.
+- The encoding fields render only after a medtech clicks **"Claim this report"** — that gate is not a bug. Don't claim a real patient's report to look; query `result_template_params` joined through `report_groups.code='CHEMISTRY'` instead.
+- Finalise re-validates enabled params server-side (rejects stale submissions).
+
+## Worklists: lab queue and results archive
+
+- **Lab queue payment gate** (`src/lib/visits/lab-gate.ts`): All/Mine hide tests whose visit is neither paid/waived nor HMO-billed; claims are blocked server-side too. Pending release / Released today are ungated. See `drmed-payments`.
+- **Results archive tabs** (`status-filter.ts`): **Unclaimed** and **In progress** cover the same status pair (`requested`, `in_progress`) and split on ownership (`assigned_to is null` vs not) — a partition, so no row falls out of every tab. Unclaimed sorts oldest-first (a worklist) and shows an "awaiting payment" chip when the lab gate hides the row from the bench.
+- **Package headers** (0040) auto-promote to `ready_for_release` on insert and never carry `requested`/`in_progress`; components are ₱0 rows with `parent_id`. Multi-row inserts must list headers before components (the trigger validates against same-statement rows in array order).
+- **Soft-deleted lines** (0125) are excluded from both worklists, the consolidated form, and are refused by claim / unclaim / reassign / result entry / finalise.
+- **Role sections**: `sectionsForRole(role) === []` means no access — both worklists deny, they don't skip the filter.
+- **Every date bound is a Manila half-open window** (`manilaRangeUtc`); the queue pages with `count: "exact"` + `.range()` rather than a row cap. Free-text search runs after the chemistry fold, so it only narrows the page in hand — the UI says so.
 
 ## Schema
 
@@ -123,11 +154,14 @@ UI state today:
 - **`@react-pdf/renderer` typings predate React 19** — `render-pdf.ts` casts through `unknown`. Don't try to "fix" the cast; it's load-bearing.
 - **Critical-value alerts**: numeric values crossing `critical_low_si / critical_high_si` thresholds insert `critical_alerts` rows. If a parameter shouldn't trigger alerts, leave the critical thresholds NULL.
 - **`filterParamsForPatient`** hides gender-specific rows that don't match patient sex. Don't bypass it on the assumption "we'll filter in UI" — the trigger and the PDF render both consume the unfiltered list otherwise.
+- **No module-scope admin-client imports in `src/lib/results/`.** `admin.ts` imports `server-only`, which throws under `tsx`; `loaders.ts` lazy-imports it inside `loadResultDocumentInput` so `npm run smoke:results` keeps working. Follow that pattern.
+- **Per-service chemistry templates are dead weight** — change the group template (above), not them.
+- **Release is trigger-gated three ways**: payment (`enforce_payment_before_release`), consent (`enforce_consent_before_release`, ships OFF), and attending physician for PF-carrying doctor lines (P0034). A "can't release" report usually means one of these, not the template.
 
 ## When this skill should NOT trigger
 
 - Generic database migrations that don't touch result templates — use the `drmed-migrations` skill.
 - Auth / RLS work — use the `drmed-rls-and-auth` skill.
-- Patient portal result-download UI (not template) — separate flow in `src/app/(patient)/portal/results/`.
+- Patient portal result-view/download UI (not template) — separate flow in `src/app/(patient)/portal/(authenticated)/` (reads via `createPatientClient`, see `drmed-rls-and-auth`).
 - Lab pricing / quote tools — `services` table writes, but no template involvement.
 - Imaging report routes that don't involve PDF rendering.

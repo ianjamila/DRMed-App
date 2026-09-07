@@ -62,6 +62,10 @@ Pure function: given branch + loaded `ServiceRow[]` + a validated `scheduledAt` 
 
 **No-orphan-patient pattern:** `createAppointmentGroup` resolves the patient via an injected **thunk it calls only after timing/conflicts pass** — so a failed booking never leaves a stray patient row. Preserve this when changing the order of operations.
 
+**DB-side hardening (0112/0113):** the public `appointments` INSERT policy is gone. Inserts and patient resolution go through two SECURITY DEFINER, **service_role-only** RPCs — `appointments_insert_slot_guarded` (advisory transaction lock on `(physician_id, scheduled_at)`; a lost race raises **P0040** → "That slot was just taken…") and `resolve_patient_guarded` (same lock discipline for dedup). Staff "Book anyway" deliberately skips the occupancy re-check (ratified). Both `create.ts` and `resolve.ts` are wired through them; the RPC error path still returns a raw PG message (known follow-up — `resolve.ts` must stay `server-only`-free for vitest, which blocks routing it through `translatePgError`).
+
+**`/register` dedup is tiered:** a strong match (email + last name + birthdate) takes the matched branch and audits `dedup_tier`; weaker matches register fresh. `pre_registered` auto-clears on the first visit, and reception has a "Mark identity verified" button (`patient.identity_verified` audit). Patient + import schemas validate email format.
+
 Self-registered / publicly-booked patients carry `pre_registered: true` and **flow straight into reception's tools** — `searchPatientsAction` (slide-over), `/staff/patients`, and `/staff/visits/new` all find them, with a "Pre-reg" / "Pre-registered · verify" badge so reception knows to verify ID at the counter.
 
 ## The three surfaces
@@ -76,7 +80,11 @@ Patient modes in the staff slide-over: **Existing** (search → pick → shows u
 
 `/register` records RA-10173 consent (`method: 'self_registration'`) for a **new** registrant only and emails the DRM-ID; a dedup match emails the DRM-ID to the on-file address and **does not show it on screen** (enumeration safety). Consent specifics → `drmed-rls-and-auth`.
 
-Confirmations reuse `notifyAppointmentBooked({appointmentId, patientId})` (SMS via Semaphore + email via Resend; re-fetches the row itself, works for staff-created rows; skips gracefully when no phone/email). The slide-over's "Send confirmation" checkbox gates it.
+Confirmations reuse `notifyAppointmentBooked({appointmentId, patientId})` (SMS via Semaphore + email via Resend; re-fetches the row itself, works for staff-created rows; skips gracefully when no phone/email). The slide-over's "Send confirmation" checkbox gates it. **Outside production nothing is sent** unless `NOTIFICATIONS_LIVE=true` — the skip is recorded in audit metadata. The reminder cron uses a rolling catch-up window (now → end of tomorrow, Manila) so a missed run doesn't drop reminders.
+
+Rate-limit buckets on these surfaces: `public_booking` (`/schedule`), `patient_registration` (`/register`), `appointment_cancel` (`/appointments/cancel/[id]`), `patient_id_recovery` (`/find-my-id`). A new public entry point gets its own bucket (`drmed-rls-and-auth`).
+
+`physician_slot_blocks` (spec §7, empty-slot holds) is **still not built** as of 2026-09-02 — no migration exists for it.
 
 ## UI primitives this subsystem added
 

@@ -1,95 +1,100 @@
 ---
 name: drmed-migrations
-description: Use when working on DRMed database schema changes, Supabase migrations, RLS policies, audit-log obligations, payment-gating trigger considerations, or the migration workflow. Trigger whenever the user mentions migration, new migration, schema change, new table, alter table, alter schema, drop table, drop column, regenerate types, regen types, db:diff, db:types, db:types:remote, db:reset, supabase db push, supabase db reset, supabase migrations, RLS policy, row-level security policy, has_role, current_patient_id, set_patient_context, payment gating trigger, enforce_payment_before_release, audit_log table, audit-log obligation, SECURITY DEFINER, seed script, seed:test, seed:services, seed:templates, smoke:results, or the 89+ files under supabase/migrations/. Also trigger when adding any new table — the skill carries the RLS-template + audit-row + payment-gating checklist. Don't make Claude reconstruct the per-table checklist from scratch.
+description: Use when working on DRMed database schema changes, Supabase migrations, RLS policies, audit-log obligations, payment-gating trigger considerations, function grants/ACLs, applying a migration to prod, or the migration workflow. Trigger whenever the user mentions migration, new migration, schema change, new table, alter table, alter schema, drop table, drop column, regenerate types, regen types, db:diff, db:types, db:types:remote, db:reset, supabase db push, supabase db reset, supabase migrations, schema_migrations, apply_migration, execute_sql, RLS policy, row-level security policy, has_role, current_patient_id, payment gating trigger, enforce_payment_before_release, audit_log table, audit-log obligation, SECURITY DEFINER, grant execute, revoke execute, anon-executable, function ACL, default privileges, rls_auto_enable, ensure_rls, P00xx error code, translatePgError, pg-errors, seed script, seed:test, seed:services, seed:templates, seed.sql, smoke:results, or the 129 files under supabase/migrations/ (0001 → 0132, with gaps). Also trigger when adding any new table, trigger, or function — the skill carries the RLS-template + audit-row + payment-gating + ACL checklist. Don't make Claude reconstruct the per-table checklist from scratch.
 ---
 
 # DRMed migrations & schema workflow
 
 ## What this is
 
-89+ sequential migrations under `supabase/migrations/`, zero-padded numeric naming (`0001_init.sql` → `0089_patient_consent_self_registration.sql`). Note the numbering has gaps (e.g. 0056–0058 never existed) — that's fine, both repo and remote skip them identically; gaps are NOT drift. Every schema change has a fixed workflow + a per-table checklist (RLS + audit + payment-gating consideration). Get the checklist wrong and you create either a compliance gap or a query that returns empty silently.
+129 sequential migrations under `supabase/migrations/`, zero-padded numeric naming (`0001_init.sql` → `0132_eod_denomination_count.sql`). The numbering has gaps (0056–0058 never existed) — that's fine, repo and remote skip them identically; gaps are NOT drift. **Prod ledger head = 0132, repo↔prod in sync (2026-09-02).** Every schema change has a fixed workflow + a per-table checklist (RLS + audit + payment-gating + function ACL). Get the checklist wrong and you create either a compliance gap, an anon-callable RPC, or a query that returns empty silently.
 
-## File structure
+## Landmark migrations (where the load-bearing objects live)
 
 ```
 supabase/migrations/
-├── 0001_init.sql                       ← core schema + set_patient_context + payment-gating trigger + has_role + audit_log
-├── 0002_function_search_path.sql
-├── 0003_patients_pre_registered.sql
-├── ...
-├── 0007_result_templates_and_values.sql
-├── 0009_result_param_age_bands.sql
-├── ...
-├── 0030_op_gl_bridge.sql
-├── ...
-└── 0049_ap_subledger_behavior.sql
+├── 0001_init.sql                        ← core schema, has_role, current_patient_id, payment-gating trigger, audit_log
+├── 0007/0009/0010                       ← result templates, age bands, flag computation moved to app
+├── 0011_accounting_capture.sql          ← hmo_providers, payments.method widened (+hmo/bpi/maybank), discount_kind CHECK (replaced by 0128)
+├── 0030_op_gl_bridge.sql                ← bridge_test_request_released (release → revenue JE); superseded bodies in 0064/0091/0109/0131
+├── 0040_package_decomposition.sql       ← package headers + tg_test_request_parent_is_header (headers auto-promote to ready_for_release)
+├── 0043_eod_cash_reconciliation.sql     ← cash_shifts, eod_close_records, eod_cash_adjustments, cash_drawer_state
+├── 0044_payroll.sql                     ← payroll + employee_leave_balance (authz fixed in 0123)
+├── 0048/0049                            ← AP subledger schema + behaviour
+├── 0053_chemistry_seed.sql              ← ONE consolidated CHEMISTRY group template (per-service chemistry templates deactivated)
+├── 0064_pf_cogs_schema.sql              ← doctor PF accrual / disbursement, COGS send-out
+├── 0086–0089                            ← patient_consents ledger, consent_settings, enforce_consent_before_release
+├── 0090_split_visit_and_consult_anchor  ← visit_group_id (split encounters), CONSULT anchor service row
+├── 0109_package_release_lifecycle       ← current bridge_test_request_released body (P0034 attending-physician guard)
+├── 0110_undo_release / 0111_payment_void_recalc
+├── 0112/0113_booking_*                  ← appointments_insert_slot_guarded + resolve_patient_guarded RPCs (service_role only)
+├── 0114_portal_rls_enforcement.sql      ← current_patient_id() reads GUC OR the patient_id JWT claim; portal policies
+├── 0118_security_definer_revoke_anon    ← classify-then-revoke: only has_role/is_staff/staff_role stay anon-executable
+├── 0119_function_default_privileges     ← new functions in public default to postgres + service_role ONLY
+├── 0120–0122                            ← report_group_service_params, template param guardrails (P0041), activation audit
+├── 0124_rls_auto_enable_codify.sql      ← ensure_rls event trigger: RLS auto-enabled on every new public table
+├── 0125_queue_entry_soft_delete.sql     ← deleted_at/by/reason on visits + test_requests, guard triggers P0042–P0046
+├── 0126_visits_classification_summary   ← SQL aggregate for the Visits archive (PostgREST has no aggregates)
+├── 0127_manila_date_defaults.sql        ← last current_date defaults replaced by (now() at time zone 'Asia/Manila')::date
+├── 0128_discount_types.sql              ← admin-managed discount catalog, statutory guard P0047, one-statutory index
+├── 0129_physician_fee_defaults.sql      ← physicians.default_consultation_fee_php + clinic_cut_php
+├── 0131_zero_pf_release_exemption.sql   ← P0034 now only fires when coalesce(doctor_pf_php,0) > 0
+└── 0132_eod_denomination_count.sql      ← eod_close_records.counted_denominations jsonb, P0048 guard, cash_drawer_state re-created
 
-scripts/
-├── seed-test-users.ts                  ← 5 staff users + 1 test patient
-├── seed-services.ts                    ← baseline service catalog
-├── seed-closures.ts                    ← PH public holidays into clinic_closures
-├── seed-package-components.ts          ← package → component map
-├── seed-result-templates.ts            ← ~70 lab test templates + params
-├── seed-hmo-providers.ts               ← 11 HMO roster
-├── seed-physicians.ts                  ← physician roster + recurring schedules
-├── import-test-list.ts                 ← ~150-test price list from CSV
-├── populate-test-descriptions.ts       ← patient-facing clinical descriptions
-└── smoke-render-results.ts             ← render-pipeline smoke test
+supabase/seed.sql                        ← post-`db reset` grants (tables + sequences ONLY, never routines)
+scripts/lib/                             ← load-env.ts, env-guard.ts (+ guard-coverage.test.ts) — every runner is guarded
+scripts/                                 ← seed-*.ts, import-*.ts, smoke-*.ts, plus subdirs history-import/, clinical-backfill/,
+                                           clinical-enrich/, patient-dedup/, books-recon/, ops-daily/, seed/, smoke/
 ```
 
 ## Standard workflow
 
 ```
-1. npm run db:diff -- <name>          → writes supabase/migrations/<n+1>_<name>.sql
-2. supabase start && supabase db reset → verify against fresh local DB
-3. supabase db push                    → apply to linked remote
-4. npm run db:types                    → regenerate src/types/database.ts
+1. npm run db:diff -- <name>          → writes supabase/migrations/<n+1>_<name>.sql (hand-write instead when it's a function/trigger/policy change — diff output for those is noisy)
+2. supabase start && supabase db reset → full replay on a fresh local DB (this is the ONLY "staging"; there is no staging project)
+3. npm test / typecheck / lint         → no PR-triggered CI exists (.github/workflows has only db-backup.yml); Vercel preview is the only gate
+4. Apply to prod (see below) BEFORE merging the PR — the Vercel production deploy of merged app code must never run ahead of its migration
+5. npm run db:types                    → regenerate src/types/database.ts (CHECK/trigger/function-only changes produce an empty diff — expected)
 ```
 
 | Script | What it does |
 |---|---|
 | `npm run db:types` / `db:types:local` | `supabase gen types typescript --local > src/types/database.ts` |
-| `npm run db:types:remote` | Same, against remote via `SUPABASE_DB_URL` (requires `.env.local`) |
-| `npm run db:diff -- <name>` | `supabase db diff -f <name>` — creates a diff migration |
-| `npm run db:reset` | `supabase db reset` — local reset to migrations (destroys local data) |
+| `npm run db:types:remote` | Same against remote via `SUPABASE_DB_URL` — **currently unusable**: `SUPABASE_DB_URL` is commented out in `.env.local` (no password on file). Hand-extend `database.ts` for a new RPC if you can't run local. |
+| `npm run db:diff -- <name>` | `supabase db diff -f <name>` |
+| `npm run db:reset` | `supabase db reset` — replays all migrations + `supabase/seed.sql` (destroys local data) |
+| `npm run seed:*` | Idempotent seeds, target the LOCAL stack by default (`scripts/lib/load-env.ts`); `--prod` / `SEED_ALLOW_PROD=1` for a deliberate remote run |
 
-## Applying a migration to the REMOTE DB from this machine (IPv6 gotcha)
+## Applying a migration to PROD from this machine
 
-`supabase db push --db-url "$SUPABASE_DB_URL"` **fails from this dev machine.** The
-`.env.local` `SUPABASE_DB_URL` points at the direct host `db.<ref>.supabase.co:5432`,
-which is **IPv6-only**, and the local network has no IPv6 route:
-`dial tcp [2406:...]:5432: connect: no route to host`. Local `supabase db reset` /
-push against the local stack (`127.0.0.1:54322`) are unaffected — this is remote-only.
-Two ways around it:
+Three facts shape this:
 
-- **Supabase MCP (preferred here)** — runs over the HTTPS Management API, no Postgres
-  socket, so IPv6 is irrelevant. Use `execute_sql` to run the DDL, then record the
-  migration yourself so the sequential history stays in sync with the repo:
-  ```sql
-  insert into supabase_migrations.schema_migrations (version, name, statements)
-  values ('00NN', '<name_without_numeric_prefix>', array['<stmt1>;','<stmt2>;']);
-  ```
-  Avoid the MCP `apply_migration` for this — it records a *timestamp* version, not the
-  `00NN` convention, which leaves an orphan row vs the repo file. DRMed prod project ref:
-  `qhptbmafrosgibooelpp` (the other project on the org, `zzcbzeivzfwwmotzlkqw`, is
-  Eaglewatch — don't touch it). Confirm only the intended migration is pending first
-  via `list_migrations`.
-- **IPv4 session pooler** — rebuild the URL as
-  `postgresql://postgres.<ref>:<pw>@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres`
-  and pass that to `supabase db push`.
+1. **`supabase db push --db-url` fails here** — `SUPABASE_DB_URL` (when set) points at `db.<ref>.supabase.co:5432`, which is IPv6-only and this network has no IPv6 route. The linked-project form (`supabase db push`, keyring password) works from the main checkout; from a worktree, copy `supabase/.temp/{project-ref,linked-project.json,pooler-url}` from the main checkout first.
+2. **The auto-mode classifier blocks Claude-run `db push` AND DDL through MCP `execute_sql` against prod** (inconsistently — some read-only `execute_sql` also gets blocked). The working pattern is to ask the user to run it themselves: `! cd ~/Claude/DRMed && /opt/homebrew/bin/supabase db push` — `db push` stamps the ledger with the real `00NN` version, so no correction is needed.
+3. **If MCP does go through:** use `execute_sql` with the full DDL wrapped in `begin; … commit;` plus a hand-written ledger row — `insert into supabase_migrations.schema_migrations (version, name, statements) values ('00NN', '<name_without_prefix>', array['…']);`. **Never use MCP `apply_migration`** — it stamps a *timestamp* version, which `db push` then treats as unapplied and re-runs; if it was used, fix the ledger row afterwards. Dry-run idiom: send `begin; <migration>; <probe selects>;` with NO commit — the wrapper discards the open transaction (verify non-persistence before trusting it).
 
-There is **one** DRMed remote (= prod); there is no separate staging Supabase project,
-so "test on staging first" in practice means the **local stack**.
+DRMed prod project ref: `qhptbmafrosgibooelpp` (the org's other project `zzcbzeivzfwwmotzlkqw` is Eaglewatch — never touch it). Confirm only the intended migration is pending via `list_migrations` first, and `git fetch` + re-check the ledger immediately before applying — parallel sessions have taken a migration number within minutes before.
 
 ## Per-new-table checklist (read EVERY time)
 
-1. **RLS** — enable it: `alter table public.<table> enable row level security;`
-2. **Staff access policy** — add at minimum a staff-role policy (template below)
-3. **Patient access policy** — if patient-readable, add a `current_patient_id()`-scoped policy
+1. **RLS** — `alter table public.<table> enable row level security;` (0124's `ensure_rls` event trigger does this automatically for new public tables, but write it anyway so the migration is self-describing and replays identically).
+2. **Staff access policy** — at minimum a staff-role policy (template below). RLS on with no policy = every query returns empty, silently.
+3. **Patient access policy** — if patient-readable, a `current_patient_id()`-scoped policy (the portal now really enforces these — see `drmed-rls-and-auth`).
 4. **Audit obligation** — does any write to this table need an `audit_log` row from the calling Server Action? (Almost always yes for patient-data tables.)
-5. **Payment-gating** — does this table represent a billable artifact (result, test request)? Check whether `enforce_payment_before_release()` already covers it or whether a new trigger is needed.
-6. **Indexes** — at minimum index FKs that policies join on (e.g., `patient_id`, `visit_id`)
-7. **Migration order** — does this table depend on another that may not yet exist? Re-check existing migrations.
+5. **Payment-gating** — is this a billable artifact? Check whether `enforce_payment_before_release()` already covers it.
+6. **Soft-delete awareness** — if rows hang off `visits` or `test_requests`, every read of them must filter `deleted_at is null` on the parent (0125). Mirror the existing queries.
+7. **Manila dates** — a `date` column default is `(now() at time zone 'Asia/Manila')::date`, never `current_date` (the DB runs in UTC; 0127 removed the last two offenders).
+8. **Indexes** — at minimum FKs that policies join on (`patient_id`, `visit_id`).
+9. **Migration order** — dependencies on tables/seed rows that may not exist yet on a fresh replay (`services` is never literally empty on replay — 0090 inserts the `CONSULT` anchor — but data migrations must not `raise` on an empty DB; 0116 did and broke `db reset` until #119).
+
+## Per-new-function checklist (0118/0119 made this mandatory)
+
+- **New functions in `public` default to postgres + service_role ONLY** (0119). If the browser/staff JWT genuinely calls it, add `grant execute on function … to authenticated` (and `anon` only for public-site reads) explicitly. Most RPCs are called from the service-role admin client and need nothing.
+- **`create or replace function` on an EXISTING function keeps its current ACL** — check what 0118 left it as before restating grants. 0132 nearly re-granted `authenticated` on `cash_drawer_state` (which reads every payment for a date) because the spec assumed the 0043 grant still stood. Restate the post-0118 ACL explicitly in the migration.
+- **`revoke … from public` alone is NOT enough on hosted Supabase** — it also grants EXECUTE to anon/authenticated directly; revoke those by name too. Local lacks those default grants, so local tests MASK the gap.
+- **Revoking EXECUTE on a trigger function does not break the trigger** (privilege is checked at `create trigger` time). A SECURITY INVOKER function that nest-calls a SECURITY DEFINER helper DOES need the caller to hold EXECUTE — that's why `eod_lock_check` / `employee_leave_balance` keep `authenticated`.
+- **`has_role` / `is_staff` / `staff_role` / `current_patient_id` MUST stay anon-executable** — 123 RLS policies reference `has_role`; revoking makes them RAISE instead of filter.
+- **Custom error codes** — every `raise exception … using errcode = 'P00NN'` needs a translation in `src/lib/accounting/pg-errors.ts`. Codes in use: P0001–P0034, P0040–P0048. **Next free code: P0049.** A BEFORE trigger runs before column CHECK constraints, so if your guard could blow up on malformed input (e.g. `jsonb_each` on a scalar), claim that case yourself and raise a P-code — a raw 22023 has no translation.
 
 ## RLS policy templates the skill carries
 
@@ -128,44 +133,55 @@ create policy "<table>: admin select"
   using (public.has_role(array['admin']));
 ```
 
-## Critical DB anchors (all in `0001_init.sql`)
+**Write-only-via-service-role tables** (`audit_log`, `patient_consents`): RLS enabled, a read policy if needed, NO insert policy — writes come from the admin client only.
+
+## Critical DB anchors
 
 | Object | Purpose |
 |---|---|
-| `set_patient_context(p_patient_id uuid)` | Sets transaction-local `app.current_patient_id`. Called by server code before patient queries. |
-| `current_patient_id()` | Reader used inside RLS policies |
-| `has_role(text[])` | `SECURITY DEFINER` helper that checks `staff_profiles.role`. Used in nearly every staff RLS policy. |
-| `enforce_payment_before_release()` | BEFORE UPDATE trigger on `test_requests`. Raises exception if `NEW.status='released'` and `visit.payment_status ∉ ('paid','waived')`. |
-| `trg_test_requests_payment_gate` | The trigger that wires the function above |
-| `audit_log` table | `(id bigserial, actor_id, actor_type, patient_id, action, resource_type, metadata jsonb, ip_address, user_agent, created_at)`. Append-only. Admin-read RLS. |
+| `current_patient_id()` (0001, body in 0114) | Reads `app.current_patient_id` GUC **or** the `patient_id` claim of the request JWT. The portal mints a 5-minute anon JWT carrying that claim (`src/lib/supabase/patient.ts`), so patient policies enforce per query. `set_patient_context()` still exists but no app code calls it. |
+| `has_role(text[])` / `is_staff()` / `staff_role()` | SECURITY DEFINER helpers over `staff_profiles`. Used in nearly every staff policy. Stay anon-executable. |
+| `enforce_payment_before_release()` → `trg_test_requests_payment_gate` | BEFORE UPDATE on `test_requests`; raises if `NEW.status='released'` and `visit.payment_status ∉ ('paid','waived')`. Source of truth for release. |
+| `enforce_consent_before_release()` (0086/0088) | Same transition, blocks when `consent_settings.gate_required` and the patient has no current consent. Ships OFF. |
+| `bridge_test_request_released()` (current body 0109 + 0131) | Release → revenue JE + doctor PF accrual. P0034 (attending physician required) fires only for lines with PF > 0. |
+| `tg_test_request_parent_is_header` (0040) | Validates package components against their header; sees same-statement rows in array order, so multi-row inserts must list headers before components. Headers auto-promote to `ready_for_release`. |
+| 0125 guards: `enforce_deletable_visit` / `enforce_deletable_test_request` / `enforce_no_payment_on_deleted_visit` / `enforce_no_status_change_on_deleted_visit` / `fn_queue_delete_cascade` | Soft-delete lifecycle: P0042 not-unpaid, P0043 released, P0044 package component, P0045 payment on deleted visit, P0046 status change on deleted visit; header↔component cascade on delete and restore. |
+| `guard_statutory_discount()` + `discount_types_one_statutory_idx` (0128) | Senior/PWD row locked at 20% (P0047); at most one statutory row even via REST. |
+| `eod_close_denominations_check()` + `cash_denomination_total_php()` (0132) | P0048: unknown slug / non-integer / negative / total-mismatch. Skips NULL (legacy closes). |
+| `visits_classification_summary()` (0126) | SQL aggregate for the Visits archive — PostgREST aggregates are disabled (`PGRST123`) and a bare select caps at 1000 rows, so real aggregates need a function. |
+| `audit_log` | `(id bigserial, actor_id, actor_type, patient_id, action, resource_type, resource_id, metadata jsonb, ip_address, user_agent, created_at)`. Append-only. Admin-read RLS. |
 
 ## Audit logging is app-side, not trigger-driven
 
-`audit_log` rows are inserted by server actions (via `audit()` from `src/lib/audit/log.ts`) — not by database triggers. Reason: capturing the actor reliably from inside Postgres is fragile when patients aren't `auth.users`. The skill `drmed-rls-and-auth` covers the `audit()` call pattern in detail.
+`audit_log` rows are inserted by server actions (`audit()` from `src/lib/audit/log.ts`) — not by triggers (the actor isn't reliably known inside Postgres when patients aren't `auth.users`). Exceptions that DO audit in SQL: template param deletes/activation flips (0121/0122, via `session_user`). See `drmed-rls-and-auth` for the call pattern.
 
 ## Common migration gotchas
 
-- **Migration order matters.** Services must exist before seeding `package_components`. Packages before `result_templates`.
-- **Idempotent seeds** — all seed scripts use upsert-on-key so re-runs are safe.
-- **`SECURITY DEFINER` for helpers** — `has_role`, `current_patient_id`, and several CoA / role resolvers use SECURITY DEFINER to bypass RLS internally. Use the same pattern for new helpers that policies depend on.
-- **Never hardcode prices** in frontend — always read from `services` table; pricing sync to Google Sheets is Phase 7+.
-- **Never put plain PINs in any migration.** Only the bcrypt hash is stored in `visit_pins`. The plain PIN is generated in app code, returned exactly once, and never re-derivable.
-- **Regenerate types** after every applied migration. Stale `src/types/database.ts` makes new columns invisible to TS and queries silently return undefined for them. (Pure CHECK-constraint or trigger-only changes don't alter generated column types, so `db:types` is a no-op for them — don't be alarmed by an empty diff.)
-- **Widening a CHECK constraint?** Postgres stores `check (col in ('a','b'))` as `check (col = ANY (ARRAY['a','b']))`, so a `DO`-block that finds the constraint by matching its definition text for `in (` will NOT match and silently fail to drop it. Drop it by its auto-generated name instead — a column-level inline check is named `<table>_<col>_check` (consistent across environments since it came from the same migration) — with `drop constraint if exists`, then re-add the widened check. Example: 0089 widened `patient_consents.method` to add `'self_registration'`.
-- **Unit tests exist now.** The repo uses **vitest** (`npm test`) for pure logic — e.g. `lib/appointments/timing.ts`, `lib/patients/resolve.ts`, the validation schemas. Modules under test must NOT `import "server-only"` (vitest can't load it); keep the pure decision logic separate from the DB-touching orchestration so it stays testable. After a schema change that affects tested logic, run `npm test`.
+- **Never edit a migration after it's on prod.** Fix forward with a new one.
+- **Widening a CHECK constraint?** Postgres stores `check (col in ('a','b'))` as `= ANY (ARRAY[...])`, so matching the definition text for `in (` silently fails. Drop by the auto-generated name (`<table>_<col>_check`) with `if exists`, then re-add.
+- **`create or replace` a function that older migrations also define** — copy the LATEST body (grep all files for the name; `bridge_test_request_released` has 10 definitions) and change only the lines you mean to.
+- **Replay on empty DB** is part of the audit — `db reset` must complete. Data migrations guard with `if exists` / `if found`, never `raise` on a missing row.
+- **Local vs prod ACL shapes differ** (fresh local functions have NULL ACLs; prod has explicit grants). Verify grants on both when a migration touches them.
+- **Local stack after `db reset`**: `supabase/seed.sql` re-grants tables + sequences to anon/authenticated/service_role. Never extend it to routines — that undoes 0118.
+- **Types**: pure CHECK/trigger/function changes leave `database.ts` unchanged — an empty `db:types` diff is not a failure. A new RPC does need it (or a hand edit, see above).
+- **Unit tests**: pure logic runs on vitest (`npm test`, ~885 tests). `cash-denominations.parity.test.ts` is the model for "a table exists in TS and SQL" — it parses the migration text and asserts they agree. Modules under test must not `import "server-only"`.
+- **Never put plain PINs in any migration.** Only bcrypt hashes live in `visit_pins`.
+- **Never hardcode prices** — read `services`.
 
 ## Hard rules
 
-- **Every new table gets RLS enabled + at least one policy.** Supabase defaults to "no access" with RLS off → leaks via service-role; with RLS on but no policy → queries return empty. Either way is wrong.
-- **Patient-data tables need a `current_patient_id()`-scoped policy.** Never rely on application code alone — RLS is the source of truth.
-- **Adding a status enum value to `test_requests.status`?** Re-check `enforce_payment_before_release()` — it currently lists `'released'` as gated. New values may need gating too.
-- **All seed scripts must be idempotent.** Use `on conflict` or upsert-by-key.
-- **Never edit a migration file after it's been pushed to remote.** Add a new migration to fix mistakes.
-- **Never bypass the local-test step.** `supabase db reset` against a fresh local instance catches most foreign-key and constraint errors before they hit prod.
+- **Every new table gets RLS enabled + at least one policy.** RLS off leaks via service-role; RLS on with no policy returns empty. Both are wrong.
+- **Patient-data tables need a `current_patient_id()`-scoped policy.** The portal enforces these for real since 0114.
+- **New functions need explicit grants only if a JWT calls them; re-created functions keep their ACL — check 0118 first.**
+- **Every P-code gets a `pg-errors.ts` translation** in the same PR.
+- **Adding a `test_requests.status` value?** Re-check `enforce_payment_before_release()`, `enforce_consent_before_release()`, and the 0125 guards.
+- **All seed scripts must be idempotent** and go through `scripts/lib/load-env.ts` + `requireLocalOrExplicitProd()` before the first query (`guard-coverage.test.ts` enforces it).
+- **Migration on prod before the app PR merges.** Vercel deploys main automatically; the code must never outrun the schema.
+- **Never bypass the local replay step.**
 
 ## When this skill should NOT trigger
 
 - App-code-only changes (TSX, Server Actions, lib helpers) that don't touch the schema — use the relevant domain skill.
-- Auth flow / RLS policy review work that isn't a new migration — use the `drmed-rls-and-auth` skill (which carries the same RLS templates).
-- Lab result template additions — use the `drmed-result-templates` skill (which handles the `result_templates` / `result_template_params` / `result_values` extension flow).
-- Read-only data exploration / ad-hoc queries — use `data:sql-queries` or `data:write-query`.
+- Auth flow / RLS review that isn't a new migration — `drmed-rls-and-auth` (same templates, plus the patient-client bridge).
+- Lab result template additions — `drmed-result-templates`.
+- Read-only prod data questions — Supabase MCP `execute_sql` with a plain `select` (may still be classifier-blocked; fall back to asking the user to run it).
