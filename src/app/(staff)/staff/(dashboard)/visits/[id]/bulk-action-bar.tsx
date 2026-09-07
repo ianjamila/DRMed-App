@@ -12,7 +12,7 @@ import { useRowSelection } from "./selection-context";
 
 interface Props {
   visitId: string;
-  paid: boolean;
+  moneySettled: boolean;
   // Pre-selected medium from the patient's preferred_release_medium when set,
   // mirrors ReleaseButton/ReleaseAllButton's default logic.
   preferredMedium: ReleaseMedium | null;
@@ -45,7 +45,7 @@ const MEDIUM_OPTIONS: { value: ReleaseMedium; label: string }[] = [
 // either group without disturbing the other's checkboxes.
 export function BulkActionBar({
   visitId,
-  paid,
+  moneySettled,
   preferredMedium,
   consentOnFile,
   gateRequired,
@@ -72,9 +72,9 @@ export function BulkActionBar({
 
   const blockedForConsent = gateRequired && !consentOnFile;
   const releaseDisabled =
-    releasePending || releaseCount === 0 || !paid || blockedForConsent;
-  const releaseTitle = !paid
-    ? "Visit must be paid before release"
+    releasePending || releaseCount === 0 || !moneySettled || blockedForConsent;
+  const releaseTitle = !moneySettled
+    ? "Visit must be paid, waived, or HMO-covered before release"
     : blockedForConsent
       ? "Patient consent not on file — capture consent first"
       : undefined;

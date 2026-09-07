@@ -168,7 +168,7 @@ export function ConsolidatedForm(props: Props) {
             <p className="text-sm font-semibold text-amber-900">
               Report finalised — release deferred:{" "}
               {deferredReason === "payment"
-                ? "visit not yet paid; results release automatically once payment is recorded"
+                ? "visit not yet paid (HMO visits are exempt); results release automatically once payment is recorded"
                 : "patient consent not on file"}
             </p>
             <button

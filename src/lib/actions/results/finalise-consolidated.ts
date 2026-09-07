@@ -169,10 +169,12 @@ export async function finaliseConsolidatedReport(
 
   // 4) Release every linked test_request. The payment-gating trigger fires
   // here and will block the transition to 'released' if visits.payment_status
-  // is not 'paid' (or 'waived'). That block is a legitimate state — the
-  // result is still finalised and the 0059 junction-insert trigger has
-  // already advanced status to ready_for_release; reception will release
-  // from the visit page once payment is recorded. Treat the gate as a soft
+  // is not 'paid' (or 'waived') AND the visit has no hmo_provider_id (0133 —
+  // an HMO visit releases straight away, its receivable is booked here).
+  // That block is a legitimate state — the result is still finalised and the
+  // 0059 junction-insert trigger has already advanced status to
+  // ready_for_release; reception will release from the visit page once
+  // payment is recorded. Treat the gate as a soft
   // outcome (releaseDeferred) rather than a hard failure so the medtech's
   // work isn't wasted and a retry doesn't produce orphan result rows.
   const { error: relErr } = await admin

@@ -27,7 +27,7 @@ export function translatePgError(err: PgError): string {
         return "Patient data-privacy consent is not on file — capture consent before releasing.";
       }
       if (/payment_status/i.test(m)) {
-        return "Visit must be paid before results can be released.";
+        return "Visit must be paid, waived, or HMO-covered before results can be released.";
       }
       return "Invalid value: that combination is not allowed by the schema.";
     }

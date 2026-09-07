@@ -7,7 +7,7 @@ import { markConsultationDoneAction, markProcedureDoneAction } from "./actions";
 interface Props {
   testRequestId: string;
   visitId: string;
-  paid: boolean;
+  moneySettled: boolean;
   // Consults and procedures both skip the lab queue and release directly
   // (see markDoctorLineDoneAction) — only the label/action/gate copy differs.
   kind: "doctor_consultation" | "doctor_procedure";
@@ -16,21 +16,21 @@ interface Props {
 const COPY = {
   doctor_consultation: {
     label: "Mark consultation done",
-    gateTitle: "Visit must be paid before completing the consultation",
+    gateTitle: "Visit must be paid, waived, or HMO-covered before completing the consultation",
     action: markConsultationDoneAction,
   },
   doctor_procedure: {
     label: "Mark procedure done",
-    gateTitle: "Visit must be paid before completing the procedure",
+    gateTitle: "Visit must be paid, waived, or HMO-covered before completing the procedure",
     action: markProcedureDoneAction,
   },
 } as const;
 
-export function MarkDoneButton({ testRequestId, visitId, paid, kind }: Props) {
+export function MarkDoneButton({ testRequestId, visitId, moneySettled, kind }: Props) {
   const [pending, start] = useTransition();
-  const disabled = pending || !paid;
+  const disabled = pending || !moneySettled;
   const { label, gateTitle, action } = COPY[kind];
-  const title = !paid ? gateTitle : undefined;
+  const title = !moneySettled ? gateTitle : undefined;
 
   return (
     <Button

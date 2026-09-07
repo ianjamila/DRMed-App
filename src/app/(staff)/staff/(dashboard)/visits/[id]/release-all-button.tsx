@@ -7,7 +7,7 @@ import { releaseAllReadyComponentsAction, type ReleaseMedium } from "./actions";
 interface Props {
   headerId: string;
   visitId: string;
-  paid: boolean;
+  moneySettled: boolean;
   // Pre-selected medium from the patient's preferred_release_medium when set,
   // so reception just clicks Release in the common case.
   preferredMedium: ReleaseMedium | null;
@@ -33,7 +33,7 @@ const MEDIUM_OPTIONS: { value: ReleaseMedium; label: string }[] = [
 export function ReleaseAllButton({
   headerId,
   visitId,
-  paid,
+  moneySettled,
   preferredMedium,
   consentOnFile,
   gateRequired,
@@ -45,9 +45,9 @@ export function ReleaseAllButton({
   );
 
   const blockedForConsent = gateRequired && !consentOnFile;
-  const disabled = pending || !paid || blockedForConsent;
-  const title = !paid
-    ? "Visit must be paid before release"
+  const disabled = pending || !moneySettled || blockedForConsent;
+  const title = !moneySettled
+    ? "Visit must be paid, waived, or HMO-covered before release"
     : blockedForConsent
       ? "Patient consent not on file — capture consent first"
       : undefined;
