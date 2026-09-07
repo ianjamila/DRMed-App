@@ -7,7 +7,7 @@ description: Use when working on DRMed money flow — payments, the payment-gati
 
 ## What this is
 
-The money flow in DRMed: pricing a visit (discounts, doctor fees), recording payments, gating result release AND lab work on payment status, voiding, deleting unpaid queue entries, end-of-day cash close, HMO billing, doctor PF payouts, and the bridge to the accounting GL. **DB triggers are the source of truth** — `enforce_payment_before_release` for release, the 0125 guards for deletion, `guard_statutory_discount` for the senior rate, `eod_close_denominations_check` for the till count. UI checks are UX only.
+The money flow in DRMed: pricing a visit (discounts, doctor fees), recording payments, gating result release AND lab work on whether the money is settled (paid, waived, or HMO-billed), voiding, deleting unpaid queue entries, end-of-day cash close, HMO billing, doctor PF payouts, and the bridge to the accounting GL. **DB triggers are the source of truth** — `enforce_payment_before_release` for release (0133: HMO visits pass unpaid), the 0125 guards for deletion, `guard_statutory_discount` for the senior rate, `eod_close_denominations_check` for the till count. UI checks are UX only.
 
 ## Schema (current shape)
 
@@ -42,7 +42,7 @@ eod_close_records       counted_cash_php + counted_denominations jsonb (0132: bi
 
 | Function / trigger | Where | Behaviour |
 |---|---|---|
-| `enforce_payment_before_release()` → `trg_test_requests_payment_gate` | 0001 | BEFORE UPDATE on `test_requests`; raises when `NEW.status='released'` and visit not in `('paid','waived')`. |
+| `enforce_payment_before_release()` → `trg_test_requests_payment_gate` | 0001, **0133** | BEFORE UPDATE on `test_requests`; raises when `NEW.status='released'` and the visit is neither in `('paid','waived')` NOR HMO-billed. 0133 added the `hmo_provider_id is not null` carve-out so the release gate matches `labQueueGate` — one definition of "money is settled". Fires for **mark consultation/procedure done** too: `markDoctorLineDoneAction` writes `status='released'` directly. |
 | `recalc_visit_payment()` → `trg_payments_recalc` (+ `_on_void`, 0111) | 0001/0111 | Sums non-voided payments → `paid_php`, sets `payment_status` paid/partial/unpaid; **preserves `'waived'`**. |
 | `advance_test_on_result_upload()` | 0001/0059 | On result link (and on `results.finalised_at` NULL→set) flips `in_progress` → `result_uploaded` (if `requires_signoff`) else `ready_for_release`. |
 | `bridge_test_request_released()` | 0030 … 0109, 0131 | Release → revenue JE (HMO splits, discount lines) + `doctor_pf_entries` accrual. **P0034** (attending physician required) fires only when `coalesce(doctor_pf_php,0) > 0` (0131) — a ₱0-PF procedure with no physician releases fine. |
@@ -57,7 +57,8 @@ eod_close_records       counted_cash_php + counted_denominations jsonb (0132: bi
 |---|---|
 | `src/lib/pricing/discounts.ts` — `lineDiscount`, `discountOptionsFor` | One arithmetic for the form preview AND the create action's authoritative recompute. A statutory code posted against a senior-ineligible line is dropped entirely (no ₱0 senior line). |
 | `src/lib/visits/consultation-fee.ts` — `defaultClinicFee`, `splitDoctorFee`, `doctorLineBase` | Doctor-line pricing. Blank consult fee = ₱0 (rejected); blank procedure fee = catalog price. `clinic_cut_php` override applies to CONSULT lines only; procedures default to a flat ₱0 clinic fee (doctor PF = full fee). |
-| `src/lib/visits/lab-gate.ts` — `labQueueGate`, `LAB_QUEUE_GATE_VISITS_OR` | "Money is settled" = `payment_status in ('paid','waived') OR hmo_provider_id is not null`. Applied to the lab worklist (All/Mine) via `.or(LAB_QUEUE_GATE_VISITS_OR, { foreignTable: "visits" })` on the `visits!inner` embed, and to `claimTestAction` / `claimConsolidated`. Pending-release / Released-today stay ungated. |
+| `src/lib/visits/money-settled.ts` — `moneySettled`, `MONEY_SETTLED_VISITS_OR` | The single definition: "money is settled" = `payment_status in ('paid','waived') OR hmo_provider_id is not null`. Mirrors migration 0133's SQL; the test pins the SQL text so the two cannot drift. Used by `labQueueGate` and by the visit page's `canRelease` (which gates the Release / Release-all / bulk / Mark-done buttons). |
+| `src/lib/visits/lab-gate.ts` — `labQueueGate`, `LAB_QUEUE_GATE_VISITS_OR` | Thin wrapper over `moneySettled` plus the "waiting for payment" hint. Applied to the lab worklist (All/Mine) via `.or(LAB_QUEUE_GATE_VISITS_OR, { foreignTable: "visits" })` on the `visits!inner` embed, and to `claimTestAction` / `claimConsolidated`. Pending-release / Released-today stay ungated. |
 | `src/lib/visits/deletion.ts` — `visitDeletability`, `testDeletability`, `QUEUE_DELETE_ROLES` | Deletable ⇔ `payment_status='unpaid'` (waived is NOT deletable — it can hold released results). Never keys on queue visibility, so it composes with the lab gate. |
 | `src/lib/visits/receipt-policy.ts` — `isConsultOnlyOrder`, `shouldPrintReceipt` | Consult-only visit (every non-deleted line classifies as `consult`) prints NO receipt; procedures still print; unknown kinds and empty lists print (fail-safe). |
 | `src/lib/visits/classification.ts` | Lab Tests is the COMPLEMENT of the two doctor kinds, never an allow-list. `foldVisitGroups` merges split encounters. |
@@ -104,7 +105,7 @@ Admin-managed `discount_types` catalog. Kinds `percent` / `fixed` / `custom` (cu
 
 ## HMO
 
-`hmo_providers` (seeded by `scripts/seed-hmo-providers.ts`), `visits.hmo_provider_id` / `test_requests.hmo_provider_id`, `due_days_for_invoice`. An HMO-billed visit passes the lab gate while unpaid. HMO settlements are ordinary `payments` rows with `method='hmo'`; claims tracking lives under `admin/accounting/hmo-claims` + `patient-ar`. No approval-gating trigger — `hmo_approval_date` is informational.
+`hmo_providers` (seeded by `scripts/seed-hmo-providers.ts`), `visits.hmo_provider_id` / `test_requests.hmo_provider_id`, `due_days_for_invoice`. **An HMO-billed visit passes both the lab gate and the release gate while unpaid** (0133) — the patient gets the result at the counter and the GL bridge books the receivable into 1110 AR HMO on release, which is what creates the claim. Do NOT reach for admin "waive balance" to unblock an HMO visit: waiving writes off a collectible. The reception queue's stage helper (`queue-stage.ts`) stays payment-only on purpose — "waiting" means the counter has cash to collect, and an HMO visit has none. HMO settlements are ordinary `payments` rows with `method='hmo'`; claims tracking lives under `admin/accounting/hmo-claims` + `patient-ar`. No approval-gating trigger — `hmo_approval_date` is informational.
 
 ## Accounting GL bridge (0028–0033, 0048/0049, 0064)
 

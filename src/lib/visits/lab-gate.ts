@@ -7,20 +7,27 @@
  * through the AR subledger), so a bare payment_status check would block every
  * HMO visit from the bench; `hmo_provider_id` is the carve-out.
  *
- * The passing payment statuses ('paid', 'waived') deliberately match both the
- * reception queue's "waiting" stage (queue-stage.ts) and the release trigger
- * `enforce_payment_before_release` — one definition of "money is settled"
- * across the app. This gate is enforced in the claim Server Actions; result
- * RELEASE stays enforced by the DB trigger, which remains the source of truth
- * for money. There is no claim-side DB trigger on purpose: non-claim writers
- * legitimately insert `in_progress` rows (package headers at visit creation,
- * legacy backfills).
+ * The predicate itself lives in ./money-settled.ts, because the release
+ * trigger `enforce_payment_before_release` encodes exactly the same rule since
+ * migration 0133 — one definition of "money is settled" across the app. (It
+ * did not always: until 0133 the release trigger was paid/waived only, and an
+ * HMO visit could reach the bench but never reach the patient.) The reception
+ * queue's "waiting" stage (queue-stage.ts) deliberately stays payment-only.
+ *
+ * This gate is enforced in the claim Server Actions; result RELEASE stays
+ * enforced by the DB trigger, which remains the source of truth for money.
+ * There is no claim-side DB trigger on purpose: non-claim writers legitimately
+ * insert `in_progress` rows (package headers at visit creation, legacy
+ * backfills).
  */
 
-export interface LabGateVisitShape {
-  payment_status: string;
-  hmo_provider_id: string | null;
-}
+import {
+  MONEY_SETTLED_VISITS_OR,
+  moneySettled,
+  type MoneySettledVisit,
+} from "./money-settled";
+
+export type LabGateVisitShape = MoneySettledVisit;
 
 export type LabGate =
   | { ok: true }
@@ -30,9 +37,7 @@ const WAITING_HINT =
   "This visit is still waiting for payment. Lab work opens once it's fully paid or covered by an HMO.";
 
 export function labQueueGate(visit: LabGateVisitShape): LabGate {
-  const settled =
-    visit.payment_status === "paid" || visit.payment_status === "waived";
-  if (settled || visit.hmo_provider_id !== null) return { ok: true };
+  if (moneySettled(visit)) return { ok: true };
   return { ok: false, reason: "waiting_for_payment", hint: WAITING_HINT };
 }
 
@@ -42,5 +47,4 @@ export function labQueueGate(visit: LabGateVisitShape): LabGate {
  * gated rows drop out of the queue query itself (keeping paging counts
  * honest). Keep in lockstep with labQueueGate(); the unit test pins both.
  */
-export const LAB_QUEUE_GATE_VISITS_OR =
-  "payment_status.in.(paid,waived),hmo_provider_id.not.is.null";
+export const LAB_QUEUE_GATE_VISITS_OR = MONEY_SETTLED_VISITS_OR;

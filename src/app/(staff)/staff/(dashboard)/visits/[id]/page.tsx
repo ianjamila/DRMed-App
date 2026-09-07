@@ -29,6 +29,7 @@ import {
   shouldPrintReceipt,
 } from "@/lib/visits/receipt-policy";
 import { isDoctorKind } from "@/lib/visits/order-lines";
+import { moneySettled } from "@/lib/visits/money-settled";
 import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
 import { ReissuePinButton } from "@/components/staff/reissue-pin-button";
 
@@ -245,7 +246,18 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
   // Mirrors the role gate inside setVisitAttendingPhysician.
   const canAssignPhysician = session.role === "reception" || session.role === "admin";
 
+  // Two different questions, deliberately kept apart:
+  //   isPaid     — does the counter still have money to collect? Drives the
+  //                admin "waive balance" escape hatch.
+  //   canRelease — may results leave the building? Mirrors the DB trigger
+  //                enforce_payment_before_release (0133), which passes an HMO
+  //                visit while it is still unpaid: the receivable is booked at
+  //                release, so waiting for payment would deadlock it.
   const isPaid = visit.payment_status === "paid" || visit.payment_status === "waived";
+  const canRelease = moneySettled({
+    payment_status: visit.payment_status,
+    hmo_provider_id: visit.hmo_provider_id,
+  });
   const balance = Number(visit.total_php) - Number(visit.paid_php);
   const activePayments = (payments ?? []).filter((p) => !p.voided_at);
   const voidedPayments = (payments ?? []).filter((p) => p.voided_at);
@@ -617,7 +629,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                           <ReleaseAllButton
                             headerId={h.id}
                             visitId={visit.id}
-                            paid={isPaid}
+                            moneySettled={canRelease}
                             consentOnFile={consent.current}
                             gateRequired={gateRequired}
                             readyCount={readyCount}
@@ -746,7 +758,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                                       status={c.status}
                                       testRequestId={c.id}
                                       visitId={visit.id}
-                                      paid={isPaid}
+                                      moneySettled={canRelease}
                                       consentOnFile={consent.current}
                                       gateRequired={gateRequired}
                                       hasPdf={hasPdfByTrId.get(c.id) === true}
@@ -925,7 +937,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                         status={t.status}
                         testRequestId={t.id}
                         visitId={visit.id}
-                        paid={isPaid}
+                        moneySettled={canRelease}
                         consentOnFile={consent.current}
                         gateRequired={gateRequired}
                         hasPdf={hasPdfByTrId.get(t.id) === true}
@@ -976,17 +988,18 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
             </tbody>
           </table>
         </Panel>
-        {!isPaid ? (
+        {!canRelease ? (
           <p className="mt-3 text-xs text-[color:var(--color-brand-text-soft)]">
-            ℹ️ Releases are blocked until visit payment status is paid or
-            waived. The payment-gating trigger enforces this at the database
-            level.
+            ℹ️ Releases are blocked until the visit is paid or waived. HMO
+            visits release straight away — the claim is booked as a
+            receivable on release. The payment-gating trigger enforces this
+            at the database level.
           </p>
         ) : null}
       </section>
       <BulkActionBar
         visitId={visit.id}
-        paid={isPaid}
+        moneySettled={canRelease}
         preferredMedium={
           (patient.preferred_release_medium ?? null) as
             | "physical"
@@ -1231,7 +1244,7 @@ interface TestActionProps {
   status: string;
   testRequestId: string;
   visitId: string;
-  paid: boolean;
+  moneySettled: boolean;
   preferredMedium: "physical" | "email" | "viber" | "gcash" | "pickup" | null;
   consentOnFile: boolean;
   gateRequired: boolean;
@@ -1252,7 +1265,7 @@ function TestAction({
   status,
   testRequestId,
   visitId,
-  paid,
+  moneySettled,
   preferredMedium,
   consentOnFile,
   gateRequired,
@@ -1268,7 +1281,7 @@ function TestAction({
       <ReleaseButton
         testRequestId={testRequestId}
         visitId={visitId}
-        paid={paid}
+        moneySettled={moneySettled}
         preferredMedium={preferredMedium}
         consentOnFile={consentOnFile}
         gateRequired={gateRequired}
@@ -1283,7 +1296,7 @@ function TestAction({
         <MarkDoneButton
           testRequestId={testRequestId}
           visitId={visitId}
-          paid={paid}
+          moneySettled={moneySettled}
           kind={kind}
         />
       );
