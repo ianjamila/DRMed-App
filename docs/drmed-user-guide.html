@@ -321,7 +321,7 @@
   <div class="meta">
     <div><strong>Audience</strong>Reception · Medtech · X-ray · Pathologist · Admin · Patients</div>
     <div><strong>Covers</strong>Everything live in production as of the September 2026 release</div>
-    <div><strong>Version</strong>2.0 · 2 September 2026</div>
+    <div><strong>Version</strong>2.1 · 8 September 2026</div>
     <div><strong>Replaces</strong>Staff User Guide v1.0 (22 May 2026)</div>
   </div>
 </header>
@@ -338,7 +338,7 @@
     <div><b>Print the receipt</b><small>Shows charges, DRM-ID and the PIN. The PIN appears once.</small><span class="pill reception">Reception</span></div>
     <div><b>Take payment</b><small>Cash, e-wallet, card, HMO. Lab work opens once paid or HMO-covered.</small><span class="pill reception">Reception</span></div>
     <div><b>Run the tests</b><small>Claim from the queue, enter values or upload the PDF, finalise.</small><span class="pill lab">Lab</span></div>
-    <div><b>Release</b><small>The lab releases from the visit page: email, or a printed copy for the counter. Blocked until the visit is paid.</small><span class="pill lab">Lab</span> <span class="pill admin">Admin</span></div>
+    <div><b>Release</b><small>The lab releases from the visit page: email, or a printed copy for the counter. Blocked until the visit is paid, waived or HMO-billed.</small><span class="pill lab">Lab</span> <span class="pill admin">Admin</span></div>
     <div><b>Patient views online</b><small>DRM-ID + PIN at drmed.ph/portal. PIN lasts 60 days.</small><span class="pill patient">Patient</span></div>
     <div><b>Close the day</b><small>Count the drawer by denomination. Admin pays doctors, reviews reports.</small><span class="pill reception">Reception</span> <span class="pill admin">Admin</span></div>
   </div>
@@ -348,7 +348,7 @@
   <p>The system enforces two rules in the database itself. No button, role or password gets around them, so it is worth knowing them by heart.</p>
   <dl class="defs">
     <dt>Lab gate</dt><dd>A test does not appear on the lab bench until the visit is <span class="status">paid</span>, <span class="status">waived</span>, or billed to an HMO. Until then it sits in the reception queue under <span class="tab">Waiting for payment</span>, and the lab sees an <q>awaiting payment</q> chip on the results archive.</dd>
-    <dt>Release gate</dt><dd>A finished result cannot be released to the patient until the visit is paid or waived. There is no HMO exception here: an HMO-billed visit passes the lab gate but stays <span class="status">unpaid</span> until Admin records the HMO settlement or waives the balance. See <a href="#limits">Known limitations</a>.</dd>
+    <dt>Release gate</dt><dd>A finished result cannot be released to the patient until the visit is <span class="status">paid</span>, <span class="status">waived</span>, or billed to an HMO. Since the September 2026 release both gates use the same rule, so an HMO visit that reached the bench also reaches the patient: the clinic books the claim as a receivable the moment the result is released, and collects from the HMO months later. A blocked line reads <q>Visit must be paid, waived, or HMO-covered before release</q>.</dd>
   </dl>
 
   <h3>The life of a test</h3>
@@ -408,7 +408,7 @@
       <li><p class="step-title">Scan the QR code with Google Authenticator, Microsoft Authenticator, 1Password or similar.</p></li>
       <li><p class="step-title">Type the 6-digit code the app shows and verify.</p></li>
     </ol>
-    <div class="note stop"><span class="k">Lost phone</span><div><p>Tell an Admin immediately. They remove your factor so you can sign in and enrol the new phone. There are no recovery codes.</p></div></div>
+    <div class="note stop"><span class="k">Lost phone</span><div><p>There are no recovery codes, no self-service reset, and no screen anywhere in the app — not even an Admin's — that removes an enrolled authenticator. Losing the phone locks you out until someone with access to the Supabase project clears the factor. Enrol on a phone you will keep, and consider adding the same account to a second device (most authenticator apps allow it) while you set it up. See <a href="#limits">Known limitations</a>.</p></div></div>
   </section>
 
   <section class="sub" id="start-sidebar">
@@ -476,7 +476,7 @@
     <ol class="steps">
       <li><p class="step-title">Work the <span class="tab">Pending callback</span> section first thing.</p><p>Call the patient, agree the time, and confirm the booking.</p></li>
       <li><p class="step-title">When a booked patient walks in, click <kbd class="ui">Mark arrived</kbd> on their row.</p><p>Only a confirmed booking can be marked arrived. Grouped multi-service bookings show one button for all of them.</p></li>
-      <li><p class="step-title">Click <kbd class="ui">+ Start visit</kbd>.</p><p>It opens New visit with the patient already picked. The button appears only after <q>arrived</q> and only if the booking has a patient record. A walk-in booking taken by phone has no record yet, so register the patient first (3.2) and start the visit from their page.</p></li>
+      <li><p class="step-title">Click <kbd class="ui">+ Start visit</kbd>.</p><p>It opens New visit with the patient already picked. The button appears only after <q>arrived</q> and only if the booking has a patient record. A walk-in booking taken by phone has no record yet, so register the patient first (3.2) and start the visit from their page.</p><p>When you save the visit, the appointment moves to <span class="status">Completed</span> on its own — and so do the others in the same multi-service booking. Nothing else marks an appointment done, so always start the visit from the appointment row rather than from the patient's page when there is a booking: that is what keeps the <b>Walk-ins waiting</b> count on your dashboard honest.</p></li>
     </ol>
 
     <h4>Taking a booking by phone</h4>
@@ -583,7 +583,10 @@
       <li><p class="step-title">Click <kbd class="ui">Record payment</kbd>.</p><p>The visit flips to <span class="status">paid</span> the moment the balance reaches zero. The lab bench sees the tests immediately; nothing else needs clicking.</p></li>
     </ol>
     <h4>HMO visits</h4>
-    <p>An HMO-billed visit skips the lab gate, so the tests run without a cash payment. The patient still pays any co-pay or non-covered lines now. The visit itself stays <span class="status">unpaid</span> until Admin records the HMO settlement under <kbd class="ui">HMO claims</kbd> or waives the balance, and until then the lab cannot release the result. Agree the standing rule for HMO patients with Admin before go-live; see <a href="#limits">Known limitations</a>.</p>
+    <p>The HMO is chosen when the visit is created, not here. New visit has two optional fieldsets, <b>Lab &amp; Services HMO</b> and <b>Doctor / PF HMO</b>, each starting at <q>— Cash / no HMO —</q>, with an <b>Approval date</b> and <b>Authorization no.</b> beside them. There is no HMO option on the payment form. The patient still pays any co-pay or non-covered line at the counter in the normal way.</p>
+    <p>An HMO-billed visit clears both gates the moment it is created: the lab can run the tests, and since the September 2026 release it can also release the result. Releasing is what books the claim as a receivable, which is why it no longer waits for the money. Admin records the settlement months later under <kbd class="ui">HMO claims</kbd>.</p>
+    <div class="note stop"><span class="k">Never waive an HMO balance</span><div><p>The visit keeps its <span class="status">unpaid</span> status until the HMO settles, and Admin's <kbd class="ui">Waive balance</kbd> button is still offered on it. That balance is money the HMO owes, not money the clinic decided not to collect: waiving it writes off a real receivable and the claim disappears from the books. Leave it alone.</p></div></div>
+    <p>One thing to expect at the counter: the Reception Queue's <span class="tab">Waiting for payment</span> stage goes by payment status alone, so an HMO visit sits on that tab while the lab is already working on it. Read the row, not the tab.</p>
     <h4>Undoing a payment</h4>
     <ol class="steps">
       <li><p class="step-title">Open the visit, find the payment under <b>Payments</b>, click <kbd class="ui">Void</kbd>.</p></li>
@@ -601,7 +604,7 @@
       <dt>Row actions</dt><dd><kbd class="ui">Record payment</kbd> · <kbd class="ui">Open visit</kbd> · <kbd class="ui">Print billing</kbd></dd></dl></div>
     <p>This is today's worklist. It updates on its own as payments land and tests finish.</p>
     <dl class="defs">
-      <dt>Waiting for payment</dt><dd>Visits created but not yet paid. The lab cannot see these. Collect and <kbd class="ui">Record payment</kbd>.</dd>
+      <dt>Waiting for payment</dt><dd>Visits created but not yet paid, so the lab cannot see them. Collect and <kbd class="ui">Record payment</kbd>. The one exception is an HMO-billed visit: its balance is owed by the HMO, so it stays on this tab while the lab is already running the tests (3.6).</dd>
       <dt>Processing</dt><dd>Paid or waived, and the lab or imaging still owes at least one result. The row itself lists what is outstanding, which is all you need to answer <q>is it ready?</q></dd>
       <dt>Completed</dt><dd>Paid and every lab and imaging line released. <kbd class="ui">Print billing</kbd> reprints the receipt (without the PIN).</dd>
     </dl>
@@ -618,12 +621,12 @@
       <li><p class="step-title">If the patient wants a printed copy at the counter, ask the lab to print it when they release.</p><p>Reception cannot open result PDFs. The lab chooses <q>Physical</q> or <q>Pickup</q> as the release method, prints the PDF and hands it to you.</p></li>
       <li><p class="step-title">If the patient wants it by email, nothing more is needed.</p><p>The lab releases with <q>Email</q> and the patient receives <q>Your DRMed lab result is ready</q> with the portal link. They sign in with the DRM-ID and PIN from their receipt.</p></li>
       <li><p class="step-title">If the lab says a release is blocked, fix the cause on your side.</p>
-        <ul><li><q>Visit must be paid before results can be released</q>: record the payment, or ask Admin to waive.</li>
-        <li><q>Patient data-privacy consent is not on file</q>: print and capture consent on the patient's page (3.3).</li>
+        <ul><li><q>Visit must be paid, waived, or HMO-covered before release</q>: record the payment, or ask Admin to waive the balance. An HMO-billed visit is never blocked for this reason.</li>
+        <li><q>Patient consent not on file — capture consent first</q>: print and capture consent on the patient's page (3.3).</li>
         <li><q>An attending physician is required…</q>: click <kbd class="ui">Assign physician</kbd> in the <b>Attending physician</b> section of the visit. The page warns you in amber beforehand.</li></ul></li>
       <li><p class="step-title">For a consultation or procedure, tell Admin (or the pathologist) once the patient has seen the doctor.</p><p>They click <kbd class="ui">Mark consultation done</kbd> or <kbd class="ui">Mark procedure done</kbd> on the visit. That is what accrues the doctor's professional fee. Reception cannot see doctor lines on the visit page.</p></li>
     </ol>
-    <div class="note warn"><span class="k">Dashboard card</span><div><p>The <b>Pending release</b> card on the reception dashboard opens the lab queue, which is always empty for reception. Use the Reception Queue's Processing tab instead.</p></div></div>
+    <div class="note tip"><span class="k">Dashboard card</span><div><p>The <b>Pending release</b> card on your dashboard (<q>Results ready, awaiting release</q>) counts finished test lines the lab has not released yet, and opens the Reception Queue's <span class="tab">Processing</span> tab — the list you actually want. It used to open the lab queue, which is always empty for reception.</p></div></div>
   </section>
 
   <!-- 3.9 -->
@@ -705,10 +708,10 @@
     <p>Rows are oldest first. Each shows the patient, the test (code and name), the visit number and a status chip. A chemistry order shows as one row, for example <q>Chemistry Panel (3 tests)</q>, because the whole panel is reported on one form (4.4). Package headers never appear; only the tests inside them do.</p>
     <ol class="steps">
       <li><p class="step-title">Start on <span class="tab">All</span>. Pick the oldest row you can run.</p><p>The subtitle reminds you: <q>Visits waiting for payment appear once they're paid or HMO-covered.</q> If a patient says they have paid and the test is not here, reception has not recorded it yet.</p></li>
-      <li><p class="step-title">Click <kbd class="ui">Claim</kbd>.</p><p>The test becomes <span class="status">in progress</span> under your name, moves to your <span class="tab">Mine</span> tab, and the entry page opens. Claim only what you are about to run; a claimed test is invisible to colleagues as available work.</p></li>
+      <li><p class="step-title">Click <kbd class="ui">Claim</kbd>.</p><p>The test becomes <span class="status">in progress</span> under your name, moves to your <span class="tab">Mine</span> tab, and the entry page opens. Claim only what you are about to run; a claimed test is invisible to colleagues as available work. You can only claim work in your own sections — anything else answers <q>This test is outside the sections you can claim.</q></p></li>
       <li><p class="step-title">Use <span class="tab">Mine</span> to get back to anything you left half-done.</p></li>
     </ol>
-    <div class="note warn"><span class="k">Claimed the wrong one?</span><div><p>You cannot un-claim it yourself. Ask an Admin: on the test page they have an <b>Assignment (admin)</b> panel with <kbd class="ui">Unclaim</kbd> and <kbd class="ui">Reassign to…</kbd>.</p></div></div>
+    <div class="note tip"><span class="k">Claimed the wrong one?</span><div><p>Put it back yourself. On the test page, under <b>Your claim</b>, click <kbd class="ui">Unclaim — put it back in the queue</kbd>, type a reason if you want one on record, then <kbd class="ui">Confirm unclaim</kbd>. The test returns to <span class="status">requested</span> for anyone in your section to pick up, and the unclaim is written to the audit log.</p><p>It works only while the test is still <span class="status">in progress</span> and nothing has been uploaded to it. Once a result is attached you get <q>You can only unclaim a test you currently hold that has no result yet.</q> and need an Admin, who has the <b>Assignment (admin)</b> panel with <kbd class="ui">Unclaim</kbd> and <kbd class="ui">Reassign to…</kbd> on any claimed test.</p></div></div>
   </section>
 
   <!-- 4.3 -->
@@ -741,7 +744,7 @@
     <ol class="steps">
       <li><p class="step-title">Click <kbd class="ui">Claim this report</kbd>.</p><p>Until you claim, the value fields are hidden. If a colleague has it you see <q>This report is claimed by another medtech.</q></p></li>
       <li><p class="step-title">Fill in the rows that are enabled.</p><p>The table columns are <b>Test / SI Result / SI Unit / Conv Result / Conv Unit</b>. Rows for tests not ordered on this visit are greyed out and skipped.</p></li>
-      <li><p class="step-title">Click <kbd class="ui">Finalise + release</kbd>.</p><p>This form releases straight to the patient if the visit is paid. If it isn't, you see <q>Report finalised — release deferred: visit not yet paid; results release automatically once payment is recorded</q>. Nothing is lost; go back to the queue.</p></li>
+      <li><p class="step-title">Click <kbd class="ui">Finalise + release</kbd>.</p><p>This form releases straight to the patient if the visit is paid, waived or HMO-billed. If it isn't, you see <q>Report finalised — release deferred: visit not yet paid (HMO visits are exempt); results release automatically once payment is recorded</q>. Nothing is lost; go back to the queue.</p></li>
     </ol>
     <div class="note stop"><span class="k">Every field greyed out?</span><div><p>The screen will say so in plain words: it is a template configuration problem, not a data-entry one. Report it to Admin (the group template under Result templates has no fields mapped for the ordered tests). Don't work around it by typing into another test.</p></div></div>
   </section>
@@ -775,20 +778,22 @@
     <div class="screen"><div class="where">The visit page · <code class="route">/staff/visits/[visit]</code> · reached from the <span class="tab">Pending release</span> tab of your queue</div>
       <dl><dt>Buttons</dt><dd><kbd class="ui">Release</kbd> per line · <kbd class="ui">Release all ready (N)</kbd> · <kbd class="ui">Release selected (N)</kbd> · <kbd class="ui">Unrelease selected (N)</kbd> · <kbd class="ui">Undo</kbd></dd>
       <dt>You see</dt><dd>only the lines in your own sections; doctor lines are visible to Admin and pathologists</dd>
-      <dt>Blocked when</dt><dd>visit not paid or waived · consent gate on and consent missing · a PF-earning doctor line has no attending physician</dd></dl></div>
+      <dt>Blocked when</dt><dd>visit not paid, waived or HMO-billed · consent gate on and consent missing · a PF-earning doctor line has no attending physician</dd></dl></div>
     <p>The test page now shows a <b>Result on file</b> panel with <kbd class="ui">View / download result</kbd> (a 5-minute link; every view is logged) and <kbd class="ui">Amend result…</kbd>. The test is <span class="status">ready for release</span>. Releasing is what makes it visible to the patient, and it is your job, not reception's.</p>
     <h4>Releasing</h4>
     <ol class="steps">
       <li><p class="step-title">Open the <span class="tab">Pending release</span> tab of your queue and click the visit number.</p><p>Lines are grouped under <b>Packages</b> and <b>Individual tests</b>.</p></li>
-      <li><p class="step-title">Click <kbd class="ui">Release</kbd> on the line, or <kbd class="ui">Release all ready (N)</kbd> for the lot.</p><p>Tick boxes and use <kbd class="ui">Release selected (N)</kbd> for a subset. Package components release individually; the package header follows on its own.</p></li>
+      <li><p class="step-title">Click <kbd class="ui">Release</kbd> on the line, or <kbd class="ui">Release all ready (N)</kbd> for the lot.</p><p>Tick boxes and use <kbd class="ui">Release selected (N)</kbd> for a subset. Package components release individually; the package header follows on its own once the last component is out — except on an HMO visit, where it waits for the settlement (see <a href="#limits">Known limitations</a>).</p></li>
       <li><p class="step-title">Choose how the patient is receiving it: Physical, Email, Viber, GCash, Pickup or Other.</p><p>The choice defaults to the patient's preferred method from their profile. Email, Viber, GCash and Other send the patient a <q>Your DRMed lab result is ready</q> email with the portal link. Physical and Pickup send nothing: open the <b>PDF →</b> link, print it, and hand it to reception for the counter.</p></li>
     </ol>
     <h4>When the button is greyed out or refuses</h4>
+    <p>A visit whose money is not settled also carries a banner above the lines: <q>ℹ️ Releases are blocked until the visit is paid or waived. HMO visits release straight away — the claim is booked as a receivable on release. The payment-gating trigger enforces this at the database level.</q> Hover the greyed-out button for the specific reason.</p>
     <dl class="defs">
-      <dt><q>Visit must be paid before results can be released.</q></dt><dd>Reception has not recorded the payment. HMO visits stay unpaid until Admin settles or waives them (see <a href="#limits">Known limitations</a>).</dd>
-      <dt><q>Patient data-privacy consent is not on file — capture consent before releasing.</q></dt><dd>The consent gate is on. Reception captures consent on the patient's page.</dd>
+      <dt><q>Visit must be paid, waived, or HMO-covered before release</q></dt><dd>Reception has not recorded the payment. Ask them to collect it, or Admin to waive the balance. An HMO-billed visit never hits this: it releases straight away, and releasing is what books the claim as a receivable. Force the action anyway and the database answers <q>Visit must be paid, waived, or HMO-covered before results can be released.</q></dd>
+      <dt><q>Patient consent not on file — capture consent first</q></dt><dd>The consent gate is on. Reception captures consent on the patient's page. The database's own refusal reads <q>Patient data-privacy consent is not on file — capture consent before releasing.</q> When the gate is off and consent is simply missing, the line shows a quiet <q>Consent not on file</q> note instead and still releases.</dd>
       <dt><q>An attending physician is required for consults and procedures that pay the doctor a PF…</q></dt><dd>Reception or Admin assigns the physician on the visit; then release again.</dd>
     </dl>
+    <p>Undoing a release is never money-gated — you can always take a result back.</p>
     <h4>Taking a release back</h4>
     <p>Click <kbd class="ui">Undo</kbd> on a released line, type the reason, and <kbd class="ui">Confirm undo</kbd>. The result disappears from the portal and returns to <span class="status">ready for release</span> so you can amend it. If the patient already opened it, the dialog says so: undoing does not un-see it, so reception should call them.</p>
     <h4>Amending a result</h4>
@@ -817,7 +822,7 @@
   <section class="sub" id="lab-path">
     <h3>4.9 For pathologists</h3>
     <p>You see every section in the queue and can claim, enter and finalise like a medtech. Your extra duties today are the <b>Critical alerts</b> page and reviewing amended results. Your dashboard adds <b>Critical alerts unacked</b>.</p>
-    <div class="note warn"><span class="k">Sign-off is not active yet</span><div><p>The system has a place for a formal pathologist sign-off step before release, but the screen is not built and the <q>Requires pathologist sign-off</q> setting on services is disabled. Results go from the bench straight to <span class="status">ready for release</span>. Your dashboard's <b>Ready for sign-off</b> card currently counts those ready-for-release tests. See <a href="#limits">Known limitations</a>.</p></div></div>
+    <div class="note warn"><span class="k">Sign-off is not active yet</span><div><p>The system has a place for a formal pathologist sign-off step before release, but the screen is not built and no service has <q>Requires pathologist sign-off</q> switched on. Results go from the bench straight to <span class="status">ready for release</span>.</p><p>Your dashboard's <b>Ready for sign-off</b> card and its <b>Pending sign-off</b> strip both count tests sitting at <span class="status">result uploaded</span> — the status a finished test takes only when its service requires sign-off. Both therefore read zero today, which is correct, and they will agree with each other the day the flag is switched on. The card's hint says as much: <q>Sign-off screen not built yet</q>. (Until the September 2026 release the strip counted ready-for-release tests instead, so a list headed <q>Pending sign-off</q> was showing work already past it.) See <a href="#limits">Known limitations</a>.</p></div></div>
   </section>
 
   <!-- 4.10 -->
@@ -867,17 +872,19 @@
       <thead><tr><th>Check</th><th>Where (Admin ›)</th><th>What you are looking for</th></tr></thead>
       <tbody>
         <tr><td>Yesterday's cash</td><td>Books &amp; reports › <b>Daily report</b>, tab <span class="tab">Cash &amp; cards</span></td><td>Each shift's counted cash, the denomination breakdown, and any <b>Difference</b> with its reason. <kbd class="ui">Export CSV</kbd> for the accountant.</td></tr>
-        <tr><td>Revenue</td><td>Books &amp; reports › <b>Daily revenue</b></td><td>Day-by-day totals by section and payment method. Pick From / To, <kbd class="ui">Apply</kbd>.</td></tr>
+        <tr><td>Revenue</td><td>Books &amp; reports › <b>Daily revenue</b></td><td>Day-by-day totals by service and kind, from released work. Pick From / To, <kbd class="ui">Apply</kbd>, then <kbd class="ui">Export CSV</kbd>: <i>Date, Service code, Service, Kind, Releases, Revenue PHP</i>.</td></tr>
         <tr><td>Doctors to pay</td><td>Pay doctors › <b>Pay doctors</b></td><td>See 5.3.</td></tr>
-        <tr><td>Lab turnaround</td><td>Books &amp; reports › <b>Lab turnaround time</b></td><td>Median hours from request to release per section and SLA breaches.</td></tr>
-        <tr><td>Things that got stuck</td><td>Books &amp; reports › <b>Stuck tests</b></td><td>Packages with no tests, visits with no lines, tests older than N days. Usually a reception slip that needs a delete or a call.</td></tr>
-        <tr><td>Undo and delete oversight</td><td>Books &amp; reports › <b>Undone releases</b> · <b>Deleted queue entries</b></td><td>Every release taken back (with whether the patient had already viewed it) and every queue entry deleted, by whom and why. These are your RA 10173 review screens.</td></tr>
-        <tr><td>Consent coverage</td><td>Books &amp; reports › <b>Patients without consent</b></td><td>Who still needs the form signed before you turn the consent gate on.</td></tr>
+        <tr><td>Staff advances outstanding</td><td>Books &amp; reports › <b>Staff advances</b></td><td>Cash advances not yet fully deducted from payroll, by staff member. <kbd class="ui">Export CSV</kbd>.</td></tr>
+        <tr><td>Lab turnaround</td><td>Books &amp; reports › <b>Lab TAT analytics</b></td><td>Median, P95 and worst hours from request to release per section, plus the twenty worst SLA breaches. Samples over 60 days old are dropped as outliers; the SLA comes from each service's turnaround hours. <kbd class="ui">Export CSV</kbd> gives one row per released test, not the section averages.</td></tr>
+        <tr><td>Things that got stuck</td><td>Books &amp; reports › <b>Stuck tests</b></td><td>Packages with no tests, visits with no lines, package headers that never auto-released, and tests older than N days (the <b>days</b> box, 3 by default). Usually a reception slip that needs a delete or a call. <kbd class="ui">Export CSV</kbd> merges all four lists into one file with a <i>List</i> column.</td></tr>
+        <tr><td>Undo and delete oversight</td><td>Books &amp; reports › <b>Undone releases</b> · <b>Deleted queue entries</b></td><td>Every release taken back (with whether the patient had already viewed it) and every queue entry deleted, by whom and why. These are your RA 10173 review screens. Both <kbd class="ui">Export CSV</kbd>.</td></tr>
+        <tr><td>Consent coverage</td><td>Books &amp; reports › <b>Patients without consent</b></td><td>Who still needs the form signed before you turn the consent gate on. <kbd class="ui">Export CSV</kbd> is the call list — it includes phone and email.</td></tr>
         <tr><td>HMO money</td><td>Admin › <b>HMO claims</b> · Daily report › <span class="tab">HMO receivables</span></td><td>Unbilled claims, batches sent, aging by provider.</td></tr>
         <tr><td>Who did what</td><td>Admin tools › <b>Audit log</b></td><td>Filter by action, DRM-ID, actor (Staff · Patient · System · Anonymous) and dates. Read-only by design.</td></tr>
         <tr><td>Did the emails go out</td><td>Admin tools › <b>Emails sent</b></td><td>Every result-ready, booking, reminder, welcome and newsletter email with Sent / Failed / No email on file. <kbd class="ui">Failures only</kbd> is the useful button.</td></tr>
       </tbody>
     </table></div>
+    <div class="note why"><span class="k">About those exports</span><div><p>Every <kbd class="ui">Export CSV</kbd> on these pages downloads exactly what the filters above it select, and every download is written to the audit log with your name, the filters used and the row count — never the contents. Only Admin can open them.</p><p>An export stops at 20,000 rows and adds a last line reading <q>TRUNCATED — more rows matched than the 20000 exported. Narrow the filters.</q> The pages themselves show fewer rows than the export does (most stop at 500) and say so above the table, so a page that looks short is not a short export.</p></div></div>
   </section>
 
   <!-- 5.3 -->
@@ -886,7 +893,7 @@
     <div class="screen"><div class="where">Admin › Pay doctors › <kbd class="ui">Pay doctors</kbd> · <code class="route">/staff/admin/accounting/pf-payouts</code></div>
       <dl><dt>Tabs</dt><dd><span class="tab">Ready to pay</span> · <span class="tab">Waiting on insurance</span> · <span class="tab">Already paid</span></dd>
       <dt>Buttons</dt><dd><kbd class="ui">Pay this doctor</kbd> · <kbd class="ui">Pay everyone (cash only)</kbd> · <kbd class="ui">Print slip</kbd> · <kbd class="ui">Void disbursement</kbd> · <kbd class="ui">Print quick guide →</kbd></dd></dl></div>
-    <p>A consultation or procedure accrues the doctor's share (the PF) when someone clicks <kbd class="ui">Mark consultation done</kbd> or <kbd class="ui">Mark procedure done</kbd> on the visit page. Only Admin and pathologists can see doctor lines there, so this click is yours: do it once the patient has seen the doctor, and only after reception has recorded the fee, because the same payment gate applies. Cash-paid visits then land under <span class="tab">Ready to pay</span>; HMO-billed ones sit under <span class="tab">Waiting on insurance</span> until the claim is settled, then move across on their own.</p>
+    <p>A consultation or procedure accrues the doctor's share (the PF) when someone clicks <kbd class="ui">Mark consultation done</kbd> or <kbd class="ui">Mark procedure done</kbd> on the visit page. Only Admin and pathologists can see doctor lines there, so this click is yours: do it once the patient has seen the doctor. The same release gate applies to it, so the visit must be paid, waived or HMO-billed first — an HMO consultation can be marked done straight away, a cash one only after reception records the fee. Blocked, the button explains itself on hover: <q>Visit must be paid, waived, or HMO-covered before completing the consultation</q>. Cash-paid visits then land under <span class="tab">Ready to pay</span>; HMO-billed ones sit under <span class="tab">Waiting on insurance</span> until the claim is settled, then move across on their own.</p>
     <ol class="steps">
       <li><p class="step-title">Open <span class="tab">Ready to pay</span>. Each doctor shows the total owed and the visits behind it.</p></li>
       <li><p class="step-title">Send the money (GCash, bank, or cash from the drawer), then click <kbd class="ui">Pay this doctor</kbd>, choose the method, <kbd class="ui">Confirm payment</kbd>.</p><p>Recording a payment does not move money. It records that you did. <kbd class="ui">Pay everyone (cash only)</kbd> batches every cash payout in one go.</p></li>
@@ -902,9 +909,9 @@
     <dl class="defs">
       <dt>Reset a password</dt><dd>Staff users › open the user › <b>New password</b> › <kbd class="ui">Reset password</kbd>. Tell them in person; there is no email.</dd>
       <dt>Someone leaves</dt><dd>Untick <b>Active</b>. Their history stays. <kbd class="ui">Delete user…</kbd> (type their full name to confirm) is a soft delete and can be <kbd class="ui">Restore</kbd>d.</dd>
-      <dt>Lost authenticator phone</dt><dd>Remove their MFA factor from their user page; they enrol again at <code class="route">/staff/mfa</code>.</dd>
+      <dt>Lost authenticator phone</dt><dd>There is nothing you can do in the app: no screen removes an enrolled authenticator, not even yours. Clearing the factor needs someone with access to the Supabase project. Warn staff before they enrol (2.2) and see <a href="#limits">Known limitations</a>.</dd>
       <dt>Waive a balance</dt><dd>On the visit: <kbd class="ui">Waive balance</kbd> → <kbd class="ui">Confirm waive</kbd>. Admin-only, and irreversible in the sense that a waived visit can't be deleted.</dd>
-      <dt>Unclaim or reassign a test</dt><dd>Open the test from the queue; the <b>Assignment (admin)</b> panel has <kbd class="ui">Unclaim</kbd> and <kbd class="ui">Reassign to…</kbd>.</dd>
+      <dt>Unclaim or reassign a test</dt><dd>Open the test from the queue; the <b>Assignment (admin)</b> panel has <kbd class="ui">Unclaim</kbd> and <kbd class="ui">Reassign to…</kbd>. You only need it now for someone else's stuck claim or to hand work to a named person — staff release their own claims themselves (4.2). Reassignment only offers active medtechs, X-ray technicians, pathologists and admins.</dd>
       <dt>Withdraw a patient's consent</dt><dd>Patient page › Consent panel › <kbd class="ui">Withdraw consent</kbd>, with a reason. Their results stay; future releases are blocked if the gate is on.</dd>
     </dl>
   </section>
@@ -981,7 +988,7 @@
         <li><b>Laboratory Request</b>: pick the tests; only ultrasound needs a time. You can upload the doctor's request form.</li>
         <li><b>Doctor Appointment</b>: pick a specialty, a doctor and a slot. Some doctors are <q>by appointment</q>; the clinic calls you to confirm.</li>
         <li><b>Home Service</b>: the clinic calls to confirm a time and the fee.</li></ul></li>
-      <li><p class="step-title">Fill in your details (new patients), review, tick the service agreement, and tap <kbd class="ui">Confirm booking</kbd> or <kbd class="ui">Submit request</kbd>.</p><p>You see <q>Booking confirmed.</q> or <q>Request received.</q> plus <b>Your DRM-ID</b> if you are new. An email confirmation follows, with a link to cancel. A reminder email arrives the day before.</p></li>
+      <li><p class="step-title">Fill in your details (new patients), review, tick the service agreement, and tap <kbd class="ui">Confirm booking</kbd> or <kbd class="ui">Submit request</kbd>.</p><p>You see <q>Booking confirmed.</q> or <q>Request received.</q> plus <b>Your DRM-ID</b> if you are new. An email confirmation follows, with a link to cancel. A reminder email arrives the day before.</p><p>The tick is required, and for a patient the clinic has never seen before it is also recorded as their Data Privacy Act consent, so they arrive with consent already on file (6.3). Nothing is booked without it: leaving it unticked answers <q>Please accept the service agreement to continue.</q></p></li>
     </ol>
     <p>Signed-in portal users can also book from the <kbd class="ui">Book</kbd> link in the portal header without re-entering anything.</p>
     <h4>Register ahead at drmed.ph/register</h4>
@@ -991,7 +998,14 @@
   <!-- 6.3 -->
   <section class="sub" id="pt-privacy">
     <h3>6.3 Privacy consent (RA 10173)</h3>
-    <p>The clinic asks for your consent once, under the Data Privacy Act of 2012, before processing your health information. You can give it three ways: by signing the printed form at reception, by ticking the box when you register online, or by accepting the notice the first time you sign in to the portal. You can withdraw it at any time by telling reception. Every view and download of your results is logged, and the clinic never sends results by text message.</p>
+    <p>The clinic asks for your consent once, under the Data Privacy Act of 2012, before processing your health information. You can give it four ways:</p>
+    <ul>
+      <li>by signing the printed form at reception, or signing on screen at the counter;</li>
+      <li>by ticking the privacy box when you register at <code class="route">drmed.ph/register</code>;</li>
+      <li>by ticking the required <b>Service agreement</b> when you book at <code class="route">drmed.ph/schedule</code> — this counts as consent only if the booking is what creates your record;</li>
+      <li>by accepting the notice the first time you sign in to the portal.</li>
+    </ul>
+    <p>Either online box records the same thing: consent given by you, on that date, against the current version of the notice. If the clinic already has a record for you, the public forms deliberately do <em>not</em> touch your consent — only you at the counter or in the portal can change it. You can withdraw it at any time by telling reception. Every view and download of your results is logged, and the clinic never sends results by text message.</p>
   </section>
 </section>
 
@@ -1001,9 +1015,10 @@
   <h2>Common questions</h2>
   <dl class="defs">
     <dt>I can't find a patient.</dt><dd>Search by phone number or DRM-ID rather than name. Try one word at a time. Patients who booked online may be listed with their online spelling; check the <b>Pre-registered · verify</b> rows.</dd>
-    <dt>The test isn't on the lab queue.</dt><dd>The visit is <b>Waiting for payment</b>. Record the payment (or the HMO), and it appears at once.</dd>
+    <dt>The test isn't on the lab queue.</dt><dd>The visit is <b>Waiting for payment</b>. Record the payment and it appears at once. If the visit is HMO-billed it should already be there — check the HMO was actually picked on the visit, not just written on the form.</dd>
     <dt>I'm reception and the visit page shows no tests.</dt><dd>By policy. Reception sees payments, receipts, PIN and physician on a visit, never the test lines or PDFs. Read progress from the Reception Queue row; the lab releases.</dd>
-    <dt>The Release button is greyed out.</dt><dd>Hover it: it says either <q>Visit must be paid before release</q> or <q>Patient consent not on file</q>. Reception fixes that, then you release. If the message mentions an attending physician, reception assigns one on the visit.</dd>
+    <dt>The Release button is greyed out.</dt><dd>Hover it: it says either <q>Visit must be paid, waived, or HMO-covered before release</q> or <q>Patient consent not on file — capture consent first</q>. Reception fixes that, then you release. If the message mentions an attending physician, reception assigns one on the visit. An HMO visit is never blocked for money.</dd>
+    <dt>I claimed the wrong test.</dt><dd>Unclaim it yourself on the test page: <b>Your claim</b> › <kbd class="ui">Unclaim — put it back in the queue</kbd> › <kbd class="ui">Confirm unclaim</kbd>. Only while nothing has been uploaded to it; after that, ask an Admin.</dd>
     <dt>The patient wants a printed result at the counter.</dt><dd>The lab prints the PDF when releasing (method Physical or Pickup) and hands it to reception. Reception cannot open result PDFs.</dd>
     <dt>The patient lost their PIN.</dt><dd>Open the patient's page, click <kbd class="ui">Re-issue PIN</kbd>, print the slip. The old PIN stops working. Never read a PIN over the phone.</dd>
     <dt>I recorded a payment on the wrong visit.</dt><dd>Void it (reason required) and record it on the right visit. Nothing is ever edited in place.</dd>
@@ -1011,7 +1026,7 @@
     <dt>A result is wrong and it's already released.</dt><dd>The lab clicks <kbd class="ui">Undo</kbd> on the line, amends with a reason, and releases again. Reception phones the patient if they had already opened it.</dd>
     <dt>The chemistry form is all greyed out.</dt><dd>Template configuration problem. Tell Admin; don't work around it.</dd>
     <dt>End of day won't close.</dt><dd>A non-zero <b>Difference</b> needs a <b>Reason for the difference</b>. Also check the ₱20 bill and ₱20 coin rows are in the right columns.</dd>
-    <dt>The doctor's fee isn't showing under Pay doctors.</dt><dd>Admin or the pathologist must click <kbd class="ui">Mark consultation done</kbd> on the visit (reception and medtechs cannot see doctor lines), and the visit must be paid. If the visit is HMO-billed, it waits under <b>Waiting on insurance</b>.</dd>
+    <dt>The doctor's fee isn't showing under Pay doctors.</dt><dd>Admin or the pathologist must click <kbd class="ui">Mark consultation done</kbd> on the visit (reception and medtechs cannot see doctor lines), and the visit must be paid, waived or HMO-billed. Once marked done, an HMO visit's fee waits under <b>Waiting on insurance</b> until the claim settles.</dd>
     <dt>My phone shows no sidebar.</dt><dd>Tap <b>☰</b> at the top left.</dd>
     <dt>The system says my session expired.</dt><dd>Sign in again. Draft results you saved are still there.</dd>
   </dl>
@@ -1023,16 +1038,15 @@
   <h2>Known limitations (September 2026)</h2>
   <p class="intro">Things the screens hint at but don't do yet, so nobody wastes time looking for them.</p>
   <dl class="defs">
-    <dt>HMO patients and release</dt><dd>An HMO-billed visit stays <span class="status">unpaid</span> until the HMO settles, which can take months, and the release gate has no HMO exception. Until the clinic decides a rule (Admin waives HMO visits on the day, or the gate is changed), HMO patients cannot receive results online. Raise this with Admin before go-live.</dd>
-    <dt>Reception and results</dt><dd>Reception sees no test lines or PDFs on a visit (clinic policy since May 2026). Releasing and printing results is the lab's job. The reception dashboard's <b>Pending release</b> card opens the lab queue, which is empty for reception.</dd>
+    <dt>Reception and results</dt><dd>Reception sees no test lines or PDFs on a visit (clinic policy since May 2026). Releasing and printing results is the lab's job.</dd>
     <dt>Doctor lines</dt><dd>Consultation and procedure lines are visible only to Admin and pathologists, so only they can click <b>Mark consultation done</b>. Reception can still assign the physician and record the fee.</dd>
-    <dt>Appointments after arrival</dt><dd>An appointment stays at <q>arrived</q> after the visit is created; nothing marks it completed. The <b>Walk-ins waiting</b> dashboard count therefore grows over time.</dd>
-    <dt>Pathologist sign-off</dt><dd>The <b>Sign-off</b> page is a placeholder and the <q>Requires pathologist sign-off</q> setting on services is disabled. Results go from the bench straight to ready for release. Pathologists review via Critical alerts and amendments instead.</dd>
+    <dt>HMO package headers</dt><dd>On an HMO-billed package the component tests release normally, but the package's own summary line stays at <span class="status">ready for release</span>: it is released automatically only when the visit's payment status changes, and there is no button anywhere to release it by hand. It clears when Admin records the settlement. Admin's <b>Stuck tests</b> report lists these under <q>Package header not auto-released</q>.</dd>
+    <dt>HMO balances look unpaid</dt><dd>An HMO visit keeps its <span class="status">unpaid</span> status and sits on the Reception Queue's <span class="tab">Waiting for payment</span> tab until Admin records the settlement, even though the lab is working on it and releasing. Do not waive the balance to tidy the list — that writes off a real receivable (3.6).</dd>
+    <dt>Pathologist sign-off</dt><dd>The <b>Sign-off</b> page is a placeholder and no service has <q>Requires pathologist sign-off</q> switched on. Results go from the bench straight to ready for release, and the pathologist dashboard's two sign-off counters therefore read zero. Pathologists review via Critical alerts and amendments instead.</dd>
     <dt>SMS</dt><dd>No text messages are sent to patients. Booking confirmations, reminders and result-ready notices are email only. Patients with no email get no automatic notice.</dd>
-    <dt>MFA for non-admins</dt><dd>Nothing links to the enrolment page; type <code class="route">/staff/mfa</code>. Once enrolled it is enforced.</dd>
-    <dt>Self-service unclaim</dt><dd>Only Admin can unclaim or reassign a test.</dd>
+    <dt>A lost authenticator locks you out</dt><dd>Two-step sign-in can be set up from <b>My profile</b>, but nothing in the app can remove an enrolled authenticator afterwards — there is no self-service reset, no Admin reset, and no recovery codes. Clearing a lost factor needs direct access to the Supabase project. Treat enrolment as a decision, not an experiment.</dd>
     <dt>Doctor procedures</dt><dd>The catalog has no <q>Doctor procedure</q> services yet, so that path is untested in daily use. Add them under Services before billing procedures.</dd>
-    <dt>Report exports</dt><dd>The seven pages under Books &amp; reports have no CSV export; the Daily report tabs do.</dd>
+    <dt>Report exports are capped</dt><dd>Every report CSV stops at 20,000 rows and marks itself TRUNCATED at the end; most report pages show only the first 500 rows on screen. Narrow the date range rather than assuming that is everything (5.2).</dd>
     <dt>Marketing trackers</dt><dd>Stored in the browser that entered them. They don't sync between computers.</dd>
     <dt>Parked pages</dt><dd><b>Sell gift code</b>, <b>Registration link</b>, <b>Sign-off</b> and <b>Patient receivables</b> are under <b>Hidden tabs</b> (Admin only in the sidebar). Reception can still open Sell gift code and Registration link by typing the address.</dd>
   </dl>
@@ -1049,14 +1063,14 @@
     <dt>Secure PIN</dt><dd>8 characters, issued per visit, valid 60 days, printed once. With the DRM-ID it opens the portal.</dd>
     <dt>Pre-registered</dt><dd>A patient who registered or booked online and hasn't shown an ID at the counter yet.</dd>
     <dt>Lab gate</dt><dd>The rule that hides unpaid, non-HMO visits from the lab bench.</dd>
-    <dt>Release</dt><dd>Making a finished result visible to the patient. Needs a paid or waived visit.</dd>
+    <dt>Release</dt><dd>Making a finished result visible to the patient. Needs a visit that is paid, waived or billed to an HMO.</dd>
     <dt>Waived</dt><dd>Admin decided not to collect the balance. Counts as paid.</dd>
     <dt>Void</dt><dd>Cancelling a recorded payment with a reason. The record stays, the balance re-opens.</dd>
     <dt>Package</dt><dd>A bundle of tests sold at one price. On a visit it is a ₱0 header line with the tests underneath.</dd>
     <dt>Report group</dt><dd>Several tests reported on one form and one PDF: the chemistry panel.</dd>
     <dt>Send-out</dt><dd>A test run by a partner lab. The medtech uploads the partner's PDF.</dd>
-    <dt>HMO</dt><dd>The patient's health plan. An HMO visit reaches the lab unpaid; release still needs the visit marked paid or waived.</dd>
-    <dt>PF</dt><dd>Professional fee: the doctor's share of a consultation or procedure. Accrues when reception marks the line done; Admin pays it out.</dd>
+    <dt>HMO</dt><dd>The patient's health plan, chosen on the visit. An HMO visit reaches the lab and releases while still showing <span class="status">unpaid</span>; the balance is a receivable the clinic collects from the plan later, never from the patient.</dd>
+    <dt>PF</dt><dd>Professional fee: the doctor's share of a consultation or procedure. Accrues when Admin or the pathologist marks the line done; Admin pays it out.</dd>
     <dt>Clinic cut</dt><dd>The clinic's share of a consultation fee for PF-split doctors.</dd>
     <dt>Attending physician</dt><dd>The doctor recorded on a visit. Required whenever a line earns PF.</dd>
     <dt>Critical alert</dt><dd>An automatic flag when a finalised value crosses a critical threshold. Acknowledged by a pathologist or admin.</dd>
@@ -1068,7 +1082,7 @@
 </section>
 
 <footer class="end">
-  <p>drmed.ph User Guide · v2.0 · 2 September 2026 · Matches the production release at migration 0132. Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
+  <p>drmed.ph User Guide · v2.1 · 8 September 2026 · Matches the production release at migration 0133. Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
 </footer>
 </main>
 </div>
