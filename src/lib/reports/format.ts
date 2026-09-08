@@ -1,4 +1,5 @@
 /** Presentation helpers shared by report loaders, pages and CSV routes. Pure. */
+import type { Json } from "@/types/database";
 
 const MANILA_STAMP = new Intl.DateTimeFormat("en-CA", {
   timeZone: "Asia/Manila",
@@ -29,4 +30,14 @@ export function csvManilaStamp(iso: string | null | undefined): string {
 export function pluckOne<T>(v: T | T[] | null | undefined): T | null {
   if (!v) return null;
   return Array.isArray(v) ? (v[0] ?? null) : v;
+}
+
+/**
+ * audit_log.metadata is untyped Json — narrow it to the object shape the
+ * writers produce before reading fields. Shared by the audit-log reports.
+ */
+export function asRecord(meta: Json | null): Record<string, Json | undefined> {
+  return meta && typeof meta === "object" && !Array.isArray(meta)
+    ? (meta as Record<string, Json | undefined>)
+    : {};
 }

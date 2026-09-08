@@ -110,6 +110,10 @@ export async function loadStuckTests(
     for (const p of data ?? []) claimerNames.set(p.id, p.full_name);
   }
 
+  // The three integrity lists below keep a flat 100-row cap and do not feed
+  // `truncated`: they describe anomalies that should be ~0, not a ledger to
+  // export in full. If one ever fills up, the fix is upstream, not a bigger cap.
+
   // Zero-child package headers — 0130's Population-A predicates, live. Since
   // the atomic visit-creation fix these can no longer be minted, so anything
   // here is pre-fix damage 0130 missed or a regression. The embed hint is the

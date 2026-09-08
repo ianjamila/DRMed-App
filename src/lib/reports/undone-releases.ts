@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Json } from "@/types/database";
 import { isISODate, manilaRangeUtc, shiftISODate, todayManilaISODate } from "@/lib/dates/manila";
 import { chunk, fetchAllRows, IN_CHUNK, unique } from "./paging";
-import { csvManilaStamp, pluckOne } from "./format";
+import { asRecord, csvManilaStamp, pluckOne } from "./format";
 
 type AnyClient = SupabaseClient<Database>;
 
@@ -83,12 +83,6 @@ export interface UndoneReleasesReport {
   entries: UndoneRelease[];
   summary: UndoneReleasesSummary;
   truncated: boolean;
-}
-
-function asRecord(meta: Json | null): Record<string, Json | undefined> {
-  return meta && typeof meta === "object" && !Array.isArray(meta)
-    ? (meta as Record<string, Json | undefined>)
-    : {};
 }
 
 export function deriveUndoneRelease(
