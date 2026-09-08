@@ -6,6 +6,7 @@ import { VisitsTabs } from "./_components/visits-tabs";
 import { paymentStatusLabel } from "@/lib/ui/payment-status";
 import { formatPatientName } from "@/lib/patients/format-name";
 import { Panel } from "@/components/ui/panel";
+import { ExportCsvLink } from "@/components/staff/export-csv-link";
 import { PageHeader } from "@/components/staff/page-header";
 import { sectionTabClass } from "@/components/staff/section-tabs-style";
 import { fetchArchiveWindow, type ArchiveRow } from "@/lib/visits/archive-query";
@@ -196,14 +197,7 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
                 />
               ))}
             </nav>
-            {isAdmin ? (
-              <a
-                href={exportHref}
-                className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-3 py-2 text-sm font-semibold text-[color:var(--color-brand-navy)] transition-colors hover:border-[color:var(--color-brand-cyan)]"
-              >
-                Export CSV
-              </a>
-            ) : null}
+            {isAdmin ? <ExportCsvLink href={exportHref} /> : null}
           </div>
         }
       />
