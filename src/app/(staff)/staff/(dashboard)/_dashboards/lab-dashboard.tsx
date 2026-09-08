@@ -132,12 +132,18 @@ async function loadLabStats(
           .is("visits.deleted_at", null)
       : SKIP_COUNT;
 
+  // "Ready for sign-off" surfaces results the pathologist hasn't looked at
+  // yet — status = result_uploaded, i.e. a result was linked but hasn't
+  // reached ready_for_release. /staff/signoff is a real route but a
+  // data-less placeholder (UI queued for a later phase), so the card links
+  // to the working /staff/results list instead; see the "Coming soon"
+  // PlannedCard below for the not-yet-built screen itself.
   const readyForSignoffPromise =
     show("lab.ready_for_signoff") && role === "pathologist"
       ? supabase
           .from("test_requests")
           .select("id, visits!inner(id)", { count: "exact", head: true })
-          .eq("status", "ready_for_release")
+          .eq("status", "result_uploaded")
           .is("deleted_at", null)
           .is("visits.deleted_at", null)
       : SKIP_COUNT;
@@ -201,13 +207,22 @@ async function loadLabStats(
           .returns<CriticalRow[]>()
       : SKIP_DATA;
 
+  // Same status as the "Ready for sign-off" card above, deliberately: a
+  // result that is linked but not yet signed off sits at result_uploaded,
+  // and only reaches ready_for_release once sign-off happens (or when the
+  // service needs none). This strip used to list ready_for_release, so a
+  // strip titled "Pending sign-off" was showing work already past it — and
+  // disagreeing with the card beside it.
   const pendingSignoffPromise =
     show("lab.strip_pending_signoff") && role === "pathologist"
       ? supabase
           .from("test_requests")
-          .select("id, patients ( first_name, last_name ), services ( name )")
-          .eq("status", "ready_for_release")
+          .select(
+            "id, patients ( first_name, last_name ), services ( name ), visits!inner(id)",
+          )
+          .eq("status", "result_uploaded")
           .is("deleted_at", null)
+          .is("visits.deleted_at", null)
           .order("requested_at", { ascending: true })
           .limit(5)
           .returns<SignoffRow[]>()
@@ -268,10 +283,14 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
     href: "/staff/queue",
   }));
 
+  // There is no per-test detail page (only a PDF route under
+  // /staff/results/[testRequestId]/pdf), so every row lands on the same
+  // filtered archive list the card links to, rather than on the data-less
+  // /staff/signoff placeholder.
   const signoffItems: ActivityItem[] = stats.pendingSignoff.map((s) => ({
     primary: pluckService(s.services),
     secondary: pluckName(s.patients),
-    href: "/staff/signoff",
+    href: "/staff/results?status=ready",
   }));
 
   const showMyQueue = role === "medtech" || role === "xray_technician";
@@ -308,8 +327,8 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
           <StatCard
             label="Ready for sign-off"
             value={stats.readyForSignoff}
-            hint="Awaiting pathologist release"
-            href="/staff/signoff"
+            hint="Sign-off screen not built yet"
+            href="/staff/results?status=ready"
             accent={stats.readyForSignoff > 0 ? "warn" : "default"}
           />
         )}
@@ -361,7 +380,7 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
             title="Pending sign-off"
             items={signoffItems}
             emptyMessage="Sign-off queue is empty."
-            viewAllHref="/staff/signoff"
+            viewAllHref="/staff/results?status=ready"
           />
         )}
         {(role === "medtech" || role === "pathologist") && show("lab.strip_recent_criticals") && (
@@ -381,6 +400,12 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
         defaultOpen={false}
       >
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {showSignoff && (
+          <PlannedCard
+            label="Sign-off screen"
+            teaser="A dedicated worklist for reviewing and approving results before release, replacing today's placeholder page."
+          />
+        )}
         </div>
       </SectionHeading>
     </div>

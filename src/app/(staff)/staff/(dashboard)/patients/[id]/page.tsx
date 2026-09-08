@@ -10,6 +10,10 @@ import { getPatientConsentState } from "@/lib/consent/gate";
 import { ConsentPanel } from "./consent/consent-panel";
 import { paymentStatusLabel } from "@/lib/ui/payment-status";
 import { formatPatientName } from "@/lib/patients/format-name";
+import {
+  PRE_REGISTERED_LABEL_FULL,
+  PRE_REGISTERED_BADGE_CLASS,
+} from "@/lib/patients/labels";
 import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
@@ -92,8 +96,10 @@ export default async function PatientDetailPage({ params }: Props) {
           </h1>
           {patient.pre_registered ? (
             <div className="flex flex-wrap items-center gap-2">
-              <p className="mt-1 inline-block rounded-md bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900">
-                Pre-registered — verify identity at counter
+              <p
+                className={`mt-1 inline-block rounded-md px-2 py-0.5 text-xs font-semibold ${PRE_REGISTERED_BADGE_CLASS}`}
+              >
+                {PRE_REGISTERED_LABEL_FULL}
               </p>
               <VerifyIdentityButton patientId={patient.id} />
             </div>

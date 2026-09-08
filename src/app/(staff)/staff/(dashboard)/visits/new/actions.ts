@@ -15,6 +15,7 @@ import { isDoctorKind, partitionByCategory } from "@/lib/visits/order-lines";
 import { isConsultOnlyOrder } from "@/lib/visits/receipt-policy";
 import { isSeniorPwdEligible } from "@/lib/pricing/senior";
 import { lineDiscount } from "@/lib/pricing/discounts";
+import { completeAppointmentFromVisitAction } from "../../appointments/actions";
 import type { Database } from "@/types/database";
 
 const optionalUuid = z
@@ -44,6 +45,10 @@ const optionalText = (max: number) =>
 
 const Schema = z.object({
   patient_id: z.string().uuid("Pick a valid patient."),
+  // The "arrived" appointment reception started this visit from, if any
+  // (absent for walk-ins). Optional and best-effort — see the completion
+  // call near the end of createVisitAction.
+  appointment_id: optionalUuid,
   service_ids: z
     .array(z.string().uuid())
     .min(1, "Select at least one service."),
@@ -71,6 +76,7 @@ export async function createVisitAction(
 
   const parsed = Schema.safeParse({
     patient_id: formData.get("patient_id"),
+    appointment_id: formData.get("appointment_id"),
     service_ids: formData.getAll("service_ids"),
     doctor_hmo_provider_id: formData.get("doctor_hmo_provider_id"),
     doctor_hmo_approval_date: formData.get("doctor_hmo_approval_date"),
@@ -460,6 +466,27 @@ export async function createVisitAction(
         ip_address: ip,
         user_agent: ua,
       });
+    }
+  }
+
+  // Close the loop on the appointment this visit was started from, if any.
+  // The visit (and its PIN) already exist above, so this is strictly
+  // best-effort: a failure (wrong role, appointment no longer "arrived", a
+  // stale/bad id) must never roll back the visit or surface an error to
+  // reception here — swallow it and let the redirect below proceed either
+  // way. Walk-ins never send appointment_id, so this is a no-op for them.
+  if (parsed.data.appointment_id) {
+    try {
+      const result = await completeAppointmentFromVisitAction(
+        parsed.data.appointment_id,
+        created[0]!.visitId,
+        groupId,
+      );
+      if (!result.ok) {
+        console.error("completeAppointmentFromVisitAction failed", result.error);
+      }
+    } catch (err) {
+      console.error("completeAppointmentFromVisitAction threw", err);
     }
   }
 

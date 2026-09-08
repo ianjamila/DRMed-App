@@ -122,9 +122,9 @@ export function TransitionButtons({
         </Button>
       ) : null}
 
-      {status === "arrived" && patientId ? (
+      {status === "arrived" && patientId && appointmentIds.length > 0 ? (
         <Link
-          href={`/staff/visits/new?patient_id=${patientId}`}
+          href={`/staff/visits/new?patient_id=${patientId}&appointment_id=${appointmentIds[0]}`}
           className="inline-block rounded-md bg-[color:var(--color-brand-navy)] px-3 py-1.5 text-xs font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
         >
           + Start visit
