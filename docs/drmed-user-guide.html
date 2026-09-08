@@ -404,7 +404,7 @@
     <h3>2.2 Two-step sign-in (MFA)</h3>
     <p>A 6-digit code from an authenticator app on top of your password. Required for Admins. Optional but recommended for everyone else, and once you have set it up it is always asked for.</p>
     <ol class="steps">
-      <li><p class="step-title">After signing in, go to <code class="route">/staff/mfa</code>.</p></li>
+      <li><p class="step-title">After signing in, open <b>My profile</b> under <b>Personal</b> and click <kbd class="ui">Set up two-step sign-in</kbd>.</p><p>It takes you to <code class="route">/staff/mfa</code>. The panel there tells you where you stand: <q>Off — add a one-time code from your phone as a second sign-in step.</q> or, once you are set up, <q>On — a one-time code from your authenticator app is required at sign-in.</q> Admins are sent to the same page automatically at sign-in until they enrol.</p></li>
       <li><p class="step-title">Scan the QR code with Google Authenticator, Microsoft Authenticator, 1Password or similar.</p></li>
       <li><p class="step-title">Type the 6-digit code the app shows and verify.</p></li>
     </ol>
@@ -451,7 +451,7 @@
     <h3>2.4 Dashboard and phone</h3>
     <p>Your dashboard shows summary cards for your role: today's visits and queue for reception, your claimed and unclaimed tests for the lab, money and exceptions for admin. Each card is a link. Admin chooses which cards each role sees under <kbd class="ui">Dashboard settings</kbd>.</p>
     <p>Every screen works on a phone. The sidebar folds into the <b>☰</b> menu top-left, tables scroll sideways, and buttons are thumb-sized. Session timeouts are normal; sign in again and continue.</p>
-    <p>Under <b>Personal</b>, <kbd class="ui">My profile</kbd> holds your name and contact details and <kbd class="ui">My payslips</kbd> shows your own payslips only.</p>
+    <p>Under <b>Personal</b>, <kbd class="ui">My profile</kbd> holds your name and contact details, and the <b>Two-step sign-in</b> panel where you set up a one-time code (2.2). <kbd class="ui">My payslips</kbd> shows your own payslips only.</p>
   </section>
 </section>
 
@@ -849,7 +849,7 @@
     <p>Each step depends on the one before it. All items are under <b>Admin › Catalog &amp; setup</b> unless noted.</p>
     <ol class="steps">
       <li><p class="step-title">Staff users <span class="pill admin">Admin tools</span></p><p><kbd class="ui">+ New staff user</kbd>: Email, Full name, Role (Reception · Medical Tech · X-ray Technician · Pathologist · Admin), Initial password (10 characters or more). After creating, edit the user to tick <b>Active</b> and record their <b>PRC license</b> (RMT, MD, RT or Pathologist, with number). Medtech licence numbers print on result PDFs.</p></li>
-      <li><p class="step-title">Enrol your own two-step sign-in.</p><p>Admins are sent to <code class="route">/staff/mfa</code> automatically. Other roles must type that address themselves; there is no link to it yet.</p></li>
+      <li><p class="step-title">Enrol your own two-step sign-in.</p><p>Admins are sent to <code class="route">/staff/mfa</code> automatically. Everyone else starts it from <b>My profile</b> › <b>Two-step sign-in</b> › <kbd class="ui">Set up two-step sign-in</kbd>; the link disappears once they are enrolled, because there is nothing left to manage. Tell staff before they enrol that a lost authenticator cannot be reset from inside the app (2.2).</p></li>
       <li><p class="step-title">Physicians</p><p><kbd class="ui">+ New physician</kbd>: Full name, Specialty, Group, then the money: <b>Compensation arrangement</b> (<q>PF split (standard)</q>, <q>Rent-paying (keeps full consult)</q> or <q>Shareholder (keeps full consult)</q>), <b>Default consultation fee (₱)</b> and <b>Clinic cut (₱)</b>. A blank clinic cut means ₱100 for PF-split doctors and ₱0 for the other two. Then edit the physician to add a photo and open <kbd class="ui">Schedule</kbd>: add <b>Recurring blocks</b> (day, start, end, valid from/until) and one-off <b>Overrides</b> (a date off, or changed hours). A doctor with no recurring blocks is <q>by appointment</q>: online bookings for them become pending callbacks.</p></li>
       <li><p class="step-title">Services</p><p><kbd class="ui">+ New service</kbd>: Code, Name, Description, <b>DRMed price (PHP)</b>, <b>HMO price (PHP, optional)</b>, tick <b>Senior / PWD 20% discount applies</b> where the law applies, Turnaround (hours), <b>Kind</b> (Lab test · Lab package · Doctor consultation · Doctor procedure · Home service · Vaccine), <b>Section</b>, and <b>Send-out test</b> with the partner lab and unit cost when the test leaves the building. <b>Active</b> makes it visible on the website. Changing a price asks you to <kbd class="ui">Confirm price change</kbd> and keeps the history.</p></li>
       <li><p class="step-title">Prices</p><p>A spreadsheet-style view of every service's <b>DRMed (₱)</b> and <b>HMO (₱)</b> price for bulk updates. Consultations show <q>priced at counter</q> because reception types the fee per visit.</p></li>

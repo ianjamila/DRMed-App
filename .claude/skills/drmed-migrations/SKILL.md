@@ -1,13 +1,13 @@
 ---
 name: drmed-migrations
-description: Use when working on DRMed database schema changes, Supabase migrations, RLS policies, audit-log obligations, payment-gating trigger considerations, function grants/ACLs, applying a migration to prod, or the migration workflow. Trigger whenever the user mentions migration, new migration, schema change, new table, alter table, alter schema, drop table, drop column, regenerate types, regen types, db:diff, db:types, db:types:remote, db:reset, supabase db push, supabase db reset, supabase migrations, schema_migrations, apply_migration, execute_sql, RLS policy, row-level security policy, has_role, current_patient_id, payment gating trigger, enforce_payment_before_release, audit_log table, audit-log obligation, SECURITY DEFINER, grant execute, revoke execute, anon-executable, function ACL, default privileges, rls_auto_enable, ensure_rls, P00xx error code, translatePgError, pg-errors, seed script, seed:test, seed:services, seed:templates, seed.sql, smoke:results, or the 129 files under supabase/migrations/ (0001 → 0132, with gaps). Also trigger when adding any new table, trigger, or function — the skill carries the RLS-template + audit-row + payment-gating + ACL checklist. Don't make Claude reconstruct the per-table checklist from scratch.
+description: Use when working on DRMed database schema changes, Supabase migrations, RLS policies, audit-log obligations, payment-gating trigger considerations, function grants/ACLs, applying a migration to prod, or the migration workflow. Trigger whenever the user mentions migration, new migration, schema change, new table, alter table, alter schema, drop table, drop column, regenerate types, regen types, db:diff, db:types, db:types:remote, db:reset, supabase db push, supabase db reset, supabase migrations, schema_migrations, apply_migration, execute_sql, RLS policy, row-level security policy, has_role, current_patient_id, payment gating trigger, enforce_payment_before_release, audit_log table, audit-log obligation, SECURITY DEFINER, grant execute, revoke execute, anon-executable, function ACL, default privileges, rls_auto_enable, ensure_rls, P00xx error code, translatePgError, pg-errors, seed script, seed:test, seed:services, seed:templates, seed.sql, smoke:results, or the 130 files under supabase/migrations/ (0001 → 0133, with gaps). Also trigger when adding any new table, trigger, or function — the skill carries the RLS-template + audit-row + payment-gating + ACL checklist. Don't make Claude reconstruct the per-table checklist from scratch.
 ---
 
 # DRMed migrations & schema workflow
 
 ## What this is
 
-129 sequential migrations under `supabase/migrations/`, zero-padded numeric naming (`0001_init.sql` → `0132_eod_denomination_count.sql`). The numbering has gaps (0056–0058 never existed) — that's fine, repo and remote skip them identically; gaps are NOT drift. **Prod ledger head = 0132, repo↔prod in sync (2026-09-02).** Every schema change has a fixed workflow + a per-table checklist (RLS + audit + payment-gating + function ACL). Get the checklist wrong and you create either a compliance gap, an anon-callable RPC, or a query that returns empty silently.
+130 sequential migrations under `supabase/migrations/`, zero-padded numeric naming (`0001_init.sql` → `0133_hmo_release_gate.sql`). The numbering has gaps (0056–0058 never existed) — that's fine, repo and remote skip them identically; gaps are NOT drift. **Prod ledger head = 0133, repo↔prod in sync (2026-09-08).** Every schema change has a fixed workflow + a per-table checklist (RLS + audit + payment-gating + function ACL). Get the checklist wrong and you create either a compliance gap, an anon-callable RPC, or a query that returns empty silently.
 
 ## Landmark migrations (where the load-bearing objects live)
 
@@ -39,7 +39,8 @@ supabase/migrations/
 ├── 0128_discount_types.sql              ← admin-managed discount catalog, statutory guard P0047, one-statutory index
 ├── 0129_physician_fee_defaults.sql      ← physicians.default_consultation_fee_php + clinic_cut_php
 ├── 0131_zero_pf_release_exemption.sql   ← P0034 now only fires when coalesce(doctor_pf_php,0) > 0
-└── 0132_eod_denomination_count.sql      ← eod_close_records.counted_denominations jsonb, P0048 guard, cash_drawer_state re-created
+├── 0132_eod_denomination_count.sql      ← eod_close_records.counted_denominations jsonb, P0048 guard, cash_drawer_state re-created
+└── 0133_hmo_release_gate.sql            ← enforce_payment_before_release now passes an HMO-billed visit; ACL back to postgres + service_role
 
 supabase/seed.sql                        ← post-`db reset` grants (tables + sequences ONLY, never routines)
 scripts/lib/                             ← load-env.ts, env-guard.ts (+ guard-coverage.test.ts) — every runner is guarded
@@ -141,7 +142,7 @@ create policy "<table>: admin select"
 |---|---|
 | `current_patient_id()` (0001, body in 0114) | Reads `app.current_patient_id` GUC **or** the `patient_id` claim of the request JWT. The portal mints a 5-minute anon JWT carrying that claim (`src/lib/supabase/patient.ts`), so patient policies enforce per query. `set_patient_context()` still exists but no app code calls it. |
 | `has_role(text[])` / `is_staff()` / `staff_role()` | SECURITY DEFINER helpers over `staff_profiles`. Used in nearly every staff policy. Stay anon-executable. |
-| `enforce_payment_before_release()` → `trg_test_requests_payment_gate` | BEFORE UPDATE on `test_requests`; raises if `NEW.status='released'` and `visit.payment_status ∉ ('paid','waived')`. Source of truth for release. |
+| `enforce_payment_before_release()` → `trg_test_requests_payment_gate` | BEFORE UPDATE on `test_requests`; raises (`check_violation`, 23514) if `NEW.status='released'` and the visit's money is not settled. Since **0133** settled means `payment_status ∈ ('paid','waived')` **or** `hmo_provider_id is not null` — an HMO patient never pays at the counter, and the release is what books the receivable. Source of truth for release; mirrored (not duplicated) in `src/lib/visits/money-settled.ts`, whose unit test pins this SQL text. "Mark consultation/procedure done" writes `status='released'`, so it hits the same trigger. |
 | `enforce_consent_before_release()` (0086/0088) | Same transition, blocks when `consent_settings.gate_required` and the patient has no current consent. Ships OFF. |
 | `bridge_test_request_released()` (current body 0109 + 0131) | Release → revenue JE + doctor PF accrual. P0034 (attending physician required) fires only for lines with PF > 0. |
 | `tg_test_request_parent_is_header` (0040) | Validates package components against their header; sees same-statement rows in array order, so multi-row inserts must list headers before components. Headers auto-promote to `ready_for_release`. |
