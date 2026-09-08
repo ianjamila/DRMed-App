@@ -18,11 +18,14 @@ Key reference artifacts:
 - `IMPLEMENTATION_PLAN.md` — original phase plan (historical; cross-check before relying on it)
 - `README.md` — operational setup
 - `.env.example` — env-var inventory
+- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.1, 8 Sep 2026): every
+  screen, label and blocked-message the app shows, checked against the code. Update it in the
+  PR that changes a flow it describes.
 - `docs/superpowers/specs/` and `docs/superpowers/audits/` — design specs and audits for
   every post-1.0 programme (partner revisions, release lifecycle, group templates, EOD
   denomination count…). Read the spec before re-deriving a design decision.
 
-Migration ledger: **prod head = 0132**, repo↔prod in sync (2026-09-02). There is ONE
+Migration ledger: **prod head = 0133**, repo↔prod in sync (2026-09-08). There is ONE
 Supabase project (= prod, ref `qhptbmafrosgibooelpp`); there is no staging project — the
 local stack is staging.
 
@@ -133,7 +136,7 @@ Never use Supabase Auth for patients, and never grant patients direct storage ac
 
 ### Payment-gating is enforced in the database
 
-A Postgres trigger on `test_requests` blocks any transition to `status = 'released'` unless the parent `visits.payment_status = 'paid'`. The UI also enforces this, but **the trigger is the source of truth**. Never bypass it; never use the service-role client to short-circuit it.
+A Postgres trigger on `test_requests` (`enforce_payment_before_release`) blocks any transition to `status = 'released'` unless the parent visit's money is settled — since migration **0133** that means `payment_status in ('paid','waived')` **or** `hmo_provider_id is not null` (an HMO patient never pays at the counter; releasing is what books the receivable). The app mirrors the same predicate in `src/lib/visits/money-settled.ts`, whose unit test pins the trigger's SQL text so the two can't drift; `src/lib/visits/lab-gate.ts` wraps it for the lab queue. The UI also enforces this, but **the trigger is the source of truth**. Never bypass it; never use the service-role client to short-circuit it. "Mark consultation/procedure done" writes `status = 'released'`, so it runs through the same trigger.
 
 Other DB-side automation to be aware of (details and P-codes in the `drmed-migrations` / `drmed-payments` skills):
 - `payments` insert (and void, 0111) recalculates `visits.paid_php` and `visits.payment_status`; `'waived'` is preserved.
