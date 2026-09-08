@@ -4,6 +4,14 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { formatPhp } from "@/lib/marketing/format";
 import { Panel } from "@/components/ui/panel";
 import { PageHeader } from "@/components/staff/page-header";
+import { ExportCsvLink } from "@/components/staff/export-csv-link";
+import { pluckOne } from "@/lib/reports/format";
+import {
+  ageDays,
+  loadStuckTests,
+  parseStuckTestsParams,
+  stuckTestsCsvHref,
+} from "@/lib/reports/stuck-tests";
 
 export const metadata = { title: "Stuck tests — staff" };
 export const dynamic = "force-dynamic";
@@ -26,219 +34,19 @@ const PAYMENT_STYLE: Record<string, string> = {
   partial: "bg-amber-100 text-amber-900",
 };
 
-interface StuckRow {
-  id: string;
-  status: string;
-  requested_at: string;
-  assigned_to: string | null;
-  visit_id: string;
-  services:
-    | { code: string; name: string }
-    | { code: string; name: string }[]
-    | null;
-  visits:
-    | {
-        visit_number: string;
-        payment_status: string;
-        patients:
-          | { first_name: string; last_name: string; drm_id: string }
-          | { first_name: string; last_name: string; drm_id: string }[]
-          | null;
-      }
-    | {
-        visit_number: string;
-        payment_status: string;
-        patients:
-          | { first_name: string; last_name: string; drm_id: string }
-          | { first_name: string; last_name: string; drm_id: string }[]
-          | null;
-      }[]
-    | null;
-}
-
-function pluckOne<T>(v: T | T[] | null): T | null {
-  if (!v) return null;
-  return Array.isArray(v) ? (v[0] ?? null) : v;
-}
-
-function ageDays(requestedAt: string): number {
-  return Math.floor(
-    (Date.now() - new Date(requestedAt).getTime()) / (1000 * 60 * 60 * 24),
-  );
-}
-
-function cutoffIso(days: number): string {
-  return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-}
-
 function manila(ts: string): string {
   return new Date(ts).toLocaleString("en-PH", { timeZone: "Asia/Manila" });
 }
 
 export default async function StuckTestsPage({ searchParams }: SearchProps) {
   await requireAdminStaff();
-  const params = await searchParams;
-  const daysRaw = Number(params.days);
-  const days =
-    Number.isFinite(daysRaw) && daysRaw >= 1 && daysRaw <= 365
-      ? Math.floor(daysRaw)
-      : 3;
+  const params = parseStuckTestsParams(await searchParams);
+  const { days } = params;
 
   const admin = createAdminClient();
-  const cutoff = cutoffIso(days);
-
-  // Non-final tests older than the threshold. No direct patients embed on
-  // test_requests — join via visits(patients(...)).
-  const { data: stuckRaw } = await admin
-    .from("test_requests")
-    .select(
-      `
-        id, status, requested_at, assigned_to, visit_id,
-        services!inner ( code, name ),
-        visits!inner (
-          visit_number, payment_status,
-          patients!inner ( first_name, last_name, drm_id )
-        )
-      `,
-    )
-    .in("status", [
-      "requested",
-      "in_progress",
-      "result_uploaded",
-      "ready_for_release",
-    ])
-    .eq("is_package_header", false)
-    .lt("requested_at", cutoff)
-    // A deleted line isn't stuck — it's not owed at all (0125).
-    .is("deleted_at", null)
-    .is("visits.deleted_at", null)
-    .order("requested_at", { ascending: true })
-    .limit(500);
-
-  const stuck = (stuckRaw ?? []) as StuckRow[];
-
-  // Resolve claimer names in one query.
-  const claimerIds = Array.from(
-    new Set(stuck.map((r) => r.assigned_to).filter((v): v is string => !!v)),
-  );
-  const claimerNames = new Map<string, string>();
-  if (claimerIds.length > 0) {
-    const { data: profs } = await admin
-      .from("staff_profiles")
-      .select("id, full_name")
-      .in("id", claimerIds);
-    for (const p of profs ?? []) claimerNames.set(p.id, p.full_name);
-  }
-
-  // Zero-child package headers — 0130's Population-A predicates, live:
-  // is_package_header = true, status in (in_progress, ready_for_release),
-  // not soft-deleted, visit not soft-deleted, and NO row has parent_id =
-  // header.id. Since the atomic visit-creation fix these can no longer be
-  // minted (header + components go in as one statement), so anything here is
-  // either pre-fix damage 0130 missed or a regression. The embed hint is the
-  // parent_id COLUMN (self-referential FK), and `.is("components", null)`
-  // makes the left-joined embed an anti-join.
-  const { data: orphanRaw } = await admin
-    .from("test_requests")
-    .select(
-      `
-        id, status, requested_at, visit_id,
-        services!inner ( code, name ),
-        visits!inner (
-          visit_number, payment_status,
-          patients!inner ( first_name, last_name, drm_id )
-        ),
-        components:test_requests!parent_id ( id )
-      `,
-    )
-    .eq("is_package_header", true)
-    .in("status", ["in_progress", "ready_for_release"])
-    .is("deleted_at", null)
-    .is("visits.deleted_at", null)
-    .is("components", null)
-    .order("requested_at", { ascending: true })
-    .limit(100);
-
-  const orphanHeaders = orphanRaw ?? [];
-
-  // Visits with NO test_request rows at all — the one partial-write shape the
-  // atomic insert still permits (a crash between the visit insert and the
-  // single test_requests insert). Older than an hour so a request in flight
-  // right now can't false-positive.
-  const { data: emptyVisitsRaw } = await admin
-    .from("visits")
-    .select(
-      `
-        id, visit_number, created_at, total_php, payment_status,
-        patients!inner ( first_name, last_name, drm_id ),
-        lines:test_requests ( id )
-      `,
-    )
-    .is("deleted_at", null)
-    .is("lines", null)
-    .lt("created_at", cutoffIso(1 / 24))
-    .order("created_at", { ascending: true })
-    .limit(100);
-
-  const emptyVisits = emptyVisitsRaw ?? [];
-
-  // Second table: package HEADERS sitting at ready_for_release on paid
-  // visits whose components are all terminal with ≥1 released — the Visit
-  // #0037 class. Post-0109 (header auto-release) this should always be
-  // empty; anything here means the auto-release didn't fire — investigate.
-  const { data: headersRaw } = await admin
-    .from("test_requests")
-    .select(
-      `
-        id, status, requested_at, visit_id,
-        services!inner ( code, name ),
-        visits!inner (
-          visit_number, payment_status,
-          patients!inner ( first_name, last_name, drm_id )
-        )
-      `,
-    )
-    .eq("is_package_header", true)
-    .eq("status", "ready_for_release")
-    .is("deleted_at", null)
-    .is("visits.deleted_at", null)
-    .order("requested_at", { ascending: true })
-    .limit(100);
-
-  const headerCandidates = ((headersRaw ?? []) as StuckRow[]).filter((h) => {
-    const visit = pluckOne(h.visits);
-    return (
-      visit?.payment_status === "paid" || visit?.payment_status === "waived"
-    );
-  });
-
-  // Check component states for each candidate header (bounded: candidates
-  // should be ~0 in a healthy system).
-  const stuckHeaders: StuckRow[] = [];
-  if (headerCandidates.length > 0) {
-    const { data: components } = await admin
-      .from("test_requests")
-      .select("parent_id, status")
-      .in(
-        "parent_id",
-        headerCandidates.map((h) => h.id),
-      );
-    const byParent = new Map<string, string[]>();
-    for (const c of components ?? []) {
-      if (!c.parent_id) continue;
-      const list = byParent.get(c.parent_id) ?? [];
-      list.push(c.status);
-      byParent.set(c.parent_id, list);
-    }
-    for (const h of headerCandidates) {
-      const statuses = byParent.get(h.id) ?? [];
-      const allTerminal =
-        statuses.length > 0 &&
-        statuses.every((s) => s === "released" || s === "cancelled");
-      const anyReleased = statuses.some((s) => s === "released");
-      if (allTerminal && anyReleased) stuckHeaders.push(h);
-    }
-  }
+  const PAGE_MAX_ROWS = 500;
+  const { stuck, stuckHeaders, orphanHeaders, emptyVisits, claimerNames, truncated } =
+    await loadStuckTests(admin, params, PAGE_MAX_ROWS);
 
   return (
     <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
@@ -271,14 +79,15 @@ export default async function StuckTestsPage({ searchParams }: SearchProps) {
             >
               Apply
             </button>
+            <ExportCsvLink href={stuckTestsCsvHref(params)} />
           </form>
         }
       />
 
-      {stuck.length === 500 ? (
+      {truncated ? (
         <p className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-          Showing the oldest 500 rows — there may be more. Raise the day
-          threshold to narrow the list.
+          Showing the oldest {PAGE_MAX_ROWS} rows — there may be more. Raise
+          the day threshold to narrow the list, or export for everything.
         </p>
       ) : null}
 
