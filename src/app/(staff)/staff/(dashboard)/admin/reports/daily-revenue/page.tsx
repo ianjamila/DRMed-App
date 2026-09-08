@@ -1,6 +1,8 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
-import { todayManilaISODate } from "@/lib/dates/manila";
+import { ExportCsvLink } from "@/components/staff/export-csv-link";
+import { REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
+import { dailyRevenueCsvHref, loadDailyRevenue, parseDailyRevenueParams } from "@/lib/reports/daily-revenue";
 
 export const metadata = { title: "Daily revenue — staff" };
 export const dynamic = "force-dynamic";
@@ -14,29 +16,13 @@ export default async function DailyRevenuePage({
   searchParams,
 }: { searchParams: Promise<SearchParams> }) {
   await requireAdminStaff();
-  const params = await searchParams;
-
-  const today = todayManilaISODate();
-  const monthStart = today.slice(0, 7) + "-01";
-  const from = params.from ?? monthStart;
-  const to = params.to ?? today;
+  const params = parseDailyRevenueParams(await searchParams);
+  const { from, to } = params;
 
   const admin = createAdminClient();
-  const { data: rows } = await admin
-    .from("v_daily_revenue_by_service")
-    .select("business_date, service_code, service_name, service_kind, revenue_php, released_count")
-    .gte("business_date", from)
-    .lte("business_date", to)
-    .order("business_date", { ascending: false })
-    .order("service_code", { ascending: true });
-
-  // Group by date in JS (simpler than a SQL pivot for v1).
-  const byDate = new Map<string, typeof rows>();
-  for (const r of rows ?? []) {
-    const list = byDate.get(r.business_date as string) ?? [];
-    list.push(r);
-    byDate.set(r.business_date as string, list);
-  }
+  // Same ceiling as the export so page and CSV can never disagree; the page
+  // says so when it bites.
+  const { byDate, truncated } = await loadDailyRevenue(admin, params, REPORT_EXPORT_MAX_ROWS);
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
@@ -47,11 +33,18 @@ export default async function DailyRevenuePage({
           <label>From <input type="date" name="from" defaultValue={from} className="rounded border px-2 py-1" /></label>
           <label>To <input type="date" name="to" defaultValue={to} className="rounded border px-2 py-1" /></label>
           <button type="submit" className="min-h-[44px] rounded border px-3 py-1">Apply</button>
+          <ExportCsvLink href={dailyRevenueCsvHref(params)} />
         </form>
       </header>
 
+      {truncated ? (
+        <p className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          Showing the first {REPORT_EXPORT_MAX_ROWS.toLocaleString("en-PH")} service-days — narrow the range.
+        </p>
+      ) : null}
+
       {[...byDate.entries()].map(([date, list]) => {
-        const total = list!.reduce((s, r) => s + Number(r.revenue_php ?? 0), 0);
+        const total = list.reduce((s, r) => s + Number(r.revenue_php ?? 0), 0);
         return (
           <section key={date} className="mb-6 rounded-lg border bg-white p-4 shadow-sm">
             <header className="mb-2 flex justify-between">
@@ -59,9 +52,9 @@ export default async function DailyRevenuePage({
               <span className="font-mono font-semibold">{PESO(total)}</span>
             </header>
             <ul className="text-sm">
-              {list!.map((r) => (
-                <li key={r.service_code as string} className="flex justify-between border-t py-1">
-                  <span><code className="mr-2">{r.service_code as string}</code>{r.service_name as string} <span className="text-[color:var(--color-brand-text-soft)]">({r.service_kind as string} · {r.released_count} releases)</span></span>
+              {list.map((r) => (
+                <li key={r.service_code} className="flex justify-between border-t py-1">
+                  <span><code className="mr-2">{r.service_code}</code>{r.service_name} <span className="text-[color:var(--color-brand-text-soft)]">({r.service_kind} · {r.released_count} releases)</span></span>
                   <span className="font-mono">{PESO(Number(r.revenue_php ?? 0))}</span>
                 </li>
               ))}
