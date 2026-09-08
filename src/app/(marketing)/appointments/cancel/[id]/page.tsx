@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { CONTACT } from "@/lib/marketing/site";
+import { appointmentStatusLabel } from "@/lib/appointments/labels";
 import { CancelButton } from "./cancel-button";
 import { TrackedTelLink } from "@/components/marketing/tracked-tel-link";
 
@@ -73,7 +74,7 @@ export default async function CancelAppointmentPage({ params }: Props) {
         <Field label="When" value={when} />
         <Field
           label="Status"
-          value={appt.status.replace(/_/g, " ")}
+          value={appointmentStatusLabel(appt.status)}
           highlight={alreadyCancelled}
         />
       </article>

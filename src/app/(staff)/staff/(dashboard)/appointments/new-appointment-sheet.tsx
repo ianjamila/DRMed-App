@@ -20,6 +20,10 @@ import { KINDS_PER_BRANCH, BOOKING_BRANCHES, type BookingBranch } from "@/lib/va
 import type { StaffBookingInput } from "@/lib/validations/staff-booking";
 import type { BookingConflict } from "@/lib/appointments/timing";
 import {
+  PRE_REGISTERED_LABEL_SHORT,
+  PRE_REGISTERED_BADGE_CLASS,
+} from "@/lib/patients/labels";
+import {
   createStaffAppointmentAction,
   searchPatientsAction,
   getPatientUpcomingAppointmentsAction,
@@ -325,8 +329,10 @@ export function NewAppointmentSheet({
                           <span className="font-semibold">
                             {p.last_name}, {p.first_name}
                             {p.pre_registered ? (
-                              <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-900">
-                                Pre-reg
+                              <span
+                                className={`ml-2 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${PRE_REGISTERED_BADGE_CLASS}`}
+                              >
+                                {PRE_REGISTERED_LABEL_SHORT}
                               </span>
                             ) : null}
                           </span>

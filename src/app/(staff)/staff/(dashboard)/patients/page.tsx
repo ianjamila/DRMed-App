@@ -3,6 +3,10 @@ import { createClient } from "@/lib/supabase/server";
 import { formatPhoneLocal } from "@/lib/format/phone";
 import { patientSearchOrClauses } from "@/lib/patients/search";
 import { formatPatientName } from "@/lib/patients/format-name";
+import {
+  PRE_REGISTERED_LABEL_VERIFY,
+  PRE_REGISTERED_BADGE_CLASS,
+} from "@/lib/patients/labels";
 import { PatientsSearchInput } from "./search-input";
 import { PageHeader } from "@/components/staff/page-header";
 import { Panel } from "@/components/ui/panel";
@@ -137,8 +141,10 @@ export default async function PatientsPage({ searchParams }: SearchProps) {
                     </td>
                     <td className="px-4 py-3">
                       {p.pre_registered ? (
-                        <span className="rounded-md bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900">
-                          Pre-registered · verify
+                        <span
+                          className={`rounded-md px-2 py-0.5 text-xs font-semibold ${PRE_REGISTERED_BADGE_CLASS}`}
+                        >
+                          {PRE_REGISTERED_LABEL_VERIFY}
                         </span>
                       ) : (
                         <span className="text-xs text-[color:var(--color-brand-text-soft)]">

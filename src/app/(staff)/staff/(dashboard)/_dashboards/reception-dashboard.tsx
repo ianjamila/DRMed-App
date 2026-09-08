@@ -396,8 +396,8 @@ export async function ReceptionDashboard({
           <StatCard
             label="Pending release"
             value={stats.pendingRelease}
-            hint="Results ready, awaiting payment"
-            href="/staff/queue?filter=pending_release"
+            hint="Results ready, awaiting release"
+            href="/staff/visits/queue?stage=processing"
           />
         )}
         {show("reception.walk_ins_waiting") && (

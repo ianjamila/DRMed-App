@@ -1,4 +1,6 @@
+import Link from "next/link";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
+import { createClient } from "@/lib/supabase/server";
 import { ChangePasswordForm } from "./change-password-form";
 import { Panel } from "@/components/ui/panel";
 
@@ -16,6 +18,12 @@ const ROLE_LABEL: Record<string, string> = {
 
 export default async function ProfilePage() {
   const session = await requireActiveStaff();
+
+  // Mirrors the detection in /staff/mfa itself: a verified TOTP factor means
+  // two-step sign-in is already on for this account.
+  const supabase = await createClient();
+  const { data: factors } = await supabase.auth.mfa.listFactors();
+  const hasMfa = !!factors?.totp?.[0];
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6 lg:px-8">
@@ -72,6 +80,34 @@ export default async function ProfilePage() {
         <div className="mt-4">
           <ChangePasswordForm />
         </div>
+      </Panel>
+
+      <Panel className="mt-6 p-6">
+        <h2 className="font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">
+          Two-step sign-in
+        </h2>
+        <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
+          {hasMfa
+            ? "On — a one-time code from your authenticator app is required at sign-in."
+            : "Off — add a one-time code from your phone as a second sign-in step."}
+        </p>
+        {/* Only the "off" state gets a link. /staff/mfa redirects straight
+            back to /staff once the session is aal2, which an enrolled user
+            reaching this page normally is (unless the
+            FEATURE_STAFF_MFA_REQUIRED escape hatch in require-staff.ts is
+            off), so a "manage" link would dead-end. There is no standalone
+            management screen and no admin-side reset action yet, so the
+            copy above deliberately promises neither. */}
+        {hasMfa ? null : (
+          <div className="mt-4">
+            <Link
+              href="/staff/mfa"
+              className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
+            >
+              Set up two-step sign-in
+            </Link>
+          </div>
+        )}
       </Panel>
     </div>
   );

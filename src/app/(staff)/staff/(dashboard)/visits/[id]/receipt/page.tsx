@@ -7,6 +7,7 @@ import { CONTACT, SITE } from "@/lib/marketing/site";
 import { getPatientConsentState } from "@/lib/consent/gate";
 import { formatPatientName } from "@/lib/patients/format-name";
 import { shouldPrintReceipt } from "@/lib/visits/receipt-policy";
+import { hasStatutoryDiscountLine } from "@/lib/pricing/statutory";
 import { NoReceiptNotice } from "@/components/staff/no-receipt-notice";
 import { PrintButton } from "./print-button";
 
@@ -137,6 +138,24 @@ export default async function ReceiptPage({ params }: Props) {
 
   const consent = await getPatientConsentState(patient.id);
 
+  // Statutory (Senior/PWD) codes from the admin-managed catalog — detection
+  // reads this flag, not the `senior_pwd_20` literal, so a future
+  // admin-created statutory discount is picked up automatically.
+  const { data: statutoryDiscountRows, error: statutoryDiscountErr } =
+    await supabase.from("discount_types").select("code").eq("is_statutory", true);
+  if (statutoryDiscountErr) {
+    // An empty set silently drops the Senior/PWD block from a printed
+    // receipt, which is a statutory field — so never let the failure pass
+    // unrecorded, even though staff RLS makes it unlikely.
+    console.error(
+      "receipt: statutory discount lookup failed",
+      statutoryDiscountErr.message,
+    );
+  }
+  const statutoryDiscountCodes = new Set(
+    (statutoryDiscountRows ?? []).map((d) => d.code),
+  );
+
   const lines = (visit.test_requests ?? []).map((tr) => {
     const svc = Array.isArray(tr.services) ? tr.services[0] : tr.services;
     const base = tr.base_price_php ?? svc?.price_php ?? 0;
@@ -198,7 +217,7 @@ export default async function ReceiptPage({ params }: Props) {
   const subtotal = lines.reduce((s, l) => s + Number(l.base), 0);
   const totalDiscount = lines.reduce((s, l) => s + Number(l.discount), 0);
   const total = lines.reduce((s, l) => s + Number(l.final), 0);
-  const hasSeniorPwdLine = lines.some((l) => l.discountKind === "senior_pwd_20");
+  const hasSeniorPwdLine = hasStatutoryDiscountLine(lines, statutoryDiscountCodes);
 
   return (
     <div className="receipt-print mx-auto max-w-2xl px-4 py-8 sm:px-6 lg:px-8 print:p-0">

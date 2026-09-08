@@ -14,6 +14,7 @@ import {
   sectionTabClass,
 } from "@/components/staff/section-tabs-style";
 import { LabRequestLinks, type LabRequestAttachment } from "./lab-request-links";
+import { appointmentStatusLabel } from "@/lib/appointments/labels";
 
 export const metadata = {
   title: "Appointments — staff",
@@ -523,7 +524,7 @@ function GroupRow({
             STATUS_STYLE[r.status] ?? ""
           }`}
         >
-          {r.status.replace(/_/g, " ")}
+          {appointmentStatusLabel(r.status)}
         </span>
       </td>
       <td className="px-4 py-3 text-right">

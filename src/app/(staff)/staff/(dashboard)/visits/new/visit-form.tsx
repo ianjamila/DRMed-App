@@ -73,6 +73,13 @@ interface Props {
   initialCategory?: "lab" | "imaging";
   /** Active rows from the admin-managed discount_types catalog, sorted. */
   discountTypes: DiscountTypeLite[];
+  /**
+   * The "arrived" appointment reception started this visit from, if any
+   * (absent for walk-ins). Threaded through as a hidden input only — the
+   * server resolves booking-group siblings and completes the appointment
+   * after the visit is created.
+   */
+  appointmentId?: string;
 }
 
 interface LineState {
@@ -137,6 +144,7 @@ export function VisitForm({
   physicians = [],
   initialCategory,
   discountTypes,
+  appointmentId,
 }: Props) {
   const router = useRouter();
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -418,6 +426,9 @@ export function VisitForm({
   return (
     <form action={formAction} className="grid gap-6">
       <input type="hidden" name="patient_id" value={patient.id} />
+      {appointmentId ? (
+        <input type="hidden" name="appointment_id" value={appointmentId} />
+      ) : null}
       {/* State-driven submission: selections from BOTH tabs submit even when
           their tab isn't active. The visible checkboxes are nameless toggles
           bound to `selected`; these hidden inputs are the form's source of

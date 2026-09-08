@@ -14,13 +14,18 @@ export const metadata = {
 };
 
 interface Props {
-  searchParams: Promise<{ patient_id?: string; q?: string; filter?: string }>;
+  searchParams: Promise<{
+    patient_id?: string;
+    appointment_id?: string;
+    q?: string;
+    filter?: string;
+  }>;
 }
 
 const PICKER_LIMIT = 25;
 
 export default async function NewVisitPage({ searchParams }: Props) {
-  const { patient_id, q, filter } = await searchParams;
+  const { patient_id, appointment_id, q, filter } = await searchParams;
   const initialCategory: "lab" | "imaging" | undefined =
     filter === "lab" || filter === "imaging" ? filter : undefined;
 
@@ -136,6 +141,7 @@ export default async function NewVisitPage({ searchParams }: Props) {
             is_statutory: d.is_statutory,
           }))}
           initialCategory={initialCategory}
+          appointmentId={appointment_id}
           hmoProviders={hmoProviders ?? []}
           physicians={(physicians ?? []).map((p) => ({
             id: p.id,

@@ -2,6 +2,10 @@ import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { Panel } from "@/components/ui/panel";
+import {
+  PRE_REGISTERED_LABEL,
+  PRE_REGISTERED_BADGE_CLASS,
+} from "@/lib/patients/labels";
 
 export const metadata = { title: "Patients without consent — staff" };
 export const dynamic = "force-dynamic";
@@ -134,8 +138,10 @@ export default async function PatientsWithoutConsentPage() {
                           {name}
                         </Link>
                         {p.pre_registered ? (
-                          <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800">
-                            Pre-registered
+                          <span
+                            className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${PRE_REGISTERED_BADGE_CLASS}`}
+                          >
+                            {PRE_REGISTERED_LABEL}
                           </span>
                         ) : null}
                       </td>
