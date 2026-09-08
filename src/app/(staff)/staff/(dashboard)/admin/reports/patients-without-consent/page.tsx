@@ -2,6 +2,11 @@ import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { Panel } from "@/components/ui/panel";
+import { ExportCsvLink } from "@/components/staff/export-csv-link";
+import {
+  loadPatientsWithoutConsent,
+  patientsWithoutConsentCsvHref,
+} from "@/lib/reports/patients-without-consent";
 import {
   PRE_REGISTERED_LABEL,
   PRE_REGISTERED_BADGE_CLASS,
@@ -23,47 +28,8 @@ export default async function PatientsWithoutConsentPage() {
   await requireAdminStaff();
   const admin = createAdminClient();
 
-  // Active patients (not merged tombstones) with no current data-privacy
-  // consent on file. These are exactly the rows whose result releases will
-  // block once the consent gate is switched ON.
-  const { data: patients } = await admin
-    .from("patients")
-    .select("id, drm_id, first_name, last_name, phone, email, pre_registered")
-    .eq("consent_current", false)
-    .is("merged_into_id", null)
-    .order("created_at", { ascending: false })
-    .limit(MAX_ROWS);
-
-  const rows = patients ?? [];
-  const capped = rows.length === MAX_ROWS;
-
-  // Visit stats (count + most recent visit date) via a second batched query,
-  // then folded onto each patient.
-  const patientIds = rows.map((p) => p.id);
-  const visitCount = new Map<string, number>();
-  const lastVisit = new Map<string, string>();
-  if (patientIds.length > 0) {
-    const { data: visits } = await admin
-      .from("visits")
-      .select("patient_id, visit_date")
-      .in("patient_id", patientIds);
-    for (const v of visits ?? []) {
-      if (!v.patient_id) continue;
-      visitCount.set(v.patient_id, (visitCount.get(v.patient_id) ?? 0) + 1);
-      if (v.visit_date) {
-        const prev = lastVisit.get(v.patient_id);
-        if (!prev || v.visit_date > prev) lastVisit.set(v.patient_id, v.visit_date);
-      }
-    }
-  }
-
-  // Order by last visit desc (most recently active first); patients with no
-  // visits sink to the bottom.
-  const ordered = [...rows].sort((a, b) => {
-    const av = lastVisit.get(a.id) ?? "";
-    const bv = lastVisit.get(b.id) ?? "";
-    return bv.localeCompare(av);
-  });
+  const { rows: ordered, visitCount, lastVisit, truncated: capped } = await loadPatientsWithoutConsent(admin, MAX_ROWS);
+  const rows = ordered;
 
   return (
     <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
@@ -95,6 +61,9 @@ export default async function PatientsWithoutConsentPage() {
             Consent-gate settings →
           </Link>
         </p>
+        <div className="mt-3">
+          <ExportCsvLink href={patientsWithoutConsentCsvHref()} />
+        </div>
       </header>
 
       {capped ? (

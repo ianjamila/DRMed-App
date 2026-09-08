@@ -4,7 +4,12 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { formatPhp } from "@/lib/marketing/format";
 import { Panel } from "@/components/ui/panel";
-import type { Json } from "@/types/database";
+import { ExportCsvLink } from "@/components/staff/export-csv-link";
+import {
+  deletedEntriesCsvHref,
+  loadDeletedEntries,
+  parseDeletedEntriesParams,
+} from "@/lib/reports/deleted-entries";
 
 export const metadata = { title: "Deleted queue entries — staff" };
 export const dynamic = "force-dynamic";
@@ -13,63 +18,9 @@ interface SearchProps {
   searchParams: Promise<{ start?: string; end?: string }>;
 }
 
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-
 // Hard cap so a wide-open range can't pull the whole audit log into one
 // render (same policy as the undone-releases report).
 const MAX_ROWS = 500;
-
-const DELETE_ACTIONS = ["visit.deleted", "test_request.deleted"] as const;
-const RESTORE_ACTIONS = ["visit.restored", "test_request.restored"] as const;
-const ALL_ACTIONS = [...DELETE_ACTIONS, ...RESTORE_ACTIONS];
-
-interface AuditRow {
-  id: number;
-  created_at: string;
-  actor_id: string | null;
-  action: string;
-  resource_type: string;
-  resource_id: string | null;
-  metadata: Json | null;
-}
-
-interface PatientEmbed {
-  first_name: string;
-  last_name: string;
-  drm_id: string;
-}
-
-interface VisitRow {
-  id: string;
-  visit_number: string;
-  deleted_at: string | null;
-  total_php: number;
-  patients: PatientEmbed | PatientEmbed[] | null;
-}
-
-interface TestRequestRow {
-  id: string;
-  deleted_at: string | null;
-  visit_id: string;
-  services: { name: string; code: string } | { name: string; code: string }[] | null;
-  visits:
-    | { visit_number: string; deleted_at: string | null; patients: PatientEmbed | PatientEmbed[] | null }
-    | { visit_number: string; deleted_at: string | null; patients: PatientEmbed | PatientEmbed[] | null }[]
-    | null;
-}
-
-function pluckOne<T>(v: T | T[] | null): T | null {
-  if (!v) return null;
-  return Array.isArray(v) ? (v[0] ?? null) : v;
-}
-
-// audit_log.metadata is untyped Json — narrow it to the object shape the
-// deletion writers produce before reading fields.
-function asRecord(meta: Json | null): Record<string, Json | undefined> {
-  return meta && typeof meta === "object" && !Array.isArray(meta)
-    ? (meta as Record<string, Json | undefined>)
-    : {};
-}
 
 const manilaDateTime = new Intl.DateTimeFormat("en-PH", {
   timeZone: "Asia/Manila",
@@ -82,103 +33,13 @@ export default async function DeletedEntriesPage({ searchParams }: SearchProps) 
   const sp = await searchParams;
 
   const todayISO = todayManilaISODate();
-  // Deletion is a corrective event, not routine — default to a wide window.
-  const defaultStart = new Date(`${todayISO}T00:00:00+08:00`);
-  defaultStart.setDate(defaultStart.getDate() - 90);
-  const defaultStartISO = defaultStart.toISOString().slice(0, 10);
-
-  const start = sp.start && DATE_RE.test(sp.start) ? sp.start : defaultStartISO;
-  const end = sp.end && DATE_RE.test(sp.end) ? sp.end : todayISO;
+  const params = parseDeletedEntriesParams(sp, todayISO);
+  const { start, end } = params;
 
   const admin = createAdminClient();
-
-  const { data: auditRows } = await admin
-    .from("audit_log")
-    .select("id, created_at, actor_id, action, resource_type, resource_id, metadata")
-    .in("action", ALL_ACTIONS)
-    .gte("created_at", `${start}T00:00:00+08:00`)
-    .lte("created_at", `${end}T23:59:59+08:00`)
-    .order("created_at", { ascending: false })
-    .limit(MAX_ROWS)
-    .returns<AuditRow[]>();
-
-  const rows = auditRows ?? [];
-  const capped = rows.length === MAX_ROWS;
-
-  // Current outcome of each entry — batched by resource type.
-  const visitIds = Array.from(
-    new Set(
-      rows
-        .filter((r) => r.resource_type === "visit")
-        .map((r) => r.resource_id)
-        .filter((v): v is string => !!v),
-    ),
-  );
-  const visitById = new Map<string, VisitRow>();
-  if (visitIds.length > 0) {
-    const { data: visits } = await admin
-      .from("visits")
-      .select(
-        "id, visit_number, deleted_at, total_php, patients ( first_name, last_name, drm_id )",
-      )
-      .in("id", visitIds)
-      .returns<VisitRow[]>();
-    for (const v of visits ?? []) visitById.set(v.id, v);
-  }
-
-  const trIds = Array.from(
-    new Set(
-      rows
-        .filter((r) => r.resource_type === "test_request")
-        .map((r) => r.resource_id)
-        .filter((v): v is string => !!v),
-    ),
-  );
-  const trById = new Map<string, TestRequestRow>();
-  if (trIds.length > 0) {
-    const { data: trs } = await admin
-      .from("test_requests")
-      .select(
-        `
-        id, deleted_at, visit_id,
-        services ( name, code ),
-        visits ( visit_number, deleted_at, patients ( first_name, last_name, drm_id ) )
-      `,
-      )
-      .in("id", trIds)
-      .returns<TestRequestRow[]>();
-    for (const tr of trs ?? []) trById.set(tr.id, tr);
-  }
-
-  // Staff names for the "By" column.
-  const actorIds = Array.from(
-    new Set(rows.map((r) => r.actor_id).filter((v): v is string => !!v)),
-  );
-  const staffNameById = new Map<string, string>();
-  if (actorIds.length > 0) {
-    const { data: staff } = await admin
-      .from("staff_profiles")
-      .select("id, full_name")
-      .in("id", actorIds);
-    for (const s of staff ?? []) staffNameById.set(s.id, s.full_name);
-  }
-
-  const deleteEvents = rows.filter((r) =>
-    (DELETE_ACTIONS as readonly string[]).includes(r.action),
-  );
-  const restoreEvents = rows.length - deleteEvents.length;
-  const stillDeleted = deleteEvents.filter((r) => {
-    if (!r.resource_id) return false;
-    return r.resource_type === "visit"
-      ? visitById.get(r.resource_id)?.deleted_at != null
-      : trById.get(r.resource_id)?.deleted_at != null;
-  }).length;
-  const deletedValue = deleteEvents.reduce((sum, r) => {
-    const meta = asRecord(r.metadata);
-    const amount =
-      r.resource_type === "visit" ? meta.total_php : meta.final_price_php;
-    return sum + (typeof amount === "number" ? amount : 0);
-  }, 0);
+  const { entries, summary, truncated: capped } = await loadDeletedEntries(admin, params, MAX_ROWS);
+  const rows = entries;
+  const { deleteEvents, restoreEvents, stillDeleted, deletedValue } = summary;
 
   return (
     <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
@@ -242,12 +103,13 @@ export default async function DeletedEntriesPage({ searchParams }: SearchProps) 
         >
           Apply
         </button>
+        <ExportCsvLink href={deletedEntriesCsvHref(params)} />
       </form>
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryTile
           label="Delete events"
-          value={String(deleteEvents.length)}
+          value={String(deleteEvents)}
           hint={`${start} → ${end}`}
         />
         <SummaryTile
@@ -296,133 +158,74 @@ export default async function DeletedEntriesPage({ searchParams }: SearchProps) 
                 </tr>
               </thead>
               <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
-                {rows.map((r) => {
-                  const meta = asRecord(r.metadata);
-                  const isDelete = (
-                    DELETE_ACTIONS as readonly string[]
-                  ).includes(r.action);
-                  const isVisit = r.resource_type === "visit";
-
-                  const visitRow =
-                    isVisit && r.resource_id
-                      ? visitById.get(r.resource_id)
-                      : undefined;
-                  const trRow =
-                    !isVisit && r.resource_id
-                      ? trById.get(r.resource_id)
-                      : undefined;
-                  const trVisit = pluckOne(trRow?.visits ?? null);
-                  const patient = isVisit
-                    ? pluckOne(visitRow?.patients ?? null)
-                    : pluckOne(trVisit?.patients ?? null);
-                  const svc = pluckOne(trRow?.services ?? null);
-                  const visitNumber = isVisit
-                    ? (visitRow?.visit_number ??
-                      (typeof meta.visit_number === "string" ||
-                      typeof meta.visit_number === "number"
-                        ? String(meta.visit_number)
-                        : null))
-                    : (trVisit?.visit_number ?? null);
-                  const visitHref = isVisit
-                    ? r.resource_id
-                      ? `/staff/visits/${r.resource_id}`
-                      : null
-                    : trRow
-                      ? `/staff/visits/${trRow.visit_id}`
-                      : typeof meta.visit_id === "string"
-                        ? `/staff/visits/${meta.visit_id}`
-                        : null;
-                  const amount = isVisit
-                    ? typeof meta.total_php === "number"
-                      ? meta.total_php
-                      : null
-                    : typeof meta.final_price_php === "number"
-                      ? meta.final_price_php
-                      : null;
-                  const currentlyDeleted = isVisit
-                    ? (visitRow?.deleted_at ?? null) != null
-                    : (trRow?.deleted_at ?? null) != null ||
-                      (trVisit?.deleted_at ?? null) != null;
-
+                {rows.map((e) => {
                   return (
-                    <tr key={r.id}>
+                    <tr key={e.id}>
                       <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-[color:var(--color-brand-text-soft)]">
-                        {manilaDateTime.format(new Date(r.created_at))}
+                        {manilaDateTime.format(new Date(e.createdAt))}
                       </td>
                       <td className="px-4 py-3">
                         <span
                           className={`rounded-md px-2 py-0.5 text-xs font-semibold ${
-                            isDelete
+                            e.isDelete
                               ? "bg-red-100 text-red-900"
                               : "bg-emerald-100 text-emerald-900"
                           }`}
                         >
-                          {isDelete ? "Deleted" : "Restored"}
+                          {e.isDelete ? "Deleted" : "Restored"}
                         </span>
                       </td>
                       <td className="px-4 py-3">
-                        {patient ? (
+                        {e.patient ? (
                           <>
-                            {patient.last_name}, {patient.first_name}{" "}
+                            {e.patient.last_name}, {e.patient.first_name}{" "}
                             <span className="font-mono text-xs text-[color:var(--color-brand-text-soft)]">
-                              {patient.drm_id}
+                              {e.patient.drm_id}
                             </span>
                           </>
                         ) : (
                           "—"
                         )}
                         <p className="font-mono text-xs text-[color:var(--color-brand-text-soft)]">
-                          {visitHref ? (
-                            <Link href={visitHref} className="hover:underline">
-                              #{visitNumber ?? "—"}
+                          {e.visitHref ? (
+                            <Link href={e.visitHref} className="hover:underline">
+                              #{e.visitNumber ?? "—"}
                             </Link>
                           ) : (
-                            <>#{visitNumber ?? "—"}</>
+                            <>#{e.visitNumber ?? "—"}</>
                           )}
                         </p>
                       </td>
                       <td className="px-4 py-3">
-                        {isVisit ? (
+                        {e.isVisit ? (
                           <>
                             Entire visit
-                            {typeof meta.active_test_count === "number" ? (
+                            {e.activeTestCount != null ? (
                               <p className="text-[10px] text-[color:var(--color-brand-text-soft)]">
-                                {meta.active_test_count}{" "}
-                                {meta.active_test_count === 1
-                                  ? "test"
-                                  : "tests"}
+                                {e.activeTestCount}{" "}
+                                {e.activeTestCount === 1 ? "test" : "tests"}
                               </p>
                             ) : null}
                           </>
                         ) : (
                           <>
-                            {svc?.name ??
-                              (typeof meta.service_name === "string"
-                                ? meta.service_name
-                                : "—")}
+                            {e.serviceName ?? "—"}
                             <p className="font-mono text-[10px] text-[color:var(--color-brand-text-soft)]">
-                              {svc?.code ??
-                                (typeof meta.service_code === "string"
-                                  ? meta.service_code
-                                  : "")}
-                              {meta.is_package_header === true
-                                ? " · package"
-                                : ""}
+                              {e.serviceCode ?? ""}
+                              {e.isPackageHeader ? " · package" : ""}
                             </p>
                           </>
                         )}
                       </td>
-                      <td className="px-4 py-3">
-                        {staffNameById.get(r.actor_id ?? "") ?? "—"}
-                      </td>
+                      <td className="px-4 py-3">{e.actorName ?? "—"}</td>
                       <td className="max-w-xs px-4 py-3 text-xs text-[color:var(--color-brand-text-mid)]">
-                        {typeof meta.reason === "string" ? meta.reason : "—"}
+                        {e.reason ?? "—"}
                       </td>
                       <td className="px-4 py-3 text-right font-mono text-xs">
-                        {amount != null && amount > 0 ? formatPhp(amount) : "—"}
+                        {e.amount != null && e.amount > 0 ? formatPhp(e.amount) : "—"}
                       </td>
                       <td className="px-4 py-3 text-xs">
-                        {currentlyDeleted ? (
+                        {e.currentlyDeleted ? (
                           <span className="font-semibold text-red-700">
                             Still deleted
                           </span>

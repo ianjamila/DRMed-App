@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { ClaimButton } from "../claim-button";
 import { ReassignPanel } from "./reassign-panel";
+import { UnclaimOwnButton } from "./unclaim-own-button";
 import { UploadResultForm } from "./upload-form";
 import { ViewResultButton } from "./view-result-button";
 import { StructuredResultForm } from "./structured-form";
@@ -233,6 +234,11 @@ export default async function QueueTestDetailPage({ params }: Props) {
   // Admin-only reassignment data: current assignee's name + the roster of
   // active lab-capable staff the claim could move to.
   const showReassignPanel = session.role === "admin" && !!test.assigned_to;
+  // Self-service unclaim for the holder. Admin gets the ReassignPanel (which
+  // already has Unclaim) instead, so the two never render together. The
+  // Server Action re-proves ownership + status; this is UX, not the guard.
+  const showSelfUnclaim =
+    !showReassignPanel && ownedByMe && test.status === "in_progress";
   let assigneeName = "—";
   let labStaff: Array<{ id: string; full_name: string; role: string }> = [];
   if (showReassignPanel) {
@@ -336,6 +342,9 @@ export default async function QueueTestDetailPage({ params }: Props) {
               assigneeName={assigneeName}
               labStaff={labStaff}
             />
+          ) : null}
+          {showSelfUnclaim ? (
+            <UnclaimOwnButton testRequestId={test.id} />
           ) : null}
         </div>
       </section>

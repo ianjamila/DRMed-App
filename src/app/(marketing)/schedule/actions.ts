@@ -16,6 +16,7 @@ import { notifyAppointmentBooked } from "@/lib/notifications/notify-appointment-
 import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit/check";
 import { resolvePatient } from "@/lib/patients/resolve";
 import { createAppointmentGroup, createLabRequestOnlyBooking, type PatientResolution } from "@/lib/appointments/create";
+import { selfRegistrationGrant, shouldRecordBookingConsent } from "@/lib/consent/self-registration";
 import type { ServiceRow } from "@/lib/appointments/timing";
 import { validateLabRequestGate, parseIntakePreference } from "@/lib/appointments/lab-request";
 import { sendMetaCapiEvent } from "@/lib/analytics/meta-capi";
@@ -364,6 +365,42 @@ export async function submitBookingAction(_prev: BookingResult | null, formData:
     return { ok: false, error: result.error };
   }
 
+  // RA 10173: the required "Service agreement" tick is a consent grant, but
+  // only for a patient this booking CREATED. A dedup match, an existing
+  // patient or a portal booking never gets its consent re-affirmed from a
+  // public form — same rule as /register. The sync_patient_consent_state
+  // trigger flips patients.consent_current on insert.
+  let consentRecorded = false;
+  if (
+    result.patient.patientId &&
+    shouldRecordBookingConsent(result.patient.resolution, data.service_agreement)
+  ) {
+    const { error: consentError } = await admin
+      .from("patient_consents")
+      .insert(
+        selfRegistrationGrant({
+          patientId: result.patient.patientId,
+          ip: requestIp,
+          userAgent,
+        }),
+      );
+    if (consentError) {
+      // The booking exists — don't fail it. Surface the gap so staff can
+      // capture consent at the counter instead.
+      await reportError({
+        scope: "schedule/consent-grant",
+        error: consentError,
+        metadata: {
+          code: consentError.code,
+          patient_id: result.patient.patientId,
+          booking_group_id: result.bookingGroupId,
+        },
+      });
+    } else {
+      consentRecorded = true;
+    }
+  }
+
   // Upload the form(s) now that we have a booking_group_id + resolved patient.
   if (labRequestFiles.length > 0) {
     await storeLabRequestFiles(
@@ -399,6 +436,7 @@ export async function submitBookingAction(_prev: BookingResult | null, formData:
       home_service_requested: data.branch === "home_service",
       physician_id: physicianId,
       patient_resolution: result.patient.resolution,
+      consent_recorded: consentRecorded,
       via: isPortalSource ? "portal" : "schedule",
       lab_request_attached: labRequestFiles.length > 0,
       lab_request_count: labRequestFiles.length,

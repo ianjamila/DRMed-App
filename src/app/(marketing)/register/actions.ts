@@ -8,7 +8,7 @@ import { reportError } from "@/lib/observability/report-error";
 import { resolvePatient } from "@/lib/patients/resolve";
 import { findCandidatesForInput } from "@/lib/patients/find-duplicates";
 import { sendEmail } from "@/lib/notifications/email";
-import { CURRENT_CONSENT_NOTICE_VERSION } from "@/lib/consent/notice";
+import { selfRegistrationGrant } from "@/lib/consent/self-registration";
 import { RegistrationSchema } from "@/lib/validations/registration";
 import { SITE } from "@/lib/marketing/site";
 import { sendMetaCapiEvent } from "@/lib/analytics/meta-capi";
@@ -190,16 +190,9 @@ export async function submitRegistrationAction(
   // New registrant: record the RA-10173 consent the form required (the
   // sync_patient_consent_state trigger flips patients.consent_current = true),
   // then email + show the DRM-ID.
-  await admin.from("patient_consents").insert({
-    patient_id: res.id,
-    event_type: "granted",
-    method: "self_registration",
-    notice_version: CURRENT_CONSENT_NOTICE_VERSION,
-    signatory: "self",
-    actor_kind: "patient",
-    ip,
-    user_agent: ua,
-  });
+  await admin
+    .from("patient_consents")
+    .insert(selfRegistrationGrant({ patientId: res.id, ip, userAgent: ua }));
 
   // Optional marketing opt-in. Mirror the schedule form's subscribe: insert a
   // fresh subscriber, or re-consent a previously-unsubscribed one, preserving

@@ -8,6 +8,8 @@ import { createClient } from "@/lib/supabase/server";
 import { audit } from "@/lib/audit/log";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { labQueueGate } from "@/lib/visits/lab-gate";
+import { sectionsForRole } from "@/lib/auth/role-sections";
+import { scopeToAllowedSections } from "@/lib/visits/bulk-selection";
 import {
   finaliseConsolidatedReport,
   type FinaliseResult,
@@ -31,7 +33,7 @@ export async function claimConsolidated(
     const { data: members } = await supabase
       .from("test_requests")
       .select(
-        "id, deleted_at, visits!inner ( deleted_at, payment_status, hmo_provider_id )",
+        "id, deleted_at, services!inner ( section, name ), visits!inner ( deleted_at, payment_status, hmo_provider_id )",
       )
       .in("id", testRequestIds);
     if (!members || members.length !== testRequestIds.length) {
@@ -49,6 +51,17 @@ export async function claimConsolidated(
     for (const m of members) {
       const gate = labQueueGate(m.visits);
       if (!gate.ok) return { ok: false, error: gate.hint };
+    }
+    // Section gate, server-side — same rule as claimTestAction: RLS is
+    // role-only, so the caller must be allowed every section in the report.
+    if (
+      scopeToAllowedSections(members, sectionsForRole(session.role)).length !==
+      members.length
+    ) {
+      return {
+        ok: false,
+        error: "This report is outside the sections you can claim.",
+      };
     }
 
     // Only claim if every member is still 'requested' — concurrency-safe,

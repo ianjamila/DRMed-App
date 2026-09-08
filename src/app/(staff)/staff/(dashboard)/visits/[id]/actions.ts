@@ -60,6 +60,31 @@ export async function releaseTestAction(
   }
   const session = await requireActiveStaff();
   const supabase = await createClient();
+
+  // Section gate, server-side (mirrors releaseSelectedAction). RLS on
+  // test_requests is role-only, not section-aware (0023), so the action has to
+  // prove the row sits in a section this role may release. Doctor lines carry
+  // a null section and therefore survive only for admin/pathologist (null =
+  // unrestricted) — see scopeToAllowedSections.
+  const allowedSections = sectionsForRole(session.role);
+  const { data: candidate } = await supabase
+    .from("test_requests")
+    .select("id, services!inner ( section, name )")
+    .eq("id", testRequestId)
+    .eq("visit_id", visitId)
+    .eq("status", "ready_for_release")
+    .maybeSingle();
+  if (!candidate) {
+    revalidatePath(`/staff/visits/${visitId}`);
+    return { ok: false, error: "This result is no longer ready to release." };
+  }
+  if (scopeToAllowedSections([candidate], allowedSections).length === 0) {
+    return {
+      ok: false,
+      error: "This test is outside the sections you can release.",
+    };
+  }
+
   const now = new Date().toISOString();
 
   const { data: updated, error } = await supabase
@@ -596,13 +621,27 @@ async function markDoctorLineDoneAction(
   // Guard server-side so a future/mis-wired caller can't release another kind.
   const { data: tr } = await supabase
     .from("test_requests")
-    .select("services ( kind )")
+    .select("id, services!inner ( kind, section, name )")
     .eq("id", testRequestId)
     .eq("visit_id", visitId)
     .maybeSingle();
   const svc = Array.isArray(tr?.services) ? tr?.services[0] : tr?.services;
   if (!tr || svc?.kind !== expectedKind) {
     return { ok: false, error: wrongKindError };
+  }
+
+  // Doctor lines are admin/pathologist-only. Their services carry a null
+  // section, which scopeToAllowedSections passes only for an unrestricted
+  // (null) role list — the same rule that hides them from medtech, xray and
+  // reception on the visit page. Enforced here because every export of this
+  // "use server" module is a callable endpoint.
+  const allowedSections = sectionsForRole(session.role);
+  if (scopeToAllowedSections([tr], allowedSections).length === 0) {
+    return {
+      ok: false,
+      error:
+        "Only an admin or pathologist can mark a consultation or procedure done.",
+    };
   }
 
   const now = new Date().toISOString();
