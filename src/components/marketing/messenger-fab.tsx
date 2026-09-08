@@ -5,7 +5,7 @@ import { useReducedMotion } from "motion/react";
 import { MessageCircle } from "lucide-react";
 
 import { SOCIAL } from "@/lib/marketing/site";
-import { metaTrack } from "@/lib/analytics/meta-pixel";
+import { TrackedMessengerLink } from "@/components/marketing/tracked-messenger-link";
 
 /**
  * Floating action button — fixed bottom-right — that links to the clinic's
@@ -35,12 +35,12 @@ export function MessengerFab() {
   if (!mounted) return null;
 
   return (
-    <a
+    <TrackedMessengerLink
       href={SOCIAL.messenger}
+      contentName="messenger_fab"
       target="_blank"
       rel="noopener noreferrer"
       aria-label="Message us on Facebook"
-      onClick={() => metaTrack("Contact", { content_name: "messenger_fab" })}
       className={[
         // Position
         "fixed right-[18px] bottom-[18px] z-[85]",
@@ -73,6 +73,6 @@ export function MessengerFab() {
       >
         Message us
       </span>
-    </a>
+    </TrackedMessengerLink>
   );
 }

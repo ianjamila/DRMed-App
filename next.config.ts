@@ -42,21 +42,44 @@ const withLocalSupabase = (
     ? `${directive} ${sources.map((k) => localSupabase[k]).join(" ")}`
     : directive;
 
+// Google Ads conversion tracking (src/components/marketing/google-tag.tsx).
+// gtag.js is only the entry point: it pulls a second script from
+// googleadservices.com, and the conversion itself is delivered as a pixel /
+// beacon / frame to doubleclick.net and to www.google.<tld> — Google picks the
+// country domain from the visitor's locale, hence the .com.ph entry alongside
+// .com. Miss any one of these and the tag fails **silently**: no console
+// error the user will see, no conversion, and Google Ads simply reports zero.
+// Listed host-by-host rather than as https://*.google.com so the allowance
+// stays auditable.
+const GOOGLE_ADS_SCRIPT_HOSTS =
+  "https://www.googletagmanager.com https://www.googleadservices.com";
+const GOOGLE_ADS_BEACON_HOSTS =
+  "https://www.googletagmanager.com https://www.googleadservices.com " +
+  "https://googleads.g.doubleclick.net https://www.google.com https://www.google.com.ph";
+const GOOGLE_ADS_FRAME_HOSTS =
+  "https://td.doubleclick.net https://googleads.g.doubleclick.net " +
+  "https://www.googleadservices.com";
+
 const cspDirectives: string[] = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' https://connect.facebook.net" +
+  `script-src 'self' 'unsafe-inline' https://connect.facebook.net ${GOOGLE_ADS_SCRIPT_HOSTS}` +
     (isProd ? "" : " 'unsafe-eval'"),
   "style-src 'self' 'unsafe-inline'",
   withLocalSupabase(
-    "img-src 'self' data: blob: https://*.supabase.co https://www.facebook.com",
+    "img-src 'self' data: blob: https://*.supabase.co https://www.facebook.com " +
+      GOOGLE_ADS_BEACON_HOSTS,
     "origin",
   ),
   "font-src 'self' data:",
   withLocalSupabase(
-    "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.resend.com https://www.facebook.com",
+    "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.resend.com " +
+      `https://www.facebook.com ${GOOGLE_ADS_BEACON_HOSTS}`,
     "origin",
     "ws",
   ),
+  // Previously inherited 'self' from default-src. Named explicitly now that
+  // Google's conversion ping can arrive as an iframe; 'self' is preserved.
+  `frame-src 'self' ${GOOGLE_ADS_FRAME_HOSTS}`,
   "frame-ancestors 'none'",
   "form-action 'self'",
   "base-uri 'self'",

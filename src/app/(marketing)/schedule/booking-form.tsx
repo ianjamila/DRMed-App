@@ -3,6 +3,7 @@
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { track } from "@vercel/analytics";
 import { metaTrack } from "@/lib/analytics/meta-pixel";
+import { googleAdsConversion } from "@/lib/analytics/google-ads";
 import { newEventId } from "@/lib/analytics/event-id";
 import Link from "next/link";
 import { AnimatePresence, motion, MotionConfig } from "motion/react";
@@ -341,6 +342,11 @@ export function BookingForm({
     if (eventIdRef.current) {
       metaTrack("Schedule", { content_name: branch, num_items: serviceCount }, eventIdRef.current);
     }
+    // Google Ads "Booking submitted". Carries no payload beyond the same
+    // random event id, reused as transaction_id so a reloaded success screen
+    // cannot double-count — deliberately NOT the branch or the service count,
+    // because Google's conversion has no field for them that ADR-0004 permits.
+    googleAdsConversion("booking", eventIdRef.current ?? undefined);
     // branch/doctorServiceId/selectedServiceIds are frozen once the form is submitted
     // (inputs are locked during pending → success), so the stale closure is intentional.
   // eslint-disable-next-line react-hooks/exhaustive-deps
