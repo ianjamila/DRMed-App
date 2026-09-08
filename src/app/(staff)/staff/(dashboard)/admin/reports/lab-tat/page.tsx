@@ -4,61 +4,22 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { ALL_SECTIONS } from "@/lib/auth/role-sections";
 import { Panel } from "@/components/ui/panel";
+import { ExportCsvLink } from "@/components/staff/export-csv-link";
+import { REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
+import {
+  labTatCsvHref,
+  loadLabTat,
+  median,
+  parseLabTatParams,
+  percentile,
+  SECTION_LABEL,
+} from "@/lib/reports/lab-tat";
 
 export const metadata = { title: "Lab TAT analytics — staff" };
 export const dynamic = "force-dynamic";
 
 interface SearchProps {
   searchParams: Promise<{ start?: string; end?: string; section?: string }>;
-}
-
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-interface ReleasedRow {
-  id: string;
-  requested_at: string;
-  released_at: string | null;
-  status: string;
-  services:
-    | { name: string; section: string | null; turnaround_hours: number | null }
-    | { name: string; section: string | null; turnaround_hours: number | null }[]
-    | null;
-  patients:
-    | { first_name: string; last_name: string }
-    | { first_name: string; last_name: string }[]
-    | null;
-  visits: { visit_number: string } | { visit_number: string }[] | null;
-}
-
-interface SectionMetric {
-  section: string;
-  totalReleased: number;
-  pending: number;
-  tatSamples: number[];
-  slaBreaches: number;
-  worstTatHours: number;
-  worstTatRequestId: string | null;
-}
-
-function pluckOne<T>(v: T | T[] | null): T | null {
-  if (!v) return null;
-  return Array.isArray(v) ? (v[0] ?? null) : v;
-}
-
-function median(values: number[]): number | null {
-  if (values.length === 0) return null;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0
-    ? (sorted[mid - 1] + sorted[mid]) / 2
-    : sorted[mid];
-}
-
-function percentile(values: number[], p: number): number | null {
-  if (values.length === 0) return null;
-  const sorted = [...values].sort((a, b) => a - b);
-  const idx = Math.min(sorted.length - 1, Math.floor(p * sorted.length));
-  return sorted[idx];
 }
 
 function formatHours(h: number | null): string {
@@ -69,150 +30,20 @@ function formatHours(h: number | null): string {
   return `${d}d ${rem}h`;
 }
 
-const SECTION_LABEL: Record<string, string> = {
-  chemistry: "Chemistry",
-  hematology: "Hematology",
-  immunology: "Immunology",
-  urinalysis: "Urinalysis",
-  microbiology: "Microbiology",
-  imaging_xray: "X-ray",
-  imaging_ultrasound: "Ultrasound",
-  imaging_ecg: "ECG",
-  send_out: "Send-out",
-  consultation: "Consultation",
-  procedure: "Procedure",
-  vaccine: "Vaccine",
-  home_service: "Home service",
-  package: "Package",
-};
-
 export default async function LabTatPage({ searchParams }: SearchProps) {
   await requireAdminStaff();
   const sp = await searchParams;
 
   const todayISO = todayManilaISODate();
-  const defaultStart = new Date(`${todayISO}T00:00:00+08:00`);
-  defaultStart.setDate(defaultStart.getDate() - 30);
-  const defaultStartISO = defaultStart.toISOString().slice(0, 10);
-
-  const start = sp.start && DATE_RE.test(sp.start) ? sp.start : defaultStartISO;
-  const end = sp.end && DATE_RE.test(sp.end) ? sp.end : todayISO;
-  const sectionFilter = sp.section && ALL_SECTIONS.includes(sp.section as (typeof ALL_SECTIONS)[number])
-    ? sp.section
-    : "";
+  const params = parseLabTatParams(sp, todayISO);
+  const { start, end, section: sectionFilter } = params;
 
   const admin = createAdminClient();
-
-  // Released test_requests in the window (for TAT samples).
-  let releasedQ = admin
-    .from("test_requests")
-    .select(
-      `
-      id, requested_at, released_at, status,
-      services!inner ( name, section, turnaround_hours ),
-      patients ( first_name, last_name ),
-      visits ( visit_number )
-    `,
-    )
-    .eq("status", "released")
-    .gte("released_at", `${start}T00:00:00+08:00`)
-    .lte("released_at", `${end}T23:59:59+08:00`);
-  if (sectionFilter) {
-    releasedQ = releasedQ.eq("services.section", sectionFilter);
-  }
-  const { data: released } = await releasedQ.returns<ReleasedRow[]>();
-
-  // Pending = requested but not yet released, regardless of date window (we
-  // want to know what's currently stuck).
-  let pendingQ = admin
-    .from("test_requests")
-    .select("id, services!inner ( section )", { count: "exact", head: true })
-    .in("status", ["requested", "in_progress", "result_uploaded", "ready_for_release"]);
-  if (sectionFilter) {
-    pendingQ = pendingQ.eq("services.section", sectionFilter);
-  }
-  const { count: pendingTotal } = await pendingQ;
-
-  const metricsBySection = new Map<string, SectionMetric>();
-
-  function ensureSection(section: string): SectionMetric {
-    let m = metricsBySection.get(section);
-    if (!m) {
-      m = {
-        section,
-        totalReleased: 0,
-        pending: 0,
-        tatSamples: [],
-        slaBreaches: 0,
-        worstTatHours: 0,
-        worstTatRequestId: null,
-      };
-      metricsBySection.set(section, m);
-    }
-    return m;
-  }
-
-  const slaBreachRows: {
-    requestId: string;
-    section: string;
-    serviceName: string;
-    patientName: string;
-    visitNumber: string;
-    tatHours: number;
-    slaHours: number | null;
-    releasedAt: string;
-  }[] = [];
-
-  for (const tr of released ?? []) {
-    if (!tr.released_at) continue;
-    const svc = pluckOne(tr.services);
-    if (!svc) continue;
-    const sec = svc.section ?? "(unset)";
-    const m = ensureSection(sec);
-    m.totalReleased += 1;
-
-    const tatMs = Date.parse(tr.released_at) - Date.parse(tr.requested_at);
-    const tatHours = tatMs / 3_600_000;
-    // Filter outliers > 60 days as garbage data.
-    if (tatHours >= 0 && tatHours < 24 * 60) {
-      m.tatSamples.push(tatHours);
-      if (tatHours > m.worstTatHours) {
-        m.worstTatHours = tatHours;
-        m.worstTatRequestId = tr.id;
-      }
-      const slaHours = svc.turnaround_hours;
-      if (slaHours !== null && slaHours !== undefined && tatHours > slaHours) {
-        m.slaBreaches += 1;
-        if (slaBreachRows.length < 20) {
-          const p = pluckOne(tr.patients);
-          const v = pluckOne(tr.visits);
-          slaBreachRows.push({
-            requestId: tr.id,
-            section: sec,
-            serviceName: svc.name,
-            patientName: p ? `${p.last_name}, ${p.first_name}` : "Walk-in",
-            visitNumber: v?.visit_number ?? "—",
-            tatHours,
-            slaHours,
-            releasedAt: tr.released_at,
-          });
-        }
-      }
-    }
-  }
-
-  const rows = Array.from(metricsBySection.values()).sort(
-    (a, b) => b.totalReleased - a.totalReleased,
-  );
-
-  // Aggregate totals
-  const allSamples = rows.flatMap((r) => r.tatSamples);
-  const overallMedian = median(allSamples);
-  const overallP95 = percentile(allSamples, 0.95);
-  const totalReleased = rows.reduce((s, r) => s + r.totalReleased, 0);
-  const totalBreaches = rows.reduce((s, r) => s + r.slaBreaches, 0);
-  const overallBreachPct =
-    totalReleased > 0 ? Math.round((totalBreaches / totalReleased) * 100) : 0;
+  // The metrics are only right on the WHOLE window, so the page walks the
+  // same ceiling as the export and says so if it bites.
+  const { metrics: rows, slaBreachRows, pendingTotal, overall, truncated } =
+    await loadLabTat(admin, params, REPORT_EXPORT_MAX_ROWS);
+  const { median: overallMedian, p95: overallP95, totalReleased, totalBreaches, breachPct: overallBreachPct } = overall;
 
   return (
     <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
@@ -298,7 +129,14 @@ export default async function LabTatPage({ searchParams }: SearchProps) {
         >
           Apply
         </button>
+        <ExportCsvLink href={labTatCsvHref(params)} />
       </form>
+
+      {truncated ? (
+        <p className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          Metrics are computed on the first {REPORT_EXPORT_MAX_ROWS.toLocaleString("en-PH")} released tests in this window — narrow the range for exact figures.
+        </p>
+      ) : null}
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryTile
