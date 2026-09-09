@@ -40,10 +40,27 @@ Run `npm run dev` with `NEXT_PUBLIC_GOOGLE_ADS_ID` set, open
 
 ### CSP — the one that breaks silently
 
-With the tag accepted, the **Console must contain no `Refused to load` /
-`Refused to connect` message naming a Google host.** If it does, the missing
-origin belongs in `next.config.ts` (see the table in ADR-0004) — the tag will
-otherwise look mounted while every conversion is dropped in the browser.
+With the tag accepted, the Console must contain no `Refused to load` /
+`Refused to connect` message naming a Google host — **with one deliberate
+exception, below.** For anything else, the missing origin belongs in
+`next.config.ts` (see the table in ADR-0004); the tag will otherwise look
+mounted while every conversion is dropped in the browser.
+
+> **`ad.doubleclick.net/ccm/s/collect` is blocked on purpose. Do not "fix" it.**
+> On production (not on localhost — this one only shows up on the real domain)
+> the tag tries one call to `ad.doubleclick.net` and the CSP refuses it. That
+> host is Google's advertising cookie-sync / remarketing endpoint, which
+> ADR-0004 forbids for a health provider; it is not on the allowlist, and it
+> should stay off it. Conversions do not travel through it — they use
+> `googleadservices.com` → `googleads.g.doubleclick.net` → `www.google.<tld>`,
+> verified separately — so a console error naming *this* host means the policy
+> is doing its job. Adding it would quietly re-open the remarketing sync the
+> `allow_ad_personalization_signals: false` setting exists to prevent.
+>
+> Confirmed on `https://drmed.ph` on 2026-09-09. If Part 3 ever shows
+> conversions failing to register on production while everything else here
+> passes, this is the first assumption to re-test — but do not widen the CSP
+> speculatively to chase it.
 
 ```
 Network tab, after Accept — expected 200:
@@ -154,10 +171,27 @@ because a real `/schedule` submission needs a database behind it.
 
 ## Part 2 — Create the two conversion actions (Google Ads UI, once)
 
-The code ships with `NEXT_PUBLIC_GOOGLE_ADS_ID` set and both labels blank,
-because a label only exists once its conversion action does. Until a label is
-filled in, that conversion is silently disabled — by design, so the tag can go
-live before the actions exist.
+> **Prerequisite, and the first thing to check: `NEXT_PUBLIC_GOOGLE_ADS_ID` is
+> not set in Vercel production.** Verified against the live site on 2026-09-09,
+> straight after this feature merged: the new code is deployed (the CSP names
+> the Google hosts, and the client bundle carries the `ga-disable` flags), but
+> with consent granted `window.gtag` is still `undefined` and the tag id
+> appears nowhere in the served page. **The tracking is inert until someone
+> adds it.**
+>
+> Vercel → project → Settings → Environment Variables →
+> `NEXT_PUBLIC_GOOGLE_ADS_ID` = `AW-868551722`, Production, then **redeploy**.
+> It is a `NEXT_PUBLIC_*` var, inlined at build time, so setting it without a
+> redeploy changes nothing.
+>
+> This is the feature's whole failure mode in miniature: everything looks
+> shipped, nothing is measured, and no error is raised anywhere. Re-run the
+> Part 1 browser checks against `https://drmed.ph` after the redeploy — if
+> `window.gtag` is still undefined with consent granted, the var did not take.
+
+The code ships both conversion **labels blank**, because a label only exists
+once its conversion action does. Until a label is filled in, that conversion is
+silently disabled — by design, so the tag can go live before the actions exist.
 
 For each of **Booking submitted** and **Messenger chat started**:
 
@@ -172,7 +206,9 @@ For each of **Booking submitted** and **Messenger chat started**:
    sends a per-conversion value — ADR-0004 explains why.
 6. **Tag setup → Install the tag yourself.** The event snippet shows
    `'send_to': 'AW-868551722/<label>'`. Copy **only the part after the slash**.
-7. Put the two labels in Vercel → project → Settings → Environment Variables:
+7. Put the labels in Vercel → project → Settings → Environment Variables,
+   alongside the tag id from the prerequisite above:
+   - `NEXT_PUBLIC_GOOGLE_ADS_ID` = `AW-868551722` (if not already set)
    - `NEXT_PUBLIC_GOOGLE_ADS_BOOKING_LABEL`
    - `NEXT_PUBLIC_GOOGLE_ADS_MESSENGER_LABEL`
 
@@ -254,9 +290,9 @@ matching id from `UNWANTED_TAG_DESTINATIONS` in
 
 | Symptom | Likely cause |
 |---|---|
-| No `gtag/js` request at all | Consent not granted, or `NEXT_PUBLIC_GOOGLE_ADS_ID` unset in that environment |
+| No `gtag/js` request at all | Consent not granted, or `NEXT_PUBLIC_GOOGLE_ADS_ID` unset in that environment — **as it was on production at merge time**. Check it first; it is the single most likely cause |
 | `gtag/js` loads, conversion never fires | The action's label env var is blank, or the site was not redeployed after setting it |
-| Console `Refused to …` naming a Google host | CSP in `next.config.ts` is missing that origin |
+| Console `Refused to …` naming a Google host | CSP in `next.config.ts` is missing that origin — **unless it names `ad.doubleclick.net`, which is blocked deliberately** (see Part 1) |
 | Conversions counted twice | The codeless `Book appointment` action is still primary — demote it |
 | Conversions land but show as Direct | The visitor did not arrive on a `gclid` link, or auto-tagging is off in the account |
 | Everything looks right, still zero | Check an ad blocker is not eating the tag in your own browser before assuming a code fault |
