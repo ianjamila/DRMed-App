@@ -8,6 +8,7 @@ import {
   postJournalEntryAction,
   deleteDraftJournalEntryAction,
 } from "@/lib/actions/accounting/journal-entries";
+import { pluckOne } from "@/lib/reports/format";
 
 const PHP = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
 
@@ -38,11 +39,6 @@ type Je = {
   reversed_by_je: JeStub;
   source_link: { label: string; href: string } | null;
 };
-
-function pluckOne<T>(v: T | T[] | null): T | null {
-  if (!v) return null;
-  return Array.isArray(v) ? (v[0] ?? null) : v;
-}
 
 export function JournalDetailClient({ je }: { je: Je }) {
   const router = useRouter();

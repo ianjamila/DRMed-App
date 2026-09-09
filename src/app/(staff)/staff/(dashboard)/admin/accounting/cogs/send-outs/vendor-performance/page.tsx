@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
+import { pluckOne } from "@/lib/reports/format";
 
 export const metadata = { title: "Send-out vendor performance — staff" };
 export const dynamic = "force-dynamic";
@@ -60,11 +61,6 @@ interface VendorMetric {
   truedUpBilled: number;
   variance: number;
   trueupCount: number;
-}
-
-function pluckOne<T>(v: T | T[] | null): T | null {
-  if (!v) return null;
-  return Array.isArray(v) ? (v[0] ?? null) : v;
 }
 
 function median(values: number[]): number | null {

@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/card";
 import { CircleAlert } from "lucide-react";
 import { StatusBadge } from "@/lib/ui/status-badge";
+import { pluckOne } from "@/lib/reports/format";
 
 const PHP = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
 
@@ -101,11 +102,6 @@ type JournalEntry = {
   status: string;
   posting_date: string;
 };
-
-function pluckOne<T>(v: T | T[] | null): T | null {
-  if (!v) return null;
-  return Array.isArray(v) ? (v[0] ?? null) : v;
-}
 
 export function BillDetailClient({
   bill,
