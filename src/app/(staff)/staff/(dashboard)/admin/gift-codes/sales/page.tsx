@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { formatPhp } from "@/lib/marketing/format";
 import { Panel } from "@/components/ui/panel";
+import { ExportCsvLink } from "@/components/staff/export-csv-link";
 
 export const metadata = { title: "Gift code sales — staff" };
 
@@ -148,12 +149,9 @@ export default async function SalesPage({ searchParams }: PageProps) {
         >
           Apply
         </button>
-        <a
-          href={csvHref}
-          className="ml-auto rounded-md border border-[color:var(--color-brand-navy)] bg-white px-4 py-2 text-sm font-bold text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-bg)]"
-        >
-          Export CSV
-        </a>
+        <div className="ml-auto">
+          <ExportCsvLink href={csvHref} />
+        </div>
       </form>
 
       <section className="mb-6 grid gap-4 sm:grid-cols-3">

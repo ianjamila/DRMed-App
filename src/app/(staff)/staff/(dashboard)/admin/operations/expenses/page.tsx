@@ -20,7 +20,7 @@ import {
   type ExpenseAccountRow,
   type PnlRow,
 } from "@/lib/operations/expense-report";
-import { buttonVariants } from "@/components/ui/button";
+import { ExportCsvLink } from "@/components/staff/export-csv-link";
 import { Card } from "@/components/ui/card";
 import { OperationsTabs } from "../_components/operations-tabs";
 import { DateControls } from "../_components/date-controls";
@@ -122,9 +122,7 @@ export default async function ExpensesPnlPage({
     <div className="p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold text-[color:var(--color-brand-navy)]">Operations</h1>
-        <a href={csvHref} className={buttonVariants({ variant: "outline", size: "sm" })}>
-          Export CSV
-        </a>
+        <ExportCsvLink href={csvHref} />
       </div>
       <OperationsTabs />
 
