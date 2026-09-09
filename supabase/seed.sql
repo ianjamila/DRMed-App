@@ -52,3 +52,13 @@ begin
   raise notice
     'seed.sql: granted table + sequence access in public to anon/authenticated/service_role (local reset only; RLS still governs access; function grants deliberately untouched — see 0118).';
 end $$;
+
+-- ⚠ Same hazard as the routines above, one level down: the blanket
+-- `grant all on all tables` includes VIEWS, so it hands `anon` back the SELECT
+-- that migration 0134 deliberately revoked on the two 0043 admin-report views.
+-- Prod never sees this (`db push` ignores seed.sql), so without the carve-out a
+-- fresh local database silently disagrees with prod on exactly the grant 0134
+-- exists to remove. Re-revoke, explicitly and by name — same classify-don't-
+-- blanket rule as 0118.
+revoke all on public.v_daily_revenue_by_service   from anon;
+revoke all on public.v_staff_advances_outstanding from anon;
