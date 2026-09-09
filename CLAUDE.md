@@ -25,7 +25,7 @@ Key reference artifacts:
   every post-1.0 programme (partner revisions, release lifecycle, group templates, EOD
   denomination count…). Read the spec before re-deriving a design decision.
 
-Migration ledger: **prod head = 0133**, repo↔prod in sync (2026-09-08). There is ONE
+Migration ledger: **prod head = 0134**, repo↔prod in sync (2026-09-09). There is ONE
 Supabase project (= prod, ref `qhptbmafrosgibooelpp`); there is no staging project — the
 local stack is staging.
 
