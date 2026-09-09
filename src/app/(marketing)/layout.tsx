@@ -7,6 +7,8 @@ import { MessengerFab } from "@/components/marketing/messenger-fab";
 import { HideOnPaths } from "@/components/marketing/hide-on-paths";
 import { CookieConsentProvider } from "@/components/marketing/cookie-consent";
 import { MetaPixel } from "@/components/marketing/meta-pixel";
+import { GoogleTag } from "@/components/marketing/google-tag";
+import { GOOGLE_ADS_ID } from "@/lib/analytics/google-ads";
 
 // /schedule uses the bundle's focused-funnel layout — its own header/footer,
 // no marketing nav/footer/FAB (C12). MarketingNav opts out internally.
@@ -18,6 +20,12 @@ const FOCUSED_ROUTES = ["/schedule"];
 // <MetaPixel> additionally gates on the visitor's opt-in consent.
 const META_PIXEL_ID = process.env.NEXT_PUBLIC_META_PIXEL_ID;
 
+// Same story for the Google tag: mounted here and nowhere else, so it cannot
+// reach /portal or /staff (RA 10173). Unset without NEXT_PUBLIC_GOOGLE_ADS_ID,
+// and <GoogleTag> additionally gates on the visitor's opt-in consent.
+// Unlike the Meta Pixel this one IS set in production — Google, unlike Meta,
+// does not block conversion events for a health provider (ADR-0004).
+
 export default function MarketingLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
@@ -28,6 +36,7 @@ export default function MarketingLayout({
     <MotionConfig reducedMotion="user">
       <CookieConsentProvider>
         {META_PIXEL_ID ? <MetaPixel pixelId={META_PIXEL_ID} /> : null}
+        {GOOGLE_ADS_ID ? <GoogleTag conversionId={GOOGLE_ADS_ID} /> : null}
         <ScrollPulse />
         <MarketingNav />
         <main className="flex-1 overflow-x-clip bg-[color:var(--color-warm-bg)] text-[color:var(--color-ink)]">

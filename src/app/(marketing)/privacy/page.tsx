@@ -150,6 +150,15 @@ export default function PrivacyPage() {
               reference used solely to avoid counting the same action twice.
             </li>
             <li>
+              <strong>Google Ads conversion tracking</strong> — used only on our
+              public pages to measure the results of our Google search
+              advertising. It records that an action happened (for example: a
+              booking form was completed, or the Messenger button was tapped),
+              never what was booked. We have switched off Google&apos;s optional
+              features for matching you personally and for building advertising
+              audiences, so this is used for counting results only.
+            </li>
+            <li>
               <strong>Campaign reference cookie</strong> — if you arrive from an
               advertisement, we store the campaign name in a first-party cookie
               for up to <strong>30 days</strong> so we can tell which campaign
@@ -185,7 +194,7 @@ export default function PrivacyPage() {
             </strong>{" "}
             On your first visit we show a short banner, and the measurement
             tools described above stay completely off — no Meta Pixel, no
-            campaign cookie — unless you press{" "}
+            Google tag, no campaign cookie — unless you press{" "}
             <strong>Accept</strong>. If you press <strong>Decline</strong>, or
             simply ignore the banner, nothing is loaded and nothing is sent.
           </p>
