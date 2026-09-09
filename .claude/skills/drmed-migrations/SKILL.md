@@ -1,13 +1,13 @@
 ---
 name: drmed-migrations
-description: Use when working on DRMed database schema changes, Supabase migrations, RLS policies, audit-log obligations, payment-gating trigger considerations, function grants/ACLs, applying a migration to prod, or the migration workflow. Trigger whenever the user mentions migration, new migration, schema change, new table, alter table, alter schema, drop table, drop column, regenerate types, regen types, db:diff, db:types, db:types:remote, db:reset, supabase db push, supabase db reset, supabase migrations, schema_migrations, apply_migration, execute_sql, RLS policy, row-level security policy, has_role, current_patient_id, payment gating trigger, enforce_payment_before_release, audit_log table, audit-log obligation, SECURITY DEFINER, grant execute, revoke execute, anon-executable, function ACL, default privileges, rls_auto_enable, ensure_rls, P00xx error code, translatePgError, pg-errors, seed script, seed:test, seed:services, seed:templates, seed.sql, smoke:results, or the 130 files under supabase/migrations/ (0001 → 0133, with gaps). Also trigger when adding any new table, trigger, or function — the skill carries the RLS-template + audit-row + payment-gating + ACL checklist. Don't make Claude reconstruct the per-table checklist from scratch.
+description: Use when working on DRMed database schema changes, Supabase migrations, RLS policies, audit-log obligations, payment-gating trigger considerations, function grants/ACLs, applying a migration to prod, or the migration workflow. Trigger whenever the user mentions migration, new migration, schema change, new table, alter table, alter schema, drop table, drop column, regenerate types, regen types, db:diff, db:types, db:types:remote, db:reset, supabase db push, supabase db reset, supabase migrations, schema_migrations, apply_migration, execute_sql, RLS policy, row-level security policy, has_role, current_patient_id, payment gating trigger, enforce_payment_before_release, audit_log table, audit-log obligation, SECURITY DEFINER, grant execute, revoke execute, anon-executable, function ACL, default privileges, rls_auto_enable, ensure_rls, P00xx error code, translatePgError, pg-errors, seed script, seed:test, seed:services, seed:templates, seed.sql, smoke:results, or the 131 files under supabase/migrations/ (0001 → 0134, with gaps). Also trigger when adding any new table, trigger, or function — the skill carries the RLS-template + audit-row + payment-gating + ACL checklist. Don't make Claude reconstruct the per-table checklist from scratch.
 ---
 
 # DRMed migrations & schema workflow
 
 ## What this is
 
-130 sequential migrations under `supabase/migrations/`, zero-padded numeric naming (`0001_init.sql` → `0133_hmo_release_gate.sql`). The numbering has gaps (0056–0058 never existed) — that's fine, repo and remote skip them identically; gaps are NOT drift. **Prod ledger head = 0133, repo↔prod in sync (2026-09-08).** Every schema change has a fixed workflow + a per-table checklist (RLS + audit + payment-gating + function ACL). Get the checklist wrong and you create either a compliance gap, an anon-callable RPC, or a query that returns empty silently.
+131 sequential migrations under `supabase/migrations/`, zero-padded numeric naming (`0001_init.sql` → `0134_harden_0043_report_views.sql`). The numbering has gaps (0056–0058 never existed) — that's fine, repo and remote skip them identically; gaps are NOT drift. **Prod ledger head = 0134, repo↔prod in sync (2026-09-09).** Every schema change has a fixed workflow + a per-table checklist (RLS + audit + payment-gating + function ACL). Get the checklist wrong and you create either a compliance gap, an anon-callable RPC, or a query that returns empty silently.
 
 ## Landmark migrations (where the load-bearing objects live)
 
@@ -40,9 +40,10 @@ supabase/migrations/
 ├── 0129_physician_fee_defaults.sql      ← physicians.default_consultation_fee_php + clinic_cut_php
 ├── 0131_zero_pf_release_exemption.sql   ← P0034 now only fires when coalesce(doctor_pf_php,0) > 0
 ├── 0132_eod_denomination_count.sql      ← eod_close_records.counted_denominations jsonb, P0048 guard, cash_drawer_state re-created
-└── 0133_hmo_release_gate.sql            ← enforce_payment_before_release now passes an HMO-billed visit; ACL back to postgres + service_role
+├── 0133_hmo_release_gate.sql            ← enforce_payment_before_release now passes an HMO-billed visit; ACL back to postgres + service_role
+└── 0134_harden_0043_report_views.sql    ← the two 0043 admin-report views: security_invoker = on + revoke anon (authenticated KEEPS its grant — the CSV routes read them via the RLS client)
 
-supabase/seed.sql                        ← post-`db reset` grants (tables + sequences ONLY, never routines)
+supabase/seed.sql                        ← post-`db reset` grants (tables + sequences ONLY, never routines) + named re-revokes (0134)
 scripts/lib/                             ← load-env.ts, env-guard.ts (+ guard-coverage.test.ts) — every runner is guarded
 scripts/                                 ← seed-*.ts, import-*.ts, smoke-*.ts, plus subdirs history-import/, clinical-backfill/,
                                            clinical-enrich/, patient-dedup/, books-recon/, ops-daily/, seed/, smoke/
@@ -164,6 +165,7 @@ create policy "<table>: admin select"
 - **Replay on empty DB** is part of the audit — `db reset` must complete. Data migrations guard with `if exists` / `if found`, never `raise` on a missing row.
 - **Local vs prod ACL shapes differ** (fresh local functions have NULL ACLs; prod has explicit grants). Verify grants on both when a migration touches them.
 - **Local stack after `db reset`**: `supabase/seed.sql` re-grants tables + sequences to anon/authenticated/service_role. Never extend it to routines — that undoes 0118.
+- **A migration that REVOKES a table/view grant must add a matching re-revoke to the tail of `seed.sql`.** `grant all on all tables in schema public` covers VIEWS too, so the blanket grant silently hands the privilege straight back on the next `db reset`. Prod never runs `seed.sql` (`db push` ignores it), so without the carve-out local and prod disagree on exactly the grant the migration exists to remove — and the local replay "passes" while proving nothing. 0134 is the worked example; revoke by name, same classify-don't-blanket rule as 0118.
 - **Types**: pure CHECK/trigger/function changes leave `database.ts` unchanged — an empty `db:types` diff is not a failure. A new RPC does need it (or a hand edit, see above).
 - **Unit tests**: pure logic runs on vitest (`npm test`, ~885 tests). `cash-denominations.parity.test.ts` is the model for "a table exists in TS and SQL" — it parses the migration text and asserts they agree. Modules under test must not `import "server-only"`.
 - **Never put plain PINs in any migration.** Only bcrypt hashes live in `visit_pins`.

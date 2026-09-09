@@ -12,6 +12,7 @@ import {
   type PaymentMethod,
 } from "./_components/historic-claim-modals";
 import { Panel } from "@/components/ui/panel";
+import { ExportCsvButton } from "@/components/staff/export-csv-link";
 
 type SummaryRow =
   Database["public"]["Views"]["v_hmo_provider_summary"]["Row"];
@@ -612,13 +613,7 @@ function AllUnbilled({
           onChange={(e) => { setFilter(e.target.value); setPage(0); }}
           className="min-w-[260px] flex-1 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm"
         />
-        <button
-          type="button"
-          onClick={exportCsv}
-          className="min-h-[36px] rounded-md border border-[color:var(--color-brand-navy)] bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-navy)] hover:text-white"
-        >
-          Export CSV
-        </button>
+        <ExportCsvButton onClick={exportCsv} />
         <div className="text-xs text-[color:var(--color-brand-text-soft)]">
           {filtered.length} {filtered.length === 1 ? "row" : "rows"} · Total{" "}
           <span className="font-semibold text-[color:var(--color-brand-navy)]">
@@ -976,13 +971,7 @@ function AllAging({
           onChange={(e) => { setFilter(e.target.value); setPage(0); }}
           className="min-w-[260px] flex-1 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm"
         />
-        <button
-          type="button"
-          onClick={exportCsv}
-          className="min-h-[36px] rounded-md border border-[color:var(--color-brand-navy)] bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-navy)] hover:text-white"
-        >
-          Export CSV
-        </button>
+        <ExportCsvButton onClick={exportCsv} />
         <div className="text-xs text-[color:var(--color-brand-text-soft)]">
           {filtered.length} {filtered.length === 1 ? "row" : "rows"} · Total{" "}
           <span className="font-semibold text-[color:var(--color-brand-navy)]">

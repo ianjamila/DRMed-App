@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { Panel } from "@/components/ui/panel";
+import { ExportCsvLink } from "@/components/staff/export-csv-link";
 import { fetchEmailLog, PAGE_SIZE } from "@/lib/emails-log/query";
 import type { EmailStatus, EmailType } from "@/lib/emails-log/types";
 
@@ -173,7 +174,7 @@ export default async function EmailsSentPage({ searchParams }: Props) {
             className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-2 focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
           />
         </div>
-        <div className="flex flex-wrap gap-2 lg:col-span-6">
+        <div className="flex flex-wrap items-center gap-2 lg:col-span-6">
           <button
             type="submit"
             className="rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
@@ -194,12 +195,9 @@ export default async function EmailsSentPage({ searchParams }: Props) {
           >
             Failures only
           </Link>
-          <a
-            href={`/staff/admin/emails-sent/export${exportQs}`}
-            className="ml-auto rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-2 text-sm font-semibold text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-bg)]"
-          >
-            Export CSV
-          </a>
+          <div className="ml-auto">
+            <ExportCsvLink href={`/staff/admin/emails-sent/export${exportQs}`} />
+          </div>
         </div>
       </form>
 
