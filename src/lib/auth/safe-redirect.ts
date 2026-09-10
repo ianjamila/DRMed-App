@@ -6,6 +6,20 @@
 // signed-in staff member has any business landing.
 const DEFAULT_PATH = "/staff";
 
+// Anything below U+0020, plus U+007F (DEL). Written as code points rather
+// than a regex escape class on purpose: the escape sequence kept getting
+// mangled into literal control bytes by the tooling that edits this file.
+const FIRST_PRINTABLE = 0x20;
+const DEL = 0x7f;
+
+function hasControlCharacter(value: string): boolean {
+  for (const character of value) {
+    const codePoint = character.codePointAt(0) ?? 0;
+    if (codePoint < FIRST_PRINTABLE || codePoint === DEL) return true;
+  }
+  return false;
+}
+
 export function safeRedirectPath(next: string | null | undefined): string {
   if (typeof next !== "string" || next.length === 0) return DEFAULT_PATH;
 
@@ -19,8 +33,8 @@ export function safeRedirectPath(next: string | null | undefined): string {
   // "/staff/../.." escapes the prefix check above once the browser resolves it.
   if (next.split(/[/?#]/).includes("..")) return DEFAULT_PATH;
 
-  // CR/LF/NUL and friends can split a header or truncate a URL.
-  if (/[\x00-\x1f]/.test(next)) return DEFAULT_PATH;
+  // CR/LF/NUL and friends can split a header or truncate a URL. DEL too.
+  if (hasControlCharacter(next)) return DEFAULT_PATH;
 
   return next;
 }

@@ -42,6 +42,13 @@ describe("safeRedirectPath", () => {
     expect(safeRedirectPath("/staff/a\nb")).toBe("/staff");
   });
 
+  // DEL sits above the C0 range, so a blocklist that stops at U+001F misses it.
+  it("rejects DEL", () => {
+    expect(safeRedirectPath(`/staff/a${String.fromCharCode(0x7f)}b`)).toBe(
+      "/staff",
+    );
+  });
+
   it.each([null, undefined, ""])("falls back for %s", (value) => {
     expect(safeRedirectPath(value)).toBe("/staff");
   });
