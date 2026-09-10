@@ -67,13 +67,37 @@ These cost real effort to establish. Do not re-derive them.
    with a control request: a bogus `redirect_to` is echoed back unchanged. The
    allowlist is enforced later, at Supabase's own `/auth/v1/callback`. A trace of
    the authorize endpoint therefore proves nothing about the allowlist.
-6. **Verified by redirect trace 2026-09-10:** the Google provider is enabled and
-   the client ID is saved (`302 → accounts.google.com`, not `Unsupported
-   provider`); Google accepts the client and its registered redirect URI
-   (`302 → /v3/signin/identifier`, no `redirect_uri_mismatch`). Still unverified
-   until one real sign-in: the redirect allowlist, the publishing status
-   (Testing vs Production), and the client secret.
-7. **DRMed has no `middleware.ts`**, though `src/lib/supabase/server.ts` carries
+6. **VERIFIED by a real Google sign-in, 2026-09-10.** Nothing here is assumed any
+   more. Ian signed in and landed on `https://drmed.ph/auth/callback`, which
+   settles all three previously-open items at once: the **redirect allowlist**
+   accepts that URL (Supabase validates it at its own callback, which is the
+   stage that ran); the **publishing status** is live (he cleared the consent
+   screen); and the **client secret** is correct (Supabase's callback had to
+   complete the server-side token exchange with Google to issue a session).
+   The returned JWT also proves two design assumptions:
+   - **Identity linking works.** `sub` came back as
+     `8c25a556-e23b-427b-a6f9-fcd555b52f32` — his pre-existing auth user id —
+     with `app_metadata.providers = ["email", "google"]`. Same id, so his
+     `staff_profiles` row, admin role and audit history are untouched. This was
+     the single largest risk in the design; it is now evidence, not inference.
+   - **`aal` came back `aal1`.** Google sign-in does NOT reach aal2, so the gate
+     change below is required, not cosmetic. Without it he would have been
+     redirected straight to `/staff/mfa` and forced to enrol.
+   - `amr` came back `[{ method: "oauth" }]`, so the claim the rejected
+     alternative depended on does exist at sign-in time. Its survival across a
+     token refresh is still unverified; the decision below is unchanged.
+7. **The app's OAuth flow is PKCE, and cannot accidentally be implicit.**
+   `@supabase/ssr` sets `flowType: "pkce"` in both `createBrowserClient` and
+   `createServerClient` **after** spreading caller options, so it is not
+   overridable. `signInWithOAuth()` therefore always returns `?code=` to the
+   callback, which is what the Route Handler reads.
+   The manual verification above instead came back as a URL **fragment**
+   (`#access_token=…`, the implicit flow) purely because hitting
+   `/auth/v1/authorize` by hand sends no `code_challenge`. Worth knowing because
+   **a fragment never reaches the server** — if the app were ever somehow put on
+   the implicit flow, the Route Handler would see an empty query and fail closed
+   to `?error=auth_failed`. Safe, but silent.
+8. **DRMed has no `middleware.ts`**, though `src/lib/supabase/server.ts` carries
    a comment claiming middleware handles session refresh. Pre-existing; see
    "Deliberately out of scope".
 
@@ -244,19 +268,20 @@ old and new values.
    `https://qhptbmafrosgibooelpp.supabase.co/auth/v1/callback`. Authorized
    JavaScript origins empty. **Done** (verified by trace).
 2. **Supabase → Auth → Providers → Google** — enabled, client ID + secret saved.
-   **Done** for the ID; the secret is unverified until a real sign-in.
+   **Done and verified.**
 3. **Supabase → Auth → URL Configuration** — Site URL `https://drmed.ph`;
    redirect allowlist must contain `https://drmed.ph/auth/callback` and
-   `http://localhost:3000/auth/callback`. **Unverified.**
-4. **Google Auth Platform → Audience** — publishing status must be *In
-   production*, not *Testing*. In Testing, only listed test users can sign in and
-   sessions expire weekly. Scopes are non-sensitive, so publishing needs no
-   Google review. **Unverified.**
+   `http://localhost:3000/auth/callback`. **Done**; the drmed.ph entry is verified,
+   the localhost entry is not yet exercised.
+4. **Google Auth Platform → Audience** — **Published 2026-09-10.** Publishing was
+   blocked until the Branding page carried an app name, support email, home-page
+   URL and privacy-policy URL (`https://drmed.ph`, `https://drmed.ph/privacy`).
+   No logo was uploaded, deliberately — a logo forces brand verification.
 5. **Vercel** — `FEATURE_STAFF_MFA_REQUIRED` is `false` today. After this ships
    it can be set to `true`.
 
-Items 3 and 4, plus the client secret, are all settled by one real Google
-sign-in once the callback route exists.
+All of the above is now settled. The only unexercised item is the localhost
+redirect entry, which the first local `npm run dev` sign-in will confirm.
 
 ## Deliberately out of scope
 
