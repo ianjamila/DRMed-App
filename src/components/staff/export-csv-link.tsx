@@ -33,9 +33,11 @@ export function ExportCsvLink({
  * instead of an anchor. `type="button"` is required: some adoption sites
  * live inside a `<form>`, and a bare `<button>` would submit it.
  *
- * `disabled` is for the moment between the click and the file: a client-built
- * export still has an audit round-trip to make first, and a second click in
- * that window would write a second audit row and download the file twice.
+ * `disabled` covers the two states a client-built export has that a Route
+ * Handler link does not: there is nothing to export (a filter matching no
+ * rows, which would otherwise leave a live control that silently does
+ * nothing), and the trailing audit round-trip is still in flight after the
+ * file has gone — a second click there would write a second audit row.
  */
 export function ExportCsvButton({
   onClick,

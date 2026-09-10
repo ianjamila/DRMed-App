@@ -2,6 +2,7 @@
 
 import { Fragment, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
+import { unstable_rethrow } from "next/navigation";
 import type { Database } from "@/types/database";
 import { snapshotHmoAgingAction, recordHmoExportAuditAction } from "./actions";
 import { csvDocumentFromRecords } from "@/lib/csv/escape";
@@ -568,6 +569,8 @@ function useAuditedCsvExport(report: HmoExportReportKey) {
     search: string;
     truncated: boolean;
   }) {
+    // Belt and braces — the control is already disabled on an empty set, so
+    // this only fires if a future call site forgets that guard.
     if (!exportRowsCsv(args.rows, args.filename, args.truncated)) return;
     startTransition(async () => {
       try {
@@ -578,9 +581,14 @@ function useAuditedCsvExport(report: HmoExportReportKey) {
           kind: args.kind,
           search: args.search,
         });
-      } catch {
-        // Transport failure, or an expired session redirecting us away. The
-        // file is already with the admin; there is nothing here to undo.
+      } catch (thrown) {
+        // requireAdminStaff() sends an expired or downgraded session to the
+        // login screen, and redirect() works by THROWING — a bare catch here
+        // would eat the navigation and strand the admin on a page they are no
+        // longer allowed to be on. unstable_rethrow re-raises Next's own
+        // control flow and returns for everything else, which really is
+        // nothing to undo: the file is already downloaded.
+        unstable_rethrow(thrown);
       }
     });
   }
@@ -701,7 +709,10 @@ function AllUnbilled({
           onChange={(e) => { setFilter(e.target.value); setPage(0); }}
           className="min-w-[260px] flex-1 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm"
         />
-        <ExportCsvButton onClick={exportCsv} disabled={csv.pending} />
+        <ExportCsvButton
+          onClick={exportCsv}
+          disabled={csv.pending || filtered.length === 0}
+        />
         <div className="text-xs text-[color:var(--color-brand-text-soft)]">
           {filtered.length} {filtered.length === 1 ? "row" : "rows"} · Total{" "}
           <span className="font-semibold text-[color:var(--color-brand-navy)]">
@@ -1077,7 +1088,10 @@ function AllAging({
           onChange={(e) => { setFilter(e.target.value); setPage(0); }}
           className="min-w-[260px] flex-1 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm"
         />
-        <ExportCsvButton onClick={exportCsv} disabled={csv.pending} />
+        <ExportCsvButton
+          onClick={exportCsv}
+          disabled={csv.pending || filtered.length === 0}
+        />
         <div className="text-xs text-[color:var(--color-brand-text-soft)]">
           {filtered.length} {filtered.length === 1 ? "row" : "rows"} · Total{" "}
           <span className="font-semibold text-[color:var(--color-brand-navy)]">
