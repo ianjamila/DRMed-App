@@ -129,9 +129,35 @@ join key we cannot claw back.
   sets Google's documented `ga-disable-<ID>` opt-out flag for both ids before
   gtag.js can send anything.
 
-  The durable fix is to **unlink both destinations** in Google Ads → Tools →
-  Data manager → Google tag, which stops it at the source. Until an admin does
-  that, this claim is enforced by code rather than by configuration.
+  The durable fix would be to **unlink both destinations** in Google Ads →
+  Tools → Data manager → Google tag, which stops it at the source. **That was
+  attempted on 2026-09-10 and neither destination was unlinked** — so the
+  `ga-disable` flags are this claim's permanent enforcement, not a stopgap
+  awaiting an admin:
+
+  - **GA4 `G-2R14BG8YRD` is deliberately left linked.** The account owner
+    declined to unlink it, wanting the option of site analytics later. That is
+    a legitimate choice and it costs nothing today, because the flag stops the
+    property collecting from drmed.ph regardless. It does mean the account and
+    the site disagree on paper, which is why it is written down here.
+  - **Merchant Center `MC-ZYRJZLN5TE` could not be unlinked.** The tag's
+    linked-destinations control is not exposed anywhere in this account's
+    Google Ads UI (Connected products offers only "Manage in Business
+    Manager", which governs the *account* link, not the tag destination). The
+    Merchant Center feed is dead in any case — every product URL it points at
+    (`drmed.ph/products/…`, `drmed.ph/collections/frontpage`) returns 404
+    since the site left Shopify.
+
+  Verified on production 2026-09-10, with consent granted and a real
+  conversion fired: both `ga-disable` flags `true`, no request carrying
+  `tid=G-…` or `tid=MC-…` on page load or on the conversion, and `_gcl_au` the
+  only Google cookie.
+
+  **Therefore: do not remove the `ga-disable` lines.** They are load-bearing.
+  If the clinic ever genuinely wants GA4, that is a deliberate change — remove
+  the id from `UNWANTED_TAG_DESTINATIONS` in `google-tag.tsx`, amend this ADR,
+  and update the privacy notice and consent copy to disclose the stream — not
+  a cleanup someone does while tidying.
 
 ### Lawful basis
 
