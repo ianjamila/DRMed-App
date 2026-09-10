@@ -511,12 +511,13 @@ function ProviderCard({
 
 const TOP_PAGE_SIZE = 100;
 
+/** Returns whether a file was actually produced — an empty set discloses nothing. */
 function exportRowsCsv(
   rows: Record<string, unknown>[],
   filename: string,
   truncated: boolean,
-) {
-  if (rows.length === 0) return;
+): boolean {
+  if (rows.length === 0) return false;
   // The house builder + escaper, not a hand-rolled copy of either. The notice
   // is the same one reportCsvResponse writes in-band: a silently short export
   // reads as "that's everything", and the reader of the file is not
@@ -535,6 +536,7 @@ function exportRowsCsv(
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+  return true;
 }
 
 /**
@@ -545,10 +547,16 @@ function exportRowsCsv(
  * no Route Handler for reportCsvResponse to audit from — the row comes from a
  * Server Action instead.
  *
- * The audit is attempted BEFORE the download, mirroring reportCsvResponse
- * (audit, then hand over the file). It never blocks the download: audit() logs
- * and swallows a failed insert rather than withholding a file the admin is
- * entitled to, and an offline browser must behave the same way.
+ * The file goes FIRST and stays synchronous with the click. WebKit ties
+ * permission to fire an `<a download>` to the user activation that started it,
+ * and an awaited round-trip in between can quietly consume that activation —
+ * the admin would see the button flicker and get no file, with nothing to
+ * explain it. Auditing afterwards costs nothing that auditing first bought:
+ * audit() logs and swallows a failed insert rather than withholding a file the
+ * admin is entitled to, so the order never gated the disclosure either way.
+ *
+ * A filtered-to-empty set produces no file, so it writes no row — an export
+ * audit that fires when nothing was exported is worse than none.
  */
 function useAuditedCsvExport(report: HmoExportReportKey) {
   const [pending, startTransition] = useTransition();
@@ -560,6 +568,7 @@ function useAuditedCsvExport(report: HmoExportReportKey) {
     search: string;
     truncated: boolean;
   }) {
+    if (!exportRowsCsv(args.rows, args.filename, args.truncated)) return;
     startTransition(async () => {
       try {
         await recordHmoExportAuditAction({
@@ -570,10 +579,9 @@ function useAuditedCsvExport(report: HmoExportReportKey) {
           search: args.search,
         });
       } catch {
-        // Transport failure or an expired session redirecting us away. Neither
-        // is a reason to withhold rows the admin is already looking at.
+        // Transport failure, or an expired session redirecting us away. The
+        // file is already with the admin; there is nothing here to undo.
       }
-      exportRowsCsv(args.rows, args.filename, args.truncated);
     });
   }
 
