@@ -10,9 +10,11 @@ Part 4 to unlink two destinations that should never have been on this tag.
 
 **Status as of 2026-09-10.** Part 2 is **done** — both actions exist, both
 labels are live in production, and the stale codeless actions that would have
-double-counted are gone. Part 3 is **half done**: the Messenger conversion has
-fired end to end against the live account; the booking leg waits on a real
-`/schedule` submission. Part 4 is **closed without unlinking either
+double-counted are gone. Part 3's browser legs are **both done**: Messenger and
+booking have each fired end to end against the live account with their real
+labels. What remains of Part 3 is Google's side — the actions moving to
+*Recording conversions*, and one attributed click proving a `gclid` survives
+the journey. Part 4 is **closed without unlinking either
 destination** — one by the owner's choice, one because the control does not
 exist in this account's UI — which promotes the `ga-disable` flags from
 stopgap to permanent enforcement. Each part carries its own status box; read
@@ -402,10 +404,27 @@ retains 30 days, and `DURING LAST_30_DAYS` is rejected as "start date too old"
 > `tid=MC-…` request; the only console errors were the two deliberate
 > `ad.doubleclick.net` CSP refusals and nothing else.
 >
-> **Booking leg: still unproven live.** It shares the same code path one label
-> apart and is covered by unit tests, but a real `/schedule` submission writes
-> a real appointment, so it waits for a genuine booking. Step 3 below is how
-> you confirm it landed.
+> **Booking leg: PASSED on production the same day**, via a real `/schedule`
+> submission driven with Playwright. Same chain, `label=tYRBCI3p2PIcEKqYlJ4D`,
+> and the beacon additionally carried
+> `oid=0f91f0d7-115a-4294-be39-86fcaa8b8dd4` — the `transaction_id` from
+> `googleAdsConversion()`, which is what makes a reloaded success screen count
+> once. `npa=1`, no hashed identifier, no GA4/Merchant Center request.
+>
+> **How it was done without leaving a fake patient behind**, if it ever needs
+> repeating: Laboratory Request branch (the only one needing no doctor and no
+> time slot), no services selected, name `ZZTEST` / `DELETEME`, a note in the
+> Notes field flagging it, `09000000000` for the phone (`0900` is not an
+> assigned PH mobile prefix, so it cannot reach a real person — and SMS is
+> skipped anyway, `SEMAPHORE_API_KEY` is unset in production), and the account
+> owner's own email for the confirmation. It created exactly one `patients`
+> row, one `appointments` row, one `patient_consents` row and two `audit_log`
+> rows. Cleanup: delete the appointment, `update audit_log set patient_id =
+> null` for those rows, then delete the patient — `patient_consents` cascades,
+> `appointments.patient_id` and `audit_log.patient_id` are both `NO ACTION`
+> and must be cleared first. **Keep the audit rows**: they are the RA 10173
+> record of a real processing event, and their metadata still names the
+> DRM-ID, so they stay self-describing without the foreign key.
 
 1. **Google tag is live.** Google Ads → Tools → **Data manager → Google tag**
    should show the tag as active and recently seen. This can take a few hours
