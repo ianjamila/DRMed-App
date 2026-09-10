@@ -8,7 +8,7 @@ import { reportError } from "@/lib/observability/report-error";
 import { resolvePatient } from "@/lib/patients/resolve";
 import { findCandidatesForInput } from "@/lib/patients/find-duplicates";
 import { sendEmail } from "@/lib/notifications/email";
-import { selfRegistrationGrant } from "@/lib/consent/self-registration";
+import { recordSelfRegistrationGrant } from "@/lib/consent/self-registration";
 import { RegistrationSchema } from "@/lib/validations/registration";
 import { SITE } from "@/lib/marketing/site";
 import { sendMetaCapiEvent } from "@/lib/analytics/meta-capi";
@@ -189,10 +189,18 @@ export async function submitRegistrationAction(
 
   // New registrant: record the RA-10173 consent the form required (the
   // sync_patient_consent_state trigger flips patients.consent_current = true),
-  // then email + show the DRM-ID.
-  await admin
-    .from("patient_consents")
-    .insert(selfRegistrationGrant({ patientId: res.id, ip, userAgent: ua }));
+  // then email + show the DRM-ID. A failed write is NOT silent and does NOT
+  // fail the registration: it is reported, and the audit row below records
+  // what actually landed. The patient then shows up under Admin > Patients
+  // without consent for capture at the counter.
+  const consentRecorded = await recordSelfRegistrationGrant(
+    {
+      insertGrant: async (row) => await admin.from("patient_consents").insert(row),
+      reportFailure: (error, metadata) =>
+        reportError({ scope: "register/consent-grant", error, metadata }),
+    },
+    { patientId: res.id, ip, userAgent: ua },
+  );
 
   // Optional marketing opt-in. Mirror the schedule form's subscribe: insert a
   // fresh subscriber, or re-consent a previously-unsubscribed one, preserving
@@ -232,7 +240,7 @@ export async function submitRegistrationAction(
     metadata: {
       drm_id: res.drm_id,
       via: "register",
-      consent_recorded: true,
+      consent_recorded: consentRecorded,
       marketing_consent: d.marketing_consent,
       email: welcomeResult.ok
         ? { ok: true, id: welcomeResult.id, to: d.email }

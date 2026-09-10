@@ -16,7 +16,7 @@ import { notifyAppointmentBooked } from "@/lib/notifications/notify-appointment-
 import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit/check";
 import { resolvePatient } from "@/lib/patients/resolve";
 import { createAppointmentGroup, createLabRequestOnlyBooking, type PatientResolution } from "@/lib/appointments/create";
-import { selfRegistrationGrant, shouldRecordBookingConsent } from "@/lib/consent/self-registration";
+import { recordSelfRegistrationGrant, shouldRecordBookingConsent } from "@/lib/consent/self-registration";
 import type { ServiceRow } from "@/lib/appointments/timing";
 import { validateLabRequestGate, parseIntakePreference } from "@/lib/appointments/lab-request";
 import { sendMetaCapiEvent } from "@/lib/analytics/meta-capi";
@@ -375,30 +375,22 @@ export async function submitBookingAction(_prev: BookingResult | null, formData:
     result.patient.patientId &&
     shouldRecordBookingConsent(result.patient.resolution, data.service_agreement)
   ) {
-    const { error: consentError } = await admin
-      .from("patient_consents")
-      .insert(
-        selfRegistrationGrant({
-          patientId: result.patient.patientId,
-          ip: requestIp,
-          userAgent,
-        }),
-      );
-    if (consentError) {
-      // The booking exists — don't fail it. Surface the gap so staff can
-      // capture consent at the counter instead.
-      await reportError({
-        scope: "schedule/consent-grant",
-        error: consentError,
-        metadata: {
-          code: consentError.code,
-          patient_id: result.patient.patientId,
-          booking_group_id: result.bookingGroupId,
-        },
-      });
-    } else {
-      consentRecorded = true;
-    }
+    // The booking exists — a failed consent write doesn't fail it. Surface the
+    // gap so staff can capture consent at the counter instead. Same helper as
+    // /register so the two public forms can't drift apart again.
+    consentRecorded = await recordSelfRegistrationGrant(
+      {
+        insertGrant: async (row) => await admin.from("patient_consents").insert(row),
+        reportFailure: (error, metadata) =>
+          reportError({ scope: "schedule/consent-grant", error, metadata }),
+      },
+      {
+        patientId: result.patient.patientId,
+        ip: requestIp,
+        userAgent,
+        metadata: { booking_group_id: result.bookingGroupId },
+      },
+    );
   }
 
   // Upload the form(s) now that we have a booking_group_id + resolved patient.

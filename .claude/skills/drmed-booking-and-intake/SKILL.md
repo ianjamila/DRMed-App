@@ -22,7 +22,8 @@ src/lib/appointments/
 src/lib/patients/
 └── resolve.ts    ← resolvePatientCore(deps, fields) PURE + resolvePatient(admin, fields) wrapper
 src/lib/consent/
-└── self-registration.ts ← selfRegistrationGrant() + shouldRecordBookingConsent() — the RA-10173
+└── self-registration.ts ← selfRegistrationGrant() + shouldRecordBookingConsent()
+                           + recordSelfRegistrationGrant(deps, input) — the RA-10173
                            grant shared by BOTH public surfaces (/register and /schedule)
 src/lib/validations/
 ├── booking.ts        ← BOOKING_BRANCHES, KINDS_PER_BRANCH, manilaSlotFor, isValidSlot,
@@ -94,7 +95,7 @@ Patient modes in the staff slide-over: **Existing** (search → pick → shows u
 - `/register` — the required `data_privacy_consent` tick ("Please accept the data-privacy consent to register." when missing, re-checked server-side after the schema).
 - `/schedule` — the required `service_agreement` tick ("Please accept the service agreement to continue." when missing). The checkbox is rendered for public bookings only; a portal booking omits it and the action synthesises `"on"`, because those patients accepted at intake.
 
-The rule is the same on both — write a `selfRegistrationGrant` row (`method: 'self_registration'`, `actor_kind: 'patient'`, current notice version) **only** when this submission CREATED the patient; a dedup match, an existing patient or a portal booking never has its consent re-affirmed from a public form. The implementations differ: `/schedule` calls the shared gate `shouldRecordBookingConsent(resolution, agreed)` and reports a failed insert via `reportError` without rolling back the booking (the appointment exists, so the gap is surfaced — the `appointment.booked` audit row carries `consent_recorded` — and staff capture consent at the counter); `/register` gates inline with early returns on the dedup match and on `res.reused`, and does not check its insert's error. Use the shared helper in anything new. `/register` also emails the DRM-ID; a dedup match emails it to the on-file address and **does not show it on screen** (enumeration safety). Consent mechanics → `drmed-rls-and-auth`.
+The rule is the same on both — write a `selfRegistrationGrant` row (`method: 'self_registration'`, `actor_kind: 'patient'`, current notice version) **only** when this submission CREATED the patient; a dedup match, an existing patient or a portal booking never has its consent re-affirmed from a public form. Both insert it through **`recordSelfRegistrationGrant(deps, input)`**, which reports a failed insert via `reportError` (scope `register/consent-grant` / `schedule/consent-grant`) without rolling back the registration or booking — the patient row exists, so the gap is surfaced, each action's audit row carries the real `consent_recorded`, and staff capture consent at the counter. Only the *gate* differs: `/schedule` calls `shouldRecordBookingConsent(resolution, agreed)`; `/register` gates inline with early returns on the dedup match and on `res.reused`. Use the shared helper in anything new. `/register` also emails the DRM-ID; a dedup match emails it to the on-file address and **does not show it on screen** (enumeration safety). Consent mechanics → `drmed-rls-and-auth`.
 
 Confirmations reuse `notifyAppointmentBooked({appointmentId, patientId})` (SMS via Semaphore + email via Resend; re-fetches the row itself, works for staff-created rows; skips gracefully when no phone/email). The slide-over's "Send confirmation" checkbox gates it. **Outside production nothing is sent** unless `NOTIFICATIONS_LIVE=true` — the skip is recorded in audit metadata. The reminder cron uses a rolling catch-up window (now → end of tomorrow, Manila) so a missed run doesn't drop reminders.
 
