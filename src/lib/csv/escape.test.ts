@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { escapeCell, csvRow, csvDocument } from "./escape";
+import {
+  escapeCell,
+  csvRow,
+  csvDocument,
+  csvDocumentFromRecords,
+} from "./escape";
 
 describe("escapeCell", () => {
   it("passes plain values through unquoted", () => {
@@ -40,5 +45,40 @@ describe("csvDocument", () => {
 
   it("produces just a newline for no rows", () => {
     expect(csvDocument([])).toBe("\n");
+  });
+});
+
+describe("csvDocumentFromRecords", () => {
+  const rows = [
+    { provider: "Maxicare", patient: "Dela Cruz, Juan", amount_php: 1200 },
+    { provider: "Intellicare", patient: "Reyes", amount_php: 0 },
+  ];
+
+  it("takes the header from the first record's keys, in order", () => {
+    expect(csvDocumentFromRecords(rows)).toBe(
+      "provider,patient,amount_php\n" +
+        'Maxicare,"Dela Cruz, Juan",1200\n' +
+        "Intellicare,Reyes,0\n",
+    );
+  });
+
+  it("renders an absent or null field as an empty cell, not the string null", () => {
+    expect(
+      csvDocumentFromRecords([{ a: 1, b: null }, { a: 2 } as Record<string, unknown>]),
+    ).toBe("a,b\n1,\n2,\n");
+  });
+
+  it("returns nothing for an empty set — there is no header to infer", () => {
+    expect(csvDocumentFromRecords([])).toBe("");
+  });
+
+  it("appends the truncation notice in-band when one is given", () => {
+    const out = csvDocumentFromRecords(rows, { truncatedNotice: "TRUNCATED — narrow it." });
+    expect(out.trimEnd().split("\n").at(-1)).toBe("TRUNCATED — narrow it.");
+  });
+
+  it("leaves a complete export unmarked", () => {
+    expect(csvDocumentFromRecords(rows, {})).toBe(csvDocumentFromRecords(rows));
+    expect(csvDocumentFromRecords(rows)).not.toContain("TRUNCATED");
   });
 });

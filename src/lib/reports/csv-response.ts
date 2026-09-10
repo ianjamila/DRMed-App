@@ -6,6 +6,7 @@ import { csvDocument } from "@/lib/csv/escape";
 import type { StaffSession } from "@/lib/auth/require-staff";
 import type { Json } from "@/types/database";
 import { REPORT_EXPORT_MAX_ROWS } from "./paging";
+import { reportExportedAction, reportExportMetadata } from "./export-audit";
 
 /**
  * The tail every admin report CSV shares: the in-band TRUNCATED row, the
@@ -37,18 +38,16 @@ export async function reportCsvResponse(args: {
   await audit({
     actor_id: args.staff.user_id,
     actor_type: "staff",
-    action: `report.${args.report}.exported`,
+    action: reportExportedAction(args.report),
     resource_type: "report",
     resource_id: null,
-    // `report` lands AFTER the spread so no loader's filter key can ever
-    // overwrite the identifier this row exists to make trustworthy.
-    metadata: {
-      ...args.filters,
+    metadata: reportExportMetadata({
       report: args.report,
+      filters: args.filters,
       // rows[0] is the header row, not data.
-      rows_exported: Math.max(0, args.rows.length - 1),
+      rowsExported: Math.max(0, args.rows.length - 1),
       truncated: args.truncated,
-    },
+    }),
     ip_address: ip,
     user_agent: ua,
   });

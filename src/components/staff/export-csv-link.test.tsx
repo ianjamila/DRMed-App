@@ -43,6 +43,20 @@ describe("ExportCsvButton", () => {
     );
     expect(html).toContain(">Download CSV<");
   });
+
+  // A client-built export has an audit round-trip to make before the file
+  // exists; a second click in that window writes a second audit row and
+  // downloads twice.
+  it("is enabled by default", () => {
+    const html = renderToStaticMarkup(<ExportCsvButton onClick={() => {}} />);
+    // The class string carries disabled: utilities, so match the attribute.
+    expect(html).not.toMatch(/\sdisabled(=|\s|>)/);
+  });
+
+  it("can be disabled while the export is in flight", () => {
+    const html = renderToStaticMarkup(<ExportCsvButton onClick={() => {}} disabled />);
+    expect(html).toMatch(/\sdisabled(=|\s|>)/);
+  });
 });
 
 describe("shared styling", () => {

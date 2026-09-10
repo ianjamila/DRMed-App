@@ -1,5 +1,9 @@
+// One class string for both mechanisms so they read as one control. The
+// disabled: utilities are inert on an anchor (:disabled never matches one) and
+// are carried here rather than appended to the button, so the two renders stay
+// byte-identical — which is the invariant the test pins.
 const exportCsvClassName =
-  "min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-3 py-2 text-sm font-semibold text-[color:var(--color-brand-navy)] transition-colors hover:border-[color:var(--color-brand-cyan)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-brand-cyan)] focus-visible:ring-offset-2";
+  "min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-3 py-2 text-sm font-semibold text-[color:var(--color-brand-navy)] transition-colors hover:border-[color:var(--color-brand-cyan)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-brand-cyan)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60";
 
 /**
  * The one "Export CSV" control. A plain anchor on purpose: the target is a
@@ -28,16 +32,29 @@ export function ExportCsvLink({
  * there's no Route Handler to link to, so this renders as a `<button>`
  * instead of an anchor. `type="button"` is required: some adoption sites
  * live inside a `<form>`, and a bare `<button>` would submit it.
+ *
+ * `disabled` covers the two states a client-built export has that a Route
+ * Handler link does not: there is nothing to export (a filter matching no
+ * rows, which would otherwise leave a live control that silently does
+ * nothing), and the trailing audit round-trip is still in flight after the
+ * file has gone — a second click there would write a second audit row.
  */
 export function ExportCsvButton({
   onClick,
   label = "Export CSV",
+  disabled = false,
 }: {
   onClick: () => void;
   label?: string;
+  disabled?: boolean;
 }) {
   return (
-    <button type="button" onClick={onClick} className={exportCsvClassName}>
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={exportCsvClassName}
+    >
       {label}
     </button>
   );

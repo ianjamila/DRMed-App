@@ -24,3 +24,26 @@ export function csvRow(cells: readonly unknown[]): string {
 export function csvDocument(rows: readonly (readonly unknown[])[]): string {
   return rows.map(csvRow).join("\n") + "\n";
 }
+
+/**
+ * A CSV built from records rather than positional rows: the header comes from
+ * the first record's keys, then one line per record.
+ *
+ * This is what the browser-built exports need — they hold rows, not the
+ * header-plus-arrays shape a Route Handler loader produces. `truncatedNotice`
+ * appends the same in-band warning `reportCsvResponse` writes, so a file that
+ * stopped at the export ceiling says so whichever mechanism produced it.
+ */
+export function csvDocumentFromRecords(
+  records: readonly Record<string, unknown>[],
+  opts: { truncatedNotice?: string } = {},
+): string {
+  if (records.length === 0) return "";
+  const header = Object.keys(records[0]);
+  const body: unknown[][] = [header];
+  for (const record of records) {
+    body.push(header.map((key) => record[key] ?? ""));
+  }
+  if (opts.truncatedNotice) body.push([opts.truncatedNotice]);
+  return csvDocument(body);
+}

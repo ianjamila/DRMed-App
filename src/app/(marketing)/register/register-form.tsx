@@ -67,8 +67,18 @@ export function RegisterForm() {
         <h2 className="font-heading text-xl font-extrabold text-emerald-900">You&apos;re registered.</h2>
         <p className="mt-3 text-sm text-emerald-900">Your DRM-ID</p>
         <p className="font-mono text-2xl font-bold text-emerald-900">{state.drm_id}</p>
+        {/*
+          "and confirms your details" is load-bearing, not filler. A patient's
+          data-privacy consent row can fail to save without failing the
+          registration (see recordSelfRegistrationGrant) — today only staff
+          learn of it, via the error report and Admin > Patients without
+          consent. Promising the counter check to EVERY registrant closes that
+          loop for the patient it happened to, without telling them something
+          went wrong that changes nothing they do: the counter step is the same
+          either way.
+        */}
         <p className="mt-3 text-sm text-emerald-800">
-          We&apos;ve emailed it to you too. Show this at the clinic — reception verifies your identity at the counter.
+          We&apos;ve emailed it to you too. Show this at the clinic — reception verifies your identity and confirms your details at the counter.
         </p>
       </div>
     );
