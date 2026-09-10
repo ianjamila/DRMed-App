@@ -135,14 +135,17 @@ export async function createVisitAction(
   let attendingArrangement: string | null = null;
   let attendingClinicCutPhp: number | null = null;
   if (parsed.data.attending_physician_id) {
+    // 0136 moved these off `physicians`, which is public-read. The side table
+    // has no anon grant and an admin-only policy, so this stays on the admin
+    // client — as it already was.
     const physAdmin = createAdminClient();
-    const { data: phys } = await physAdmin
-      .from("physicians")
+    const { data: comp } = await physAdmin
+      .from("physician_compensation")
       .select("compensation_arrangement, clinic_cut_php")
-      .eq("id", parsed.data.attending_physician_id)
+      .eq("physician_id", parsed.data.attending_physician_id)
       .maybeSingle();
-    attendingArrangement = phys?.compensation_arrangement ?? null;
-    attendingClinicCutPhp = phys?.clinic_cut_php != null ? Number(phys.clinic_cut_php) : null;
+    attendingArrangement = comp?.compensation_arrangement ?? null;
+    attendingClinicCutPhp = comp?.clinic_cut_php != null ? Number(comp.clinic_cut_php) : null;
   }
 
   // Snapshot pricing per line — same arithmetic as the client form so the

@@ -20,16 +20,17 @@ export async function updateCompensationArrangement(input: {
 
   const admin = createAdminClient();
 
+  // 0136 moved this off the public-read `physicians` table.
   const { data: before } = await admin
-    .from("physicians")
+    .from("physician_compensation")
     .select("compensation_arrangement")
-    .eq("id", input.physician_id)
+    .eq("physician_id", input.physician_id)
     .single();
 
   const { error } = await admin
-    .from("physicians")
+    .from("physician_compensation")
     .update({ compensation_arrangement: input.compensation_arrangement })
-    .eq("id", input.physician_id);
+    .eq("physician_id", input.physician_id);
   if (error) return { ok: false, error: translatePgError(error) };
 
   await audit({
@@ -67,8 +68,8 @@ export async function recomputeClinicFeeForUnreleased(): Promise<
   // arrangement governs the scrub. Useful for reading the audit log without
   // having to re-query the physicians table.
   const { count: physiciansClassified } = await admin
-    .from("physicians")
-    .select("id", { count: "exact", head: true })
+    .from("physician_compensation")
+    .select("physician_id", { count: "exact", head: true })
     .in("compensation_arrangement", ["rent_paying", "shareholder"]);
 
   await audit({

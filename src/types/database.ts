@@ -4206,6 +4206,48 @@ export type Database = {
         }
         Relationships: []
       }
+      physician_compensation: {
+        Row: {
+          clinic_cut_php: number | null
+          compensation_arrangement: string
+          created_at: string
+          default_consultation_fee_php: number | null
+          physician_id: string
+          updated_at: string
+        }
+        Insert: {
+          clinic_cut_php?: number | null
+          compensation_arrangement?: string
+          created_at?: string
+          default_consultation_fee_php?: number | null
+          physician_id: string
+          updated_at?: string
+        }
+        Update: {
+          clinic_cut_php?: number | null
+          compensation_arrangement?: string
+          created_at?: string
+          default_consultation_fee_php?: number | null
+          physician_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "physician_compensation_physician_id_fkey"
+            columns: ["physician_id"]
+            isOneToOne: true
+            referencedRelation: "physicians"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "physician_compensation_physician_id_fkey"
+            columns: ["physician_id"]
+            isOneToOne: true
+            referencedRelation: "v_ops_daily_doctor"
+            referencedColumns: ["physician_id"]
+          },
+        ]
+      }
       physician_schedule_overrides: {
         Row: {
           created_at: string
@@ -4342,10 +4384,7 @@ export type Database = {
       physicians: {
         Row: {
           bio: string | null
-          clinic_cut_php: number | null
-          compensation_arrangement: string
           created_at: string
-          default_consultation_fee_php: number | null
           display_order: number
           full_name: string
           group_label: string | null
@@ -4358,10 +4397,7 @@ export type Database = {
         }
         Insert: {
           bio?: string | null
-          clinic_cut_php?: number | null
-          compensation_arrangement?: string
           created_at?: string
-          default_consultation_fee_php?: number | null
           display_order?: number
           full_name: string
           group_label?: string | null
@@ -4374,10 +4410,7 @@ export type Database = {
         }
         Update: {
           bio?: string | null
-          clinic_cut_php?: number | null
-          compensation_arrangement?: string
           created_at?: string
-          default_consultation_fee_php?: number | null
           display_order?: number
           full_name?: string
           group_label?: string | null

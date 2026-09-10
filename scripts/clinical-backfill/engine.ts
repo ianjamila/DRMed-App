@@ -121,10 +121,30 @@ export async function run(cfg: TabConfig): Promise<void> {
 
   // Surnames whose attending doctor keeps 100% of the consult (clinic_fee=0 is
   // expected, not an error) — recover their otherwise-"zero_amount" consults.
+  // 0136 moved compensation_arrangement into physician_compensation, so it is
+  // read through the embed rather than off the physicians row.
   const physRoster = await fetchAll<{ full_name: string; compensation_arrangement: string | null }>(async (lo, hi) => {
-    const { data, error } = await admin.from("physicians").select("full_name,compensation_arrangement").range(lo, hi);
+    const { data, error } = await admin
+      .from("physicians")
+      .select("full_name,physician_compensation(compensation_arrangement)")
+      .range(lo, hi);
     if (error) throw new Error(error.message);
-    return (data ?? []) as { full_name: string; compensation_arrangement: string | null }[];
+    type Embedded = {
+      full_name: string;
+      physician_compensation:
+        | { compensation_arrangement: string | null }
+        | { compensation_arrangement: string | null }[]
+        | null;
+    };
+    return ((data ?? []) as unknown as Embedded[]).map((p) => {
+      const comp = Array.isArray(p.physician_compensation)
+        ? (p.physician_compensation[0] ?? null)
+        : p.physician_compensation;
+      return {
+        full_name: p.full_name,
+        compensation_arrangement: comp?.compensation_arrangement ?? null,
+      };
+    });
   });
   const keepsFullFeeByName = new Set(
     physRoster.filter((p) => p.compensation_arrangement === "rent_paying" || p.compensation_arrangement === "shareholder").map((p) => p.full_name),

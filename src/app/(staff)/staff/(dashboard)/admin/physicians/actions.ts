@@ -47,9 +47,17 @@ export async function createPhysicianAction(
   }
 
   const admin = createAdminClient();
+  // 0136 split the commercial terms into physician_compensation, so one form
+  // submit is now two writes. `physicians` takes the public fields only.
+  const {
+    compensation_arrangement,
+    default_consultation_fee_php,
+    clinic_cut_php,
+    ...publicFields
+  } = parsed.data;
   const { data: created, error } = await admin
     .from("physicians")
-    .insert(parsed.data)
+    .insert(publicFields)
     .select("id, slug")
     .single();
   if (error || !created) {
@@ -57,6 +65,31 @@ export async function createPhysicianAction(
       ok: false,
       error: error?.message ?? "Could not create physician.",
     };
+  }
+
+  // upsert, not update: a trigger already created the row, but upsert means
+  // this does not depend on that ordering. A failure here leaves the doctor on
+  // the arrangement default rather than losing the whole submission — the Edit
+  // form fixes it, and the error is surfaced rather than swallowed.
+  const { error: compError } = await admin
+    .from("physician_compensation")
+    .upsert(
+      {
+        physician_id: created.id,
+        compensation_arrangement,
+        default_consultation_fee_php,
+        clinic_cut_php,
+      },
+      { onConflict: "physician_id" },
+    );
+  if (compError) {
+    // Unwind, the same way createOneVisit unwinds a half-made visit. Before
+    // 0136 this was one atomic insert; leaving the physician live on the
+    // trigger's 'pf_split' DEFAULT after the admin chose rent_paying or
+    // shareholder would quietly deduct ₱100 a consult until someone noticed.
+    // physician_compensation cascades on delete.
+    await admin.from("physicians").delete().eq("id", created.id);
+    return { ok: false, error: compError.message };
   }
 
   const { ip, ua } = await ipAndAgent();
@@ -100,11 +133,49 @@ export async function updatePhysicianAction(
     .select("slug")
     .eq("id", physicianId)
     .maybeSingle();
+  // 0136: two writes, same split as createPhysicianAction. Compensation goes
+  // FIRST so the money-relevant half is never the one left half-applied: if it
+  // fails, `physicians` has not been touched at all. If the second write then
+  // fails, the snapshot below puts compensation back.
+  const {
+    compensation_arrangement,
+    default_consultation_fee_php,
+    clinic_cut_php,
+    ...publicFields
+  } = parsed.data;
+
+  const { data: priorComp } = await admin
+    .from("physician_compensation")
+    .select("compensation_arrangement, default_consultation_fee_php, clinic_cut_php")
+    .eq("physician_id", physicianId)
+    .maybeSingle();
+
+  const { error: compError } = await admin
+    .from("physician_compensation")
+    .upsert(
+      {
+        physician_id: physicianId,
+        compensation_arrangement,
+        default_consultation_fee_php,
+        clinic_cut_php,
+      },
+      { onConflict: "physician_id" },
+    );
+  if (compError) return { ok: false, error: compError.message };
+
   const { error } = await admin
     .from("physicians")
-    .update(parsed.data)
+    .update(publicFields)
     .eq("id", physicianId);
-  if (error) return { ok: false, error: error.message };
+  if (error) {
+    if (priorComp) {
+      await admin
+        .from("physician_compensation")
+        .update(priorComp)
+        .eq("physician_id", physicianId);
+    }
+    return { ok: false, error: error.message };
+  }
 
   const { ip, ua } = await ipAndAgent();
   await audit({
