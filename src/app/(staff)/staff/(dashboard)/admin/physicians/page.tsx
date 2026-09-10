@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { pluckOne } from "@/lib/reports/format";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { formatPhp } from "@/lib/marketing/format";
 import { defaultClinicFee } from "@/lib/visits/consultation-fee";
@@ -15,8 +16,9 @@ export default async function PhysiciansAdminPage() {
 
   const { data: physicians } = await admin
     .from("physicians")
+    // 0136: commercial terms moved to physician_compensation (admin-only).
     .select(
-      "id, slug, full_name, specialty, group_label, is_active, display_order, compensation_arrangement, default_consultation_fee_php, clinic_cut_php",
+      "id, slug, full_name, specialty, group_label, is_active, display_order, physician_compensation ( compensation_arrangement, default_consultation_fee_php, clinic_cut_php )",
     )
     .order("is_active", { ascending: false })
     .order("display_order", { ascending: true })
@@ -36,8 +38,26 @@ export default async function PhysiciansAdminPage() {
     }
   }
 
-  const active = (physicians ?? []).filter((p) => p.is_active);
-  const inactive = (physicians ?? []).filter((p) => !p.is_active);
+  // 0136: flatten the physician_compensation embed back into the flat Row the
+  // list renders, falling back to the same defaults the dropped columns had.
+  const rows = (physicians ?? []).map((p) => {
+    const comp = pluckOne(p.physician_compensation);
+    return {
+      id: p.id,
+      slug: p.slug,
+      full_name: p.full_name,
+      specialty: p.specialty,
+      group_label: p.group_label,
+      is_active: p.is_active,
+      display_order: p.display_order,
+      compensation_arrangement: comp?.compensation_arrangement ?? "pf_split",
+      default_consultation_fee_php: comp?.default_consultation_fee_php ?? null,
+      clinic_cut_php: comp?.clinic_cut_php ?? null,
+    };
+  });
+
+  const active = rows.filter((p) => p.is_active);
+  const inactive = rows.filter((p) => !p.is_active);
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">

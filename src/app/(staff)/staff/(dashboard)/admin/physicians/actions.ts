@@ -47,9 +47,17 @@ export async function createPhysicianAction(
   }
 
   const admin = createAdminClient();
+  // 0136 split the commercial terms into physician_compensation, so one form
+  // submit is now two writes. `physicians` takes the public fields only.
+  const {
+    compensation_arrangement,
+    default_consultation_fee_php,
+    clinic_cut_php,
+    ...publicFields
+  } = parsed.data;
   const { data: created, error } = await admin
     .from("physicians")
-    .insert(parsed.data)
+    .insert(publicFields)
     .select("id, slug")
     .single();
   if (error || !created) {
@@ -58,6 +66,23 @@ export async function createPhysicianAction(
       error: error?.message ?? "Could not create physician.",
     };
   }
+
+  // upsert, not update: a trigger already created the row, but upsert means
+  // this does not depend on that ordering. A failure here leaves the doctor on
+  // the arrangement default rather than losing the whole submission — the Edit
+  // form fixes it, and the error is surfaced rather than swallowed.
+  const { error: compError } = await admin
+    .from("physician_compensation")
+    .upsert(
+      {
+        physician_id: created.id,
+        compensation_arrangement,
+        default_consultation_fee_php,
+        clinic_cut_php,
+      },
+      { onConflict: "physician_id" },
+    );
+  if (compError) return { ok: false, error: compError.message };
 
   const { ip, ua } = await ipAndAgent();
   await audit({
@@ -100,11 +125,31 @@ export async function updatePhysicianAction(
     .select("slug")
     .eq("id", physicianId)
     .maybeSingle();
+  // 0136: two writes, same split as createPhysicianAction.
+  const {
+    compensation_arrangement,
+    default_consultation_fee_php,
+    clinic_cut_php,
+    ...publicFields
+  } = parsed.data;
   const { error } = await admin
     .from("physicians")
-    .update(parsed.data)
+    .update(publicFields)
     .eq("id", physicianId);
   if (error) return { ok: false, error: error.message };
+
+  const { error: compError } = await admin
+    .from("physician_compensation")
+    .upsert(
+      {
+        physician_id: physicianId,
+        compensation_arrangement,
+        default_consultation_fee_php,
+        clinic_cut_php,
+      },
+      { onConflict: "physician_id" },
+    );
+  if (compError) return { ok: false, error: compError.message };
 
   const { ip, ua } = await ipAndAgent();
   await audit({

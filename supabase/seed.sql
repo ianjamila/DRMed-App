@@ -72,3 +72,9 @@ revoke all on public.v_hmo_stuck            from anon, authenticated;
 revoke all on public.v_hmo_ar_aging         from anon, authenticated;
 revoke all on public.v_hmo_provider_summary from anon, authenticated;
 revoke all on public.v_inventory_balances   from anon, authenticated;
+
+-- And 0136's side table. RLS already denies anon here, so this is defence in
+-- depth rather than the only lock — but without it a local database hard-denies
+-- nothing while prod hard-denies at the grant, and the replay stops matching
+-- what it is supposed to prove.
+revoke all on public.physician_compensation from anon;

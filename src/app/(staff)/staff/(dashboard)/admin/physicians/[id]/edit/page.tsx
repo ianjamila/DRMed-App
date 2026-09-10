@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { physicianPhotoUrl } from "@/lib/physicians/photo";
+import { pluckOne } from "@/lib/reports/format";
 import { PhysicianForm } from "../../physician-form";
 import { PhotoUpload } from "./photo-upload";
 import { DeletePhysicianButton } from "./delete-physician-button";
@@ -22,12 +23,24 @@ export default async function EditPhysicianPage({ params }: PageProps) {
 
   const { data: physician } = await admin
     .from("physicians")
+    // 0136: commercial terms moved to physician_compensation (admin-only).
     .select(
-      "id, slug, full_name, specialty, group_label, bio, is_active, display_order, photo_path, compensation_arrangement, default_consultation_fee_php, clinic_cut_php",
+      "id, slug, full_name, specialty, group_label, bio, is_active, display_order, photo_path, physician_compensation ( compensation_arrangement, default_consultation_fee_php, clinic_cut_php )",
     )
     .eq("id", id)
     .maybeSingle();
   if (!physician) notFound();
+
+  // The form still takes one flat object, so the embed is flattened back here
+  // rather than reshaping the form. Falls back to the same defaults the dropped
+  // columns carried, so a doctor missing a compensation row edits cleanly.
+  const comp = pluckOne(physician.physician_compensation);
+  const physicianFormDefaults = {
+    ...physician,
+    compensation_arrangement: comp?.compensation_arrangement ?? "pf_split",
+    default_consultation_fee_php: comp?.default_consultation_fee_php ?? null,
+    clinic_cut_php: comp?.clinic_cut_php ?? null,
+  };
 
   const photoUrl = physicianPhotoUrl({
     slug: physician.slug,
@@ -70,7 +83,7 @@ export default async function EditPhysicianPage({ params }: PageProps) {
         </div>
       </section>
 
-      <PhysicianForm initial={physician} />
+      <PhysicianForm initial={physicianFormDefaults} />
 
       <section className="mt-8 border-t border-[color:var(--color-brand-bg-mid)] pt-6">
         <h2 className="mb-3 font-heading text-sm font-extrabold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">

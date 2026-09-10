@@ -17,7 +17,7 @@ export default async function PfPayoutsPage() {
       `
       id, pf_php, recognized_at, recognition_basis, physician_id,
       test_request_id, hmo_allocation_id, created_at,
-      physicians(id, full_name, compensation_arrangement, is_active)
+      physicians(id, full_name, is_active, physician_compensation(compensation_arrangement))
     `
     )
     .is("disbursement_id", null)

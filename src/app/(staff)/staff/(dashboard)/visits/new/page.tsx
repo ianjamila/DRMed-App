@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { pluckOne } from "@/lib/reports/format";
 import { getPatientConsentState } from "@/lib/consent/gate";
 import { patientSearchOrClauses } from "@/lib/patients/search";
 import { VisitForm } from "./visit-form";
@@ -62,8 +63,11 @@ export default async function NewVisitPage({ searchParams }: Props) {
       .order("name", { ascending: true }),
     admin
       .from("physicians")
+      // 0136: the commercial terms live in physician_compensation now. Embedded
+      // rather than fetched separately so this stays one round trip; the row is
+      // guaranteed to exist (backfilled, and a trigger creates one per doctor).
       .select(
-        "id, full_name, specialty, compensation_arrangement, default_consultation_fee_php, clinic_cut_php, is_active",
+        "id, full_name, specialty, is_active, physician_compensation ( compensation_arrangement, default_consultation_fee_php, clinic_cut_php )",
       )
       .eq("is_active", true)
       .order("full_name", { ascending: true }),
@@ -143,17 +147,23 @@ export default async function NewVisitPage({ searchParams }: Props) {
           initialCategory={initialCategory}
           appointmentId={appointment_id}
           hmoProviders={hmoProviders ?? []}
-          physicians={(physicians ?? []).map((p) => ({
-            id: p.id,
-            full_name: p.full_name,
-            specialty: p.specialty,
-            compensation_arrangement: p.compensation_arrangement,
-            default_consultation_fee_php:
-              p.default_consultation_fee_php != null
-                ? Number(p.default_consultation_fee_php)
-                : null,
-            clinic_cut_php: p.clinic_cut_php != null ? Number(p.clinic_cut_php) : null,
-          }))}
+          physicians={(physicians ?? []).map((p) => {
+            const comp = pluckOne(p.physician_compensation);
+            return {
+              id: p.id,
+              full_name: p.full_name,
+              specialty: p.specialty,
+              // Falls back to the same default the column carried, so a doctor
+              // somehow missing a row behaves as before rather than crashing.
+              compensation_arrangement: comp?.compensation_arrangement ?? "pf_split",
+              default_consultation_fee_php:
+                comp?.default_consultation_fee_php != null
+                  ? Number(comp.default_consultation_fee_php)
+                  : null,
+              clinic_cut_php:
+                comp?.clinic_cut_php != null ? Number(comp.clinic_cut_php) : null,
+            };
+          })}
         />
       </Panel>
     </div>

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
+import { pluckOne } from "@/lib/reports/format";
 
 export const metadata = { title: "Doctor pay (this year) — staff" };
 export const dynamic = "force-dynamic";
@@ -10,6 +11,23 @@ const PHP = new Intl.NumberFormat("en-PH", {
   style: "currency",
   currency: "PHP",
 });
+
+/**
+ * The physicians embed these queries share. 0136 moved the commercial terms to
+ * physician_compensation, so the arrangement now arrives one level deeper. This
+ * file hand-writes its row shapes instead of deriving them from the generated
+ * types, which is why `tsc` did NOT catch the stale embed when the column was
+ * dropped — the query would have failed at runtime and rendered an empty page.
+ * Declared once so the two shapes cannot drift apart again.
+ */
+type PhysicianEmbed = {
+  id: string;
+  full_name: string;
+  physician_compensation:
+    | { compensation_arrangement: string | null }
+    | { compensation_arrangement: string | null }[]
+    | null;
+};
 
 interface SearchProps {
   searchParams: Promise<{ year?: string }>;
@@ -23,10 +41,7 @@ interface EntryRow {
   physician_id: string;
   disbursement_id: string | null;
   created_at: string;
-  physicians:
-    | { id: string; full_name: string; compensation_arrangement: string | null }
-    | { id: string; full_name: string; compensation_arrangement: string | null }[]
-    | null;
+  physicians: PhysicianEmbed | PhysicianEmbed[] | null;
 }
 
 interface DisbursementRow {
@@ -52,12 +67,7 @@ interface PhysicianSummary {
   openBalance: number;
 }
 
-function pluckPhysician(
-  v:
-    | { id: string; full_name: string; compensation_arrangement: string | null }
-    | { id: string; full_name: string; compensation_arrangement: string | null }[]
-    | null,
-) {
+function pluckPhysician(v: PhysicianEmbed | PhysicianEmbed[] | null) {
   if (!v) return null;
   return Array.isArray(v) ? (v[0] ?? null) : v;
 }
@@ -89,7 +99,7 @@ export default async function PfYtdSummaryPage({ searchParams }: SearchProps) {
         `
         id, pf_php, recognized_at, recognition_basis, physician_id,
         disbursement_id, created_at,
-        physicians ( id, full_name, compensation_arrangement )
+        physicians ( id, full_name, physician_compensation ( compensation_arrangement ) )
       `,
       )
       .gte("created_at", `${yearStart}T00:00:00+08:00`)
@@ -113,7 +123,7 @@ export default async function PfYtdSummaryPage({ searchParams }: SearchProps) {
     const row = byPhysician.get(ph.id) ?? {
       id: ph.id,
       name: ph.full_name,
-      arrangement: ph.compensation_arrangement,
+      arrangement: pluckOne(ph.physician_compensation)?.compensation_arrangement ?? null,
       accruedYtd: 0,
       accruedCount: 0,
       recognizedCashYtd: 0,

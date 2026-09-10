@@ -97,13 +97,21 @@ begin
   returning id into v_staff_id;
 
   -- ---- Physicians
-  insert into public.physicians (full_name, slug, specialty, is_active, compensation_arrangement)
-  values ('SMOKE-12.5 Dr PfSplit', 'smoke-125-dr-pfsplit', 'General Medicine', true, 'pf_split')
+  -- 0136: compensation_arrangement lives in physician_compensation now. A
+  -- trigger creates that row on insert, defaulting to 'pf_split', so this
+  -- doctor needs no follow-up write.
+  insert into public.physicians (full_name, slug, specialty, is_active)
+  values ('SMOKE-12.5 Dr PfSplit', 'smoke-125-dr-pfsplit', 'General Medicine', true)
   returning id into v_phys_pf_split;
 
-  insert into public.physicians (full_name, slug, specialty, is_active, compensation_arrangement)
-  values ('SMOKE-12.5 Dr Shareholder', 'smoke-125-dr-shareholder', 'General Medicine', true, 'shareholder')
+  insert into public.physicians (full_name, slug, specialty, is_active)
+  values ('SMOKE-12.5 Dr Shareholder', 'smoke-125-dr-shareholder', 'General Medicine', true)
   returning id into v_phys_shareholder;
+
+  -- ...but this one is not the default, so set it on the row the trigger made.
+  update public.physician_compensation
+     set compensation_arrangement = 'shareholder'
+   where physician_id = v_phys_shareholder;
 
   -- ---- Vendor (for send-out services)
   insert into public.vendors (name) values ('SMOKE-12.5 Hi Precision')
