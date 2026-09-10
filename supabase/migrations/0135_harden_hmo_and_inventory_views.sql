@@ -49,6 +49,22 @@
 -- No view body is restated: `alter view ... set` changes only the option, so the
 -- definitions in 0082 (unbilled, stuck, ar_aging), 0078 (provider_summary) and
 -- 0073 (inventory) stay the one source of truth for what these views select.
+--
+-- ⚠ READ THIS BEFORE REDEFINING ANY OF THESE FIVE VIEWS
+--   `create or replace view`'s WITH clause REPLACES the view's options — it
+--   does not merge with what is already set. Omit the clause and
+--   `security_invoker` silently reverts to off: the view goes back to running
+--   with its OWNER's rights, base-table RLS stops applying, nothing errors and
+--   no test fails. The revoke above still stands, so the view is not instantly
+--   world-readable again — but the second half of this fix is gone, and the
+--   note at line 34 ("restore the `authenticated` grant and let RLS be the
+--   lock") would then be advice that quietly does not hold.
+--   This is not hypothetical: these four HMO views were recreated by ordinary
+--   feature work three times (0078, 0079, 0080/0081/0082). Any one of those,
+--   written after today, would have reopened it.
+--   EVERY later `create or replace view` of these five MUST restate
+--   `with (security_invoker = on)`. src/lib/supabase/hardened-views.test.ts
+--   fails the build if one doesn't.
 
 alter view public.v_hmo_unbilled         set (security_invoker = on);
 alter view public.v_hmo_stuck            set (security_invoker = on);
