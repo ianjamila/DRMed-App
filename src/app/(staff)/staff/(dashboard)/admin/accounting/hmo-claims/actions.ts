@@ -6,6 +6,11 @@ import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { audit } from "@/lib/audit/log";
+import { ipAndAgent } from "@/lib/server/action-helpers";
+import {
+  HmoExportAuditSchema,
+  recordHmoExportAudit,
+} from "@/lib/reports/export-audit";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import {
   CreateClaimBatchSchema,
@@ -1256,4 +1261,35 @@ export async function snapshotHmoAgingAction(
 
   revalidatePath(BASE_PATH);
   return { ok: true, data: { rows: count ?? rows.length } };
+}
+
+// ============================================================
+// Export audit
+// ============================================================
+
+/**
+ * Write the `report.<key>.exported` row for one of the two HMO CSVs the
+ * browser builds itself. See src/lib/reports/export-audit.ts for why these two
+ * cannot audit from a Route Handler the way every other report CSV does, and
+ * what that costs.
+ *
+ * Every export of a "use server" file is a callable endpoint whether or not
+ * client code references it, so this re-proves its own payload: admin-only,
+ * and the schema pins the report key to a known report and the row count to
+ * the export ceiling. It reads nothing and changes nothing else, so there is
+ * no revalidatePath.
+ */
+export async function recordHmoExportAuditAction(
+  input: unknown,
+): Promise<ActionResult> {
+  const session = await requireAdminStaff();
+  const parsed = HmoExportAuditSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+  await recordHmoExportAudit(
+    { audit, ipAndAgent },
+    { actorId: session.user_id, audit: parsed.data },
+  );
+  return { ok: true };
 }

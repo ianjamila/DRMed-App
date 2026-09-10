@@ -3,7 +3,10 @@
 import { Fragment, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import type { Database } from "@/types/database";
-import { snapshotHmoAgingAction } from "./actions";
+import { snapshotHmoAgingAction, recordHmoExportAuditAction } from "./actions";
+import { csvDocumentFromRecords } from "@/lib/csv/escape";
+import { REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
+import type { HmoExportReportKey } from "@/lib/reports/export-audit";
 import {
   MarkHistoricBilledModal,
   MarkHistoricPaidModal,
@@ -52,14 +55,19 @@ function matchesKind<T extends { kind?: string | null }>(row: T, kind: Kind): bo
 export function HmoClaimsClient({
   summary,
   unbilled,
+  unbilledTruncated,
   stuck,
+  stuckTruncated,
   aging,
   staff,
   paymentMethods,
 }: {
   summary: SummaryRow[];
   unbilled: UnbilledRow[];
+  /** The 20,000-row export ceiling was reached — these are not all of them. */
+  unbilledTruncated: boolean;
   stuck: StuckRow[];
+  stuckTruncated: boolean;
   aging: AgingRow[];
   staff: StaffPick[];
   paymentMethods: PaymentMethod[];
@@ -100,8 +108,24 @@ export function HmoClaimsClient({
           kind={kind}
         />
       )}
-      {view === "all_unbilled" && <AllUnbilled rows={fUnbilled} staff={staff} paymentMethods={paymentMethods} />}
-      {view === "all_aging" && <AllAging rows={fStuck} staff={staff} paymentMethods={paymentMethods} />}
+      {view === "all_unbilled" && (
+        <AllUnbilled
+          rows={fUnbilled}
+          kind={kind}
+          truncated={unbilledTruncated}
+          staff={staff}
+          paymentMethods={paymentMethods}
+        />
+      )}
+      {view === "all_aging" && (
+        <AllAging
+          rows={fStuck}
+          kind={kind}
+          truncated={stuckTruncated}
+          staff={staff}
+          paymentMethods={paymentMethods}
+        />
+      )}
       {view === "aging_matrix" && <AgingMatrix rows={fAging} />}
     </div>
   );
@@ -487,16 +511,21 @@ function ProviderCard({
 
 const TOP_PAGE_SIZE = 100;
 
-function exportRowsCsv(rows: Record<string, unknown>[], filename: string) {
+function exportRowsCsv(
+  rows: Record<string, unknown>[],
+  filename: string,
+  truncated: boolean,
+) {
   if (rows.length === 0) return;
-  const header = Object.keys(rows[0]);
-  const lines: string[][] = [header];
-  for (const r of rows) {
-    lines.push(header.map((h) => String(r[h] ?? "")));
-  }
-  const text = lines
-    .map((row) => row.map((c) => `"${c.replace(/"/g, '""')}"`).join(","))
-    .join("\n");
+  // The house builder + escaper, not a hand-rolled copy of either. The notice
+  // is the same one reportCsvResponse writes in-band: a silently short export
+  // reads as "that's everything", and the reader of the file is not
+  // necessarily the person who clicked.
+  const text = csvDocumentFromRecords(rows, {
+    truncatedNotice: truncated
+      ? `TRUNCATED — more rows matched than the ${REPORT_EXPORT_MAX_ROWS} exported. Narrow the filters.`
+      : undefined,
+  });
   const blob = new Blob([text], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -508,15 +537,63 @@ function exportRowsCsv(rows: Record<string, unknown>[], filename: string) {
   URL.revokeObjectURL(url);
 }
 
+/**
+ * Download a browser-built CSV and leave an audit row behind it.
+ *
+ * RA 10173: every export that discloses patient data is attributable. These
+ * two build the file client-side from the rows already on screen, so there is
+ * no Route Handler for reportCsvResponse to audit from — the row comes from a
+ * Server Action instead.
+ *
+ * The audit is attempted BEFORE the download, mirroring reportCsvResponse
+ * (audit, then hand over the file). It never blocks the download: audit() logs
+ * and swallows a failed insert rather than withholding a file the admin is
+ * entitled to, and an offline browser must behave the same way.
+ */
+function useAuditedCsvExport(report: HmoExportReportKey) {
+  const [pending, startTransition] = useTransition();
+
+  function download(args: {
+    rows: Record<string, unknown>[];
+    filename: string;
+    kind: Kind;
+    search: string;
+    truncated: boolean;
+  }) {
+    startTransition(async () => {
+      try {
+        await recordHmoExportAuditAction({
+          report,
+          rows_exported: args.rows.length,
+          truncated: args.truncated,
+          kind: args.kind,
+          search: args.search,
+        });
+      } catch {
+        // Transport failure or an expired session redirecting us away. Neither
+        // is a reason to withhold rows the admin is already looking at.
+      }
+      exportRowsCsv(args.rows, args.filename, args.truncated);
+    });
+  }
+
+  return { pending, download };
+}
+
 function AllUnbilled({
   rows,
+  kind,
+  truncated,
   staff,
   paymentMethods,
 }: {
   rows: UnbilledRow[];
+  kind: Kind;
+  truncated: boolean;
   staff: StaffPick[];
   paymentMethods: PaymentMethod[];
 }) {
+  const csv = useAuditedCsvExport("hmo_unbilled");
   const [filter, setFilter] = useState("");
   const [page, setPage] = useState(0);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -580,8 +657,8 @@ function AllUnbilled({
   }
 
   function exportCsv() {
-    exportRowsCsv(
-      filtered.map((r) => ({
+    csv.download({
+      rows: filtered.map((r) => ({
         provider: r.provider_name ?? "",
         is_historic: r.is_historic ? "yes" : "no",
         kind: r.kind ?? "lab",
@@ -591,8 +668,11 @@ function AllUnbilled({
         service: r.service_description ?? "",
         amount_php: r.billed_amount_php ?? 0,
       })),
-      `hmo-all-unbilled-${today}.csv`,
-    );
+      filename: `hmo-all-unbilled-${today}.csv`,
+      kind,
+      search: filter.trim(),
+      truncated,
+    });
   }
 
   if (rows.length === 0) {
@@ -613,13 +693,21 @@ function AllUnbilled({
           onChange={(e) => { setFilter(e.target.value); setPage(0); }}
           className="min-w-[260px] flex-1 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm"
         />
-        <ExportCsvButton onClick={exportCsv} />
+        <ExportCsvButton onClick={exportCsv} disabled={csv.pending} />
         <div className="text-xs text-[color:var(--color-brand-text-soft)]">
           {filtered.length} {filtered.length === 1 ? "row" : "rows"} · Total{" "}
           <span className="font-semibold text-[color:var(--color-brand-navy)]">
             {PHP.format(filtered.reduce((s, r) => s + Number(r.billed_amount_php ?? 0), 0))}
           </span>
         </div>
+        {truncated && (
+          <p className="w-full rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            Showing the first {REPORT_EXPORT_MAX_ROWS.toLocaleString()} rows —
+            more matched, so this list, its total and its export are all
+            incomplete. The filter box only searches what is on this page; open
+            a provider from “By provider” to see all of theirs.
+          </p>
+        )}
       </div>
       <Panel className="overflow-x-auto">
         <table className="w-full min-w-[1000px] text-sm">
@@ -862,13 +950,20 @@ function AllUnbilled({
 
 function AllAging({
   rows,
+  kind,
+  truncated,
   staff,
   paymentMethods,
 }: {
   rows: StuckRow[];
+  kind: Kind;
+  truncated: boolean;
   staff: StaffPick[];
   paymentMethods: PaymentMethod[];
 }) {
+  // "All aging" is the v_hmo_stuck detail — submitted claims still unresolved.
+  // v_hmo_ar_aging feeds the separate matrix view.
+  const csv = useAuditedCsvExport("hmo_aging");
   const [filter, setFilter] = useState("");
   const [page, setPage] = useState(0);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -938,8 +1033,8 @@ function AllAging({
   }
 
   function exportCsv() {
-    exportRowsCsv(
-      filtered.map((r) => ({
+    csv.download({
+      rows: filtered.map((r) => ({
         provider: r.provider_name ?? "",
         is_historic: r.is_historic ? "yes" : "no",
         kind: r.kind ?? "lab",
@@ -949,8 +1044,11 @@ function AllAging({
         service: r.service_description ?? "",
         unresolved_php: r.unresolved_balance_php ?? 0,
       })),
-      `hmo-all-aging-${today}.csv`,
-    );
+      filename: `hmo-all-aging-${today}.csv`,
+      kind,
+      search: filter.trim(),
+      truncated,
+    });
   }
 
   if (rows.length === 0) {
@@ -971,13 +1069,21 @@ function AllAging({
           onChange={(e) => { setFilter(e.target.value); setPage(0); }}
           className="min-w-[260px] flex-1 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm"
         />
-        <ExportCsvButton onClick={exportCsv} />
+        <ExportCsvButton onClick={exportCsv} disabled={csv.pending} />
         <div className="text-xs text-[color:var(--color-brand-text-soft)]">
           {filtered.length} {filtered.length === 1 ? "row" : "rows"} · Total{" "}
           <span className="font-semibold text-[color:var(--color-brand-navy)]">
             {PHP.format(filtered.reduce((s, r) => s + Number(r.unresolved_balance_php ?? 0), 0))}
           </span>
         </div>
+        {truncated && (
+          <p className="w-full rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            Showing the first {REPORT_EXPORT_MAX_ROWS.toLocaleString()} rows —
+            more matched, so this list, its total and its export are all
+            incomplete. The filter box only searches what is on this page; open
+            a provider from “By provider” to see all of theirs.
+          </p>
+        )}
       </div>
       <Panel className="overflow-x-auto">
         <table className="w-full min-w-[960px] text-sm">
