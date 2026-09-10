@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { audit } from "@/lib/audit/log";
+import { needsMfaChallenge } from "@/lib/auth/mfa-gate";
 
 export interface StaffSession {
   user_id: string;
@@ -67,14 +68,12 @@ export async function requireSignedInStaff(): Promise<StaffSession> {
 }
 
 // Call at the top of any protected /staff/* server component.
-// Verifies basic auth (delegated to requireSignedInStaff) AND enforces
-// MFA: admin must reach aal2 (TOTP); other roles only need aal2 if they
-// have a verified factor enrolled (optional MFA).
+// Verifies basic auth (delegated to requireSignedInStaff) AND enforces MFA
+// for anyone who has enrolled a factor. Enrolment itself is opt-in for every
+// role — see needsMfaChallenge for why.
 //
 // FEATURE_STAFF_MFA_REQUIRED env var (default "true"): when set to "false",
-// the MFA gate is fully disabled — admin and non-admin alike can sign in
-// at aal1. Intended for UAT environments where MFA enrollment friction
-// blocks testing. Re-enable before going live.
+// the MFA gate is fully disabled. Intended for UAT environments.
 export async function requireActiveStaff(): Promise<StaffSession> {
   const session = await requireSignedInStaff();
   const supabase = await createClient();
@@ -82,15 +81,13 @@ export async function requireActiveStaff(): Promise<StaffSession> {
 
   if (!aal) return session;
 
-  const mfaRequired = process.env.FEATURE_STAFF_MFA_REQUIRED !== "false";
-
-  const needsMfa =
-    mfaRequired &&
-    (session.role === "admin"
-      ? aal.currentLevel !== "aal2"
-      : aal.nextLevel === "aal2" && aal.currentLevel !== "aal2");
-
-  if (needsMfa) {
+  if (
+    needsMfaChallenge({
+      mfaRequired: process.env.FEATURE_STAFF_MFA_REQUIRED !== "false",
+      currentLevel: aal.currentLevel,
+      nextLevel: aal.nextLevel,
+    })
+  ) {
     redirect("/staff/mfa");
   }
 
