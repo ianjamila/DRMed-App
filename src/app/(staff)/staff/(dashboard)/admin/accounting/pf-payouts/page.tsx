@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { pluckOne } from "@/lib/reports/format";
 import { PfPayoutsClient } from "./pf-payouts-client";
 
 export const metadata = { title: "Pay doctors — DRMed" };
@@ -24,6 +25,29 @@ export default async function PfPayoutsPage() {
     .is("voided_at", null)
     .not("recognized_at", "is", null)
     .order("recognized_at", { ascending: false });
+
+  // 0136 moved compensation_arrangement into physician_compensation, so it now
+  // arrives one level deeper in the embed. Flatten it HERE rather than teaching
+  // the client to descend: pf-payouts-client declares its own PhysicianInfo
+  // shape with the field OPTIONAL, so a stale direct read type-checks fine and
+  // silently yields undefined — every doctor would render as "pf split",
+  // including the rent_paying and shareholder ones. Same trap that hid in
+  // pf-ytd-summary. Keeping the client's contract flat means it cannot recur.
+  const openEntriesFlat = (openEntries ?? []).map((e) => {
+    const ph = pluckOne(e.physicians);
+    return {
+      ...e,
+      physicians: ph
+        ? {
+            id: ph.id,
+            full_name: ph.full_name,
+            is_active: ph.is_active,
+            compensation_arrangement:
+              pluckOne(ph.physician_compensation)?.compensation_arrangement ?? null,
+          }
+        : null,
+    };
+  });
 
   // Tab 2 data: Pending HMO settlement
   const { data: pendingHmo } = await admin
@@ -102,7 +126,7 @@ export default async function PfPayoutsPage() {
       </section>
 
       <PfPayoutsClient
-        openEntries={openEntries ?? []}
+        openEntries={openEntriesFlat}
         pendingHmo={pendingHmo ?? []}
         history={history ?? []}
         nowIso={new Date().toISOString()}

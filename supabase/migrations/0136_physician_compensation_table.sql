@@ -34,8 +34,10 @@
 --     arrangement and ph.clinic_cut_php. Recreated below, restating
 --     `security_invoker = on` — CREATE OR REPLACE VIEW's WITH clause REPLACES
 --     the options, so omitting it would silently revert the view to definer
---     rights (the trap 0135 documents, and which
---     src/lib/supabase/hardened-views.test.ts guards).
+--     rights (the trap 0135 documents). This migration also ADDS the view to
+--     the HARDENED map in src/lib/supabase/hardened-views.test.ts, which until
+--     now covered only the 0134/0135 views — so a future recreation that drops
+--     the clause fails the build instead of shipping quietly.
 --   recompute_clinic_fee_for_unreleased() (0065 → 0066 → 0129) joins physicians
 --     for both columns. Recreated below against the new table.
 --

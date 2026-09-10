@@ -46,6 +46,10 @@ const HARDENED: Record<string, string> = {
   v_hmo_ar_aging: "0135",
   v_hmo_provider_summary: "0135",
   v_inventory_balances: "0135",
+  // Not hardened BY 0136 — it was already security_invoker — but 0136 recreates
+  // it, which is exactly when the option is easiest to drop. Registered here so
+  // the next recreation cannot lose it silently.
+  v_ops_daily_doctor: "0136",
 };
 
 const migrations = readdirSync(MIGRATIONS_DIR)
@@ -81,6 +85,7 @@ describe("hardened views keep security_invoker", () => {
       "v_hmo_stuck",
       "v_hmo_unbilled",
       "v_inventory_balances",
+      "v_ops_daily_doctor",
       "v_staff_advances_outstanding",
     ]);
   });
