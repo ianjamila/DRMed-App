@@ -1,13 +1,13 @@
 ---
 name: drmed-migrations
-description: Use when working on DRMed database schema changes, Supabase migrations, RLS policies, audit-log obligations, payment-gating trigger considerations, function grants/ACLs, applying a migration to prod, or the migration workflow. Trigger whenever the user mentions migration, new migration, schema change, new table, alter table, alter schema, drop table, drop column, regenerate types, regen types, db:diff, db:types, db:types:remote, db:reset, supabase db push, supabase db reset, supabase migrations, schema_migrations, apply_migration, execute_sql, RLS policy, row-level security policy, has_role, current_patient_id, payment gating trigger, enforce_payment_before_release, audit_log table, audit-log obligation, SECURITY DEFINER, grant execute, revoke execute, anon-executable, function ACL, default privileges, rls_auto_enable, ensure_rls, P00xx error code, translatePgError, pg-errors, seed script, seed:test, seed:services, seed:templates, seed.sql, smoke:results, or the 131 files under supabase/migrations/ (0001 → 0134, with gaps). Also trigger when adding any new table, trigger, or function — the skill carries the RLS-template + audit-row + payment-gating + ACL checklist. Don't make Claude reconstruct the per-table checklist from scratch.
+description: Use when working on DRMed database schema changes, Supabase migrations, RLS policies, audit-log obligations, payment-gating trigger considerations, function grants/ACLs, applying a migration to prod, or the migration workflow. Trigger whenever the user mentions migration, new migration, schema change, new table, alter table, alter schema, drop table, drop column, regenerate types, regen types, db:diff, db:types, db:types:remote, db:reset, supabase db push, supabase db reset, supabase migrations, schema_migrations, apply_migration, execute_sql, RLS policy, row-level security policy, has_role, current_patient_id, payment gating trigger, enforce_payment_before_release, audit_log table, audit-log obligation, SECURITY DEFINER, grant execute, revoke execute, anon-executable, function ACL, default privileges, rls_auto_enable, ensure_rls, P00xx error code, translatePgError, pg-errors, seed script, seed:test, seed:services, seed:templates, seed.sql, smoke:results, or the 132 files under supabase/migrations/ (0001 → 0135, with gaps). Also trigger when adding any new table, trigger, or function — the skill carries the RLS-template + audit-row + payment-gating + ACL checklist. Don't make Claude reconstruct the per-table checklist from scratch.
 ---
 
 # DRMed migrations & schema workflow
 
 ## What this is
 
-131 sequential migrations under `supabase/migrations/`, zero-padded numeric naming (`0001_init.sql` → `0134_harden_0043_report_views.sql`). The numbering has gaps (0056–0058 never existed) — that's fine, repo and remote skip them identically; gaps are NOT drift. **Prod ledger head = 0134, repo↔prod in sync (2026-09-09).** Every schema change has a fixed workflow + a per-table checklist (RLS + audit + payment-gating + function ACL). Get the checklist wrong and you create either a compliance gap, an anon-callable RPC, or a query that returns empty silently.
+132 sequential migrations under `supabase/migrations/`, zero-padded numeric naming (`0001_init.sql` → `0135_harden_hmo_and_inventory_views.sql`). The numbering has gaps (0056–0058 never existed) — that's fine, repo and remote skip them identically; gaps are NOT drift. **Prod ledger head = 0135, repo↔prod in sync (2026-09-10).** Every schema change has a fixed workflow + a per-table checklist (RLS + audit + payment-gating + function ACL). Get the checklist wrong and you create either a compliance gap, an anon-callable RPC, or a query that returns empty silently.
 
 ## Landmark migrations (where the load-bearing objects live)
 
@@ -41,9 +41,10 @@ supabase/migrations/
 ├── 0131_zero_pf_release_exemption.sql   ← P0034 now only fires when coalesce(doctor_pf_php,0) > 0
 ├── 0132_eod_denomination_count.sql      ← eod_close_records.counted_denominations jsonb, P0048 guard, cash_drawer_state re-created
 ├── 0133_hmo_release_gate.sql            ← enforce_payment_before_release now passes an HMO-billed visit; ACL back to postgres + service_role
-└── 0134_harden_0043_report_views.sql    ← the two 0043 admin-report views: security_invoker = on + revoke anon (authenticated KEEPS its grant — the CSV routes read them via the RLS client)
+├── 0134_harden_0043_report_views.sql    ← the two 0043 admin-report views: security_invoker = on + revoke anon (authenticated KEEPS its grant — the CSV routes read them via the RLS client)
+└── 0135_harden_hmo_and_inventory_views.sql ← the four v_hmo_* views + v_inventory_balances: security_invoker = on + revoke anon AND authenticated. Closed a LIVE anon-readable disclosure (2,031 rows / 292 named patients + their tests). 0134's "the last views still running as their owner" was wrong.
 
-supabase/seed.sql                        ← post-`db reset` grants (tables + sequences ONLY, never routines) + named re-revokes (0134)
+supabase/seed.sql                        ← post-`db reset` grants (tables + sequences ONLY, never routines) + named re-revokes (0134, 0135)
 scripts/lib/                             ← load-env.ts, env-guard.ts (+ guard-coverage.test.ts) — every runner is guarded
 scripts/                                 ← seed-*.ts, import-*.ts, smoke-*.ts, plus subdirs history-import/, clinical-backfill/,
                                            clinical-enrich/, patient-dedup/, books-recon/, ops-daily/, seed/, smoke/

@@ -62,3 +62,13 @@ end $$;
 -- blanket rule as 0118.
 revoke all on public.v_daily_revenue_by_service   from anon;
 revoke all on public.v_staff_advances_outstanding from anon;
+
+-- Same carve-out for 0135. These five go further than 0134 — `authenticated`
+-- is revoked too, because no route reads them through the RLS-scoped client —
+-- so the local re-revoke has to name both roles or a fresh local database
+-- disagrees with prod on the grant that closed the anon HMO disclosure.
+revoke all on public.v_hmo_unbilled         from anon, authenticated;
+revoke all on public.v_hmo_stuck            from anon, authenticated;
+revoke all on public.v_hmo_ar_aging         from anon, authenticated;
+revoke all on public.v_hmo_provider_summary from anon, authenticated;
+revoke all on public.v_inventory_balances   from anon, authenticated;
