@@ -1,6 +1,7 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows } from "@/lib/reports/paging";
+import { resolvePatientsByIdChunked } from "./resolve-patients";
 import { parseEmailLogRow } from "./parse-row";
 import {
   EMAIL_ACTIONS,
@@ -104,21 +105,24 @@ function applyFilters(query: any, filters: EmailLogFilters, patientId: string | 
   return q;
 }
 
+// N15: chunked past the 200-id-per-`.in()` and 1000-row PostgREST caps, and
+// throws (rather than discarding) a failed chunk's error — see
+// resolve-patients.ts. The export can walk up to EXPORT_CAP (10,000) audit
+// rows, which can easily name more than 1000 distinct patients; the plain
+// UI page (PAGE_SIZE = 50 rows) never approaches a second chunk, but shares
+// the same, now-safe, code path.
 async function resolvePatients(
   supabase: RlsClient,
   rows: EmailAuditRow[],
 ): Promise<Map<string, PatientLite>> {
-  const ids = Array.from(
-    new Set(rows.map((r) => r.patient_id).filter((x): x is string => !!x)),
-  );
-  const map = new Map<string, PatientLite>();
-  if (ids.length === 0) return map;
-  const { data } = await supabase
-    .from("patients")
-    .select("id, drm_id, first_name, middle_name, last_name, email")
-    .in("id", ids);
-  for (const p of data ?? []) map.set(p.id, p as PatientLite);
-  return map;
+  const ids = rows.map((r) => r.patient_id).filter((x): x is string => !!x);
+  return resolvePatientsByIdChunked<PatientLite>(ids, async (idChunk) => {
+    const { data, error } = await supabase
+      .from("patients")
+      .select("id, drm_id, first_name, middle_name, last_name, email")
+      .in("id", [...idChunk]);
+    return { data: data as PatientLite[] | null, error };
+  });
 }
 
 export interface EmailLogResult {

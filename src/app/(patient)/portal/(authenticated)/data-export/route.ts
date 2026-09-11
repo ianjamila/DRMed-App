@@ -5,6 +5,7 @@ import { createPatientClient } from "@/lib/supabase/patient";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { chunk, fetchAllRows, IN_CHUNK, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
+import { isResultDownloadEligible } from "@/lib/results/release-eligibility";
 
 // RA 10173 access right: patients can download a copy of their data.
 // Bundled as a ZIP with JSON snapshots + every released result PDF the
@@ -64,6 +65,7 @@ interface AppointmentRow {
 
 type JRow = {
   test_request_id: string;
+  result_id: string;
   results: { storage_path: string | null } | { storage_path: string | null }[] | null;
   test_requests:
     | {
@@ -195,7 +197,7 @@ export async function GET() {
         db
           .from("result_test_requests")
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          .select("test_request_id, results!inner(storage_path), test_requests!inner(id, visit_id, status, deleted_at, services!inner(code, name))" as any)
+          .select("test_request_id, result_id, results!inner(storage_path), test_requests!inner(id, visit_id, status, deleted_at, services!inner(code, name))" as any)
           .eq("test_requests.status", "released")
           .is("test_requests.deleted_at", null)
           .in("test_requests.visit_id", ids)
@@ -262,9 +264,18 @@ export async function GET() {
 
   // PDF results — deduplicated by storage_path so consolidated reports
   // (multiple test_requests pointing to one result) are only bundled once.
+  //
+  // This query only checked THIS row's own test_request status ('released',
+  // filtered above) — for a consolidated report the stored PDF is shared
+  // with sibling test_requests that may have had their release undone since.
+  // Same withdrawn-sibling gate as the two portal download paths
+  // (src/lib/results/release-eligibility.ts): withhold the whole shared PDF
+  // unless every linked test is still released. Cached per result_id so a
+  // consolidated report's several rows only trigger one eligibility check.
   let bundleBytes = 0;
   let bundleTruncated = false;
   const seenPaths = new Set<string>();
+  const eligibilityCache = new Map<string, boolean>();
   for (const jRow of releasedResults) {
     const result = Array.isArray(jRow.results) ? jRow.results[0] : jRow.results;
     const tr = Array.isArray(jRow.test_requests) ? jRow.test_requests[0] : jRow.test_requests;
@@ -274,6 +285,12 @@ export async function GET() {
     if (!result?.storage_path || !svc) continue;
     if (seenPaths.has(result.storage_path)) continue;
     seenPaths.add(result.storage_path);
+    let eligible = eligibilityCache.get(jRow.result_id);
+    if (eligible === undefined) {
+      eligible = await isResultDownloadEligible(admin, jRow.result_id);
+      eligibilityCache.set(jRow.result_id, eligible);
+    }
+    if (!eligible) continue;
     const { data: blob } = await admin.storage
       .from("results")
       .download(result.storage_path);

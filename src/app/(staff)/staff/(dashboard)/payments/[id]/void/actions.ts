@@ -7,6 +7,7 @@ import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { VoidPaymentSchema } from "@/lib/validations/accounting";
 import { translatePgError } from "@/lib/accounting/pg-errors";
+import { reverseJournalEntryBySource } from "@/lib/accounting/journal-entry";
 
 export type VoidResult = { ok: true } | { ok: false; error: string };
 
@@ -73,6 +74,20 @@ export async function voidPaymentAction(
       })
       .eq("id", redeemedCode.id);
     if (gcErr) return { ok: false, error: translatePgError(gcErr) };
+
+    // Finding 11 (go-live review): a whole-use voucher redemption may have
+    // forfeited a remainder, booked as breakage income at redemption time
+    // (source_kind='gift_code_breakage', keyed on the gift code — see
+    // payments/new/actions.ts and 0139). Reverse it here too, or voiding the
+    // redemption leaves that income booked for a redemption that no longer
+    // happened, and 2250 doesn't return to its pre-redemption balance.
+    const breakageErr = await reverseJournalEntryBySource(admin, {
+      sourceKind: "gift_code_breakage",
+      sourceId: redeemedCode.id,
+      actorId: session.user_id,
+      reason: `Payment voided: ${parsed.data.reason}`,
+    });
+    if (breakageErr) return { ok: false, error: breakageErr };
   }
 
   // 3. Flip voided_at — bridge trigger emits the reversal JE.

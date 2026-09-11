@@ -189,7 +189,22 @@ export function CashDrawerClient(props: {
                 <td className="px-3 py-2">{r.payee ?? r.notes ?? "—"}</td>
                 <td className="px-3 py-2">
                   {!r.voided_at && !closed && (
-                    <button onClick={() => handleVoid(r.id)} className="text-xs text-red-600">Void</button>
+                    r.kind === "gift_code_sale" ? (
+                      // Finding 8 (go-live review): this row can't be
+                      // undone with the generic Void — that never touches
+                      // `gift_codes`, so the code would stay redeemable
+                      // after the money came back out of the drawer.
+                      // Cancelling the code is the one control that does
+                      // both at once (admin only).
+                      <span
+                        className="text-xs text-[color:var(--color-brand-text-soft)]"
+                        title="Cancel the gift code instead (Admin → Gift codes) — that reverses this entry too."
+                      >
+                        Cancel via Gift codes
+                      </span>
+                    ) : (
+                      <button onClick={() => handleVoid(r.id)} className="text-xs text-red-600">Void</button>
+                    )
                   )}
                 </td>
               </tr>

@@ -1,6 +1,8 @@
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
+import { sectionsForRole } from "@/lib/auth/role-sections";
+import { isSectionAllowed } from "@/lib/auth/section-access";
 import { deriveEnabledParamIds } from "@/lib/results/enabled-params";
 import { labQueueGate } from "@/lib/visits/lab-gate";
 import { ConsolidatedForm } from "./consolidated-form";
@@ -44,7 +46,7 @@ export default async function ConsolidatedQueuePage({
     .select(
       `
       id, status, assigned_to,
-      services!inner(id, code, name, report_group_id),
+      services!inner(id, code, name, section, report_group_id),
       visits!inner(id, visit_number, patient_id, payment_status, hmo_provider_id,
                    patients!inner(drm_id, last_name, first_name, sex, birthdate))
     `,
@@ -56,6 +58,33 @@ export default async function ConsolidatedQueuePage({
     .is("deleted_at", null)
     .is("visits.deleted_at", null);
   if (!requests || requests.length === 0) redirect("/staff/queue");
+
+  // N1 (go-live): section gate. This is the sibling of the single-test
+  // detail page's gate (queue/[id]/page.tsx) — that fix gated
+  // /staff/queue/<id> but missed this route, which shows the exact same
+  // patient-name / service-code / parameter-name detail for every test in
+  // the group. RLS on test_requests permits every lab role (and reception)
+  // to read these rows (0023), so this app-level filter is the only guard.
+  // sectionsForRole(role) === [] is a DENY, never "no filter" — reception's
+  // case. null = unrestricted (admin/pathologist), same as every other
+  // section-gated surface.
+  //
+  // Unlike the single-test page, there is no package-header component list
+  // to partially filter here: a consolidated report's status filter
+  // (ACTIVE_STATUSES above) already excludes package headers entirely —
+  // they auto-promote straight to 'ready_for_release' on insert and never
+  // carry 'requested'/'in_progress'/'result_uploaded' (see the
+  // drmed-result-templates skill), so `requests` can never contain one.
+  // Every remaining row belongs to one report group, which in practice
+  // means one lab section — deny the whole page unless every row's
+  // service section is allowed, rather than trying to filter individual
+  // rows out of a single shared report.
+  const allowedSections = sectionsForRole(session.role);
+  const sectionOk = requests.every((r) => {
+    const rsvc = Array.isArray(r.services) ? r.services[0] : r.services;
+    return isSectionAllowed(allowedSections, rsvc?.section ?? null);
+  });
+  if (!sectionOk) notFound();
 
   // Which params this visit's ordered services enable — from
   // report_group_service_params (0120), not the old hardcoded map. Package

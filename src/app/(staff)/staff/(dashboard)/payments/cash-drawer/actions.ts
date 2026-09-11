@@ -130,6 +130,28 @@ export async function voidCashAdjustmentAction(
   }
 
   const admin = createAdminClient();
+
+  // Finding 8 (go-live review): a gift-code sale row can't go through this
+  // generic Void — it only reverses the cash-drawer entry, never touches
+  // `gift_codes`, so reception could take the money back out of the drawer
+  // while the code stays purchased and redeemable. The proper control
+  // (Admin → Gift codes → Cancel this code) cancels the code AND reverses
+  // this same drawer entry in one step (cancelGiftCodeAction). Refuse here
+  // and point at that control instead of half-undoing the sale.
+  const { data: adjustment, error: readErr } = await admin
+    .from("eod_cash_adjustments")
+    .select("kind, gift_code_id")
+    .eq("id", parsed.data.id)
+    .maybeSingle();
+  if (readErr) return { ok: false, error: translatePgError(readErr) };
+  if (adjustment?.kind === "gift_code_sale") {
+    return {
+      ok: false,
+      error:
+        "This is a gift code sale. To undo it, cancel the gift code instead (Admin → Gift codes) — that takes the money back out of the drawer AND stops the code from being used.",
+    };
+  }
+
   const { error } = await admin
     .from("eod_cash_adjustments")
     .update({

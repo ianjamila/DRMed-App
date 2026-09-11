@@ -9,6 +9,10 @@ import { getPatientSession } from "@/lib/auth/patient-session-cookies";
 import { renderResultPdf } from "@/lib/results/render-pdf";
 import { loadConsultantSignatures, resolvePerformer } from "@/lib/results/signatures";
 import {
+  isResultDownloadEligible,
+  WITHDRAWN_SHARED_RESULT_ERROR,
+} from "@/lib/results/release-eligibility";
+import {
   normalisePatientSex,
   type ResultDocumentInput,
 } from "@/lib/results/types";
@@ -105,35 +109,18 @@ export async function getPatientConsolidatedResultDownloadUrl(
   // exactly the gap this closes.
   //
   // A single shared PDF covers every linked test_request. The safe
-  // default: it is downloadable only while EVERY linked test is still
-  // released; if any one's release was undone, withhold the whole file
-  // rather than continue serving a document that includes withdrawn
-  // content. Re-check against the full (unfiltered) membership via the
-  // service-role client — RLS can't tell us about a row that is no longer
-  // released, so this is the one read in this function that has to bypass
-  // it. A normal single-test result has exactly one junction row, so this
-  // reduces to the same released check as before and is a no-op there.
-  const { data: allLinkRows } = await admin
-    .from("result_test_requests")
-    .select(
-      `
-        test_request_id,
-        test_requests!inner ( id, status, visit_id,
-          visits!inner ( id, patient_id )
-        )
-      ` as any, // eslint-disable-line @typescript-eslint/no-explicit-any
-    )
-    .eq("result_id", resultId);
-  const allLinks = (allLinkRows ?? []) as unknown as RTRItem[];
-  const allReleased =
-    allLinks.length > 0 &&
-    allLinks.every((l) => l.test_requests?.status === "released");
-  if (!allReleased) {
-    return {
-      ok: false,
-      error:
-        "This shared report is temporarily unavailable — part of it was withdrawn after release. Please contact the lab for an updated copy.",
-    };
+  // default (shared across every download path — see
+  // src/lib/results/release-eligibility.ts): it is downloadable only while
+  // EVERY linked test is still released; if any one's release was undone,
+  // withhold the whole file rather than continue serving a document that
+  // includes withdrawn content. This re-checks against the full
+  // (unfiltered) membership via the service-role client — RLS can't tell
+  // us about a row that is no longer released, so this is the one read in
+  // this function that has to bypass it. A normal single-test result has
+  // exactly one junction row, so this reduces to the same released check
+  // as before and is a no-op there.
+  if (!(await isResultDownloadEligible(admin, resultId))) {
+    return { ok: false, error: WITHDRAWN_SHARED_RESULT_ERROR };
   }
 
   const storagePath = rRow.storage_path;
@@ -231,6 +218,17 @@ export async function getPatientResultDownloadUrl(
 
   if (!result || !result.storage_path) {
     return { ok: false, error: "No result file on this test." };
+  }
+
+  // This test's own status is 'released' (checked above), but its stored
+  // PDF may be a SHARED consolidated file that also covers sibling tests —
+  // if a sibling's release was since undone, the file still contains the
+  // withdrawn value and must not go out. Same shared check as the
+  // consolidated download path (src/lib/results/release-eligibility.ts); a
+  // single-test result has exactly one junction row (this one, already
+  // known released), so this is a no-op there.
+  if (!(await isResultDownloadEligible(admin, result.id))) {
+    return { ok: false, error: WITHDRAWN_SHARED_RESULT_ERROR };
   }
 
   const { data: signed, error: signErr } = await admin.storage

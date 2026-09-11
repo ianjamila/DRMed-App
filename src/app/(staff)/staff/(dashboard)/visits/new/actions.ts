@@ -520,15 +520,24 @@ export async function createVisitAction(
     // even though the visit existed. Close out any arrived appointment this
     // patient still has, by patient_id rather than by appointment id.
     //
+    // Finding 9: pass the visit's own service_ids through so only arrived
+    // appointments for services THIS visit actually covers get completed —
+    // a patient arrived for an unrelated doctor consultation must not be
+    // swept just because a lab visit was started from their patient page.
+    // See completeArrivedAppointmentsForPatientAction's own comment for the
+    // full rationale and the visit/patient pairing check it now does.
+    //
     // Same best-effort contract as the branch above, and deliberately an
     // `else` — when an appointment_id was supplied it has already completed
     // the whole booking group, so running this too would be redundant.
     // "No arrived appointment for this patient" is the ordinary case for a
-    // true walk-off-the-street visit, so it is not logged as a failure.
+    // true walk-off-the-street visit (or one whose arrived appointments are
+    // all for other services), so it is not logged as a failure.
     try {
       const result = await completeArrivedAppointmentsForPatientAction(
         parsed.data.patient_id,
         created[0]!.visitId,
+        parsed.data.service_ids,
         groupId,
       );
       if (!result.ok && result.error !== "No arrived appointment for this patient.") {

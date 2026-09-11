@@ -26,19 +26,77 @@
 -- explicitly below for a self-describing replay — see 0118/0119 and the
 -- drmed-migrations skill).
 --
--- Backfill: prod has 5 payment journal entries and 0 test_request-release
--- journal entries are known to be affected (per the go-live audit) — this is
--- a no-op on prod today. It is still included, guarded to never raise on a
--- missing/empty table (required for a clean replay on an empty DB — no rows
--- to touch, `UPDATE ... FROM ...` simply affects 0 rows), so any row that
--- *was* posted with the wrong-day bug self-corrects on replay. Known
--- limitation, stated rather than silently worked around: `entry_number`
--- embeds the fiscal year it was assigned under (je_next_number) and is a
--- printed/exported business document number — this backfill does NOT
--- renumber it, so a JE whose corrected posting_date crosses a year boundary
--- would carry an entry_number from the "wrong" year. Given zero affected rows
--- today, this is accepted rather than solved; an operator hitting this later
--- should renumber by hand via the normal correction flow, not this migration.
+-- go-live review follow-ups (findings 7, 10, 12) folded into this same
+-- migration rather than stacked, since 0140 has not reached prod yet:
+--
+-- Finding 12 — forward postings only. bridge_payment_void() (0030, ~line 305)
+-- and fn_undo_release_bridge() (0110, ~line 35) still built their reversal
+-- JE's posting_date from a bare UTC cast/`current_date`. Left alone, a
+-- forward posting now lands on the correct Manila day while voiding or
+-- undoing it minutes later could still land on the PREVIOUS Manila day (a
+-- closed period), so a reversal that should trivially succeed would fail.
+-- Both are re-created below, byte-identical to their current bodies except
+-- the posting_date line, same pattern as the two functions above. A repo-wide
+-- grep for other `::date` casts on a timestamptz column in an accounting
+-- posting path turned up more (bridge_hmo_claim_resolution_insert/void,
+-- bridge_test_request_cancelled, bridge_pf_at_hmo_allocation/writeoff,
+-- bridge_cogs_send_out_trueup, bridge_cash_adjustment_void) — out of scope
+-- for this migration (not named in the review, and each is its own blast
+-- radius), reported to the operator rather than silently left or silently
+-- fixed.
+--
+-- Finding 7 — the backfill's closed-period strategy. Both backfill UPDATEs
+-- below can touch an already-`status = 'posted'` journal_entries row, which
+-- re-fires trg_je_period_lock_check (0029_gl_foundation_fixes.sql ~line 47):
+-- if the CORRECTED date falls in a CLOSED accounting_periods row, that
+-- BEFORE trigger raises P0002 and aborts the whole migration partway
+-- through. An empty-database replay can never exercise this (no populated
+-- periods to collide with) — the original version of this comment claimed
+-- the backfill "never raises"; that was true only on an empty DB and false
+-- on real data, and is corrected here. Chosen strategy: SKIP any row whose
+-- corrected date is closed and write an audit_log row for manual handling,
+-- rather than (a) reopening/closing the period around the correction —
+-- reopening a closed accounting period from inside an unattended migration
+-- is a much bigger event than a one-day posting-date drift and has its own
+-- blast radius (every other posted JE in that period becomes editable again
+-- for the duration) — or (b) restricting the backfill to open periods only
+-- at the query level with no record of what was skipped, which silently
+-- leaves the ledger wrong with no trail for the bookkeeper to follow up on.
+-- Skipping-and-reporting is safe on a populated prod DB (never raises, never
+-- half-applies) and is a no-op on an empty replay (no closed periods with
+-- rows in them to skip).
+--
+-- Finding 10 — the release backfill's timestamp. tr.released_at is
+-- OVERWRITTEN on every (re-)release; fn_undo_release_bridge() (0110) does
+-- not restore a prior timestamp when a test is undone and re-released, so
+-- tr.released_at only ever describes the event that produced the JE
+-- CURRENTLY in status = 'posted' for that test_request — the partial unique
+-- index journal_entries_one_posted_per_source (0030) guarantees at most one
+-- such row. A journal_entries row left at source_kind = 'test_request' and
+-- status = 'reversed' (an undone release) predates that overwrite; its true
+-- original posting timestamp can no longer be reconstructed from
+-- test_requests, and correcting it with the CURRENT released_at would
+-- relocate a real historical entry to the wrong month while leaving the
+-- 'reversal' JE that reverses it (source_kind = 'reversal', untouched by
+-- this backfill) on its original date — an inconsistent pair. The release
+-- backfill below is therefore restricted to `status = 'posted'` rows only;
+-- reversed rows are left untouched and reported via audit_log instead of
+-- guessed at. Correcting fewer rows correctly beats corrupting history.
+--
+-- Backfill scope today: prod has 5 payment journal entries and 0
+-- test_request-release journal entries known to be affected (per the
+-- go-live audit), and 0 reversed test_request-release journal entries exist
+-- at all yet — so every clause below is a no-op on prod today. All four
+-- (payment UPDATE, release UPDATE, and their two audit_log reports) are
+-- guarded to never raise on a missing/empty table, required for a clean
+-- replay on an empty DB. Known limitation, stated rather than silently
+-- worked around: `entry_number` embeds the fiscal year it was assigned
+-- under (je_next_number) and is a printed/exported business document
+-- number — this backfill does NOT renumber it, so a JE whose corrected
+-- posting_date crosses a year boundary would carry an entry_number from the
+-- "wrong" year. Given zero affected rows today, this is accepted rather
+-- than solved; an operator hitting this later should renumber by hand via
+-- the normal correction flow, not this migration.
 -- =============================================================================
 
 create or replace function public.bridge_payment_insert()
@@ -464,23 +522,256 @@ $function$;
 revoke execute on function public.bridge_test_request_released() from public, anon, authenticated;
 grant  execute on function public.bridge_test_request_released() to service_role;
 
--- ---- Backfill: correct posting_date on any JE booked with the pre-fix bug -
--- Guarded with a WHERE that only matches rows whose stored posting_date
--- disagrees with the Manila-local date the fixed trigger bodies above would
--- have produced. A no-op (0 rows) on prod today and on a freshly replayed
--- empty DB — never raises either way. See the entry_number caveat in the
--- header comment.
-update public.journal_entries je
-set posting_date = (p.received_at at time zone 'Asia/Manila')::date
-from public.payments p
-where je.source_kind = 'payment'
-  and je.source_id = p.id
-  and je.posting_date is distinct from (p.received_at at time zone 'Asia/Manila')::date;
+-- =============================================================================
+-- Finding 12: the corresponding reversal paths, re-created byte-identical to
+-- their current bodies (0030 for bridge_payment_void, 0110 for
+-- fn_undo_release_bridge) except the posting_date line, so a void or an
+-- undo-release posts to the same Manila day its forward posting now does.
+-- =============================================================================
 
-update public.journal_entries je
-set posting_date = (tr.released_at at time zone 'Asia/Manila')::date
-from public.test_requests tr
-where je.source_kind = 'test_request'
-  and je.source_id = tr.id
-  and tr.released_at is not null
-  and je.posting_date is distinct from (tr.released_at at time zone 'Asia/Manila')::date;
+create or replace function public.bridge_payment_void()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_original_je  uuid;
+  v_orig_number  text;
+  v_reversal_je  uuid;
+begin
+  -- Find the original posted payment JE.
+  select id, entry_number into v_original_je, v_orig_number
+    from public.journal_entries
+    where source_kind = 'payment'
+      and source_id = NEW.id
+      and status = 'posted'
+    for update;
+  if v_original_je is null then
+    -- Defensive: payment was voided but no JE exists. Skip; nothing to reverse.
+    return NEW;
+  end if;
+
+  -- Insert the reversal header as draft first.
+  insert into public.journal_entries (
+    posting_date, description, status, source_kind, source_id, reverses, created_by
+  )
+  values (
+    -- 0140: Manila-local date of the void, not the UTC date `::date` reads.
+    (NEW.voided_at at time zone 'Asia/Manila')::date,
+    'Reversal of ' || v_orig_number || ': ' || coalesce(NEW.void_reason, '(no reason)'),
+    'draft',
+    'reversal',
+    null,
+    v_original_je,
+    NEW.voided_by
+  )
+  returning id into v_reversal_je;
+
+  -- Mirror original lines with swapped debit/credit.
+  insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
+  select v_reversal_je, account_id, credit_php, debit_php, line_order
+    from public.journal_lines
+    where entry_id = v_original_je
+    order by line_order;
+
+  update public.journal_entries set status = 'posted' where id = v_reversal_je;
+  update public.journal_entries
+     set status = 'reversed', reversed_by = v_reversal_je
+   where id = v_original_je;
+
+  return NEW;
+end;
+$$;
+
+revoke execute on function public.bridge_payment_void() from public, anon, authenticated;
+grant  execute on function public.bridge_payment_void() to service_role;
+
+create or replace function public.fn_undo_release_bridge()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_actor        uuid;
+  v_original_je  uuid;
+  v_orig_number  text;
+  v_reversal_je  uuid;
+  v_header       record;
+begin
+  v_actor := auth.uid();
+
+  -- ---- 1. Accounting reversal (pattern: 0064 bridge_test_request_cancelled) --
+  select id, entry_number into v_original_je, v_orig_number
+    from public.journal_entries
+    where source_kind = 'test_request' and source_id = new.id and status = 'posted'
+    for update;
+
+  if v_original_je is not null then
+    insert into public.journal_entries (
+      posting_date, description, status, source_kind, source_id, reverses, created_by
+    ) values (
+      -- 0140: Manila-local date of the undo, not the UTC date `current_date` reads.
+      (now() at time zone 'Asia/Manila')::date,
+      'Reversal of ' || v_orig_number || ': release undone',
+      'draft', 'reversal', null, v_original_je, v_actor
+    ) returning id into v_reversal_je;
+
+    insert into public.journal_lines (entry_id, account_id, debit_php, credit_php, line_order)
+    select v_reversal_je, account_id, credit_php, debit_php, line_order
+      from public.journal_lines where entry_id = v_original_je order by line_order;
+
+    update public.journal_entries set status = 'posted' where id = v_reversal_je;
+    update public.journal_entries
+       set status = 'reversed', reversed_by = v_reversal_je
+     where id = v_original_je;
+  end if;
+
+  update public.doctor_pf_entries
+     set voided_at = now(), voided_by = v_actor, void_reason = 'release_undone'
+   where test_request_id = new.id and voided_at is null;
+
+  update public.cogs_send_out_entries
+     set voided_at = now(), voided_by = v_actor, void_reason = 'release_undone'
+   where test_request_id = new.id and voided_at is null;
+
+  -- ---- 2. Package cascade ---------------------------------------------------
+  if new.parent_id is not null then
+    select id, status into v_header
+      from public.test_requests where id = new.parent_id for update;
+
+    -- Clear the completion stamp; fn_set_package_completed_at's IS NULL guard
+    -- re-stamps correctly on re-completion.
+    update public.test_requests
+       set package_completed_at = null
+     where id = new.parent_id and package_completed_at is not null;
+
+    if v_header.status = 'released' then
+      -- Re-fires this trigger for the header's own JE reversal.
+      update public.test_requests
+         set status = 'ready_for_release',
+             released_at = null, released_by = null, release_medium = null
+       where id = new.parent_id;
+
+      -- Traceability: the human reason lives on the component's audit row
+      -- (written by the server action); this system row marks the cascade.
+      insert into public.audit_log (actor_id, actor_type, action, resource_type, resource_id, metadata)
+      values (
+        v_actor, 'system', 'test_request.release_undone', 'test_request', new.parent_id,
+        jsonb_build_object('cascaded_from', new.id, 'visit_id', new.visit_id)
+      );
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+revoke execute on function public.fn_undo_release_bridge() from public, anon, authenticated;
+grant  execute on function public.fn_undo_release_bridge() to service_role;
+
+-- ---- Backfill: correct posting_date on any JE booked with the pre-fix bug -
+-- See the header comment (findings 7 and 10) for why each piece below exists.
+-- Every clause is guarded to affect 0 rows and never raise on an empty or
+-- missing table, required for a clean replay on an empty DB.
+
+-- Payments: received_at never changes after insert — a void creates a new
+-- 'reversal' JE rather than mutating the original 'payment' JE's stored
+-- event time — so every payments-sourced JE's true event timestamp is still
+-- exactly p.received_at, regardless of the payment's current void state.
+-- Rows whose corrected date would land in a CLOSED period are left alone
+-- (Finding 7) and reported instead of applied.
+with payment_candidates as (
+  select je.id, je.posting_date as old_date,
+         (p.received_at at time zone 'Asia/Manila')::date as new_date
+  from public.journal_entries je
+  join public.payments p on p.id = je.source_id
+  where je.source_kind = 'payment'
+    and je.posting_date is distinct from (p.received_at at time zone 'Asia/Manila')::date
+),
+payment_skipped as (
+  select * from payment_candidates
+  where public.period_status_for(new_date) = 'closed'
+),
+payment_applied as (
+  update public.journal_entries je
+  set posting_date = c.new_date
+  from payment_candidates c
+  where je.id = c.id
+    and public.period_status_for(c.new_date) is distinct from 'closed'
+  returning je.id
+)
+insert into public.audit_log (
+  actor_id, actor_type, action, resource_type, resource_id, metadata
+)
+select
+  null, 'system', 'gl.posting_date_backfill_skipped', 'journal_entries', s.id,
+  jsonb_build_object(
+    'reason', 'corrected_date_in_closed_period',
+    'source_kind', 'payment',
+    'stored_posting_date', s.old_date,
+    'would_be_posting_date', s.new_date
+  )
+from payment_skipped s;
+
+-- Test-request releases: tr.released_at is OVERWRITTEN on every (re-)release,
+-- so it only reliably describes the event behind the JE CURRENTLY in
+-- status = 'posted' for that test_request (journal_entries_one_posted_
+-- per_source, 0030, guarantees at most one such row). A row left in
+-- status = 'reversed' predates an undo-and-re-release; its true original
+-- event time can no longer be established from test_requests, so it is left
+-- untouched and reported rather than corrected with the wrong timestamp
+-- (Finding 10). Among the 'posted' rows, one whose corrected date would
+-- land in a CLOSED period is also left alone and reported (Finding 7).
+with release_candidates as (
+  select je.id, je.posting_date as old_date,
+         (tr.released_at at time zone 'Asia/Manila')::date as new_date
+  from public.journal_entries je
+  join public.test_requests tr on tr.id = je.source_id
+  where je.source_kind = 'test_request'
+    and je.status = 'posted'
+    and tr.released_at is not null
+    and je.posting_date is distinct from (tr.released_at at time zone 'Asia/Manila')::date
+),
+release_skipped as (
+  select * from release_candidates
+  where public.period_status_for(new_date) = 'closed'
+),
+release_applied as (
+  update public.journal_entries je
+  set posting_date = c.new_date
+  from release_candidates c
+  where je.id = c.id
+    and public.period_status_for(c.new_date) is distinct from 'closed'
+  returning je.id
+),
+release_unresolvable as (
+  select je.id, je.posting_date as old_date, tr.id as test_request_id
+  from public.journal_entries je
+  join public.test_requests tr on tr.id = je.source_id
+  where je.source_kind = 'test_request'
+    and je.status = 'reversed'
+)
+insert into public.audit_log (
+  actor_id, actor_type, action, resource_type, resource_id, metadata
+)
+select
+  null::uuid, 'system', 'gl.posting_date_backfill_skipped', 'journal_entries', s.id,
+  jsonb_build_object(
+    'reason', 'corrected_date_in_closed_period',
+    'source_kind', 'test_request',
+    'stored_posting_date', s.old_date,
+    'would_be_posting_date', s.new_date
+  )
+from release_skipped s
+union all
+select
+  null::uuid, 'system', 'gl.posting_date_backfill_skipped', 'journal_entries', u.id,
+  jsonb_build_object(
+    'reason', 'original_event_timestamp_unknown_after_undo_release',
+    'source_kind', 'test_request',
+    'test_request_id', u.test_request_id,
+    'stored_posting_date', u.old_date
+  )
+from release_unresolvable u;

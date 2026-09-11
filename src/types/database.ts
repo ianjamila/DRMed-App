@@ -6374,6 +6374,8 @@ export type Database = {
         | "cogs_send_out_trueup"
         | "history_import"
         | "petty_cash"
+        | "gift_code_sale"
+        | "gift_code_breakage"
       je_status: "draft" | "posted" | "reversed"
       period_status: "open" | "closed"
     }
@@ -6540,6 +6542,8 @@ export const Constants = {
         "cogs_send_out_trueup",
         "history_import",
         "petty_cash",
+        "gift_code_sale",
+        "gift_code_breakage",
       ],
       je_status: ["draft", "posted", "reversed"],
       period_status: ["open", "closed"],

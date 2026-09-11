@@ -249,18 +249,26 @@ export async function finaliseConsolidatedReport(
     // render + upload + release.
     resultId = linkedResult!.id;
   } else {
-    // Fresh finalise: insert the results row (finalised_at set so the
-    // advance_test_on_result_upload trigger fires on the junction insert
-    // below and flips test_requests.status from in_progress), then the
-    // junction rows.
-    const nowIso = new Date().toISOString();
+    // Fresh finalise: insert the results row. `finalised_at` stays NULL
+    // here (N5/M13 fix) — the advance_test_on_rtr_insert trigger reads
+    // results.finalised_at at the moment the junction rows below are
+    // inserted, and (for a 'structured' result) only flips
+    // test_requests.status when it's already non-null. Setting it now
+    // would advance ordinary chemistry tests to ready_for_release before
+    // the PDF has even been rendered, let alone uploaded — exactly the
+    // gap that left a medtech unable to recover from an upload failure
+    // (the consolidated entry page's ACTIVE_STATUSES excludes
+    // ready_for_release) and left the visit page willing to release a
+    // fileless test. finalised_at is written for real in step 8, in the
+    // SAME update as storage_path — only once the PDF is safely stored —
+    // which is also when the flip is meant to happen.
     const { data: resultsRow, error: rErr } = await admin
       .from("results")
       .insert({
         report_group_id: input.groupId,
         finalised_by_staff_id: session.user_id,
         generation_kind: "structured",
-        finalised_at: nowIso,
+        finalised_at: null,
         uploaded_by: session.user_id,
         storage_path: null,
       })
@@ -288,10 +296,32 @@ export async function finaliseConsolidatedReport(
   // ---------------------------------------------------------------------
   // 5) Result values, WITH flag computed (N3). Uses the exact same
   // pickRangeForPatient + computeFlag pair the single-test path uses
-  // (src/lib/results/types.ts), so the two can never drift. `upsert`
-  // (not `insert`) so a retry safely overwrites whatever a stalled prior
-  // attempt already wrote.
+  // (src/lib/results/types.ts), so the two can never drift.
+  //
+  // WIPE the in-scope value set before writing, mirroring the single-test
+  // amend flow's "DELETE + reinsert" pattern (queue/[id]/actions.ts step
+  // 9) rather than upsert-only. The form omits empty fields entirely, so
+  // an upsert-only write can never remove a value: a medtech who CLEARS an
+  // incorrect result and retries after an upload failure would otherwise
+  // leave the old value (and its critical alert) live in the database and
+  // on the printed PDF. Scope the delete to `enabledParamIds` — the
+  // params for the services in THIS call (derived from orderedServiceIds
+  // above) — never a blanket delete on resultId, so a value belonging to
+  // a test outside this call's scope can't be touched. On a fresh
+  // finalise there is nothing to delete yet, so this is a harmless no-op
+  // there; on a resume, `enabledParamIds` covers exactly the same
+  // services as the original attempt (isCleanResumableState above
+  // requires input.testRequestIds to match the existing result's full
+  // membership), so nothing outside this result's own scope is at risk.
   // ---------------------------------------------------------------------
+  if (enabledParamIds.size > 0) {
+    const { error: wipeErr } = await admin
+      .from("result_values")
+      .delete()
+      .eq("result_id", resultId)
+      .in("parameter_id", [...enabledParamIds]);
+    if (wipeErr) return { ok: false, error: translatePgError(wipeErr) };
+  }
   if (input.values.length > 0) {
     const valueRows = input.values.map((v) => {
       const param = paramsById.get(v.parameter_id);
@@ -404,17 +434,28 @@ export async function finaliseConsolidatedReport(
   }
 
   // ---------------------------------------------------------------------
-  // 7) Render the consolidated PDF and upload it BEFORE any release write
-  // (N5). This is the crux of the fix: nothing below this point can leave
-  // a test released without a downloadable PDF, because release (step 8)
-  // only runs after the upload has already succeeded. If either fails,
-  // the linked test_requests are left at whatever status the trigger gave
-  // them in step 4 (in_progress → result_uploaded/ready_for_release) —
-  // never 'released' — and the idempotency check in step 4 lets the
-  // medtech retry (it resumes from the existing no-PDF result row rather
-  // than refusing).
+  // 7) Render the consolidated PDF and upload it BEFORE any release write,
+  // and BEFORE `finalised_at` is ever written to the database (N5 + M13).
+  // This is the crux of the fix: nothing below this point can leave a test
+  // released — or even advanced past 'in_progress' — without a
+  // downloadable PDF, because both the status flip AND release (step 9)
+  // only happen after the upload AND the metadata write (step 8) have
+  // already succeeded. If rendering, the upload, or the metadata write
+  // fails, every linked test_request is still sitting at 'in_progress'
+  // (step 4 left it there — see the comment on the fresh-insert branch
+  // above) — a state the consolidated entry page's ACTIVE_STATUSES already
+  // includes, so the medtech can simply reopen the same URL and retry; the
+  // idempotency check in step 4 resumes from this existing no-PDF result
+  // row rather than refusing.
+  //
+  // `finalisedAtOverride` prints this moment on the PDF even though it
+  // isn't written to `results.finalised_at` until step 8 succeeds — see
+  // the comment on loadResultDocumentInput's options parameter.
   // ---------------------------------------------------------------------
-  const docInput = await loadResultDocumentInput(resultId);
+  const finalisedNow = new Date();
+  const docInput = await loadResultDocumentInput(resultId, {
+    finalisedAtOverride: finalisedNow,
+  });
   const pdfBuf = await renderResultPdf(docInput);
   const pdfPath = `${resultId}.pdf`;
   const { error: upErr } = await admin.storage
@@ -422,20 +463,40 @@ export async function finaliseConsolidatedReport(
     .upload(pdfPath, pdfBuf, { contentType: "application/pdf", upsert: true });
   if (upErr) return { ok: false, error: translatePgError(upErr) };
 
-  // 8) Stamp storage_path + file_size_bytes now that the PDF is safely
-  // uploaded.
-  await admin
+  // 8) Stamp storage_path + file_size_bytes + finalised_at now that the
+  // PDF is safely uploaded. Writing finalised_at (NULL → not-NULL) here is
+  // what fires advance_test_on_result_upload and flips every linked
+  // test_request from 'in_progress' to 'result_uploaded' /
+  // 'ready_for_release' — deliberately deferred to this exact moment so
+  // that flip can only ever happen once a downloadable PDF already exists.
+  // This write's result MUST be checked: the upload can succeed while this
+  // UPDATE fails (e.g. a transient DB error), and if we proceeded to
+  // release anyway, `results.storage_path` would still be null in the
+  // database — a released test whose patient-facing download says "No
+  // result file on this test", contradicting the invariant this whole
+  // function exists to guarantee (no test is ever released without a
+  // downloadable PDF). Abort before release on failure; the object
+  // already sitting in storage is harmless (re-finalising overwrites it
+  // via `upsert: true` above) and the idempotency check in step 4 lets the
+  // medtech retry.
+  const { error: metaErr } = await admin
     .from("results")
-    .update({ storage_path: pdfPath, file_size_bytes: pdfBuf.byteLength })
+    .update({
+      storage_path: pdfPath,
+      file_size_bytes: pdfBuf.byteLength,
+      finalised_at: finalisedNow.toISOString(),
+    })
     .eq("id", resultId);
+  if (metaErr) return { ok: false, error: translatePgError(metaErr) };
 
   // ---------------------------------------------------------------------
   // 9) Release every linked test_request that is ready to (N4 + M13).
   //
   // The status filter (`.eq("status", "ready_for_release")`) is the M13
   // guard: a test whose service requires pathologist sign-off was left at
-  // 'result_uploaded' by the trigger in step 4 (never 'ready_for_release')
-  // and is therefore excluded from this UPDATE's WHERE clause entirely —
+  // 'result_uploaded' by the trigger fired in step 8 (never
+  // 'ready_for_release') and is therefore excluded from this UPDATE's
+  // WHERE clause entirely —
   // it can never be force-released from here. The shared consolidated PDF
   // stays withheld from the portal until every linked test reaches
   // 'released' (see N6 in the portal actions).
@@ -486,7 +547,7 @@ export async function finaliseConsolidatedReport(
     }
   } else if ((releasedRows ?? []).length < input.testRequestIds.length) {
     // No error, but not every id matched the status filter — the ids that
-    // didn't were left at 'result_uploaded' by the sign-off gate in step 4
+    // didn't were left at 'result_uploaded' by the sign-off gate in step 8
     // (a payment/consent failure would have raised for the whole
     // statement above, since every row shares one visit).
     releaseDeferred = true;

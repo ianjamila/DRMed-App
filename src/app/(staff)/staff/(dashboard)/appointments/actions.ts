@@ -8,6 +8,7 @@ import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { resolvePatient } from "@/lib/patients/resolve";
 import { AttachPatientSchema, type AttachPatientInput } from "@/lib/appointments/attach-patient";
+import { matchArrivedAppointmentsForServices } from "@/lib/appointments/match-arrived";
 
 type Transition =
   | "arrived"
@@ -190,23 +191,43 @@ export async function completeAppointmentFromVisitAction(
   });
 }
 
-// A9 part 2: completeAppointmentFromVisitAction above only fires when the
-// visit was started via the appointment's own "+ Start visit" link (it
-// carries appointment_id). Reception's documented workaround for a walk-in
-// that vanished from every section (the bug this batch fixes) was to start
-// the visit straight from the patient's page instead — a path that never
-// threads an appointment_id, so the appointment used to dangle at "arrived"
-// forever even after the visit existed. This is the same completion
-// mechanism (transitionGroup, same ALLOWED_FROM.completed = ["arrived"]
-// guard, same per-row audit trail) reached by patient_id instead of a lead
-// appointment id, so any visit-creation path — not just the appointment
-// list's own link — can close out a dangling arrived appointment.
+// A9 part 2 / Finding 9: completeAppointmentFromVisitAction above only fires
+// when the visit was started via the appointment's own "+ Start visit" link
+// (it carries appointment_id). Reception's documented workaround for a
+// walk-in that vanished from every section (the bug this batch fixes) was to
+// start the visit straight from the patient's page instead — a path that
+// never threads an appointment_id, so the appointment used to dangle at
+// "arrived" forever even after the visit existed. This is the same
+// completion mechanism (transitionGroup, same ALLOWED_FROM.completed =
+// ["arrived"] guard, same per-row audit trail) reached by patient_id instead
+// of a lead appointment id, so any visit-creation path — not just the
+// appointment list's own link — can close out a dangling arrived
+// appointment.
+//
+// Finding 9 fix: the original version completed EVERY arrived appointment
+// for the patient regardless of which services the new visit covers, and
+// never proved `visitId` actually belonged to `patientId` (unlike its
+// sibling above, which re-proves the pairing because — same reasoning as
+// there — every export of a "use server" file is a callable endpoint
+// whether or not any client code references it). A patient arrived for both
+// a separate lab visit and a doctor consultation would have BOTH
+// appointments swept by creating just the lab visit, silently dropping the
+// consultation from the queue while the patient was still waiting for it.
+// Now: (1) the visit is fetched and its patient_id checked against
+// `patientId` before anything is touched, exactly like
+// completeAppointmentFromVisitAction; (2) only arrived appointments whose
+// own `service_id` is one of `serviceIds` (the services THIS visit was
+// actually created for) are completed — see
+// `matchArrivedAppointmentsForServices` (src/lib/appointments/match-arrived.ts)
+// for the pure matching rule and its "leave it open, never guess" default
+// on an unmatched or null service_id.
 //
 // Best-effort by design, exactly like completeAppointmentFromVisitAction:
 // the caller must treat {ok:false} or a thrown error as non-fatal, since the
 // visit already exists by the time this runs. Returns {ok:false} (not an
-// error) when the patient simply has no arrived appointment — that's the
-// common case for a walk-in with no prior appointment at all, not a failure.
+// error) when nothing matched — that's the common case (a true walk-in with
+// no prior appointment, or arrived appointments for services this visit
+// doesn't cover), not a failure.
 //
 // Wired in at visits/new/actions.ts (createVisitAction), on the branch where
 // no appointment_id was threaded. It is deliberately an `else` rather than an
@@ -219,12 +240,35 @@ export async function completeAppointmentFromVisitAction(
 export async function completeArrivedAppointmentsForPatientAction(
   patientId: string,
   visitId: string,
+  serviceIds: ReadonlyArray<string>,
   visitGroupId: string | null = null,
 ): Promise<ApptResult> {
   const supabase = await createClient();
+
+  // Prove the pairing before touching any appointment — this action is
+  // exported and independently callable, and (unlike
+  // completeAppointmentFromVisitAction, which proves the same thing via the
+  // appointment row) previously had nothing pinning visitId to patientId.
+  const { data: visit, error: visitErr } = await supabase
+    .from("visits")
+    .select("id, patient_id")
+    .eq("id", visitId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (visitErr || !visit) {
+    return { ok: false, error: "Visit not found." };
+  }
+  if (visit.patient_id !== patientId) {
+    return { ok: false, error: "That visit belongs to a different patient." };
+  }
+
+  if (serviceIds.length === 0) {
+    return { ok: false, error: "No arrived appointment for this patient." };
+  }
+
   const { data: arrived, error: arrivedErr } = await supabase
     .from("appointments")
-    .select("id, booking_group_id")
+    .select("id, service_id")
     .eq("patient_id", patientId)
     .eq("status", "arrived");
   if (arrivedErr) return { ok: false, error: arrivedErr.message };
@@ -232,24 +276,21 @@ export async function completeArrivedAppointmentsForPatientAction(
     return { ok: false, error: "No arrived appointment for this patient." };
   }
 
-  const groupIds = Array.from(
-    new Set(arrived.map((a) => a.booking_group_id).filter((id): id is string => !!id)),
-  );
-  const soloIds = arrived.filter((a) => !a.booking_group_id).map((a) => a.id);
-  let ids: string[] = [...soloIds];
-  if (groupIds.length > 0) {
-    const { data: siblings, error: sibErr } = await supabase
-      .from("appointments")
-      .select("id")
-      .in("booking_group_id", groupIds);
-    if (sibErr) return { ok: false, error: sibErr.message };
-    ids = [...ids, ...(siblings ?? []).map((r) => r.id)];
+  const ids = matchArrivedAppointmentsForServices(arrived, serviceIds);
+  if (ids.length === 0) {
+    // Arrived appointments exist, but none is for a service this visit
+    // covers — e.g. the patient is still waiting on an unrelated
+    // consultation. Leave them all open rather than guessing.
+    return { ok: false, error: "No arrived appointment for this patient." };
   }
 
   return transitionGroup(ids, "completed", {
     via: "visit_created_from_patient_page",
     visit_id: visitId,
     visit_group_id: visitGroupId,
+    matched_service_ids: Array.from(
+      new Set(arrived.filter((a) => ids.includes(a.id)).map((a) => a.service_id)),
+    ),
   });
 }
 

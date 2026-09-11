@@ -19,6 +19,11 @@ export function translatePgError(err: PgError): string {
       if (m.includes("vendors_tin_unique")) {
         return "A vendor with this TIN already exists.";
       }
+      if (m.includes("payments_gift_code_redemption_unique")) {
+        // Finding 6 (go-live review): the redemption race guard — someone
+        // else's redemption of the same code landed first.
+        return "This code was just redeemed by someone else. Refresh the visit and check its balance.";
+      }
       return "That value already exists. Pick a different one.";
     }
     case "23514": {

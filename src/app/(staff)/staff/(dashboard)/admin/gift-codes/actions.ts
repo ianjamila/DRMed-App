@@ -8,6 +8,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { generateGiftCodes } from "@/lib/gift-codes/generate";
 import { ipAndAgent } from "@/lib/server/action-helpers";
 import { translatePgError } from "@/lib/accounting/pg-errors";
+import { reverseJournalEntryBySource } from "@/lib/accounting/journal-entry";
 import {
   CancelGiftCodeSchema,
   GenerateBatchSchema,
@@ -165,6 +166,22 @@ export async function cancelGiftCodeAction(
         // an admin can reopen that EOD close first, then cancel.
         return { ok: false, error: translatePgError(voidErr) };
       }
+    }
+  } else if (current.status === "purchased") {
+    // Finding 11 (go-live review): the non-cash sibling of the block above.
+    // A non-cash sale (gcash/maya/card/bank_transfer) posts its own sale JE
+    // directly (source_kind='gift_code_sale' — see gift-codes/actions.ts)
+    // rather than through eod_cash_adjustments. Cancelling without reversing
+    // it would leave 2250 credited forever for a code that never got, and
+    // now never will get, redeemed.
+    const jeErr = await reverseJournalEntryBySource(admin, {
+      sourceKind: "gift_code_sale",
+      sourceId: giftCodeId,
+      actorId: session.user_id,
+      reason: `Gift code cancelled: ${parsed.data.cancellation_reason}`,
+    });
+    if (jeErr) {
+      return { ok: false, error: jeErr };
     }
   }
 

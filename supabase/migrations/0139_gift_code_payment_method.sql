@@ -75,6 +75,30 @@ values (
 )
 on conflict (payment_method) do nothing;
 
+-- ---- Finding 6 (go-live review, blocker): redemption double-spend race ----
+-- redeemGiftCode() (payments/new/actions.ts) reads a code as 'purchased',
+-- inserts a `payments` row, THEN conditionally flips gift_codes to
+-- 'redeemed' with `.eq('status','purchased')`. Two concurrent redemptions of
+-- the SAME code can both pass the initial read and both insert a payment —
+-- only the conditional UPDATE is atomic, and the app was only checking its
+-- `error` (never null on a zero-row match), not whether it actually touched
+-- a row. This unique index is the database-side guarantee: a code can have
+-- at most one non-voided `gift_code` payment at a time, using the value
+-- `reference_number` already carries on every redemption (the code itself).
+-- The losing concurrent INSERT now fails outright with 23505 (translated to
+-- a friendly message below) instead of silently minting a second payment;
+-- the app also now checks the conditional UPDATE's row count as defence in
+-- depth (e.g. the code got cancelled between the read and the write, a
+-- window this index alone doesn't cover). Voiding a redemption sets
+-- `voided_at`, which drops the row out of this partial index, freeing the
+-- code to be redeemed again — matching voidPaymentAction resetting
+-- gift_codes.status back to 'purchased'. Mirrors
+-- eod_cash_adjustments_gift_code_active_unique (N14 above), which protects
+-- the sale leg the same way.
+create unique index payments_gift_code_redemption_unique
+  on public.payments (reference_number)
+  where method = 'gift_code' and voided_at is null;
+
 -- ---- N14: eod_cash_adjustments — new kind + gift_code_id link --------------
 alter table public.eod_cash_adjustments
   add column if not exists gift_code_id uuid references public.gift_codes(id);
@@ -312,3 +336,88 @@ $$;
 -- drmed-migrations skill's guidance on re-created functions).
 revoke execute on function public.cash_drawer_state(date, uuid) from public, anon, authenticated;
 grant  execute on function public.cash_drawer_state(date, uuid) to service_role;
+
+-- =============================================================================
+-- Finding 11 (go-live review): the liability accounting doesn't cover what
+-- the app actually does.
+--
+-- Two real gaps in the "nets to zero" claim above:
+--
+--   1. Redemption is a WHOLE-USE voucher (redeemGiftCode() in
+--      payments/new/actions.ts — applied = min(face_value, visit balance);
+--      the remainder is forfeited, and reception cannot split a code across
+--      visits — this is a deliberate product decision, not a bug). The
+--      `payments` row (and therefore the bridge_payment_insert JE) only
+--      carries the APPLIED amount, so a ₱1,000 code spent against a ₱600
+--      bill only ever debits 2250 by ₱600. The other ₱400 stays credited to
+--      "Gift Codes Outstanding" forever — the code is 'redeemed' (dead) but
+--      the liability it created never clears.
+--
+--      Decision: book the forfeited remainder as INCOME at redemption
+--      (standard "gift-card breakage" treatment), rather than changing
+--      redemption to stop forfeiting — the whole-use design is intentional
+--      and changing it means tracking a running remaining balance per code,
+--      a materially bigger product change. Application code (redeemGiftCode)
+--      now posts a SECOND two-line JE alongside the payment's own —
+--      DR 2250 / CR 4600 Gift Code Breakage Income, for the forfeited amount
+--      only — so the two JEs together always drain 2250 by exactly the face
+--      value, whatever the split between "applied" and "forfeited" is.
+--      voidPaymentAction reverses both JEs (the payment's own, via the
+--      existing bridge trigger, and this breakage JE via
+--      reverseJournalEntryBySource), so a voided redemption nets back to the
+--      pre-redemption state — 2250 fully re-credited, breakage income
+--      reversed, code back to 'purchased'.
+--
+--   2. A NON-CASH gift-code sale (gcash/maya/card/bank_transfer;
+--      sellGiftCodeAction in gift-codes/actions.ts) never touches
+--      eod_cash_adjustments — correctly, since it's not physical cash for
+--      the drawer to count — but that also meant it posted NO journal entry
+--      at all. Redeeming that code still debits 2250 by the mapped method
+--      account regardless of how it was sold, so every non-cash-sold code's
+--      eventual redemption drives 2250 further negative with no sale-side
+--      credit to offset it.
+--
+--      Fix: sellGiftCodeAction now posts a sale-side JE directly for
+--      non-cash methods too — DR the method's own account (the same
+--      payment_method_account_map row `resolve_cash_account` would use for
+--      an ordinary payment) / CR 2250 — mirroring the cash leg's DR 1010 /
+--      CR 2250 (via eod_cash_adjustments) above. cancelGiftCodeAction
+--      reverses it the same way the cash leg already reverses its
+--      eod_cash_adjustments row.
+--
+-- Net result, per code, whatever the payment method or how much of it gets
+-- redeemed:
+--   SALE                 DR <method account>         CR 2250  face_value
+--   REDEMPTION (applied)  DR 2250 (applied)            CR AR    applied
+--   REDEMPTION (forfeit)  DR 2250 (forfeited, if any)  CR 4600  forfeited
+--     — applied + forfeited == face_value, so 2250 is credited face_value
+--       at sale and debited face_value (in up to two postings) at
+--       redemption: nets to zero for every code, cash-sold or not, whole or
+--       partially applied.
+--   VOID of the redemption payment reverses BOTH postings above (the
+--     payment's own JE via the existing bridge trigger, the breakage JE via
+--     reverseJournalEntryBySource), so 2250 and 4600 return to their
+--     pre-redemption balances and the code is redeemable again.
+--   CANCEL of an unredeemed sale reverses the SALE posting (cash: via the
+--     eod_cash_adjustments void trigger, as before; non-cash: via
+--     reverseJournalEntryBySource), so 2250 returns to its pre-sale balance.
+--
+-- New source_kinds for these two application-posted JE types, so a
+-- bookkeeper can tell them apart from manual entries and from the
+-- cash-drawer bridge's 'cash_adjustment' kind. `add value` cannot run inside
+-- a txn that then uses the value (see 0101_je_source_kind_petty_cash.sql) —
+-- these are only referenced by application code at runtime, never by this
+-- migration, so it's safe to add them here.
+-- =============================================================================
+alter type public.je_source_kind add value if not exists 'gift_code_sale';
+alter type public.je_source_kind add value if not exists 'gift_code_breakage';
+
+insert into public.chart_of_accounts (code, name, type, normal_balance, description)
+values (
+  '4600',
+  'Gift Code Breakage Income',
+  'revenue',
+  'credit',
+  'Forfeited remainder when a whole-use gift code is redeemed for less than its face value (see 0139) — recognised as income at the moment of redemption, when the voucher''s life ends and the unused portion can never be claimed.'
+)
+on conflict (code) do nothing;

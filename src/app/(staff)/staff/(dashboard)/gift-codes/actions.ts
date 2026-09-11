@@ -9,6 +9,7 @@ import { SellGiftCodeSchema } from "@/lib/validations/gift-code";
 import { ipAndAgent } from "@/lib/server/action-helpers";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { translatePgError } from "@/lib/accounting/pg-errors";
+import { postSimpleJournalEntry } from "@/lib/accounting/journal-entry";
 
 export type SellResult = { ok: true } | { ok: false; error: string };
 
@@ -90,14 +91,34 @@ export async function sellGiftCodeAction(
     return { ok: false, error: "This code has already been sold." };
   }
 
+  // Don't leave a "sold" code with no matching accounting entry — put it
+  // back exactly as it was (status + every purchase field) so the sale
+  // genuinely did not happen, and reception sees why.
+  const undoSale = async () => {
+    await admin
+      .from("gift_codes")
+      .update({
+        status: "generated",
+        purchased_at: null,
+        purchased_by_name: null,
+        purchased_by_contact: null,
+        purchase_method: null,
+        purchase_reference_number: null,
+        sold_by: null,
+        // Restore whatever notes existed before this attempt — we only
+        // overwrote them above if reception typed sale notes.
+        ...(parsed.data.notes ? { notes: code.notes } : {}),
+      })
+      .eq("id", code.id);
+  };
+
   // N14: a CASH sale takes real money over the counter but isn't tied to a
   // visit (0014 removed payments.visit_id's nullability on purpose), so it
   // can't go through the payments table. eod_cash_adjustments (0139) is the
   // table that already exists for exactly this — cash movements with no
   // payments row — reused here with kind='gift_code_sale' so the EOD drawer's
-  // expected_cash_php counts this cash exactly once, at sale. Non-cash sales
-  // (gcash/maya/card/bank_transfer) don't touch the drawer at all — nothing
-  // physical to reconcile.
+  // expected_cash_php counts this cash exactly once, at sale, AND (via
+  // bridge_cash_adjustment_insert) posts the sale's DR 1010 / CR 2250 JE.
   if (parsed.data.purchase_method === "cash") {
     const { data: shift } = await admin
       .from("cash_shifts")
@@ -124,31 +145,53 @@ export async function sellGiftCodeAction(
       : null;
 
     if (!shift || adjErr) {
-      // Don't leave a "sold" code with no drawer entry — put it back exactly
-      // as it was (status + every purchase field) so the sale genuinely did
-      // not happen, and reception sees why (e.g. EOD already closed for
-      // today — the same P0015 a cash payment would hit).
-      await admin
-        .from("gift_codes")
-        .update({
-          status: "generated",
-          purchased_at: null,
-          purchased_by_name: null,
-          purchased_by_contact: null,
-          purchase_method: null,
-          purchase_reference_number: null,
-          sold_by: null,
-          // Restore whatever notes existed before this attempt — we only
-          // overwrote them above if reception typed sale notes.
-          ...(parsed.data.notes ? { notes: code.notes } : {}),
-        })
-        .eq("id", code.id);
+      // e.g. EOD already closed for today — the same P0015 a cash payment
+      // would hit.
+      await undoSale();
       return {
         ok: false,
         error: adjErr
           ? translatePgError(adjErr)
           : "No active cash shift is configured — ask an admin to check cash-drawer setup.",
       };
+    }
+  } else {
+    // Finding 11 (go-live review): a non-cash sale (gcash/maya/card/
+    // bank_transfer) rightly skips the drawer — there's no physical cash to
+    // reconcile — but it still took real money, and 2250 Gift Codes
+    // Outstanding needs the same credit a cash sale gets via
+    // eod_cash_adjustments, or every redemption of a non-cash-sold code
+    // debits 2250 with nothing to offset it. Post the sale JE directly:
+    // DR the method's own account (the same one resolve_cash_account()
+    // would pick for an ordinary payment of this method) / CR 2250.
+    const { data: methodAccount } = await admin
+      .from("payment_method_account_map")
+      .select("account_id")
+      .eq("payment_method", parsed.data.purchase_method)
+      .maybeSingle();
+    const { data: outstandingAccount } = await admin
+      .from("chart_of_accounts")
+      .select("id")
+      .eq("code", "2250")
+      .single();
+
+    const jeErr =
+      methodAccount && outstandingAccount
+        ? await postSimpleJournalEntry(admin, {
+            postingDate: todayManilaISODate(),
+            description: `Gift code ${parsed.data.code} sold (${parsed.data.purchase_method}) to ${parsed.data.buyer_name}`,
+            sourceKind: "gift_code_sale",
+            sourceId: code.id,
+            debitAccountId: methodAccount.account_id,
+            creditAccountId: outstandingAccount.id,
+            amountPhp: Number(code.face_value_php),
+            createdBy: session.user_id,
+          })
+        : "Could not find the account for this payment method. Ask an admin to check payment routing.";
+
+    if (jeErr) {
+      await undoSale();
+      return { ok: false, error: jeErr };
     }
   }
 
