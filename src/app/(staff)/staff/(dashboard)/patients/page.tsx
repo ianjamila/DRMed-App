@@ -1,5 +1,7 @@
 import Link from "next/link";
+import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
+import { RegistrationLinkButton } from "@/components/staff/registration-link-button";
 import { formatPhoneLocal } from "@/lib/format/phone";
 import { patientSearchOrClauses } from "@/lib/patients/search";
 import { formatPatientName } from "@/lib/patients/format-name";
@@ -58,6 +60,13 @@ export default async function PatientsPage({ searchParams }: SearchProps) {
   const showingFrom = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
   const showingTo = Math.min(page * PAGE_SIZE, total);
 
+  // Same derivation the Appointments page uses, so the QR points at whatever
+  // host reception actually reached the app on (prod, preview or localhost)
+  // rather than a hardcoded domain that would be wrong on two of the three.
+  const host = (await headers()).get("host") ?? "drmed.ph";
+  const proto = host.startsWith("localhost") ? "http" : "https";
+  const registerUrl = `${proto}://${host}/register?src=staff_qr`;
+
   const pageHref = (n: number) => {
     const sp = new URLSearchParams();
     if (query) sp.set("q", query);
@@ -71,12 +80,19 @@ export default async function PatientsPage({ searchParams }: SearchProps) {
         title="Patients"
         subtitle="Search by DRM-ID, name, phone, or email — filters as you type."
         actions={
-          <Link
-            href="/staff/patients/new"
-            className="rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
-          >
-            + New patient
-          </Link>
+          <>
+            {/* Same QR reception already has on Appointments: hand the phone
+                to the patient and let them self-register. This is the other
+                page reception stands on when someone walks up unregistered,
+                so the shortcut belongs here too. */}
+            <RegistrationLinkButton url={registerUrl} />
+            <Link
+              href="/staff/patients/new"
+              className="rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
+            >
+              + New patient
+            </Link>
+          </>
         }
       />
 
