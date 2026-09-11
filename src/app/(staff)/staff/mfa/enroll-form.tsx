@@ -101,9 +101,10 @@ export function EnrollForm({ role }: Props) {
           {enroll.secret}
         </p>
         <p className="mt-2">
-          Save this somewhere safe. Two-step sign-in is optional — if you lose
-          your authenticator, sign in with Google instead and ask an admin to
-          clear the old factor.
+          Save this somewhere safe. Two-step sign-in is optional, but once
+          you&apos;re enrolled the code is required on every sign-in —
+          Google included — and a lost authenticator can only be cleared by
+          someone with access to the Supabase project.
         </p>
       </details>
 
