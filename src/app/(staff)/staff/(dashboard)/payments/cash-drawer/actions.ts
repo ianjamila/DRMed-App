@@ -11,6 +11,8 @@ import {
   denominationsTotal,
   type DenominationCounts,
 } from "@/lib/accounting/cash-denominations";
+import { giftCodeRefundEligibility } from "@/lib/gift-codes/refund";
+import type { GiftCodeStatus } from "@/lib/gift-codes/labels";
 import {
   RecordCashAdjustmentSchema,
   VoidCashAdjustmentSchema,
@@ -134,10 +136,18 @@ export async function voidCashAdjustmentAction(
   // Finding 8 (go-live review): a gift-code sale row can't go through this
   // generic Void — it only reverses the cash-drawer entry, never touches
   // `gift_codes`, so reception could take the money back out of the drawer
-  // while the code stays purchased and redeemable. The proper control
-  // (Admin → Gift codes → Cancel this code) cancels the code AND reverses
-  // this same drawer entry in one step (cancelGiftCodeAction). Refuse here
-  // and point at that control instead of half-undoing the sale.
+  // while the code stays purchased and redeemable. Refuse here and point at
+  // the proper control instead of half-undoing the sale.
+  //
+  // Go-live gap: that pointer used to send everyone to Admin → Gift codes →
+  // Cancel, which burns the voucher permanently (status='cancelled' is
+  // terminal). Reception now has its own undo for the common case — a
+  // mis-keyed sale on a code that's still unredeemed — via
+  // refundGiftCodeSaleAction (reverses this same drawer entry AND returns
+  // the code to sellable inventory, see 0142). Look up the code's current
+  // status so the message points at the right control: Refund for an
+  // unredeemed sale, or the admin cancel flow only for the rarer states
+  // that flow can't handle (already redeemed, already cancelled).
   const { data: adjustment, error: readErr } = await admin
     .from("eod_cash_adjustments")
     .select("kind, gift_code_id")
@@ -145,11 +155,23 @@ export async function voidCashAdjustmentAction(
     .maybeSingle();
   if (readErr) return { ok: false, error: translatePgError(readErr) };
   if (adjustment?.kind === "gift_code_sale") {
-    return {
-      ok: false,
-      error:
-        "This is a gift code sale. To undo it, cancel the gift code instead (Admin → Gift codes) — that takes the money back out of the drawer AND stops the code from being used.",
-    };
+    const { data: code } = adjustment.gift_code_id
+      ? await admin
+          .from("gift_codes")
+          .select("status")
+          .eq("id", adjustment.gift_code_id)
+          .maybeSingle()
+      : { data: null };
+    const eligibility = code
+      ? giftCodeRefundEligibility(code.status as GiftCodeStatus)
+      : null;
+
+    let message =
+      "This is a gift code sale. To undo it, use Refund gift code sale instead (Front desk → Refund gift code sale, or Admin → Gift codes) — that reverses this drawer entry AND makes the code available to sell again.";
+    if (eligibility && !eligibility.ok) {
+      message = eligibility.error;
+    }
+    return { ok: false, error: message };
   }
 
   const { error } = await admin

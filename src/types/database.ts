@@ -2116,6 +2116,9 @@ export type Database = {
           redeemed_by: string | null
           redeemed_payment_id: string | null
           redeemed_visit_id: string | null
+          refund_reason: string | null
+          refunded_at: string | null
+          refunded_by: string | null
           sold_by: string | null
           status: string
           updated_at: string
@@ -2141,6 +2144,9 @@ export type Database = {
           redeemed_by?: string | null
           redeemed_payment_id?: string | null
           redeemed_visit_id?: string | null
+          refund_reason?: string | null
+          refunded_at?: string | null
+          refunded_by?: string | null
           sold_by?: string | null
           status?: string
           updated_at?: string
@@ -2166,6 +2172,9 @@ export type Database = {
           redeemed_by?: string | null
           redeemed_payment_id?: string | null
           redeemed_visit_id?: string | null
+          refund_reason?: string | null
+          refunded_at?: string | null
+          refunded_by?: string | null
           sold_by?: string | null
           status?: string
           updated_at?: string

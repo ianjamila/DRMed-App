@@ -441,7 +441,7 @@
         <tr><td>Everything else under Admin</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
         <tr><td colspan="6"><b>Personal</b></td></tr>
         <tr><td>My profile · My payslips</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-        <tr><td colspan="6"><b>Hidden tabs</b> (Admin only; parked pages: Sell gift code · Registration link · Sign-off · Patient receivables)</td></tr>
+        <tr><td colspan="6"><b>Hidden tabs</b> (Admin only; parked pages: Sell gift code · Refund gift code sale · Registration link · Sign-off · Patient receivables)</td></tr>
       </tbody>
     </table></div>
     <div class="note tip"><span class="k">Shortcut</span><div><p>The <kbd class="ui">New lab request</kbd> and <kbd class="ui">New imaging request</kbd> items open the New visit screen with the right tab already filtered. They are the fastest way to start a walk-in.</p></div></div>
@@ -671,6 +671,7 @@
       <dt>Quick quote</dt><dd>Billing › <kbd class="ui">Quick quote</kbd>. A searchable price list you can read out or copy into a chat reply. Nothing is saved. Press <kbd class="ui">Cmd/Ctrl + K</kbd> to jump to the search box.</dd>
       <dt>Inquiries</dt><dd>Front desk › <kbd class="ui">Inquiries</kbd>. Log a phone or Messenger enquiry with <kbd class="ui">+ New inquiry</kbd> (caller, contact, channel, what they asked). When they decide to come in, open it and use <kbd class="ui">Book from inquiry</kbd>, which turns it into an appointment.</dd>
       <dt>Sell a gift code</dt><dd>Type <code class="route">/staff/gift-codes/sell</code> (the sidebar item is parked). Enter buyer name and contact, payment method and reference, the code you are handing over, then <kbd class="ui">Record sale</kbd>. The recipient redeems it later as a payment method (3.6).</dd>
+      <dt>Refund a gift code sale</dt><dd>Type <code class="route">/staff/gift-codes/refund</code> (also parked; linked from the Sell page). Look up the code, type a reason, then <kbd class="ui">Refund this sale</kbd>. Use this for a mis-keyed sale — wrong buyer, wrong tender, customer changed their mind — <b>before the code has been redeemed</b>. It takes the money back out of today&apos;s drawer count and puts the code back on sale. Trying to <b>Void</b> the sale from the cash drawer (3.10) now points here instead of Admin. If the code has already been redeemed on a visit, void that payment instead (3.6) — the code returns to Purchased and can then be refunded. Admin can also do this from a code&apos;s detail page (<b>Gift codes</b> in Operations), where <b>Cancel this code</b> stays for the rare case a code should never be sellable again — cancelling is permanent, refunding is not.</dd>
     </dl>
   </section>
 </section>
@@ -1049,7 +1050,7 @@
     <dt>Doctor procedures</dt><dd>The catalog has no <q>Doctor procedure</q> services yet, so that path is untested in daily use. Add them under Services before billing procedures.</dd>
     <dt>Report exports are capped</dt><dd>Every report CSV stops at 20,000 rows and marks itself TRUNCATED at the end; most report pages show only the first 500 rows on screen. Narrow the date range rather than assuming that is everything (5.2).</dd>
     <dt>Marketing trackers</dt><dd>Stored in the browser that entered them. They don't sync between computers.</dd>
-    <dt>Parked pages</dt><dd><b>Sell gift code</b>, <b>Registration link</b>, <b>Sign-off</b> and <b>Patient receivables</b> are under <b>Hidden tabs</b> (Admin only in the sidebar). Reception can still open Sell gift code and Registration link by typing the address.</dd>
+    <dt>Parked pages</dt><dd><b>Sell gift code</b>, <b>Refund gift code sale</b>, <b>Registration link</b>, <b>Sign-off</b> and <b>Patient receivables</b> are under <b>Hidden tabs</b> (Admin only in the sidebar). Reception can still open Sell gift code, Refund gift code sale and Registration link by typing the address.</dd>
   </dl>
 </section>
 

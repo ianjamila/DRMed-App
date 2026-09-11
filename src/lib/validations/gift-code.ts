@@ -60,6 +60,15 @@ export const CancelGiftCodeSchema = z.object({
     .max(500),
 });
 
+export const RefundGiftCodeSchema = z.object({
+  code: giftCode,
+  refund_reason: z
+    .string()
+    .trim()
+    .min(1, "Reason is required.")
+    .max(500),
+});
+
 export const RedeemGiftCodePaymentSchema = z.object({
   visit_id: z.string().uuid(),
   code: giftCode,

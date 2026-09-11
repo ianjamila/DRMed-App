@@ -8,7 +8,9 @@ import {
   STATUS_LABELS,
   type GiftCodeStatus,
 } from "@/lib/gift-codes/labels";
+import { giftCodeRefundEligibility } from "@/lib/gift-codes/refund";
 import { CancelButton } from "./cancel-button";
+import { RefundButton } from "./refund-button";
 
 export const metadata = { title: "Gift code — staff" };
 
@@ -26,7 +28,7 @@ export default async function GiftCodeDetailPage({ params }: PageProps) {
   const { data: code } = await admin
     .from("gift_codes")
     .select(
-      "id, code, face_value_php, status, batch_label, notes, generated_at, generated_by, purchased_at, purchased_by_name, purchased_by_contact, sold_by, redeemed_at, redeemed_by, redeemed_visit_id, cancelled_at, cancelled_by, cancellation_reason",
+      "id, code, face_value_php, status, batch_label, notes, generated_at, generated_by, purchased_at, purchased_by_name, purchased_by_contact, sold_by, redeemed_at, redeemed_by, redeemed_visit_id, cancelled_at, cancelled_by, cancellation_reason, refunded_at, refunded_by, refund_reason",
     )
     .eq("id", id)
     .maybeSingle();
@@ -38,6 +40,7 @@ export default async function GiftCodeDetailPage({ params }: PageProps) {
     code.sold_by,
     code.redeemed_by,
     code.cancelled_by,
+    code.refunded_by,
   ].filter((v): v is string => Boolean(v));
   const nameMap = new Map<string, string>();
   if (staffIds.length > 0) {
@@ -115,6 +118,12 @@ export default async function GiftCodeDetailPage({ params }: PageProps) {
             who={code.cancelled_by ? nameMap.get(code.cancelled_by) : null}
             extra={code.cancellation_reason}
           />
+          <Fact
+            label="Last refunded"
+            when={code.refunded_at}
+            who={code.refunded_by ? nameMap.get(code.refunded_by) : null}
+            extra={code.refund_reason}
+          />
         </dl>
 
         {code.notes ? (
@@ -128,8 +137,25 @@ export default async function GiftCodeDetailPage({ params }: PageProps) {
           </div>
         ) : null}
 
+        {giftCodeRefundEligibility(code.status as GiftCodeStatus).ok ? (
+          <div className="mt-6 border-t border-[color:var(--color-brand-bg-mid)] pt-4">
+            <p className="mb-2 text-xs text-[color:var(--color-brand-text-soft)]">
+              Sale mis-keyed and the code hasn&apos;t been redeemed yet?
+              Refunding reverses the payment and puts the code back in
+              inventory to sell again. Reception can also do this from
+              Front desk → Refund gift code sale.
+            </p>
+            <RefundButton code={code.code} />
+          </div>
+        ) : null}
+
         {code.status !== "redeemed" && code.status !== "cancelled" ? (
           <div className="mt-6 border-t border-[color:var(--color-brand-bg-mid)] pt-4">
+            <p className="mb-2 text-xs text-[color:var(--color-brand-text-soft)]">
+              Cancelling is permanent — the code can never be sold or
+              redeemed again. Prefer Refund above when the code just needs
+              to go back on sale.
+            </p>
             <CancelButton giftCodeId={code.id} />
           </div>
         ) : null}

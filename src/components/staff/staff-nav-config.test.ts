@@ -66,6 +66,7 @@ describe("Hidden tabs is admin-only", () => {
     expect(hidden?.collapsible).toBe(true);
     expect(hrefsIn(hidden)).toEqual([
       "/staff/gift-codes/sell",
+      "/staff/gift-codes/refund",
       "/staff/registration",
       "/staff/signoff",
       "/staff/admin/accounting/patient-ar",
