@@ -72,7 +72,7 @@ export function StaffForm({ initial }: Props) {
         />
         {isEdit ? (
           <p className="text-xs text-[color:var(--color-brand-text-soft)]">
-            Email cannot be changed here. Contact Supabase support if needed.
+            Change the sign-in email in the “Sign-in email” panel below.
           </p>
         ) : null}
       </div>

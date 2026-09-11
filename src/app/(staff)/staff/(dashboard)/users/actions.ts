@@ -9,6 +9,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import {
   AdminResetPasswordSchema,
   StaffCreateSchema,
+  StaffEmailChangeSchema,
   StaffUpdateSchema,
 } from "@/lib/validations/staff-user";
 import { ipAndAgent, firstIssue } from "@/lib/server/action-helpers";
@@ -192,6 +193,93 @@ export async function adminResetStaffPasswordAction(
   return {
     ok: true,
     message: "Password reset. Share the new password with the user securely.",
+  };
+}
+
+export type EmailChangeResult =
+  | { ok: true; message: string }
+  | { ok: false; error: string };
+
+// Staff sign in with Google, which matches on email — so a stale address here
+// locks the person out. Confirmed immediately (email_confirm) because an admin
+// is asserting it in person; the user id never changes, so staff_profiles and
+// every audit row stay attached.
+export async function changeStaffEmailAction(
+  staffUserId: string,
+  _prev: EmailChangeResult | null,
+  formData: FormData,
+): Promise<EmailChangeResult> {
+  const session = await requireAdminStaff();
+
+  if (session.user_id === staffUserId) {
+    return {
+      ok: false,
+      error: "Use Personal → My profile to change your own email.",
+    };
+  }
+
+  const parsed = StaffEmailChangeSchema.safeParse({
+    email: formData.get("email"),
+  });
+  if (!parsed.success) {
+    return { ok: false, error: firstIssue(parsed.error) };
+  }
+
+  const admin = createAdminClient();
+
+  const { data: target } = await admin
+    .from("staff_profiles")
+    .select("id, full_name")
+    .eq("id", staffUserId)
+    .maybeSingle();
+  if (!target) {
+    return { ok: false, error: "Staff user not found." };
+  }
+
+  const { data: current } = await admin.auth.admin.getUserById(staffUserId);
+  const oldEmail = current?.user?.email ?? null;
+  if (oldEmail === parsed.data.email) {
+    return { ok: false, error: "That is already this user's email." };
+  }
+
+  const { error: updateErr } = await admin.auth.admin.updateUserById(
+    staffUserId,
+    { email: parsed.data.email, email_confirm: true },
+  );
+  if (updateErr) {
+    // Supabase rejects a duplicate address; surface it plainly rather than
+    // leaking the raw Auth error.
+    const duplicate = /already|registered|exists/i.test(updateErr.message);
+    return {
+      ok: false,
+      error: duplicate
+        ? "Another account already uses that email."
+        : updateErr.message,
+    };
+  }
+
+  const { ip, ua } = await ipAndAgent();
+  await audit({
+    actor_id: session.user_id,
+    actor_type: "staff",
+    action: "staff_user.email_changed",
+    resource_type: "staff_profile",
+    resource_id: staffUserId,
+    metadata: {
+      target_name: target.full_name,
+      old_email: oldEmail,
+      new_email: parsed.data.email,
+    },
+    ip_address: ip,
+    user_agent: ua,
+  });
+
+  revalidatePath("/staff/users");
+  revalidatePath(`/staff/users/${staffUserId}/edit`);
+
+  return {
+    ok: true,
+    message: `Email changed to ${parsed.data.email}. They sign in with that Google account from now on.`,
   };
 }
 

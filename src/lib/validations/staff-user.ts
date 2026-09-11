@@ -68,7 +68,12 @@ export const AdminResetPasswordSchema = z.object({
     .min(10, "Password must be at least 10 characters."),
 });
 
+export const StaffEmailChangeSchema = z.object({
+  email: z.string().trim().toLowerCase().email("Invalid email."),
+});
+
 export type StaffCreateInput = z.infer<typeof StaffCreateSchema>;
 export type StaffUpdateInput = z.infer<typeof StaffUpdateSchema>;
 export type ChangePasswordInput = z.infer<typeof ChangePasswordSchema>;
 export type AdminResetPasswordInput = z.infer<typeof AdminResetPasswordSchema>;
+export type StaffEmailChangeInput = z.infer<typeof StaffEmailChangeSchema>;
