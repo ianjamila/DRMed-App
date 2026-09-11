@@ -37,10 +37,14 @@ export function EmailForm({ staffUserId, currentEmail }: Props) {
   return (
     <form action={formAction} className="grid gap-3">
       <div className="grid gap-1.5">
-        <Label htmlFor="email">New email</Label>
+        <Label htmlFor="signin_email">New email</Label>
+        {/* id is signin_email, not email: the profile form above renders its
+            own disabled id="email" field, and duplicate ids would point this
+            label at that one instead. The form field NAME stays "email"
+            because changeStaffEmailAction reads formData.get("email"). */}
         <Input
           key={savedCount}
-          id="email"
+          id="signin_email"
           name="email"
           type="email"
           required
@@ -68,8 +72,8 @@ export function EmailForm({ staffUserId, currentEmail }: Props) {
       ) : null}
 
       <div>
-        <Button type="submit" variant="outline" disabled={pending}>
-          {pending ? "Saving…" : "Change email"}
+        <Button type="submit" variant="brand" disabled={pending}>
+          {pending ? "Saving…" : "Save sign-in email"}
         </Button>
       </div>
     </form>

@@ -1,6 +1,10 @@
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  summarizeSignInMethods,
+  type SignInSummary,
+} from "@/lib/auth/sign-in-methods";
 import { RestoreButton } from "./restore-button";
 import { PageHeader } from "@/components/staff/page-header";
 import { Panel } from "@/components/ui/panel";
@@ -26,6 +30,7 @@ type StaffRow = {
   deleted_at: string | null;
   deleted_by: string | null;
   email: string;
+  sign_in: SignInSummary;
 };
 
 async function loadStaff(): Promise<{
@@ -45,8 +50,13 @@ async function loadStaff(): Promise<{
   ]);
 
   const emailById = new Map<string, string>();
+  // Who has migrated to Google. listUsers returns each user's identity rows,
+  // so this costs nothing extra — the call was already being made for emails.
+  const signInById = new Map<string, SignInSummary>();
   for (const u of usersResp?.users ?? []) {
-    if (u.id && u.email) emailById.set(u.id, u.email);
+    if (!u.id) continue;
+    if (u.email) emailById.set(u.id, u.email);
+    signInById.set(u.id, summarizeSignInMethods(u.identities));
   }
 
   const all: StaffRow[] = (profiles ?? []).map((p) => ({
@@ -58,6 +68,7 @@ async function loadStaff(): Promise<{
     deleted_at: p.deleted_at,
     deleted_by: p.deleted_by,
     email: emailById.get(p.id) ?? "—",
+    sign_in: signInById.get(p.id) ?? { google: false, password: false },
   }));
 
   // Build a name lookup for the deleter — we want the deleted table to
@@ -70,6 +81,34 @@ async function loadStaff(): Promise<{
     deleted: all.filter((r) => r.deleted_at !== null),
     deleterNames,
   };
+}
+
+// Shows at a glance who still needs moving onto Google. A row with only
+// "Password" has not signed in with Google yet; "Neither" should never appear
+// for a real staff member and means the auth user has no identity rows at all.
+function SignInBadges({ summary }: { summary: SignInSummary }) {
+  if (!summary.google && !summary.password) {
+    return (
+      <span className="rounded-md bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900">
+        Neither
+      </span>
+    );
+  }
+
+  return (
+    <span className="flex flex-wrap gap-1">
+      {summary.google ? (
+        <span className="rounded-md bg-sky-100 px-2 py-0.5 text-xs font-semibold text-sky-900">
+          Google
+        </span>
+      ) : null}
+      {summary.password ? (
+        <span className="rounded-md bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-700">
+          Password
+        </span>
+      ) : null}
+    </span>
+  );
 }
 
 function formatManila(iso: string): string {
@@ -115,6 +154,7 @@ export default async function StaffUsersPage() {
               <tr>
                 <th className="px-4 py-3">Name</th>
                 <th className="px-4 py-3">Email</th>
+                <th className="px-4 py-3">Sign-in</th>
                 <th className="px-4 py-3">Role</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3 text-right">Action</th>
@@ -124,7 +164,7 @@ export default async function StaffUsersPage() {
               {existing.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={5}
+                    colSpan={6}
                     className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]"
                   >
                     No staff users yet.
@@ -141,6 +181,9 @@ export default async function StaffUsersPage() {
                     </td>
                     <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
                       {u.email}
+                    </td>
+                    <td className="px-4 py-3">
+                      <SignInBadges summary={u.sign_in} />
                     </td>
                     <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
                       {ROLE_LABEL[u.role] ?? u.role}

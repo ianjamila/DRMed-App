@@ -13,9 +13,10 @@ import {
   StaffUpdateSchema,
 } from "@/lib/validations/staff-user";
 import { ipAndAgent, firstIssue } from "@/lib/server/action-helpers";
+import { reportError } from "@/lib/observability/report-error";
 
 export type StaffResult =
-  | { ok: true; redirect_to?: string }
+  | { ok: true; message?: string; redirect_to?: string }
   | { ok: false; error: string };
 
 export async function createStaffUserAction(
@@ -129,7 +130,15 @@ export async function updateStaffUserAction(
 
   revalidatePath("/staff/users");
   revalidatePath(`/staff/users/${staffUserId}/edit`);
-  redirect("/staff/users");
+
+  // Deliberately no redirect. An admin needs to see the save confirmed, and
+  // this page carries panels BELOW this form (sign-in email, password reset)
+  // that are often used in the same visit — navigating to the list threw away
+  // whatever the admin was part-way through down there. The revalidatePath
+  // calls above refresh this page server-side, so the heading and the disabled
+  // Email field show stored values without a manual reload. Creating a user
+  // still redirects: there is no more work to do on a blank form.
+  return { ok: true, message: "Changes saved." };
 }
 
 export type AdminResetResult =
@@ -160,14 +169,22 @@ export async function adminResetStaffPasswordAction(
   const admin = createAdminClient();
 
   // Confirm the target row exists before touching auth, so an admin can't
-  // accidentally reset a deleted-profile auth user.
+  // accidentally reset a deleted-profile auth user. A soft delete leaves the
+  // row in place with deleted_at set, so "exists" is not enough — the UI hides
+  // this panel for a deleted user and this is the matching server-side gate.
   const { data: target } = await admin
     .from("staff_profiles")
-    .select("id, full_name")
+    .select("id, full_name, deleted_at")
     .eq("id", staffUserId)
     .maybeSingle();
   if (!target) {
     return { ok: false, error: "Staff user not found." };
+  }
+  if (target.deleted_at !== null) {
+    return {
+      ok: false,
+      error: "This staff user is deleted. Restore them first.",
+    };
   }
 
   const { error: updateErr } = await admin.auth.admin.updateUserById(
@@ -175,7 +192,17 @@ export async function adminResetStaffPasswordAction(
     { password: parsed.data.new_password },
   );
   if (updateErr) {
-    return { ok: false, error: updateErr.message };
+    // GoTrue messages can carry internals, so they go to Sentry and the admin
+    // gets a stable sentence instead.
+    await reportError({
+      scope: "users.adminResetStaffPassword",
+      error: updateErr,
+      metadata: { staffUserId },
+    });
+    return {
+      ok: false,
+      error: "Could not reset the password. The error has been logged.",
+    };
   }
 
   const { ip, ua } = await ipAndAgent();
@@ -229,11 +256,20 @@ export async function changeStaffEmailAction(
 
   const { data: target } = await admin
     .from("staff_profiles")
-    .select("id, full_name")
+    .select("id, full_name, deleted_at")
     .eq("id", staffUserId)
     .maybeSingle();
   if (!target) {
     return { ok: false, error: "Staff user not found." };
+  }
+  // A soft delete keeps the row, so the panel is hidden in the UI and refused
+  // here too — changing a deleted user's address would hand a live sign-in
+  // route to someone who is supposed to have none.
+  if (target.deleted_at !== null) {
+    return {
+      ok: false,
+      error: "This staff user is deleted. Restore them first.",
+    };
   }
 
   const { data: current } = await admin.auth.admin.getUserById(staffUserId);
@@ -251,11 +287,20 @@ export async function changeStaffEmailAction(
     // the message text can change across Supabase platform versions or with
     // future i18n, with no compile-time signal when it does.
     const duplicate = updateErr.code === "email_exists";
+    if (!duplicate) {
+      // Anything other than a duplicate is ours to diagnose, not the admin's
+      // to read — the raw GoTrue message can expose internals.
+      await reportError({
+        scope: "users.changeStaffEmail",
+        error: updateErr,
+        metadata: { staffUserId },
+      });
+    }
     return {
       ok: false,
       error: duplicate
         ? "Another account already uses that email."
-        : updateErr.message,
+        : "Could not change the email. The error has been logged.",
     };
   }
 

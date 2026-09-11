@@ -81,16 +81,25 @@ export default async function EditStaffUserPage({ params }: Props) {
           <h2 className="font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">
             Sign-in email
           </h2>
-          <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
-            Staff sign in with Google, matched on this address. Update it when
-            someone changes the Google account they use.
-          </p>
-          <div className="mt-4">
-            <EmailForm
-              staffUserId={profile.id}
-              currentEmail={userResp?.user?.email ?? ""}
-            />
-          </div>
+          {isDeleted ? (
+            <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
+              This staff user is deleted, so their sign-in email is frozen.
+              Restore them from the staff users list first.
+            </p>
+          ) : (
+            <>
+              <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
+                Staff sign in with Google, matched on this address. Update it
+                when someone changes the Google account they use.
+              </p>
+              <div className="mt-4">
+                <EmailForm
+                  staffUserId={profile.id}
+                  currentEmail={userResp?.user?.email ?? ""}
+                />
+              </div>
+            </>
+          )}
         </Panel>
       ) : null}
 
@@ -108,6 +117,11 @@ export default async function EditStaffUserPage({ params }: Props) {
               Personal → My profile
             </Link>{" "}
             so the current password check applies.
+          </p>
+        ) : isDeleted ? (
+          <p className="mt-1 text-sm text-amber-900/80">
+            This staff user is deleted, so their password is frozen. Restore
+            them from the staff users list first.
           </p>
         ) : (
           <>
