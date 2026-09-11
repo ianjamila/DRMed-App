@@ -1917,6 +1917,7 @@ export type Database = {
           amount_php: number
           business_date: string
           contra_account_id: string | null
+          gift_code_id: string | null
           id: string
           kind: string
           notes: string | null
@@ -1933,6 +1934,7 @@ export type Database = {
           amount_php: number
           business_date: string
           contra_account_id?: string | null
+          gift_code_id?: string | null
           id?: string
           kind: string
           notes?: string | null
@@ -1949,6 +1951,7 @@ export type Database = {
           amount_php?: number
           business_date?: string
           contra_account_id?: string | null
+          gift_code_id?: string | null
           id?: string
           kind?: string
           notes?: string | null
@@ -1967,6 +1970,13 @@ export type Database = {
             columns: ["contra_account_id"]
             isOneToOne: false
             referencedRelation: "chart_of_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "eod_cash_adjustments_gift_code_id_fkey"
+            columns: ["gift_code_id"]
+            isOneToOne: false
+            referencedRelation: "gift_codes"
             referencedColumns: ["id"]
           },
           {
@@ -2106,6 +2116,9 @@ export type Database = {
           redeemed_by: string | null
           redeemed_payment_id: string | null
           redeemed_visit_id: string | null
+          refund_reason: string | null
+          refunded_at: string | null
+          refunded_by: string | null
           sold_by: string | null
           status: string
           updated_at: string
@@ -2131,6 +2144,9 @@ export type Database = {
           redeemed_by?: string | null
           redeemed_payment_id?: string | null
           redeemed_visit_id?: string | null
+          refund_reason?: string | null
+          refunded_at?: string | null
+          refunded_by?: string | null
           sold_by?: string | null
           status?: string
           updated_at?: string
@@ -2156,6 +2172,9 @@ export type Database = {
           redeemed_by?: string | null
           redeemed_payment_id?: string | null
           redeemed_visit_id?: string | null
+          refund_reason?: string | null
+          refunded_at?: string | null
+          refunded_by?: string | null
           sold_by?: string | null
           status?: string
           updated_at?: string
@@ -6364,6 +6383,8 @@ export type Database = {
         | "cogs_send_out_trueup"
         | "history_import"
         | "petty_cash"
+        | "gift_code_sale"
+        | "gift_code_breakage"
       je_status: "draft" | "posted" | "reversed"
       period_status: "open" | "closed"
     }
@@ -6530,6 +6551,8 @@ export const Constants = {
         "cogs_send_out_trueup",
         "history_import",
         "petty_cash",
+        "gift_code_sale",
+        "gift_code_breakage",
       ],
       je_status: ["draft", "posted", "reversed"],
       period_status: ["open", "closed"],

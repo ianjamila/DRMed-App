@@ -14,6 +14,10 @@ import {
 } from "@/lib/validations/staff-user";
 import { ipAndAgent, firstIssue } from "@/lib/server/action-helpers";
 import { reportError } from "@/lib/observability/report-error";
+import {
+  isSelfAdminLockout,
+  wouldRemoveLastActiveAdmin,
+} from "@/lib/auth/admin-lockout";
 
 export type StaffResult =
   | { ok: true; message?: string; redirect_to?: string }
@@ -108,7 +112,40 @@ export async function updateStaffUserAction(
     };
   }
 
+  // H7: an admin can never remove their own admin role or deactivate their
+  // own account through this form — regardless of how many other admins
+  // exist. Mirrors the self-service blocks below on password reset / email
+  // change / delete.
+  const isSelf = session.user_id === staffUserId;
+  if (isSelfAdminLockout(isSelf, parsed.data)) {
+    return {
+      ok: false,
+      error:
+        "You cannot remove your own admin role or deactivate your own account. Ask another admin to make this change.",
+    };
+  }
+
   const admin = createAdminClient();
+
+  // H7: block any edit that would leave zero active admins clinic-wide.
+  // Counted fresh, right before the write — a client-side check races
+  // against a concurrent edit to a different admin's row.
+  const { count: otherActiveAdmins, error: countErr } = await admin
+    .from("staff_profiles")
+    .select("id", { count: "exact", head: true })
+    .eq("role", "admin")
+    .eq("is_active", true)
+    .is("deleted_at", null)
+    .neq("id", staffUserId);
+  if (countErr) return { ok: false, error: countErr.message };
+  if (wouldRemoveLastActiveAdmin(otherActiveAdmins ?? 0, parsed.data)) {
+    return {
+      ok: false,
+      error:
+        "This would leave the clinic with no active admin. Make another user an active admin first.",
+    };
+  }
+
   const { error } = await admin
     .from("staff_profiles")
     .update(parsed.data)

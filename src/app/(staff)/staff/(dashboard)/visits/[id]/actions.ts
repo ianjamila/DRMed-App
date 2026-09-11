@@ -18,6 +18,7 @@ import {
   scopeToAllowedSections,
 } from "@/lib/visits/bulk-selection";
 import { countResultViews } from "@/lib/results/viewed-count";
+import { canManuallyReleasePackageHeader } from "@/lib/visits/package-header-release";
 
 export type ReleaseMedium =
   | "physical"
@@ -267,6 +268,96 @@ export async function releaseAllReadyComponentsAction(
       metadata: { visit_id: visitId, header_id: headerId },
     });
   }
+
+  revalidatePath(`/staff/visits/${visitId}`);
+  return { ok: true };
+}
+
+// A3 (go-live): admin-only escape hatch for a package header stuck at
+// ready_for_release. Normally migration 0109's Leg A trigger
+// (fn_release_header_when_components_done) auto-releases the header the
+// moment its last component goes terminal on a money-settled visit — but
+// there is currently no UI path at all to release a header by hand when
+// that trigger doesn't fire (headers never reach TestAction; ReleaseAllButton
+// only ever targets components; bulk actions filter is_package_header=false).
+// This action writes the exact same fields the trigger would have written
+// (status/released_at/released_by/release_medium='other') through an UPDATE
+// that still runs through enforce_payment_before_release (0133) — the
+// payment-gating trigger is never bypassed, and the service-role client is
+// never reached for here.
+export async function releasePackageHeaderAction(
+  headerId: string,
+  visitId: string,
+): Promise<ReleaseResult> {
+  const session = await requireAdminStaff();
+  const supabase = await createClient();
+
+  const { data: header } = await supabase
+    .from("test_requests")
+    .select("id, status, is_package_header")
+    .eq("id", headerId)
+    .eq("visit_id", visitId)
+    .maybeSingle();
+  if (!header?.is_package_header) {
+    return { ok: false, error: "Package not found on this visit." };
+  }
+
+  const { data: components } = await supabase
+    .from("test_requests")
+    .select("id, status")
+    .eq("parent_id", headerId)
+    .eq("visit_id", visitId);
+
+  if (!canManuallyReleasePackageHeader(header, components ?? [])) {
+    return {
+      ok: false,
+      error:
+        "This package can only be released once every component is released or cancelled.",
+    };
+  }
+
+  const now = new Date().toISOString();
+  const { data: updated, error } = await supabase
+    .from("test_requests")
+    .update({
+      status: "released",
+      released_at: now,
+      released_by: session.user_id,
+      release_medium: "other",
+    })
+    .eq("id", headerId)
+    .eq("visit_id", visitId)
+    .eq("status", "ready_for_release")
+    .select("id");
+
+  if (error) {
+    // The payment-gating trigger (enforce_payment_before_release, 0133) is
+    // the source of truth — this is the same check_violation path every
+    // other release goes through.
+    return { ok: false, error: translatePgError(error) };
+  }
+  if (!updated || updated.length === 0) {
+    // A concurrent action (or the Leg A trigger itself, on the read above)
+    // already released it. Never audit a write that didn't happen.
+    revalidatePath(`/staff/visits/${visitId}`);
+    return { ok: false, error: "This package is no longer ready to release." };
+  }
+
+  const h = await headers();
+  await audit({
+    actor_id: session.user_id,
+    actor_type: "staff",
+    action: "test_request.released",
+    resource_type: "test_request",
+    resource_id: headerId,
+    metadata: {
+      visit_id: visitId,
+      release_medium: "other",
+      manual_header_release: true,
+    },
+    ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    user_agent: h.get("user-agent"),
+  });
 
   revalidatePath(`/staff/visits/${visitId}`);
   return { ok: true };
@@ -524,7 +615,7 @@ export async function waiveVisitBalanceAction(
 
   const { data: visit } = await supabase
     .from("visits")
-    .select("payment_status, total_php, paid_php, deleted_at")
+    .select("payment_status, total_php, paid_php, deleted_at, hmo_provider_id")
     .eq("id", visitId)
     .maybeSingle();
   if (!visit) {
@@ -534,6 +625,18 @@ export async function waiveVisitBalanceAction(
     return {
       ok: false,
       error: "This visit was deleted from the queue. Restore it before waiving.",
+    };
+  }
+  if (visit.hmo_provider_id !== null) {
+    // A5: waiving does NOT write off the HMO receivable — the release
+    // bridge still books AR-HMO by hmo_provider_id on release regardless of
+    // payment_status. Offering "waive" here is a misleading-status trap:
+    // an HMO visit already releases without payment (moneySettled's HMO
+    // carve-out), so there is nothing waiving would unblock.
+    return {
+      ok: false,
+      error:
+        "This visit is billed to an HMO and already releases without payment — there's no balance to waive.",
     };
   }
   if (visit.payment_status === "waived") {

@@ -15,7 +15,10 @@ import { isDoctorKind, partitionByCategory } from "@/lib/visits/order-lines";
 import { isConsultOnlyOrder } from "@/lib/visits/receipt-policy";
 import { isSeniorPwdEligible } from "@/lib/pricing/senior";
 import { lineDiscount } from "@/lib/pricing/discounts";
-import { completeAppointmentFromVisitAction } from "../../appointments/actions";
+import {
+  completeAppointmentFromVisitAction,
+  completeArrivedAppointmentsForPatientAction,
+} from "../../appointments/actions";
 import type { Database } from "@/types/database";
 
 const optionalUuid = z
@@ -73,6 +76,13 @@ export async function createVisitAction(
   formData: FormData,
 ): Promise<CreateVisitResult> {
   const session = await requireActiveStaff();
+  // Defence in depth: creating a visit is a reception/admin action, matching
+  // the sibling money/intake actions (e.g. reissuePatientPinAction,
+  // createStaffAppointmentAction). Not reachable through the nav for other
+  // roles today, but every write action here should still carry its own gate.
+  if (session.role !== "reception" && session.role !== "admin") {
+    return { ok: false, error: "Only reception or admin can create a visit." };
+  }
 
   const parsed = Schema.safeParse({
     patient_id: formData.get("patient_id"),
@@ -101,12 +111,23 @@ export async function createVisitAction(
   const { data: services, error: svcErr } = await supabase
     .from("services")
     .select(
-      "id, kind, code, name, price_php, hmo_price_php, senior_pwd_eligible",
+      "id, kind, code, name, price_php, hmo_price_php, senior_pwd_eligible, is_active",
     )
     .in("id", parsed.data.service_ids);
 
   if (svcErr || !services || services.length !== parsed.data.service_ids.length) {
     return { ok: false, error: "One or more services could not be found." };
+  }
+
+  // M8: mirror the package-component path's is_active guard (below) — a
+  // deactivated service must not be orderable on a new visit either.
+  const inactiveTopLevel = services.filter((s) => s.is_active === false);
+  if (inactiveTopLevel.length > 0) {
+    const codes = inactiveTopLevel.map((s) => s.code).join(", ");
+    return {
+      ok: false,
+      error: `Selected services are no longer active: ${codes}. Refresh the page and pick current services.`,
+    };
   }
 
   // Active rows from the admin-managed discount catalog. Codes not in this
@@ -490,6 +511,40 @@ export async function createVisitAction(
       }
     } catch (err) {
       console.error("completeAppointmentFromVisitAction threw", err);
+    }
+  } else if (parsed.data.patient_id) {
+    // A9/L1 fallback: reception can also start the visit straight from the
+    // patient's page, which threads no appointment_id at all. That was the
+    // documented workaround while "Mark arrived" hid walk-ins from every
+    // section, and it left the appointment dangling at "arrived" forever
+    // even though the visit existed. Close out any arrived appointment this
+    // patient still has, by patient_id rather than by appointment id.
+    //
+    // Finding 9: pass the visit's own service_ids through so only arrived
+    // appointments for services THIS visit actually covers get completed —
+    // a patient arrived for an unrelated doctor consultation must not be
+    // swept just because a lab visit was started from their patient page.
+    // See completeArrivedAppointmentsForPatientAction's own comment for the
+    // full rationale and the visit/patient pairing check it now does.
+    //
+    // Same best-effort contract as the branch above, and deliberately an
+    // `else` — when an appointment_id was supplied it has already completed
+    // the whole booking group, so running this too would be redundant.
+    // "No arrived appointment for this patient" is the ordinary case for a
+    // true walk-off-the-street visit (or one whose arrived appointments are
+    // all for other services), so it is not logged as a failure.
+    try {
+      const result = await completeArrivedAppointmentsForPatientAction(
+        parsed.data.patient_id,
+        created[0]!.visitId,
+        parsed.data.service_ids,
+        groupId,
+      );
+      if (!result.ok && result.error !== "No arrived appointment for this patient.") {
+        console.error("completeArrivedAppointmentsForPatientAction failed", result.error);
+      }
+    } catch (err) {
+      console.error("completeArrivedAppointmentsForPatientAction threw", err);
     }
   }
 

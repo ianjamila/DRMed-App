@@ -30,6 +30,7 @@
     "smoke:results": "tsx scripts/smoke-render-results.ts",
     "verify:meta-capi": "tsx scripts/verify-meta-capi.ts",
     "smoke:chemistry": "tsx scripts/smoke-chemistry-consolidated.ts",
+    "clear:trial-queue": "tsx scripts/clear-trial-queue.ts",
     "wipe:operational": "tsx scripts/wipe-operational.ts",
     "import:legacy": "tsx scripts/import-legacy-customers.ts",
     "import:history:expenses": "tsx scripts/history-import/expenses.ts",

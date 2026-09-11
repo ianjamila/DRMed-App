@@ -8,7 +8,7 @@ import { LabRequestUploads, type UploadRow } from "./lab-request-uploads";
 import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
-  title: "Your results — drmed.ph",
+  title: "Your results",
 };
 
 // Standalone (non-package) released result, rendered as a row in the

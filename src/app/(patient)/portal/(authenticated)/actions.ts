@@ -9,6 +9,10 @@ import { getPatientSession } from "@/lib/auth/patient-session-cookies";
 import { renderResultPdf } from "@/lib/results/render-pdf";
 import { loadConsultantSignatures, resolvePerformer } from "@/lib/results/signatures";
 import {
+  isResultDownloadEligible,
+  WITHDRAWN_SHARED_RESULT_ERROR,
+} from "@/lib/results/release-eligibility";
+import {
   normalisePatientSex,
   type ResultDocumentInput,
 } from "@/lib/results/types";
@@ -92,6 +96,31 @@ export async function getPatientConsolidatedResultDownloadUrl(
 
   if (!owned) {
     return { ok: false, error: "Result not found." };
+  }
+
+  // N6: the RLS policy backing the query above (`result_test_requests:
+  // patient released only`, migration 0114) is itself released-gated, so
+  // `junctions` here can ONLY ever contain the linked tests that are
+  // CURRENTLY released — undoing one sibling's release makes that row
+  // disappear from this list entirely rather than showing up as
+  // unreleased. That means the `.some()` ownership check above stays true
+  // (and this download stays live) as long as AT LEAST ONE linked test is
+  // still released, even after another linked test's release was undone —
+  // exactly the gap this closes.
+  //
+  // A single shared PDF covers every linked test_request. The safe
+  // default (shared across every download path — see
+  // src/lib/results/release-eligibility.ts): it is downloadable only while
+  // EVERY linked test is still released; if any one's release was undone,
+  // withhold the whole file rather than continue serving a document that
+  // includes withdrawn content. This re-checks against the full
+  // (unfiltered) membership via the service-role client — RLS can't tell
+  // us about a row that is no longer released, so this is the one read in
+  // this function that has to bypass it. A normal single-test result has
+  // exactly one junction row, so this reduces to the same released check
+  // as before and is a no-op there.
+  if (!(await isResultDownloadEligible(admin, resultId))) {
+    return { ok: false, error: WITHDRAWN_SHARED_RESULT_ERROR };
   }
 
   const storagePath = rRow.storage_path;
@@ -189,6 +218,17 @@ export async function getPatientResultDownloadUrl(
 
   if (!result || !result.storage_path) {
     return { ok: false, error: "No result file on this test." };
+  }
+
+  // This test's own status is 'released' (checked above), but its stored
+  // PDF may be a SHARED consolidated file that also covers sibling tests —
+  // if a sibling's release was since undone, the file still contains the
+  // withdrawn value and must not go out. Same shared check as the
+  // consolidated download path (src/lib/results/release-eligibility.ts); a
+  // single-test result has exactly one junction row (this one, already
+  // known released), so this is a no-op there.
+  if (!(await isResultDownloadEligible(admin, result.id))) {
+    return { ok: false, error: WITHDRAWN_SHARED_RESULT_ERROR };
   }
 
   const { data: signed, error: signErr } = await admin.storage
@@ -410,11 +450,38 @@ export async function getPackagePdfDownloadUrl(
     },
   };
 
+  // Finding 4 (go-live review): a component's `results` row can be the SAME
+  // shared/consolidated PDF that another test_request outside this package
+  // (a standalone same-group test on this visit, or a component belonging
+  // to a different report) is also linked to via result_test_requests. If
+  // that other link's release was undone, the stored file still contains
+  // the withdrawn value — isResultDownloadEligible is the one shared check
+  // every other download path (getPatientConsolidatedResultDownloadUrl,
+  // getPatientResultDownloadUrl, the data-export ZIP) already runs before
+  // handing out a storage_path; this assembly path was the one that didn't.
+  // Cache by result id (not by component) since several components can
+  // point at the same consolidated result row and would otherwise repeat
+  // the same result_test_requests query.
+  const eligibilityCache = new Map<string, Promise<boolean>>();
+  const checkEligible = (resultId: string): Promise<boolean> => {
+    let cached = eligibilityCache.get(resultId);
+    if (!cached) {
+      cached = isResultDownloadEligible(admin, resultId);
+      eligibilityCache.set(resultId, cached);
+    }
+    return cached;
+  };
+
+  let skippedWithdrawn = 0;
   const [coverPdfBytes, ...componentPdfBytes] = await Promise.all([
     renderResultPdf(coverInput),
     ...releasedComponents.map(async (c) => {
       const result = resultByTrId.get(c.id);
       if (!result || !result.storage_path) return null;
+      if (!(await checkEligible(result.id))) {
+        skippedWithdrawn++;
+        return null;
+      }
       const dl = await admin.storage
         .from("results")
         .download(result.storage_path);
@@ -475,6 +542,7 @@ export async function getPackagePdfDownloadUrl(
       merged_page_count: merged.getPageCount(),
       skipped_cancelled_components: cancelledComponents.length,
       skipped_malformed_components: skippedMalformed,
+      skipped_withdrawn_components: skippedWithdrawn,
     },
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),

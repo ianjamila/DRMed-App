@@ -41,8 +41,12 @@ export async function GET(request: Request) {
     until: get("until"),
   };
 
-  const entries = await fetchEmailLogForExport(filters);
-  const csv = emailLogToCsv(entries);
+  // H8: fetchEmailLogForExport now walks the whole filtered set (chunked
+  // past PostgREST's 1000-row cap) rather than reading a single short page,
+  // and reports whether it still had to stop at the export ceiling — so the
+  // audit row below records the TRUE row count, not a silently short one.
+  const { entries, truncated } = await fetchEmailLogForExport(filters);
+  const csv = emailLogToCsv(entries, { truncated });
 
   const { ip, ua } = await ipAndAgent();
   await audit({
@@ -50,7 +54,7 @@ export async function GET(request: Request) {
     actor_type: "staff",
     action: "emails_log.exported",
     resource_type: "audit_log",
-    metadata: { ...filters, rows: entries.length },
+    metadata: { ...filters, rows: entries.length, truncated },
     ip_address: ip,
     user_agent: ua,
   });

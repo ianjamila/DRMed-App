@@ -3,7 +3,7 @@ import { CONTACT } from "@/lib/marketing/site";
 import { DisplayPoller } from "./poller";
 
 export const metadata = {
-  title: "Now serving · drmed.ph",
+  title: "Now serving",
   // Keep the display out of search engines and AI crawlers — it's an
   // internal kiosk view, not public content.
   robots: { index: false, follow: false },

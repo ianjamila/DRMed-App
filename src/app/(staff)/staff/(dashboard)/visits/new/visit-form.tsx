@@ -31,6 +31,24 @@ import {
   type CreateVisitResult,
 } from "./actions";
 
+/**
+ * Reception-facing wording for physicians.compensation_arrangement — mirrors
+ * the admin physician-form option labels, not the raw enum code. Used only
+ * to explain why the clinic-fee default came out to ₱0 for this doctor.
+ */
+function compensationArrangementLabel(arrangement: string): string {
+  switch (arrangement) {
+    case "pf_split":
+      return "PF split";
+    case "rent_paying":
+      return "rent-paying — keeps the full consult fee";
+    case "shareholder":
+      return "shareholder — keeps the full consult fee";
+    default:
+      return arrangement.replace(/_/g, " ");
+  }
+}
+
 export interface ServiceLite {
   id: string;
   code: string;
@@ -575,7 +593,8 @@ export function VisitForm({
                 ))}
               </select>
               <p className="text-xs text-[color:var(--color-brand-text-soft)]">
-                Required at release time for consults and procedures.
+                Always required to add a consultation. For a procedure,
+                only needed if the doctor gets a fee share above ₱0.
               </p>
             </div>
           </fieldset>
@@ -856,8 +875,9 @@ export function VisitForm({
                         <Label
                           htmlFor={`doctor_pf__${s.id}`}
                           className="text-[10px]"
+                          title="The doctor's share of this line — paid out separately at PF payout time."
                         >
-                          Doctor PF
+                          Doctor&apos;s fee (PF)
                         </Label>
                         <input
                           id={`doctor_pf__${s.id}`}
@@ -874,8 +894,8 @@ export function VisitForm({
                       </div>
                       <p className="col-span-12 sm:col-span-6 self-end text-[10px] text-[color:var(--color-brand-text-soft)]">
                         {selectedPhysician && cfAuto === 0
-                          ? `Defaulted to ₱0 clinic fee (${selectedPhysician.compensation_arrangement.replace("_", "-")} arrangement).`
-                          : `Defaults: clinic fee ${formatPhp(cfAuto)}, doctor PF = final − clinic fee. Both editable.`}
+                          ? `Defaulted to ₱0 clinic fee — this doctor is ${compensationArrangementLabel(selectedPhysician.compensation_arrangement)}.`
+                          : `Defaults: clinic fee ${formatPhp(cfAuto)}, doctor's fee (PF) = final − clinic fee. Both editable.`}
                       </p>
                     </div>
                   ) : null}
@@ -975,8 +995,9 @@ export function VisitForm({
                         <Label
                           htmlFor={`doctor_pf__${s.id}`}
                           className="text-[10px]"
+                          title="The doctor's share of this line — paid out separately at PF payout time."
                         >
-                          Doctor PF
+                          Doctor&apos;s fee (PF)
                         </Label>
                         <input
                           id={`doctor_pf__${s.id}`}

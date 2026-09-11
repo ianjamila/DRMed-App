@@ -8,8 +8,11 @@ import {
 import { StaffLoginForm } from "./login-form";
 import { GoogleSignInButton } from "./google-button";
 
+// Root layout.tsx's title.template already appends " — drmed.ph" to every
+// page title — writing the suffix here too produced "Staff sign in —
+// drmed.ph — drmed.ph".
 export const metadata = {
-  title: "Staff sign in — drmed.ph",
+  title: "Staff sign in",
 };
 
 const ERROR_COPY: Record<string, string> = {

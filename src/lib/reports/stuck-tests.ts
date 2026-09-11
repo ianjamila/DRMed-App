@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import { chunk, fetchAllRows, IN_CHUNK, unique } from "./paging";
 import { csvManilaStamp, pluckOne } from "./format";
+import { moneySettled } from "@/lib/visits/money-settled";
 
 type AnyClient = SupabaseClient<Database>;
 
@@ -21,6 +22,7 @@ type PatientEmbed = { first_name: string; last_name: string; drm_id: string };
 type VisitEmbed = {
   visit_number: string;
   payment_status: string;
+  hmo_provider_id: string | null;
   patients: PatientEmbed | PatientEmbed[] | null;
 };
 
@@ -46,7 +48,7 @@ export interface EmptyVisitRow {
 export interface StuckTestsLists {
   /** Non-final tests older than the threshold (the main table). */
   stuck: StuckRow[];
-  /** Package headers at ready_for_release on paid visits whose components are all terminal — 0109 should have auto-released them. */
+  /** Package headers at ready_for_release on money-settled visits (paid, waived or HMO) whose components are all terminal — 0109/0138 should have auto-released them. */
   stuckHeaders: StuckRow[];
   /** Package headers with no component rows at all. */
   orphanHeaders: StuckRow[];
@@ -57,6 +59,17 @@ export interface StuckTestsLists {
 export interface StuckTestsReport extends StuckTestsLists {
   claimerNames: ReadonlyMap<string, string>;
   truncated: boolean;
+}
+
+/**
+ * Is this package header's visit money-settled, and therefore a genuine
+ * "should have auto-released by now" candidate? Shares `moneySettled` with
+ * the DB trigger's predicate (0133/0138) so the report can never again go
+ * blind to HMO visits, whose `payment_status` stays 'unpaid' for good.
+ */
+export function headerCandidateIsSettled(row: StuckRow): boolean {
+  const visit = pluckOne(row.visits);
+  return visit ? moneySettled(visit) : false;
 }
 
 export function ageDays(requestedAt: string, now: number = Date.now()): number {
@@ -71,7 +84,7 @@ const STUCK_SELECT = `
   id, status, requested_at, assigned_to, visit_id,
   services!inner ( code, name ),
   visits!inner (
-    visit_number, payment_status,
+    visit_number, payment_status, hmo_provider_id,
     patients!inner ( first_name, last_name, drm_id )
   )
 `;
@@ -152,9 +165,12 @@ export async function loadStuckTests(
     .limit(100)
     .returns<EmptyVisitRow[]>();
 
-  // Package HEADERS sitting at ready_for_release on paid visits whose
+  // Package HEADERS sitting at ready_for_release on SETTLED visits whose
   // components are all terminal with ≥1 released — post-0109 this should be
-  // empty; anything here means the auto-release didn't fire.
+  // empty; anything here means the auto-release didn't fire. "Settled" has
+  // included HMO since 0133/0138: an HMO visit's payment_status stays
+  // 'unpaid' forever, so the old paid/waived-only filter made this report
+  // blind to precisely the stuck headers A3 was about.
   const { data: headersRaw } = await client
     .from("test_requests")
     .select(STUCK_SELECT)
@@ -166,10 +182,7 @@ export async function loadStuckTests(
     .limit(100)
     .returns<StuckRow[]>();
 
-  const headerCandidates = (headersRaw ?? []).filter((h) => {
-    const visit = pluckOne(h.visits);
-    return visit?.payment_status === "paid" || visit?.payment_status === "waived";
-  });
+  const headerCandidates = (headersRaw ?? []).filter(headerCandidateIsSettled);
 
   const stuckHeaders: StuckRow[] = [];
   if (headerCandidates.length > 0) {

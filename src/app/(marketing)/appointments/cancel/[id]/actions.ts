@@ -7,7 +7,7 @@ import { audit } from "@/lib/audit/log";
 import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit/check";
 
 export type CancelResult =
-  | { ok: true }
+  | { ok: true; cancelledCount: number }
   | { ok: false; error: string; retryAfterSec?: number };
 
 // Public cancel — anyone holding the appointment id (UUID) from the
@@ -39,7 +39,7 @@ export async function cancelAppointmentAction(
 
   const { data: existing } = await admin
     .from("appointments")
-    .select("id, status, patient_id")
+    .select("id, status, patient_id, booking_group_id")
     .eq("id", appointmentId)
     .maybeSingle();
 
@@ -59,25 +59,58 @@ export async function cancelAppointmentAction(
     };
   }
 
-  const { error } = await admin
+  // N11: a multi-service booking (diagnostic package, lab request with
+  // several tests…) inserts one appointment row per service, all sharing
+  // booking_group_id — the shared booking core's grouping key (see
+  // lib/appointments/create.ts). Cancelling "this appointment" from the
+  // patient's point of view means cancelling the whole request, not just
+  // the lead row they happened to land on. Terminal siblings (already
+  // completed/arrived/no-show/cancelled individually by reception) are left
+  // alone — only the still-open ones move.
+  let idsToCancel = [existing.id];
+  if (existing.booking_group_id) {
+    const { data: group, error: groupErr } = await admin
+      .from("appointments")
+      .select("id, status")
+      .eq("booking_group_id", existing.booking_group_id);
+    if (groupErr) return { ok: false, error: groupErr.message };
+    const openIds = (group ?? [])
+      .filter((r) => !["cancelled", "completed", "no_show", "arrived"].includes(r.status))
+      .map((r) => r.id);
+    idsToCancel = openIds.includes(existing.id) ? openIds : [...openIds, existing.id];
+  }
+
+  const { data: updated, error } = await admin
     .from("appointments")
     .update({ status: "cancelled" })
-    .eq("id", appointmentId);
+    .in("id", idsToCancel)
+    .select("id");
 
   if (error) return { ok: false, error: error.message };
 
-  await audit({
-    actor_id: null,
-    actor_type: "anonymous",
-    patient_id: existing.patient_id,
-    action: "appointment.cancelled",
-    resource_type: "appointment",
-    resource_id: appointmentId,
-    metadata: { source: "public_cancel_link" },
-    ip_address: ip,
-    user_agent: h.get("user-agent"),
-  });
+  const cancelledIds = (updated ?? []).map((r) => r.id);
+  const cancelledCount = cancelledIds.length;
+  const ua = h.get("user-agent");
+  await Promise.all(
+    cancelledIds.map((id) =>
+      audit({
+        actor_id: null,
+        actor_type: "anonymous",
+        patient_id: existing.patient_id,
+        action: "appointment.cancelled",
+        resource_type: "appointment",
+        resource_id: id,
+        metadata: {
+          source: "public_cancel_link",
+          group_appointment_ids: cancelledIds,
+          group_cancelled_count: cancelledCount,
+        },
+        ip_address: ip,
+        user_agent: ua,
+      }),
+    ),
+  );
 
   revalidatePath(`/appointments/cancel/${appointmentId}`);
-  return { ok: true };
+  return { ok: true, cancelledCount };
 }

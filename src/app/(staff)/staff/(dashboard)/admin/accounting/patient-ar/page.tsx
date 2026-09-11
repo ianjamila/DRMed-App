@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
+import { fetchAllRows, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 import {
   sectionTabsNavClass,
   sectionTabClass,
@@ -18,8 +19,18 @@ const PHP = new Intl.NumberFormat("en-PH", {
 
 type Scope = "non_hmo" | "hmo" | "all";
 
+// M14: was a flat `.limit(500)` oldest-first, so past 500 open visits it was
+// the NEWEST rows that silently vanished from both the table AND the bucket
+// totals above it — a reader has no way to notice a financial total is
+// short. Fixed by walking the FULL scope-filtered set with `fetchAllRows`
+// (so every bucket total and the grand total are always exact, regardless of
+// row count) and paging only the on-screen TABLE from that already-fetched
+// set — real "page N of M" navigation, not a silent cut. `DISPLAY_PAGE_SIZE`
+// governs the table only; the totals never depend on it.
+const DISPLAY_PAGE_SIZE = 200;
+
 interface SearchProps {
-  searchParams: Promise<{ scope?: Scope }>;
+  searchParams: Promise<{ scope?: Scope; page?: string }>;
 }
 
 interface VisitRow {
@@ -82,29 +93,40 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
   const sp = await searchParams;
   const scope: Scope =
     sp.scope === "hmo" || sp.scope === "all" ? sp.scope : "non_hmo";
+  const requestedPage = Number(sp.page);
+  const currentPage =
+    Number.isInteger(requestedPage) && requestedPage >= 1 ? requestedPage : 1;
 
   const today = todayManilaISODate();
   const admin = createAdminClient();
 
-  let query = admin
-    .from("visits")
-    .select(
-      `
-        id, visit_number, visit_date, total_php, paid_php, payment_status, hmo_provider_id,
-        patients ( id, drm_id, first_name, last_name ),
-        hmo_providers ( name )
-      `,
-    )
-    .in("payment_status", ["unpaid", "partial"])
-    .is("deleted_at", null)
-    .order("visit_date", { ascending: true })
-    .limit(500);
+  const baseQuery = () => {
+    let q = admin
+      .from("visits")
+      .select(
+        `
+          id, visit_number, visit_date, total_php, paid_php, payment_status, hmo_provider_id,
+          patients ( id, drm_id, first_name, last_name ),
+          hmo_providers ( name )
+        `,
+      )
+      .in("payment_status", ["unpaid", "partial"])
+      .is("deleted_at", null)
+      .order("visit_date", { ascending: true })
+      // Tie-break on id — visit_date alone isn't unique, and `fetchAllRows`
+      // needs a total order across pages or rows can repeat or drop.
+      .order("id", { ascending: true });
+    if (scope === "non_hmo") q = q.is("hmo_provider_id", null);
+    else if (scope === "hmo") q = q.not("hmo_provider_id", "is", null);
+    return q;
+  };
 
-  if (scope === "non_hmo") query = query.is("hmo_provider_id", null);
-  else if (scope === "hmo") query = query.not("hmo_provider_id", "is", null);
-
-  const { data } = await query.returns<VisitRow[]>();
-  const rows = data ?? [];
+  // Every matching row, not the first 500 — bucket totals below must be
+  // exact regardless of how many open visits there are.
+  const { rows, truncated } = await fetchAllRows<VisitRow>(
+    (from, to) => baseQuery().range(from, to).returns<VisitRow[]>(),
+    REPORT_EXPORT_MAX_ROWS,
+  );
 
   const totals: BucketTotals = {
     current: { count: 0, amount: 0 },
@@ -137,9 +159,24 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
     totals.d61_90.count +
     totals.d90_plus.count;
 
+  // Table pagination — over the already-fetched, already-totalled set. Real
+  // navigation (every row is reachable on some page) rather than a hard cut.
+  const totalPages = Math.max(1, Math.ceil(enriched.length / DISPLAY_PAGE_SIZE));
+  const page = Math.min(currentPage, totalPages);
+  const pageStart = (page - 1) * DISPLAY_PAGE_SIZE;
+  const pageRows = enriched.slice(pageStart, pageStart + DISPLAY_PAGE_SIZE);
+
   function tabHref(s: Scope) {
     const params = new URLSearchParams();
     if (s !== "non_hmo") params.set("scope", s);
+    const qs = params.toString();
+    return `/staff/admin/accounting/patient-ar${qs ? `?${qs}` : ""}`;
+  }
+
+  function pageHref(p: number) {
+    const params = new URLSearchParams();
+    if (scope !== "non_hmo") params.set("scope", scope);
+    if (p > 1) params.set("page", String(p));
     const qs = params.toString();
     return `/staff/admin/accounting/patient-ar${qs ? `?${qs}` : ""}`;
   }
@@ -216,7 +253,7 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
-                {enriched.map(({ v, outstanding, days }) => {
+                {pageRows.map(({ v, outstanding, days }) => {
                   const p = pluckPatient(v.patients);
                   const providerName = pluckProviderName(v.hmo_providers);
                   return (
@@ -280,10 +317,47 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
         )}
       </section>
 
-      {rows.length === 500 ? (
-        <p className="mt-3 text-xs text-[color:var(--color-brand-text-soft)]">
-          Showing first 500 oldest visits. Narrow the scope or build pagination
-          if this becomes routinely truncated.
+      {enriched.length > 0 ? (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-[color:var(--color-brand-text-soft)]">
+          <p>
+            Showing {pageStart + 1}–{pageStart + pageRows.length} of{" "}
+            {enriched.length} visit{enriched.length === 1 ? "" : "s"}
+            {totalPages > 1 ? ` (page ${page} of ${totalPages})` : ""}.
+          </p>
+          {totalPages > 1 ? (
+            <nav className="flex items-center gap-2" aria-label="Table pages">
+              {/* Rows are oldest-first (ascending visit_date), so a lower
+                  page number is OLDER and a higher one is NEWER. */}
+              {page > 1 ? (
+                <Link
+                  href={pageHref(page - 1)}
+                  className="font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
+                >
+                  ← Older
+                </Link>
+              ) : (
+                <span className="opacity-40">← Older</span>
+              )}
+              {page < totalPages ? (
+                <Link
+                  href={pageHref(page + 1)}
+                  className="font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
+                >
+                  Newer →
+                </Link>
+              ) : (
+                <span className="opacity-40">Newer →</span>
+              )}
+            </nav>
+          ) : null}
+        </div>
+      ) : null}
+
+      {truncated ? (
+        <p className="mt-2 text-xs font-semibold text-red-700">
+          TRUNCATED — more than {REPORT_EXPORT_MAX_ROWS.toLocaleString()}{" "}
+          visits matched this scope; only the first {REPORT_EXPORT_MAX_ROWS.toLocaleString()}{" "}
+          were loaded, so the totals above are a floor, not the true figure.
         </p>
       ) : null}
     </div>

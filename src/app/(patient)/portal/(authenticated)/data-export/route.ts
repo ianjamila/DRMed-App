@@ -4,6 +4,8 @@ import { requirePatientProfile } from "@/lib/auth/require-patient";
 import { createPatientClient } from "@/lib/supabase/patient";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
+import { chunk, fetchAllRows, IN_CHUNK, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
+import { isResultDownloadEligible } from "@/lib/results/release-eligibility";
 
 // RA 10173 access right: patients can download a copy of their data.
 // Bundled as a ZIP with JSON snapshots + every released result PDF the
@@ -14,6 +16,68 @@ import { audit } from "@/lib/audit/log";
 // the function. Most patients will be far under this; if a real patient
 // ever bumps it we can stream chunks instead.
 const MAX_BUNDLE_BYTES = 50 * 1024 * 1024; // 50 MB
+
+// N10: `maxDuration` matches the other paged exports — walking a patient's
+// full history in REPORT_EXPORT_MAX_ROWS-capped, IN_CHUNK-batched pages is
+// still bounded work, but a patient with an unusually long history (or a
+// slow storage download loop below) needs more than the 10s default.
+export const maxDuration = 60;
+
+interface VisitRow {
+  id: string;
+  visit_number: string;
+  visit_date: string;
+  payment_status: string;
+  total_php: number;
+  paid_php: number;
+  notes: string | null;
+  created_at: string;
+}
+
+interface TestRequestRow {
+  id: string;
+  visit_id: string;
+  status: string;
+  requested_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  released_at: string | null;
+  services: { code: string; name: string } | { code: string; name: string }[] | null;
+}
+
+interface PaymentRow {
+  id: string;
+  visit_id: string;
+  amount_php: number;
+  method: string | null;
+  received_at: string;
+  reference_number: string | null;
+}
+
+interface AppointmentRow {
+  id: string;
+  scheduled_at: string;
+  status: string;
+  notes: string | null;
+  created_at: string;
+  services: { code: string; name: string } | { code: string; name: string }[] | null;
+}
+
+type JRow = {
+  test_request_id: string;
+  result_id: string;
+  results: { storage_path: string | null } | { storage_path: string | null }[] | null;
+  test_requests:
+    | {
+        id: string;
+        services: { code: string; name: string } | { code: string; name: string }[] | null;
+      }
+    | {
+        id: string;
+        services: { code: string; name: string } | { code: string; name: string }[] | null;
+      }[]
+    | null;
+};
 
 export async function GET() {
   const patient = await requirePatientProfile();
@@ -35,62 +99,125 @@ export async function GET() {
     .eq("id", patient.patient_id)
     .single();
 
-  // 2. Visits + test_requests (status timeline) + payments (their own).
-  const { data: visits } = await db
-    .from("visits")
-    .select(
-      "id, visit_number, visit_date, payment_status, total_php, paid_php, notes, created_at",
-    )
-    .eq("patient_id", patient.patient_id)
-    .order("visit_date", { ascending: false });
-  const visitIds = (visits ?? []).map((v) => v.id);
+  // 2. Visits — every matching row (not just the first page), and never a
+  // soft-deleted one (0125: "every read surface" includes the portal).
+  // `visits: patient self select` RLS scopes by patient_id only, NOT
+  // deleted_at, so this app-level filter is the only thing hiding a deleted
+  // visit from a patient's own export.
+  const { rows: visits, truncated: visitsTruncated } = await fetchAllRows<VisitRow>(
+    (from, to) =>
+      db
+        .from("visits")
+        .select(
+          "id, visit_number, visit_date, payment_status, total_php, paid_php, notes, created_at",
+        )
+        .eq("patient_id", patient.patient_id)
+        .is("deleted_at", null)
+        .order("visit_date", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<VisitRow[]>(),
+    REPORT_EXPORT_MAX_ROWS,
+  );
+  const visitIds = visits.map((v) => v.id);
 
-  const [
-    { data: testRequests },
-    { data: payments },
-    { data: appointments },
-    { data: auditEntries },
-    { data: releasedResults },
-  ] = await Promise.all([
-    visitIds.length > 0
-      ? db
+  // 3. Everything keyed off those visits — chunked past PostgREST's `.in()`
+  // practical limits AND its 1000-row response cap, mirroring the pattern
+  // `patients-without-consent.ts` uses for the same "N ids → M rows" shape.
+  async function fetchByVisitIds<T>(
+    buildPage: (ids: string[], from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+  ): Promise<{ rows: T[]; truncated: boolean }> {
+    const rows: T[] = [];
+    let truncated = false;
+    for (const ids of chunk(visitIds, IN_CHUNK)) {
+      const chunkResult = await fetchAllRows<T>(
+        (from, to) => buildPage(ids, from, to),
+        REPORT_EXPORT_MAX_ROWS,
+      );
+      rows.push(...chunkResult.rows);
+      truncated ||= chunkResult.truncated;
+    }
+    return { rows, truncated };
+  }
+
+  const [testRequestsResult, paymentsResult, appointmentsResult, auditResult, releasedResultsResult] =
+    await Promise.all([
+      // 0125: filter deleted_at is null — a soft-deleted test line isn't
+      // owed, and isn't something the patient needs echoed back either.
+      fetchByVisitIds<TestRequestRow>((ids, from, to) =>
+        db
           .from("test_requests")
           .select(
             "id, visit_id, status, requested_at, started_at, completed_at, released_at, services!inner ( code, name )",
           )
-          .in("visit_id", visitIds)
-      : Promise.resolve({ data: [] }),
-    visitIds.length > 0
-      ? db
-          .from("payments")
-          .select("id, visit_id, amount_php, method, paid_at, reference")
-          .in("visit_id", visitIds)
-      : Promise.resolve({ data: [] }),
-    db
-      .from("appointments")
-      .select(
-        "id, scheduled_at, status, notes, created_at, services ( code, name )",
-      )
-      .eq("patient_id", patient.patient_id)
-      .order("created_at", { ascending: false }),
-    // audit_log stays on the service-role client: the compliance ledger is
-    // deliberately not patient-RLS-readable.
-    admin
-      .from("audit_log")
-      .select("id, action, actor_type, created_at, metadata")
-      .eq("patient_id", patient.patient_id)
-      .order("created_at", { ascending: false })
-      .limit(500),
-    db
-      .from("result_test_requests")
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .select("test_request_id, results!inner(storage_path), test_requests!inner(id, visit_id, status, services!inner(code, name))" as any)
-      .eq("test_requests.status", "released")
-      .in(
-        "test_requests.visit_id",
-        visitIds.length > 0 ? visitIds : ["00000000-0000-0000-0000-000000000000"],
+          .in("visit_id", ids)
+          .is("deleted_at", null)
+          .order("id", { ascending: true })
+          .range(from, to)
+          .returns<TestRequestRow[]>(),
       ),
-  ]);
+      fetchByVisitIds<PaymentRow>((ids, from, to) =>
+        db
+          .from("payments")
+          // N10: the real column names are `received_at` / `reference_number`
+          // — the old `paid_at, reference` select matched no column, so
+          // PostgREST silently returned an empty projection and
+          // payments.json was ALWAYS `[]`. Confirmed against
+          // src/types/database.ts, not guessed.
+          .select("id, visit_id, amount_php, method, received_at, reference_number")
+          .in("visit_id", ids)
+          .order("id", { ascending: true })
+          .range(from, to)
+          .returns<PaymentRow[]>(),
+      ),
+      fetchAllRows<AppointmentRow>(
+        (from, to) =>
+          db
+            .from("appointments")
+            .select("id, scheduled_at, status, notes, created_at, services ( code, name )")
+            .eq("patient_id", patient.patient_id)
+            .order("created_at", { ascending: false })
+            .order("id", { ascending: true })
+            .range(from, to)
+            .returns<AppointmentRow[]>(),
+        REPORT_EXPORT_MAX_ROWS,
+      ),
+      // audit_log stays on the service-role client: the compliance ledger is
+      // deliberately not patient-RLS-readable. Deliberately still capped at
+      // the last 500 (documented in the README below) — an access-events
+      // ledger, not the primary record, so a rolling window is the honest
+      // scope rather than every row this account has ever produced.
+      admin
+        .from("audit_log")
+        .select("id, action, actor_type, created_at, metadata")
+        .eq("patient_id", patient.patient_id)
+        .order("created_at", { ascending: false })
+        .limit(500),
+      fetchByVisitIds<JRow>((ids, from, to) =>
+        db
+          .from("result_test_requests")
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          .select("test_request_id, result_id, results!inner(storage_path), test_requests!inner(id, visit_id, status, deleted_at, services!inner(code, name))" as any)
+          .eq("test_requests.status", "released")
+          .is("test_requests.deleted_at", null)
+          .in("test_requests.visit_id", ids)
+          .order("test_request_id", { ascending: true })
+          .range(from, to)
+          .returns<JRow[]>(),
+      ),
+    ]);
+
+  const testRequests = testRequestsResult.rows;
+  const payments = paymentsResult.rows;
+  const appointments = appointmentsResult.rows;
+  const auditEntries = auditResult.data ?? [];
+  const releasedResults = releasedResultsResult.rows;
+  const truncated =
+    visitsTruncated ||
+    testRequestsResult.truncated ||
+    paymentsResult.truncated ||
+    appointmentsResult.truncated ||
+    releasedResultsResult.truncated;
 
   const zip = new JSZip();
 
@@ -118,54 +245,67 @@ export async function GET() {
       "If anything looks wrong, contact reception. You can also request",
       "correction or deletion under RA 10173 §16(c).",
       "",
+      ...(truncated
+        ? [
+            "NOTE: one or more sections exceeded this export's row ceiling and",
+            "were cut off. Contact reception for a complete copy.",
+            "",
+          ]
+        : []),
     ].join("\n"),
   );
 
   zip.file("patient.json", JSON.stringify(patientRow, null, 2));
-  zip.file("visits.json", JSON.stringify(visits ?? [], null, 2));
-  zip.file(
-    "test_requests.json",
-    JSON.stringify(testRequests ?? [], null, 2),
-  );
-  zip.file("payments.json", JSON.stringify(payments ?? [], null, 2));
-  zip.file("appointments.json", JSON.stringify(appointments ?? [], null, 2));
-  zip.file("audit_log.json", JSON.stringify(auditEntries ?? [], null, 2));
+  zip.file("visits.json", JSON.stringify(visits, null, 2));
+  zip.file("test_requests.json", JSON.stringify(testRequests, null, 2));
+  zip.file("payments.json", JSON.stringify(payments, null, 2));
+  zip.file("appointments.json", JSON.stringify(appointments, null, 2));
+  zip.file("audit_log.json", JSON.stringify(auditEntries, null, 2));
 
   // PDF results — deduplicated by storage_path so consolidated reports
   // (multiple test_requests pointing to one result) are only bundled once.
+  //
+  // This query only checked THIS row's own test_request status ('released',
+  // filtered above) — for a consolidated report the stored PDF is shared
+  // with sibling test_requests that may have had their release undone since.
+  // Same withdrawn-sibling gate as the two portal download paths
+  // (src/lib/results/release-eligibility.ts): withhold the whole shared PDF
+  // unless every linked test is still released. Cached per result_id so a
+  // consolidated report's several rows only trigger one eligibility check.
   let bundleBytes = 0;
-  let truncated = false;
+  let bundleTruncated = false;
   const seenPaths = new Set<string>();
-  for (const jRow of releasedResults ?? []) {
-    type JRow = {
-      test_request_id: string;
-      results: { storage_path: string | null } | null;
-      test_requests: { id: string; services: { code: string; name: string } | null } | null;
-    };
-    const j = jRow as unknown as JRow;
-    const result = Array.isArray(j.results) ? j.results[0] : j.results;
-    const tr = Array.isArray(j.test_requests) ? j.test_requests[0] : j.test_requests;
+  const eligibilityCache = new Map<string, boolean>();
+  for (const jRow of releasedResults) {
+    const result = Array.isArray(jRow.results) ? jRow.results[0] : jRow.results;
+    const tr = Array.isArray(jRow.test_requests) ? jRow.test_requests[0] : jRow.test_requests;
     const svc = tr
       ? (Array.isArray(tr.services) ? tr.services[0] : tr.services)
       : null;
     if (!result?.storage_path || !svc) continue;
     if (seenPaths.has(result.storage_path)) continue;
     seenPaths.add(result.storage_path);
+    let eligible = eligibilityCache.get(jRow.result_id);
+    if (eligible === undefined) {
+      eligible = await isResultDownloadEligible(admin, jRow.result_id);
+      eligibilityCache.set(jRow.result_id, eligible);
+    }
+    if (!eligible) continue;
     const { data: blob } = await admin.storage
       .from("results")
       .download(result.storage_path);
     if (!blob) continue;
     const ab = await blob.arrayBuffer();
     if (bundleBytes + ab.byteLength > MAX_BUNDLE_BYTES) {
-      truncated = true;
+      bundleTruncated = true;
       break;
     }
     bundleBytes += ab.byteLength;
-    const trId = tr?.id ?? j.test_request_id;
+    const trId = tr?.id ?? jRow.test_request_id;
     const filename = `${svc.code}-${trId.slice(0, 8)}.pdf`;
     zip.file(`results/${filename}`, ab);
   }
-  if (truncated) {
+  if (bundleTruncated) {
     zip.file(
       "results/_TRUNCATED.txt",
       "The result archive exceeded the 50 MB bundle cap. Some PDFs are missing from this export. Contact reception for a full copy on a USB drive.",
@@ -187,10 +327,10 @@ export async function GET() {
     resource_id: patient.patient_id,
     metadata: {
       bundle_bytes: buffer.byteLength,
-      truncated,
-      visit_count: visits?.length ?? 0,
-      test_request_count: testRequests?.length ?? 0,
-      released_result_count: (releasedResults ?? []).length,
+      truncated: bundleTruncated || truncated,
+      visit_count: visits.length,
+      test_request_count: testRequests.length,
+      released_result_count: releasedResults.length,
     },
     ip_address: ip,
     user_agent: ua,

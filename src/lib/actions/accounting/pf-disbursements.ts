@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { audit } from "@/lib/audit/log";
 import { translatePgError } from "@/lib/accounting/pg-errors";
+import { voidPfDisbursementAndUnlink } from "@/lib/accounting/pf-disbursement-void";
 import { PfDisbursementCreateSchema } from "@/lib/validations/accounting";
 
 type ActionResult<T = unknown> =
@@ -107,97 +108,20 @@ export async function voidPfDisbursement(input: {
 
   const admin = createAdminClient();
 
-  // Fetch disbursement + entries.
-  const { data: disb, error: dErr } = await admin
-    .from("doctor_pf_disbursements")
-    .select("id, journal_entry_id, voided_at, total_php, physician_id")
-    .eq("id", input.disbursement_id)
-    .single();
-  if (dErr || !disb) return { ok: false, error: translatePgError(dErr) };
-  if (disb.voided_at) return { ok: false, error: "Disbursement already voided" };
-
-  // Draft-flip pattern for JE reversal (see feedback_je_cleanup_pattern.md):
-  //   1. Update original JE to status='draft'
-  //   2. Insert reversal JE
-  //   3. Update original back to status='reversed'
-  if (disb.journal_entry_id) {
-    // Step 1: original to draft
-    await admin
-      .from("journal_entries")
-      .update({ status: "draft" })
-      .eq("id", disb.journal_entry_id);
-
-    // Fetch lines of original
-    const { data: lines } = await admin
-      .from("journal_lines")
-      .select("account_id, debit_php, credit_php, description, line_order")
-      .eq("entry_id", disb.journal_entry_id)
-      .order("line_order");
-
-    // Insert reversal JE — use je_next_number (not the PF batch counter, which must
-    // only increment for actual disbursements). This matches how §6.3-6.7 bridge
-    // functions assign entry_numbers for reversal JEs (12.5.1c fix).
-    const revYear = new Date().getFullYear();
-    const { data: nRow } = await admin.rpc("je_next_number", { p_fiscal_year: revYear });
-    const revEntryNumber = nRow as string;
-    const { data: revJe } = await admin
-      .from("journal_entries")
-      .insert({
-        entry_number: revEntryNumber,
-        posting_date: new Date().toISOString().slice(0, 10),
-        status: "draft",
-        source_kind: "reversal",
-        source_id: null,
-        description: `Void of PF disbursement (${input.disbursement_id})`,
-        created_by: staff.user_id,
-        reverses: disb.journal_entry_id,
-      })
-      .select("id")
-      .single();
-
-    if (revJe && lines) {
-      for (const l of lines) {
-        await admin.from("journal_lines").insert({
-          entry_id: revJe.id,
-          line_order: l.line_order,
-          account_id: l.account_id,
-          debit_php: l.credit_php,
-          credit_php: l.debit_php,
-          description: `Reversal: ${l.description ?? ""}`,
-        });
-      }
-      await admin.from("journal_entries").update({ status: "posted" }).eq("id", revJe.id);
-    }
-
-    await admin
-      .from("journal_entries")
-      .update({ status: "reversed", reversed_by: revJe?.id ?? null })
-      .eq("id", disb.journal_entry_id);
-  }
-
-  // Soft-void the disbursement + unlink entries.
-  await admin
-    .from("doctor_pf_disbursements")
-    .update({
-      voided_at: new Date().toISOString(),
-      voided_by: staff.user_id,
-      void_reason: input.void_reason,
-    })
-    .eq("id", input.disbursement_id);
-
-  await admin
-    .from("doctor_pf_entries")
-    .update({ disbursement_id: null })
-    .eq("disbursement_id", input.disbursement_id);
-
-  await audit({
-    actor_id: staff.user_id,
-    actor_type: "staff",
-    action: "pf_disbursement.voided",
-    resource_type: "doctor_pf_disbursements",
-    resource_id: input.disbursement_id,
-    metadata: { void_reason: input.void_reason, total_php: disb.total_php },
+  // M12: the JE reversal + soft-void + doctor_pf_entries unlink + audit row
+  // are all in voidPfDisbursementAndUnlink() (src/lib/accounting) — shared
+  // with the bulk EOD payout's failure-rollback path so the two can't drift.
+  const result = await voidPfDisbursementAndUnlink(admin, {
+    disbursementId: input.disbursement_id,
+    voidedBy: staff.user_id,
+    voidReason: input.void_reason,
   });
+  if (!result.ok) {
+    return {
+      ok: false,
+      error: translatePgError({ code: result.code, message: result.error }),
+    };
+  }
 
   return { ok: true, data: { voided: true } };
 }

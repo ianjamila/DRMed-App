@@ -1,6 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { requireActiveStaff } from "@/lib/auth/require-staff";
+import { audit } from "@/lib/audit/log";
+import { hasRecentAudit } from "@/lib/server/action-helpers";
 import { peekVisitGroupPinFlash } from "@/lib/auth/visit-pin-flash";
 import { formatPhp } from "@/lib/marketing/format";
 import { CONTACT, SITE } from "@/lib/marketing/site";
@@ -8,10 +13,13 @@ import { getPatientConsentState } from "@/lib/consent/gate";
 import { formatPatientName } from "@/lib/patients/format-name";
 import { shouldPrintReceipt } from "@/lib/visits/receipt-policy";
 import { hasStatutoryDiscountLine } from "@/lib/pricing/statutory";
+import { visibleReceiptLines, receiptTotals } from "@/lib/visits/receipt-totals";
 import { NoReceiptNotice } from "@/components/staff/no-receipt-notice";
 import { PrintButton } from "./print-button";
+import { logGroupReceiptPrintAction } from "./log-print-action";
 
 export const metadata = { title: "Combined receipt — staff" };
+export const dynamic = "force-dynamic";
 
 interface Props {
   params: Promise<{ groupId: string }>;
@@ -21,6 +29,9 @@ const DOCTOR_KINDS = new Set(["doctor_consultation", "doctor_procedure"]);
 
 export default async function GroupReceiptPage({ params }: Props) {
   const { groupId } = await params;
+  // A8: get the actor for the disclosure audit below (mirrors the
+  // single-visit receipt page).
+  const session = await requireActiveStaff();
   const supabase = await createClient();
 
   const { data: visits } = await supabase
@@ -75,9 +86,13 @@ export default async function GroupReceiptPage({ params }: Props) {
   // dropped — that is the doctor slip the clinic asked us to stop printing.
   // The lab half of the same encounter still prints, and it carries the
   // portal PIN block below, so nothing is lost by suppressing this one.
+  // N8: soft-deleted test lines (0125) never reach a slip's render or its
+  // totals — `visibleReceiptLines` strips them before `lines` is stored on
+  // the slip, so every downstream use (isDoctor classification, the
+  // shouldPrintReceipt check, the render, the totals) sees only live lines.
   const slips = visits
     .map((v) => {
-      const lines = (v.test_requests ?? []).map((tr) => {
+      const allLines = (v.test_requests ?? []).map((tr) => {
         const svc = Array.isArray(tr.services) ? tr.services[0] : tr.services;
         const base = tr.base_price_php ?? svc?.price_php ?? 0;
         const discount = tr.discount_amount_php ?? 0;
@@ -92,14 +107,12 @@ export default async function GroupReceiptPage({ params }: Props) {
           deleted: tr.deleted_at !== null,
         };
       });
+      const lines = visibleReceiptLines(allLines);
       const isDoctor = lines.some((l) => l.svc && DOCTOR_KINDS.has(l.svc.kind));
       const prints = shouldPrintReceipt(
-        lines
-          .filter((l) => !l.deleted)
-          .map((l) => l.svc?.kind)
-          .filter((kind): kind is string => Boolean(kind)),
+        lines.map((l) => l.svc?.kind).filter((kind): kind is string => Boolean(kind)),
       );
-      return { visit: v, lines, isDoctor, prints };
+      return { visit: v, lines, deletedLineCount: allLines.length - lines.length, isDoctor, prints };
     })
     .filter((slip) => slip.prints)
     .sort((a, b) => Number(b.isDoctor) - Number(a.isDoctor));
@@ -118,6 +131,36 @@ export default async function GroupReceiptPage({ params }: Props) {
 
   const plainPin = await peekVisitGroupPinFlash(groupId);
 
+  // A8: view of the combined receipt is a disclosure (name, DRM-ID, every
+  // slip's line items and prices, and — while the flash cookie lives — the
+  // plaintext portal PIN). Dedupe like the single-visit receipt: suppress a
+  // repeat row from the same viewer within 5 minutes. Never include the PIN.
+  const admin = createAdminClient();
+  const recentlyViewed = await hasRecentAudit(
+    admin,
+    { actor_id: session.user_id, action: "receipt.viewed", resource_id: groupId },
+    5,
+  );
+  if (!recentlyViewed) {
+    const h = await headers();
+    await audit({
+      actor_id: session.user_id,
+      actor_type: "staff",
+      patient_id: patient.id,
+      action: "receipt.viewed",
+      resource_type: "visit_group",
+      resource_id: groupId,
+      metadata: {
+        visit_ids: slips.map((s) => s.visit.id),
+        slip_count: slips.length,
+        deleted_line_count: slips.reduce((s, slip) => s + slip.deletedLineCount, 0),
+        has_pin_flash: Boolean(plainPin),
+      },
+      ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+      user_agent: h.get("user-agent"),
+    });
+  }
+
   return (
     <div className="receipt-print mx-auto max-w-2xl px-4 py-8 sm:px-6 lg:px-8 print:p-0">
       <div className="mb-4 flex items-center justify-between gap-2 print:hidden">
@@ -127,13 +170,14 @@ export default async function GroupReceiptPage({ params }: Props) {
         >
           ← Visit
         </Link>
-        <PrintButton hasFlash={Boolean(plainPin)} />
+        <PrintButton
+          hasFlash={Boolean(plainPin)}
+          onPrint={logGroupReceiptPrintAction.bind(null, groupId)}
+        />
       </div>
 
       {slips.map((slip, idx) => {
-        const subtotal = slip.lines.reduce((s, l) => s + Number(l.base), 0);
-        const totalDiscount = slip.lines.reduce((s, l) => s + Number(l.discount), 0);
-        const total = slip.lines.reduce((s, l) => s + Number(l.final), 0);
+        const { subtotal, totalDiscount, total } = receiptTotals(slip.lines);
         const hasSeniorPwdLine = hasStatutoryDiscountLine(slip.lines, statutoryDiscountCodes);
         return (
           <article

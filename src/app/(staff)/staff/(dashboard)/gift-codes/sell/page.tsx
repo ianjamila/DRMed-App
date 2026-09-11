@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
@@ -59,6 +60,16 @@ export default async function SellGiftCodePage({ searchParams }: PageProps) {
           and record how they paid. The code becomes redeemable on any
           future visit&apos;s payment screen.
         </p>
+        <p className="mt-2 text-xs text-[color:var(--color-brand-text-soft)]">
+          Sold the wrong code, or mis-typed the buyer&apos;s details?{" "}
+          <Link
+            href="/staff/gift-codes/refund"
+            className="font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
+          >
+            Refund a gift code sale
+          </Link>{" "}
+          instead of trying again here.
+        </p>
       </header>
 
       {lastSold ? (
@@ -71,6 +82,16 @@ export default async function SellGiftCodePage({ searchParams }: PageProps) {
             {lastSold.purchased_by_contact
               ? ` (${lastSold.purchased_by_contact})`
               : ""}
+          </p>
+          <p className="mt-2 text-xs">
+            Made a mistake on this sale?{" "}
+            <Link
+              href={`/staff/gift-codes/refund?code=${encodeURIComponent(lastSold.code)}`}
+              className="font-semibold underline"
+            >
+              Refund it
+            </Link>
+            .
           </p>
         </div>
       ) : null}

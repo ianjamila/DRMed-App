@@ -51,7 +51,7 @@ export default async function EditServicePage({ params }: Props) {
   const { data: history } = await admin
     .from("service_price_history")
     .select(
-      "id, price_php, hmo_price_php, senior_discount_php, effective_from, changed_by, change_reason",
+      "id, price_php, hmo_price_php, effective_from, changed_by, change_reason",
     )
     .eq("service_id", id)
     .order("effective_from", { ascending: false })
@@ -108,7 +108,6 @@ export default async function EditServicePage({ params }: Props) {
                 <th className="px-4 py-3">When</th>
                 <th className="px-4 py-3 text-right">DRMed</th>
                 <th className="px-4 py-3 text-right">HMO</th>
-                <th className="px-4 py-3 text-right">Senior disc.</th>
                 <th className="px-4 py-3">By</th>
               </tr>
             </thead>
@@ -116,7 +115,7 @@ export default async function EditServicePage({ params }: Props) {
               {(history ?? []).length === 0 ? (
                 <tr>
                   <td
-                    colSpan={5}
+                    colSpan={4}
                     className="px-4 py-6 text-center text-sm text-[color:var(--color-brand-text-soft)]"
                   >
                     No history yet.
@@ -134,11 +133,6 @@ export default async function EditServicePage({ params }: Props) {
                     <td className="px-4 py-2 text-right text-[color:var(--color-brand-text-mid)]">
                       {h.hmo_price_php != null
                         ? formatPhp(h.hmo_price_php)
-                        : "—"}
-                    </td>
-                    <td className="px-4 py-2 text-right text-[color:var(--color-brand-text-mid)]">
-                      {h.senior_discount_php != null
-                        ? formatPhp(h.senior_discount_php)
                         : "—"}
                     </td>
                     <td className="px-4 py-2 text-xs text-[color:var(--color-brand-text-soft)]">

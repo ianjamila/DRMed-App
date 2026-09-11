@@ -397,7 +397,7 @@ export function BookingForm({
       if (!/^\d{4}-\d{2}-\d{2}$/.test(birthdate))
         e.birthdate = "Birthdate must be YYYY-MM-DD.";
       if (phone.trim().length < 7)
-        e.phone = "Phone is required for SMS confirmation.";
+        e.phone = "We need your phone number in case reception needs to reach you about this booking.";
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim()))
         e.email = "Valid email required for confirmation.";
     } else if (key === "review") {
@@ -706,7 +706,7 @@ export function BookingForm({
                         </span>
                       </>
                     }
-                    sub="We verify your identity at the counter on arrival."
+                    sub="We verify your identity and confirm your details at the counter on arrival."
                   >
                     <div className="mt-6 grid gap-4">
                       <div className="grid gap-4 sm:grid-cols-2">
@@ -854,6 +854,18 @@ export function BookingForm({
                 <button
                   type="submit"
                   disabled={pending}
+                  onClick={(e) => {
+                    // The review step has no "Continue" — this button IS
+                    // the submit attempt. Only now do we run validate() and
+                    // let the red "Please accept the service agreement"
+                    // alert appear; before this click showErrors stays
+                    // false (see goNext), so the checkbox starts clean.
+                    const errs = validate("review");
+                    if (Object.keys(errs).length > 0) {
+                      e.preventDefault();
+                      setShowErrors(true);
+                    }
+                  }}
                   className="inline-flex min-h-[46px] items-center justify-center gap-2 rounded-full bg-[color:var(--color-brand-cyan)] px-7 py-3 text-[14.5px] font-bold text-[color:var(--color-ink)] shadow-[var(--shadow-warm-sm)] transition hover:-translate-y-px hover:bg-[color:var(--color-brand-navy)] hover:text-white disabled:opacity-60"
                 >
                   {pending
@@ -880,7 +892,7 @@ export function BookingForm({
         <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[color:var(--color-brand-cyan-text)]" />
         {isExistingMode
           ? "We'll send confirmation to the contact info already on file."
-          : "By submitting, you'll receive an email confirmation. New patients are pre-registered — reception verifies your identity at the counter. For corporate or HMO bookings, message us instead."}
+          : "By submitting, you'll receive an email confirmation. New patients are pre-registered — reception verifies your identity and confirms your details at the counter. For corporate or HMO bookings, message us instead."}
       </p>
     </div>
     </MotionConfig>

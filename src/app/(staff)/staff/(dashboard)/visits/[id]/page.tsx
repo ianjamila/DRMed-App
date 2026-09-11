@@ -7,6 +7,7 @@ import { formatPhp } from "@/lib/marketing/format";
 import { sectionsForRole } from "@/lib/auth/role-sections";
 import { ReleaseButton } from "./release-button";
 import { ReleaseAllButton } from "./release-all-button";
+import { ReleasePackageHeaderButton } from "./release-package-header-button";
 import { MarkDoneButton } from "./mark-done-button";
 import { SelectionProvider } from "./selection-context";
 import { RowSelectCheckbox } from "./row-select-checkbox";
@@ -30,6 +31,7 @@ import {
 } from "@/lib/visits/receipt-policy";
 import { isDoctorKind } from "@/lib/visits/order-lines";
 import { moneySettled } from "@/lib/visits/money-settled";
+import { canManuallyReleasePackageHeader } from "@/lib/visits/package-header-release";
 import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
 import { ReissuePinButton } from "@/components/staff/reissue-pin-button";
 
@@ -60,12 +62,17 @@ const TEST_STATUS_STYLE: Record<string, string> = {
   cancelled: "bg-red-100 text-red-900",
 };
 
+// Mirrors the payment form's METHODS list (payments/new/payment-form.tsx) —
+// every method the form offers must have an entry here, or the raw enum
+// value shows on this page's payment tables (M6). `hmo` / `bpi` / `maybank`
+// aren't offered by the counter form but can exist on legacy/imported rows.
 const PAYMENT_METHOD_LABEL: Record<string, string> = {
   cash: "Cash",
   gcash: "GCash",
   maya: "Maya",
   card: "Card",
   bank_transfer: "Bank transfer",
+  gift_code: "Gift code",
   hmo: "HMO",
   bpi: "BPI",
   maybank: "Maybank",
@@ -245,6 +252,11 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
     });
   // Mirrors the role gate inside setVisitAttendingPhysician.
   const canAssignPhysician = session.role === "reception" || session.role === "admin";
+  // A6: RLS denies medtech/pathologist/xray_technician any access to
+  // `payments` (migration 0001: "payments: reception/admin manage") — those
+  // roles never have a payment row to see or void. Mirrors canVoidPayment in
+  // payments/[id]/void/actions.ts (same role pair).
+  const canSeePayments = session.role === "reception" || session.role === "admin";
 
   // Two different questions, deliberately kept apart:
   //   isPaid     — does the counter still have money to collect? Drives the
@@ -277,10 +289,6 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
   // see everything). Package headers are visible if ANY of their
   // components are accessible — we don't want a half-visible package.
   const allowedSections = sectionsForRole(session.role); // null = unrestricted
-  // Soft-deleted lines (0125) leave the operational pipeline entirely and
-  // render in their own "Deleted entries" panel below with a Restore action.
-  const deletedTestRows = (tests ?? []).filter((t) => t.deleted_at !== null);
-  const rawRows = (tests ?? []).filter((t) => t.deleted_at === null);
   const isVisible = (r: { services: { section?: string | null } | { section?: string | null }[] | null }) => {
     if (allowedSections === null) return true;
     if (allowedSections.length === 0) return false;
@@ -288,6 +296,18 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
     const sect = svc?.section ?? null;
     return sect != null && allowedSections.includes(sect as never);
   };
+  // A4 (go-live): soft-deleted lines (0125) leave the operational pipeline
+  // entirely and render in their own "Deleted entries" panel below with a
+  // Restore action — but RLS on test_requests is role-only, NOT
+  // section-aware (0023), so without this filter the panel printed every
+  // deleted test's real service name and price to every role, including
+  // reception (sectionsForRole("reception") === [], a DENY) and lab roles
+  // outside the section. Apply isVisible() row by row, exactly like the live
+  // table one block above does for rawRows.
+  const deletedTestRows = (tests ?? [])
+    .filter((t) => t.deleted_at !== null)
+    .filter((t) => isVisible(t));
+  const rawRows = (tests ?? []).filter((t) => t.deleted_at === null);
   // First pass: mark which parent_ids have at least one visible component.
   const visibleParents = new Set<string>();
   for (const r of rawRows) {
@@ -404,12 +424,14 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                 confirmText="Issue a Secure PIN for this visit and print the portal slip? Any earlier PIN for this visit stops working immediately."
               />
             ) : null}
-            <Link
-              href={`/staff/payments/new?visit_id=${visit.id}`}
-              className="rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
-            >
-              Record payment
-            </Link>
+            {canSeePayments ? (
+              <Link
+                href={`/staff/payments/new?visit_id=${visit.id}`}
+                className="rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
+              >
+                Record payment
+              </Link>
+            ) : null}
             {canDeleteVisit ? (
               <QueueDeleteDialog
                 visitId={visit.id}
@@ -470,35 +492,37 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
         </section>
       ) : null}
 
-      <section className="mt-6 grid gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5 sm:grid-cols-4">
-        <Field label="Total" value={formatPhp(visit.total_php)} />
-        <Field label="Paid" value={formatPhp(visit.paid_php)} />
-        <Field
-          label="Balance"
-          value={formatPhp(balance > 0 ? balance : 0)}
-          highlight={balance > 0}
-        />
-        <div>
-          <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-            Status
-          </p>
-          <p className="mt-1">
-            <span
-              className={`rounded-md px-2 py-0.5 text-xs font-semibold ${
-                PAYMENT_STATUS_STYLE[visit.payment_status] ?? ""
-              }`}
-            >
-              {paymentStatusLabel(visit.payment_status)}
-            </span>
-          </p>
-          {isAdmin && !isPaid && !visitDeleted ? (
-            <WaiveBalanceDialog
-              visitId={visit.id}
-              balanceLabel={formatPhp(balance > 0 ? balance : 0)}
-            />
-          ) : null}
-        </div>
-      </section>
+      {canSeePayments ? (
+        <section className="mt-6 grid gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5 sm:grid-cols-4">
+          <Field label="Total" value={formatPhp(visit.total_php)} />
+          <Field label="Paid" value={formatPhp(visit.paid_php)} />
+          <Field
+            label="Balance"
+            value={formatPhp(balance > 0 ? balance : 0)}
+            highlight={balance > 0}
+          />
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+              Status
+            </p>
+            <p className="mt-1">
+              <span
+                className={`rounded-md px-2 py-0.5 text-xs font-semibold ${
+                  PAYMENT_STATUS_STYLE[visit.payment_status] ?? ""
+                }`}
+              >
+                {paymentStatusLabel(visit.payment_status)}
+              </span>
+            </p>
+            {isAdmin && !isPaid && !visitDeleted && !visit.hmo_provider_id ? (
+              <WaiveBalanceDialog
+                visitId={visit.id}
+                balanceLabel={formatPhp(balance > 0 ? balance : 0)}
+              />
+            ) : null}
+          </div>
+        </section>
+      ) : null}
 
       {hasDoctorLines || attendingPhysician ? (
         <section className="mt-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
@@ -642,6 +666,18 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                                 | "pickup"
                                 | null
                             }
+                          />
+                        ) : null}
+                        {/* A3 (go-live): admin-only escape hatch for a header
+                            stuck at ready_for_release with every component
+                            already terminal — the Leg A trigger (0109)
+                            normally auto-releases it and didn't. */}
+                        {isAdmin &&
+                        canManuallyReleasePackageHeader(h, components) ? (
+                          <ReleasePackageHeaderButton
+                            headerId={h.id}
+                            visitId={visit.id}
+                            moneySettled={canRelease}
                           />
                         ) : null}
                         {testDeletability(session.role, {
@@ -1108,10 +1144,17 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                     {p.reference_number ?? "—"}
                   </td>
                   <td className="px-4 py-3">
-                    <VoidPaymentDialog
-                      paymentId={p.id}
-                      amountLabel={formatPhp(p.amount_php)}
-                    />
+                    {/* A6: void is reception/admin-only by owner decision —
+                        mirrors canVoidPayment in
+                        payments/[id]/void/actions.ts, which gates the actual
+                        write. RLS already keeps activePayments empty for
+                        every other role, so this is defense-in-depth. */}
+                    {canSeePayments ? (
+                      <VoidPaymentDialog
+                        paymentId={p.id}
+                        amountLabel={formatPhp(p.amount_php)}
+                      />
+                    ) : null}
                   </td>
                 </tr>
               ))}

@@ -9,8 +9,65 @@ import { PaymentRecordSchema } from "@/lib/validations/payment";
 import { RedeemGiftCodePaymentSchema } from "@/lib/validations/gift-code";
 import { ipAndAgent } from "@/lib/server/action-helpers";
 import { translatePgError } from "@/lib/accounting/pg-errors";
+import { postSimpleJournalEntry } from "@/lib/accounting/journal-entry";
+import { todayManilaISODate } from "@/lib/dates/manila";
 
 export type PaymentResult = { ok: true } | { ok: false; error: string };
+
+// Finding 1 (go-live review, SHIP BLOCKER): a gift-code redemption that
+// fails partway through must VOID the payment it already inserted, never
+// DELETE it. `payments` has an INSERT trigger (trg_payments_recalc) and an
+// UPDATE-OF-voided_at trigger (trg_payments_recalc_on_void) that keep
+// visits.paid_php/payment_status in sync — there is NO DELETE trigger for
+// that recalculation (trg_bridge_payment_delete only reverses the journal
+// entry). A deleted payment therefore leaves the visit reading
+// "Paid, ₱0 balance" with no payment row behind it, and
+// enforce_payment_before_release reads visits.payment_status, so the
+// patient's results release for free. Voiding instead fires the recalc
+// trigger (paid_php/payment_status drop back to reflecting no active
+// payment) and the bridge's reversal JE. The gift-code redemption unique
+// index (payments_gift_code_redemption_unique) is partial on
+// `voided_at IS NULL`, so a voided row never blocks a legitimate retry
+// with the same code.
+async function voidRedemptionPayment(
+  admin: ReturnType<typeof createAdminClient>,
+  input: {
+    paymentId: string;
+    userId: string;
+    visitId: string;
+    code: string;
+    reason: string;
+  },
+): Promise<string | null> {
+  const { error } = await admin
+    .from("payments")
+    .update({
+      voided_at: new Date().toISOString(),
+      voided_by: input.userId,
+      void_reason: input.reason,
+    })
+    .eq("id", input.paymentId)
+    .is("voided_at", null);
+  if (error) return translatePgError(error);
+
+  const { ip, ua } = await ipAndAgent();
+  await audit({
+    actor_id: input.userId,
+    actor_type: "staff",
+    action: "payment.voided",
+    resource_type: "payment",
+    resource_id: input.paymentId,
+    metadata: {
+      reason: input.reason,
+      auto_rollback: true,
+      visit_id: input.visitId,
+      gift_code: input.code,
+    },
+    ip_address: ip,
+    user_agent: ua,
+  });
+  return null;
+}
 
 export async function recordPaymentAction(
   _prev: PaymentResult | null,
@@ -145,6 +202,13 @@ async function redeemGiftCode(
   const amountApplied =
     Math.round(Math.min(Number(code.face_value_php), balance) * 100) / 100;
 
+  const forfeitedPhp =
+    Math.round((Number(code.face_value_php) - amountApplied) * 100) / 100;
+
+  // Finding 6 (go-live review, blocker): this INSERT is now guarded by
+  // payments_gift_code_redemption_unique (0139) — a concurrent redemption of
+  // the SAME code fails here with 23505 instead of silently minting a
+  // second payment. translatePgError() gives it a friendly message.
   const { data: payment, error: payErr } = await admin
     .from("payments")
     .insert({
@@ -164,7 +228,14 @@ async function redeemGiftCode(
     };
   }
 
-  const { error: updErr } = await admin
+  // Finding 6: check the affected row count, not just the error — a
+  // conditional UPDATE that matches zero rows returns no error at all. This
+  // catches the code having moved out of 'purchased' between the read above
+  // and this write (redeemed by a near-simultaneous request that won the
+  // unique-index race above and got here first, or cancelled by an admin in
+  // the same window) — cases the unique index alone doesn't cover, since it
+  // only protects the `payments` insert, not this gift_codes transition.
+  const { data: updatedCode, error: updErr } = await admin
     .from("gift_codes")
     .update({
       status: "redeemed",
@@ -174,11 +245,90 @@ async function redeemGiftCode(
       redeemed_payment_id: payment.id,
     })
     .eq("id", code.id)
-    .eq("status", "purchased"); // optimistic concurrency
-  if (updErr) {
-    // Best-effort rollback so the visit doesn't show a phantom payment.
-    await admin.from("payments").delete().eq("id", payment.id);
-    return { ok: false, error: translatePgError(updErr) };
+    .eq("status", "purchased") // optimistic concurrency
+    .select("id")
+    .maybeSingle();
+  if (updErr || !updatedCode) {
+    // Rollback so the visit doesn't show a phantom payment — void, never
+    // delete (Finding 1, see voidRedemptionPayment above).
+    const primaryError = updErr
+      ? translatePgError(updErr)
+      : "This code was just redeemed or cancelled by someone else. Refresh and try again.";
+    const voidErr = await voidRedemptionPayment(admin, {
+      paymentId: payment.id,
+      userId,
+      visitId: parsed.data.visit_id,
+      code: parsed.data.code,
+      reason: "redemption_rollback",
+    });
+    return {
+      ok: false,
+      error: voidErr
+        ? `${primaryError} (The payment could not be voided automatically — ask an admin to check payment ${payment.id}.)`
+        : primaryError,
+    };
+  }
+
+  // Finding 11: the payment above already debits 2250 by `amountApplied`
+  // via bridge_payment_insert. When the whole-use voucher forfeits a
+  // remainder (face value > visit balance), that remainder never gets
+  // debited anywhere and 2250 carries it forever. Book it as breakage income
+  // now, in the same request, so the two JEs together always drain 2250 by
+  // exactly the face value. See 0139's Finding 11 note for the full walk-through.
+  if (forfeitedPhp > 0) {
+    const { data: outstandingAccount } = await admin
+      .from("chart_of_accounts")
+      .select("id")
+      .eq("code", "2250")
+      .single();
+    const { data: breakageAccount } = await admin
+      .from("chart_of_accounts")
+      .select("id")
+      .eq("code", "4600")
+      .single();
+
+    const jeErr =
+      outstandingAccount && breakageAccount
+        ? await postSimpleJournalEntry(admin, {
+            postingDate: todayManilaISODate(),
+            description: `Gift code ${parsed.data.code} redeemed — ₱${forfeitedPhp.toFixed(2)} forfeited`,
+            sourceKind: "gift_code_breakage",
+            sourceId: code.id,
+            debitAccountId: outstandingAccount.id,
+            creditAccountId: breakageAccount.id,
+            amountPhp: forfeitedPhp,
+            createdBy: userId,
+          })
+        : "Could not find the gift-code accounts. Ask an admin to check the chart of accounts.";
+
+    if (jeErr) {
+      // Roll back the whole redemption — the code stays spendable, no
+      // half-booked accounting, and the payment is voided rather than
+      // deleted (Finding 1, see voidRedemptionPayment above).
+      await admin
+        .from("gift_codes")
+        .update({
+          status: "purchased",
+          redeemed_at: null,
+          redeemed_by: null,
+          redeemed_visit_id: null,
+          redeemed_payment_id: null,
+        })
+        .eq("id", code.id);
+      const voidErr = await voidRedemptionPayment(admin, {
+        paymentId: payment.id,
+        userId,
+        visitId: parsed.data.visit_id,
+        code: parsed.data.code,
+        reason: "redemption_rollback",
+      });
+      return {
+        ok: false,
+        error: voidErr
+          ? `${jeErr} (The payment could not be voided automatically — ask an admin to check payment ${payment.id}.)`
+          : jeErr,
+      };
+    }
   }
 
   const { ip, ua } = await ipAndAgent();
@@ -194,8 +344,7 @@ async function redeemGiftCode(
       payment_id: payment.id,
       face_value_php: code.face_value_php,
       amount_applied_php: amountApplied,
-      forfeited_php:
-        Math.round((Number(code.face_value_php) - amountApplied) * 100) / 100,
+      forfeited_php: forfeitedPhp,
     },
     ip_address: ip,
     user_agent: ua,

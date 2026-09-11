@@ -11,6 +11,7 @@ import {
 } from "@/lib/operations/cash-report";
 import { enumerateDays } from "@/lib/operations/daily-report";
 import { buildDenominationTrend } from "@/lib/accounting/denomination-trends";
+import { fetchAllRows, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 import { ExportCsvLink } from "@/components/staff/export-csv-link";
 import { Card } from "@/components/ui/card";
 import { OperationsTabs } from "../_components/operations-tabs";
@@ -42,26 +43,55 @@ export default async function CashCollectedPage({
   const to = params.to ?? today;
 
   const admin = createAdminClient();
-  const [collectionsRes, hmoRes, eodRes] = await Promise.all([
-    admin
-      .from("v_ops_daily_collections")
-      .select("*")
-      .gte("business_date", from)
-      .lte("business_date", to),
-    admin
-      .from("v_ops_daily_hmo_received")
-      .select("*")
-      .gte("received_date", from)
-      .lte("received_date", to),
-    admin
-      .from("eod_close_records")
-      .select("id,business_date,expected_cash_php,counted_cash_php,variance_php,counted_denominations")
-      .eq("status", "closed")
-      .gte("business_date", from)
-      .lte("business_date", to),
-  ]);
-
-  if (collectionsRes.error || hmoRes.error || eodRes.error) {
+  // N14: same paged reads as cash.csv (same ceiling, same `fetchAllRows`) so
+  // this screen can't show narrower channel/method figures than the export.
+  let collectionsResult: { rows: CollectionRow[]; truncated: boolean };
+  let hmoResult: { rows: HmoReceivedRow[]; truncated: boolean };
+  let eodResult: { rows: EodCloseRow[]; truncated: boolean };
+  try {
+    [collectionsResult, hmoResult, eodResult] = await Promise.all([
+      fetchAllRows<CollectionRow>(
+        (rFrom, rTo) =>
+          admin
+            .from("v_ops_daily_collections")
+            .select("*")
+            .gte("business_date", from)
+            .lte("business_date", to)
+            .order("business_date", { ascending: true })
+            .order("section", { ascending: true })
+            .order("method", { ascending: true })
+            .range(rFrom, rTo)
+            .returns<CollectionRow[]>(),
+        REPORT_EXPORT_MAX_ROWS,
+      ),
+      fetchAllRows<HmoReceivedRow>(
+        (rFrom, rTo) =>
+          admin
+            .from("v_ops_daily_hmo_received")
+            .select("*")
+            .gte("received_date", from)
+            .lte("received_date", to)
+            .order("received_date", { ascending: true })
+            .order("source", { ascending: true })
+            .range(rFrom, rTo)
+            .returns<HmoReceivedRow[]>(),
+        REPORT_EXPORT_MAX_ROWS,
+      ),
+      fetchAllRows<EodCloseRow>(
+        (rFrom, rTo) =>
+          admin
+            .from("eod_close_records")
+            .select("id,business_date,expected_cash_php,counted_cash_php,variance_php,counted_denominations")
+            .eq("status", "closed")
+            .gte("business_date", from)
+            .lte("business_date", to)
+            .order("business_date", { ascending: true })
+            .range(rFrom, rTo)
+            .returns<EodCloseRow[]>(),
+        REPORT_EXPORT_MAX_ROWS,
+      ),
+    ]);
+  } catch {
     return (
       <div className="p-4">
         <h1 className="text-xl font-semibold text-[color:var(--color-brand-navy)]">Operations</h1>
@@ -73,20 +103,12 @@ export default async function CashCollectedPage({
     );
   }
 
+  const truncated = collectionsResult.truncated || hmoResult.truncated || eodResult.truncated;
+
   const days = enumerateDays(from, to);
-  const matrix = buildCollectionsMatrix(
-    (collectionsRes.data ?? []) as CollectionRow[],
-    days,
-    (hmoRes.data ?? []) as HmoReceivedRow[],
-  );
-  const creditCard = buildCreditCardPanel(
-    (collectionsRes.data ?? []) as CollectionRow[],
-    days,
-  );
-  const reconRows = buildCashReconRows(
-    (eodRes.data ?? []) as EodCloseRow[],
-    days,
-  );
+  const matrix = buildCollectionsMatrix(collectionsResult.rows, days, hmoResult.rows);
+  const creditCard = buildCreditCardPanel(collectionsResult.rows, days);
+  const reconRows = buildCashReconRows(eodResult.rows, days);
   // Trends run off the reconciled days only — a day with no close has no count
   // to trend, and counting it as "balanced" would flatter the numbers.
   const trend = buildDenominationTrend(
@@ -108,6 +130,13 @@ export default async function CashCollectedPage({
       {/* key on the range so the custom From/To inputs re-init after a pill/year
           navigation (useState would otherwise keep its stale initial value). */}
       <DateControls key={`${from}_${to}`} from={from} to={to} today={today} basePath={BASE} />
+
+      {truncated ? (
+        <p className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          Showing the first {REPORT_EXPORT_MAX_ROWS.toLocaleString("en-PH")} rows of at least one
+          section — narrow the date range to see the rest.
+        </p>
+      ) : null}
 
       <CashSummaryCards matrix={matrix} reconRows={reconRows} />
       <CollectionsMatrix matrix={matrix} />

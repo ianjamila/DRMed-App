@@ -47,9 +47,9 @@ export function WaiveBalanceDialog({
   return (
     <div className="space-y-2 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] p-2 text-xs">
       <p className="text-[color:var(--color-brand-text-mid)]">
-        Waiving {balanceLabel}. Marks this visit as waived (HMO-covered /
-        charity / no-charge). Results become releasable without payment.
-        Reason is audit-logged.
+        Waiving {balanceLabel}. Marks this visit as waived (charity /
+        no-charge — the patient owes nothing). Results become releasable
+        without payment. Reason is audit-logged.
       </p>
       <textarea
         rows={2}

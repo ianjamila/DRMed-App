@@ -27,7 +27,16 @@ export function RegistrationLinkButton({ url }: { url: string }) {
         Registration link
       </Button>
       {open && (
-        <Panel className="absolute right-0 z-40 mt-2 flex w-64 flex-col items-center gap-2 p-4 shadow-lg">
+        // Anchored LEFT, not right. This button lives in PageHeader's
+        // `actions` slot, which wraps onto its own left-aligned line whenever
+        // the page's subtitle is long — as it is on Appointments. Anchored
+        // `right-0`, the 16rem panel then extended LEFTWARD from the button's
+        // right edge, off the content column, under the fixed sidebar, where
+        // it was clipped mid-sentence and covered the tabs and table behind
+        // it. Opening rightward runs into the page's own empty space instead.
+        // The max-width keeps it on screen on a narrow viewport, where the
+        // sidebar collapses and the content column is only a phone wide.
+        <Panel className="absolute left-0 z-40 mt-2 flex w-64 max-w-[calc(100vw-2rem)] flex-col items-center gap-2 p-4 shadow-lg">
           <p className="text-xs font-semibold text-[color:var(--color-brand-text-mid)]">Have the patient scan to self-register</p>
           <QrCode value={url} size={170} />
           <span className="font-mono text-[10px] break-all text-[color:var(--color-brand-text-soft)]">{url}</span>

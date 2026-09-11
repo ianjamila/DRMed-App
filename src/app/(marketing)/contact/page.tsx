@@ -258,7 +258,7 @@ export default function ContactPage() {
             <p className="mt-1 text-sm text-white/75">Book ahead online or just walk in during clinic hours.</p>
           </div>
           <div className="flex flex-wrap gap-3">
-            <PillLink href="/schedule" variant="cyan" size="md">Book an appointment</PillLink>
+            <PillLink href="/schedule" variant="cyan" size="md">Book a test or consultation</PillLink>
             <PillLink href={telHref("mobile")} variant="lineOnDark" size="md">Call now</PillLink>
           </div>
         </div>

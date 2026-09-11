@@ -19,6 +19,7 @@ interface ProviderDefaults {
   name?: string;
   is_active?: boolean;
   due_days_for_invoice?: number | null;
+  unbilled_threshold_days?: number | null;
   contract_start_date?: string | null;
   contract_end_date?: string | null;
   contact_person_name?: string | null;
@@ -90,6 +91,26 @@ export function HmoProviderForm({ initial }: Props) {
           />
           <p className="text-xs text-[color:var(--color-brand-text-soft)]">
             Used by the HMO receivables dashboard to flag overdue invoices.
+          </p>
+        </div>
+
+        <div className="grid gap-1.5">
+          <Label htmlFor="unbilled_threshold_days">
+            Days before flagged as stuck unbilled
+          </Label>
+          <StableInput
+            id="unbilled_threshold_days"
+            name="unbilled_threshold_days"
+            type="number"
+            min="1"
+            max="365"
+            step="1"
+            defaultValue={String(initial?.unbilled_threshold_days ?? 14)}
+            placeholder="14"
+          />
+          <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+            A released test still not on an HMO invoice past this many days
+            shows up as &quot;stuck&quot; on the HMO claims dashboard.
           </p>
         </div>
 

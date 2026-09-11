@@ -15,6 +15,7 @@ import {
 } from "@/components/staff/section-tabs-style";
 import { LabRequestLinks, type LabRequestAttachment } from "./lab-request-links";
 import { appointmentStatusLabel } from "@/lib/appointments/labels";
+import { fetchAllRows, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 
 export const metadata = {
   title: "Appointments — staff",
@@ -68,7 +69,9 @@ const APPT_SELECT = `
   physicians ( full_name )
 `;
 
-function rowFrom(a: {
+// N13: named (not inline) so the paged loaders below can type their
+// `fetchAllRows` fetcher without re-deriving this shape.
+interface ApptSourceRow {
   id: string;
   scheduled_at: string | null;
   created_at: string;
@@ -102,7 +105,9 @@ function rowFrom(a: {
     | { full_name: string }
     | Array<{ full_name: string }>
     | null;
-}): ApptRow {
+}
+
+function rowFrom(a: ApptSourceRow): ApptRow {
   const p = Array.isArray(a.patients) ? a.patients[0] : a.patients;
   const s = Array.isArray(a.services) ? a.services[0] : a.services;
   const ph = Array.isArray(a.physicians) ? a.physicians[0] : a.physicians;
@@ -157,34 +162,69 @@ async function loadScheduledRange(
   return (data ?? []).map(rowFrom);
 }
 
-async function loadWalkInsCreatedToday(
-  fromIso: string,
-  toIso: string,
-): Promise<ApptRow[]> {
-  // Confirmed appointments without a specific scheduled_at — the lab
-  // walk-in path. Show them in today's queue when reception created them
-  // (or a public booking landed) within the day.
-  const supabase = await createClient();
-  const { data } = await supabase
-    .from("appointments")
-    .select(APPT_SELECT)
-    .is("scheduled_at", null)
-    .eq("status", "confirmed")
-    .gte("created_at", fromIso)
-    .lt("created_at", toIso)
-    .order("created_at", { ascending: true });
-  return (data ?? []).map(rowFrom);
+interface LoadedAppts {
+  rows: ApptRow[];
+  // True only if the open set genuinely exceeds REPORT_EXPORT_MAX_ROWS —
+  // the page says so rather than silently dropping the remainder.
+  truncated: boolean;
 }
 
-async function loadPendingCallback(): Promise<ApptRow[]> {
+async function loadOpenWalkIns(): Promise<LoadedAppts> {
+  // Confirmed OR arrived appointments with no specific scheduled_at — the
+  // diagnostic-package / untimed-lab-request walk-in path (every public
+  // lab-request booking has scheduled_at = null). Loaded by OPEN STATUS,
+  // not "created today" (N12): a walk-in booked yesterday afternoon is
+  // still waiting this morning and must not vanish from the page. "arrived"
+  // is included (A9): marking a walk-in arrived used to drop it out of
+  // every section on this page — no section selected on scheduled_at AND
+  // status = confirmed once status flips to arrived — which stranded "+
+  // Start visit" (only rendered for arrived rows) and left the appointment
+  // stuck at arrived forever.
+  //
+  // N13: these are appointment ROWS, not bookings — a three-service booking
+  // is three rows sharing one booking_group_id — so a flat `.limit(100)`
+  // both dropped the OLDEST waiting walk-ins (newest-first + a hard cap
+  // means the longest-waiting patient is the first to disappear) and could
+  // cut a multi-service booking in half at the boundary. `fetchAllRows`
+  // walks the whole open set in 1000-row PostgREST pages (a plain select
+  // silently caps there) up to REPORT_EXPORT_MAX_ROWS, so every currently
+  // open booking comes back whole and oldest-first, matching how reception
+  // should work the queue; a page component banner covers the (practically
+  // unreachable, for a live "still open" set) case where that ceiling bites.
   const supabase = await createClient();
-  const { data } = await supabase
-    .from("appointments")
-    .select(APPT_SELECT)
-    .eq("status", "pending_callback")
-    .order("created_at", { ascending: false })
-    .limit(100);
-  return (data ?? []).map(rowFrom);
+  const { rows, truncated } = await fetchAllRows<ApptSourceRow>(
+    (rFrom, rTo) =>
+      supabase
+        .from("appointments")
+        .select(APPT_SELECT)
+        .is("scheduled_at", null)
+        .in("status", ["confirmed", "arrived"])
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(rFrom, rTo)
+        .returns<ApptSourceRow[]>(),
+    REPORT_EXPORT_MAX_ROWS,
+  );
+  return { rows: rows.map(rowFrom), truncated };
+}
+
+async function loadPendingCallback(): Promise<LoadedAppts> {
+  // N13: same paging rationale as loadOpenWalkIns above — oldest first, the
+  // shared report pager instead of a row-count cap.
+  const supabase = await createClient();
+  const { rows, truncated } = await fetchAllRows<ApptSourceRow>(
+    (rFrom, rTo) =>
+      supabase
+        .from("appointments")
+        .select(APPT_SELECT)
+        .eq("status", "pending_callback")
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(rFrom, rTo)
+        .returns<ApptSourceRow[]>(),
+    REPORT_EXPORT_MAX_ROWS,
+  );
+  return { rows: rows.map(rowFrom), truncated };
 }
 
 type FilterType = "all" | "consult" | "home";
@@ -238,12 +278,14 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
     new Date(`${manilaToday}T00:00:00+08:00`).getTime() + 31 * 24 * 60 * 60 * 1000,
   ).toISOString();
 
-  const [todayScheduled, todayWalkIns, upcoming, pending] = await Promise.all([
+  const [todayScheduled, walkInsResult, upcoming, pendingResult] = await Promise.all([
     loadScheduledRange(startOfTodayUtc, startOfTomorrowUtc),
-    loadWalkInsCreatedToday(startOfTodayUtc, startOfTomorrowUtc),
+    loadOpenWalkIns(),
     loadScheduledRange(startOfTomorrowUtc, endOfRangeUtc),
     loadPendingCallback(),
   ]);
+  const openWalkIns = walkInsResult.rows;
+  const pending = pendingResult.rows;
 
   const supabase = await createClient();
   const [{ data: serviceRows }, { data: physicianRows }] = await Promise.all([
@@ -258,16 +300,15 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
   const selfBookUrl = `${proto}://${host}/schedule?src=staff_qr`;
   const registerUrl = `${proto}://${host}/register?src=staff_qr`;
 
-  const todayRows = [...todayScheduled, ...todayWalkIns];
-
   // Build full (unfiltered) groups for each section — used for tab counts.
   const allPendingGroups = groupRows(pending);
-  const allTodayGroups = groupRows(todayRows);
+  const allWalkInGroups = groupRows(openWalkIns);
+  const allTodayGroups = groupRows(todayScheduled);
   const allUpcomingGroups = groupRows(upcoming);
 
   const groupIds = Array.from(
     new Set(
-      [...allPendingGroups, ...allTodayGroups, ...allUpcomingGroups]
+      [...allPendingGroups, ...allWalkInGroups, ...allTodayGroups, ...allUpcomingGroups]
         .map((g) => g.lead.booking_group_id)
         .filter((id): id is string => !!id),
     ),
@@ -285,10 +326,11 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
     }
   }
 
-  // Counts shown in tab labels — union of all three sections.
+  // Counts shown in tab labels — union of all four sections.
   function countForTab(t: FilterType): number {
     return (
       applyFilter(allPendingGroups, t).length +
+      applyFilter(allWalkInGroups, t).length +
       applyFilter(allTodayGroups, t).length +
       applyFilter(allUpcomingGroups, t).length
     );
@@ -296,6 +338,7 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
 
   // Filtered groups for the active tab.
   const pendingGroups = applyFilter(allPendingGroups, type);
+  const walkInGroups = applyFilter(allWalkInGroups, type);
   const todayGroups = applyFilter(allTodayGroups, type);
   const upcomingGroups = applyFilter(allUpcomingGroups, type);
 
@@ -341,6 +384,23 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
         empty="No pending callbacks. Nice."
         isAdmin={session.role === "admin"}
         attachmentsByGroup={attachmentsByGroup}
+        truncatedNotice={
+          pendingResult.truncated
+            ? `Showing the first ${REPORT_EXPORT_MAX_ROWS.toLocaleString("en-PH")} pending-callback appointment rows (oldest first) — there are more than that still open.`
+            : null
+        }
+      />
+      <Section
+        title={`Walk-ins waiting (${walkInGroups.length})`}
+        groups={walkInGroups}
+        empty="No walk-ins waiting — diagnostic packages and untimed lab requests land here until reception acts on them."
+        isAdmin={session.role === "admin"}
+        attachmentsByGroup={attachmentsByGroup}
+        truncatedNotice={
+          walkInsResult.truncated
+            ? `Showing the first ${REPORT_EXPORT_MAX_ROWS.toLocaleString("en-PH")} walk-in appointment rows (oldest first) — there are more than that still open.`
+            : null
+        }
       />
       <Section
         title={`Today (${todayGroups.length})`}
@@ -366,18 +426,29 @@ function Section({
   empty,
   isAdmin,
   attachmentsByGroup,
+  truncatedNotice = null,
 }: {
   title: string;
   groups: ApptGroup[];
   empty: string;
   isAdmin: boolean;
   attachmentsByGroup: Map<string, LabRequestAttachment[]>;
+  // N13: set only when the loader's row ceiling actually bit — never silent.
+  truncatedNotice?: string | null;
 }) {
   return (
     <section className="mt-6">
       <h2 className="mb-3 font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
         {title}
       </h2>
+      {truncatedNotice ? (
+        <p
+          role="status"
+          className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+        >
+          {truncatedNotice}
+        </p>
+      ) : null}
       <Panel className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
@@ -446,6 +517,7 @@ function GroupRow({
       <td className="px-4 py-3 whitespace-nowrap text-[color:var(--color-brand-text-mid)]">
         {r.scheduled_at ? (
           new Date(r.scheduled_at).toLocaleString("en-PH", {
+            timeZone: "Asia/Manila",
             dateStyle: "medium",
             timeStyle: "short",
           })
@@ -531,6 +603,8 @@ function GroupRow({
         <TransitionButtons
           appointmentIds={ids}
           patientId={r.patient_id}
+          walkInName={r.walk_in_name}
+          walkInPhone={r.walk_in_phone}
           status={r.status}
           isAdmin={isAdmin}
           groupSize={group.rows.length}

@@ -7,6 +7,7 @@ import {
   loadPatientsWithoutConsent,
   patientsWithoutConsentCsvHref,
 } from "@/lib/reports/patients-without-consent";
+import { REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 import {
   PRE_REGISTERED_LABEL,
   PRE_REGISTERED_BADGE_CLASS,
@@ -15,9 +16,16 @@ import {
 export const metadata = { title: "Patients without consent — staff" };
 export const dynamic = "force-dynamic";
 
-// Same hard cap as the other admin reports so the list can't pull an unbounded
-// scan into one render.
-const MAX_ROWS = 500;
+// M15: how many patients this page RENDERS. This used to also be the ceiling
+// on which patients were even considered, so the cut fell on registration
+// recency (`created_at desc`) rather than visit recency — an old patient who
+// visited yesterday could be dropped in favor of a brand-new patient who
+// never returned. The candidate set is now the full REPORT_EXPORT_MAX_ROWS
+// walk (same ceiling the CSV export already proves comfortably covers this
+// table — 7,056 patients total, 20,000 row ceiling); this page still shows
+// only the first DISPLAY_LIMIT, but only after `loadPatientsWithoutConsent`
+// has sorted the complete candidate set most-recently-active-first.
+const DISPLAY_LIMIT = 500;
 
 const manilaDate = new Intl.DateTimeFormat("en-PH", {
   timeZone: "Asia/Manila",
@@ -28,8 +36,20 @@ export default async function PatientsWithoutConsentPage() {
   await requireAdminStaff();
   const admin = createAdminClient();
 
-  const { rows: ordered, visitCount, lastVisit, truncated: capped } = await loadPatientsWithoutConsent(admin, MAX_ROWS);
+  const {
+    rows: ordered,
+    visitCount,
+    lastVisit,
+    truncated: candidatesIncomplete,
+    displayTruncated,
+  } = await loadPatientsWithoutConsent(admin, REPORT_EXPORT_MAX_ROWS, DISPLAY_LIMIT);
   const rows = ordered;
+  // Distinct failure modes worth telling the reader apart: `candidatesIncomplete`
+  // means even the sorted set is missing patients (the candidate walk itself
+  // hit REPORT_EXPORT_MAX_ROWS — not expected at today's scale, but the report
+  // must say so rather than look complete). `displayTruncated` is the ordinary,
+  // meaningful cut to the first DISPLAY_LIMIT most-recently-active patients.
+  const capped = displayTruncated;
 
   return (
     <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
@@ -53,7 +73,7 @@ export default async function PatientsWithoutConsentPage() {
         <p className="mt-2 text-sm font-semibold text-[color:var(--color-brand-navy)]">
           {rows.length} {rows.length === 1 ? "patient" : "patients"} without
           consent
-          {capped ? " (showing the first 500)" : ""}.{" "}
+          {capped ? ` (showing the first ${DISPLAY_LIMIT})` : ""}.{" "}
           <Link
             href="/staff/admin/settings/consent-gate"
             className="text-[color:var(--color-brand-cyan)] hover:underline"
@@ -66,10 +86,18 @@ export default async function PatientsWithoutConsentPage() {
         </div>
       </header>
 
+      {candidatesIncomplete ? (
+        <p className="mt-4 text-xs font-semibold text-red-700">
+          TRUNCATED — more than {REPORT_EXPORT_MAX_ROWS.toLocaleString()}{" "}
+          patients matched; the list below (and its ordering) is incomplete.
+          Use the CSV export or narrow the underlying data.
+        </p>
+      ) : null}
+
       {capped ? (
         <p className="mt-4 text-xs text-amber-700">
-          Showing the most recent {MAX_ROWS} — clear these and reload to see the
-          rest.
+          Showing the {DISPLAY_LIMIT} most recently active — clear these and
+          reload to see the rest.
         </p>
       ) : null}
 

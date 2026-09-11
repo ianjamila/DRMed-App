@@ -143,9 +143,19 @@ interface TemplateRow {
  * The three existing inline builders (preview route, queue actions,
  * portal cover action) are NOT replaced by this helper in this task —
  * that's a follow-up DRY refactor.
+ *
+ * `options.finalisedAtOverride`: print this timestamp on the PDF instead
+ * of `results.finalised_at`. Needed by finaliseConsolidatedReport, which
+ * must render the PDF (to learn whether the upload succeeds) BEFORE it is
+ * safe to write `finalised_at` to the database — writing it earlier would
+ * fire the release-advancement trigger before a downloadable PDF exists
+ * (see the N5/M13 fix in finalise-consolidated.ts). The row's real
+ * `finalised_at` stays null in the database until that write, but the
+ * printed report still needs to show the true finalisation moment.
  */
 export async function loadResultDocumentInput(
   resultId: string,
+  options?: { finalisedAtOverride?: Date },
 ): Promise<ResultDocumentInput> {
   // Both imports are deferred to call time (rather than module scope) so that
   // importing loadTemplateParams alone — e.g. from scripts/smoke-render-results.ts
@@ -281,7 +291,9 @@ export async function loadResultDocumentInput(
     },
     visit: { visit_number: visit.visit_number },
     controlNo: results.control_no,
-    finalisedAt: results.finalised_at ? new Date(results.finalised_at) : null,
+    finalisedAt:
+      options?.finalisedAtOverride ??
+      (results.finalised_at ? new Date(results.finalised_at) : null),
     performer,
     consultantPathologist: consultants.pathologist,
     medtech: performer

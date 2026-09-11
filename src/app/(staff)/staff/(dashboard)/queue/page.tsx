@@ -4,7 +4,7 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { queueTitleForRole, sectionsForRole } from "@/lib/auth/role-sections";
 import { RealtimeRefresher } from "@/components/staff/realtime-refresher";
 import { ClaimButton } from "./claim-button";
-import { sectionTabClass } from "@/components/staff/section-tabs-style";
+import { sectionTabClass, sectionTabsNavClass } from "@/components/staff/section-tabs-style";
 import { PageHeader } from "@/components/staff/page-header";
 import { Panel } from "@/components/ui/panel";
 import {
@@ -397,31 +397,40 @@ export default async function QueuePage({ searchParams }: SearchProps) {
               : null}
           </>
         }
-        actions={
-          <nav className="flex gap-2 text-sm">
-            <FilterTab
-              href={buildHref({ filter: "", page: null })}
-              label="All"
-              active={filter === "all"}
-            />
-            <FilterTab
-              href={buildHref({ filter: "pending_release", page: null })}
-              label="Pending release"
-              active={filter === "pending_release"}
-            />
-            <FilterTab
-              href={buildHref({ filter: "released_today", page: null })}
-              label="Released today"
-              active={filter === "released_today"}
-            />
-            <FilterTab
-              href={buildHref({ filter: "mine", page: null })}
-              label="Mine"
-              active={filter === "mine"}
-            />
-          </nav>
-        }
       />
+
+      {/* The tab bar lives BELOW the header, not in its `actions` slot. In the
+          slot it shared a `flex-wrap justify-between` row with the title +
+          subtitle — and this page's subtitle changes length on every tab
+          ("N matching", "showing the dates you picked", the worklist
+          sentence). A longer subtitle pushed the bar to a new line and a
+          shorter one pulled it back up beside the title, so the tabs visibly
+          jumped between positions each time one was clicked. Standalone, they
+          sit in the same place no matter what the subtitle says — and this is
+          the shared tab-bar treatment every other staff section page uses
+          (visits/queue, appointments, patient-ar). */}
+      <nav className={sectionTabsNavClass} aria-label="Queue filter">
+        <FilterTab
+          href={buildHref({ filter: "", page: null })}
+          label="All"
+          active={filter === "all"}
+        />
+        <FilterTab
+          href={buildHref({ filter: "pending_release", page: null })}
+          label="Pending release"
+          active={filter === "pending_release"}
+        />
+        <FilterTab
+          href={buildHref({ filter: "released_today", page: null })}
+          label="Released today"
+          active={filter === "released_today"}
+        />
+        <FilterTab
+          href={buildHref({ filter: "mine", page: null })}
+          label="Mine"
+          active={filter === "mine"}
+        />
+      </nav>
 
       <form
         className="mb-6 grid grid-cols-1 gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4 sm:grid-cols-2 lg:grid-cols-4"
@@ -787,7 +796,15 @@ function FilterTab({
   active: boolean;
 }) {
   return (
-    <Link href={href} className={sectionTabClass(active)}>
+    <Link
+      href={href}
+      className={sectionTabClass(active)}
+      // Every sibling tab bar marks its selected tab this way (SectionTabs,
+      // visits, visits/queue, appointments, patient-ar); this one did not, so
+      // a screen reader announced four ordinary links with nothing to say
+      // which was open.
+      aria-current={active ? "page" : undefined}
+    >
       {label}
     </Link>
   );

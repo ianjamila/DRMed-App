@@ -7,6 +7,8 @@ import { audit } from "@/lib/audit/log";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { generateGiftCodes } from "@/lib/gift-codes/generate";
 import { ipAndAgent } from "@/lib/server/action-helpers";
+import { translatePgError } from "@/lib/accounting/pg-errors";
+import { reverseJournalEntryBySource } from "@/lib/accounting/journal-entry";
 import {
   CancelGiftCodeSchema,
   GenerateBatchSchema,
@@ -119,7 +121,7 @@ export async function cancelGiftCodeAction(
   const admin = createAdminClient();
   const { data: current } = await admin
     .from("gift_codes")
-    .select("status, code")
+    .select("status, code, purchase_method")
     .eq("id", giftCodeId)
     .maybeSingle();
   if (!current) return { ok: false, error: "Gift code not found." };
@@ -133,6 +135,56 @@ export async function cancelGiftCodeAction(
     return { ok: false, error: "This code is already cancelled." };
   }
 
+  // N14: a cancelled code that was SOLD for cash took real money over the
+  // counter (eod_cash_adjustments, kind=gift_code_sale — see 0139 and
+  // gift-codes/actions.ts). Cancelling without reversing that entry would
+  // reintroduce the exact "drawer looks over" bug this fixes, just delayed —
+  // the sale would still count as cash-in even though the code (and
+  // presumably the cash — refunded at the counter) was undone. Void it via
+  // the same trg_bridge_cash_adjustment_void path a manual cash-drawer void
+  // uses, which posts the reversal JE automatically.
+  if (current.status === "purchased" && current.purchase_method === "cash") {
+    const { data: adjustment } = await admin
+      .from("eod_cash_adjustments")
+      .select("id")
+      .eq("gift_code_id", giftCodeId)
+      .is("voided_at", null)
+      .maybeSingle();
+    if (adjustment) {
+      const { error: voidErr } = await admin
+        .from("eod_cash_adjustments")
+        .update({
+          voided_at: new Date().toISOString(),
+          voided_by: session.user_id,
+          void_reason: `Gift code cancelled: ${parsed.data.cancellation_reason}`,
+        })
+        .eq("id", adjustment.id)
+        .is("voided_at", null);
+      if (voidErr) {
+        // e.g. P0015 — EOD already closed for the sale's business date. Block
+        // the cancellation rather than silently leave the drawer entry live;
+        // an admin can reopen that EOD close first, then cancel.
+        return { ok: false, error: translatePgError(voidErr) };
+      }
+    }
+  } else if (current.status === "purchased") {
+    // Finding 11 (go-live review): the non-cash sibling of the block above.
+    // A non-cash sale (gcash/maya/card/bank_transfer) posts its own sale JE
+    // directly (source_kind='gift_code_sale' — see gift-codes/actions.ts)
+    // rather than through eod_cash_adjustments. Cancelling without reversing
+    // it would leave 2250 credited forever for a code that never got, and
+    // now never will get, redeemed.
+    const jeErr = await reverseJournalEntryBySource(admin, {
+      sourceKind: "gift_code_sale",
+      sourceId: giftCodeId,
+      actorId: session.user_id,
+      reason: `Gift code cancelled: ${parsed.data.cancellation_reason}`,
+    });
+    if (jeErr) {
+      return { ok: false, error: jeErr };
+    }
+  }
+
   const { error } = await admin
     .from("gift_codes")
     .update({
@@ -142,7 +194,7 @@ export async function cancelGiftCodeAction(
       cancellation_reason: parsed.data.cancellation_reason,
     })
     .eq("id", giftCodeId);
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: translatePgError(error) };
 
   const { ip, ua } = await ipAndAgent();
   await audit({
@@ -161,5 +213,6 @@ export async function cancelGiftCodeAction(
   });
 
   revalidatePath("/staff/admin/gift-codes");
+  revalidatePath("/staff/payments/cash-drawer");
   return { ok: true };
 }

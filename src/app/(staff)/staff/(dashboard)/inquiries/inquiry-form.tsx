@@ -283,7 +283,7 @@ export function InquiryForm({
             <p className="text-xs text-[color:var(--color-brand-text-soft)]">
               To mark this inquiry confirmed, save it first, then use{" "}
               <span className="font-semibold">Book from this inquiry</span> on
-              the inquiry detail page (Phase 10.4).
+              the inquiry detail page.
             </p>
           ) : null}
         </fieldset>

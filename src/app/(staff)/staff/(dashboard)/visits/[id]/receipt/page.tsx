@@ -1,6 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { requireActiveStaff } from "@/lib/auth/require-staff";
+import { audit } from "@/lib/audit/log";
+import { hasRecentAudit } from "@/lib/server/action-helpers";
 import { peekVisitPinFlash } from "@/lib/auth/visit-pin-flash";
 import { formatPhp } from "@/lib/marketing/format";
 import { CONTACT, SITE } from "@/lib/marketing/site";
@@ -8,12 +13,15 @@ import { getPatientConsentState } from "@/lib/consent/gate";
 import { formatPatientName } from "@/lib/patients/format-name";
 import { shouldPrintReceipt } from "@/lib/visits/receipt-policy";
 import { hasStatutoryDiscountLine } from "@/lib/pricing/statutory";
+import { visibleReceiptLines, receiptTotals } from "@/lib/visits/receipt-totals";
 import { NoReceiptNotice } from "@/components/staff/no-receipt-notice";
 import { PrintButton } from "./print-button";
+import { logReceiptPrintAction } from "./log-print-action";
 
 export const metadata = {
   title: "Receipt — staff",
 };
+export const dynamic = "force-dynamic";
 
 interface Props {
   params: Promise<{ id: string }>;
@@ -47,7 +55,7 @@ function PortalAccessSlip({
         >
           ← Visit
         </Link>
-        <PrintButton hasFlash />
+        <PrintButton hasFlash onPrint={logReceiptPrintAction.bind(null, visitId)} />
       </div>
 
       <article className="receipt-sheet rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-8 print:border-0 print:p-0 print:text-xs">
@@ -92,9 +100,10 @@ function PortalAccessSlip({
           <p className="mt-3 text-xs text-[color:var(--color-brand-text-soft)]">
             Sign in at{" "}
             <strong>{SITE.url.replace(/^https?:\/\//, "")}/portal</strong> to view
-            results when ready. PIN is valid for 60 days and replaces any earlier
-            one. Keep it private — anyone with this PIN can view the patient&apos;s
-            lab results.
+            results when ready. PIN is valid for 60 days. Any PIN from an
+            earlier visit also keeps working until it expires, so please
+            destroy old slips. Keep it private — anyone with this PIN can view
+            the patient&apos;s lab results.
           </p>
         </div>
 
@@ -109,6 +118,11 @@ function PortalAccessSlip({
 
 export default async function ReceiptPage({ params }: Props) {
   const { id } = await params;
+  // A8: get the actor for the disclosure audit below. The dashboard layout
+  // already gates on requireActiveStaff — this call is cheap (cookie-backed)
+  // and mirrors the count-sheet / payslip pages, which re-derive the session
+  // themselves rather than threading it through props.
+  const session = await requireActiveStaff();
   const supabase = await createClient();
 
   const { data: visit } = await supabase
@@ -156,7 +170,11 @@ export default async function ReceiptPage({ params }: Props) {
     (statutoryDiscountRows ?? []).map((d) => d.code),
   );
 
-  const lines = (visit.test_requests ?? []).map((tr) => {
+  // N8: a soft-deleted test line (0125) must never reappear — or get
+  // charged for — on a reprint. `lines` is the VISIBLE set used for every
+  // render and total below; `allLines` only exists to preserve the deleted
+  // count in the view audit's metadata.
+  const allLines = (visit.test_requests ?? []).map((tr) => {
     const svc = Array.isArray(tr.services) ? tr.services[0] : tr.services;
     const base = tr.base_price_php ?? svc?.price_php ?? 0;
     const discount = tr.discount_amount_php ?? 0;
@@ -171,11 +189,45 @@ export default async function ReceiptPage({ params }: Props) {
       deleted: tr.deleted_at !== null,
     };
   });
+  const lines = visibleReceiptLines(allLines);
 
   // Plain PIN — present only on the redirect from createVisit, or from a
   // deliberate re-issue. The cookie is read here (server component is
   // read-only) and cleared right after mount by ClearPinOnMount.
   const plainPin = await peekVisitPinFlash(visit.id);
+
+  // A8: view of a receipt is itself a disclosure (name, DRM-ID, line items,
+  // prices, and — while the flash cookie lives — the plaintext portal PIN).
+  // Dedupe like `payroll_payslip.viewed`: `force-dynamic` re-renders on every
+  // back-button nav, so suppress a repeat row from the same viewer within 5
+  // minutes rather than flooding the log. Never include the PIN itself.
+  async function logReceiptViewed(kind: "portal_access_slip" | "full") {
+    const admin = createAdminClient();
+    const recentlyViewed = await hasRecentAudit(
+      admin,
+      { actor_id: session.user_id, action: "receipt.viewed", resource_id: visit!.id },
+      5,
+    );
+    if (recentlyViewed) return;
+    const h = await headers();
+    await audit({
+      actor_id: session.user_id,
+      actor_type: "staff",
+      patient_id: patient!.id,
+      action: "receipt.viewed",
+      resource_type: "visit",
+      resource_id: visit!.id,
+      metadata: {
+        visit_number: visit!.visit_number,
+        kind,
+        line_count: lines.length,
+        deleted_line_count: allLines.length - lines.length,
+        has_pin_flash: Boolean(plainPin),
+      },
+      ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+      user_agent: h.get("user-agent"),
+    });
+  }
 
   // Item 1 / decision 4: consultation-only visits print no bill. The button
   // that links here is hidden for them, but the URL is guessable and stale
@@ -184,13 +236,11 @@ export default async function ReceiptPage({ params }: Props) {
   // PIN on its own slip (no billing lines) rather than swallowing it.
   if (
     !shouldPrintReceipt(
-      lines
-        .filter((l) => !l.deleted)
-        .map((l) => l.svc?.kind)
-        .filter((kind): kind is string => Boolean(kind)),
+      lines.map((l) => l.svc?.kind).filter((kind): kind is string => Boolean(kind)),
     )
   ) {
     if (plainPin) {
+      await logReceiptViewed("portal_access_slip");
       return (
         <PortalAccessSlip
           visitId={visit.id}
@@ -214,10 +264,9 @@ export default async function ReceiptPage({ params }: Props) {
     );
   }
 
-  const subtotal = lines.reduce((s, l) => s + Number(l.base), 0);
-  const totalDiscount = lines.reduce((s, l) => s + Number(l.discount), 0);
-  const total = lines.reduce((s, l) => s + Number(l.final), 0);
+  const { subtotal, totalDiscount, total } = receiptTotals(lines);
   const hasSeniorPwdLine = hasStatutoryDiscountLine(lines, statutoryDiscountCodes);
+  await logReceiptViewed("full");
 
   return (
     <div className="receipt-print mx-auto max-w-2xl px-4 py-8 sm:px-6 lg:px-8 print:p-0">
@@ -237,7 +286,10 @@ export default async function ReceiptPage({ params }: Props) {
               Print combined receipt →
             </Link>
           ) : null}
-          <PrintButton hasFlash={Boolean(plainPin)} />
+          <PrintButton
+            hasFlash={Boolean(plainPin)}
+            onPrint={logReceiptPrintAction.bind(null, visit.id)}
+          />
         </div>
       </div>
 

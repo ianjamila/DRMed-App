@@ -582,6 +582,12 @@ export const STAFF_NAV: StaffNavSection[] = [
         roles: ["reception", "admin"],
       },
       {
+        href: "/staff/gift-codes/refund",
+        label: "Refund gift code sale",
+        description: "Undo a mis-keyed gift-code sale — wrong buyer details, wrong payment method, customer changed their mind — while the code is still unused. Reverses the payment and puts the code back on sale; a code already redeemed on a visit needs the payment void instead.",
+        roles: ["reception", "admin"],
+      },
+      {
         href: "/staff/registration",
         label: "Registration link",
         description: "Share the public pre-registration page with patients — show the QR to scan, copy the link to text them, or print a desk poster. Parked here because registration is optional; it just saves counter time on arrival.",

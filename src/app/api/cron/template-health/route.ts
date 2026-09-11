@@ -99,6 +99,19 @@ export async function GET(request: Request) {
           .in("parameter_id", paramIds)
       : { data: [] as { service_id: string; parameter_id: string }[] };
 
+    // M17: per-service templates on a grouped service are dead on arrival
+    // (the queue always redirects a grouped service to the consolidated
+    // form). serviceList is already scoped to services in one of the groups
+    // fetched above, so this only needs to look up templates for THOSE
+    // service ids.
+    const serviceIds = serviceList.map((s) => s.id);
+    const { data: serviceTemplateRows } = serviceIds.length
+      ? await admin
+          .from("result_templates")
+          .select("service_id, is_active, id")
+          .in("service_id", serviceIds)
+      : { data: [] as { service_id: string | null; is_active: boolean; id: string }[] };
+
     const groupsInput: TemplateHealthGroup[] = groupList.map((g) => {
       const tpl = templateByGroup.get(g.id) ?? null;
       return {
@@ -119,9 +132,14 @@ export async function GET(request: Request) {
       };
     });
 
+    const serviceTemplates = (serviceTemplateRows ?? [])
+      .filter((t): t is { service_id: string; is_active: boolean; id: string } => !!t.service_id)
+      .map((t) => ({ service_id: t.service_id, template_id: t.id, is_active: t.is_active }));
+
     const findings = deriveTemplateHealthFindings({
       groups: groupsInput,
       links: mapRows ?? [],
+      serviceTemplates,
     });
 
     const counts: Record<string, number> = {};

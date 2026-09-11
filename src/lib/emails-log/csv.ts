@@ -17,7 +17,10 @@ function cell(v: string | null | undefined): string {
   return `"${s.replace(/"/g, '""')}"`;
 }
 
-export function emailLogToCsv(entries: EmailLogEntry[]): string {
+export function emailLogToCsv(
+  entries: EmailLogEntry[],
+  opts: { truncated?: boolean } = {},
+): string {
   const lines = [HEADERS.map(cell).join(",")];
   for (const e of entries) {
     const status = e.bulk
@@ -40,6 +43,15 @@ export function emailLogToCsv(entries: EmailLogEntry[]): string {
         cell(e.detail),
         cell(e.reviewCtaShown ? "yes" : ""),
       ].join(","),
+    );
+  }
+  // H8: a silently truncated export reads as "that's everything" — say so
+  // in-band, matching the report library's TRUNCATED row.
+  if (opts.truncated) {
+    lines.push(
+      cell(
+        `TRUNCATED — more rows matched than the export ceiling. Narrow the filters.`,
+      ),
     );
   }
   return lines.join("\r\n");

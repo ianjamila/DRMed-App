@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { Button } from "@/components/ui/button";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
@@ -30,7 +31,12 @@ interface PageProps {
 }
 
 export default async function InquiriesPage({ searchParams }: PageProps) {
-  await requireActiveStaff();
+  const session = await requireActiveStaff();
+  // Every child page (new, edit, book) already bounces non-reception/admin —
+  // the list itself was the one gap left open to every role.
+  if (session.role !== "reception" && session.role !== "admin") {
+    redirect("/staff");
+  }
   const params = await searchParams;
   const status: StatusFilter = (
     ["pending", "confirmed", "dropped", "all"] as const
@@ -99,7 +105,7 @@ export default async function InquiriesPage({ searchParams }: PageProps) {
       <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-            Phase 10 · Reception
+            Front desk
           </p>
           <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
             Inquiries

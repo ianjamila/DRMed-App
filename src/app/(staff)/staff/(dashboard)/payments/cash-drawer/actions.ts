@@ -11,6 +11,8 @@ import {
   denominationsTotal,
   type DenominationCounts,
 } from "@/lib/accounting/cash-denominations";
+import { giftCodeRefundEligibility } from "@/lib/gift-codes/refund";
+import type { GiftCodeStatus } from "@/lib/gift-codes/labels";
 import {
   RecordCashAdjustmentSchema,
   VoidCashAdjustmentSchema,
@@ -130,6 +132,48 @@ export async function voidCashAdjustmentAction(
   }
 
   const admin = createAdminClient();
+
+  // Finding 8 (go-live review): a gift-code sale row can't go through this
+  // generic Void — it only reverses the cash-drawer entry, never touches
+  // `gift_codes`, so reception could take the money back out of the drawer
+  // while the code stays purchased and redeemable. Refuse here and point at
+  // the proper control instead of half-undoing the sale.
+  //
+  // Go-live gap: that pointer used to send everyone to Admin → Gift codes →
+  // Cancel, which burns the voucher permanently (status='cancelled' is
+  // terminal). Reception now has its own undo for the common case — a
+  // mis-keyed sale on a code that's still unredeemed — via
+  // refundGiftCodeSaleAction (reverses this same drawer entry AND returns
+  // the code to sellable inventory, see 0142). Look up the code's current
+  // status so the message points at the right control: Refund for an
+  // unredeemed sale, or the admin cancel flow only for the rarer states
+  // that flow can't handle (already redeemed, already cancelled).
+  const { data: adjustment, error: readErr } = await admin
+    .from("eod_cash_adjustments")
+    .select("kind, gift_code_id")
+    .eq("id", parsed.data.id)
+    .maybeSingle();
+  if (readErr) return { ok: false, error: translatePgError(readErr) };
+  if (adjustment?.kind === "gift_code_sale") {
+    const { data: code } = adjustment.gift_code_id
+      ? await admin
+          .from("gift_codes")
+          .select("status")
+          .eq("id", adjustment.gift_code_id)
+          .maybeSingle()
+      : { data: null };
+    const eligibility = code
+      ? giftCodeRefundEligibility(code.status as GiftCodeStatus)
+      : null;
+
+    let message =
+      "This is a gift code sale. To undo it, use Refund gift code sale instead (Front desk → Refund gift code sale, or Admin → Gift codes) — that reverses this drawer entry AND makes the code available to sell again.";
+    if (eligibility && !eligibility.ok) {
+      message = eligibility.error;
+    }
+    return { ok: false, error: message };
+  }
+
   const { error } = await admin
     .from("eod_cash_adjustments")
     .update({
@@ -141,11 +185,31 @@ export async function voidCashAdjustmentAction(
     .is("voided_at", null);
   if (error) return { ok: false, error: translatePgError(error) };
 
-  const { data: rev } = await admin
+  // Look up the reversal JE the void trigger (trg_bridge_cash_adjustment_void)
+  // just posted, so the audit row can carry it — mirroring how
+  // recordCashAdjustmentAction includes the creation JE's id/number above.
+  //
+  // This was previously `.is("reverses", null).eq("source_kind", "reversal")`
+  // with the result fetched and then discarded (`void rev`) — a reversal JE
+  // by definition always HAS `reverses` set (it points at the JE it reverses),
+  // so that filter matched zero rows every time; scoped correctly here
+  // instead of removed, since the intent (surface the reversal in the audit
+  // metadata) is worth keeping.
+  const { data: originalJe } = await admin
     .from("journal_entries")
-    .select("id, entry_number")
-    .is("reverses", null)
-    .eq("source_kind", "reversal");
+    .select("id")
+    .eq("source_kind", "cash_adjustment")
+    .eq("source_id", parsed.data.id)
+    .maybeSingle();
+
+  const { data: rev } = originalJe
+    ? await admin
+        .from("journal_entries")
+        .select("id, entry_number")
+        .eq("source_kind", "reversal")
+        .eq("reverses", originalJe.id)
+        .maybeSingle()
+    : { data: null };
 
   const h = await headers();
   await audit({
@@ -154,11 +218,14 @@ export async function voidCashAdjustmentAction(
     action: "cash_adjustment.voided",
     resource_type: "eod_cash_adjustments",
     resource_id: parsed.data.id,
-    metadata: { void_reason: parsed.data.void_reason },
+    metadata: {
+      void_reason: parsed.data.void_reason,
+      reversal_journal_entry_id: rev?.id ?? null,
+      reversal_journal_entry_number: rev?.entry_number ?? null,
+    },
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),
   });
-  void rev;
 
   revalidatePath("/staff/payments/cash-drawer");
   return { ok: true, data: undefined };

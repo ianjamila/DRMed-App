@@ -95,6 +95,12 @@ export function ServiceForm({ initial, vendors = [] }: Props) {
 
   const formRef = useRef<HTMLFormElement>(null);
   const skipConfirmRef = useRef(false);
+  // Gate the cost/vendor fieldset on the LIVE checkbox value, not the
+  // server-rendered initial value — otherwise ticking "Send-out test" on
+  // edit never reveals the fields (save then fails: "unit cost is
+  // required" with no way to enter it), and ticking it on create silently
+  // lands the service on the "Unconfigured send-outs" list.
+  const [isSendOut, setIsSendOut] = useState(initial?.is_send_out ?? false);
   const [imageUrl, setImageUrl] = useState(initial?.image_url ?? "");
   const showImagePreview = /^(https?:\/\/|\/)/.test(imageUrl.trim());
   const [confirming, setConfirming] = useState<{
@@ -301,6 +307,7 @@ export function ServiceForm({ initial, vendors = [] }: Props) {
               type="checkbox"
               name="is_send_out"
               defaultChecked={initial?.is_send_out ?? false}
+              onChange={(e) => setIsSendOut(e.target.checked)}
             />
             <span>Send-out test</span>
           </label>
@@ -316,7 +323,7 @@ export function ServiceForm({ initial, vendors = [] }: Props) {
           </div>
         </div>
 
-        {initial?.is_send_out ? (
+        {isSendOut ? (
           <fieldset className="grid gap-4 rounded-lg border border-amber-200 bg-amber-50/50 p-4 sm:grid-cols-2">
             <legend className="px-2 text-xs font-bold uppercase tracking-wider text-amber-700">
               Send-out COGS config

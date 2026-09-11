@@ -351,7 +351,7 @@ export function NewAppointmentSheet({
                       {upcoming.map((u) => (
                         <li key={u.id}>
                           {u.scheduled_at
-                            ? new Date(u.scheduled_at).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" })
+                            ? new Date(u.scheduled_at).toLocaleString("en-PH", { timeZone: "Asia/Manila", dateStyle: "medium", timeStyle: "short" })
                             : "Pending callback"}
                           {u.service_name ? ` · ${u.service_name}` : ""}
                           {u.physician_name ? ` · ${u.physician_name}` : ""}
@@ -413,7 +413,7 @@ export function NewAppointmentSheet({
                 <input value={walkIn.walk_in_name} onChange={(e) => setWalkIn({ ...walkIn, walk_in_name: e.target.value })} placeholder="Walk-in name" className={INPUT_CLS} />
                 <input value={walkIn.walk_in_phone} onChange={(e) => setWalkIn({ ...walkIn, walk_in_phone: e.target.value })} placeholder="Walk-in phone" className={INPUT_CLS} />
                 <p className="text-xs text-muted-foreground">
-                  No patient record is created. The “+ Start visit” button only appears once reception registers them on arrival.
+                  No patient record is created yet. Once they arrive, use “Attach patient” on this row in the appointments list to link one — “+ Start visit” appears right after.
                 </p>
               </div>
             )}

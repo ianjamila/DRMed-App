@@ -28,7 +28,20 @@ export interface PatientsWithoutConsentReport {
   rows: PatientWithoutConsentRow[];
   visitCount: ReadonlyMap<string, number>;
   lastVisit: ReadonlyMap<string, string>;
+  /**
+   * True when more patients matched than `maxRows` could hold — the
+   * candidate SET itself is incomplete, so even the correctly-ordered list
+   * above may be missing patients no amount of re-sorting can recover.
+   */
   truncated: boolean;
+  /**
+   * True when `displayLimit` cut the (already fully sorted) list down for
+   * on-screen rendering. Unlike `truncated`, this cut is meaningful — the
+   * candidate set was complete and sorted most-recently-active-first before
+   * this trim, so nothing more urgent was dropped in favor of something less
+   * urgent.
+   */
+  displayTruncated: boolean;
 }
 
 /** Most recently active first; patients with no visits sink to the bottom. Stable. */
@@ -41,9 +54,27 @@ export function orderByLastVisit(
   );
 }
 
+/**
+ * M15: `maxRows` bounds the CANDIDATE set (every patient lacking consent,
+ * fetched `created_at desc` — an arbitrary but stable order, since nothing
+ * meaningful can be known before visits are joined in below). `displayLimit`,
+ * when given, trims the list a caller actually RENDERS — applied only AFTER
+ * `orderByLastVisit` below, so the trim keeps the most-recently-active
+ * patients rather than the most-recently-REGISTERED ones.
+ *
+ * Getting this order backwards was the bug: a page that fetched only the
+ * first `displayLimit` patients by `created_at desc` and sorted THAT short
+ * list by last-visit could drop a patient who registered years ago but
+ * walked in yesterday, while keeping a patient who registered last week and
+ * never returned. `maxRows` must stay generous enough to cover the true
+ * candidate population (the report library's `REPORT_EXPORT_MAX_ROWS`, same
+ * ceiling the CSV export already proves comfortably covers this table) so
+ * the sort-then-trim below is never working from an already-wrong set.
+ */
 export async function loadPatientsWithoutConsent(
   client: AnyClient,
   maxRows: number,
+  displayLimit?: number,
 ): Promise<PatientsWithoutConsentReport> {
   // Active patients (not merged tombstones) with no current data-privacy
   // consent on file — exactly the rows whose releases will block once the
@@ -91,11 +122,16 @@ export async function loadPatientsWithoutConsent(
     }
   }
 
+  const ordered = orderByLastVisit(patients, lastVisit);
+  const displayTruncated = displayLimit != null && displayLimit < ordered.length;
+  const rows = displayLimit != null ? ordered.slice(0, displayLimit) : ordered;
+
   return {
-    rows: orderByLastVisit(patients, lastVisit),
+    rows,
     visitCount,
     lastVisit,
     truncated: truncated || visitsTruncated,
+    displayTruncated,
   };
 }
 

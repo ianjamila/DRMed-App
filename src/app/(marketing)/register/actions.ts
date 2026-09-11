@@ -226,7 +226,11 @@ export async function submitRegistrationAction(
         emailParagraph("Thanks for pre-registering. This is your DRMed patient ID — present it at the clinic on your visit:") +
         emailHighlight("Your DRM-ID", res.drm_id) +
         emailParagraph("Reception verifies your identity at the counter. After your visit, the Secure PIN printed on your receipt unlocks your results online.") +
-        emailButton("Book an appointment", `${SITE.url.replace(/\/$/, "")}/schedule`, "cyan"),
+        emailButton(
+          "Book a test or consultation",
+          `${SITE.url.replace(/\/$/, "")}/schedule`,
+          "cyan",
+        ),
     }),
   });
 
