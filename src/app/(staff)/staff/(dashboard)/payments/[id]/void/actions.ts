@@ -10,11 +10,24 @@ import { translatePgError } from "@/lib/accounting/pg-errors";
 
 export type VoidResult = { ok: true } | { ok: false; error: string };
 
+// A6 (go-live): reception + admin only, by owner decision. RLS already
+// denies medtech/pathologist/xray_technician SELECT/UPDATE on `payments`
+// (0001: "payments: reception/admin manage"), so this is defense-in-depth
+// rather than a live click path — but requireActiveStaff() alone let ANY
+// active staff role call this action. Mirrors canManagePettyCash in
+// payments/petty-cash/actions.ts (same role pair, same money-action shape).
+function canVoidPayment(role: string): boolean {
+  return role === "reception" || role === "admin";
+}
+
 export async function voidPaymentAction(
   paymentId: string,
   reason: string,
 ): Promise<VoidResult> {
   const session = await requireActiveStaff();
+  if (!canVoidPayment(session.role)) {
+    return { ok: false, error: "Forbidden." };
+  }
 
   const parsed = VoidPaymentSchema.safeParse({ reason });
   if (!parsed.success) {

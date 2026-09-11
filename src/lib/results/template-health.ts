@@ -11,7 +11,8 @@ export interface TemplateHealthFinding {
     | "group_zero_mappings"
     | "service_zero_mappings"
     | "template_inactive_active_services"
-    | "unreachable_param";
+    | "unreachable_param"
+    | "stray_service_template";
   severity: "error" | "warning" | "info";
   group_id: string;
   group_code: string;
@@ -53,9 +54,27 @@ export interface TemplateHealthLink {
   parameter_id: string;
 }
 
+/**
+ * A per-service result_templates row (keyed by service_id, not
+ * report_group_id). Only relevant here when the service also belongs to a
+ * report group — `/staff/queue/[id]` redirects unconditionally to the
+ * consolidated form whenever `services.report_group_id` is set (regardless
+ * of whether the group even has a template), so any per-service template on
+ * a grouped service is dead on arrival: loadResultDocumentInput only looks
+ * it up when `results.report_group_id` is null, which never happens for a
+ * grouped service (M17).
+ */
+export interface TemplateHealthServiceTemplate {
+  service_id: string;
+  template_id: string;
+  is_active: boolean;
+}
+
 export interface TemplateHealthInput {
   groups: TemplateHealthGroup[];
   links: TemplateHealthLink[];
+  /** Optional — omit to skip the stray-per-service-template check. */
+  serviceTemplates?: TemplateHealthServiceTemplate[];
 }
 
 export function deriveTemplateHealthFindings(
@@ -72,6 +91,10 @@ export function deriveTemplateHealthFindings(
       (mappedParamCountByService.get(link.service_id) ?? 0) + 1,
     );
   }
+
+  const serviceTemplateByService = new Map<string, TemplateHealthServiceTemplate>(
+    (input.serviceTemplates ?? []).map((t) => [t.service_id, t]),
+  );
 
   const findings: TemplateHealthFinding[] = [];
 
@@ -178,6 +201,30 @@ export function deriveTemplateHealthFindings(
             message: `${g.name}: "${p.parameter_name}" is not enabled by any service — unreachable field.`,
           });
         }
+      }
+    }
+
+    // 6. Stray per-service template on a service that belongs to this group.
+    // Unlike checks 1-5, this doesn't depend on the group's own template
+    // state at all — the queue redirects to the consolidated form purely on
+    // `services.report_group_id` being set, so a per-service template here
+    // is unreachable even if the group has no template of its own yet.
+    // Scoped to every member (not just orderableMembers) since that redirect
+    // doesn't filter by is_active or kind either.
+    for (const svc of members) {
+      const stray = serviceTemplateByService.get(svc.id);
+      if (stray) {
+        findings.push({
+          type: "stray_service_template",
+          severity: "warning",
+          group_id: g.id,
+          group_code: g.code,
+          group_name: g.name,
+          template_id: stray.template_id,
+          service_id: svc.id,
+          service_code: svc.code,
+          message: `${svc.code} has its own per-service result template, but it belongs to the ${g.name} group — every result for it renders from the group's consolidated template instead, so this per-service template is never used.`,
+        });
       }
     }
   }

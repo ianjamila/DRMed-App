@@ -64,4 +64,15 @@ describe("emailLogToCsv", () => {
     const line = csv.split("\r\n")[1];
     expect(line.endsWith('"yes"')).toBe(true);
   });
+
+  it("appends no truncation row by default", () => {
+    const csv = emailLogToCsv([entry({})]);
+    expect(csv).not.toContain("TRUNCATED");
+  });
+
+  it("H8: appends an in-band TRUNCATED row when the export hit its ceiling", () => {
+    const csv = emailLogToCsv([entry({})], { truncated: true });
+    const lines = csv.split("\r\n");
+    expect(lines[lines.length - 1]).toContain("TRUNCATED");
+  });
 });

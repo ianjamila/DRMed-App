@@ -7,8 +7,11 @@ import {
 } from "@/components/ui/card";
 import { PatientLoginForm } from "./login-form";
 
+// Root layout.tsx's title.template already appends " — drmed.ph" to every
+// page title — writing the suffix here too produced "Patient sign in —
+// drmed.ph — drmed.ph".
 export const metadata = {
-  title: "Patient sign in — drmed.ph",
+  title: "Patient sign in",
 };
 
 export default function PatientLoginPage() {

@@ -31,7 +31,7 @@ export default async function NewVisitPage({ searchParams }: Props) {
     filter === "lab" || filter === "imaging" ? filter : undefined;
 
   if (!patient_id) {
-    return <PatientPicker query={q ?? ""} />;
+    return <PatientPicker query={q ?? ""} filter={initialCategory} />;
   }
 
   const supabase = await createClient();
@@ -170,7 +170,17 @@ export default async function NewVisitPage({ searchParams }: Props) {
   );
 }
 
-async function PatientPicker({ query }: { query: string }) {
+async function PatientPicker({
+  query,
+  filter,
+}: {
+  query: string;
+  // M5: the sidebar "New lab request / New imaging request" links and the
+  // dashboard quicklinks pass ?filter=lab|imaging to pre-filter the service
+  // picker once a patient is chosen — carry it through the patient-pick step
+  // instead of dropping it, or the pre-filter never actually happens.
+  filter?: "lab" | "imaging";
+}) {
   const supabase = await createClient();
 
   let q = supabase
@@ -229,7 +239,7 @@ async function PatientPicker({ query }: { query: string }) {
               return (
                 <li key={p.id}>
                   <Link
-                    href={`/staff/visits/new?patient_id=${p.id}`}
+                    href={`/staff/visits/new?patient_id=${p.id}${filter ? `&filter=${filter}` : ""}`}
                     className="flex items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-[color:var(--color-brand-bg)]"
                   >
                     <div className="min-w-0 flex-1">

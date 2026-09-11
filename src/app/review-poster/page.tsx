@@ -6,7 +6,7 @@ import { ReviewPoster } from "./poster";
 // Standalone (outside marketing chrome), print-optimized desk poster reception
 // can print for the counter. noindex — internal print aid, not a search page.
 export const metadata: Metadata = {
-  title: "Review poster — drmed.ph",
+  title: "Review poster",
   robots: { index: false, follow: false },
 };
 

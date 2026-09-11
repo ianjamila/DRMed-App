@@ -3,7 +3,7 @@ import { PageHero } from "@/components/marketing/page-hero";
 import { RegisterForm } from "./register-form";
 
 export const metadata: Metadata = {
-  title: "Register — drmed.ph",
+  title: "Register",
   description: "Pre-register at DRMed Clinic and Laboratory and get your DRM-ID.",
 };
 

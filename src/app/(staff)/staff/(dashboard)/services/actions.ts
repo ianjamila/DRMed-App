@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
-import { ServiceSchema } from "@/lib/validations/service";
+import { ServiceSchema, type ServiceInput } from "@/lib/validations/service";
 import { SITE } from "@/lib/marketing/site";
 import { submitToIndexNow } from "@/lib/seo/indexnow";
 import { servicePageUrls } from "@/lib/seo/indexnow-core";
@@ -31,6 +31,18 @@ function parseForm(formData: FormData) {
     requires_signoff: formData.get("requires_signoff"),
     senior_pwd_eligible: formData.get("senior_pwd_eligible"),
   });
+}
+
+/**
+ * M13 — requires_signoff has no working UI yet (the sign-off queue isn't
+ * built; the checkbox is permanently disabled in service-form.tsx) so the
+ * feature must stay dormant on every service. This is the server-side floor:
+ * without it a crafted POST straight to the action (bypassing the disabled
+ * checkbox) could flip requires_signoff on. Always force it false here —
+ * remove this once the sign-off queue ships and the checkbox is re-enabled.
+ */
+function withSignoffFloor(data: ServiceInput): ServiceInput {
+  return { ...data, requires_signoff: false };
 }
 
 /** Parse send-out config fields; returns null when not a send-out service. */
@@ -61,15 +73,46 @@ export async function createServiceAction(
     };
   }
 
+  // Validate send-out config when is_send_out is true — same check as
+  // update. Without this, ticking "Send-out test" on create silently landed
+  // the service on the "Unconfigured send-outs" list: ServiceSchema doesn't
+  // carry cost/vendor, so nothing was ever persisted or rejected.
+  const sendOutResult = parseSendOutConfig(formData, parsed.data.is_send_out);
+  if (sendOutResult && !sendOutResult.ok) {
+    return { ok: false, error: sendOutResult.error };
+  }
+
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("services")
-    .insert(parsed.data)
+    .insert(withSignoffFloor(parsed.data))
     .select("id, code")
     .single();
 
   if (error || !data) {
     return { ok: false, error: error?.message ?? "Could not create service." };
+  }
+
+  // Persist send-out config via admin client, same choke point as update
+  // (services cost/vendor columns are service_role-only).
+  if (sendOutResult?.ok) {
+    const admin = createAdminClient();
+    const { error: soErr } = await admin
+      .from("services")
+      .update({
+        send_out_unit_cost_php: sendOutResult.cost,
+        send_out_vendor_id: sendOutResult.vendorId,
+      })
+      .eq("id", data.id);
+    if (soErr) return { ok: false, error: soErr.message };
+    await audit({
+      actor_id: session.user_id,
+      actor_type: "staff",
+      action: "service.send_out_config_updated",
+      resource_type: "services",
+      resource_id: data.id,
+      metadata: { cost: sendOutResult.cost, vendor_id: sendOutResult.vendorId },
+    });
   }
 
   const h = await headers();
@@ -127,7 +170,7 @@ export async function updateServiceAction(
 
   const { error } = await supabase
     .from("services")
-    .update(parsed.data)
+    .update(withSignoffFloor(parsed.data))
     .eq("id", serviceId);
 
   if (error) return { ok: false, error: error.message };

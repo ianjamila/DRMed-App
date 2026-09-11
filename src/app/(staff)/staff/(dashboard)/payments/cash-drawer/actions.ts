@@ -141,11 +141,31 @@ export async function voidCashAdjustmentAction(
     .is("voided_at", null);
   if (error) return { ok: false, error: translatePgError(error) };
 
-  const { data: rev } = await admin
+  // Look up the reversal JE the void trigger (trg_bridge_cash_adjustment_void)
+  // just posted, so the audit row can carry it — mirroring how
+  // recordCashAdjustmentAction includes the creation JE's id/number above.
+  //
+  // This was previously `.is("reverses", null).eq("source_kind", "reversal")`
+  // with the result fetched and then discarded (`void rev`) — a reversal JE
+  // by definition always HAS `reverses` set (it points at the JE it reverses),
+  // so that filter matched zero rows every time; scoped correctly here
+  // instead of removed, since the intent (surface the reversal in the audit
+  // metadata) is worth keeping.
+  const { data: originalJe } = await admin
     .from("journal_entries")
-    .select("id, entry_number")
-    .is("reverses", null)
-    .eq("source_kind", "reversal");
+    .select("id")
+    .eq("source_kind", "cash_adjustment")
+    .eq("source_id", parsed.data.id)
+    .maybeSingle();
+
+  const { data: rev } = originalJe
+    ? await admin
+        .from("journal_entries")
+        .select("id, entry_number")
+        .eq("source_kind", "reversal")
+        .eq("reverses", originalJe.id)
+        .maybeSingle()
+    : { data: null };
 
   const h = await headers();
   await audit({
@@ -154,11 +174,14 @@ export async function voidCashAdjustmentAction(
     action: "cash_adjustment.voided",
     resource_type: "eod_cash_adjustments",
     resource_id: parsed.data.id,
-    metadata: { void_reason: parsed.data.void_reason },
+    metadata: {
+      void_reason: parsed.data.void_reason,
+      reversal_journal_entry_id: rev?.id ?? null,
+      reversal_journal_entry_number: rev?.entry_number ?? null,
+    },
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),
   });
-  void rev;
 
   revalidatePath("/staff/payments/cash-drawer");
   return { ok: true, data: undefined };

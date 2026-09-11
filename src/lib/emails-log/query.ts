@@ -1,5 +1,6 @@
 import "server-only";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
+import { fetchAllRows } from "@/lib/reports/paging";
 import { parseEmailLogRow } from "./parse-row";
 import {
   EMAIL_ACTIONS,
@@ -11,6 +12,13 @@ import {
 } from "./types";
 
 export const PAGE_SIZE = 50;
+// H8: the true row cap the export is allowed to reach. Previously requested
+// via a single `.range(0, EXPORT_CAP - 1)`, which reads as "give me up to
+// 10,000 rows" but PostgREST hard-caps ONE response at 1000 regardless of the
+// range asked for — so the export silently stopped at 1000 with no signal,
+// and the audit row recorded that short count as if it were the complete
+// set. `fetchAllRows` (src/lib/reports/paging.ts) walks it in 1000-row pages
+// up to this ceiling and reports whether it was actually reached.
 const EXPORT_CAP = 10_000;
 
 const SELECT =
@@ -43,7 +51,7 @@ export interface EmailLogFilters {
   page: number;
 }
 
-type AdminClient = ReturnType<typeof createAdminClient>;
+type RlsClient = Awaited<ReturnType<typeof createClient>>;
 
 // Resolve a DRM-ID filter to a patient_id. Returns:
 //  - { id }            → filter to this patient
@@ -52,13 +60,13 @@ type AdminClient = ReturnType<typeof createAdminClient>;
 const NO_MATCH = "00000000-0000-0000-0000-000000000000";
 
 async function resolvePatientFilter(
-  admin: AdminClient,
+  supabase: RlsClient,
   drmId: string | null,
 ): Promise<{ patientId: string | null; resolvedDrmId: string | null }> {
   if (!drmId || drmId.trim().length === 0) {
     return { patientId: null, resolvedDrmId: null };
   }
-  const { data } = await admin
+  const { data } = await supabase
     .from("patients")
     .select("id, drm_id")
     .eq("drm_id", drmId.trim().toUpperCase())
@@ -97,7 +105,7 @@ function applyFilters(query: any, filters: EmailLogFilters, patientId: string | 
 }
 
 async function resolvePatients(
-  admin: AdminClient,
+  supabase: RlsClient,
   rows: EmailAuditRow[],
 ): Promise<Map<string, PatientLite>> {
   const ids = Array.from(
@@ -105,7 +113,7 @@ async function resolvePatients(
   );
   const map = new Map<string, PatientLite>();
   if (ids.length === 0) return map;
-  const { data } = await admin
+  const { data } = await supabase
     .from("patients")
     .select("id, drm_id, first_name, middle_name, last_name, email")
     .in("id", ids);
@@ -126,12 +134,15 @@ export interface EmailLogResult {
 }
 
 export async function fetchEmailLog(filters: EmailLogFilters): Promise<EmailLogResult> {
-  const admin = createAdminClient();
-  const { patientId, resolvedDrmId } = await resolvePatientFilter(admin, filters.drmId);
+  // M16: RLS-scoped client, not service-role — `audit_log: admin select` and
+  // `patients: staff full` both let an admin staff JWT read what this page
+  // needs; every caller is already behind requireAdminStaff().
+  const supabase = await createClient();
+  const { patientId, resolvedDrmId } = await resolvePatientFilter(supabase, filters.drmId);
   const drmNoMatch = patientId === NO_MATCH;
 
   const offset = (filters.page - 1) * PAGE_SIZE;
-  const base = admin
+  const base = supabase
     .from("audit_log")
     .select(SELECT, { count: "exact" })
     .order("created_at", { ascending: false })
@@ -146,7 +157,7 @@ export async function fetchEmailLog(filters: EmailLogFilters): Promise<EmailLogR
   );
   const [main, fails] = await Promise.all([
     applyFilters(base, filters, patientId),
-    admin
+    supabase
       .from("audit_log")
       .select("id", { count: "exact", head: true })
       .in("action", [...EMAIL_ACTIONS])
@@ -155,7 +166,7 @@ export async function fetchEmailLog(filters: EmailLogFilters): Promise<EmailLogR
   ]);
 
   const rows = (main.data ?? []) as unknown as EmailAuditRow[];
-  const patients = await resolvePatients(admin, rows);
+  const patients = await resolvePatients(supabase, rows);
   const entries = rows.map((r) =>
     parseEmailLogRow(r, r.patient_id ? patients.get(r.patient_id) ?? null : null),
   );
@@ -170,23 +181,45 @@ export async function fetchEmailLog(filters: EmailLogFilters): Promise<EmailLogR
   };
 }
 
-// Full filtered set for CSV export (capped). No pagination.
+export interface EmailLogExportResult {
+  entries: EmailLogEntry[];
+  // H8: true when the filtered set exceeds EXPORT_CAP — the export stopped
+  // there, and the caller must say so rather than letting the file (or its
+  // audit row) read as complete.
+  truncated: boolean;
+}
+
+// Full filtered set for CSV export (capped). No UI pagination — but the set
+// itself is walked in PostgREST-sized pages under the hood (H8).
 export async function fetchEmailLogForExport(
   filters: Omit<EmailLogFilters, "page">,
-): Promise<EmailLogEntry[]> {
-  const admin = createAdminClient();
-  const { patientId } = await resolvePatientFilter(admin, filters.drmId);
+): Promise<EmailLogExportResult> {
+  // M16: RLS-scoped client — see fetchEmailLog.
+  const supabase = await createClient();
+  const { patientId } = await resolvePatientFilter(supabase, filters.drmId);
 
-  const base = admin
-    .from("audit_log")
-    .select(SELECT)
-    .order("created_at", { ascending: false })
-    .range(0, EXPORT_CAP - 1);
+  // H8: PostgREST hard-caps ONE response at 1000 rows no matter what range is
+  // requested, so a single `.range(0, EXPORT_CAP - 1)` silently returned at
+  // most 1000 rows. `fetchAllRows` walks it in PostgREST's 1000-row pages
+  // (its own PAGE_SIZE, distinct from this file's 50-row UI PAGE_SIZE) up to
+  // EXPORT_CAP — `created_at` ties (bulk sends can share a millisecond) are
+  // broken by `id` so the paged order stays total and no row is skipped or
+  // repeated.
+  const { rows, truncated } = await fetchAllRows<EmailAuditRow>(
+    (from, to) => {
+      const base = supabase
+        .from("audit_log")
+        .select(SELECT)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false });
+      return applyFilters(base, { ...filters, page: 1 }, patientId).range(from, to);
+    },
+    EXPORT_CAP,
+  );
 
-  const { data } = await applyFilters(base, { ...filters, page: 1 }, patientId);
-  const rows = (data ?? []) as unknown as EmailAuditRow[];
-  const patients = await resolvePatients(admin, rows);
-  return rows.map((r) =>
+  const patients = await resolvePatients(supabase, rows);
+  const entries = rows.map((r) =>
     parseEmailLogRow(r, r.patient_id ? patients.get(r.patient_id) ?? null : null),
   );
+  return { entries, truncated };
 }

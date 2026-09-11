@@ -6,7 +6,7 @@ import { RegisterPoster } from "./poster";
 // can print and put on the desk. noindex — it's an internal print aid, not a
 // page we want surfaced in search.
 export const metadata: Metadata = {
-  title: "Registration poster — drmed.ph",
+  title: "Registration poster",
   robots: { index: false, follow: false },
 };
 

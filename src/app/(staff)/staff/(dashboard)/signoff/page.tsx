@@ -13,18 +13,16 @@ export default async function SignoffPage() {
         Sign-off
       </h1>
       <p className="mt-2 text-sm text-[color:var(--color-brand-text-mid)]">
-        Pathologist sign-off lands here. It only fires when a service has{" "}
-        <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">
-          requires_signoff = true
-        </code>
-        . Defaults are off; flip it on a service in{" "}
+        Pathologist sign-off lands here once it&apos;s built. The option to
+        require it on a service is locked off for now on the{" "}
         <Link
           href="/staff/services"
           className="text-[color:var(--color-brand-cyan)] hover:underline"
         >
-          /staff/services
+          service edit page
         </Link>{" "}
-        to enable.
+        — turning it on before this screen exists would strand results
+        waiting for a sign-off that never happens.
       </p>
       <p className="mt-4 text-sm text-[color:var(--color-brand-text-soft)]">
         UI to come — wiring this up is queued for a later phase.

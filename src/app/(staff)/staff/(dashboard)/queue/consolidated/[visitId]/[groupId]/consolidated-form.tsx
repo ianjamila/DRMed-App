@@ -26,7 +26,7 @@ export function ConsolidatedForm(props: Props) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [deferredReason, setDeferredReason] = useState<
-    "payment" | "consent" | null
+    "payment" | "consent" | "signoff" | null
   >(null);
 
   // Derived server-side from report_group_service_params — identity-based, so
@@ -169,7 +169,9 @@ export function ConsolidatedForm(props: Props) {
               Report finalised — release deferred:{" "}
               {deferredReason === "payment"
                 ? "visit not yet paid (HMO visits are exempt); results release automatically once payment is recorded"
-                : "patient consent not on file"}
+                : deferredReason === "consent"
+                  ? "patient consent not on file"
+                  : "one or more of these tests requires pathologist sign-off before it can be released"}
             </p>
             <button
               type="button"

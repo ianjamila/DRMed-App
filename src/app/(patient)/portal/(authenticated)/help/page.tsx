@@ -3,7 +3,7 @@ import { CONTACT } from "@/lib/marketing/site";
 import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
-  title: "Help — drmed.ph",
+  title: "Help",
 };
 
 export default function PatientHelpPage() {

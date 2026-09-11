@@ -19,7 +19,7 @@ export default async function EditHmoProviderPage({ params }: Props) {
   const { data: p } = await admin
     .from("hmo_providers")
     .select(
-      "id, name, is_active, due_days_for_invoice, contract_start_date, contract_end_date, contact_person_name, contact_person_address, contact_person_phone, contact_person_email, notes",
+      "id, name, is_active, due_days_for_invoice, unbilled_threshold_days, contract_start_date, contract_end_date, contact_person_name, contact_person_address, contact_person_phone, contact_person_email, notes",
     )
     .eq("id", id)
     .maybeSingle();

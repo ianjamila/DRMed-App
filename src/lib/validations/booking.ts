@@ -73,10 +73,14 @@ const PatientFields = {
     .union([z.literal(""), z.enum(["male", "female"])])
     .transform((v) => (v === "" ? null : v))
     .nullable(),
+  // M3: don't promise an SMS that (as of 2026-09) never actually sends —
+  // prod's Semaphore keys are placeholders, so every booking notification
+  // records sms.skipped. Phone stays required (reception may need to call
+  // about the booking); the message just has to stop claiming a text follows.
   phone: z
     .string()
     .trim()
-    .min(7, "Phone is required for SMS confirmation.")
+    .min(7, "We need your phone number in case reception needs to reach you about this booking.")
     .max(40),
   email: z
     .string()

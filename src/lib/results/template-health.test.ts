@@ -170,6 +170,44 @@ describe("deriveTemplateHealthFindings", () => {
     expect(out).toEqual([]);
   });
 
+  it("flags a stray per-service template on a service that belongs to the group (M17)", () => {
+    const g = group({});
+    const out = deriveTemplateHealthFindings({
+      groups: [g],
+      links: [{ service_id: "svc-1", parameter_id: "param-1" }],
+      serviceTemplates: [{ service_id: "svc-1", template_id: "stray-tpl", is_active: true }],
+    });
+    const finding = out.find((f) => f.type === "stray_service_template");
+    expect(finding).toMatchObject({
+      severity: "warning",
+      group_id: "grp-1",
+      service_id: "svc-1",
+      service_code: "FBS_RBS",
+      template_id: "stray-tpl",
+    });
+  });
+
+  it("stray per-service template still flags even when the group has no template of its own", () => {
+    const g = group({ template: null, params: [] });
+    const out = deriveTemplateHealthFindings({
+      groups: [g],
+      links: [],
+      serviceTemplates: [{ service_id: "svc-1", template_id: "stray-tpl", is_active: false }],
+    });
+    expect(out).toEqual([
+      expect.objectContaining({ type: "stray_service_template", service_id: "svc-1" }),
+    ]);
+  });
+
+  it("no serviceTemplates input means no stray-template findings at all", () => {
+    const g = group({});
+    const out = deriveTemplateHealthFindings({
+      groups: [g],
+      links: [{ service_id: "svc-1", parameter_id: "param-1" }],
+    });
+    expect(out.some((f) => f.type === "stray_service_template")).toBe(false);
+  });
+
   it("multiple groups are evaluated independently", () => {
     const healthy = group({});
     const broken = group({

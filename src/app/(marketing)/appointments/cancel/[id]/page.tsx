@@ -3,11 +3,12 @@ import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { CONTACT } from "@/lib/marketing/site";
 import { appointmentStatusLabel } from "@/lib/appointments/labels";
+import { formatManilaDateTime } from "@/lib/notifications/format-manila-datetime";
 import { CancelButton } from "./cancel-button";
 import { TrackedTelLink } from "@/components/marketing/tracked-tel-link";
 
 export const metadata = {
-  title: "Cancel appointment — drmed.ph",
+  title: "Cancel appointment",
   // Anyone holding the URL can render this page; keep it out of search.
   robots: { index: false, follow: false },
 };
@@ -16,7 +17,11 @@ interface Props {
   params: Promise<{ id: string }>;
 }
 
-const CANCELLABLE = new Set(["confirmed"]);
+// H3 + owner decision: patients can cancel online while a booking is either
+// confirmed OR still awaiting reception's callback. Must stay the mirror image
+// of the terminal-state block in cancel/[id]/actions.ts (cancelAppointmentAction)
+// — that action already allows both; this set is what gates the button.
+const CANCELLABLE = new Set(["confirmed", "pending_callback"]);
 
 // The URL token is the appointment UUID (from the confirmation email/SMS).
 // We render only non-PII fields here — service, time, status — so a leaked
@@ -43,10 +48,7 @@ export default async function CancelAppointmentPage({ params }: Props) {
   const svc = Array.isArray(appt.services) ? appt.services[0] : appt.services;
 
   const when = appt.scheduled_at
-    ? new Date(appt.scheduled_at).toLocaleString("en-PH", {
-        dateStyle: "long",
-        timeStyle: "short",
-      })
+    ? formatManilaDateTime(appt.scheduled_at)
     : "to be confirmed by reception";
 
   const cancellable = CANCELLABLE.has(appt.status);
@@ -87,7 +89,7 @@ export default async function CancelAppointmentPage({ params }: Props) {
             This appointment is already cancelled. If you want to book again,
             head to{" "}
             <Link
-              href="/schedule#book"
+              href="/schedule"
               className="font-bold text-[color:var(--color-brand-cyan)] hover:underline"
             >
               /schedule
@@ -114,7 +116,7 @@ export default async function CancelAppointmentPage({ params }: Props) {
         <p className="mt-4 text-xs text-[color:var(--color-brand-text-soft)]">
           Cancellation is final. To reschedule, cancel here and re-book at{" "}
           <Link
-            href="/schedule#book"
+            href="/schedule"
             className="text-[color:var(--color-brand-cyan)] hover:underline"
           >
             /schedule

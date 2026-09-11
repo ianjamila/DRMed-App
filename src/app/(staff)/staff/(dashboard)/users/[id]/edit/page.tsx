@@ -73,6 +73,7 @@ export default async function EditStaffUserPage({ params }: Props) {
             prc_license_kind: prcKind,
             prc_license_no: profile.prc_license_no,
           }}
+          isSelf={isSelf}
         />
       </Panel>
 

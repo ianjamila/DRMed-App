@@ -1917,6 +1917,7 @@ export type Database = {
           amount_php: number
           business_date: string
           contra_account_id: string | null
+          gift_code_id: string | null
           id: string
           kind: string
           notes: string | null
@@ -1933,6 +1934,7 @@ export type Database = {
           amount_php: number
           business_date: string
           contra_account_id?: string | null
+          gift_code_id?: string | null
           id?: string
           kind: string
           notes?: string | null
@@ -1949,6 +1951,7 @@ export type Database = {
           amount_php?: number
           business_date?: string
           contra_account_id?: string | null
+          gift_code_id?: string | null
           id?: string
           kind?: string
           notes?: string | null
@@ -1967,6 +1970,13 @@ export type Database = {
             columns: ["contra_account_id"]
             isOneToOne: false
             referencedRelation: "chart_of_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "eod_cash_adjustments_gift_code_id_fkey"
+            columns: ["gift_code_id"]
+            isOneToOne: false
+            referencedRelation: "gift_codes"
             referencedColumns: ["id"]
           },
           {

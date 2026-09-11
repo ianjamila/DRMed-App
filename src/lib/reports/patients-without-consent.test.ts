@@ -36,6 +36,49 @@ describe("patientsWithoutConsentCsvRows", () => {
   });
 });
 
+describe("M15: display-limit trims only after sorting by last visit", () => {
+  // Regression guard for the real bug: a patient who registered long ago but
+  // visited recently must survive a display trim over one who registered
+  // recently but never returned — the trim has to happen on the SORTED list,
+  // never before it.
+  const oldPatientRecentVisit: PatientWithoutConsentRow = {
+    id: "old",
+    drm_id: "DRM-OLD",
+    first_name: "Old",
+    last_name: "Timer",
+    phone: null,
+    email: null,
+    pre_registered: false,
+  };
+  const newPatientNoVisit: PatientWithoutConsentRow = {
+    id: "new",
+    drm_id: "DRM-NEW",
+    first_name: "New",
+    last_name: "Comer",
+    phone: null,
+    email: null,
+    pre_registered: false,
+  };
+  // Registration order (what a naive created_at-desc truncation would use)
+  // deliberately disagrees with visit recency: newPatientNoVisit is "first"
+  // by registration, oldPatientRecentVisit is first by actual activity.
+  const registrationOrder = [newPatientNoVisit, oldPatientRecentVisit];
+  const recentVisit = new Map([["old", "2026-09-10"]]);
+
+  it("orderByLastVisit alone already puts the recently-active patient first", () => {
+    expect(orderByLastVisit(registrationOrder, recentVisit).map((r) => r.id)).toEqual([
+      "old",
+      "new",
+    ]);
+  });
+
+  it("a trim to 1 keeps the recently-active patient, not the recently-registered one", () => {
+    const sorted = orderByLastVisit(registrationOrder, recentVisit);
+    const trimmed = sorted.slice(0, 1);
+    expect(trimmed.map((r) => r.id)).toEqual(["old"]);
+  });
+});
+
 describe("href / filename", () => {
   it("has no filters and stamps the day", () => {
     expect(patientsWithoutConsentCsvHref()).toBe("/api/admin/reports/patients-without-consent.csv");

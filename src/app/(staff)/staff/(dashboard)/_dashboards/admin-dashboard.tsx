@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { loadHiddenCardIds } from "@/lib/dashboards/card-prefs";
 import { loadCandidatePairs } from "@/lib/patients/find-duplicates";
+import { fetchAllRows, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 import { DashboardHeader } from "./_components/dashboard-header";
 import { SectionHeading } from "./_components/section-heading";
 import { StatCard } from "./_components/stat-card";
@@ -26,13 +27,21 @@ const QUICK_LINKS = [
 
 const SKIP_COUNT = Promise.resolve({ count: 0, data: null });
 const SKIP_DATA = Promise.resolve({ data: null });
+// H1/M9: the paged equivalent of SKIP_DATA, for cards walked with
+// `fetchAllRows` instead of a bare `.select()`.
+const SKIP_ROWS = Promise.resolve({ rows: [], truncated: false });
 
-type BillRow = { outstanding_amount: number | null; due_date: string; status: string };
-type PatientArRow = { total_php: number | null; paid_php: number | null };
-type UnbilledRow = { released_at: string; days_since_release: number; billed_amount_php: number | null };
-type AdvanceRow = { outstanding_balance_php: number | null };
-type PfRow = { pf_php: number };
-type PfToPayRow = { pf_php: number; physician_id: string };
+type BillRow = { id: string; outstanding_amount: number | null; due_date: string; status: string };
+type PatientArRow = { id: string; total_php: number | null; paid_php: number | null };
+type UnbilledRow = {
+  test_request_id: string;
+  released_at: string;
+  days_since_release: number;
+  billed_amount_php: number | null;
+};
+type AdvanceRow = { id: string; outstanding_balance_php: number | null };
+type PfRow = { id: string; pf_php: number };
+type PfToPayRow = { id: string; pf_php: number; physician_id: string };
 type AuditRow = {
   id: string;
   action: string;
@@ -116,54 +125,102 @@ async function loadAdminStats(show: (id: string) => boolean) {
           .select("id", { count: "exact", head: true })
           .eq("status", "draft")
       : SKIP_COUNT,
+    // H1/M9: these five cards used a bare `.select()` with no `.range()`,
+    // silently capped by PostgREST at 1000 rows — the "HMO unbilled aged
+    // 90+" card read ₱954,157 on prod against a true ₱2,110,365.40 across
+    // 2,031 rows (H1). Bills / patient AR / advances / PF read 0/0/0/13 rows
+    // today, so they aren't wrong yet, but the identical pattern would break
+    // silently as each grows (M9) — walked with `fetchAllRows` (the same
+    // pager the HMO claims page already uses for this exact view) up to the
+    // 20,000-row export ceiling. No existing SQL aggregate returns "unbilled
+    // aged 90+ days" specifically (`v_hmo_provider_summary.total_unbilled_php`
+    // is unbilled at ANY age, per provider) — see the report for why a SQL
+    // function would still be the better long-term fix.
     show("admin.ap_outstanding") || show("admin.ap_overdue")
-      ? admin
-          .from("bills")
-          .select("outstanding_amount, due_date, status")
-          .gt("outstanding_amount", 0)
-          .neq("status", "voided")
-          .returns<BillRow[]>()
-      : SKIP_DATA,
+      ? fetchAllRows<BillRow>(
+          (from, to) =>
+            admin
+              .from("bills")
+              .select("id, outstanding_amount, due_date, status")
+              .gt("outstanding_amount", 0)
+              .neq("status", "voided")
+              .order("id", { ascending: true })
+              .range(from, to)
+              .returns<BillRow[]>(),
+          REPORT_EXPORT_MAX_ROWS,
+        )
+      : SKIP_ROWS,
     show("admin.patient_ar")
-      ? admin
-          .from("visits")
-          .select("total_php, paid_php")
-          .in("payment_status", ["unpaid", "partial"])
-          .is("hmo_provider_id", null)
-          .is("deleted_at", null)
-          .returns<PatientArRow[]>()
-      : SKIP_DATA,
+      ? fetchAllRows<PatientArRow>(
+          (from, to) =>
+            admin
+              .from("visits")
+              .select("id, total_php, paid_php")
+              .in("payment_status", ["unpaid", "partial"])
+              .is("hmo_provider_id", null)
+              .is("deleted_at", null)
+              .order("id", { ascending: true })
+              .range(from, to)
+              .returns<PatientArRow[]>(),
+          REPORT_EXPORT_MAX_ROWS,
+        )
+      : SKIP_ROWS,
     show("admin.hmo_unbilled_aged")
-      ? admin
-          .from("v_hmo_unbilled")
-          .select("released_at, days_since_release, billed_amount_php")
-          .returns<UnbilledRow[]>()
-      : SKIP_DATA,
+      ? fetchAllRows<UnbilledRow>(
+          (from, to) =>
+            admin
+              .from("v_hmo_unbilled")
+              .select("test_request_id, released_at, days_since_release, billed_amount_php")
+              .order("days_since_release", { ascending: false })
+              .order("test_request_id", { ascending: true })
+              .range(from, to)
+              .returns<UnbilledRow[]>(),
+          REPORT_EXPORT_MAX_ROWS,
+        )
+      : SKIP_ROWS,
     show("admin.advances_outstanding")
-      ? admin
-          .from("staff_advances")
-          .select("outstanding_balance_php")
-          .eq("status", "outstanding")
-          .returns<AdvanceRow[]>()
-      : SKIP_DATA,
+      ? fetchAllRows<AdvanceRow>(
+          (from, to) =>
+            admin
+              .from("staff_advances")
+              .select("id, outstanding_balance_php")
+              .eq("status", "outstanding")
+              .order("id", { ascending: true })
+              .range(from, to)
+              .returns<AdvanceRow[]>(),
+          REPORT_EXPORT_MAX_ROWS,
+        )
+      : SKIP_ROWS,
     show("admin.pf_pending")
-      ? admin
-          .from("doctor_pf_entries")
-          .select("pf_php")
-          .eq("recognition_basis", "hmo_at_settlement")
-          .is("recognized_at", null)
-          .is("voided_at", null)
-          .returns<PfRow[]>()
-      : SKIP_DATA,
+      ? fetchAllRows<PfRow>(
+          (from, to) =>
+            admin
+              .from("doctor_pf_entries")
+              .select("id, pf_php")
+              .eq("recognition_basis", "hmo_at_settlement")
+              .is("recognized_at", null)
+              .is("voided_at", null)
+              .order("id", { ascending: true })
+              .range(from, to)
+              .returns<PfRow[]>(),
+          REPORT_EXPORT_MAX_ROWS,
+        )
+      : SKIP_ROWS,
     show("admin.pf_to_pay")
-      ? admin
-          .from("doctor_pf_entries")
-          .select("pf_php, physician_id")
-          .is("disbursement_id", null)
-          .not("recognized_at", "is", null)
-          .is("voided_at", null)
-          .returns<PfToPayRow[]>()
-      : SKIP_DATA,
+      ? fetchAllRows<PfToPayRow>(
+          (from, to) =>
+            admin
+              .from("doctor_pf_entries")
+              .select("id, pf_php, physician_id")
+              .is("disbursement_id", null)
+              .not("recognized_at", "is", null)
+              .is("voided_at", null)
+              .order("id", { ascending: true })
+              .range(from, to)
+              .returns<PfToPayRow[]>(),
+          REPORT_EXPORT_MAX_ROWS,
+        )
+      : SKIP_ROWS,
     show("admin.active_employees")
       ? admin
           .from("employees")
@@ -222,34 +279,40 @@ async function loadAdminStats(show: (id: string) => boolean) {
     0,
   );
 
-  const billRows = (bills.data ?? []) as BillRow[];
+  const billRows = bills.rows;
   const apOutstanding = billRows.reduce(
     (s, b) => s + Number(b.outstanding_amount ?? 0),
     0,
   );
   const apOverdue = billRows.filter((b) => b.due_date < today).length;
 
-  const patientArRows = (patientAr.data ?? []) as PatientArRow[];
+  const patientArRows = patientAr.rows;
   const patientArTotal = patientArRows.reduce(
     (s, v) => s + (Number(v.total_php ?? 0) - Number(v.paid_php ?? 0)),
     0,
   );
   const patientArCount = patientArRows.length;
 
-  const unbilledRows = (unbilled.data ?? []) as UnbilledRow[];
-  const unbilledAgedTotal = unbilledRows
-    .filter((u) => Number(u.days_since_release ?? 0) >= 90)
-    .reduce((s, u) => s + Number(u.billed_amount_php ?? 0), 0);
-  const unbilledAgedCount = unbilledRows.filter(
+  // H1: real total over every matching row (chunk-paged past the 1000-row
+  // PostgREST cap), not the first page — this is the fix for the
+  // ₱954,157-vs-₱2,110,365.40 discrepancy confirmed live on prod.
+  const unbilledRows = unbilled.rows;
+  const unbilledAgedRows = unbilledRows.filter(
     (u) => Number(u.days_since_release ?? 0) >= 90,
-  ).length;
+  );
+  const unbilledAgedTotal = unbilledAgedRows.reduce(
+    (s, u) => s + Number(u.billed_amount_php ?? 0),
+    0,
+  );
+  const unbilledAgedCount = unbilledAgedRows.length;
+  const unbilledAgedTruncated = unbilled.truncated;
 
-  const advancesTotal = ((advances.data ?? []) as AdvanceRow[]).reduce(
+  const advancesTotal = advances.rows.reduce(
     (s, a) => s + Number(a.outstanding_balance_php ?? 0),
     0,
   );
 
-  const pfPendingTotal = ((pfPending.data ?? []) as PfRow[]).reduce(
+  const pfPendingTotal = pfPending.rows.reduce(
     (s, p) => s + Number(p.pf_php ?? 0),
     0,
   );
@@ -257,7 +320,7 @@ async function loadAdminStats(show: (id: string) => boolean) {
   // "Ready to pay" PF, grouped per doctor: total owed + how many doctors have
   // a positive balance (matches the Pay doctors page's Ready-to-pay tab).
   const toPayByDoctor = new Map<string, number>();
-  for (const r of (doctorsToPay.data ?? []) as PfToPayRow[]) {
+  for (const r of doctorsToPay.rows) {
     toPayByDoctor.set(
       r.physician_id,
       (toPayByDoctor.get(r.physician_id) ?? 0) + Number(r.pf_php ?? 0),
@@ -298,6 +361,7 @@ async function loadAdminStats(show: (id: string) => boolean) {
     patientArCount,
     unbilledAgedTotal,
     unbilledAgedCount,
+    unbilledAgedTruncated,
     advancesTotal,
     pfPendingTotal,
     doctorsToPayTotal,
@@ -434,7 +498,11 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
           <StatCard
             label="HMO unbilled aged 90+"
             value={formatPeso(stats.unbilledAgedTotal)}
-            hint={`${stats.unbilledAgedCount} test${stats.unbilledAgedCount === 1 ? "" : "s"} ≥ 90d unbilled`}
+            hint={
+              stats.unbilledAgedTruncated
+                ? `${stats.unbilledAgedCount}+ tests ≥ 90d unbilled — capped at ${REPORT_EXPORT_MAX_ROWS.toLocaleString()} rows, true total is higher`
+                : `${stats.unbilledAgedCount} test${stats.unbilledAgedCount === 1 ? "" : "s"} ≥ 90d unbilled`
+            }
             href="/staff/admin/accounting/hmo-claims"
             accent={stats.unbilledAgedCount > 0 ? "warn" : "default"}
           />

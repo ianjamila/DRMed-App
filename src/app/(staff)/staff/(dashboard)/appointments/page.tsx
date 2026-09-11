@@ -157,22 +157,30 @@ async function loadScheduledRange(
   return (data ?? []).map(rowFrom);
 }
 
-async function loadWalkInsCreatedToday(
-  fromIso: string,
-  toIso: string,
-): Promise<ApptRow[]> {
-  // Confirmed appointments without a specific scheduled_at — the lab
-  // walk-in path. Show them in today's queue when reception created them
-  // (or a public booking landed) within the day.
+async function loadOpenWalkIns(): Promise<ApptRow[]> {
+  // Confirmed OR arrived appointments with no specific scheduled_at — the
+  // diagnostic-package / untimed-lab-request walk-in path (every public
+  // lab-request booking has scheduled_at = null). Loaded by OPEN STATUS,
+  // not "created today" (N12): a walk-in booked yesterday afternoon is
+  // still waiting this morning and must not vanish from the page. "arrived"
+  // is included (A9): marking a walk-in arrived used to drop it out of
+  // every section on this page — no section selected on scheduled_at AND
+  // status = confirmed once status flips to arrived — which stranded "+
+  // Start visit" (only rendered for arrived rows) and left the appointment
+  // stuck at arrived forever.
+  //
+  // Bounded like loadPendingCallback below (same shape of list: scoped by
+  // status, not by a date range) rather than an unbounded select — newest
+  // first so the count is honest about what's shown if the list is ever
+  // capped.
   const supabase = await createClient();
   const { data } = await supabase
     .from("appointments")
     .select(APPT_SELECT)
     .is("scheduled_at", null)
-    .eq("status", "confirmed")
-    .gte("created_at", fromIso)
-    .lt("created_at", toIso)
-    .order("created_at", { ascending: true });
+    .in("status", ["confirmed", "arrived"])
+    .order("created_at", { ascending: false })
+    .limit(100);
   return (data ?? []).map(rowFrom);
 }
 
@@ -238,9 +246,9 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
     new Date(`${manilaToday}T00:00:00+08:00`).getTime() + 31 * 24 * 60 * 60 * 1000,
   ).toISOString();
 
-  const [todayScheduled, todayWalkIns, upcoming, pending] = await Promise.all([
+  const [todayScheduled, openWalkIns, upcoming, pending] = await Promise.all([
     loadScheduledRange(startOfTodayUtc, startOfTomorrowUtc),
-    loadWalkInsCreatedToday(startOfTodayUtc, startOfTomorrowUtc),
+    loadOpenWalkIns(),
     loadScheduledRange(startOfTomorrowUtc, endOfRangeUtc),
     loadPendingCallback(),
   ]);
@@ -258,16 +266,15 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
   const selfBookUrl = `${proto}://${host}/schedule?src=staff_qr`;
   const registerUrl = `${proto}://${host}/register?src=staff_qr`;
 
-  const todayRows = [...todayScheduled, ...todayWalkIns];
-
   // Build full (unfiltered) groups for each section — used for tab counts.
   const allPendingGroups = groupRows(pending);
-  const allTodayGroups = groupRows(todayRows);
+  const allWalkInGroups = groupRows(openWalkIns);
+  const allTodayGroups = groupRows(todayScheduled);
   const allUpcomingGroups = groupRows(upcoming);
 
   const groupIds = Array.from(
     new Set(
-      [...allPendingGroups, ...allTodayGroups, ...allUpcomingGroups]
+      [...allPendingGroups, ...allWalkInGroups, ...allTodayGroups, ...allUpcomingGroups]
         .map((g) => g.lead.booking_group_id)
         .filter((id): id is string => !!id),
     ),
@@ -285,10 +292,11 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
     }
   }
 
-  // Counts shown in tab labels — union of all three sections.
+  // Counts shown in tab labels — union of all four sections.
   function countForTab(t: FilterType): number {
     return (
       applyFilter(allPendingGroups, t).length +
+      applyFilter(allWalkInGroups, t).length +
       applyFilter(allTodayGroups, t).length +
       applyFilter(allUpcomingGroups, t).length
     );
@@ -296,6 +304,7 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
 
   // Filtered groups for the active tab.
   const pendingGroups = applyFilter(allPendingGroups, type);
+  const walkInGroups = applyFilter(allWalkInGroups, type);
   const todayGroups = applyFilter(allTodayGroups, type);
   const upcomingGroups = applyFilter(allUpcomingGroups, type);
 
@@ -339,6 +348,13 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
         title={`Pending callback (${pendingGroups.length})`}
         groups={pendingGroups}
         empty="No pending callbacks. Nice."
+        isAdmin={session.role === "admin"}
+        attachmentsByGroup={attachmentsByGroup}
+      />
+      <Section
+        title={`Walk-ins waiting (${walkInGroups.length})`}
+        groups={walkInGroups}
+        empty="No walk-ins waiting — diagnostic packages and untimed lab requests land here until reception acts on them."
         isAdmin={session.role === "admin"}
         attachmentsByGroup={attachmentsByGroup}
       />
@@ -446,6 +462,7 @@ function GroupRow({
       <td className="px-4 py-3 whitespace-nowrap text-[color:var(--color-brand-text-mid)]">
         {r.scheduled_at ? (
           new Date(r.scheduled_at).toLocaleString("en-PH", {
+            timeZone: "Asia/Manila",
             dateStyle: "medium",
             timeStyle: "short",
           })
@@ -531,6 +548,8 @@ function GroupRow({
         <TransitionButtons
           appointmentIds={ids}
           patientId={r.patient_id}
+          walkInName={r.walk_in_name}
+          walkInPhone={r.walk_in_phone}
           status={r.status}
           isAdmin={isAdmin}
           groupSize={group.rows.length}

@@ -7,12 +7,17 @@ import { clearVisitPinFlashAction } from "./clear-pin-action";
 
 interface Props {
   hasFlash: boolean;
+  // A8: audits `receipt.printed` — bound by the caller to the visit or
+  // group id (`logReceiptPrintAction.bind(null, visit.id)` /
+  // `logGroupReceiptPrintAction.bind(null, groupId)`), since a shared
+  // button can't know which resource it's printing.
+  onPrint: () => Promise<void>;
 }
 
-// Print, then clear the flash cookie (so a later reload shows "Already
-// viewed"). If there's no flash to clear (e.g. revisiting an old receipt),
-// just print.
-export function PrintButton({ hasFlash }: Props) {
+// Print, log the disclosure, then clear the flash cookie (so a later reload
+// shows "Already viewed"). Both the audit write and the flash-clear run in
+// the same transition so the button's pending state covers both.
+export function PrintButton({ hasFlash, onPrint }: Props) {
   const router = useRouter();
   const [pending, start] = useTransition();
 
@@ -23,12 +28,13 @@ export function PrintButton({ hasFlash }: Props) {
       className="bg-[color:var(--color-brand-navy)] text-white hover:bg-[color:var(--color-brand-cyan)]"
       onClick={() => {
         window.print();
-        if (hasFlash) {
-          start(async () => {
+        start(async () => {
+          await onPrint();
+          if (hasFlash) {
             await clearVisitPinFlashAction();
-            router.refresh();
-          });
-        }
+          }
+          router.refresh();
+        });
       }}
     >
       {pending ? "Finishing…" : "Print & mark as printed"}

@@ -34,6 +34,12 @@ interface StaffDefaults {
 
 interface Props {
   initial?: StaffDefaults;
+  // H7: true when this form is an admin editing their OWN account. The role
+  // select and Active checkbox stay visible but non-changeable so an admin
+  // can't lock themselves out — the server action enforces the same rule
+  // (see admin-lockout.ts), this just keeps the form from offering a change
+  // it will reject anyway.
+  isSelf?: boolean;
 }
 
 const ROLE_OPTIONS: { value: StaffDefaults["role"]; label: string }[] = [
@@ -44,7 +50,7 @@ const ROLE_OPTIONS: { value: StaffDefaults["role"]; label: string }[] = [
   { value: "admin", label: "Admin" },
 ];
 
-export function StaffForm({ initial }: Props) {
+export function StaffForm({ initial, isSelf = false }: Props) {
   const router = useRouter();
   const isEdit = Boolean(initial?.id);
 
@@ -98,11 +104,20 @@ export function StaffForm({ initial }: Props) {
           className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
         >
           {ROLE_OPTIONS.map((r) => (
-            <option key={r.value} value={r.value}>
+            <option
+              key={r.value}
+              value={r.value}
+              disabled={isSelf && r.value !== "admin"}
+            >
               {r.label}
             </option>
           ))}
         </StableSelect>
+        {isSelf ? (
+          <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+            You can&apos;t change your own role. Ask another admin.
+          </p>
+        ) : null}
       </div>
 
       {!isEdit ? (
@@ -124,14 +139,30 @@ export function StaffForm({ initial }: Props) {
         </div>
       ) : (
         <>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              name="is_active"
-              defaultChecked={initial?.is_active ?? true}
-            />
-            <span>Active (can sign into the staff portal)</span>
-          </label>
+          {isSelf ? (
+            <>
+              {/* Disabled checkboxes don't submit — the hidden input keeps
+                  is_active=true in the payload while the visible control
+                  can't be unticked. */}
+              <input type="hidden" name="is_active" value="true" />
+              <label className="flex items-center gap-2 text-sm text-[color:var(--color-brand-text-soft)]">
+                <input type="checkbox" checked disabled readOnly />
+                <span>
+                  Active — you can&apos;t deactivate your own account. Ask
+                  another admin.
+                </span>
+              </label>
+            </>
+          ) : (
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                name="is_active"
+                defaultChecked={initial?.is_active ?? true}
+              />
+              <span>Active (can sign into the staff portal)</span>
+            </label>
+          )}
 
           <fieldset className="grid gap-3 rounded-lg border border-[color:var(--color-brand-bg-mid)] p-4">
             <legend className="px-1 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">

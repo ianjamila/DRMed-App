@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { audit } from "@/lib/audit/log";
 import { translatePgError } from "@/lib/accounting/pg-errors";
+import { voidPfDisbursementAndUnlink } from "@/lib/accounting/pf-disbursement-void";
 import { PfBulkPayoutSchema } from "@/lib/validations/accounting";
 
 type ActionResult<T = unknown> =
@@ -23,6 +24,30 @@ export async function createBulkPfPayoutCash(
   const admin = createAdminClient();
 
   const created: string[] = [];
+  const total = data.by_physician.length;
+
+  // Rolls back every disbursement created so far in this batch via the SAME
+  // path a manual void uses (JE reversal + soft-void + doctor_pf_entries
+  // unlink + audit row — see M12), so a failed batch never strands PF entries
+  // pointing at a voided-but-still-linked disbursement.
+  async function rollbackCreated(reason: string): Promise<void> {
+    for (const id of created) {
+      await voidPfDisbursementAndUnlink(admin, {
+        disbursementId: id,
+        voidedBy: staff.user_id,
+        voidReason: "bulk_failed",
+        auditContext: { bulk_rollback: true, batch_failure_reason: reason },
+      });
+    }
+  }
+
+  // M12: give a partial failure a clear message — today it fails silently
+  // about how far the batch got before rolling back.
+  function partialFailureMessage(cause: string): string {
+    if (created.length === 0) return cause;
+    const noun = total === 1 ? "payout" : "payouts";
+    return `${cause} (${created.length} of ${total} ${noun} in this batch were already created and have been rolled back — nothing was left half-done.)`;
+  }
 
   // Atomic: if any single physician fails, void the previously-created disbursements.
   // (For simplicity here, we iterate and fail-fast; production-grade transactional
@@ -34,14 +59,9 @@ export async function createBulkPfPayoutCash(
       { p_year: year }
     );
     if (nErr) {
-      // Rollback previously created
-      for (const id of created) {
-        await admin
-          .from("doctor_pf_disbursements")
-          .update({ voided_at: new Date().toISOString(), voided_by: staff.user_id, void_reason: "bulk_failed" })
-          .eq("id", id);
-      }
-      return { ok: false, error: translatePgError(nErr) };
+      const message = translatePgError(nErr);
+      await rollbackCreated(message);
+      return { ok: false, error: partialFailureMessage(message) };
     }
     const { data: disb, error: insErr } = await admin
       .from("doctor_pf_disbursements")
@@ -57,13 +77,9 @@ export async function createBulkPfPayoutCash(
       .select("id")
       .single();
     if (insErr || !disb) {
-      for (const id of created) {
-        await admin
-          .from("doctor_pf_disbursements")
-          .update({ voided_at: new Date().toISOString(), voided_by: staff.user_id, void_reason: "bulk_failed" })
-          .eq("id", id);
-      }
-      return { ok: false, error: translatePgError(insErr) };
+      const message = translatePgError(insErr);
+      await rollbackCreated(message);
+      return { ok: false, error: partialFailureMessage(message) };
     }
     created.push(disb.id);
     await admin

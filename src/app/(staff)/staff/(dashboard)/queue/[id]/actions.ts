@@ -6,6 +6,8 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
+import { sectionsForRole } from "@/lib/auth/role-sections";
+import { isSectionAllowed } from "@/lib/auth/section-access";
 import { renderResultPdf } from "@/lib/results/render-pdf";
 import { loadConsultantSignatures, resolvePerformer } from "@/lib/results/signatures";
 import {
@@ -37,6 +39,15 @@ const IMAGING_ALLOWED_MIMES = new Set([
   "application/pdf",
 ]);
 const IMAGING_MAX_BYTES = 25 * 1024 * 1024; // 25 MB
+
+// N1 (go-live): shared denial message for every mutating action on this
+// route once it's section-gated (see role-sections.ts / section-access.ts).
+// Wording matches the existing section gate in queue/actions.ts's
+// claimTestAction ("outside the sections you can claim") rather than
+// disguising the reason as a 404 — that disguise belongs to the page
+// (queue/[id]/page.tsx uses notFound()), not to a Server Action a caller
+// only reaches by already having a form open.
+const SECTION_DENIED_ERROR = "This test is outside the sections you can access.";
 
 function fileExtForMime(mime: string): string {
   return (
@@ -99,7 +110,7 @@ async function prepareStructured(
     .select(
       `
         id, status, assigned_to, visit_id, service_id,
-        services!inner ( id, is_send_out ),
+        services!inner ( id, section, is_send_out ),
         visits!inner ( id, patient_id )
       `,
     )
@@ -110,6 +121,13 @@ async function prepareStructured(
     .maybeSingle();
 
   if (!tr) return { ok: false, error: "Test not found." };
+  // N1 (go-live): section gate — reception (and any role outside the
+  // test's bench) may not enter/amend a result via this path. See
+  // SECTION_DENIED_ERROR for why this isn't disguised as "not found".
+  const gateSvc = Array.isArray(tr.services) ? tr.services[0] : tr.services;
+  if (!isSectionAllowed(sectionsForRole(session.role), gateSvc?.section ?? null)) {
+    return { ok: false, error: SECTION_DENIED_ERROR };
+  }
   if (tr.assigned_to !== session.user_id) {
     return { ok: false, error: "You haven't claimed this test." };
   }
@@ -741,6 +759,7 @@ export async function uploadResultAction(
     .select(
       `
         id, status, visit_id, service_id,
+        services!inner ( section ),
         visits!inner ( id, patient_id )
       `,
     )
@@ -750,6 +769,16 @@ export async function uploadResultAction(
     .maybeSingle();
 
   if (!testRequest) return { ok: false, error: "Test not found." };
+  // N1 (go-live): section gate — same predicate as the claim/reassign
+  // actions in ../actions.ts.
+  {
+    const gateSvc = Array.isArray(testRequest.services)
+      ? testRequest.services[0]
+      : testRequest.services;
+    if (!isSectionAllowed(sectionsForRole(session.role), gateSvc?.section ?? null)) {
+      return { ok: false, error: SECTION_DENIED_ERROR };
+    }
+  }
   if (testRequest.status !== "in_progress") {
     return {
       ok: false,
@@ -944,10 +973,22 @@ export async function amendResultAction(
 
   const { data: testRow } = await admin
     .from("test_requests")
-    .select("id, status, visit_id, visits!inner ( id, patient_id )")
+    .select(
+      "id, status, visit_id, services!inner ( section ), visits!inner ( id, patient_id )",
+    )
     .eq("id", testRequestId)
     .maybeSingle();
   if (!testRow) return { ok: false, error: "Test not found." };
+  // N1 (go-live): section gate. This read runs on the admin client (no RLS),
+  // so the role check has to happen here explicitly.
+  {
+    const gateSvc = Array.isArray(testRow.services)
+      ? testRow.services[0]
+      : testRow.services;
+    if (!isSectionAllowed(sectionsForRole(session.role), gateSvc?.section ?? null)) {
+      return { ok: false, error: SECTION_DENIED_ERROR };
+    }
+  }
   const visit = Array.isArray(testRow.visits) ? testRow.visits[0] : testRow.visits;
   if (!visit) return { ok: false, error: "Visit not found." };
 
@@ -1137,7 +1178,7 @@ export async function amendStructuredResultAction(
     .from("test_requests")
     .select(
       `id, status, visit_id, service_id,
-       services!inner ( id, code, name ),
+       services!inner ( id, code, name, section ),
        visits!inner ( id, patient_id, visit_number )`,
     )
     .eq("id", testRequestId)
@@ -1151,6 +1192,11 @@ export async function amendStructuredResultAction(
     : testRow.services;
   if (!visit || !svc) {
     return { ok: false, error: "Missing service or visit." };
+  }
+  // N1 (go-live): section gate. This read runs on the admin client (no
+  // RLS), so the role check has to happen here explicitly.
+  if (!isSectionAllowed(sectionsForRole(session.role), svc.section)) {
+    return { ok: false, error: SECTION_DENIED_ERROR };
   }
 
   const allowed = new Set([
@@ -1579,6 +1625,27 @@ export async function getResultDownloadUrl(
 ): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
   const session = await requireActiveStaff();
   const admin = createAdminClient();
+
+  // N1 (go-live): section gate. This mints a 5-minute signed URL to the
+  // actual result PDF — the read discloses patient data just as directly as
+  // amending does, so it needs the same gate as every write action on this
+  // route (RLS on `results`/`result_test_requests` includes reception per
+  // 0051, so it does not save us here). Runs on the admin client, so the
+  // role check has to happen here explicitly.
+  const { data: gateRow } = await admin
+    .from("test_requests")
+    .select("services!inner ( section )")
+    .eq("id", testRequestId)
+    .maybeSingle();
+  const gateSvc = gateRow
+    ? Array.isArray(gateRow.services)
+      ? gateRow.services[0]
+      : gateRow.services
+    : null;
+  if (!gateRow) return { ok: false, error: "Test not found." };
+  if (!isSectionAllowed(sectionsForRole(session.role), gateSvc?.section ?? null)) {
+    return { ok: false, error: SECTION_DENIED_ERROR };
+  }
 
   const { data: resultLink } = await admin
     .from("result_test_requests")

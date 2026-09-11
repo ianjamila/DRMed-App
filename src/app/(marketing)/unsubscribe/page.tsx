@@ -4,7 +4,7 @@ import { audit } from "@/lib/audit/log";
 import { ResubscribeButton } from "./resubscribe-button";
 
 export const metadata = {
-  title: "Unsubscribed — drmed.ph",
+  title: "Unsubscribed",
   robots: { index: false, follow: false },
 };
 

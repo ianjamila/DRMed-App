@@ -111,7 +111,10 @@ export function PackageCard(props: PackageCardProps) {
           className="min-h-[44px] bg-[color:var(--color-brand-cyan)] text-white hover:bg-[color:var(--color-brand-navy)] disabled:bg-[color:var(--color-brand-bg-mid)]"
           title={
             !props.consolidatedAvailable
-              ? "Available when all components are released"
+              ? props.totalCount > 0 &&
+                props.releasedCount === props.totalCount
+                ? "All results are ready — the combined file is still being prepared. Check back shortly, or download the individual results below."
+                : "Available when all components are released"
               : undefined
           }
         >

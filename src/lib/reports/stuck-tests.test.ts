@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ageDays,
+  headerCandidateIsSettled,
   parseStuckTestsParams,
   STUCK_TESTS_CSV_HEADER,
   stuckTestsCsvFilename,
@@ -32,17 +33,44 @@ const NOW = Date.parse("2026-09-08T10:00:00Z");
 const stuck: StuckRow = {
   id: "t1", status: "in_progress", requested_at: "2026-09-01T02:00:00Z", assigned_to: "u1", visit_id: "v1",
   services: { code: "CBC", name: "CBC" },
-  visits: { visit_number: "0042", payment_status: "paid", patients: { first_name: "Ana", last_name: "Cruz", drm_id: "DRM-1" } },
+  visits: { visit_number: "0042", payment_status: "paid", hmo_provider_id: null, patients: { first_name: "Ana", last_name: "Cruz", drm_id: "DRM-1" } },
 };
 const header: StuckRow = {
   id: "h1", status: "ready_for_release", requested_at: "2026-09-02T02:00:00Z", assigned_to: null, visit_id: "v2",
   services: [{ code: "ROUTINE", name: "Routine package" }],
-  visits: [{ visit_number: "0043", payment_status: "waived", patients: [{ first_name: "Ben", last_name: "Dy", drm_id: "DRM-2" }] }],
+  visits: [{ visit_number: "0043", payment_status: "waived", hmo_provider_id: null, patients: [{ first_name: "Ben", last_name: "Dy", drm_id: "DRM-2" }] }],
 };
 const empty: EmptyVisitRow = {
   id: "v3", visit_number: "0044", created_at: "2026-09-07T02:00:00Z", total_php: 0, payment_status: "unpaid",
   patients: { first_name: "Cy", last_name: "Ek", drm_id: "DRM-3" },
 };
+
+describe("headerCandidateIsSettled", () => {
+  const withVisit = (payment_status: string, hmo_provider_id: string | null): StuckRow => ({
+    ...header,
+    visits: [{ visit_number: "0043", payment_status, hmo_provider_id, patients: [{ first_name: "Ben", last_name: "Dy", drm_id: "DRM-2" }] }],
+  });
+
+  it("counts an HMO visit as settled even though it is never paid", () => {
+    // The A3 case: an HMO visit's payment_status stays 'unpaid' forever, so
+    // a paid/waived-only filter hid exactly the headers this report exists
+    // to surface.
+    expect(headerCandidateIsSettled(withVisit("unpaid", "hmo-1"))).toBe(true);
+  });
+
+  it("counts paid and waived visits as settled", () => {
+    expect(headerCandidateIsSettled(withVisit("paid", null))).toBe(true);
+    expect(headerCandidateIsSettled(withVisit("waived", null))).toBe(true);
+  });
+
+  it("does not count an unpaid non-HMO visit, whose header is legitimately withheld", () => {
+    expect(headerCandidateIsSettled(withVisit("unpaid", null))).toBe(false);
+  });
+
+  it("does not count a row whose visit embed is missing", () => {
+    expect(headerCandidateIsSettled({ ...header, visits: null })).toBe(false);
+  });
+});
 
 describe("stuckTestsCsvRows", () => {
   it("unions the four lists under a List column", () => {

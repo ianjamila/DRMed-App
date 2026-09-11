@@ -94,6 +94,48 @@ export async function getPatientConsolidatedResultDownloadUrl(
     return { ok: false, error: "Result not found." };
   }
 
+  // N6: the RLS policy backing the query above (`result_test_requests:
+  // patient released only`, migration 0114) is itself released-gated, so
+  // `junctions` here can ONLY ever contain the linked tests that are
+  // CURRENTLY released — undoing one sibling's release makes that row
+  // disappear from this list entirely rather than showing up as
+  // unreleased. That means the `.some()` ownership check above stays true
+  // (and this download stays live) as long as AT LEAST ONE linked test is
+  // still released, even after another linked test's release was undone —
+  // exactly the gap this closes.
+  //
+  // A single shared PDF covers every linked test_request. The safe
+  // default: it is downloadable only while EVERY linked test is still
+  // released; if any one's release was undone, withhold the whole file
+  // rather than continue serving a document that includes withdrawn
+  // content. Re-check against the full (unfiltered) membership via the
+  // service-role client — RLS can't tell us about a row that is no longer
+  // released, so this is the one read in this function that has to bypass
+  // it. A normal single-test result has exactly one junction row, so this
+  // reduces to the same released check as before and is a no-op there.
+  const { data: allLinkRows } = await admin
+    .from("result_test_requests")
+    .select(
+      `
+        test_request_id,
+        test_requests!inner ( id, status, visit_id,
+          visits!inner ( id, patient_id )
+        )
+      ` as any, // eslint-disable-line @typescript-eslint/no-explicit-any
+    )
+    .eq("result_id", resultId);
+  const allLinks = (allLinkRows ?? []) as unknown as RTRItem[];
+  const allReleased =
+    allLinks.length > 0 &&
+    allLinks.every((l) => l.test_requests?.status === "released");
+  if (!allReleased) {
+    return {
+      ok: false,
+      error:
+        "This shared report is temporarily unavailable — part of it was withdrawn after release. Please contact the lab for an updated copy.",
+    };
+  }
+
   const storagePath = rRow.storage_path;
   if (!storagePath) {
     return { ok: false, error: "No result file available." };

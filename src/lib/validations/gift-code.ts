@@ -1,6 +1,19 @@
 import { z } from "zod";
 import { GIFT_CODE_PATTERN, normaliseGiftCode } from "@/lib/gift-codes/labels";
-import { PaymentMethodEnum } from "./payment";
+
+// N14 cleanup: gift_codes.purchase_method (0014) allows only these five
+// tenders — narrower than payments.method (which also has hmo/bpi/maybank,
+// and now gift_code itself, added in 0139). The sell form's dropdown already
+// only offers these five; this schema used to reuse the payments
+// PaymentMethodEnum, which meant a "Gift code" option would validate here and
+// then fail at the DB with a raw constraint error instead of a clean message.
+export const GiftCodePurchaseMethodEnum = z.enum([
+  "cash",
+  "gcash",
+  "maya",
+  "card",
+  "bank_transfer",
+]);
 
 const optionalText = (max: number) =>
   z
@@ -61,7 +74,7 @@ export const SellGiftCodeSchema = z.object({
     .trim()
     .min(1, "Buyer contact is required.")
     .max(120),
-  purchase_method: PaymentMethodEnum,
+  purchase_method: GiftCodePurchaseMethodEnum,
   purchase_reference_number: optionalText(80),
   notes: optionalText(2000),
 });

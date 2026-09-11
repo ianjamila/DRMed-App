@@ -39,10 +39,30 @@ export async function saveTemplateAndParamsAction(
   if (data.target.kind === "service") {
     const { data: svc } = await admin
       .from("services")
-      .select("id, code, name")
+      .select("id, code, name, report_group_id")
       .eq("id", data.target.id)
       .maybeSingle();
     if (!svc) return { ok: false, error: "Service not found." };
+
+    // M17: a service that belongs to a report group always renders from
+    // the group's consolidated template — /staff/queue/[id] redirects to it
+    // unconditionally on services.report_group_id being set, and
+    // loadResultDocumentInput only looks up a per-service template when
+    // results.report_group_id is null, which never happens for a grouped
+    // service. A per-service template saved here would be dead on arrival,
+    // so reject it with the name of the group template that already covers it.
+    if (svc.report_group_id) {
+      const { data: grp } = await admin
+        .from("report_groups")
+        .select("name")
+        .eq("id", svc.report_group_id)
+        .maybeSingle();
+      return {
+        ok: false,
+        error: `${svc.name} is part of the "${grp?.name ?? "consolidated"}" report group — its results always use that group's template, so a separate template here would never be shown. Edit the group's template instead.`,
+      };
+    }
+
     targetLabel = { code: svc.code, name: svc.name };
   } else {
     const { data: grp } = await admin

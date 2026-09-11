@@ -2,9 +2,10 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { reportError } from "@/lib/observability/report-error";
-import { SITE } from "@/lib/marketing/site";
+import { SITE, CONTACT } from "@/lib/marketing/site";
 import { sendEmail } from "./email";
 import { sendSms } from "./sms";
+import { formatManilaDateTime } from "./format-manila-datetime";
 import {
   renderEmailShell, emailParagraph, emailDetailBox, emailButton, emailFinePrint, escapeHtml,
 } from "./branded-email";
@@ -111,23 +112,29 @@ export async function notifyAppointmentBooked({
         emailFinePrint("Bring a valid ID on the day of your visit. For HMO, please bring your card."),
     });
   } else {
-    const when = appt.scheduled_at
-      ? new Date(appt.scheduled_at).toLocaleString("en-PH", {
-          dateStyle: "long",
-          timeStyle: "short",
-        })
-      : "your selected time";
-    smsBody =
-      `Hi ${greeting}, your DRMed booking for ${serviceName} on ${when} is confirmed. ` +
-      `Cancel: ${cancelUrl} — DRMED`;
-    emailSubject = `Booking confirmed — ${serviceName} on ${when}`;
+    // scheduled_at is null for every walk-in lab booking (diagnostic
+    // packages, and lab tests that don't require a slot) — that's the
+    // NORMAL shape for this branch, not a missing value. L2: don't claim
+    // the patient picked a time they never picked; tell them when the
+    // clinic is actually open, from the one source of truth for hours
+    // (CONTACT.hours), never a hardcoded copy of it.
+    const when = appt.scheduled_at ? formatManilaDateTime(appt.scheduled_at) : null;
+    const whenLine = when ?? `Walk in any time — ${CONTACT.hours}`;
+    smsBody = when
+      ? `Hi ${greeting}, your DRMed booking for ${serviceName} on ${when} is confirmed. ` +
+        `Cancel: ${cancelUrl} — DRMED`
+      : `Hi ${greeting}, your DRMed booking for ${serviceName} is confirmed. Walk in any time — ${CONTACT.hours}. ` +
+        `Cancel: ${cancelUrl} — DRMED`;
+    emailSubject = when
+      ? `Booking confirmed — ${serviceName} on ${when}`
+      : `Booking confirmed — ${serviceName}`;
     emailText = [
       `Hi ${greeting},`,
       "",
       `Your DRMed Clinic and Laboratory booking is confirmed.`,
       "",
       `Service: ${serviceName}`,
-      `Date / time: ${when}`,
+      `Date / time: ${whenLine}`,
       ...formNote,
       "",
       `Need to cancel or reschedule? Open this link:`,
@@ -144,7 +151,7 @@ export async function notifyAppointmentBooked({
         emailParagraph("Your DRMed Clinic and Laboratory booking is confirmed. Here are the details:") +
         emailDetailBox([
           { label: "Service", value: serviceName },
-          { label: "Date / time", value: when },
+          { label: "Date / time", value: whenLine },
         ]) +
         (formCount > 0 ? emailParagraph(`<span style="color:#0a7c44;">&#10003; We received your doctor's request form (${formCount} file${formCount === 1 ? "" : "s"}).</span>`) : "") +
         emailButton("View or cancel booking", cancelUrl, "navy") +

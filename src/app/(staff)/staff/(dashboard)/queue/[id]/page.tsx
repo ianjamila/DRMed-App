@@ -2,6 +2,8 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
+import { sectionsForRole } from "@/lib/auth/role-sections";
+import { isSectionAllowed } from "@/lib/auth/section-access";
 import { ClaimButton } from "../claim-button";
 import { ReassignPanel } from "./reassign-panel";
 import { UnclaimOwnButton } from "./unclaim-own-button";
@@ -51,7 +53,7 @@ export default async function QueueTestDetailPage({ params }: Props) {
         id, status, requested_at, started_at, completed_at, assigned_to,
         is_package_header, parent_id, package_completed_at, final_price_php,
         deleted_at, delete_reason,
-        services!inner ( id, code, name, turnaround_hours, requires_signoff, is_send_out ),
+        services!inner ( id, code, name, section, turnaround_hours, requires_signoff, is_send_out ),
         visits!inner (
           id, visit_number, deleted_at, payment_status, hmo_provider_id,
           patients!inner ( id, drm_id, first_name, last_name, phone, sex, birthdate )
@@ -69,6 +71,51 @@ export default async function QueueTestDetailPage({ params }: Props) {
   if (!svc || !visit) notFound();
   const patient = Array.isArray(visit.patients) ? visit.patients[0] : visit.patients;
   if (!patient) notFound();
+
+  // N1 (go-live): section gate. This route shows/amends the actual result
+  // (test names, values, PDF) — RLS on `results` includes reception (0051),
+  // so it does NOT save us here. sectionsForRole(role) === [] is a DENY,
+  // never "no filter" (reception's case). null = unrestricted
+  // (admin/pathologist), matching every other section-gated surface
+  // (queue list, results list, visit page, the result-PDF route). A blocked
+  // caller gets the same notFound() peer detail pages use for a missing
+  // resource — not a stack trace, and no signal that the id exists.
+  //
+  // A package header's own row carries section='package' (an admin-catalog
+  // label, not a bench section — see 0006), so gating on it directly would
+  // wrongly hide every package from medtech/xray. Instead, mirror the visit
+  // page's packageHeaders/visibleParents rule exactly: a header is visible
+  // if ANY of its components resolves to an allowed section, and only those
+  // allowed components render below — never the whole package.
+  const allowedSections = sectionsForRole(session.role);
+  let visiblePackageComponents: Array<{
+    id: string;
+    status: string;
+    released_at: string | null;
+    services:
+      | { code: string; name: string; section: string | null }
+      | { code: string; name: string; section: string | null }[]
+      | null;
+  }> = [];
+  if (test.is_package_header) {
+    const { data: componentsRaw } = await supabase
+      .from("test_requests")
+      .select(
+        `
+          id, status, released_at, package_completed_at, requested_at,
+          services!inner ( code, name, section )
+        `,
+      )
+      .eq("parent_id", test.id)
+      .order("requested_at", { ascending: true });
+    visiblePackageComponents = (componentsRaw ?? []).filter((c) => {
+      const csvc = Array.isArray(c.services) ? c.services[0] : c.services;
+      return isSectionAllowed(allowedSections, csvc?.section ?? null);
+    });
+    if (visiblePackageComponents.length === 0) notFound();
+  } else if (!isSectionAllowed(allowedSections, svc.section)) {
+    notFound();
+  }
 
   // Soft-deleted (0125): no work happens on this entry. Point at the visit
   // page, which owns the deleted-entries panel and the Restore action.
@@ -115,19 +162,13 @@ export default async function QueueTestDetailPage({ params }: Props) {
   // Phase 14 D3: package headers carry no work. Render a read-only summary
   // panel listing component test_requests instead of the structured form /
   // PDF upload / amend form.
+  //
+  // N1: only the components this role's sections cover are listed here
+  // (visiblePackageComponents, computed by the gate above) — a component in
+  // another bench's section is omitted rather than shown, same as the visit
+  // page's per-header component list.
   if (test.is_package_header) {
-    const { data: componentsRaw } = await supabase
-      .from("test_requests")
-      .select(
-        `
-          id, status, released_at, package_completed_at, requested_at,
-          services!inner ( code, name, section )
-        `,
-      )
-      .eq("parent_id", test.id)
-      .order("requested_at", { ascending: true });
-
-    const components = (componentsRaw ?? []).map((c) => ({
+    const components = visiblePackageComponents.map((c) => ({
       id: c.id,
       status: c.status,
       released_at: c.released_at,

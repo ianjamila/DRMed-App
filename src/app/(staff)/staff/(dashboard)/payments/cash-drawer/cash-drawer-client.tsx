@@ -25,6 +25,11 @@ const KIND_LABEL: Record<string, string> = {
   other_payout: "Other",
   float_topup: "Cash added to drawer",
   float_pullout: "Cash removed from drawer",
+  // Pre-existing gap, not previously in this map: a cash salary payout from
+  // /cash-drawer (0044) used to render as the raw "salary_payout" string.
+  salary_payout: "Salary payout",
+  // N14 (0139): a cash gift-code sale.
+  gift_code_sale: "Gift code sold",
 };
 const kindLabel = (k: string) => KIND_LABEL[k] ?? k;
 
@@ -45,6 +50,7 @@ export function CashDrawerClient(props: {
   const s = props.state as {
     opening_float_php?: number;
     cash_payments_php?: number;
+    gift_code_sales_php?: number;
     cash_payouts_php?: number;
     expected_cash_php?: number;
     payments_by_method?: Record<string, number>;
@@ -108,6 +114,16 @@ export function CashDrawerClient(props: {
           <strong className="text-[color:var(--color-brand-navy)]">Cash received today</strong>
           <span className="font-mono">{PESO(Number(s.cash_payments_php ?? 0))}</span>
         </div>
+        {Number(s.gift_code_sales_php ?? 0) !== 0 ? (
+          <div className="flex justify-between border-b py-2">
+            <strong className="text-[color:var(--color-brand-navy)]">
+              Gift codes sold for cash
+            </strong>
+            <span className="font-mono">
+              {PESO(Number(s.gift_code_sales_php ?? 0))}
+            </span>
+          </div>
+        ) : null}
         <div className="flex justify-between border-b py-2">
           <strong className="text-[color:var(--color-brand-navy)]">Cash paid out</strong>
           <span className="font-mono">−{PESO(Number(s.cash_payouts_php ?? 0))}</span>

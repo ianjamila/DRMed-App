@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
+import { translatePgError } from "@/lib/accounting/pg-errors";
 import {
   HmoProviderCreateSchema,
   HmoProviderUpdateSchema,
@@ -20,6 +21,7 @@ function readForm(formData: FormData) {
     name: formData.get("name"),
     is_active: formData.get("is_active"),
     due_days_for_invoice: formData.get("due_days_for_invoice"),
+    unbilled_threshold_days: formData.get("unbilled_threshold_days"),
     contract_start_date: formData.get("contract_start_date"),
     contract_end_date: formData.get("contract_end_date"),
     contact_person_name: formData.get("contact_person_name"),
@@ -50,7 +52,13 @@ export async function createHmoProviderAction(
     .select("id, name")
     .single();
   if (error || !created) {
-    return { ok: false, error: error?.message ?? "Could not create provider." };
+    // M10: raw PG text (e.g. the unique-name violation) reached the user
+    // unmodified — route it through the same translator every other write
+    // action uses.
+    return {
+      ok: false,
+      error: error ? translatePgError(error) : "Could not create provider.",
+    };
   }
 
   const h = await headers();
@@ -88,7 +96,7 @@ export async function updateHmoProviderAction(
     .from("hmo_providers")
     .update(parsed.data)
     .eq("id", providerId);
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: translatePgError(error) };
 
   const h = await headers();
   await audit({

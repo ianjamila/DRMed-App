@@ -11,7 +11,7 @@ import { requirePatientProfile } from "@/lib/auth/require-patient";
 import { BookingForm } from "@/app/(marketing)/schedule/booking-form";
 
 export const metadata = {
-  title: "Book an appointment — drmed.ph",
+  title: "Book an appointment",
 };
 
 export const dynamic = "force-dynamic";

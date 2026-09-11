@@ -6,7 +6,7 @@ import { DownloadButton } from "../../download-button";
 import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
-  title: "Visit — drmed.ph",
+  title: "Visit",
 };
 
 interface Props {
