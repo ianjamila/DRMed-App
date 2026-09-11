@@ -185,9 +185,15 @@ async function main() {
   console.log(`  Attributed to:   ${actor.full_name} (${actor.role})\n`);
 
   if (!commit) {
+    // Echo back the operator's OWN flags, not a reconstructed set. Rebuilding
+    // the line by hand silently dropped --prod, so the suggested command
+    // pointed at local while the dry run above had read production — the
+    // confirm token would not have matched and the real run would simply not
+    // have happened, which is a confusing way to find out.
+    const replay = args.filter((a) => a !== "--commit" && !a.startsWith(CONFIRM_FLAG));
     console.log(
       `Dry run only. To apply:\n  npm run clear:trial-queue -- ` +
-        `--actor-email=${actorEmail} --commit ${CONFIRM_FLAG}=${expectedConfirmToken()}\n`,
+        `${replay.join(" ")} --commit ${CONFIRM_FLAG}=${expectedConfirmToken()}\n`,
     );
     return;
   }
