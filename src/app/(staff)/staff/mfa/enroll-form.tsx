@@ -101,8 +101,9 @@ export function EnrollForm({ role }: Props) {
           {enroll.secret}
         </p>
         <p className="mt-2">
-          Save this somewhere safe — if you lose your authenticator and your
-          recovery contact, an admin must reset MFA via the database.
+          Save this somewhere safe. Two-step sign-in is optional — if you lose
+          your authenticator, sign in with Google instead and ask an admin to
+          clear the old factor.
         </p>
       </details>
 
