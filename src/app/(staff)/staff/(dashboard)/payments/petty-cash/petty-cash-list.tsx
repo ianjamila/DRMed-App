@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { Panel } from "@/components/ui/panel";
 import { voidPettyCashExpenseAction } from "./actions";
 
 export interface PettyCashRow {
@@ -26,21 +27,28 @@ function timeManila(iso: string): string {
   });
 }
 
-export function PettyCashList({ rows }: { rows: PettyCashRow[] }) {
+export function PettyCashList({
+  rows,
+  isToday,
+}: {
+  rows: PettyCashRow[];
+  isToday: boolean;
+}) {
   const total = rows
     .filter((r) => r.status === "posted")
     .reduce((sum, r) => sum + r.amount_php, 0);
+  const dayLabel = isToday ? "today" : "this day";
 
   if (rows.length === 0) {
     return (
-      <p className="rounded-xl border border-dashed border-[color:var(--color-brand-bg-mid)] bg-white p-6 text-sm text-[color:var(--color-brand-text-soft)]">
-        No petty cash recorded today yet.
-      </p>
+      <Panel className="border-dashed p-6 text-sm text-[color:var(--color-brand-text-soft)]">
+        No petty cash recorded {dayLabel} yet.
+      </Panel>
     );
   }
 
   return (
-    <div className="overflow-hidden rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+    <Panel className="overflow-hidden">
       <ul className="divide-y divide-[color:var(--color-brand-bg-mid)]">
         {rows.map((r) => (
           <PettyCashItem key={r.id} row={r} />
@@ -48,13 +56,13 @@ export function PettyCashList({ rows }: { rows: PettyCashRow[] }) {
       </ul>
       <div className="flex items-center justify-between border-t border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg-soft)] px-4 py-3 text-sm">
         <span className="font-semibold text-[color:var(--color-brand-text-soft)]">
-          Total today (not counting reversed)
+          Total {dayLabel} (not counting reversed)
         </span>
         <span className="font-mono font-bold text-[color:var(--color-brand-navy)]">
           {peso.format(total)}
         </span>
       </div>
-    </div>
+    </Panel>
   );
 }
 
