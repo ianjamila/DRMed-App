@@ -94,6 +94,52 @@ No migration is required — absence of a prefs row means visible.
 
 The lab queue (`/staff/queue`) and the Visits archive (`/staff/visits`) are the reference list pages: `PageHeader` on top, status tabs via `SectionTabs`, filter chips that round-trip through search params (multi-select chips serialise to a comma list — see `parseVisitClasses` / `serialiseVisitClasses` in `src/lib/visits/classification.ts`), a date picker with prev/next/"Back to today", and real paging (`count: "exact"` + `.range()`, one page size for every tab so the page doesn't resize when switching). Tab links and Clear reset to page 1; page links keep the filters. When a search can only run post-fetch (an ILIKE across an embed isn't expressible in one PostgREST query), say so in the subtitle rather than implying a miss means "not in the list".
 
+## 4a · The three page-shape standards (agreed 2026-09-11)
+
+Staff pages visibly jumped as you navigated between them. Measured across the
+**151** `page.tsx` files under `src/app/(staff)/staff/`: only 9 used
+`PageHeader`, **9 different container widths** were in use, and **35 pages had
+no outer container at all**. These are the three rules that fix it. Apply them
+to any page you touch; don't blind-sweep the whole tree.
+
+**1 · Width belongs to the shell, not the page.**
+`StaffShell`'s `<main>` owns the container:
+`mx-auto w-full max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8`. A page therefore
+adds **no** `mx-auto max-w-* px-* py-*` wrapper of its own — doing so
+double-pads it, and a different `max-w` per page is exactly what made the
+column shift sideways between routes.
+
+A page that is *deliberately* narrow — a single-column focused form (new visit,
+new journal entry, login) — keeps a narrow wrapper on its FORM, inside the
+shell's container, never on the page root. Narrow is then a property of the
+form, not of the route, so the page frame stays put while the content inside it
+is as wide as it should be.
+
+**2 · One header component.** Every page opens with `PageHeader`
+(`title`, optional `subtitle`, optional `actions`). Don't hand-roll an `<h1>`
+block, and don't add an eyebrow line above the title — no sibling has one.
+
+**Never put controls in `actions` beside a subtitle whose length varies.** They
+share one `flex flex-wrap items-start justify-between` row, so a longer
+subtitle pushes the controls onto a new line and a shorter one pulls them back
+up — the controls visibly jump as the reader uses the page. If the subtitle
+carries a count, a filter echo or anything data-dependent, put the controls in
+a **sibling below the header** instead. The lab queue (`queue/page.tsx`) has
+the canonical comment explaining this; the registration-link button popping
+under the sidebar was the same root cause.
+
+**3 · One date format: `Sep 11, 2026`.** Use `manilaDate`, `manilaDateTime`
+(`Sep 11, 2026, 2:06 PM`) and `manilaTime` from `@/lib/dates/manila`. Never
+call `toLocaleDateString` / `toLocaleString` directly in a page.
+
+The old bug was **not** a locale bug — worth understanding so it isn't
+reintroduced. `toLocaleString("en-PH", { timeZone: "Asia/Manila" })` with no
+`dateStyle` or `month` field defaults to **numeric** `9/11/2026`, which is
+genuinely ambiguous for a PH clinic (9 November or 11 September?). Every
+explicit `"en-US"` call in this repo already passes a named `month`/`weekday`
+and was always fine. The rule is therefore *always go through the helper*,
+never *"use en-PH"*.
+
 ## 5 · Printable slips
 
 Every print surface follows the same shape (receipts, portal-access slip, EOD count sheet, PF payout slip):

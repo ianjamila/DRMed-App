@@ -189,7 +189,8 @@ All Server Actions return `{ ok: true, data } | { ok: false, error }`. User-faci
 | Audit-log writer — call from every write action | `src/lib/audit/log.ts` (`audit()`) |
 | Server Action helpers (`ipAndAgent`, `firstIssue`) | `src/lib/server/action-helpers.ts` |
 | PG error → user-facing message translator | `src/lib/accounting/pg-errors.ts` (`translatePgError`) |
-| Manila/PHT date helpers (`todayManilaISODate`, `isISODate`, `shiftISODate`, `manilaRangeUtc`, `friendlyManilaDate`) | `src/lib/dates/manila.ts` |
+| Manila/PHT date helpers (`todayManilaISODate`, `isISODate`, `shiftISODate`, `manilaRangeUtc`, `friendlyManilaDate`) + the canonical display formatters `manilaDate` / `manilaDateTime` / `manilaTime` — never call `toLocaleDateString` in a page | `src/lib/dates/manila.ts` |
+| Staff list-page URL contract (sort/dir/page/size parsing, sort-column allow-list) | `src/lib/ui/table-params.ts`; components `src/components/staff/{sortable-th,list-pagination}.tsx` |
 | Rate-limit checker (per-bucket) | `src/lib/rate-limit/check.ts` |
 | Pure visit-domain rules (classification, deletability, lab payment gate, receipt policy, doctor-fee split, visit # search) | `src/lib/visits/{classification,deletion,lab-gate,receipt-policy,consultation-fee,visit-number-filter}.ts` |
 | Discount arithmetic (form preview AND server recompute) | `src/lib/pricing/discounts.ts` |

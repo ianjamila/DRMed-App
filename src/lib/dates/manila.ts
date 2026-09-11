@@ -92,3 +92,63 @@ export function manilaDayWindowUtc(offsetDays: number): {
     endIso: new Date(start + 86_400_000).toISOString(),
   };
 }
+
+/**
+ * THE canonical short date for staff screens: "11 Sep 2026".
+ *
+ * Staff pages used to mix `toLocaleDateString()` (which renders "9/11/2026" on
+ * an en-US runtime) with ad-hoc `Intl` options, so the same visit read as a
+ * different date depending on which page you were on. For a PH clinic a
+ * numeric day/month order is genuinely ambiguous — 9/11 is either 9 November
+ * or 11 September — so the house format always spells the month.
+ *
+ * Accepts a YYYY-MM-DD calendar date or a timestamptz ISO string; both are
+ * rendered in Asia/Manila.
+ */
+export function manilaDate(value: string | Date | null | undefined): string {
+  const d = toManilaInstant(value);
+  if (!d) return "—";
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    timeZone: MANILA_TZ,
+  }).format(d);
+}
+
+/** The canonical date + time: "11 Sep 2026, 2:06 PM". */
+export function manilaDateTime(value: string | Date | null | undefined): string {
+  const d = toManilaInstant(value);
+  if (!d) return "—";
+  const date = manilaDate(d);
+  return `${date}, ${manilaTime(d)}`;
+}
+
+/** The canonical clock time alone: "2:06 PM". */
+export function manilaTime(value: string | Date | null | undefined): string {
+  const d = toManilaInstant(value);
+  if (!d) return "—";
+  return new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: MANILA_TZ,
+  }).format(d);
+}
+
+/**
+ * Normalise the two shapes staff pages actually hold to an instant.
+ *
+ * A bare YYYY-MM-DD is a Manila CALENDAR date, not an instant — parsing it with
+ * `new Date()` reads it as UTC midnight, which is 8am Manila the same day but
+ * renders as the PREVIOUS day for anyone formatting in a westward zone. Pinning
+ * it to Manila noon keeps it on its own calendar day under any formatter.
+ */
+function toManilaInstant(value: string | Date | null | undefined): Date | null {
+  if (!value) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  const d = isISODate(value)
+    ? new Date(`${value}T12:00:00+08:00`)
+    : new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
