@@ -57,10 +57,16 @@ function requireReception(role: StaffSession["role"]): boolean {
   return role === "reception" || role === "admin";
 }
 
-export async function createInquiryAction(
-  _prev: InquiryResult | null,
-  formData: FormData,
-): Promise<InquiryResult> {
+// Shared write path for creating an inquiry — validation, insert, audit row.
+// Never redirects, so it can serve both callers:
+//  - createInquiryAction wraps this and redirects on success, for the
+//    standalone /staff/inquiries/new page's useActionState + <form action>
+//    (the no-JS fallback: a real HTTP redirect is what makes that work
+//    without client JS).
+//  - createInquiryFromSheetAction wraps this and just returns the result,
+//    for the "+ New inquiry" sheet, which stays on /staff/inquiries and
+//    closes/refreshes itself via useTransition.
+async function insertInquiry(formData: FormData): Promise<InquiryResult> {
   const session = await requireActiveStaff();
   if (!requireReception(session.role)) {
     return { ok: false, error: "Reception or admin access required." };
@@ -107,7 +113,25 @@ export async function createInquiryAction(
   });
 
   revalidatePath("/staff/inquiries");
+  return { ok: true };
+}
+
+export async function createInquiryAction(
+  _prev: InquiryResult | null,
+  formData: FormData,
+): Promise<InquiryResult> {
+  const result = await insertInquiry(formData);
+  if (!result.ok) return result;
   redirect("/staff/inquiries");
+}
+
+// Used by the "+ New inquiry" sheet (new-inquiry-sheet.tsx). Same validation,
+// insert and audit row as createInquiryAction, just without the redirect —
+// the sheet is already on /staff/inquiries and closes/refreshes itself.
+export async function createInquiryFromSheetAction(
+  formData: FormData,
+): Promise<InquiryResult> {
+  return insertInquiry(formData);
 }
 
 export async function updateInquiryAction(
