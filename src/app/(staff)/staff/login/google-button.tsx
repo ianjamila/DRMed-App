@@ -26,9 +26,11 @@ export function GoogleSignInButton() {
 
   return (
     <div className="flex flex-col gap-2">
+      {/* Primary variant on purpose: Google is the main route in and the
+          password form below the divider is the fallback. Leaving both as
+          "outline" would make the two look interchangeable. */}
       <Button
         type="button"
-        variant="outline"
         onClick={signIn}
         disabled={pending}
         className="w-full"
