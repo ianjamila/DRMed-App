@@ -450,11 +450,38 @@ export async function getPackagePdfDownloadUrl(
     },
   };
 
+  // Finding 4 (go-live review): a component's `results` row can be the SAME
+  // shared/consolidated PDF that another test_request outside this package
+  // (a standalone same-group test on this visit, or a component belonging
+  // to a different report) is also linked to via result_test_requests. If
+  // that other link's release was undone, the stored file still contains
+  // the withdrawn value — isResultDownloadEligible is the one shared check
+  // every other download path (getPatientConsolidatedResultDownloadUrl,
+  // getPatientResultDownloadUrl, the data-export ZIP) already runs before
+  // handing out a storage_path; this assembly path was the one that didn't.
+  // Cache by result id (not by component) since several components can
+  // point at the same consolidated result row and would otherwise repeat
+  // the same result_test_requests query.
+  const eligibilityCache = new Map<string, Promise<boolean>>();
+  const checkEligible = (resultId: string): Promise<boolean> => {
+    let cached = eligibilityCache.get(resultId);
+    if (!cached) {
+      cached = isResultDownloadEligible(admin, resultId);
+      eligibilityCache.set(resultId, cached);
+    }
+    return cached;
+  };
+
+  let skippedWithdrawn = 0;
   const [coverPdfBytes, ...componentPdfBytes] = await Promise.all([
     renderResultPdf(coverInput),
     ...releasedComponents.map(async (c) => {
       const result = resultByTrId.get(c.id);
       if (!result || !result.storage_path) return null;
+      if (!(await checkEligible(result.id))) {
+        skippedWithdrawn++;
+        return null;
+      }
       const dl = await admin.storage
         .from("results")
         .download(result.storage_path);
@@ -515,6 +542,7 @@ export async function getPackagePdfDownloadUrl(
       merged_page_count: merged.getPageCount(),
       skipped_cancelled_components: cancelledComponents.length,
       skipped_malformed_components: skippedMalformed,
+      skipped_withdrawn_components: skippedWithdrawn,
     },
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),

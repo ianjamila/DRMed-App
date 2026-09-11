@@ -14,6 +14,61 @@ import { todayManilaISODate } from "@/lib/dates/manila";
 
 export type PaymentResult = { ok: true } | { ok: false; error: string };
 
+// Finding 1 (go-live review, SHIP BLOCKER): a gift-code redemption that
+// fails partway through must VOID the payment it already inserted, never
+// DELETE it. `payments` has an INSERT trigger (trg_payments_recalc) and an
+// UPDATE-OF-voided_at trigger (trg_payments_recalc_on_void) that keep
+// visits.paid_php/payment_status in sync — there is NO DELETE trigger for
+// that recalculation (trg_bridge_payment_delete only reverses the journal
+// entry). A deleted payment therefore leaves the visit reading
+// "Paid, ₱0 balance" with no payment row behind it, and
+// enforce_payment_before_release reads visits.payment_status, so the
+// patient's results release for free. Voiding instead fires the recalc
+// trigger (paid_php/payment_status drop back to reflecting no active
+// payment) and the bridge's reversal JE. The gift-code redemption unique
+// index (payments_gift_code_redemption_unique) is partial on
+// `voided_at IS NULL`, so a voided row never blocks a legitimate retry
+// with the same code.
+async function voidRedemptionPayment(
+  admin: ReturnType<typeof createAdminClient>,
+  input: {
+    paymentId: string;
+    userId: string;
+    visitId: string;
+    code: string;
+    reason: string;
+  },
+): Promise<string | null> {
+  const { error } = await admin
+    .from("payments")
+    .update({
+      voided_at: new Date().toISOString(),
+      voided_by: input.userId,
+      void_reason: input.reason,
+    })
+    .eq("id", input.paymentId)
+    .is("voided_at", null);
+  if (error) return translatePgError(error);
+
+  const { ip, ua } = await ipAndAgent();
+  await audit({
+    actor_id: input.userId,
+    actor_type: "staff",
+    action: "payment.voided",
+    resource_type: "payment",
+    resource_id: input.paymentId,
+    metadata: {
+      reason: input.reason,
+      auto_rollback: true,
+      visit_id: input.visitId,
+      gift_code: input.code,
+    },
+    ip_address: ip,
+    user_agent: ua,
+  });
+  return null;
+}
+
 export async function recordPaymentAction(
   _prev: PaymentResult | null,
   formData: FormData,
@@ -194,13 +249,23 @@ async function redeemGiftCode(
     .select("id")
     .maybeSingle();
   if (updErr || !updatedCode) {
-    // Best-effort rollback so the visit doesn't show a phantom payment.
-    await admin.from("payments").delete().eq("id", payment.id);
+    // Rollback so the visit doesn't show a phantom payment — void, never
+    // delete (Finding 1, see voidRedemptionPayment above).
+    const primaryError = updErr
+      ? translatePgError(updErr)
+      : "This code was just redeemed or cancelled by someone else. Refresh and try again.";
+    const voidErr = await voidRedemptionPayment(admin, {
+      paymentId: payment.id,
+      userId,
+      visitId: parsed.data.visit_id,
+      code: parsed.data.code,
+      reason: "redemption_rollback",
+    });
     return {
       ok: false,
-      error: updErr
-        ? translatePgError(updErr)
-        : "This code was just redeemed or cancelled by someone else. Refresh and try again.",
+      error: voidErr
+        ? `${primaryError} (The payment could not be voided automatically — ask an admin to check payment ${payment.id}.)`
+        : primaryError,
     };
   }
 
@@ -238,7 +303,8 @@ async function redeemGiftCode(
 
     if (jeErr) {
       // Roll back the whole redemption — the code stays spendable, no
-      // phantom payment, no half-booked accounting.
+      // half-booked accounting, and the payment is voided rather than
+      // deleted (Finding 1, see voidRedemptionPayment above).
       await admin
         .from("gift_codes")
         .update({
@@ -249,8 +315,19 @@ async function redeemGiftCode(
           redeemed_payment_id: null,
         })
         .eq("id", code.id);
-      await admin.from("payments").delete().eq("id", payment.id);
-      return { ok: false, error: jeErr };
+      const voidErr = await voidRedemptionPayment(admin, {
+        paymentId: payment.id,
+        userId,
+        visitId: parsed.data.visit_id,
+        code: parsed.data.code,
+        reason: "redemption_rollback",
+      });
+      return {
+        ok: false,
+        error: voidErr
+          ? `${jeErr} (The payment could not be voided automatically — ask an admin to check payment ${payment.id}.)`
+          : jeErr,
+      };
     }
   }
 

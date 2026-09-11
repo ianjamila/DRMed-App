@@ -348,90 +348,12 @@ export async function finaliseConsolidatedReport(
     if (vErr) return { ok: false, error: translatePgError(vErr) };
   }
 
-  // ---------------------------------------------------------------------
-  // 6) Critical-value detection (N3), mirroring the single-test path's
-  // step 11. Map each parameter back to a test_request in this report (via
-  // report_group_service_params) so the alert carries a real
-  // test_request_id. Delete any alerts a stalled prior attempt already
-  // inserted for this result first, so a retry can't page pathologist/
-  // admin twice for the same value.
-  // ---------------------------------------------------------------------
-  const serviceIdToTestRequestId = new Map(
-    claimRows.map((r) => [flatService(r.services)?.id ?? "", r.id]),
-  );
-  const paramIdToTestRequestId = new Map<string, string>();
-  for (const m of mapRows ?? []) {
-    const trId = serviceIdToTestRequestId.get(m.service_id);
-    if (trId) paramIdToTestRequestId.set(m.parameter_id, trId);
-  }
-
-  const alerts: Array<{
-    result_id: string;
-    test_request_id: string;
-    parameter_id: string;
-    parameter_name: string;
-    direction: "low" | "high";
-    observed_value_si: number;
-    threshold_si: number;
-    patient_id: string;
-    patient_drm_id: string;
-  }> = [];
-  for (const v of input.values) {
-    const param = paramsById.get(v.parameter_id);
-    const testRequestId = paramIdToTestRequestId.get(v.parameter_id);
-    if (!param || !testRequestId) continue;
-    const range = pickRangeForPatient(param, patientSex, patientAgeMonths);
-    const hit = detectCritical(param, range, {
-      numeric_value_si: v.numeric_value_si,
-      numeric_value_conv: v.numeric_value_conv,
-      is_blank: false,
-    });
-    if (hit) {
-      alerts.push({
-        result_id: resultId,
-        test_request_id: testRequestId,
-        parameter_id: param.id,
-        parameter_name: param.parameter_name,
-        direction: hit.direction,
-        observed_value_si: hit.observed_si,
-        threshold_si: hit.threshold_si,
-        patient_id: patientRaw.id,
-        patient_drm_id: patientRaw.drm_id,
-      });
-    }
-  }
-  await admin.from("critical_alerts").delete().eq("result_id", resultId);
+  // Headers are needed both for the critical-alert audit below (moved to
+  // after the PDF upload, step 6-relocated) and for the finalise/release
+  // audits in step 10.
   const h = await headers();
   const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
   const ua = h.get("user-agent");
-  if (alerts.length > 0) {
-    const { error: alertErr } = await admin.from("critical_alerts").insert(alerts);
-    if (alertErr) {
-      // Don't fail the finalise — the result row is already committed.
-      // Surface in the audit log so the gap is investigatable.
-      console.error("critical_alerts insert failed", alertErr);
-    } else {
-      await audit({
-        actor_id: session.user_id,
-        actor_type: "staff",
-        patient_id: patientRaw.id,
-        action: "result.critical_value_detected",
-        resource_type: "result",
-        resource_id: resultId,
-        metadata: {
-          test_request_ids: input.testRequestIds,
-          alerts: alerts.map((a) => ({
-            parameter: a.parameter_name,
-            direction: a.direction,
-            observed: a.observed_value_si,
-            threshold: a.threshold_si,
-          })),
-        },
-        ip_address: ip,
-        user_agent: ua,
-      });
-    }
-  }
 
   // ---------------------------------------------------------------------
   // 7) Render the consolidated PDF and upload it BEFORE any release write,
@@ -488,6 +410,105 @@ export async function finaliseConsolidatedReport(
     })
     .eq("id", resultId);
   if (metaErr) return { ok: false, error: translatePgError(metaErr) };
+
+  // ---------------------------------------------------------------------
+  // 6 (relocated, Finding 6 go-live review): critical-value detection (N3),
+  // mirroring the single-test path's step 11. Map each parameter back to a
+  // test_request in this report (via report_group_service_params) so the
+  // alert carries a real test_request_id.
+  //
+  // This step now runs AFTER the PDF has been rendered and uploaded and
+  // `finalised_at`/`storage_path` have been durably written (steps 7-8),
+  // not before. Previously it ran up front and unconditionally deleted +
+  // re-inserted every critical_alerts row for this result on EVERY attempt
+  // — including a retry that resumes a stalled prior attempt (step 4).
+  // Because the idempotency check above refuses to resume once
+  // `storage_path` is set (it demands "no stored PDF yet"), critical_alerts
+  // can now only ever be written once per resultId: by the time this point
+  // is reached, the PDF/metadata write has already succeeded, so any
+  // further call for the same test_request_ids is refused up front as
+  // "already have a result on file" and never reaches this block again.
+  // That closes both problems the old ordering had: a pathologist's
+  // acknowledgement made between two attempts can no longer be wiped by a
+  // second attempt's delete+insert (there is no second attempt past this
+  // point), and result.critical_value_detected can no longer be audited
+  // twice for the same underlying event. The delete below is kept as
+  // defense-in-depth for a genuinely stale row (e.g. a legacy result that
+  // predates this ordering) rather than something the normal flow relies on.
+  // ---------------------------------------------------------------------
+  const serviceIdToTestRequestId = new Map(
+    claimRows.map((r) => [flatService(r.services)?.id ?? "", r.id]),
+  );
+  const paramIdToTestRequestId = new Map<string, string>();
+  for (const m of mapRows ?? []) {
+    const trId = serviceIdToTestRequestId.get(m.service_id);
+    if (trId) paramIdToTestRequestId.set(m.parameter_id, trId);
+  }
+
+  const alerts: Array<{
+    result_id: string;
+    test_request_id: string;
+    parameter_id: string;
+    parameter_name: string;
+    direction: "low" | "high";
+    observed_value_si: number;
+    threshold_si: number;
+    patient_id: string;
+    patient_drm_id: string;
+  }> = [];
+  for (const v of input.values) {
+    const param = paramsById.get(v.parameter_id);
+    const testRequestId = paramIdToTestRequestId.get(v.parameter_id);
+    if (!param || !testRequestId) continue;
+    const range = pickRangeForPatient(param, patientSex, patientAgeMonths);
+    const hit = detectCritical(param, range, {
+      numeric_value_si: v.numeric_value_si,
+      numeric_value_conv: v.numeric_value_conv,
+      is_blank: false,
+    });
+    if (hit) {
+      alerts.push({
+        result_id: resultId,
+        test_request_id: testRequestId,
+        parameter_id: param.id,
+        parameter_name: param.parameter_name,
+        direction: hit.direction,
+        observed_value_si: hit.observed_si,
+        threshold_si: hit.threshold_si,
+        patient_id: patientRaw.id,
+        patient_drm_id: patientRaw.drm_id,
+      });
+    }
+  }
+  await admin.from("critical_alerts").delete().eq("result_id", resultId);
+  if (alerts.length > 0) {
+    const { error: alertErr } = await admin.from("critical_alerts").insert(alerts);
+    if (alertErr) {
+      // Don't fail the finalise — the result row (and its PDF) are already
+      // committed. Surface in the audit log so the gap is investigatable.
+      console.error("critical_alerts insert failed", alertErr);
+    } else {
+      await audit({
+        actor_id: session.user_id,
+        actor_type: "staff",
+        patient_id: patientRaw.id,
+        action: "result.critical_value_detected",
+        resource_type: "result",
+        resource_id: resultId,
+        metadata: {
+          test_request_ids: input.testRequestIds,
+          alerts: alerts.map((a) => ({
+            parameter: a.parameter_name,
+            direction: a.direction,
+            observed: a.observed_value_si,
+            threshold: a.threshold_si,
+          })),
+        },
+        ip_address: ip,
+        user_agent: ua,
+      });
+    }
+  }
 
   // ---------------------------------------------------------------------
   // 9) Release every linked test_request that is ready to (N4 + M13).

@@ -138,16 +138,32 @@ export async function reverseJournalEntryBySource(
     .maybeSingle();
   if (!original) return null;
 
-  await admin
+  // Every write from here on is checked and, on failure, the original entry
+  // is restored to exactly the state it was found in (posted) rather than
+  // left half-reversed — see the go-live review Finding 3: this function
+  // used to discard every one of these errors, which could leave the
+  // original marked 'reversed' with an incomplete or missing reversal entry
+  // behind it.
+  const { error: draftErr } = await admin
     .from("journal_entries")
     .update({ status: "draft" })
     .eq("id", original.id);
+  if (draftErr) return translatePgError(draftErr);
 
-  const { data: lines } = await admin
+  const { data: lines, error: linesReadErr } = await admin
     .from("journal_lines")
     .select("account_id, debit_php, credit_php, description, line_order")
     .eq("entry_id", original.id)
     .order("line_order");
+  if (linesReadErr || !lines) {
+    await admin
+      .from("journal_entries")
+      .update({ status: "posted" })
+      .eq("id", original.id);
+    return linesReadErr
+      ? translatePgError(linesReadErr)
+      : "Could not load journal lines to reverse.";
+  }
 
   // Manila-local "today", not a bare UTC cast — matches 0140's fix to the
   // trigger-driven bridges (bridge_payment_void / fn_undo_release_bridge)
@@ -160,6 +176,10 @@ export async function reverseJournalEntryBySource(
     { p_fiscal_year: fiscalYear },
   );
   if (numErr || !entryNumber) {
+    await admin
+      .from("journal_entries")
+      .update({ status: "posted" })
+      .eq("id", original.id);
     return numErr
       ? translatePgError(numErr)
       : "Could not allocate a journal entry number.";
@@ -180,7 +200,7 @@ export async function reverseJournalEntryBySource(
     .select("id")
     .single();
 
-  if (revErr || !revJe || !lines) {
+  if (revErr || !revJe) {
     // Put the original back exactly where it was found — better an
     // un-reversed entry than one stuck half-reversed in draft.
     await admin
@@ -191,16 +211,46 @@ export async function reverseJournalEntryBySource(
   }
 
   for (const l of lines) {
-    await admin.from("journal_lines").insert(reversePfJournalLine(revJe.id, l));
+    const { error: lineErr } = await admin
+      .from("journal_lines")
+      .insert(reversePfJournalLine(revJe.id, l));
+    if (lineErr) {
+      // Clean up the half-built reversal and restore the original rather
+      // than leaving an unbalanced draft behind.
+      await admin.from("journal_lines").delete().eq("entry_id", revJe.id);
+      await admin.from("journal_entries").delete().eq("id", revJe.id);
+      await admin
+        .from("journal_entries")
+        .update({ status: "posted" })
+        .eq("id", original.id);
+      return translatePgError(lineErr);
+    }
   }
-  await admin
+
+  const { error: postErr } = await admin
     .from("journal_entries")
     .update({ status: "posted" })
     .eq("id", revJe.id);
-  await admin
+  if (postErr) {
+    await admin.from("journal_lines").delete().eq("entry_id", revJe.id);
+    await admin.from("journal_entries").delete().eq("id", revJe.id);
+    await admin
+      .from("journal_entries")
+      .update({ status: "posted" })
+      .eq("id", original.id);
+    return translatePgError(postErr);
+  }
+
+  const { error: reversedErr } = await admin
     .from("journal_entries")
     .update({ status: "reversed", reversed_by: revJe.id })
     .eq("id", original.id);
+  if (reversedErr) {
+    // The reversal itself posted fine; only the flag on the original failed
+    // to update. Surface it rather than silently succeeding with a stale
+    // original status.
+    return translatePgError(reversedErr);
+  }
 
   return null;
 }

@@ -3,6 +3,7 @@ import "server-only";
 import type { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { reversePfJournalLine } from "./pf-journal-reversal";
+import { todayManilaISODate } from "@/lib/dates/manila";
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 
@@ -57,29 +58,65 @@ export async function voidPfDisbursementAndUnlink(
   if (disb.journal_entry_id) {
     // Draft-flip pattern for JE reversal (matches the single-void path this
     // was extracted from): 1) original → draft, 2) insert reversal JE,
-    // 3) original → reversed.
-    await admin
+    // 3) original → reversed. Every write below is checked and, on failure,
+    // the original entry is put back exactly where it was found (posted) —
+    // see the go-live review Finding 3: this used to discard every one of
+    // these errors, which could leave the original marked 'reversed' with
+    // no complete (or even no) reversal entry behind it — the books would
+    // then say a doctor was paid when the payout was actually voided.
+    const { error: draftErr } = await admin
       .from("journal_entries")
       .update({ status: "draft" })
       .eq("id", disb.journal_entry_id);
+    if (draftErr) {
+      return { ok: false, error: draftErr.message, code: draftErr.code };
+    }
 
-    const { data: lines } = await admin
+    const { data: lines, error: linesReadErr } = await admin
       .from("journal_lines")
       .select("account_id, debit_php, credit_php, description, line_order")
       .eq("entry_id", disb.journal_entry_id)
       .order("line_order");
+    if (linesReadErr || !lines) {
+      await admin
+        .from("journal_entries")
+        .update({ status: "posted" })
+        .eq("id", disb.journal_entry_id);
+      return {
+        ok: false,
+        error: linesReadErr?.message ?? "Could not load journal lines to reverse.",
+        code: linesReadErr?.code,
+      };
+    }
 
-    const revYear = new Date().getFullYear();
-    const { data: nRow } = await admin.rpc("je_next_number", {
-      p_fiscal_year: revYear,
+    // Manila-local "today", not a bare UTC cast — 0140 fixed exactly this
+    // class of bug in the trigger-driven bridges (bridge_payment_void /
+    // fn_undo_release_bridge); this app-code path had the same bug: between
+    // midnight and 08:00 Manila the UTC calendar date is still yesterday, so
+    // a reversal could try to post into an already-closed prior period.
+    const postingDate = todayManilaISODate();
+    const revFiscalYear = Number(postingDate.slice(0, 4));
+    const { data: nRow, error: numErr } = await admin.rpc("je_next_number", {
+      p_fiscal_year: revFiscalYear,
     });
+    if (numErr || !nRow) {
+      await admin
+        .from("journal_entries")
+        .update({ status: "posted" })
+        .eq("id", disb.journal_entry_id);
+      return {
+        ok: false,
+        error: numErr?.message ?? "Could not allocate a journal entry number.",
+        code: numErr?.code,
+      };
+    }
     const revEntryNumber = nRow as string;
 
-    const { data: revJe } = await admin
+    const { data: revJe, error: revJeErr } = await admin
       .from("journal_entries")
       .insert({
         entry_number: revEntryNumber,
-        posting_date: new Date().toISOString().slice(0, 10),
+        posting_date: postingDate,
         status: "draft",
         source_kind: "reversal",
         source_id: null,
@@ -89,30 +126,66 @@ export async function voidPfDisbursementAndUnlink(
       })
       .select("id")
       .single();
-
-    if (revJe && lines) {
-      for (const l of lines) {
-        await admin
-          .from("journal_lines")
-          .insert(reversePfJournalLine(revJe.id, l));
-      }
+    if (revJeErr || !revJe) {
       await admin
         .from("journal_entries")
         .update({ status: "posted" })
-        .eq("id", revJe.id);
+        .eq("id", disb.journal_entry_id);
+      return {
+        ok: false,
+        error: revJeErr?.message ?? "Could not create the reversal journal entry.",
+        code: revJeErr?.code,
+      };
     }
 
-    await admin
+    for (const l of lines) {
+      const { error: lineErr } = await admin
+        .from("journal_lines")
+        .insert(reversePfJournalLine(revJe.id, l));
+      if (lineErr) {
+        // Clean up the half-built reversal and restore the original exactly
+        // where it was found rather than leaving an unbalanced draft behind.
+        await admin.from("journal_lines").delete().eq("entry_id", revJe.id);
+        await admin.from("journal_entries").delete().eq("id", revJe.id);
+        await admin
+          .from("journal_entries")
+          .update({ status: "posted" })
+          .eq("id", disb.journal_entry_id);
+        return { ok: false, error: lineErr.message, code: lineErr.code };
+      }
+    }
+
+    const { error: postErr } = await admin
       .from("journal_entries")
-      .update({ status: "reversed", reversed_by: revJe?.id ?? null })
+      .update({ status: "posted" })
+      .eq("id", revJe.id);
+    if (postErr) {
+      await admin.from("journal_lines").delete().eq("entry_id", revJe.id);
+      await admin.from("journal_entries").delete().eq("id", revJe.id);
+      await admin
+        .from("journal_entries")
+        .update({ status: "posted" })
+        .eq("id", disb.journal_entry_id);
+      return { ok: false, error: postErr.message, code: postErr.code };
+    }
+
+    const { error: reversedErr } = await admin
+      .from("journal_entries")
+      .update({ status: "reversed", reversed_by: revJe.id })
       .eq("id", disb.journal_entry_id);
+    if (reversedErr) {
+      // The reversal itself posted fine; only the flag on the original
+      // failed to update. Surface it rather than silently voiding the
+      // disbursement while the original entry's status is stale.
+      return { ok: false, error: reversedErr.message, code: reversedErr.code };
+    }
   }
 
   // Soft-void the disbursement + unlink entries — the step the bulk rollback
   // path was missing before M12 (it voided the disbursement but left every
   // doctor_pf_entries row pointing at it, stranding those PF entries: not
   // open for a fresh disbursement, but their batch is dead).
-  await admin
+  const { error: voidErr } = await admin
     .from("doctor_pf_disbursements")
     .update({
       voided_at: new Date().toISOString(),
@@ -120,11 +193,17 @@ export async function voidPfDisbursementAndUnlink(
       void_reason: input.voidReason,
     })
     .eq("id", input.disbursementId);
+  if (voidErr) {
+    return { ok: false, error: voidErr.message, code: voidErr.code };
+  }
 
-  await admin
+  const { error: unlinkErr } = await admin
     .from("doctor_pf_entries")
     .update({ disbursement_id: null })
     .eq("disbursement_id", input.disbursementId);
+  if (unlinkErr) {
+    return { ok: false, error: unlinkErr.message, code: unlinkErr.code };
+  }
 
   await audit({
     actor_id: input.voidedBy,
