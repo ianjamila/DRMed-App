@@ -103,8 +103,13 @@ describe("handleOAuthCallback", () => {
     expect(out).toEqual({ kind: "rejected", redirectTo: "/staff/login?error=not_staff" });
     expect(deps.audit).toHaveBeenCalledWith(
       expect.objectContaining({
-        action: "staff.signin.rejected_unknown",
-        metadata: { provider: "google", email: "a@b.com", has_profile: false },
+        action: "staff.signin.rejected_inactive",
+        metadata: {
+          provider: "google",
+          email: "a@b.com",
+          has_profile: false,
+          is_deleted: false,
+        },
       }),
     );
     expect(deps.signOut).toHaveBeenCalled();
@@ -135,6 +140,17 @@ describe("handleOAuthCallback", () => {
 
     expect(out.kind).toBe("rejected");
     expect(deps.deleteAuthUser).not.toHaveBeenCalled();
+    expect(deps.audit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "staff.signin.rejected_inactive",
+        metadata: {
+          provider: "google",
+          email: "a@b.com",
+          has_profile: true,
+          is_deleted: true,
+        },
+      }),
+    );
   });
 
   it("records that a profile existed when rejecting an inactive user", async () => {
@@ -145,7 +161,29 @@ describe("handleOAuthCallback", () => {
 
     expect(deps.audit).toHaveBeenCalledWith(
       expect.objectContaining({
-        metadata: { provider: "google", email: "a@b.com", has_profile: true },
+        metadata: {
+          provider: "google",
+          email: "a@b.com",
+          has_profile: true,
+          is_deleted: false,
+        },
+      }),
+    );
+  });
+
+  it("reports exchange_failed when exchangeCode resolves with no error and no userId", async () => {
+    const deps = makeDeps({
+      exchangeCode: vi
+        .fn()
+        .mockResolvedValue({ userId: null, email: null, error: null }),
+    });
+    const out = await handleOAuthCallback(INPUT, deps);
+
+    expect(out).toEqual({ kind: "failed", redirectTo: "/staff/login?error=auth_failed" });
+    expect(deps.audit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "staff.signin.failed",
+        metadata: { provider: "google", reason: "exchange_failed" },
       }),
     );
   });

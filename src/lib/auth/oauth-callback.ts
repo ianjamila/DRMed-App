@@ -82,11 +82,12 @@ export async function handleOAuthCallback(
     await deps.audit({
       actor_id: userId,
       actor_type: "staff",
-      action: "staff.signin.rejected_unknown",
+      action: "staff.signin.rejected_inactive",
       metadata: {
         provider: "google",
         email: exchanged.email,
         has_profile: !!profile,
+        is_deleted: !!profile?.deleted_at,
       },
       ...base,
     });
