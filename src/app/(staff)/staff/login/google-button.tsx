@@ -1,12 +1,25 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 
 export function GoogleSignInButton() {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // If the user presses back from Google's account chooser or consent
+  // screen, the browser can restore this page from bfcache with React
+  // state intact — including `pending: true` from just before the
+  // navigation to Google. Without this, the primary sign-in button would
+  // render as permanently disabled ("Redirecting to Google…").
+  useEffect(() => {
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) setPending(false);
+    };
+    window.addEventListener("pageshow", onPageShow);
+    return () => window.removeEventListener("pageshow", onPageShow);
+  }, []);
 
   async function signIn() {
     setPending(true);

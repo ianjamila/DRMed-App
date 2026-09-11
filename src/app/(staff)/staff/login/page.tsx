@@ -13,7 +13,7 @@ export const metadata = {
 };
 
 const ERROR_COPY: Record<string, string> = {
-  auth_failed: "That sign-in didn't complete. Please try again.",
+  auth_failed: "Google sign-in didn't go through. Try again, or use your password below.",
   not_staff:
     "That Google account isn't set up as staff here. Ask an admin to add it, or sign in with your password.",
 };
@@ -48,11 +48,11 @@ export default async function StaffLoginPage({ searchParams }: Props) {
           <GoogleSignInButton />
 
           <div className="flex items-center gap-3">
-            <span className="h-px flex-1 bg-slate-200" />
+            <span className="h-px flex-1 bg-slate-200" aria-hidden="true" />
             <span className="text-xs uppercase tracking-wider text-slate-500">
               or
             </span>
-            <span className="h-px flex-1 bg-slate-200" />
+            <span className="h-px flex-1 bg-slate-200" aria-hidden="true" />
           </div>
 
           <StaffLoginForm />
