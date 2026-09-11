@@ -32,7 +32,9 @@ export interface OAuthCallbackDeps {
   }>;
   /** Returns the row in ANY state (inactive, soft-deleted), or null if none exists. */
   loadProfile: (userId: string) => Promise<StaffProfileRow | null>;
+  /** Must resolve, never reject — implementations catch and report their own failures. */
   signOut: () => Promise<void>;
+  /** Must resolve, never reject — implementations catch and report their own failures. */
   deleteAuthUser: (userId: string) => Promise<void>;
   audit: (entry: OAuthAuditEntry) => Promise<void>;
 }

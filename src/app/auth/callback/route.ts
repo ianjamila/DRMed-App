@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
-import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
+import { ipAndAgent } from "@/lib/server/action-helpers";
+import { reportError } from "@/lib/observability/report-error";
 import { handleOAuthCallback } from "@/lib/auth/oauth-callback";
 
 // Supabase redirects here after Google. Must be a Route Handler:
@@ -14,14 +15,14 @@ export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
   const supabase = await createClient();
   const admin = createAdminClient();
-  const h = await headers();
+  const { ip, ua } = await ipAndAgent();
 
   const outcome = await handleOAuthCallback(
     {
       code: searchParams.get("code"),
       next: searchParams.get("next"),
-      ip: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
-      userAgent: h.get("user-agent"),
+      ip,
+      userAgent: ua,
     },
     {
       exchangeCode: async (code) => {
@@ -42,11 +43,39 @@ export async function GET(request: Request) {
           .maybeSingle();
         return data ?? null;
       },
+      // The allow/reject decision is already made and audited by the time
+      // these run — they're best-effort cleanup on the rejected path. A
+      // throw here must never turn the intended fail-closed redirect into
+      // Next's generic error page, and a returned error must never be
+      // dropped silently (an orphaned auth.users row with zero trace), so
+      // both report through reportError instead of propagating.
       signOut: async () => {
-        await supabase.auth.signOut();
+        try {
+          const { error } = await supabase.auth.signOut();
+          if (error) {
+            await reportError({ scope: "auth.callback.signOut", error });
+          }
+        } catch (error) {
+          await reportError({ scope: "auth.callback.signOut", error });
+        }
       },
       deleteAuthUser: async (userId) => {
-        await admin.auth.admin.deleteUser(userId);
+        try {
+          const { error } = await admin.auth.admin.deleteUser(userId);
+          if (error) {
+            await reportError({
+              scope: "auth.callback.deleteAuthUser",
+              error,
+              metadata: { userId },
+            });
+          }
+        } catch (error) {
+          await reportError({
+            scope: "auth.callback.deleteAuthUser",
+            error,
+            metadata: { userId },
+          });
+        }
       },
       audit,
     },
