@@ -168,7 +168,7 @@ export function ConsolidatedForm(props: Props) {
             <p className="text-sm font-semibold text-amber-900">
               Report finalised — release deferred:{" "}
               {deferredReason === "payment"
-                ? "visit not yet paid (HMO visits are exempt); results release automatically once payment is recorded"
+                ? "visit not yet paid (HMO visits are exempt). Record the payment, then come back and release these results — only packages release on their own"
                 : deferredReason === "consent"
                   ? "patient consent not on file"
                   : "one or more of these tests requires pathologist sign-off before it can be released"}

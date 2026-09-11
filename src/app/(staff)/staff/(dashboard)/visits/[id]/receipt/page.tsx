@@ -100,9 +100,10 @@ function PortalAccessSlip({
           <p className="mt-3 text-xs text-[color:var(--color-brand-text-soft)]">
             Sign in at{" "}
             <strong>{SITE.url.replace(/^https?:\/\//, "")}/portal</strong> to view
-            results when ready. PIN is valid for 60 days and replaces any earlier
-            one. Keep it private — anyone with this PIN can view the patient&apos;s
-            lab results.
+            results when ready. PIN is valid for 60 days. Any PIN from an
+            earlier visit also keeps working until it expires, so please
+            destroy old slips. Keep it private — anyone with this PIN can view
+            the patient&apos;s lab results.
           </p>
         </div>
 
