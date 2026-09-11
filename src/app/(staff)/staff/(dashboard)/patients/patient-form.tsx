@@ -254,10 +254,13 @@ export function PatientForm({ initial, referralOptions }: Props) {
         </legend>
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="grid gap-1.5">
-            <Label htmlFor="referral_source">Referral source</Label>
+            <Label htmlFor="referral_source">
+              Referral source{!isEdit ? " *" : ""}
+            </Label>
             <select
               id="referral_source"
               name="referral_source"
+              required={!isEdit}
               value={referralSource}
               onChange={(e) => setReferralSource(e.target.value)}
               className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
