@@ -80,7 +80,16 @@ const PatientFields = {
   consent_given_today: consentField,
 };
 
-export const PatientCreateSchema = z.object(PatientFields);
+// Referral source is required when reception registers a NEW patient — it is
+// the only place the app records where a patient came from, and it was being
+// left blank (40 of 41 new patients in the 90 days to 2026-09-11). Edits stay
+// optional so legacy records without a source can still be saved.
+export const PatientCreateSchema = z.object({
+  ...PatientFields,
+  referral_source: z.enum(ReferralSourceEnum, {
+    error: "Choose a referral source (where the patient heard about us).",
+  }),
+});
 export const PatientUpdateSchema = z.object(PatientFields);
 
 export type PatientCreateInput = z.infer<typeof PatientCreateSchema>;

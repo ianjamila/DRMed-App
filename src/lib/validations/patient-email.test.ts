@@ -13,7 +13,8 @@ const baseStaff = {
   sex: "male",
   phone: "",
   address: "",
-  referral_source: "",
+  // Required on create since the referral-source rule (2026-09-11).
+  referral_source: "walk_in",
   referred_by_doctor: "",
   preferred_release_medium: "",
   senior_pwd_id_kind: "",
