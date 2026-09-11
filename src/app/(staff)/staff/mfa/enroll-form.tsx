@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,14 +11,11 @@ import {
   type EnrollPayload,
   type ActionResult,
 } from "./actions";
-import type { StaffSession } from "@/lib/auth/require-staff";
 import { Panel } from "@/components/ui/panel";
 
-interface Props {
-  role: StaffSession["role"];
-}
-
-export function EnrollForm({ role }: Props) {
+// Enrolment is opt-in for every role, so reaching this screen is always a
+// deliberate choice — no role needs a different entry path.
+export function EnrollForm() {
   const [enroll, setEnroll] = useState<EnrollPayload | null>(null);
   const [enrollError, setEnrollError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
@@ -26,15 +23,6 @@ export function EnrollForm({ role }: Props) {
     ActionResult | null,
     FormData
   >(verifyEnrollmentAction, null);
-
-  // Auto-start enrollment for admin (it's required) so they don't need an
-  // extra click. Other roles see a "Begin setup" button — for them the
-  // page is only reachable via opt-in, so a confirm step is friendlier.
-  useEffect(() => {
-    if (role !== "admin" || enroll || starting) return;
-    void start();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   async function start() {
     setStarting(true);
@@ -52,9 +40,7 @@ export function EnrollForm({ role }: Props) {
     return (
       <Panel className="p-5">
         <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
-          {role === "admin"
-            ? "MFA is required for admin accounts"
-            : "Set up two-factor authentication"}
+          Set up two-factor authentication
         </h2>
         <p className="mt-2 text-sm text-[color:var(--color-brand-text-soft)]">
           You&apos;ll need an authenticator app — Google Authenticator,

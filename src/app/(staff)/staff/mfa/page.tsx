@@ -28,10 +28,11 @@ export default async function StaffMfaPage() {
   // factors.totp is verified TOTP factors only (Supabase types).
   const verified = factors?.totp?.[0];
 
-  // Verified factor → user is between password and code step. Show challenge.
-  // No verified factor → enrollment screen (admin: required; others: optional
-  // but we still got here so something asked us to enroll — typically the
-  // user clicked the "Set up MFA" link from a future profile page).
+  // Verified factor → user is between the first step and the code step, on
+  // any sign-in route. Show challenge.
+  // No verified factor → enrollment screen. Enrolment is opt-in for every
+  // role, so arriving here means the user chose it — typically via the
+  // "Set up two-step sign-in" link on their profile page.
   const mode: "challenge" | "enroll" = verified ? "challenge" : "enroll";
 
   return (
@@ -49,7 +50,7 @@ export default async function StaffMfaPage() {
       </header>
 
       {mode === "enroll" ? (
-        <EnrollForm role={session.role} />
+        <EnrollForm />
       ) : (
         <ChallengeForm />
       )}
