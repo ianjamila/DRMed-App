@@ -19,7 +19,7 @@ export function ComposeForm({ activeSubscriberCount }: Props) {
   const router = useRouter();
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState(
-    "Hello there!\n\nA quick note from drmed.ph:\n\n- New test available: …\n- Schedule update: …\n\n[Book an appointment](https://drmed.ph/schedule)\n",
+    "Hello there!\n\nA quick note from drmed.ph:\n\n- New test available: …\n- Schedule update: …\n\n[Book a test or consultation](https://drmed.ph/schedule)\n",
   );
   const [confirming, setConfirming] = useState(false);
   const [state, formAction, pending] = useActionState<
