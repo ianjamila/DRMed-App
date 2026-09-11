@@ -89,6 +89,10 @@ export async function signInStaff(
     actor_id: data.user.id,
     actor_type: "staff",
     action: "staff.signin.success",
+    // Google sign-in logs the same action, so name the route here too —
+    // otherwise a successful password sign-in is the one row in the audit
+    // log that doesn't say how the person got in.
+    metadata: { provider: "password" },
     ip_address: ipAddress,
     user_agent: userAgent,
   });

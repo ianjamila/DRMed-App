@@ -72,7 +72,7 @@ export function StaffForm({ initial }: Props) {
         />
         {isEdit ? (
           <p className="text-xs text-[color:var(--color-brand-text-soft)]">
-            Email cannot be changed here. Contact Supabase support if needed.
+            Change the sign-in email in the “Sign-in email” panel below.
           </p>
         ) : null}
       </div>
@@ -177,6 +177,14 @@ export function StaffForm({ initial }: Props) {
       {state && !state.ok ? (
         <p className="text-sm text-red-600" role="alert">
           {state.error}
+        </p>
+      ) : null}
+      {state && state.ok && state.message ? (
+        <p
+          className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800"
+          role="status"
+        >
+          {state.message}
         </p>
       ) : null}
 

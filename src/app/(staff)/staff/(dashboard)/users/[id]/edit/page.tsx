@@ -5,6 +5,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { StaffForm } from "../../staff-form";
 import { AdminResetForm } from "./admin-reset-form";
 import { DeleteForm } from "./delete-form";
+import { EmailForm } from "./email-form";
 import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
@@ -75,6 +76,33 @@ export default async function EditStaffUserPage({ params }: Props) {
         />
       </Panel>
 
+      {!isSelf ? (
+        <Panel className="mt-6 p-6">
+          <h2 className="font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">
+            Sign-in email
+          </h2>
+          {isDeleted ? (
+            <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
+              This staff user is deleted, so their sign-in email is frozen.
+              Restore them from the staff users list first.
+            </p>
+          ) : (
+            <>
+              <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
+                Staff sign in with Google, matched on this address. Update it
+                when someone changes the Google account they use.
+              </p>
+              <div className="mt-4">
+                <EmailForm
+                  staffUserId={profile.id}
+                  currentEmail={userResp?.user?.email ?? ""}
+                />
+              </div>
+            </>
+          )}
+        </Panel>
+      ) : null}
+
       <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50/40 p-6">
         <h2 className="font-heading text-lg font-bold text-amber-900">
           Reset password
@@ -89,6 +117,11 @@ export default async function EditStaffUserPage({ params }: Props) {
               Personal → My profile
             </Link>{" "}
             so the current password check applies.
+          </p>
+        ) : isDeleted ? (
+          <p className="mt-1 text-sm text-amber-900/80">
+            This staff user is deleted, so their password is frozen. Restore
+            them from the staff users list first.
           </p>
         ) : (
           <>

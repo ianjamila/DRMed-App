@@ -39,8 +39,8 @@ export function StaffLoginForm() {
           {state.error}
         </p>
       ) : null}
-      <Button type="submit" disabled={pending}>
-        {pending ? "Signing in…" : "Sign in"}
+      <Button type="submit" variant="outline" disabled={pending}>
+        {pending ? "Signing in…" : "Sign in with a password"}
       </Button>
     </form>
   );
