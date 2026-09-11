@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,12 +18,28 @@ export function EmailForm({ staffUserId, currentEmail }: Props) {
     FormData
   >(action, null);
 
+  // The schema normalises the address (trim + lowercase), so after a save the
+  // input should show what was actually stored, not what was typed. Remounting
+  // via a key is how an uncontrolled input picks up a new defaultValue — keyed
+  // on a success counter so a later failed attempt never wipes the admin's
+  // in-progress retry. `useActionState` hands back a new `state` identity per
+  // submission, so this adjusts the counter during render (React's documented
+  // "storing information from previous renders" pattern) rather than in an
+  // effect — no extra commit-then-re-render flash for what's really a pure
+  // derivation of the last result.
+  const [savedCount, setSavedCount] = useState(0);
+  const [lastState, setLastState] = useState(state);
+  if (state !== lastState) {
+    setLastState(state);
+    if (state?.ok) setSavedCount((n) => n + 1);
+  }
+
   return (
     <form action={formAction} className="grid gap-3">
       <div className="grid gap-1.5">
         <Label htmlFor="email">New email</Label>
         <Input
-          key={state?.ok ? "after-success" : "open"}
+          key={savedCount}
           id="email"
           name="email"
           type="email"

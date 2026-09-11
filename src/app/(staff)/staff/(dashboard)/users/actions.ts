@@ -247,9 +247,10 @@ export async function changeStaffEmailAction(
     { email: parsed.data.email, email_confirm: true },
   );
   if (updateErr) {
-    // Supabase rejects a duplicate address; surface it plainly rather than
-    // leaking the raw Auth error.
-    const duplicate = /already|registered|exists/i.test(updateErr.message);
+    // Key off GoTrue's stable error code, not its human-readable message —
+    // the message text can change across Supabase platform versions or with
+    // future i18n, with no compile-time signal when it does.
+    const duplicate = updateErr.code === "email_exists";
     return {
       ok: false,
       error: duplicate
