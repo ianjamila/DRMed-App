@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   Dialog,
   DialogContent,
@@ -10,8 +11,21 @@ import {
 } from "@/components/ui/dialog";
 import { createPfDisbursement } from "@/lib/actions/accounting/pf-disbursements";
 import { createBulkPfPayoutCash } from "@/lib/actions/accounting/pf-bulk-payout";
-import { todayManilaISODate } from "@/lib/dates/manila";
+import { manilaDate, todayManilaISODate } from "@/lib/dates/manila";
 import { formatPfMethod } from "@/lib/accounting/pf-labels";
+import {
+  ariaSortFor,
+  DEFAULT_PAGE_SIZE,
+  buildListHref,
+  nextSort,
+  pageCount,
+  parsePage,
+  parsePageSize,
+  parseSort,
+  type SortSpec,
+} from "@/lib/ui/table-params";
+import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
+import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -58,6 +72,20 @@ type HistoryDisbursement = {
 
 type Tab = "open" | "pending_hmo" | "history";
 
+const BASE_PATH = "/staff/admin/accounting/pf-payouts";
+const TAB_KEYS = ["open", "pending_hmo", "history"] as const;
+
+/**
+ * Columns the "Already paid" table can be ordered by.
+ *
+ * Same allow-list discipline as the server-rendered lists: an unrecognised
+ * `?sort=` must fall back to the default rather than be used to index into a
+ * row object with an arbitrary string.
+ */
+const HISTORY_SORTABLE = ["batch_number", "posted_date", "physician", "method", "total_php"] as const;
+type HistorySort = (typeof HISTORY_SORTABLE)[number];
+const HISTORY_DEFAULT_SORT: SortSpec<HistorySort> = { key: "posted_date", dir: "desc" };
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -98,7 +126,15 @@ export function PfPayoutsClient({
   history: HistoryDisbursement[];
   nowIso: string;
 }) {
-  const [tab, setTab] = useState<Tab>("open");
+  // The tab lives in the URL rather than in component state so that the
+  // History tab's `?sort=&dir=&page=&size=` belong to a tab you can link to —
+  // and so switching tabs drops them, instead of carrying a sort that means
+  // nothing on the tab you just landed on.
+  const params = useSearchParams();
+  const rawTab = params.get("tab");
+  const tab: Tab = (TAB_KEYS as readonly string[]).includes(rawTab ?? "")
+    ? (rawTab as Tab)
+    : "open";
 
   const tabs: { key: Tab; label: string; count: number }[] = [
     { key: "open", label: "Ready to pay", count: openEntries.length },
@@ -111,9 +147,10 @@ export function PfPayoutsClient({
       {/* Tab bar */}
       <div className="flex gap-0 mb-6 border-b border-[color:var(--color-brand-border)]">
         {tabs.map((t) => (
-          <button
+          <Link
             key={t.key}
-            onClick={() => setTab(t.key)}
+            href={buildListHref(BASE_PATH, {}, { tab: t.key === "open" ? null : t.key })}
+            aria-current={tab === t.key ? "page" : undefined}
             className={[
               "px-4 py-2 text-sm font-medium transition-colors",
               tab === t.key
@@ -125,7 +162,7 @@ export function PfPayoutsClient({
             <span className="ml-1 rounded-full bg-[color:var(--color-brand-bg)] px-1.5 py-0.5 text-xs">
               {t.count}
             </span>
-          </button>
+          </Link>
         ))}
       </div>
 
@@ -170,7 +207,14 @@ function OpenTab({ entries }: { entries: OpenEntry[] }) {
     g.total += Number(e.pf_php);
   }
 
-  const groups = Array.from(byPhysician.entries());
+  // Ordered by doctor name, not Map insertion order — which is whatever order
+  // the entries query happened to return, so the same list of doctors could
+  // reshuffle between loads. This tab is a payout worklist and stays
+  // deliberately UNPAGED: hiding a doctor who is owed money behind a "next
+  // page" is how someone gets missed on payout day.
+  const groups = Array.from(byPhysician.entries()).sort((a, b) =>
+    a[1].name.localeCompare(b[1].name),
+  );
   const activePositiveGroups = groups.filter(([, g]) => g.isActive && g.total > 0);
   const inactiveGroups = groups.filter(([, g]) => !g.isActive && g.total !== 0);
   const negativeGroups = groups.filter(([, g]) => g.isActive && g.total < 0);
@@ -531,9 +575,16 @@ function PendingHmoTab({ entries, nowIso }: { entries: PendingHmoEntry[]; nowIso
 
   const nowMs = new Date(nowIso).getTime();
 
+  // Same reasoning as the Ready-to-pay tab: ordered by doctor name so the list
+  // is stable across loads, and left unpaged because it is a watchlist of
+  // money still owed.
+  const physGroups = Array.from(byPhys.entries()).sort((a, b) =>
+    a[1].name.localeCompare(b[1].name),
+  );
+
   return (
     <div className="space-y-4">
-      {Array.from(byPhys.entries()).map(([pid, g]) => (
+      {physGroups.map(([pid, g]) => (
         <div
           key={pid}
           className="rounded-md border border-[color:var(--color-brand-border)] overflow-hidden"
@@ -591,7 +642,91 @@ function PendingHmoTab({ entries, nowIso }: { entries: PendingHmoEntry[]; nowIso
 // Tab 3 — History
 // ---------------------------------------------------------------------------
 
+function physicianNameOf(
+  p: { id: string; full_name: string } | { id: string; full_name: string }[] | null,
+): string {
+  if (!p) return "(unknown)";
+  return Array.isArray(p) ? (p[0]?.full_name ?? "(unknown)") : p.full_name;
+}
+
 function HistoryTab({ disbursements }: { disbursements: HistoryDisbursement[] }) {
+  const params = useSearchParams();
+  const sort = parseSort(
+    params.get("sort") ?? undefined,
+    params.get("dir") ?? undefined,
+    HISTORY_SORTABLE,
+    HISTORY_DEFAULT_SORT,
+  );
+  const size = parsePageSize(params.get("size") ?? undefined);
+  const page = parsePage(params.get("page") ?? undefined);
+
+  // Sorted on the value, never on the rendered string: `total_php` is money
+  // and `posted_date` is an ISO date, both of which sort wrongly as display
+  // text ("₱1,000" < "₱9" alphabetically).
+  const sorted = [...disbursements].sort((a, b) => {
+    const dir = sort.dir === "asc" ? 1 : -1;
+    let cmp = 0;
+    switch (sort.key) {
+      case "batch_number":
+        cmp = a.batch_number - b.batch_number;
+        break;
+      case "posted_date":
+        cmp = a.posted_date.localeCompare(b.posted_date);
+        break;
+      case "physician":
+        cmp = physicianNameOf(a.physicians).localeCompare(physicianNameOf(b.physicians));
+        break;
+      case "method":
+        cmp = a.method.localeCompare(b.method);
+        break;
+      case "total_php":
+        cmp = Number(a.total_php) - Number(b.total_php);
+        break;
+    }
+    // Tie-break on id so the ordering is TOTAL. Rows arrive in whatever order
+    // the query returned, and several payouts share a posted_date, so without
+    // this the page slice can shift between renders — the client-side twin of
+    // the `.range()` drop/repeat bug.
+    return cmp !== 0 ? cmp * dir : a.id.localeCompare(b.id);
+  });
+
+  const total = sorted.length;
+  const totalPages = pageCount(total, size);
+  // Clamp rather than trust the URL: a hand-edited ?page=99 should show the
+  // last page, not an empty table.
+  const safePage = Math.min(page, totalPages);
+  const rows = sorted.slice((safePage - 1) * size, safePage * size);
+
+  const isDefaultSort =
+    sort.key === HISTORY_DEFAULT_SORT.key && sort.dir === HISTORY_DEFAULT_SORT.dir;
+  const baseParams: Record<string, string | null> = {
+    tab: "history",
+    sort: isDefaultSort ? null : sort.key,
+    dir: isDefaultSort ? null : sort.dir,
+    size: size === DEFAULT_PAGE_SIZE ? null : String(size),
+  };
+
+  const sortHref = (key: HistorySort) => {
+    const next = nextSort(sort, key);
+    const nextIsDefault =
+      next.key === HISTORY_DEFAULT_SORT.key && next.dir === HISTORY_DEFAULT_SORT.dir;
+    return buildListHref(BASE_PATH, baseParams, {
+      sort: nextIsDefault ? null : next.key,
+      dir: nextIsDefault ? null : next.dir,
+      page: null,
+    });
+  };
+
+  const th = (key: HistorySort, label: string, align: "left" | "right" = "left") => (
+    <SortableTh
+      key={key}
+      label={label}
+      href={sortHref(key)}
+      state={ariaSortFor(sort, key)}
+      align={align}
+    />
+  );
+
   if (disbursements.length === 0) {
     return (
       <div className="rounded-md border border-[color:var(--color-brand-border)] bg-[color:var(--color-brand-bg)] p-8 text-center text-sm text-[color:var(--color-brand-text-soft)]">
@@ -601,26 +736,25 @@ function HistoryTab({ disbursements }: { disbursements: HistoryDisbursement[] })
   }
 
   return (
+    <>
     <div className="overflow-x-auto rounded-md border border-[color:var(--color-brand-border)]">
       <table className="w-full text-sm md:min-w-[640px]">
         <thead className="bg-[color:var(--color-brand-bg)] text-[color:var(--color-brand-text-soft)]">
           <tr>
-            <th className="px-4 py-3 text-left font-medium">Reference no.</th>
-            <th className="px-4 py-3 text-left font-medium">Date</th>
-            <th className="px-4 py-3 text-left font-medium">Doctor</th>
-            <th className="px-4 py-3 text-left font-medium">Paid by</th>
-            <th className="px-4 py-3 text-right font-medium">Total</th>
-            <th className="px-4 py-3 text-right font-medium"></th>
+            {th("batch_number", "Reference no.")}
+            {th("posted_date", "Date")}
+            {th("physician", "Doctor")}
+            {th("method", "Paid by")}
+            {th("total_php", "Total", "right")}
+            <PlainTh label="" align="right" />
           </tr>
         </thead>
         <tbody className="divide-y divide-[color:var(--color-brand-border)]">
-          {disbursements.map((d) => {
+          {rows.map((d) => {
             const year = d.posted_date.slice(0, 4);
             const batchLabel = `PF-${year}-${String(d.batch_number).padStart(4, "0")}`;
             const isVoided = !!d.voided_at;
-            const physName = Array.isArray(d.physicians)
-              ? (d.physicians[0]?.full_name ?? "(unknown)")
-              : (d.physicians?.full_name ?? "(unknown)");
+            const physName = physicianNameOf(d.physicians);
 
             return (
               <tr
@@ -631,7 +765,7 @@ function HistoryTab({ disbursements }: { disbursements: HistoryDisbursement[] })
                   {batchLabel}
                 </td>
                 <td className="px-4 py-3 text-[color:var(--color-brand-text-soft)]">
-                  {d.posted_date}
+                  {manilaDate(d.posted_date)}
                 </td>
                 <td className="px-4 py-3">{physName}</td>
                 <td className="px-4 py-3 text-[color:var(--color-brand-text-soft)]">
@@ -663,5 +797,33 @@ function HistoryTab({ disbursements }: { disbursements: HistoryDisbursement[] })
         </tbody>
       </table>
     </div>
+
+    <ListPagination
+      page={safePage}
+      pageCount={totalPages}
+      total={total}
+      size={size}
+      prevHref={
+        safePage > 1
+          ? buildListHref(BASE_PATH, baseParams, {
+              page: safePage - 1 > 1 ? String(safePage - 1) : null,
+            })
+          : null
+      }
+      nextHref={
+        safePage < totalPages
+          ? buildListHref(BASE_PATH, baseParams, { page: String(safePage + 1) })
+          : null
+      }
+      sizeOptions={PAGE_SIZES.map((s) => ({
+        size: s,
+        href: buildListHref(BASE_PATH, baseParams, {
+          size: s === DEFAULT_PAGE_SIZE ? null : String(s),
+          page: null,
+        }),
+      }))}
+      noun="payout"
+    />
+    </>
   );
 }

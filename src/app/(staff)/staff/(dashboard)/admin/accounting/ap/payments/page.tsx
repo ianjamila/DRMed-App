@@ -1,5 +1,6 @@
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { listBillPaymentsAction } from "@/lib/actions/accounting/bill-payments";
+import { AP_INDEX_MAX_ROWS } from "@/lib/ui/table-params";
 import { listVendorsAction } from "@/lib/actions/accounting/vendors";
 import { PaymentsIndexClient } from "./payments-index-client";
 import Link from "next/link";
@@ -22,7 +23,10 @@ export default async function PaymentsIndexPage({
       date_from: sp.date_from,
       date_to: sp.date_to,
       search: sp.q,
-      limit: 50,
+      // Was 50 — see the note in the bills index. The pager describes the
+      // fetched set, so a 50-row fetch made it claim "of 50" whatever the
+      // real number of payments was.
+      limit: AP_INDEX_MAX_ROWS,
     }),
     listVendorsAction({ active: true }),
   ]);

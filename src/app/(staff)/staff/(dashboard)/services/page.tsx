@@ -3,20 +3,131 @@ import { createClient } from "@/lib/supabase/server";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { formatPhp } from "@/lib/marketing/format";
 import { Panel } from "@/components/ui/panel";
+import {
+  ariaSortFor,
+  buildListHref,
+  DEFAULT_PAGE_SIZE,
+  nextSort,
+  pageCount,
+  parsePage,
+  parsePageSize,
+  parseSort,
+  rangeFor,
+  type SortSpec,
+} from "@/lib/ui/table-params";
+import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
+import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 
 export const metadata = {
   title: "Services — staff",
 };
 
-export default async function ServicesAdminPage() {
-  await requireAdminStaff();
+interface SearchProps {
+  searchParams: Promise<{
+    sort?: string;
+    dir?: string;
+    page?: string;
+    size?: string;
+  }>;
+}
+
+const BASE_PATH = "/staff/services";
+
+// Sortable columns for the catalog. `parseSort` requires this exact
+// allow-list — it's a security boundary because the value reaches a
+// PostgREST `.order()`; never widen it to a raw search param. `section` is
+// fetched below but isn't a column this table shows, so it's left off this
+// list — only what's visibly a column is sortable.
+const SORTABLE_COLUMNS = [
+  "code",
+  "name",
+  "price_php",
+  "turnaround_hours",
+  "is_active",
+] as const;
+type SortColumn = (typeof SORTABLE_COLUMNS)[number];
+
+const DEFAULT_SORT: SortSpec<SortColumn> = { key: "name", dir: "asc" };
+
+// turnaround_hours is nullable (not every service has a fixed TAT) and
+// renders as "—" — sink blanks to the bottom regardless of direction so a
+// sort doesn't just surface every untimed service first.
+const NULLS_LAST_COLUMNS = new Set<SortColumn>(["turnaround_hours"]);
+
+interface ServiceRow {
+  id: string;
+  code: string;
+  name: string;
+  price_php: number;
+  hmo_price_php: number | null;
+  turnaround_hours: number | null;
+  is_active: boolean;
+  requires_signoff: boolean;
+  is_send_out: boolean;
+  section: string | null;
+}
+
+async function search(sort: SortSpec<SortColumn>, page: number, size: number) {
   const supabase = await createClient();
-  const { data: services } = await supabase
+  const [from, to] = rangeFor(page, size);
+
+  let q = supabase
     .from("services")
     .select(
       "id, code, name, price_php, hmo_price_php, turnaround_hours, is_active, requires_signoff, is_send_out, section",
-    )
-    .order("name", { ascending: true });
+      { count: "exact" },
+    );
+
+  q = q.order(sort.key, {
+    ascending: sort.dir === "asc",
+    ...(NULLS_LAST_COLUMNS.has(sort.key) ? { nullsFirst: false } : {}),
+  });
+  // Tie-break on id — without a total order, .range() can drop or repeat
+  // rows across pages.
+  q = q.order("id", { ascending: true }).range(from, to);
+
+  const { data, error, count } = await q.returns<ServiceRow[]>();
+  if (error) {
+    console.error("services list failed", error);
+    return { rows: [], total: 0 };
+  }
+  return { rows: data ?? [], total: count ?? 0 };
+}
+
+export default async function ServicesAdminPage({ searchParams }: SearchProps) {
+  await requireAdminStaff();
+
+  const params = await searchParams;
+  const sort = parseSort(params.sort, params.dir, SORTABLE_COLUMNS, DEFAULT_SORT);
+  const size = parsePageSize(params.size);
+  const page = parsePage(params.page);
+  const { rows: services, total } = await search(sort, page, size);
+  const totalPages = pageCount(total, size);
+
+  // Params at their default are omitted so page 1 with the default sort and
+  // size stays the bare /staff/services URL.
+  const isDefaultSort = sort.key === DEFAULT_SORT.key && sort.dir === DEFAULT_SORT.dir;
+  const baseParams: Record<string, string | null> = {
+    sort: isDefaultSort ? null : sort.key,
+    dir: isDefaultSort ? null : sort.dir,
+    size: size === DEFAULT_PAGE_SIZE ? null : String(size),
+  };
+
+  const sortHref = (key: SortColumn) => {
+    const next = nextSort(sort, key);
+    const nextIsDefault = next.key === DEFAULT_SORT.key && next.dir === DEFAULT_SORT.dir;
+    // Any change to sort resets to page 1 — staying on page 7 of a result
+    // set that just reordered is a blank screen with no explanation.
+    return buildListHref(BASE_PATH, baseParams, {
+      sort: nextIsDefault ? null : next.key,
+      dir: nextIsDefault ? null : next.dir,
+      page: null,
+    });
+  };
+
+  const th = (key: SortColumn, label: string) => (
+    <SortableTh key={key} label={label} href={sortHref(key)} state={ariaSortFor(sort, key)} />
+  );
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
@@ -43,26 +154,26 @@ export default async function ServicesAdminPage() {
         <table className="w-full min-w-[760px] text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
-              <th className="px-4 py-3">Code</th>
-              <th className="px-4 py-3">Name</th>
-              <th className="px-4 py-3">Price</th>
-              <th className="px-4 py-3">Turnaround</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3 text-right">Action</th>
+              {th("code", "Code")}
+              {th("name", "Name")}
+              {th("price_php", "Price")}
+              {th("turnaround_hours", "Turnaround")}
+              {th("is_active", "Status")}
+              <PlainTh label="Action" align="right" />
             </tr>
           </thead>
           <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
-            {(services ?? []).length === 0 ? (
+            {services.length === 0 ? (
               <tr>
                 <td
                   colSpan={6}
                   className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]"
                 >
-                  No services yet.
+                  No services match.
                 </td>
               </tr>
             ) : (
-              (services ?? []).map((s) => (
+              services.map((s) => (
                 <tr
                   key={s.id}
                   className="hover:bg-[color:var(--color-brand-bg)]"
@@ -126,6 +237,34 @@ export default async function ServicesAdminPage() {
           </tbody>
         </table>
       </Panel>
+
+      <ListPagination
+        page={page}
+        pageCount={totalPages}
+        total={total}
+        size={size}
+        prevHref={
+          page > 1
+            ? buildListHref(BASE_PATH, baseParams, {
+                page: page - 1 > 1 ? String(page - 1) : null,
+              })
+            : null
+        }
+        nextHref={
+          page < totalPages
+            ? buildListHref(BASE_PATH, baseParams, { page: String(page + 1) })
+            : null
+        }
+        sizeOptions={PAGE_SIZES.map((s) => ({
+          size: s,
+          // Changing the page size resets to page 1 — same reasoning as sort.
+          href: buildListHref(BASE_PATH, baseParams, {
+            size: s === DEFAULT_PAGE_SIZE ? null : String(s),
+            page: null,
+          }),
+        }))}
+        noun="service"
+      />
     </div>
   );
 }

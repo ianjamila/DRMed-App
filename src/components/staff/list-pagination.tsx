@@ -17,6 +17,10 @@ export interface SizeOption {
  * `total` is the row count the query reported. When it is an ESTIMATE rather
  * than an exact count, pass `approximate` so the label says "about N" instead
  * of asserting a precision the number doesn't have.
+ *
+ * `noun` is pluralised by appending "s", which is wrong for an irregular
+ * noun like "inquiry" — pass `plural` explicitly ("inquiries") when that's
+ * the case.
  */
 export function ListPagination({
   page,
@@ -28,6 +32,7 @@ export function ListPagination({
   sizeOptions,
   approximate = false,
   noun = "row",
+  plural,
 }: {
   page: number;
   pageCount: number;
@@ -38,6 +43,7 @@ export function ListPagination({
   sizeOptions: SizeOption[];
   approximate?: boolean;
   noun?: string;
+  plural?: string;
 }) {
   const first = total === 0 ? 0 : (page - 1) * size + 1;
   const last = Math.min(page * size, total);
@@ -49,14 +55,14 @@ export function ListPagination({
     >
       <p className="text-sm text-[color:var(--color-brand-text-soft)]">
         {total === 0 ? (
-          <>No {noun}s</>
+          <>No {plural ?? `${noun}s`}</>
         ) : (
           <>
             Showing <span className="font-semibold">{first.toLocaleString("en-PH")}</span>–
             <span className="font-semibold">{last.toLocaleString("en-PH")}</span> of{" "}
             {approximate ? "about " : null}
-            <span className="font-semibold">{total.toLocaleString("en-PH")}</span> {noun}
-            {total === 1 ? "" : "s"}
+            <span className="font-semibold">{total.toLocaleString("en-PH")}</span>{" "}
+            {total === 1 ? noun : (plural ?? `${noun}s`)}
           </>
         )}
       </p>
