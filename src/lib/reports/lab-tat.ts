@@ -261,11 +261,23 @@ export async function loadLabTat(
   // currently stuck). Live lines only (0125), lab lines only — a consultation
   // is never "awaiting release", so counting one here would put the Pending
   // tile permanently in its amber state over work nobody owes.
+  //
+  // BOTH deleted_at filters, and this one needs them more than the released
+  // query above does. A visit is deletable only while it is unpaid (P0042),
+  // which is exactly the state a visit with outstanding bench work is in — so
+  // "deleted visit, lines never cascaded" is the NORMAL shape here, not the
+  // corner case it is for a released line. Without the visits half, deleting
+  // an unpaid visit leaves its lab lines counted as pending forever, with no
+  // queue entry left anywhere to work them off.
   let pendingQ = client
     .from("test_requests")
-    .select("id, services!inner ( section )", { count: "exact", head: true })
+    .select("id, services!inner ( section ), visits!inner ( id )", {
+      count: "exact",
+      head: true,
+    })
     .in("status", ["requested", "in_progress", "result_uploaded", "ready_for_release"])
     .is("deleted_at", null)
+    .is("visits.deleted_at", null)
     .not("services.kind", "in", DOCTOR_KINDS_PG_LIST);
   if (params.section) pendingQ = pendingQ.eq("services.section", params.section);
   const { count: pendingTotal } = await pendingQ;

@@ -280,7 +280,16 @@ const SURFACES: Record<string, Surface> = {
  * Only for helpers that do the check themselves. A helper named here is a
  * promise a reviewer has to keep, so keep the list short.
  */
-const LIVE_FILTER_MARKERS = ["refuseIfVisitDeleted"];
+/**
+ * Named helpers that prove the row's PARENT VISIT is live.
+ *
+ * Only the parent. `refuseIfVisitDeleted` reads `visits.deleted_at` for the
+ * visit id and returns early — it says nothing about whether the LINE itself
+ * was deleted, and lines do not cascade. There is deliberately no companion
+ * list for the line's own `deleted_at`: no helper proves that today, and one
+ * list serving both obligations is how a half-filtered query would pass.
+ */
+const VISIT_LIVE_MARKERS = ["refuseIfVisitDeleted"];
 
 type Lifecycle = "live" | "any";
 
@@ -449,16 +458,16 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
     why: "A printable receipt. Nothing is billed on a deleted visit, so there is nothing to print.",
   },
   "app/(staff)/staff/(dashboard)/visits/[id]/receipt/log-print-action.ts": {
-    lifecycle: "live",
-    why: "Audit-logs the receipt print (RA 10173). Matches its group-receipt sibling, which has carried the filter since 0125.",
+    lifecycle: "any",
+    why: "Hydrates the ATTRIBUTION on a receipt.printed audit row (RA 10173), not a read of current data. The receipt page 404s on a deleted visit, so the only way here with one is a delete between render and print — and window.print() has already run. Filtering would blank the patient id, visit number and total on the record of a disclosure that did happen.",
   },
   "app/(staff)/staff/(dashboard)/visits/group/[groupId]/receipt/page.tsx": {
     lifecycle: "live",
     why: "The split-encounter receipt — same rule as the single-visit one.",
   },
   "app/(staff)/staff/(dashboard)/visits/group/[groupId]/receipt/log-print-action.ts": {
-    lifecycle: "live",
-    why: "Audit-logs the group receipt print. This is the sibling the single-visit one was brought into line with.",
+    lifecycle: "any",
+    why: "Same audit-attribution reason as the single-visit sibling above, which is why it reads unfiltered — but it then splits in JS: the visit_ids/totals it logs are the live rows only, mirroring what the page actually printed, while the patient id survives a mid-print deletion.",
   },
 
   // --- Live: release, notification and the patient's own view ---------------
@@ -560,6 +569,16 @@ interface Chain {
   calls: Call[];
   /** Every string literal passed anywhere in the chain. */
   literals: string[];
+  /**
+   * String literals passed to `.select()` ONLY (hoisted constants resolved).
+   *
+   * Separate from `literals` because the soft-delete rules read the select
+   * string as EVIDENCE — "this chain selects deleted_at, so it can branch on
+   * it in JS". A filter argument is not that evidence, and pooling the two
+   * let `.not("deleted_at", "is", null)` — which selects deleted rows, the
+   * exact opposite — satisfy the check just by naming the column.
+   */
+  selectLiterals: string[];
   /** Every identifier referenced anywhere in the chain. */
   identifiers: string[];
   /** Source text of the nearest enclosing function (or the whole file). */
@@ -682,17 +701,23 @@ function scanFile(full: string): Chain[] {
       const { methods, calls } = collectChain(node);
       const literals: string[] = [];
       const identifiers: string[] = [];
+      const selectLiterals: string[] = [];
 
-      for (const call of calls) {
+      for (const [i, call] of calls.entries()) {
+        const isSelect = methods[i] === "select";
         for (const arg of call.arguments) {
           const collectArg = (a: ts.Node) => {
             if (ts.isStringLiteralLike(a)) {
               literals.push(a.text);
+              if (isSelect) selectLiterals.push(a.text);
             } else if (ts.isIdentifier(a)) {
               identifiers.push(a.text);
               // A hoisted select constant counts as the string it holds.
               const resolved = consts.get(a.text);
-              if (resolved !== undefined) literals.push(resolved);
+              if (resolved !== undefined) {
+                literals.push(resolved);
+                if (isSelect) selectLiterals.push(resolved);
+              }
             }
             a.forEachChild(collectArg);
           };
@@ -711,6 +736,7 @@ function scanFile(full: string): Chain[] {
           args: call.arguments.map(shapeOf),
         })),
         literals,
+        selectLiterals,
         identifiers,
         scopeText: scope.getText(src),
       });
@@ -796,15 +822,16 @@ function nullPinnedColumns(chain: Chain): string[] {
   return out;
 }
 
-/** Column paths in the select string, e.g. "deleted_at" or "visits( … deleted_at … )". */
-const selectText = (chain: Chain) =>
-  chain.calls
-    .filter((c) => c.method === "select")
-    .flatMap((c) => c.args)
-    .filter((a): a is string => typeof a === "string")
-    .join(" ")
-    // A hoisted select constant reaches `literals` but not `calls`.
-    .concat(" ", chain.literals.join(" "));
+/**
+ * Column paths in the select string, e.g. "deleted_at" or "visits( … deleted_at … )".
+ *
+ * `selectLiterals` already covers both the inline string and the hoisted
+ * constant, and — unlike `literals` — nothing else. Widening this to every
+ * literal in the chain silently inverts the polarity the whole scanner exists
+ * to read: `.not("deleted_at", "is", null)` would count as proof that the
+ * chain excludes deleted rows.
+ */
+const selectText = (chain: Chain) => chain.selectLiterals.join(" ");
 
 /**
  * Is the row's OWN `deleted_at` accounted for?
@@ -814,14 +841,16 @@ const selectText = (chain: Chain) =>
  *   2. selecting the column and branching on it in JS — the pattern the bench
  *      detail page and the physician-reassign action use, because they want to
  *      SAY the row was deleted rather than merely return nothing
- *   3. a filter built in a sibling statement of the same function, or a named
- *      helper from LIVE_FILTER_MARKERS
+ *   3. a filter built in a sibling statement of the same function — the
+ *      `let q = …; if (x) q = q.is(…)` shape
+ *
+ * NOT accepted: a VISIT_LIVE_MARKERS helper. Those prove the parent visit,
+ * which is a different obligation — see that list's comment.
  */
 function excludesDeletedRows(chain: Chain): boolean {
   if (nullPinnedColumns(chain).some((c) => c === "deleted_at")) return true;
   if (/(^|[^.\w])deleted_at/.test(selectText(chain))) return true;
-  if (/\.is\(\s*"deleted_at"/.test(chain.scopeText)) return true;
-  return LIVE_FILTER_MARKERS.some((m) => chain.scopeText.includes(m));
+  return /\.is\(\s*"deleted_at"/.test(chain.scopeText);
 }
 
 /**
@@ -834,7 +863,7 @@ function pinsVisitLiveDirectly(chain: Chain): boolean {
   if (nullPinnedColumns(chain).some((c) => c === "visits.deleted_at")) return true;
   if (/visits[^)]*deleted_at/.test(selectText(chain))) return true;
   if (/\.is\(\s*"visits\.deleted_at"/.test(chain.scopeText)) return true;
-  return LIVE_FILTER_MARKERS.some((m) => chain.scopeText.includes(m));
+  return VISIT_LIVE_MARKERS.some((m) => chain.scopeText.includes(m));
 }
 
 /**
@@ -870,12 +899,28 @@ function excludesDeletedVisits(chain: Chain, all: Chain[]): boolean {
   );
   const sameFile = (s: Chain) => s.file === chain.file;
 
+  // A sibling test_requests chain vouches for exactly ONE shape: a follow-up
+  // keyed on `parent_id`, i.e. the components of a package header the sibling
+  // already proved. Components share their header's visit (0040), so proving
+  // the header proves them.
+  //
+  // Nothing else. A sibling reading test_requests is otherwise a DIFFERENT row
+  // set over the same table, and its filters say nothing about this one's. Lab
+  // TAT is the worked example: its pending count carried no visits filter at
+  // all and passed this test for a while by borrowing the released query's,
+  // two statements away, over a disjoint set of statuses — while a deleted
+  // visit's unreleased lines sat in the Pending tile with no queue entry left
+  // to work them off.
+  const keyedOnParentId = chain.calls.some(
+    (c) => (c.method === "in" || c.method === "eq") && c.args[0] === "parent_id",
+  );
+
   return all.some(
     (s) =>
       s !== chain &&
       (s.table === "visits"
         ? (keyedOnVisitId ? sameFile(s) : sameScope(s)) && excludesDeletedRows(s)
-        : sameScope(s) && pinsVisitLiveDirectly(s)),
+        : keyedOnParentId && sameScope(s) && pinsVisitLiveDirectly(s)),
   );
 }
 
@@ -1103,5 +1148,156 @@ describe("live surfaces exclude soft-deleted rows", () => {
         `the query runs, returns the UNFILTERED rows, and looks exactly like ` +
         `a working fix. Change the select to "visits!inner ( … )".`,
     ).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The guard's own guard
+// ---------------------------------------------------------------------------
+
+/**
+ * Everything above asks the predicates about the 96 chains that exist today,
+ * so a predicate that says yes too easily reads as a clean pass. These ask the
+ * predicates about chains that DON'T exist — the ones a future refactor would
+ * start letting through — and every case here is one that did pass before
+ * being fixed.
+ */
+const fakeChain = (over: Partial<Chain> = {}): Chain => ({
+  file: "fake.ts",
+  line: 1,
+  table: "test_requests",
+  methods: [],
+  calls: [],
+  literals: [],
+  selectLiterals: [],
+  identifiers: [],
+  scopeText: "",
+  ...over,
+});
+
+describe("the lifecycle predicates reject what they should", () => {
+  it("does not read `.is(col, null)` and `.not(col, 'is', null)` as the same thing", () => {
+    const excluded = fakeChain({
+      methods: ["select", "is"],
+      calls: [
+        { method: "select", args: ["id"] },
+        { method: "is", args: ["deleted_at", null] },
+      ],
+      literals: ["id", "deleted_at"],
+      selectLiterals: ["id"],
+    });
+    // The restore path's filter: this selects ONLY deleted rows.
+    const inverted = fakeChain({
+      methods: ["select", "not"],
+      calls: [
+        { method: "select", args: ["id"] },
+        { method: "not", args: ["deleted_at", "is", null] },
+      ],
+      literals: ["id", "deleted_at"],
+      selectLiterals: ["id"],
+    });
+
+    expect(excludesDeletedRows(excluded)).toBe(true);
+    expect(
+      excludesDeletedRows(inverted),
+      "A chain that filters FOR deleted rows counted as one that excludes " +
+        "them, because the column name reached the select-text check through " +
+        "the filter's arguments.",
+    ).toBe(false);
+  });
+
+  it("accepts a selected deleted_at as evidence, but only from the select", () => {
+    const selects = fakeChain({
+      methods: ["select"],
+      calls: [{ method: "select", args: ["id, deleted_at"] }],
+      literals: ["id, deleted_at"],
+      selectLiterals: ["id, deleted_at"],
+    });
+    // Same column, named in an .order() rather than selected.
+    const merelyMentions = fakeChain({
+      methods: ["select", "order"],
+      calls: [
+        { method: "select", args: ["id"] },
+        { method: "order", args: ["deleted_at"] },
+      ],
+      literals: ["id", "deleted_at"],
+      selectLiterals: ["id"],
+    });
+
+    expect(excludesDeletedRows(selects)).toBe(true);
+    expect(excludesDeletedRows(merelyMentions)).toBe(false);
+  });
+
+  it("keeps the visits half and the line's own half as separate obligations", () => {
+    // refuseIfVisitDeleted reads visits.deleted_at for the visit id. It proves
+    // the parent and nothing else — lines do not cascade (0125).
+    const guardedScope = fakeChain({
+      methods: ["select", "eq"],
+      calls: [
+        { method: "select", args: ["id"] },
+        { method: "eq", args: ["id", OTHER] },
+      ],
+      literals: ["id"],
+      selectLiterals: ["id"],
+      scopeText:
+        "const visitDeleted = await refuseIfVisitDeleted(supabase, visitId);",
+    });
+
+    expect(pinsVisitLiveDirectly(guardedScope)).toBe(true);
+    expect(
+      excludesDeletedRows(guardedScope),
+      "A helper that checks the parent VISIT satisfied the LINE's own " +
+        "deleted_at check, so dropping .is('deleted_at', null) from a guarded " +
+        "action would not have failed anything.",
+    ).toBe(false);
+  });
+
+  it("does not let one test_requests query vouch for a different one", () => {
+    // The Lab TAT shape: a released query that filters properly, and a pending
+    // count over a disjoint set of statuses that does not.
+    const released = fakeChain({
+      line: 10,
+      methods: ["select", "eq", "is"],
+      calls: [
+        { method: "select", args: ["id, visits!inner ( id )"] },
+        { method: "eq", args: ["status", "released"] },
+        { method: "is", args: ["visits.deleted_at", null] },
+      ],
+      literals: ["id, visits!inner ( id )", "status", "released", "visits.deleted_at"],
+      selectLiterals: ["id, visits!inner ( id )"],
+      scopeText: "SCOPE",
+    });
+    const pending = fakeChain({
+      line: 20,
+      methods: ["select", "in"],
+      calls: [
+        { method: "select", args: ["id"] },
+        { method: "in", args: ["status", OTHER] },
+      ],
+      literals: ["id", "status"],
+      selectLiterals: ["id"],
+      scopeText: "SCOPE",
+    });
+    // The one shape that IS allowed to borrow: package components of a header
+    // the sibling already proved. They share its visit (0040).
+    const components = fakeChain({
+      line: 30,
+      methods: ["select", "eq"],
+      calls: [
+        { method: "select", args: ["id"] },
+        { method: "eq", args: ["parent_id", OTHER] },
+      ],
+      literals: ["id", "parent_id"],
+      selectLiterals: ["id"],
+      scopeText: "SCOPE",
+    });
+
+    expect(excludesDeletedVisits(released, [released, pending, components])).toBe(true);
+    expect(
+      excludesDeletedVisits(pending, [released, pending, components]),
+      "Lab TAT's pending count borrowed the released query's visits filter " +
+        "and passed, while deleted visits' unreleased lines stayed in the tile.",
+    ).toBe(false);
+    expect(excludesDeletedVisits(components, [released, pending, components])).toBe(true);
   });
 });
