@@ -88,7 +88,6 @@ interface Props {
   patient: PatientLite;
   hmoProviders: HmoProviderLite[];
   physicians?: PhysicianLite[];
-  initialCategory?: "lab" | "imaging";
   /** Active rows from the admin-managed discount_types catalog, sorted. */
   discountTypes: DiscountTypeLite[];
   /**
@@ -160,7 +159,6 @@ export function VisitForm({
   patient,
   hmoProviders,
   physicians = [],
-  initialCategory,
   discountTypes,
   appointmentId,
 }: Props) {
@@ -172,7 +170,7 @@ export function VisitForm({
   const [attendingPhysicianId, setAttendingPhysicianId] = useState<string>("");
   const [serviceQuery, setServiceQuery] = useState("");
   const [activeTab, setActiveTab] = useState<ServiceTab>("lab");
-  const [labCategory, setLabCategory] = useState<LabCategory>(initialCategory ?? "all");
+  const [labCategory, setLabCategory] = useState<LabCategory>("all");
   const deferredQuery = useDeferredValue(serviceQuery);
   // Phase 14: when reception selects a lab_package, fetch its components so
   // the package row can render an indented "Includes:" list inline. Keyed by

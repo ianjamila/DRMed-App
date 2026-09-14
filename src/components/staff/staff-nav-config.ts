@@ -22,8 +22,9 @@ export interface StaffNavItem {
   activePrefix?: string;
   // Sub-trees that should NOT mark this item active even though they fall under
   // `href`'s prefix. Mirrors SectionTabs' excludePrefixes — e.g. "Billing &
-  // receipts" at /staff/visits excludes /staff/visits/new (which belongs to the
-  // Services group's "New … request" items).
+  // receipts" at /staff/visits excludes /staff/visits/new (the New visit form,
+  // which no sidebar item owns — it is reached from the Reception Queue's
+  // + New visit button).
   excludePrefixes?: string[];
   roles: readonly StaffRole[];
 }
@@ -114,10 +115,12 @@ export const STAFF_NAV: StaffNavSection[] = [
         // opens to its printable A5 billing. "Visit archive" is the one name for
         // this route — the in-page tab and the reception dashboard quicklink use
         // it too, and the page's own h1 matches. excludePrefixes keeps this item
-        // from lighting on /staff/visits/new (Services) or /staff/visits/queue
-        // (the Front-desk Reception Queue item owns that route).
+        // from lighting on /staff/visits/new (reached from the Reception Queue's
+        // + New visit button, a patient page, or the Visits tab bar — no sidebar
+        // item owns it) or /staff/visits/queue (the Front-desk Reception Queue
+        // item owns that route).
         excludePrefixes: ["/staff/visits/new", "/staff/visits/queue"],
-        description: "Every visit ever, searchable by date / patient / status. Open a visit to print its patient billing (A5) and re-issue receipts. This is the record side of billing — to start a new charge, use New lab request or New imaging request under Services.",
+        description: "Every visit ever, searchable by date / patient / status. Open a visit to print its patient billing (A5) and re-issue receipts. This is the record side of billing — to start a new charge, use + New visit on the Reception Queue.",
         roles: ["reception", "admin"],
       },
       {
@@ -139,28 +142,6 @@ export const STAFF_NAV: StaffNavSection[] = [
         // same page. activePrefix keeps this item lit on the eod route too.
         activePrefix: "/staff/payments/eod",
         description: "Your shift cash workspace — start your drawer with a counted amount of starting cash, then count it again at End of day to see the difference.",
-        roles: ["reception", "admin"],
-      },
-    ],
-  },
-  {
-    heading: "Services",
-    items: [
-      {
-        href: "/staff/visits/new?filter=lab",
-        label: "New lab request",
-        // Both Services items open the New visit form; the ?filter pre-selects
-        // the Lab/Imaging picker category (soft — the user can still switch and
-        // build a mixed visit). activePrefix lights them across the new-visit page.
-        activePrefix: "/staff/visits/new",
-        description: "Start a new lab visit — opens the visit form with the picker pre-filtered to lab tests. Pick the patient, choose tests, and the system issues the receipt + result PIN. You can still switch to imaging, packages, or a doctor on the same form.",
-        roles: ["reception", "admin"],
-      },
-      {
-        href: "/staff/visits/new?filter=imaging",
-        label: "New imaging request",
-        activePrefix: "/staff/visits/new",
-        description: "Start a new imaging visit — opens the visit form pre-filtered to imaging (X-ray, ultrasound, ECG). Pick the patient and the study; the imaging tech sees it in their queue. You can still add other services on the same form.",
         roles: ["reception", "admin"],
       },
     ],

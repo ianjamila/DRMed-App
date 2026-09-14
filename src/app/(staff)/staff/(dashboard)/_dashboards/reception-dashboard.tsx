@@ -11,8 +11,10 @@ import { QuickLinks } from "./_components/quick-links";
 import { ActivityStrip, type ActivityItem } from "./_components/activity-strip";
 import { formatPeso, formatTime, relativeAge } from "./_components/format";
 
-// Quicklinks mirror the sidebar groups (Front desk / Billing / Services /
-// Personal). Cash drawer was restored to Front desk (revisions 2/9) and
+// Quicklinks mirror the sidebar groups (Front desk / Billing / Personal).
+// There is no "start a visit" quicklink: the Reception Queue's + New visit
+// button is the one doorway to /staff/visits/new, so the dashboard points at
+// the queue instead of duplicating it. Cash drawer was restored to Front desk (revisions 2/9) and
 // carries End of day as its second tab.
 //
 // Partner revision 8 made the sidebar's "Hidden tabs" section admin-only, so
@@ -40,13 +42,6 @@ const QUICK_GROUPS: { label: string; items: { href: string; label: string }[] }[
       { href: "/staff/visits", label: "Visit archive" },
       { href: "/staff/quote", label: "Quick quote" },
       { href: "/staff/payments/petty-cash", label: "Petty cash" },
-    ],
-  },
-  {
-    label: "Services",
-    items: [
-      { href: "/staff/visits/new?filter=lab", label: "New lab request" },
-      { href: "/staff/visits/new?filter=imaging", label: "New imaging request" },
     ],
   },
   {
