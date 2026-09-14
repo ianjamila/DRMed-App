@@ -14,6 +14,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { formatPhp } from "@/lib/marketing/format";
+import { isoDateParts } from "@/lib/dates/manila";
 import {
   getPayslipUrlAction,
   type EmployeePayslipAdminOption,
@@ -99,8 +100,14 @@ function formatDate(iso: string): string {
 function formatPeriodRange(start: string, end: string): string {
   const s = new Date(`${start}T00:00:00+08:00`);
   const e = new Date(`${end}T00:00:00+08:00`);
-  const sameMonth =
-    s.getUTCFullYear() === e.getUTCFullYear() && s.getUTCMonth() === e.getUTCMonth();
+  // Compare the CALENDAR months off the strings, not UTC components off the
+  // +08:00 instants — Manila midnight is 16:00 UTC the previous day, so a
+  // 1–15 September period read as August/September and rendered in the long
+  // form while a 16–30 period rendered compact, on the same screen. Same
+  // defect as the financial-statement presets (M2).
+  const sp = isoDateParts(start);
+  const ep = isoDateParts(end);
+  const sameMonth = sp.year === ep.year && sp.month === ep.month;
   if (sameMonth) {
     return `${new Intl.DateTimeFormat("en-PH", {
       month: "short",
