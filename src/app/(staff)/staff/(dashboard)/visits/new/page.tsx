@@ -19,31 +19,20 @@ interface Props {
     patient_id?: string;
     appointment_id?: string;
     q?: string;
-    filter?: string;
   }>;
 }
 
 const PICKER_LIMIT = 25;
 
-// Services > "New lab request" / "New imaging request" and this page are the same
-// destination, so the picker heading has to be the words on the item you clicked —
-// otherwise reception lands on a differently-named screen and wonders if it misfired.
-// (It used to say "Visits", which the Visit archive is also called.) The filter is
-// soft: once a patient is picked, the form is titled "New visit" because you can
-// still add a consultation or a package to it.
-const PICKER_TITLE = {
-  lab: "New lab request",
-  imaging: "New imaging request",
-  none: "New visit",
-} as const;
+// The picker heading is "New visit", the same words as the Reception Queue's
+// + New visit button that leads here — it used to say "Visits", which the Visit
+// archive is also called, and reception wondered if the click had misfired.
 
 export default async function NewVisitPage({ searchParams }: Props) {
-  const { patient_id, appointment_id, q, filter } = await searchParams;
-  const initialCategory: "lab" | "imaging" | undefined =
-    filter === "lab" || filter === "imaging" ? filter : undefined;
+  const { patient_id, appointment_id, q } = await searchParams;
 
   if (!patient_id) {
-    return <PatientPicker query={q ?? ""} filter={initialCategory} />;
+    return <PatientPicker query={q ?? ""} />;
   }
 
   const supabase = await createClient();
@@ -156,7 +145,6 @@ export default async function NewVisitPage({ searchParams }: Props) {
             amount_php: d.amount_php != null ? Number(d.amount_php) : null,
             is_statutory: d.is_statutory,
           }))}
-          initialCategory={initialCategory}
           appointmentId={appointment_id}
           hmoProviders={hmoProviders ?? []}
           physicians={(physicians ?? []).map((p) => {
@@ -182,17 +170,7 @@ export default async function NewVisitPage({ searchParams }: Props) {
   );
 }
 
-async function PatientPicker({
-  query,
-  filter,
-}: {
-  query: string;
-  // M5: the sidebar "New lab request / New imaging request" links and the
-  // dashboard quicklinks pass ?filter=lab|imaging to pre-filter the service
-  // picker once a patient is chosen — carry it through the patient-pick step
-  // instead of dropping it, or the pre-filter never actually happens.
-  filter?: "lab" | "imaging";
-}) {
+async function PatientPicker({ query }: { query: string }) {
   const supabase = await createClient();
 
   let q = supabase
@@ -215,7 +193,7 @@ async function PatientPicker({
       <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            {PICKER_TITLE[filter ?? "none"]}
+            New visit
           </h1>
           <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
             Pick the patient this visit is for, or register a new one.
@@ -251,7 +229,7 @@ async function PatientPicker({
               return (
                 <li key={p.id}>
                   <Link
-                    href={`/staff/visits/new?patient_id=${p.id}${filter ? `&filter=${filter}` : ""}`}
+                    href={`/staff/visits/new?patient_id=${p.id}`}
                     className="flex items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-[color:var(--color-brand-bg)]"
                   >
                     <div className="min-w-0 flex-1">
