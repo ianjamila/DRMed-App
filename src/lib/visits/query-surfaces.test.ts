@@ -291,6 +291,75 @@ const SURFACES: Record<string, Surface> = {
  */
 const VISIT_LIVE_MARKERS = ["refuseIfVisitDeleted"];
 
+/**
+ * Reads whose row set is DERIVED from a query that already proved the
+ * lifecycle, rather than proving it itself.
+ *
+ * These are real — an action that loads a package header, checks it, then
+ * loads its components by `parent_id` should not re-join `visits` to say
+ * again what it just established. But the scanner cannot see that the ids came
+ * from the guarded query; it can only see two chains in the same function. It
+ * used to INFER the link (any `.is("deleted_at", …)` in the enclosing
+ * function's text, or any sibling chain that filtered), and that inference is
+ * what let Lab TAT's pending count borrow the released query's filter across a
+ * disjoint set of statuses — two queries that share nothing but a scope.
+ *
+ * So the link is written down instead of guessed. Each entry names the column
+ * the ids arrive on and the query that proves them, so a reviewer can check
+ * the claim; a new unfiltered chain in the same file, keyed on anything else,
+ * still fails. Adding an entry is the deliberate act the guard exists to force.
+ */
+interface DerivedRowSet {
+  file: string;
+  /** The column the ids arrive on — `.in(key, …)` or `.eq(key, …)`. */
+  key: "parent_id" | "visit_id" | "id";
+  /** What established the lifecycle, named so the claim can be checked. */
+  provenBy: string;
+}
+
+const DERIVED_ROW_SETS: DerivedRowSet[] = [
+  {
+    file: "app/(patient)/portal/(authenticated)/actions.ts",
+    key: "parent_id",
+    provenBy:
+      "The package header read above it, which embeds visits!inner and pins visits.deleted_at; components share their header's visit (0040).",
+  },
+  {
+    file: "app/(patient)/portal/(authenticated)/data-export/route.ts",
+    key: "visit_id",
+    provenBy:
+      "The visit ids come from GET()'s own visits read, which filters deleted_at; the lines are then fetched in chunks by a nested helper.",
+  },
+  {
+    file: "app/(staff)/staff/(dashboard)/queue/[id]/page.tsx",
+    key: "parent_id",
+    provenBy:
+      "The bench detail page's guarded test lookup above it (visits!inner + visits.deleted_at), of which these are the package components.",
+  },
+  {
+    file: "lib/actions/results/finalise-consolidated.ts",
+    key: "id",
+    provenBy:
+      "The claim-rows query at the top of the action pins both halves AND asserts every row's visit_id equals input.visitId, so this reads the visit it just proved live.",
+  },
+  {
+    file: "lib/reports/stuck-tests.ts",
+    key: "parent_id",
+    provenBy:
+      "The header query above it pins both halves; these are the components of those headers, chunked by parent_id.",
+  },
+];
+
+/** Is this chain one of the written-down derived reads? */
+const isDerivedRowSet = (chain: Chain) =>
+  DERIVED_ROW_SETS.some(
+    (d) =>
+      d.file === chain.file &&
+      chain.calls.some(
+        (c) => (c.method === "in" || c.method === "eq") && c.args[0] === d.key,
+      ),
+  );
+
 type Lifecycle = "live" | "any";
 
 interface LifecycleSurface {
@@ -672,8 +741,17 @@ function stringConstants(src: ts.SourceFile): Map<string, string> {
   return out;
 }
 
-function scanFile(full: string): Chain[] {
-  const text = readFileSync(full, "utf8");
+const scanFile = (full: string): Chain[] =>
+  scanSource(readFileSync(full, "utf8"), full);
+
+/**
+ * The scanner, over source text rather than a path.
+ *
+ * Split out so the negative cases at the bottom can feed it real TypeScript.
+ * Hand-built `Chain` objects test the predicates but not the walk that fills
+ * them, and the walk is where the polarity and attribution bugs lived.
+ */
+function scanSource(text: string, full: string): Chain[] {
   if (!TABLES.some((t) => text.includes(t))) return [];
 
   const src = ts.createSourceFile(
@@ -841,16 +919,18 @@ const selectText = (chain: Chain) => chain.selectLiterals.join(" ");
  *   2. selecting the column and branching on it in JS — the pattern the bench
  *      detail page and the physician-reassign action use, because they want to
  *      SAY the row was deleted rather than merely return nothing
- *   3. a filter built in a sibling statement of the same function — the
- *      `let q = …; if (x) q = q.is(…)` shape
+ *   3. a written entry in DERIVED_ROW_SETS, for a row set another query
+ *      already proved
  *
- * NOT accepted: a VISIT_LIVE_MARKERS helper. Those prove the parent visit,
- * which is a different obligation — see that list's comment.
+ * NOT accepted: a VISIT_LIVE_MARKERS helper (those prove the parent visit,
+ * which is a different obligation), and NOT the presence of a filter somewhere
+ * else in the enclosing function — see DERIVED_ROW_SETS for why that inference
+ * was removed.
  */
 function excludesDeletedRows(chain: Chain): boolean {
   if (nullPinnedColumns(chain).some((c) => c === "deleted_at")) return true;
   if (/(^|[^.\w])deleted_at/.test(selectText(chain))) return true;
-  return /\.is\(\s*"deleted_at"/.test(chain.scopeText);
+  return isDerivedRowSet(chain);
 }
 
 /**
@@ -862,66 +942,21 @@ function excludesDeletedRows(chain: Chain): boolean {
 function pinsVisitLiveDirectly(chain: Chain): boolean {
   if (nullPinnedColumns(chain).some((c) => c === "visits.deleted_at")) return true;
   if (/visits[^)]*deleted_at/.test(selectText(chain))) return true;
-  if (/\.is\(\s*"visits\.deleted_at"/.test(chain.scopeText)) return true;
-  return VISIT_LIVE_MARKERS.some((m) => chain.scopeText.includes(m));
+  if (VISIT_LIVE_MARKERS.some((m) => chain.scopeText.includes(m))) return true;
+  return isDerivedRowSet(chain);
 }
 
 /**
- * …or by an EARLIER query in the same function that already proved it.
+ * Is the row's VISIT accounted for at all?
  *
- * Several actions read once to decide, then read again to hydrate: the portal
- * data export fetches the patient's live visits and then their lines by
- * `visit_id`; the bench detail page loads the guarded test and then its package
- * components by `parent_id`; claim/unclaim re-reads `assigned_to` after the
- * guarded lookup. Demanding a second `visits!inner` embed on the follow-up
- * would add a join for no reason, so a sibling chain in the same scope counts —
- * but only a sibling that genuinely establishes it, not merely the presence of
- * the word somewhere in the function.
- *
- * Scope is the nearest enclosing function, so "sibling" means a query the same
- * call actually runs. A module-level chain would scope to the whole file; there
- * are none today, and a new one would be worth looking at anyway.
+ * Either this chain proves it, or DERIVED_ROW_SETS says which query did. There
+ * is deliberately no third option: the scanner used to hunt the enclosing
+ * function (and, for `visit_id`, the whole file) for some other chain whose
+ * filters it could borrow, which is how Lab TAT's pending count passed while
+ * counting the lab lines of deleted visits.
  */
-function excludesDeletedVisits(chain: Chain, all: Chain[]): boolean {
-  if (pinsVisitLiveDirectly(chain)) return true;
-
-  const sameScope = (s: Chain) =>
-    s.file === chain.file && s.scopeText === chain.scopeText;
-
-  // A chain keyed on `visit_id` is selecting lines OF a set of visits, so the
-  // query that produced that set is what decides whether they were live. That
-  // query is often a scope or two away — the portal's data export builds its
-  // visit ids in GET() and reads the lines inside a nested chunking helper —
-  // so for this shape alone the sibling may sit anywhere in the file. It still
-  // has to be a `visits` read that genuinely excludes deleted rows.
-  const keyedOnVisitId = chain.calls.some(
-    (c) => (c.method === "in" || c.method === "eq") && c.args[0] === "visit_id",
-  );
-  const sameFile = (s: Chain) => s.file === chain.file;
-
-  // A sibling test_requests chain vouches for exactly ONE shape: a follow-up
-  // keyed on `parent_id`, i.e. the components of a package header the sibling
-  // already proved. Components share their header's visit (0040), so proving
-  // the header proves them.
-  //
-  // Nothing else. A sibling reading test_requests is otherwise a DIFFERENT row
-  // set over the same table, and its filters say nothing about this one's. Lab
-  // TAT is the worked example: its pending count carried no visits filter at
-  // all and passed this test for a while by borrowing the released query's,
-  // two statements away, over a disjoint set of statuses — while a deleted
-  // visit's unreleased lines sat in the Pending tile with no queue entry left
-  // to work them off.
-  const keyedOnParentId = chain.calls.some(
-    (c) => (c.method === "in" || c.method === "eq") && c.args[0] === "parent_id",
-  );
-
-  return all.some(
-    (s) =>
-      s !== chain &&
-      (s.table === "visits"
-        ? (keyedOnVisitId ? sameFile(s) : sameScope(s)) && excludesDeletedRows(s)
-        : keyedOnParentId && sameScope(s) && pinsVisitLiveDirectly(s)),
-  );
+function excludesDeletedVisits(chain: Chain): boolean {
+  return pinsVisitLiveDirectly(chain);
 }
 
 const describeChain = (c: Chain) => `${c.file}:${c.line}`;
@@ -1120,7 +1155,7 @@ describe("live surfaces exclude soft-deleted rows", () => {
     const missing = readChains
       .filter((c) => c.table === "test_requests")
       .filter((c) => LIFECYCLES[c.file]?.lifecycle === "live")
-      .filter((c) => !excludesDeletedVisits(c, readChains))
+      .filter((c) => !excludesDeletedVisits(c))
       .map(describeChain);
 
     expect(
@@ -1157,147 +1192,167 @@ describe("live surfaces exclude soft-deleted rows", () => {
 
 /**
  * Everything above asks the predicates about the 96 chains that exist today,
- * so a predicate that says yes too easily reads as a clean pass. These ask the
- * predicates about chains that DON'T exist — the ones a future refactor would
- * start letting through — and every case here is one that did pass before
- * being fixed.
+ * so a predicate that says yes too easily reads as a clean pass. These ask
+ * about code that does NOT exist — what a future edit would start letting
+ * through — and every case here is one that really did pass before it was
+ * fixed.
+ *
+ * They go through `scanSource`, not through hand-built `Chain` objects. The
+ * two bugs this file has had were both in the WALK (a filter argument counted
+ * as a selected column; a sibling query's filter counted as this one's), and a
+ * synthetic chain is exactly the evidence that cannot see them — the first
+ * attempt at these tests used one, and missed the second bug entirely.
  */
-const fakeChain = (over: Partial<Chain> = {}): Chain => ({
-  file: "fake.ts",
-  line: 1,
-  table: "test_requests",
-  methods: [],
-  calls: [],
-  literals: [],
-  selectLiterals: [],
-  identifiers: [],
-  scopeText: "",
-  ...over,
-});
+const probe = (source: string): Chain[] =>
+  scanSource(source, join(SRC_DIR, "probe/fake.ts"));
+
+const oneChain = (source: string): Chain => {
+  const chains = probe(source);
+  expect(chains, "probe source should yield exactly one chain").toHaveLength(1);
+  return chains[0]!;
+};
 
 describe("the lifecycle predicates reject what they should", () => {
   it("does not read `.is(col, null)` and `.not(col, 'is', null)` as the same thing", () => {
-    const excluded = fakeChain({
-      methods: ["select", "is"],
-      calls: [
-        { method: "select", args: ["id"] },
-        { method: "is", args: ["deleted_at", null] },
-      ],
-      literals: ["id", "deleted_at"],
-      selectLiterals: ["id"],
-    });
-    // The restore path's filter: this selects ONLY deleted rows.
-    const inverted = fakeChain({
-      methods: ["select", "not"],
-      calls: [
-        { method: "select", args: ["id"] },
-        { method: "not", args: ["deleted_at", "is", null] },
-      ],
-      literals: ["id", "deleted_at"],
-      selectLiterals: ["id"],
-    });
+    const excluded = oneChain(`
+      const r = await db.from("test_requests").select("id").is("deleted_at", null);
+    `);
+    // What the restore path uses: this selects ONLY deleted rows.
+    const inverted = oneChain(`
+      const r = await db.from("test_requests").select("id").not("deleted_at", "is", null);
+    `);
 
     expect(excludesDeletedRows(excluded)).toBe(true);
     expect(
       excludesDeletedRows(inverted),
       "A chain that filters FOR deleted rows counted as one that excludes " +
         "them, because the column name reached the select-text check through " +
-        "the filter's arguments.",
+        "the filter's own arguments.",
     ).toBe(false);
   });
 
   it("accepts a selected deleted_at as evidence, but only from the select", () => {
-    const selects = fakeChain({
-      methods: ["select"],
-      calls: [{ method: "select", args: ["id, deleted_at"] }],
-      literals: ["id, deleted_at"],
-      selectLiterals: ["id, deleted_at"],
-    });
+    const selects = oneChain(`
+      const r = await db.from("visits").select("id, deleted_at").eq("id", x);
+    `);
     // Same column, named in an .order() rather than selected.
-    const merelyMentions = fakeChain({
-      methods: ["select", "order"],
-      calls: [
-        { method: "select", args: ["id"] },
-        { method: "order", args: ["deleted_at"] },
-      ],
-      literals: ["id", "deleted_at"],
-      selectLiterals: ["id"],
-    });
+    const mentions = oneChain(`
+      const r = await db.from("visits").select("id").order("deleted_at");
+    `);
 
     expect(excludesDeletedRows(selects)).toBe(true);
-    expect(excludesDeletedRows(merelyMentions)).toBe(false);
+    expect(excludesDeletedRows(mentions)).toBe(false);
   });
 
   it("keeps the visits half and the line's own half as separate obligations", () => {
     // refuseIfVisitDeleted reads visits.deleted_at for the visit id. It proves
     // the parent and nothing else — lines do not cascade (0125).
-    const guardedScope = fakeChain({
-      methods: ["select", "eq"],
-      calls: [
-        { method: "select", args: ["id"] },
-        { method: "eq", args: ["id", OTHER] },
-      ],
-      literals: ["id"],
-      selectLiterals: ["id"],
-      scopeText:
-        "const visitDeleted = await refuseIfVisitDeleted(supabase, visitId);",
-    });
+    const chain = oneChain(`
+      async function act(visitId: string) {
+        const visitDeleted = await refuseIfVisitDeleted(supabase, visitId);
+        if (visitDeleted) return visitDeleted;
+        const r = await db.from("test_requests").select("id").eq("id", id);
+      }
+    `);
 
-    expect(pinsVisitLiveDirectly(guardedScope)).toBe(true);
+    expect(pinsVisitLiveDirectly(chain)).toBe(true);
     expect(
-      excludesDeletedRows(guardedScope),
+      excludesDeletedRows(chain),
       "A helper that checks the parent VISIT satisfied the LINE's own " +
         "deleted_at check, so dropping .is('deleted_at', null) from a guarded " +
         "action would not have failed anything.",
     ).toBe(false);
   });
 
-  it("does not let one test_requests query vouch for a different one", () => {
-    // The Lab TAT shape: a released query that filters properly, and a pending
-    // count over a disjoint set of statuses that does not.
-    const released = fakeChain({
-      line: 10,
-      methods: ["select", "eq", "is"],
-      calls: [
-        { method: "select", args: ["id, visits!inner ( id )"] },
-        { method: "eq", args: ["status", "released"] },
-        { method: "is", args: ["visits.deleted_at", null] },
-      ],
-      literals: ["id, visits!inner ( id )", "status", "released", "visits.deleted_at"],
-      selectLiterals: ["id, visits!inner ( id )"],
-      scopeText: "SCOPE",
-    });
-    const pending = fakeChain({
-      line: 20,
-      methods: ["select", "in"],
-      calls: [
-        { method: "select", args: ["id"] },
-        { method: "in", args: ["status", OTHER] },
-      ],
-      literals: ["id", "status"],
-      selectLiterals: ["id"],
-      scopeText: "SCOPE",
-    });
-    // The one shape that IS allowed to borrow: package components of a header
-    // the sibling already proved. They share its visit (0040).
-    const components = fakeChain({
-      line: 30,
-      methods: ["select", "eq"],
-      calls: [
-        { method: "select", args: ["id"] },
-        { method: "eq", args: ["parent_id", OTHER] },
-      ],
-      literals: ["id", "parent_id"],
-      selectLiterals: ["id"],
-      scopeText: "SCOPE",
-    });
+  it("does not let a filtered query in the same function vouch for an unfiltered one", () => {
+    // The Lab TAT shape exactly: a released query that filters both halves,
+    // and a pending count over a DISJOINT set of statuses that filters
+    // neither. They share a scope and nothing else.
+    const chains = probe(`
+      async function labTat() {
+        const released = await db
+          .from("test_requests")
+          .select("id, visits!inner ( id )")
+          .eq("status", "released")
+          .is("deleted_at", null)
+          .is("visits.deleted_at", null);
 
-    expect(excludesDeletedVisits(released, [released, pending, components])).toBe(true);
+        const pending = await db
+          .from("test_requests")
+          .select("id")
+          .in("status", ["requested", "in_progress"]);
+      }
+    `);
+    expect(chains).toHaveLength(2);
+    const [released, pending] = chains as [Chain, Chain];
+
+    expect(excludesDeletedRows(released)).toBe(true);
+    expect(excludesDeletedVisits(released)).toBe(true);
     expect(
-      excludesDeletedVisits(pending, [released, pending, components]),
-      "Lab TAT's pending count borrowed the released query's visits filter " +
-        "and passed, while deleted visits' unreleased lines stayed in the tile.",
+      excludesDeletedRows(pending),
+      "The scanner searched the enclosing function's TEXT for a deleted_at " +
+        "filter, so any filtered query in the same function covered for every " +
+        "unfiltered one below it.",
     ).toBe(false);
-    expect(excludesDeletedVisits(components, [released, pending, components])).toBe(true);
+    expect(
+      excludesDeletedVisits(pending),
+      "Same, for the visits half — this is how Lab TAT's Pending tile counted " +
+        "the lab lines of deleted visits while looking filtered to a reviewer.",
+    ).toBe(false);
+  });
+
+  it("exempts a derived row set only where DERIVED_ROW_SETS says so", () => {
+    const source = `
+      const components = await db.from("test_requests").select("id").eq("parent_id", header.id);
+    `;
+    const listed = scanSource(
+      source,
+      join(SRC_DIR, "lib/reports/stuck-tests.ts"),
+    )[0]!;
+    const unlisted = scanSource(
+      source,
+      join(SRC_DIR, "lib/reports/some-new-report.ts"),
+    )[0]!;
+
+    expect(excludesDeletedVisits(listed)).toBe(true);
+    expect(
+      excludesDeletedVisits(unlisted),
+      "The parent_id shape was exempt by its SHAPE rather than by name, so a " +
+        "new file could read components of an unproven header and pass.",
+    ).toBe(false);
+  });
+
+  it("exempts only the column each DERIVED_ROW_SETS entry names", () => {
+    // stuck-tests.ts is listed, but for `parent_id`. A different key in the
+    // same file is a different row set and proves nothing.
+    const otherKey = scanSource(
+      `const r = await db.from("test_requests").select("id").eq("service_id", s);`,
+      join(SRC_DIR, "lib/reports/stuck-tests.ts"),
+    )[0]!;
+
+    expect(excludesDeletedVisits(otherKey)).toBe(false);
+    expect(excludesDeletedRows(otherKey)).toBe(false);
+  });
+
+  it("has no stale DERIVED_ROW_SETS entries", () => {
+    const unused = DERIVED_ROW_SETS.filter(
+      (d) =>
+        !readChains.some(
+          (c) =>
+            c.file === d.file &&
+            c.calls.some(
+              (call) =>
+                (call.method === "in" || call.method === "eq") &&
+                call.args[0] === d.key,
+            ),
+        ),
+    ).map((d) => `${d.file} (${d.key})`);
+
+    expect(
+      unused.sort(),
+      `These DERIVED_ROW_SETS entries no longer match any query. An exemption ` +
+        `that outlives its query silently widens the guard for whatever is ` +
+        `written next in that file — delete them, or fix the key.`,
+    ).toEqual([]);
   });
 });
