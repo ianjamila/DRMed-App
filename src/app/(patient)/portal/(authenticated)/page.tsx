@@ -6,6 +6,33 @@ import { DownloadButton } from "./download-button";
 import { PackageCard, type PackageComponentRow } from "./package-card";
 import { LabRequestUploads, type UploadRow } from "./lab-request-uploads";
 import { Panel } from "@/components/ui/panel";
+import { classifyKind } from "@/lib/visits/classification";
+
+/**
+ * Normalise an embedded relation — Supabase types these as single-or-array
+ * depending on the relation hint shape.
+ */
+function unwrap<T>(v: T | T[] | null | undefined): T | null {
+  if (v == null) return null;
+  return Array.isArray(v) ? (v[0] ?? null) : v;
+}
+
+/**
+ * A doctor line — a consultation or a procedure.
+ *
+ * `test_requests` doubles as the visit's bill line, so doctor lines sit in it
+ * alongside lab tests. They produce no result document: reception marks them
+ * done and they go straight to `released`, which is why they used to surface
+ * here as a "Released" result row whose only action was the words "No file".
+ * The portal now shows them for what they are — a record of a clinic visit —
+ * in their own section, and keeps the results list to actual lab results.
+ */
+function isDoctorLine(
+  services: { kind: string } | { kind: string }[] | null | undefined,
+): boolean {
+  const kind = unwrap(services)?.kind;
+  return kind != null && classifyKind(kind) !== "lab";
+}
 
 export const metadata = {
   title: "Your results",
@@ -63,9 +90,23 @@ interface VisitWithPending {
   pending: number;
 }
 
+// A completed consultation or procedure, shown as a record of the visit rather
+// than as a result — there is no report to download. See `isDoctorLine`.
+interface ConsultationRow {
+  id: string;
+  visit_id: string;
+  visit_number: string;
+  visit_date: string;
+  service_name: string;
+  /** Null when the doctor has since been deactivated, or none was recorded. */
+  physician_name: string | null;
+  physician_specialty: string | null;
+}
+
 interface PortalData {
   packages: PackageGroup[];
   standalones: ReleasedRow[];
+  consultations: ConsultationRow[];
   visitsWithPending: VisitWithPending[];
 }
 
@@ -85,7 +126,10 @@ async function loadResults(patientId: string): Promise<PortalData> {
     .select(
       `
         id, visit_number, visit_date,
-        test_requests ( id, status, is_package_header, deleted_at )
+        test_requests (
+          id, status, is_package_header, deleted_at,
+          services!test_requests_service_id_fkey ( kind )
+        )
       `,
     )
     .eq("patient_id", patientId)
@@ -101,7 +145,12 @@ async function loadResults(patientId: string): Promise<PortalData> {
         t.is_package_header !== true &&
         t.deleted_at === null &&
         t.status !== "released" &&
-        t.status !== "cancelled",
+        t.status !== "cancelled" &&
+        // "…tests that haven't been released yet" is a lab sentence. A doctor
+        // line is a bill line for a consultation the patient has already had;
+        // nothing is pending on it from their side, and they are shown their
+        // consultations in their own section below instead.
+        !isDoctorLine(t.services),
     ).length;
     if (pending > 0) {
       visitsWithPending.push({
@@ -124,8 +173,11 @@ async function loadResults(patientId: string): Promise<PortalData> {
       `
         id, status, released_at, parent_id, is_package_header, created_at,
         legacy_import_run_id,
-        services!test_requests_service_id_fkey ( code, name ),
-        visits!inner ( id, visit_number, visit_date, patient_id )
+        services!test_requests_service_id_fkey ( code, name, kind ),
+        visits!inner (
+          id, visit_number, visit_date, patient_id,
+          physicians!visits_attending_physician_id_fkey ( full_name, specialty )
+        )
       `,
     )
     .eq("visits.patient_id", patientId)
@@ -136,22 +188,25 @@ async function loadResults(patientId: string): Promise<PortalData> {
 
   type TRRow = NonNullable<typeof trRaw>[number];
 
-  // Normalise embedded relations (Supabase types these as
-  // single-or-array depending on the relation hint shape).
-  function unwrap<T>(v: T | T[] | null | undefined): T | null {
-    if (v == null) return null;
-    return Array.isArray(v) ? (v[0] ?? null) : v;
-  }
-
   const rows = trRaw ?? [];
   const headerRows: TRRow[] = [];
   const componentsByParent = new Map<string, TRRow[]>();
   const standaloneReleased: TRRow[] = [];
+  const doctorRows: TRRow[] = [];
 
   for (const r of rows) {
     const visit = unwrap(r.visits);
     if (!visit || visit.patient_id !== patientId) continue;
-    if (r.is_package_header) {
+    // Doctor lines are pulled out first: they are never a package header or a
+    // package component, and routing them into `standaloneReleased` is what put
+    // a file-less "Consultation" row in the results list.
+    if (isDoctorLine(r.services)) {
+      // Any non-cancelled doctor line, not just a released one. The record is
+      // dated by the VISIT, and the patient sat in front of the doctor whether
+      // or not reception has got round to marking the line done — gating on
+      // `released` would silently drop a consultation that really happened.
+      if (r.status !== "cancelled") doctorRows.push(r);
+    } else if (r.is_package_header) {
       headerRows.push(r);
     } else if (r.parent_id) {
       const arr = componentsByParent.get(r.parent_id) ?? [];
@@ -161,6 +216,31 @@ async function loadResults(patientId: string): Promise<PortalData> {
       standaloneReleased.push(r);
     }
   }
+
+  // One record per completed consultation / procedure: when it happened, who
+  // the patient saw, and the visit it belongs to. The attending physician lives
+  // on the VISIT, not the line — `test_requests.attending_physician_id` is null
+  // on every consultation in production — so it is read through the visit embed.
+  // `physicians` is readable to the patient only while the doctor is active, so
+  // a retired doctor (or one of the legacy rows with no physician recorded at
+  // all) simply has no name to show and the row still stands on its date.
+  const consultations: ConsultationRow[] = doctorRows.map((r) => {
+    const visit = unwrap(r.visits)!;
+    const svc = unwrap(r.services);
+    const physician = unwrap(visit.physicians);
+    return {
+      id: r.id,
+      visit_id: visit.id,
+      visit_number: visit.visit_number,
+      visit_date: visit.visit_date,
+      service_name: svc?.name ?? "Consultation",
+      physician_name: physician?.full_name ?? null,
+      physician_specialty: physician?.specialty ?? null,
+    };
+  });
+
+  // Newest first, matching the results list.
+  consultations.sort((a, b) => b.visit_date.localeCompare(a.visit_date));
 
   // Batch-lookup which component test_request_ids have a result (via junction).
   const allComponentIds = [...componentsByParent.values()]
@@ -371,7 +451,7 @@ async function loadResults(patientId: string): Promise<PortalData> {
     return br.localeCompare(ar);
   });
 
-  return { packages, standalones, visitsWithPending };
+  return { packages, standalones, consultations, visitsWithPending };
 }
 
 async function loadUploads(patientId: string): Promise<UploadRow[]> {
@@ -438,12 +518,28 @@ async function loadUploads(patientId: string): Promise<UploadRow[]> {
 
 export default async function PatientPortalPage() {
   const patient = await requirePatientProfile();
-  const { packages, standalones, visitsWithPending } = await loadResults(
-    patient.patient_id,
-  );
+  const { packages, standalones, consultations, visitsWithPending } =
+    await loadResults(patient.patient_id);
   const uploads = await loadUploads(patient.patient_id);
 
   const nothingToShow = packages.length === 0 && standalones.length === 0;
+
+  // Shared by the table and the mobile card list so the three cases can't drift.
+  // The consultations case matters most: a patient who only ever sees a doctor
+  // has no lab result coming, so "we'll email you when they're ready" would be
+  // a promise the clinic never keeps.
+  const emptyResultsMessage = !nothingToShow ? (
+    <>
+      No individual results — your released results are grouped into the package
+      cards above.
+    </>
+  ) : consultations.length > 0 ? (
+    <>
+      No lab results yet — your consultations are listed below.
+    </>
+  ) : (
+    <>No released results yet. We&apos;ll email you when they&apos;re ready.</>
+  );
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
@@ -491,17 +587,7 @@ export default async function PatientPortalPage() {
                   colSpan={6}
                   className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]"
                 >
-                  {nothingToShow ? (
-                    <>
-                      No released results yet. We&apos;ll email you
-                      when they&apos;re ready.
-                    </>
-                  ) : (
-                    <>
-                      No individual results — your released results are grouped
-                      into the package cards above.
-                    </>
-                  )}
+                  {emptyResultsMessage}
                 </td>
               </tr>
             ) : (
@@ -575,17 +661,7 @@ export default async function PatientPortalPage() {
       <div className="mt-6 sm:hidden">
         {standalones.length === 0 ? (
           <Panel className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]">
-            {nothingToShow ? (
-              <>
-                No released results yet. We&apos;ll email you when
-                they&apos;re ready.
-              </>
-            ) : (
-              <>
-                No individual results — your released results are grouped into
-                the package cards above.
-              </>
-            )}
+            {emptyResultsMessage}
           </Panel>
         ) : (
           <ul className="space-y-3">
@@ -656,6 +732,53 @@ export default async function PatientPortalPage() {
           asked for a review while collecting medical results. The tracked
           /review?src=portal link itself is left intact so any review link
           already shared elsewhere keeps working. */}
+
+      {consultations.length > 0 ? (
+        <section className="mt-8 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
+          <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+            Your consultations
+          </h2>
+          <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
+            Visits where you saw a doctor. There&apos;s no report to download for
+            a consultation — ask the clinic if you need a copy of anything the
+            doctor wrote.
+          </p>
+          <ul className="mt-3 divide-y divide-[color:var(--color-brand-bg-mid)] text-sm">
+            {consultations.map((c) => (
+              <li
+                key={c.id}
+                className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 py-2"
+              >
+                <div className="min-w-0">
+                  <p className="font-semibold text-[color:var(--color-brand-navy)]">
+                    {c.physician_name ? `Dr. ${c.physician_name}` : c.service_name}
+                  </p>
+                  <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+                    {c.physician_name
+                      ? [c.physician_specialty, c.service_name]
+                          .filter(Boolean)
+                          .join(" · ")
+                      : "Attending doctor not on record"}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-baseline gap-3 text-xs text-[color:var(--color-brand-text-soft)]">
+                  <span>
+                    {new Date(c.visit_date).toLocaleDateString("en-PH", {
+                      timeZone: "Asia/Manila",
+                    })}
+                  </span>
+                  <Link
+                    href={`/portal/visits/${c.visit_id}`}
+                    className="font-mono hover:text-[color:var(--color-brand-cyan)]"
+                  >
+                    #{c.visit_number}
+                  </Link>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       {visitsWithPending.length > 0 ? (
         <section className="mt-8 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">

@@ -10,6 +10,7 @@ import { sectionsForRole } from "@/lib/auth/role-sections";
 import { matchesAllTokens } from "@/lib/patients/search";
 import { PageHeader } from "@/components/staff/page-header";
 import { labQueueGate } from "@/lib/visits/lab-gate";
+import { DOCTOR_KIND_VALUES } from "@/lib/visits/classification";
 import {
   RESULT_STATUSES,
   RESULT_STATUS_LABEL,
@@ -108,8 +109,28 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
   if (fromIso) query = query.gte("requested_at", fromIso);
   if (toIso) query = query.lt("requested_at", toIso);
 
+  // Doctor lines are not results. `test_requests` doubles as the visit's bill
+  // line, so a consultation (and a procedure) is stored in it too — but it goes
+  // straight from `requested` to `released` at the counter with no bench step,
+  // no `results` row and no PDF, so every one of them landed here as a row whose
+  // Status said "released" and whose PDF cell said "—". They outnumbered the lab
+  // work: 7.4k of the 25.6k live lines, and because a split encounter files the
+  // doctor half as its own visit (0090), 7,350 of 14,259 visit rows on this page
+  // were consultation-only — more than half the archive, pushing real lab work
+  // off the first page.
+  //
+  // Enumerating the doctor kinds rather than allow-listing the lab ones is the
+  // same complement rule as `classifyKind()`, so a kind seeded into the catalog
+  // later still shows up here instead of silently vanishing from the archive.
+  // Consultations keep their home on /staff/visits under the "Doctor Consults"
+  // chip, which is the surface built to show them.
+  query = query.not("services.kind", "in", `(${DOCTOR_KIND_VALUES.join(",")})`);
+
   // Section gate per role: admin + pathologist see everything (null), medtech
   // sees lab-bench sections, xray sees imaging sections, reception sees nothing.
+  // (Non-admin roles never saw the doctor lines anyway — `CONSULT` carries a
+  // null section, which no role's list matches — so this only ever showed for
+  // admin and pathologist, whose `null` list skips the filter entirely.)
   if (allowedSections !== null) {
     if (allowedSections.length === 0) {
       // Force empty result set without breaking the query shape.
@@ -178,7 +199,17 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
     <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
       <PageHeader
         title="Results"
-        subtitle={<>Archive of every test request — unclaimed, in progress, ready for release, released, or cancelled.{hasFilters ? ` · ${total} matching` : ` · ${total} total`}</>}
+        subtitle={
+          <>
+            Archive of every lab test — unclaimed, in progress, ready for
+            release, released, or cancelled. Doctor consultations and procedures
+            have no result to release, so they live on{" "}
+            <Link href="/staff/visits?kind=consult" className="font-semibold text-[color:var(--color-brand-cyan)] hover:underline">
+              Visits
+            </Link>
+            .{hasFilters ? ` · ${total} matching` : ` · ${total} total`}
+          </>
+        }
       />
 
       <nav className="mb-4 flex flex-wrap gap-2">
