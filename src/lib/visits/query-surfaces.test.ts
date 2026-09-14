@@ -12,8 +12,6 @@
  * a scanner and nothing else. The lab half is documented immediately below;
  * the soft-delete half above its own map, further down.
  *
- * (The filename is historical — the lab half came first.)
- *
  * WHY THIS EXISTS
  * ---------------
  * `test_requests` doubles as the visit's BILL LINE. A doctor consultation and
