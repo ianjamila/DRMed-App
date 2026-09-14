@@ -33,8 +33,11 @@ export async function GET(
   // to the role's allowed sections. null = unrestricted (admin/pathologist).
   const { data: tr } = await admin
     .from("test_requests")
-    .select("id, services!inner ( section )")
+    .select("id, services!inner ( section ), visits!inner ( id )")
     .eq("id", testRequestId)
+    // Queue-deleted lines (0125), or lines on a deleted visit, stream no PDF.
+    .is("deleted_at", null)
+    .is("visits.deleted_at", null)
     .maybeSingle();
   if (!tr) {
     return NextResponse.json({ error: "Test not found." }, { status: 404 });

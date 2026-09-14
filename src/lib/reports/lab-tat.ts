@@ -215,9 +215,15 @@ export async function loadLabTat(
 ): Promise<LabTatReport> {
   const { fromIso, toIso } = manilaRangeUtc(params.start, params.end);
 
-  // Released test_requests in the window (the TAT samples). No deleted_at
-  // filter on purpose: a released line can never be soft-deleted (0125's
-  // guard raises P0043 on status = released), so it would be a no-op.
+  // Released test_requests in the window (the TAT samples).
+  //
+  // This used to skip the deleted_at filters, reasoning that a released line
+  // can never be soft-deleted (0125's guard raises P0043 on status =
+  // 'released'), so they would be a no-op. That is an ORDERING claim, and the
+  // DB only enforces one direction of it: a line deleted while at
+  // ready_for_release can still be released afterwards, and deleting a VISIT
+  // never cascaded to its lines at all. Both filters are cheap; the invariant
+  // was not worth trusting.
   //
   // Doctor lines are excluded. `test_requests` doubles as the visit's bill
   // line, so consultations and procedures sit in it alongside lab tests
@@ -235,12 +241,14 @@ export async function loadLabTat(
         `
         id, requested_at, released_at, status,
         services!inner ( name, section, turnaround_hours ),
-        visits ( visit_number, patients ( first_name, last_name ) )
+        visits!inner ( visit_number, patients ( first_name, last_name ) )
       `,
       )
       .eq("status", "released")
       .gte("released_at", fromIso!)
       .lt("released_at", toIso!)
+      .is("deleted_at", null)
+      .is("visits.deleted_at", null)
       .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
       .order("released_at", { ascending: true })
       .order("id", { ascending: true })

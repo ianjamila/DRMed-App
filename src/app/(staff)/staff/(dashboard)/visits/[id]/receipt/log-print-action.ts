@@ -25,6 +25,7 @@ export async function logReceiptPrintAction(visitId: string): Promise<void> {
     .from("visits")
     .select("id, visit_number, total_php, patient_id")
     .eq("id", visitId)
+    .is("deleted_at", null)
     .maybeSingle();
 
   const { ip, ua } = await ipAndAgent();

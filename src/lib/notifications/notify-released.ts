@@ -45,6 +45,10 @@ export async function notifyResultReleased({
       `,
     )
     .eq("id", testRequestId)
+    // A patient must never be told "your lab result is ready" for a deleted
+    // line or a line on a deleted visit (0125).
+    .is("deleted_at", null)
+    .is("visits.deleted_at", null)
     .maybeSingle();
 
   if (!row) return;

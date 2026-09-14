@@ -45,6 +45,9 @@ export async function notifyResultsReleasedBulk({
       `,
     )
     .eq("id", visitId)
+    // A patient must never be told their lab results are ready for a
+    // deleted visit (0125).
+    .is("deleted_at", null)
     .maybeSingle();
 
   if (!visit) return;
