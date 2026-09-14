@@ -26,7 +26,7 @@ import {
 } from "@/lib/visits/classification";
 
 export const metadata = {
-  title: "Visits — staff",
+  title: "Visit archive — staff",
 };
 
 const PHP = new Intl.NumberFormat("en-PH", {
@@ -162,7 +162,7 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
   return (
     <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
       <PageHeader
-        title="Visits"
+        title="Visit archive"
         subtitle={
           <>
             {count} visit{count === 1 ? "" : "s"} · {rangeLabel}

@@ -118,13 +118,15 @@ export const STAFF_NAV: StaffNavSection[] = [
     items: [
       {
         href: "/staff/visits",
-        label: "Visits",
+        label: "Visit archive",
         // /staff/visits is the visit archive (every visit ever); each visit
-        // opens to its printable A5 billing. excludePrefixes keeps this item
+        // opens to its printable A5 billing. "Visit archive" is the one name for
+        // this route — the in-page tab and the reception dashboard quicklink use
+        // it too, and the page's own h1 matches. excludePrefixes keeps this item
         // from lighting on /staff/visits/new (Services) or /staff/visits/queue
         // (the Front-desk Reception Queue item owns that route).
         excludePrefixes: ["/staff/visits/new", "/staff/visits/queue"],
-        description: "Every visit ever, searchable by date / patient / status. Open a visit to print its patient billing (A5) and re-issue receipts. This is the record side of billing — to start a new charge, use New lab/imaging request under Services.",
+        description: "Every visit ever, searchable by date / patient / status. Open a visit to print its patient billing (A5) and re-issue receipts. This is the record side of billing — to start a new charge, use New lab request or New imaging request under Services.",
         roles: ["reception", "admin"],
       },
       {

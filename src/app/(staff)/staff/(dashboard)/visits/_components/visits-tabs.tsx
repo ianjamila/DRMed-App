@@ -8,12 +8,12 @@ import { SectionTabs } from "@/components/staff/section-tabs";
 const TABS = [
   { href: "/staff/visits/new", label: "New visit" },
   {
-    // Archive: the bare /staff/visits plus detail drilldowns like
+    // Visit archive: the bare /staff/visits plus detail drilldowns like
     // /staff/visits/<uuid>, but NOT /staff/visits/new (New visit). /staff/visits/queue
     // stays excluded too: the queue renders no bar today, but the exclusion keeps
-    // Archive from lighting up if one is ever added there or under it.
+    // it from lighting up if one is ever added there or under it.
     href: "/staff/visits",
-    label: "Archive",
+    label: "Visit archive",
     excludePrefixes: ["/staff/visits/new", "/staff/visits/queue"],
   },
 ];
