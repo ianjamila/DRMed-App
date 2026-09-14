@@ -21,6 +21,7 @@ import {
 import { SubmitBatchModal } from "./modals/submit-batch-modal";
 import { AcknowledgeBatchModal } from "./modals/acknowledge-batch-modal";
 import { Panel } from "@/components/ui/panel";
+import { manilaDate, manilaDateTime } from "@/lib/dates/manila";
 
 type BatchRow = Database["public"]["Tables"]["hmo_claim_batches"]["Row"] & {
   hmo_providers: { name: string } | null;
@@ -71,14 +72,6 @@ const HMO_RESPONSE_LABEL: Record<string, string> = {
   no_response: "No response",
 };
 
-function fmtDate(s: string | null | undefined): string {
-  if (!s) return "—";
-  return new Date(s).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" });
-}
-function fmtDateTime(s: string | null | undefined): string {
-  if (!s) return "—";
-  return new Date(s).toLocaleString("en-PH", { timeZone: "Asia/Manila" });
-}
 
 function unresolvedOf(it: ItemRow): number {
   return (
@@ -313,7 +306,7 @@ function Header({
         </div>
       </div>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4 text-xs md:grid-cols-4">
-        <KeyValue label="Submitted" value={fmtDate(batch.submitted_at)} />
+        <KeyValue label="Submitted" value={manilaDate(batch.submitted_at)} />
         <KeyValue label="Medium" value={batch.medium ?? "—"} />
         <KeyValue label="Reference" value={batch.reference_no ?? "—"} mono />
         <KeyValue label="HMO ack ref" value={batch.hmo_ack_ref ?? "—"} mono />
@@ -879,7 +872,7 @@ function ResolutionsLog({
                     }
                   >
                     <td className="px-4 py-3 text-xs">
-                      {fmtDateTime(r.resolved_at)}
+                      {manilaDateTime(r.resolved_at)}
                     </td>
                     <td
                       className={
@@ -959,7 +952,7 @@ function AllocationsLog({ allocations }: { allocations: AllocationRow[] }) {
                         (isVoided ? "line-through" : "")
                       }
                     >
-                      {fmtDateTime(a.payments?.received_at ?? null)}
+                      {manilaDateTime(a.payments?.received_at ?? null)}
                     </td>
                     <td className="px-4 py-3 font-mono text-xs">
                       {a.payments?.reference_number ?? "—"}

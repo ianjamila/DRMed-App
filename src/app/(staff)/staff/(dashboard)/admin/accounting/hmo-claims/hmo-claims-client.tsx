@@ -17,6 +17,7 @@ import {
 } from "./_components/historic-claim-modals";
 import { Panel } from "@/components/ui/panel";
 import { ExportCsvButton } from "@/components/staff/export-csv-link";
+import { manilaDate } from "@/lib/dates/manila";
 
 type SummaryRow =
   Database["public"]["Views"]["v_hmo_provider_summary"]["Row"];
@@ -199,7 +200,7 @@ function ConsolidatedTotals({
   }, [summary, unbilled, stuck, aging, kind]);
 
   const oldestLabel = totals.oldestIso
-    ? new Date(totals.oldestIso).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })
+    ? manilaDate(totals.oldestIso)
     : "—";
   // eslint-disable-next-line react-hooks/purity -- age reflects the current time; client-only display, stable within a day.
   const nowMs = Date.now();
@@ -457,7 +458,7 @@ function ProviderCard({
   const unbilled = kind === "all" ? (row.total_unbilled_php ?? 0) : unbilledTotal;
   const stuck = kind === "all" ? (row.total_stuck_php ?? 0) : stuckTotal;
   const oldest = row.oldest_open_released_at
-    ? new Date(row.oldest_open_released_at).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })
+    ? manilaDate(row.oldest_open_released_at)
     : "—";
 
   const unbilledLabel =
@@ -790,7 +791,7 @@ function AllUnbilled({
                   </td>
                   <td className="px-4 py-3 text-xs">
                     {r.released_at
-                      ? new Date(r.released_at).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })
+                      ? manilaDate(r.released_at)
                       : "—"}
                   </td>
                   <td className="px-4 py-3 text-xs">
@@ -1166,7 +1167,7 @@ function AllAging({
                   </td>
                   <td className="px-4 py-3 text-xs">
                     {r.submitted_at
-                      ? new Date(r.submitted_at).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })
+                      ? manilaDate(r.submitted_at)
                       : "—"}
                   </td>
                   <td className="px-4 py-3 text-xs">

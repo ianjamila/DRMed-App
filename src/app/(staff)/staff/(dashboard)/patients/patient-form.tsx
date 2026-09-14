@@ -19,6 +19,7 @@ import {
   updatePatientAction,
   type PatientUpdateResult,
 } from "./[id]/edit-actions";
+import { manilaDate } from "@/lib/dates/manila";
 
 interface PatientDefaults {
   id?: string;
@@ -376,7 +377,7 @@ export function PatientForm({ initial, referralOptions }: Props) {
           <Alert variant="success">
             <AlertDescription>
               ✓ Consent already on file (signed{" "}
-              {new Date(initial!.consent_signed_at!).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })})
+              {manilaDate(initial!.consent_signed_at!)})
             </AlertDescription>
           </Alert>
         ) : (

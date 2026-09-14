@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { manilaDateTime } from "@/lib/dates/manila";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
@@ -351,7 +352,7 @@ export function NewAppointmentSheet({
                       {upcoming.map((u) => (
                         <li key={u.id}>
                           {u.scheduled_at
-                            ? new Date(u.scheduled_at).toLocaleString("en-PH", { timeZone: "Asia/Manila", dateStyle: "medium", timeStyle: "short" })
+                            ? manilaDateTime(u.scheduled_at)
                             : "Pending callback"}
                           {u.service_name ? ` · ${u.service_name}` : ""}
                           {u.physician_name ? ` · ${u.physician_name}` : ""}

@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import { voidPfDisbursement } from "@/lib/actions/accounting/pf-disbursements";
 import { formatPfBasis, formatPfMethod } from "@/lib/accounting/pf-labels";
+import { manilaDateTime } from "@/lib/dates/manila";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -160,11 +161,11 @@ export function DisbursementDetailClient({
             ["Method", formatPfMethod(d.method)],
             ["Total", PHP.format(Number(d.total_php))],
             ["Recorded by", getName(d.recorded_by_staff)],
-            ["Recorded at", new Date(d.recorded_at).toLocaleString("en-PH", { timeZone: "Asia/Manila" })],
+            ["Recorded at", manilaDateTime(d.recorded_at)],
             ...(d.notes ? [["Notes", d.notes] as [string, string]] : []),
             ...(isVoided
               ? [
-                  ["Voided at", new Date(d.voided_at!).toLocaleString("en-PH", { timeZone: "Asia/Manila" })],
+                  ["Voided at", manilaDateTime(d.voided_at!)],
                   ["Void reason", d.void_reason ?? "(none)"],
                 ]
               : []),
@@ -221,7 +222,7 @@ export function DisbursementDetailClient({
                     </td>
                     <td className="px-4 py-3 text-[color:var(--color-brand-text-soft)]">
                       {e.recognized_at
-                        ? new Date(e.recognized_at).toLocaleString("en-PH", { timeZone: "Asia/Manila" })
+                        ? manilaDateTime(e.recognized_at)
                         : "—"}
                     </td>
                     <td className="px-4 py-3 text-right font-mono">

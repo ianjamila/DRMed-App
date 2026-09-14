@@ -6,7 +6,7 @@ import Link from "next/link";
 import { recordCashAdjustmentAction, voidCashAdjustmentAction }
   from "./actions";
 import { PaymentsTabs } from "../_components/payments-tabs";
-import { friendlyManilaDate } from "@/lib/dates/manila";
+import { friendlyManilaDate, manilaTime } from "@/lib/dates/manila";
 import type { Database } from "@/types/database";
 
 type Adjustment = Database["public"]["Tables"]["eod_cash_adjustments"]["Row"];
@@ -211,7 +211,7 @@ export function CashDrawerClient(props: {
             )}
             {props.rows.map((r) => (
               <tr key={r.id} className={r.voided_at ? "opacity-50" : ""}>
-                <td className="px-3 py-2 whitespace-nowrap">{new Date(r.recorded_at).toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Manila" })}</td>
+                <td className="px-3 py-2 whitespace-nowrap">{manilaTime(r.recorded_at)}</td>
                 <td className="px-3 py-2">{kindLabel(r.kind)}</td>
                 <td className="px-3 py-2 font-mono">{PESO(Number(r.amount_php))}</td>
                 <td className="px-3 py-2">{r.payee ?? r.notes ?? "—"}</td>

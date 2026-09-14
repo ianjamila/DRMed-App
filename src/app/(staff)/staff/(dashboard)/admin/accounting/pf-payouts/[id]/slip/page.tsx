@@ -7,6 +7,7 @@ import { formatPatientName } from "@/lib/patients/format-name";
 import { pesosInWords } from "@/lib/accounting/amount-in-words";
 import { formatPfMethod, pfBasisShortLabel } from "@/lib/accounting/pf-labels";
 import { SlipPrintButton } from "./slip-print-button";
+import { manilaDate, manilaDateTime } from "@/lib/dates/manila";
 
 export const metadata = { title: "PF payout slip — staff" };
 export const dynamic = "force-dynamic";
@@ -92,19 +93,6 @@ interface SlipLine {
 function pluck<T>(v: Embed<T>): T | null {
   if (!v) return null;
   return Array.isArray(v) ? (v[0] ?? null) : v;
-}
-
-function manilaDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-PH", {
-    timeZone: "Asia/Manila",
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-}
-
-function manilaDateTime(iso: string): string {
-  return new Date(iso).toLocaleString("en-PH", { timeZone: "Asia/Manila" });
 }
 
 // ---------------------------------------------------------------------------

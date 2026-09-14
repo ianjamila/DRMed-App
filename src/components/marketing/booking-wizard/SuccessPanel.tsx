@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { formatManilaDateTime } from "@/lib/notifications/format-manila-datetime";
 
 /**
  * Booking confirmation. An ECG line draws, resolves into a ring, then a green
@@ -48,11 +49,7 @@ export function SuccessPanel({
   }, []);
 
   const whenLabel = scheduledAt
-    ? new Date(scheduledAt).toLocaleString("en-PH", {
-        dateStyle: "long",
-        timeStyle: "short",
-        timeZone: "Asia/Manila",
-      })
+    ? formatManilaDateTime(scheduledAt)
     : null;
 
   return (

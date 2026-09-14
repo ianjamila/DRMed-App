@@ -7,6 +7,7 @@ import { PackageCard, type PackageComponentRow } from "./package-card";
 import { LabRequestUploads, type UploadRow } from "./lab-request-uploads";
 import { Panel } from "@/components/ui/panel";
 import { classifyKind } from "@/lib/visits/classification";
+import { manilaDate } from "@/lib/dates/manila";
 
 /**
  * Normalise an embedded relation — Supabase types these as single-or-array
@@ -480,12 +481,7 @@ async function loadUploads(patientId: string): Promise<UploadRow[]> {
     const svc = Array.isArray(ap.services) ? ap.services[0] : ap.services;
     const name = svc?.name ?? "Lab request";
     const when = ap.scheduled_at
-      ? new Date(ap.scheduled_at).toLocaleDateString("en-PH", {
-          timeZone: "Asia/Manila",
-          year: "numeric",
-          month: "short",
-          day: "numeric",
-        })
+      ? manilaDate(ap.scheduled_at)
       : null;
     const label = when ? `${name} · ${when}` : name;
     // Prefer a row that carries a scheduled time over a barer one.
@@ -619,11 +615,11 @@ export default async function PatientPortalPage() {
                     ) : null}
                   </td>
                   <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
-                    {new Date(row.test_date).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })}
+                    {manilaDate(row.test_date)}
                   </td>
                   <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
                     {row.released_at
-                      ? new Date(row.released_at).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })
+                      ? manilaDate(row.released_at)
                       : "—"}
                   </td>
                   <td className="px-4 py-3">
@@ -697,9 +693,7 @@ export default async function PatientPortalPage() {
                     #{row.visit_number}
                   </Link>
                   <span>
-                    {new Date(row.test_date).toLocaleDateString("en-PH", {
-                      timeZone: "Asia/Manila",
-                    })}
+                    {manilaDate(row.test_date)}
                   </span>
                 </div>
                 <div className="mt-3">
@@ -763,9 +757,7 @@ export default async function PatientPortalPage() {
                 </div>
                 <div className="flex shrink-0 items-baseline gap-3 text-xs text-[color:var(--color-brand-text-soft)]">
                   <span>
-                    {new Date(c.visit_date).toLocaleDateString("en-PH", {
-                      timeZone: "Asia/Manila",
-                    })}
+                    {manilaDate(c.visit_date)}
                   </span>
                   <Link
                     href={`/portal/visits/${c.visit_id}`}
@@ -801,7 +793,7 @@ export default async function PatientPortalPage() {
                   Visit #{v.visit_number}
                 </Link>
                 <span className="text-xs text-[color:var(--color-brand-text-soft)]">
-                  {new Date(v.visit_date).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })} ·{" "}
+                  {manilaDate(v.visit_date)} ·{" "}
                   {v.pending} test{v.pending === 1 ? "" : "s"} pending
                 </span>
               </li>

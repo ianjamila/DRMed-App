@@ -4,6 +4,7 @@ import { createPatientClient } from "@/lib/supabase/patient";
 import { requirePatientProfile } from "@/lib/auth/require-patient";
 import { DownloadButton } from "../../download-button";
 import { Panel } from "@/components/ui/panel";
+import { manilaDate, manilaLongDate } from "@/lib/dates/manila";
 
 export const metadata = {
   title: "Visit",
@@ -91,9 +92,7 @@ export default async function PatientVisitDetailPage({ params }: Props) {
           Visit #{visit.visit_number}
         </p>
         <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          {new Date(visit.visit_date).toLocaleDateString("en-PH", {
-            dateStyle: "long",
-          })}
+          {manilaLongDate(visit.visit_date)}
         </h1>
       </header>
 
@@ -138,7 +137,7 @@ export default async function PatientVisitDetailPage({ params }: Props) {
                     </td>
                     <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
                       {t.released_at
-                        ? new Date(t.released_at).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })
+                        ? manilaDate(t.released_at)
                         : "—"}
                     </td>
                     <td className="px-4 py-3">

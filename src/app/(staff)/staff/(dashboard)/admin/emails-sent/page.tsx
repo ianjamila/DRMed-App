@@ -4,6 +4,7 @@ import { Panel } from "@/components/ui/panel";
 import { ExportCsvLink } from "@/components/staff/export-csv-link";
 import { fetchEmailLog, PAGE_SIZE } from "@/lib/emails-log/query";
 import type { EmailStatus, EmailType } from "@/lib/emails-log/types";
+import { manilaDateTime } from "@/lib/dates/manila";
 
 export const metadata = { title: "Emails sent — staff" };
 
@@ -247,9 +248,7 @@ export default async function EmailsSentPage({ searchParams }: Props) {
                 return (
                   <tr key={e.id} className="hover:bg-[color:var(--color-brand-bg)]">
                     <td className="px-4 py-3 whitespace-nowrap text-xs text-[color:var(--color-brand-text-mid)]">
-                      {new Date(e.sentAt).toLocaleString("en-PH", {
-                        timeZone: "Asia/Manila",
-                      })}
+                      {manilaDateTime(e.sentAt)}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap">{e.typeLabel}</td>
                     <td className="px-4 py-3 whitespace-nowrap">

@@ -9,6 +9,7 @@ import {
 } from "@/lib/auth/role-sections";
 import type { StaffSession } from "@/lib/auth/require-staff";
 import { Panel } from "@/components/ui/panel";
+import { manilaTime } from "@/lib/dates/manila";
 
 interface NotificationItem {
   id: string;
@@ -147,7 +148,7 @@ export function NotificationBell({ role }: Props) {
             id: row.id,
             kind: "appointment",
             title: `${who} booked ${what}`,
-            subtitle: `${formatTime(new Date())}${flag}`,
+            subtitle: `${manilaTime(new Date())}${flag}`,
             href: "/staff/appointments",
             ts: Date.now(),
           });
@@ -195,7 +196,7 @@ export function NotificationBell({ role }: Props) {
             id: row.id,
             kind: "test_request",
             title: `${svc?.name ?? "Test"} for ${who}`,
-            subtitle: `Visit #${visit?.visit_number ?? "?"} · ${formatTime(new Date())}`,
+            subtitle: `Visit #${visit?.visit_number ?? "?"} · ${manilaTime(new Date())}`,
             href: `/staff/queue/${row.id}`,
             ts: Date.now(),
           });
@@ -376,10 +377,4 @@ function BellIcon() {
   );
 }
 
-function formatTime(d: Date): string {
-  return d.toLocaleTimeString("en-PH", {
-    hour: "numeric",
-    minute: "2-digit",
-    timeZone: "Asia/Manila",
-  });
-}
+

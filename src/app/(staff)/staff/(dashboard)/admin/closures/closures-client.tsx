@@ -12,6 +12,7 @@ import {
   type ClosureResult,
 } from "./actions";
 import { Panel } from "@/components/ui/panel";
+import { friendlyManilaDate } from "@/lib/dates/manila";
 
 export interface ClosureRow {
   closed_on: string;
@@ -137,11 +138,7 @@ function ClosureRow({ row }: { row: ClosureRow }) {
     FormData
   >(bulkRescheduleForClosureAction, null);
 
-  // sv-SE on a YYYY-MM-DD literal renders without timezone drift.
-  const dateLabel = new Date(`${row.closed_on}T00:00:00+08:00`).toLocaleString(
-    "en-PH",
-    { dateStyle: "full", timeZone: "Asia/Manila" },
-  );
+  const dateLabel = friendlyManilaDate(row.closed_on);
 
   // After a successful bulk reschedule, the page revalidates and
   // affected_count drops to 0 — but until that round-trip completes

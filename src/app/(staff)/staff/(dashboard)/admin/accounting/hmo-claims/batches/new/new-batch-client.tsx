@@ -8,6 +8,7 @@ import {
   addItemsToBatchAction,
 } from "../../actions";
 import { Panel } from "@/components/ui/panel";
+import { manilaDate } from "@/lib/dates/manila";
 
 const PHP = new Intl.NumberFormat("en-PH", {
   style: "currency",
@@ -226,7 +227,7 @@ export function NewBatchClient({
                       </span>
                     </td>
                     <td className="px-4 py-3 text-xs">
-                      {new Date(r.released_at).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })}
+                      {manilaDate(r.released_at)}
                     </td>
                     <td className="px-4 py-3 text-xs">{r.patient_name ?? "—"}</td>
                     <td className="px-4 py-3 text-xs text-[color:var(--color-brand-text-soft)]">

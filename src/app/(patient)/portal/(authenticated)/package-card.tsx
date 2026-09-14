@@ -6,6 +6,7 @@ import {
   getPackagePdfDownloadUrl,
   getPatientResultDownloadUrl,
 } from "./actions";
+import { manilaDate } from "@/lib/dates/manila";
 
 // Per-component status surface for the "Show individual results" panel.
 // `released` shows a download link, `cancelled` is rendered greyed out
@@ -89,14 +90,14 @@ export function PackageCard(props: PackageCardProps) {
           </h2>
           <p className="mt-0.5 font-mono text-xs text-[color:var(--color-brand-text-soft)]">
             {props.header.package_code} · Visit #{props.header.visit_number} ·{" "}
-            {new Date(props.header.visit_date).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })}
+            {manilaDate(props.header.visit_date)}
           </p>
           <p className="mt-1 text-xs text-[color:var(--color-brand-text-mid)]">
             {props.releasedCount} of {props.totalCount} components released
             {props.header.released_at ? (
               <>
                 {" · released "}
-                {new Date(props.header.released_at).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })}
+                {manilaDate(props.header.released_at)}
               </>
             ) : null}
           </p>

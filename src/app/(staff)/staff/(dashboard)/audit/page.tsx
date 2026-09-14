@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { Panel } from "@/components/ui/panel";
+import { manilaDateTime } from "@/lib/dates/manila";
 
 export const metadata = {
   title: "Audit log — staff",
@@ -221,7 +222,7 @@ export default async function AuditLogPage({ searchParams }: Props) {
               (rows ?? []).map((r) => (
                 <tr key={r.id} className="hover:bg-[color:var(--color-brand-bg)]">
                   <td className="px-4 py-3 whitespace-nowrap text-xs text-[color:var(--color-brand-text-mid)]">
-                    {new Date(r.created_at).toLocaleString("en-PH", { timeZone: "Asia/Manila" })}
+                    {manilaDateTime(r.created_at)}
                   </td>
                   <td className="px-4 py-3 font-mono text-xs">{r.action}</td>
                   <td className="px-4 py-3">

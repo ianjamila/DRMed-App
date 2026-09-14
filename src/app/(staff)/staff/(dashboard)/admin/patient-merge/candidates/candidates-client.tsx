@@ -3,6 +3,7 @@ import { useActionState } from "react";
 import type { CandidatePair } from "@/lib/patients/find-duplicates";
 import type { DupSignal } from "@/lib/patients/duplicates";
 import { mergeCandidateAction, undoMergeAction, type MergeResult, type UndoResult, type RecentMerge } from "../actions";
+import { manilaDate } from "@/lib/dates/manila";
 
 const SIGNAL_LABEL: Record<DupSignal, string> = {
   exact_email: "Same email",
@@ -103,7 +104,7 @@ export function CandidatesClient({ pairs, recent }: { pairs: CandidatePair[]; re
           <ul className="divide-y">
             {recent.map((m) => (
               <li key={m.id} className="flex items-center justify-between py-2 text-sm">
-                <span>{m.source_drm_id} → {m.keep_drm_id} <span className="text-slate-400">· {new Date(m.merged_at).toLocaleDateString("en-PH")}</span></span>
+                <span>{m.source_drm_id} → {m.keep_drm_id} <span className="text-slate-400">· {manilaDate(m.merged_at)}</span></span>
                 <UndoButton merge={m} />
               </li>
             ))}
