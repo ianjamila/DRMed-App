@@ -47,7 +47,7 @@ An **item** is a `StaffNavItem`:
 
 - **Cash drawer**: `href: /staff/payments/cash-drawer`, `activePrefix: /staff/payments/eod` (lands on Cash drawer, stays lit on End of day).
 - **Expenses**: `href: /staff/admin/accounting/ap/quick-expense`, `activePrefix: /staff/admin/accounting/ap` (lands on Quick expense, lit across all AP tabs).
-- **Visits**: `href: /staff/visits/new`, `activePrefix: /staff/visits`.
+- **Visits** (Billing): `href: /staff/visits` (the archive) with `excludePrefixes: ["/staff/visits/new", "/staff/visits/queue"]` — the two sibling routes are owned by other sidebar items (Services › New lab/imaging request, Front desk › Reception Queue), so the umbrella pattern is inverted here: exclusions, not an `activePrefix`.
 - **Financial statements**: a single bare-base `href` — the default prefix match already covers `/balance-sheet` and `/cash-flow`, so no `activePrefix` needed.
 
 Avoid an `activePrefix` so broad it lights the item on unrelated sibling routes (e.g. don't use `/staff/payments` if `/staff/payments/new` shouldn't highlight it).
@@ -66,6 +66,8 @@ interface SectionTab { href: string; label: string; exact?: boolean; excludePref
   - `excludePrefixes: [...]` — for the default prefix match, treat these sub-trees as NOT this tab (e.g. Archive at `/staff/visits` excludes `/staff/visits/new`).
 - `query` — an already-built `"?date=…"` string appended to every tab href, to carry a selection across tabs. The **caller** reads `useSearchParams` and passes it in, so `SectionTabs` itself uses only `usePathname` and never triggers the dynamic-render bailout. (`PaymentsTabs` does this for `date`/`shift`.)
 - Each tab set is a thin wrapper that just declares its `TABS` and renders `<SectionTabs/>` (see `bills-tabs.tsx`, `visits-tabs.tsx`, `statement-tabs.tsx`, `payments-tabs.tsx`).
+
+**A tab bar has to be a set of views, not a set of URLs.** `SectionTabs` promises "different views of the same thing", so only group pages that share a subject. `visits-tabs.tsx` is the cautionary example: it was built as New visit | Archive (create vs browse the visit record), then the Reception Queue was dropped in for sharing the `/staff/visits` prefix — pairing a live day worklist with a records archive, under labels ("Archive", "New visit") that contradicted the sidebar's own names for the same routes ("Visits", "New lab request"). The queue now renders no bar and carries a `+ New visit` **action** in its `PageHeader` `actions` slot instead. When a cross-page shortcut is genuinely useful but the pages aren't siblings, that's the shape to reach for.
 
 **Param-driven bars that can't use the component** (e.g. a server-component scope filter like patient-AR's non-HMO/HMO/all) should import `sectionTabsNavClass` and `sectionTabClass(active)` from `section-tabs-style.ts` and apply them inline, so they match the navy style exactly without the client component.
 

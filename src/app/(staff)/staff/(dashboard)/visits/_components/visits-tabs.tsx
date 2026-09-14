@@ -1,15 +1,17 @@
 import { SectionTabs } from "@/components/staff/section-tabs";
 
+// Create vs browse — the two halves of the visit *record*, which is what this
+// bar was built for. The Reception Queue is deliberately NOT here: it's a live
+// day worklist, not a third view of the archive, and it shares /staff/visits
+// only by URL accident. It renders no tab bar and is reached from the sidebar
+// (Front desk › Reception Queue) with a "+ New visit" action of its own.
 const TABS = [
-  // Reception Queue is the landing tab of the Visits area — today's live
-  // reception worklist (waiting → processing → completed). Named in full to
-  // disambiguate it from the Lab section's own Queue.
-  { href: "/staff/visits/queue", label: "Reception Queue" },
   { href: "/staff/visits/new", label: "New visit" },
   {
     // Archive: the bare /staff/visits plus detail drilldowns like
-    // /staff/visits/<uuid>, but NOT /staff/visits/new (New visit) or
-    // /staff/visits/queue (Reception Queue) — so those don't double-light Archive.
+    // /staff/visits/<uuid>, but NOT /staff/visits/new (New visit). /staff/visits/queue
+    // stays excluded too: the queue renders no bar today, but the exclusion keeps
+    // Archive from lighting up if one is ever added there or under it.
     href: "/staff/visits",
     label: "Archive",
     excludePrefixes: ["/staff/visits/new", "/staff/visits/queue"],

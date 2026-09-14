@@ -601,7 +601,8 @@
     <h3>3.7 The Reception Queue</h3>
     <div class="screen"><div class="where">Sidebar › Front desk › <kbd class="ui">Reception Queue</kbd> · <code class="route">/staff/visits/queue</code></div>
       <dl><dt>Stages</dt><dd><span class="tab">Waiting for payment</span> · <span class="tab">Processing</span> · <span class="tab">Completed</span></dd>
-      <dt>Row actions</dt><dd><kbd class="ui">Record payment</kbd> · <kbd class="ui">Open visit</kbd> · <kbd class="ui">Print billing</kbd></dd></dl></div>
+      <dt>Row actions</dt><dd><kbd class="ui">Record payment</kbd> · <kbd class="ui">Open visit</kbd> · <kbd class="ui">Print billing</kbd></dd>
+      <dt>Page action</dt><dd><kbd class="ui">+ New visit</kbd>, top right — opens the New visit form for the patient at the counter. It also appears in the middle of the page when today's <span class="tab">Waiting for payment</span> stage is empty.</dd></dl></div>
     <p>This is today's worklist. It updates on its own as payments land and tests finish.</p>
     <dl class="defs">
       <dt>Waiting for payment</dt><dd>Visits created but not yet paid, so the lab cannot see them. Collect and <kbd class="ui">Record payment</kbd>. The one exception is an HMO-billed visit: its balance is owed by the HMO, so it stays on this tab while the lab is already running the tests (3.6).</dd>
@@ -609,7 +610,7 @@
       <dt>Completed</dt><dd>Paid and every lab and imaging line released. <kbd class="ui">Print billing</kbd> reprints the receipt (without the PIN).</dd>
     </dl>
     <div class="note why"><span class="k">Why the visit page shows no tests</span><div><p>By clinic policy, reception does not see individual test lines or result PDFs. On a visit page you see the patient, the payments, the receipt and PIN buttons, the attending physician and the HMO details, but not the tests. Use the Reception Queue row for progress, and leave releasing to the lab.</p></div></div>
-    <p>The related <kbd class="ui">Visits</kbd> item in the Billing group has three tabs: <span class="tab">Reception Queue</span>, <span class="tab">New visit</span> and <span class="tab">Archive</span>. The archive filters by <span class="tab">Lab Tests</span> / <span class="tab">Doctor Consults</span> / <span class="tab">Doctor Procedures</span>, shows <span class="tab">Active</span> or <span class="tab">Deleted</span> entries, and searches by visit number. Admin can <kbd class="ui">Export CSV</kbd> from it.</p>
+    <p>The related <kbd class="ui">Visits</kbd> item in the Billing group has two tabs: <span class="tab">New visit</span> and <span class="tab">Archive</span>. (The Reception Queue is not one of them — reach it from the sidebar, under Front desk.) The archive filters by <span class="tab">Lab Tests</span> / <span class="tab">Doctor Consults</span> / <span class="tab">Doctor Procedures</span>, shows <span class="tab">Active</span> or <span class="tab">Deleted</span> entries, and searches by visit number. Admin can <kbd class="ui">Export CSV</kbd> from it.</p>
   </section>
 
   <!-- 3.8 -->
