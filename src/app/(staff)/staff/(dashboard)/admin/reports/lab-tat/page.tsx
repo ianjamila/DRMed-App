@@ -13,6 +13,7 @@ import {
   parseLabTatParams,
   percentile,
   SECTION_LABEL,
+  UNSECTIONED_LABEL,
 } from "@/lib/reports/lab-tat";
 
 export const metadata = { title: "Lab TAT analytics — staff" };
@@ -236,6 +237,15 @@ export default async function LabTatPage({ searchParams }: SearchProps) {
           </div>
         )}
       </section>
+
+      {rows.some((r) => r.section === UNSECTIONED_LABEL) ? (
+        <p className="mt-2 text-xs text-[color:var(--color-brand-text-soft)]">
+          <span className="font-medium">{UNSECTIONED_LABEL}</span> is the
+          pre-app import catch-all, not a data gap: one legacy code standing in
+          for whatever the paper record said, spanning every bench. It has no
+          single section to report under, so it is listed on its own.
+        </p>
+      ) : null}
 
       {slaBreachRows.length > 0 ? (
         <section className="mt-8">

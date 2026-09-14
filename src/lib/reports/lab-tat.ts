@@ -34,6 +34,18 @@ export function parseLabTatParams(
   };
 }
 
+/**
+ * The bucket a released line lands in when its service carries no `section`.
+ *
+ * After migration 0144 backfilled the twelve retired catalog rows, exactly one
+ * service is still unsectioned: `LEGACY-LAB`, the pre-app import catch-all —
+ * one code standing in for whatever the paper record said, spanning every
+ * bench (334 lines, 2024-02 → 2026-05). It is deliberately left unsectioned
+ * because there is no bench it honestly belongs to, so this row is a real
+ * category, not a data gap. The page says so beneath the table.
+ */
+export const UNSECTIONED_LABEL = "(unset)";
+
 export const SECTION_LABEL: Record<string, string> = {
   chemistry: "Chemistry",
   hematology: "Hematology",
@@ -146,7 +158,7 @@ export function aggregateLabTat(released: readonly ReleasedRow[]): LabTatAggrega
     if (!tr.released_at) continue;
     const svc = pluckOne(tr.services);
     if (!svc) continue;
-    const sec = svc.section ?? "(unset)";
+    const sec = svc.section ?? UNSECTIONED_LABEL;
     const m = ensure(sec);
     m.totalReleased += 1;
 
