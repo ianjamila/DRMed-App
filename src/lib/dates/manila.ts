@@ -94,7 +94,7 @@ export function manilaDayWindowUtc(offsetDays: number): {
 }
 
 /**
- * THE canonical short date for staff screens: "11 Sep 2026".
+ * THE canonical short date for staff screens: "Sep 11, 2026".
  *
  * Staff pages used to mix `toLocaleDateString()` (which renders "9/11/2026" on
  * an en-US runtime) with ad-hoc `Intl` options, so the same visit read as a
@@ -102,21 +102,26 @@ export function manilaDayWindowUtc(offsetDays: number): {
  * numeric day/month order is genuinely ambiguous — 9/11 is either 9 November
  * or 11 September — so the house format always spells the month.
  *
+ * Month-first with a spelled month, matching `friendlyManilaDate` above and
+ * the appointments list — the two places the app already had it right. Note
+ * en-GB is NOT equivalent: it yields "11 Sept 2026", day-first and with a
+ * four-letter "Sept" that reads inconsistently beside every other surface.
+ *
  * Accepts a YYYY-MM-DD calendar date or a timestamptz ISO string; both are
  * rendered in Asia/Manila.
  */
 export function manilaDate(value: string | Date | null | undefined): string {
   const d = toManilaInstant(value);
   if (!d) return "—";
-  return new Intl.DateTimeFormat("en-GB", {
-    day: "2-digit",
+  return new Intl.DateTimeFormat("en-US", {
     month: "short",
+    day: "numeric",
     year: "numeric",
     timeZone: MANILA_TZ,
   }).format(d);
 }
 
-/** The canonical date + time: "11 Sep 2026, 2:06 PM". */
+/** The canonical date + time: "Sep 11, 2026, 2:06 PM". */
 export function manilaDateTime(value: string | Date | null | undefined): string {
   const d = toManilaInstant(value);
   if (!d) return "—";
