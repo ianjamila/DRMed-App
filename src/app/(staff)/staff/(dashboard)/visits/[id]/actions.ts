@@ -759,7 +759,14 @@ async function markDoctorLineDoneAction(
     })
     .eq("id", testRequestId)
     .eq("visit_id", visitId)
-    .in("status", ["requested", "in_progress"])
+    // `ready_for_release` is reachable for a doctor line only through
+    // undoReleaseSelectedAction, which is kind-agnostic by design (undoing a
+    // mistakenly-completed consultation is legitimate). Re-completing it has
+    // to come back through THIS action: the generic Release button would fire
+    // notifyResultReleased and email the patient about a lab result that does
+    // not exist. Accepting the status here is what lets the visit page offer
+    // "Mark done" for it instead.
+    .in("status", ["requested", "in_progress", "ready_for_release"])
     .select("id");
 
   if (error) {

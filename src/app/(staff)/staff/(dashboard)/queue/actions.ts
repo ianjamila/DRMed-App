@@ -10,6 +10,7 @@ import { translatePgError } from "@/lib/accounting/pg-errors";
 import { labQueueGate } from "@/lib/visits/lab-gate";
 import { sectionsForRole } from "@/lib/auth/role-sections";
 import { scopeToAllowedSections } from "@/lib/visits/bulk-selection";
+import { isDoctorKind } from "@/lib/visits/order-lines";
 
 export type ClaimResult = { ok: true } | { ok: false; error: string };
 
@@ -25,7 +26,7 @@ export async function claimTestAction(
   const { data: testRequest } = await supabase
     .from("test_requests")
     .select(
-      "id, is_package_header, services!inner ( section, name ), visits!inner ( deleted_at, payment_status, hmo_provider_id )",
+      "id, is_package_header, services!inner ( kind, section, name ), visits!inner ( deleted_at, payment_status, hmo_provider_id )",
     )
     .eq("id", testRequestId)
     .maybeSingle();
@@ -42,6 +43,19 @@ export async function claimTestAction(
     return {
       ok: false,
       error: "Package headers cannot be claimed — they have no work.",
+    };
+  }
+  // Same reasoning for doctor lines: a consultation has no bench step to
+  // claim. The section gate below cannot refuse one — doctor services carry a
+  // null `section`, which passes for the unrestricted roles by design (that
+  // is what lets an admin mark a consultation done). So admin/pathologist
+  // could claim a consultation into `in_progress`, where it would then sit
+  // forever: nothing on the bench can move it on.
+  if (isDoctorKind(testRequest.services.kind)) {
+    return {
+      ok: false,
+      error:
+        "Consultations and procedures are completed on the visit page with “Mark done”, not claimed from the lab queue.",
     };
   }
   // Section gate, server-side: RLS lets every lab role (and reception) write

@@ -1,6 +1,7 @@
 import type { StaffSession } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { DOCTOR_KINDS_PG_LIST } from "@/lib/visits/classification";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { loadHiddenCardIds } from "@/lib/dashboards/card-prefs";
 import { DashboardHeader } from "./_components/dashboard-header";
@@ -202,10 +203,20 @@ async function loadReceptionStats(show: (id: string) => boolean) {
     show("reception.pending_release")
       ? supabase
           .from("test_requests")
-          .select("id, visits!inner ( id )", { count: "exact", head: true })
+          .select("id, services!inner ( id ), visits!inner ( id )", {
+            count: "exact",
+            head: true,
+          })
           .eq("status", "ready_for_release")
           .is("deleted_at", null)
           .is("visits.deleted_at", null)
+          // "Results ready, awaiting release" is lab work. A consultation is
+          // never awaiting release — reception completes it at the counter —
+          // but undoing an already-completed one parks it at
+          // `ready_for_release`, where it was counted here and sat in the
+          // tile as work nobody owes. Same reasoning lab-tat.ts applies to
+          // its own Pending tile.
+          .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
       : SKIP_COUNT,
     show("reception.walk_ins_waiting")
       ? supabase

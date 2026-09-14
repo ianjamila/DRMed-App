@@ -2,6 +2,7 @@ import "server-only";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
+import { DOCTOR_KINDS_PG_LIST } from "@/lib/visits/classification";
 import { appendRowsToTab } from "./google-sheets";
 import {
   mapConsultRow,
@@ -199,7 +200,13 @@ const TEST_REQUEST_SELECT = `
   physicians!test_requests_attending_physician_id_fkey ( full_name )
 `;
 
-const LAB_KINDS = ["lab_test", "lab_package", "vaccine", "home_service"];
+// The two doctor tabs enumerate their kind; the Lab tab takes the COMPLEMENT
+// (see `DOCTOR_KINDS_PG_LIST`). It used to carry its own allow-list —
+// ["lab_test","lab_package","vaccine","home_service"] — which is the same set
+// today but fails open in the wrong direction: seed one new kind into the
+// catalog and its revenue silently stops reaching the accounting sheet
+// altogether, belonging to no tab. As the complement, a new kind lands on the
+// Lab tab by default and someone notices it there.
 const CONSULT_KINDS = ["doctor_consultation"];
 const PROCEDURE_KINDS = ["doctor_procedure"];
 
@@ -210,7 +217,7 @@ async function fetchLabRows(
   const { data, error } = await admin
     .from("test_requests")
     .select(TEST_REQUEST_SELECT)
-    .in("services.kind", LAB_KINDS)
+    .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
     .gt("released_at", watermark)
     .not("released_at", "is", null)
     .order("released_at", { ascending: true })
