@@ -103,7 +103,7 @@ export default async function HistoricClaimDetail({
   const totalFinal = (siblings ?? []).reduce((s, r) => s + Number(r.final_amount_php), 0);
 
   return (
-    <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="px-4 py-8 sm:px-6 lg:px-8">
       <div className="mb-4">
         <Link
           href={`/staff/admin/accounting/hmo-claims/${providerId}`}

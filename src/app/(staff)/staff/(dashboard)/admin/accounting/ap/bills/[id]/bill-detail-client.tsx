@@ -164,7 +164,7 @@ export function BillDetailClient({
   const canVoid = ["posted", "partially_paid", "paid"].includes(bill.status);
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8 space-y-6">
+    <div className="space-y-6">
       {/* HEADER */}
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>

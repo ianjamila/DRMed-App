@@ -37,7 +37,7 @@ export default async function PfDisbursementDetailPage({
     .order("recognized_at", { ascending: true });
 
   return (
-    <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="px-4 py-8 sm:px-6 lg:px-8">
       <DisbursementDetailClient
         disbursement={disb}
         entries={entries ?? []}

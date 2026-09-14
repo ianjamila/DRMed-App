@@ -99,7 +99,7 @@ export default async function SalesPage({ searchParams }: PageProps) {
   const csvHref = `/api/admin/gift-codes/sales.csv?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6">
         <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
           <Link
