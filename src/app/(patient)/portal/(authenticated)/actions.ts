@@ -183,6 +183,10 @@ export async function getPatientResultDownloadUrl(
       ` as any, // eslint-disable-line @typescript-eslint/no-explicit-any
     )
     .eq("id", testRequestId)
+    // Queue-deleted lines (0125), or lines on a deleted visit, mint no
+    // signed URL — this id is attacker-controllable (exported Server Action).
+    .is("deleted_at", null)
+    .is("visits.deleted_at", null)
     .maybeSingle();
 
   if (!testRow) {
@@ -303,7 +307,7 @@ export async function getPackagePdfDownloadUrl(
         id, status, is_package_header, parent_id, visit_id,
         package_completed_at,
         services!test_requests_service_id_fkey ( code, name ),
-        visits!test_requests_visit_id_fkey (
+        visits!inner (
           id, patient_id, visit_number,
           patients!visits_patient_id_fkey (
             drm_id, last_name, first_name, sex, birthdate
@@ -312,6 +316,14 @@ export async function getPackagePdfDownloadUrl(
       `,
     )
     .eq("id", headerTestRequestId)
+    // Queue-deleted headers (0125), and headers on a deleted visit, mint no
+    // package download. The FK hint is dropped in favour of `!inner`:
+    // test_requests has exactly one FK to visits (the plain `visits!inner`
+    // embed in getPatientResultDownloadUrl above resolves without it), and
+    // the hint alone leaves a LEFT join, which PostgREST would silently
+    // ignore the visits.deleted_at filter on.
+    .is("deleted_at", null)
+    .is("visits.deleted_at", null)
     .maybeSingle();
 
   if (!headerRow) {
@@ -350,6 +362,9 @@ export async function getPackagePdfDownloadUrl(
       `,
     )
     .eq("parent_id", headerRow.id)
+    // Queue-deleted components (0125) don't go into the package; the header
+    // read above already establishes the visit is live.
+    .is("deleted_at", null)
     .order("created_at");
 
   if (!components || components.length === 0) {

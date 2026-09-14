@@ -450,6 +450,11 @@ export async function finaliseStructuredAction(
     .from("visits")
     .select("visit_number")
     .eq("id", ctx.visitId)
+    // prepareStructured already proved the visit was live, but that was a
+    // separate round trip — restate it (0125) so a visit deleted in between
+    // fails the render rather than stamping a deleted visit's number on a PDF.
+    // Null is already handled by the !visit guard below.
+    .is("deleted_at", null)
     .single();
 
   const { data: patient } = await admin
@@ -977,6 +982,9 @@ export async function amendResultAction(
       "id, status, visit_id, services!inner ( section ), visits!inner ( id, patient_id )",
     )
     .eq("id", testRequestId)
+    // Queue-deleted lines (0125) accept no result work.
+    .is("deleted_at", null)
+    .is("visits.deleted_at", null)
     .maybeSingle();
   if (!testRow) return { ok: false, error: "Test not found." };
   // N1 (go-live): section gate. This read runs on the admin client (no RLS),
@@ -1182,6 +1190,9 @@ export async function amendStructuredResultAction(
        visits!inner ( id, patient_id, visit_number )`,
     )
     .eq("id", testRequestId)
+    // Queue-deleted lines (0125) accept no result work.
+    .is("deleted_at", null)
+    .is("visits.deleted_at", null)
     .maybeSingle();
   if (!testRow) return { ok: false, error: "Test not found." };
   const visit = Array.isArray(testRow.visits)
@@ -1634,8 +1645,12 @@ export async function getResultDownloadUrl(
   // role check has to happen here explicitly.
   const { data: gateRow } = await admin
     .from("test_requests")
-    .select("services!inner ( section )")
+    .select("services!inner ( section ), visits!inner ( id )")
     .eq("id", testRequestId)
+    // Queue-deleted lines (0125), or lines on a deleted visit, mint no
+    // signed URL to the result PDF.
+    .is("deleted_at", null)
+    .is("visits.deleted_at", null)
     .maybeSingle();
   const gateSvc = gateRow
     ? Array.isArray(gateRow.services)

@@ -51,6 +51,44 @@ const VALID_MEDIA: readonly ReleaseMedium[] = [
   "other",
 ];
 
+/**
+ * Refuse to act on a soft-deleted visit (0125).
+ *
+ * Deleting a VISIT does not cascade to its `test_requests` — the only cascade
+ * is package header → components — so a deleted visit keeps a full set of
+ * live-looking lines. The visit page still renders them (it has to: reception
+ * needs the deletion reason and the Restore button), and nothing downstream
+ * stopped a release: `enforce_payment_before_release` passes an HMO visit
+ * while it is unpaid (0133), and `payment_status = 'unpaid'` is exactly what
+ * makes a visit deletable (P0042). So a deleted HMO visit's lines were
+ * releasable, and releasing one emailed the patient about a visit the clinic
+ * had removed.
+ *
+ * Checked once per action rather than as a `visits!inner` embed on each read:
+ * these actions address rows by id, several of their selects are consumed by
+ * hand-shaped row types, and an explicit refusal reads better than a row that
+ * silently stops matching.
+ */
+async function refuseIfVisitDeleted(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  visitId: string,
+): Promise<{ ok: false; error: string } | null> {
+  const { data: visit } = await supabase
+    .from("visits")
+    .select("deleted_at")
+    .eq("id", visitId)
+    .maybeSingle();
+  if (!visit) return { ok: false, error: "Visit not found." };
+  if (visit.deleted_at !== null) {
+    return {
+      ok: false,
+      error:
+        "This visit was deleted from the queue. Restore it before releasing results.",
+    };
+  }
+  return null;
+}
+
 export async function releaseTestAction(
   testRequestId: string,
   visitId: string,
@@ -61,6 +99,9 @@ export async function releaseTestAction(
   }
   const session = await requireActiveStaff();
   const supabase = await createClient();
+
+  const visitDeleted = await refuseIfVisitDeleted(supabase, visitId);
+  if (visitDeleted) return visitDeleted;
 
   // Section gate, server-side (mirrors releaseSelectedAction). RLS on
   // test_requests is role-only, not section-aware (0023), so the action has to
@@ -74,6 +115,7 @@ export async function releaseTestAction(
     .eq("id", testRequestId)
     .eq("visit_id", visitId)
     .eq("status", "ready_for_release")
+    .is("deleted_at", null)
     .maybeSingle();
   if (!candidate) {
     revalidatePath(`/staff/visits/${visitId}`);
@@ -165,12 +207,16 @@ export async function releaseAllReadyComponentsAction(
   const session = await requireActiveStaff();
   const supabase = await createClient();
 
+  const visitDeleted = await refuseIfVisitDeleted(supabase, visitId);
+  if (visitDeleted) return visitDeleted;
+
   // Verify the target really is a package header on this visit.
   const { data: header } = await supabase
     .from("test_requests")
     .select("id, is_package_header, visit_id")
     .eq("id", headerId)
     .eq("visit_id", visitId)
+    .is("deleted_at", null)
     .maybeSingle();
   if (!header?.is_package_header) {
     return { ok: false, error: "Package not found on this visit." };
@@ -193,7 +239,8 @@ export async function releaseAllReadyComponentsAction(
       .select("id, services!inner ( section )")
       .eq("parent_id", headerId)
       .eq("visit_id", visitId)
-      .eq("status", "ready_for_release");
+      .eq("status", "ready_for_release")
+      .is("deleted_at", null);
     scopedIds = (readyRows ?? [])
       .filter((r) => {
         const svc = Array.isArray(r.services) ? r.services[0] : r.services;
@@ -292,11 +339,15 @@ export async function releasePackageHeaderAction(
   const session = await requireAdminStaff();
   const supabase = await createClient();
 
+  const visitDeleted = await refuseIfVisitDeleted(supabase, visitId);
+  if (visitDeleted) return visitDeleted;
+
   const { data: header } = await supabase
     .from("test_requests")
     .select("id, status, is_package_header")
     .eq("id", headerId)
     .eq("visit_id", visitId)
+    .is("deleted_at", null)
     .maybeSingle();
   if (!header?.is_package_header) {
     return { ok: false, error: "Package not found on this visit." };
@@ -306,7 +357,8 @@ export async function releasePackageHeaderAction(
     .from("test_requests")
     .select("id, status")
     .eq("parent_id", headerId)
-    .eq("visit_id", visitId);
+    .eq("visit_id", visitId)
+    .is("deleted_at", null);
 
   if (!canManuallyReleasePackageHeader(header, components ?? [])) {
     return {
@@ -392,6 +444,9 @@ export async function releaseSelectedAction(
   const session = await requireActiveStaff();
   const supabase = await createClient();
 
+  const visitDeleted = await refuseIfVisitDeleted(supabase, visitId);
+  if (visitDeleted) return visitDeleted;
+
   const allowedSections = sectionsForRole(session.role);
   const { data: candidates } = await supabase
     .from("test_requests")
@@ -399,7 +454,8 @@ export async function releaseSelectedAction(
     .in("id", testRequestIds)
     .eq("visit_id", visitId)
     .eq("status", "ready_for_release")
-    .eq("is_package_header", false);
+    .eq("is_package_header", false)
+    .is("deleted_at", null);
 
   const scoped = scopeToAllowedSections(candidates ?? [], allowedSections);
   if (scoped.length === 0) {
@@ -504,6 +560,9 @@ export async function undoReleaseSelectedAction(
   const session = await requireActiveStaff();
   const supabase = await createClient();
 
+  const visitDeleted = await refuseIfVisitDeleted(supabase, visitId);
+  if (visitDeleted) return visitDeleted;
+
   const allowedSections = sectionsForRole(session.role);
   // is_package_header = false is LOAD-BEARING, not a convenience filter:
   // nothing at the DB layer blocks a direct header released→ready_for_release
@@ -518,7 +577,8 @@ export async function undoReleaseSelectedAction(
     .in("id", testRequestIds)
     .eq("visit_id", visitId)
     .eq("status", "released")
-    .eq("is_package_header", false);
+    .eq("is_package_header", false)
+    .is("deleted_at", null);
 
   const scoped = scopeToAllowedSections(candidates ?? [], allowedSections);
   if (scoped.length === 0) {
@@ -721,12 +781,16 @@ async function markDoctorLineDoneAction(
   const session = await requireActiveStaff();
   const supabase = await createClient();
 
+  const visitDeleted = await refuseIfVisitDeleted(supabase, visitId);
+  if (visitDeleted) return visitDeleted;
+
   // Guard server-side so a future/mis-wired caller can't release another kind.
   const { data: tr } = await supabase
     .from("test_requests")
     .select("id, services!inner ( kind, section, name )")
     .eq("id", testRequestId)
     .eq("visit_id", visitId)
+    .is("deleted_at", null)
     .maybeSingle();
   const svc = Array.isArray(tr?.services) ? tr?.services[0] : tr?.services;
   if (!tr || svc?.kind !== expectedKind) {

@@ -11,7 +11,6 @@ import { SectionHeading } from "./_components/section-heading";
 import { StatCard } from "./_components/stat-card";
 import { QuickLinks } from "./_components/quick-links";
 import { ActivityStrip, type ActivityItem } from "./_components/activity-strip";
-import { PlannedCard } from "./_components/planned-card";
 import { formatPeso, relativeAge } from "./_components/format";
 
 const QUICK_LINKS = [
@@ -107,10 +106,20 @@ async function loadAdminStats(show: (id: string) => boolean) {
     show("admin.released_today")
       ? supabase
           .from("test_requests")
-          .select("id, services!inner ( id )", { count: "exact", head: true })
+          .select("id, services!inner ( id ), visits!inner ( id )", {
+            count: "exact",
+            head: true,
+          })
           .eq("status", "released")
           .gte("released_at", startOfTodayUtc)
           .lt("released_at", startOfTomorrowUtc)
+          // Both deleted_at filters, like the Queue tile above. A released
+          // line can normally not be deleted (P0043 refuses it), but that
+          // guard runs on the DELETE, not on the release — a line deleted at
+          // ready_for_release could still be released afterwards, and a
+          // deleted VISIT never cascaded to its lines at all.
+          .is("deleted_at", null)
+          .is("visits.deleted_at", null)
           // "Results released to patients" means LAB results. `test_requests`
           // doubles as the visit's bill line, and "Mark done" on a
           // consultation writes status='released' with a released_at — so

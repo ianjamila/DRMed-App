@@ -70,7 +70,9 @@ async function previewByDrmId(drmId: string): Promise<PatientPreview | null> {
     admin
       .from("visits")
       .select("id", { count: "exact", head: true })
-      .eq("patient_id", row.id),
+      .eq("patient_id", row.id)
+      // Preview count is for identifying the right patient (0125) — count live visits only.
+      .is("deleted_at", null),
     admin
       .from("appointments")
       .select("id", { count: "exact", head: true })

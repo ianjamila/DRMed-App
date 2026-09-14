@@ -21,6 +21,13 @@ export async function logReceiptPrintAction(visitId: string): Promise<void> {
   const session = await requireActiveStaff();
   const supabase = await createClient();
 
+  // Deliberately NOT filtered on deleted_at. This is the hydration behind an
+  // audit row, not a read of current data: the receipt page itself 404s on a
+  // deleted visit, so the only way to arrive here with one is a delete between
+  // render and print — and PrintButton calls window.print() BEFORE this action,
+  // so by then the paper is out. Filtering would null the patient id, visit
+  // number and total on the one record of that disclosure, and drop it out of
+  // the audit page's DRM-ID filter, precisely when the disclosure did happen.
   const { data: visit } = await supabase
     .from("visits")
     .select("id, visit_number, total_php, patient_id")

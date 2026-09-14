@@ -143,9 +143,22 @@ async function performUnclaim(
   // would return assigned_to already nulled.
   const { data: before } = await supabase
     .from("test_requests")
-    .select("assigned_to")
+    .select("assigned_to, visits!inner ( id )")
     .eq("id", testRequestId)
+    .is("deleted_at", null)
+    .is("visits.deleted_at", null)
     .maybeSingle();
+  // An UPDATE can't filter an embedded table, so the write below carries only
+  // the line's own deleted_at — this read is what covers a live line on a
+  // DELETED visit (0125 does not cascade visit → lines). Same rule as
+  // claimTestAction.
+  if (!before) {
+    return {
+      ok: false,
+      error:
+        "This entry was deleted from the queue. Restore it before unclaiming it.",
+    };
+  }
 
   // Only an in-flight claim with no uploaded result can be unclaimed. A
   // queue-deleted line (0125) is refused even via a stale link — same rule as
@@ -244,9 +257,22 @@ export async function reassignTestAction(
   // Fetch the current assignee first so the audit row records the handover.
   const { data: before } = await supabase
     .from("test_requests")
-    .select("assigned_to")
+    .select("assigned_to, visits!inner ( id )")
     .eq("id", testRequestId)
+    .is("deleted_at", null)
+    .is("visits.deleted_at", null)
     .maybeSingle();
+  // An UPDATE can't filter an embedded table, so the write below carries only
+  // the line's own deleted_at — this read is what covers a live line on a
+  // DELETED visit (0125 does not cascade visit → lines). Same rule as
+  // claimTestAction.
+  if (!before) {
+    return {
+      ok: false,
+      error:
+        "This entry was deleted from the queue. Restore it before reassigning it.",
+    };
+  }
 
   const { data, error } = await supabase
     .from("test_requests")

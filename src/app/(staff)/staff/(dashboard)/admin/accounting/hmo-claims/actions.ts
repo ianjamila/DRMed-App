@@ -55,10 +55,14 @@ export async function createClaimBatchAction(
 
   // Load test_requests + verify each is released-with-HMO + matches provider + unbatched.
   // services.kind required so we can enforce single-kind batches (lab vs doctor).
+  // A deleted line (or a line on a deleted visit, 0125) must never be billed to
+  // an HMO — the count check below already refuses a batch that came back short.
   const { data: trs, error: trErr } = await admin
     .from("test_requests")
     .select("id, visit_id, hmo_approved_amount_php, status, visits!inner(hmo_provider_id), services!inner(kind)")
-    .in("id", parsed.data.test_request_ids);
+    .in("id", parsed.data.test_request_ids)
+    .is("deleted_at", null)
+    .is("visits.deleted_at", null);
   if (trErr) return { ok: false, error: translatePgError(trErr) };
   if (!trs || trs.length !== parsed.data.test_request_ids.length) {
     return { ok: false, error: "One or more test requests not found." };
@@ -140,10 +144,14 @@ export async function addItemsToBatchAction(input: unknown): Promise<ActionResul
   if (!batch || batch.voided_at) return { ok: false, error: "Batch not found or voided." };
   if (batch.status !== "draft") return { ok: false, error: "Only draft batches accept new items." };
 
+  // A deleted line (or a line on a deleted visit, 0125) must never be billed to
+  // an HMO — the count check below already refuses a batch that came back short.
   const { data: trs, error: trErr } = await admin
     .from("test_requests")
     .select("id, hmo_approved_amount_php, status, visits!inner(hmo_provider_id), services!inner(kind)")
-    .in("id", parsed.data.test_request_ids);
+    .in("id", parsed.data.test_request_ids)
+    .is("deleted_at", null)
+    .is("visits.deleted_at", null);
   if (trErr) return { ok: false, error: translatePgError(trErr) };
   if (!trs || trs.length !== parsed.data.test_request_ids.length) {
     return { ok: false, error: "Test requests not found." };

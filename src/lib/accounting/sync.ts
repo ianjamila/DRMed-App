@@ -218,6 +218,17 @@ async function fetchLabRows(
     .from("test_requests")
     .select(TEST_REQUEST_SELECT)
     .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
+    // The two doctor tabs below have carried these filters since 0125; this
+    // one did not, on the reading that a released line can never be deleted
+    // (P0043 refuses to delete a row whose status is already 'released').
+    // That is an ORDERING claim, and the DB does not enforce the other
+    // direction: a line deleted at ready_for_release could still be released
+    // afterwards, and a deleted VISIT never cascaded to its lines at all. The
+    // sync is append-only — a row crosses the watermark once and is never
+    // revisited — so anything that slipped through sat in the Lab Services
+    // sheet permanently, with no correction pass to take it out again.
+    .is("deleted_at", null)
+    .is("visits.deleted_at", null)
     .gt("released_at", watermark)
     .not("released_at", "is", null)
     .order("released_at", { ascending: true })

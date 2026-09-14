@@ -34,6 +34,18 @@ export function parseLabTatParams(
   };
 }
 
+/**
+ * The bucket a released line lands in when its service carries no `section`.
+ *
+ * After migration 0144 backfilled the twelve retired catalog rows, exactly one
+ * service is still unsectioned: `LEGACY-LAB`, the pre-app import catch-all —
+ * one code standing in for whatever the paper record said, spanning every
+ * bench (334 lines, 2024-02 → 2026-05). It is deliberately left unsectioned
+ * because there is no bench it honestly belongs to, so this row is a real
+ * category, not a data gap. The page says so beneath the table.
+ */
+export const UNSECTIONED_LABEL = "(unset)";
+
 export const SECTION_LABEL: Record<string, string> = {
   chemistry: "Chemistry",
   hematology: "Hematology",
@@ -146,7 +158,7 @@ export function aggregateLabTat(released: readonly ReleasedRow[]): LabTatAggrega
     if (!tr.released_at) continue;
     const svc = pluckOne(tr.services);
     if (!svc) continue;
-    const sec = svc.section ?? "(unset)";
+    const sec = svc.section ?? UNSECTIONED_LABEL;
     const m = ensure(sec);
     m.totalReleased += 1;
 
@@ -203,9 +215,15 @@ export async function loadLabTat(
 ): Promise<LabTatReport> {
   const { fromIso, toIso } = manilaRangeUtc(params.start, params.end);
 
-  // Released test_requests in the window (the TAT samples). No deleted_at
-  // filter on purpose: a released line can never be soft-deleted (0125's
-  // guard raises P0043 on status = released), so it would be a no-op.
+  // Released test_requests in the window (the TAT samples).
+  //
+  // This used to skip the deleted_at filters, reasoning that a released line
+  // can never be soft-deleted (0125's guard raises P0043 on status =
+  // 'released'), so they would be a no-op. That is an ORDERING claim, and the
+  // DB only enforces one direction of it: a line deleted while at
+  // ready_for_release can still be released afterwards, and deleting a VISIT
+  // never cascaded to its lines at all. Both filters are cheap; the invariant
+  // was not worth trusting.
   //
   // Doctor lines are excluded. `test_requests` doubles as the visit's bill
   // line, so consultations and procedures sit in it alongside lab tests
@@ -223,12 +241,14 @@ export async function loadLabTat(
         `
         id, requested_at, released_at, status,
         services!inner ( name, section, turnaround_hours ),
-        visits ( visit_number, patients ( first_name, last_name ) )
+        visits!inner ( visit_number, patients ( first_name, last_name ) )
       `,
       )
       .eq("status", "released")
       .gte("released_at", fromIso!)
       .lt("released_at", toIso!)
+      .is("deleted_at", null)
+      .is("visits.deleted_at", null)
       .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
       .order("released_at", { ascending: true })
       .order("id", { ascending: true })
@@ -241,11 +261,23 @@ export async function loadLabTat(
   // currently stuck). Live lines only (0125), lab lines only — a consultation
   // is never "awaiting release", so counting one here would put the Pending
   // tile permanently in its amber state over work nobody owes.
+  //
+  // BOTH deleted_at filters, and this one needs them more than the released
+  // query above does. A visit is deletable only while it is unpaid (P0042),
+  // which is exactly the state a visit with outstanding bench work is in — so
+  // "deleted visit, lines never cascaded" is the NORMAL shape here, not the
+  // corner case it is for a released line. Without the visits half, deleting
+  // an unpaid visit leaves its lab lines counted as pending forever, with no
+  // queue entry left anywhere to work them off.
   let pendingQ = client
     .from("test_requests")
-    .select("id, services!inner ( section )", { count: "exact", head: true })
+    .select("id, services!inner ( section ), visits!inner ( id )", {
+      count: "exact",
+      head: true,
+    })
     .in("status", ["requested", "in_progress", "result_uploaded", "ready_for_release"])
     .is("deleted_at", null)
+    .is("visits.deleted_at", null)
     .not("services.kind", "in", DOCTOR_KINDS_PG_LIST);
   if (params.section) pendingQ = pendingQ.eq("services.section", params.section);
   const { count: pendingTotal } = await pendingQ;

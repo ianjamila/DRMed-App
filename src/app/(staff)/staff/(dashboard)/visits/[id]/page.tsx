@@ -648,7 +648,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                         >
                           {h.status.replace(/_/g, " ")}
                         </span>
-                        {readyCount >= 2 ? (
+                        {readyCount >= 2 && !visitDeleted ? (
                           <ReleaseAllButton
                             headerId={h.id}
                             visitId={visit.id}
@@ -672,6 +672,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                             already terminal — the Leg A trigger (0109)
                             normally auto-releases it and didn't. */}
                         {isAdmin &&
+                        !visitDeleted &&
                         canManuallyReleasePackageHeader(h, components) ? (
                           <ReleasePackageHeaderButton
                             headerId={h.id}
@@ -733,7 +734,8 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                                   className="hover:bg-[color:var(--color-brand-bg)]"
                                 >
                                   <td className="px-4 py-3">
-                                    {c.status === "ready_for_release" ? (
+                                    {visitDeleted ? null : c.status ===
+                                      "ready_for_release" ? (
                                       <RowSelectCheckbox
                                         testRequestId={c.id}
                                         eligibility="release"
@@ -790,6 +792,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                                   <td className="px-4 py-3 text-right">
                                     <TestAction
                                       size="compact"
+                                      visitDeleted={visitDeleted}
                                       status={c.status}
                                       testRequestId={c.id}
                                       visitId={visit.id}
@@ -874,7 +877,8 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                     className="hover:bg-[color:var(--color-brand-bg)]"
                   >
                     <td className="px-2 py-3">
-                      {t.status === "ready_for_release" ? (
+                      {visitDeleted ? null : t.status ===
+                        "ready_for_release" ? (
                         <RowSelectCheckbox
                           testRequestId={t.id}
                           eligibility="release"
@@ -981,6 +985,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                     </td>
                     <td className="px-4 py-3 text-right">
                       <TestAction
+                        visitDeleted={visitDeleted}
                         status={t.status}
                         testRequestId={t.id}
                         visitId={visit.id}
@@ -1044,22 +1049,24 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
           </p>
         ) : null}
       </section>
-      <BulkActionBar
-        visitId={visit.id}
-        moneySettled={canRelease}
-        preferredMedium={
-          (patient.preferred_release_medium ?? null) as
-            | "physical"
-            | "email"
-            | "viber"
-            | "gcash"
-            | "pickup"
-            | null
-        }
-        consentOnFile={consent.current}
-        gateRequired={gateRequired}
-        viewedCountById={viewedCountRecord}
-      />
+      {visitDeleted ? null : (
+        <BulkActionBar
+          visitId={visit.id}
+          moneySettled={canRelease}
+          preferredMedium={
+            (patient.preferred_release_medium ?? null) as
+              | "physical"
+              | "email"
+              | "viber"
+              | "gcash"
+              | "pickup"
+              | null
+          }
+          consentOnFile={consent.current}
+          gateRequired={gateRequired}
+          viewedCountById={viewedCountRecord}
+        />
+      )}
       </SelectionProvider>
 
       {deletedTestRows.length > 0 ? (
@@ -1296,6 +1303,9 @@ function PfStatusBadge({ entry }: { entry: PfEntryShape }) {
 
 interface TestActionProps {
   status: string;
+  // A soft-deleted visit keeps live lines (0125's delete does not cascade to
+  // test_requests), so the table still renders them — but none may be actioned.
+  visitDeleted: boolean;
   testRequestId: string;
   visitId: string;
   moneySettled: boolean;
@@ -1317,6 +1327,7 @@ interface TestActionProps {
 // where to go next.
 function TestAction({
   status,
+  visitDeleted,
   testRequestId,
   visitId,
   moneySettled,
@@ -1329,6 +1340,19 @@ function TestAction({
   size = "default",
 }: TestActionProps) {
   const sizeCls = size === "compact" ? "text-[10px]" : "text-xs";
+
+  // Nothing on a deleted visit is actionable. Release, undo and mark-done all
+  // refuse one server-side now (refuseIfVisitDeleted in ./actions.ts), and the
+  // release controls would otherwise disable themselves with the money
+  // tooltip — the wrong reason entirely. The red "Deleted from the queue"
+  // banner above is the explanation; this cell goes quiet like "cancelled".
+  if (visitDeleted) {
+    return (
+      <span className={`${sizeCls} text-[color:var(--color-brand-text-soft)]`}>
+        —
+      </span>
+    );
+  }
 
   // Kind is checked BEFORE status. A doctor line is completed with "Mark
   // done" (markDoctorLineDoneAction) in every state it can be actioned from,

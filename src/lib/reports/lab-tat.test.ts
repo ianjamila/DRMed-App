@@ -218,12 +218,30 @@ describe("loadLabTat query shape", () => {
     expect(argsOf(pending, "is")).toContainEqual(["deleted_at", null]);
   });
 
-  it("still omits deleted_at on the released query, which 0125 makes a no-op", async () => {
-    // Deliberate, not an oversight: 0125's guard raises P0043 on soft-deleting
-    // a line whose status is 'released', so the filter could never exclude a
-    // row. Verified on prod — zero rows are both released and soft-deleted.
+  it("excludes deleted lines and deleted visits from the released query too", async () => {
+    // This assertion used to be its own inverse: the released query omitted
+    // both filters, on the reasoning that 0125's guard raises P0043 when
+    // soft-deleting a line whose status is already 'released', so they could
+    // never exclude a row. Prod agreed — zero rows were both released and
+    // soft-deleted — and that is still true, so nothing this report prints
+    // moves. But it is a claim about ORDER, and the database enforces only
+    // one direction of it: a line deleted at ready_for_release could still be
+    // released afterwards, and deleting a VISIT never cascaded to its lines
+    // at all. Both are now filtered at the source (the release actions refuse
+    // a deleted visit), and the report states the invariant rather than
+    // inheriting it.
     const { released } = await runLoadLabTat();
-    expect(argsOf(released, "is")).not.toContainEqual(["deleted_at", null]);
+    expect(argsOf(released, "is")).toContainEqual(["deleted_at", null]);
+    expect(argsOf(released, "is")).toContainEqual(["visits.deleted_at", null]);
+  });
+
+  it("embeds visits as an INNER join so the visits.deleted_at filter applies", async () => {
+    // PostgREST silently ignores a filter on a LEFT-joined embed, so a plain
+    // `visits ( … )` embed would make the assertion above pass while the query
+    // returned unfiltered rows.
+    const { released } = await runLoadLabTat();
+    const selects = argsOf(released, "select").flat().join(" ");
+    expect(selects).toMatch(/visits\s*!\s*inner/);
   });
 
   it("applies a lab section filter to both queries when one is chosen", async () => {

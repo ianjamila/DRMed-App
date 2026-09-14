@@ -163,7 +163,7 @@ async function redeemGiftCode(
       .maybeSingle(),
     admin
       .from("visits")
-      .select("id, total_php, paid_php")
+      .select("id, total_php, paid_php, deleted_at")
       .eq("id", parsed.data.visit_id)
       .maybeSingle(),
   ]);
@@ -184,6 +184,16 @@ async function redeemGiftCode(
   }
   if (!visit) {
     return { ok: false, error: "Visit not found." };
+  }
+  // The page already filters deleted visits out of the form, but this is a
+  // stale-form / re-POST path. A DB trigger (P0045, 0125) also blocks the
+  // insert, but it surfaces as a raw Postgres error — this gives the
+  // operator a clear message instead.
+  if (visit.deleted_at !== null) {
+    return {
+      ok: false,
+      error: "This visit was deleted from the queue. Restore it before recording a payment.",
+    };
   }
 
   const balance =
