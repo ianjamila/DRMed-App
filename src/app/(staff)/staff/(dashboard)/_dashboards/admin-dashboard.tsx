@@ -11,7 +11,6 @@ import { SectionHeading } from "./_components/section-heading";
 import { StatCard } from "./_components/stat-card";
 import { QuickLinks } from "./_components/quick-links";
 import { ActivityStrip, type ActivityItem } from "./_components/activity-strip";
-import { PlannedCard } from "./_components/planned-card";
 import { formatPeso, relativeAge } from "./_components/format";
 
 const QUICK_LINKS = [
