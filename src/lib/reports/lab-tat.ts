@@ -1,7 +1,8 @@
 /** Lab turnaround-time analytics — shared by the page and its CSV. Not `server-only`. */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
-import { ALL_SECTIONS, type ServiceSection } from "@/lib/auth/role-sections";
+import { LAB_SECTIONS, type ServiceSection } from "@/lib/auth/role-sections";
+import { DOCTOR_KINDS_PG_LIST } from "@/lib/visits/classification";
 import { isISODate, manilaRangeUtc, shiftISODate, todayManilaISODate } from "@/lib/dates/manila";
 import { fetchAllRows } from "./paging";
 import { csvManilaStamp, pluckOne } from "./format";
@@ -19,7 +20,11 @@ export function parseLabTatParams(
   sp: { start?: string; end?: string; section?: string },
   today: string = todayManilaISODate(),
 ): LabTatParams {
-  const section = (ALL_SECTIONS as readonly string[]).includes(sp.section ?? "")
+  // Only the LAB sections are selectable. A doctor section (`consultation`,
+  // `procedure`) now matches nothing here, so a stale bookmark carrying one
+  // falls back to "All sections" — the same way an unknown section does —
+  // rather than rendering an empty report that reads like a quiet lab.
+  const section = (LAB_SECTIONS as readonly string[]).includes(sp.section ?? "")
     ? (sp.section as ServiceSection)
     : "";
   return {
@@ -201,6 +206,16 @@ export async function loadLabTat(
   // Released test_requests in the window (the TAT samples). No deleted_at
   // filter on purpose: a released line can never be soft-deleted (0125's
   // guard raises P0043 on status = released), so it would be a no-op.
+  //
+  // Doctor lines are excluded. `test_requests` doubles as the visit's bill
+  // line, so consultations and procedures sit in it alongside lab tests
+  // (0090). They go straight requested → released at the counter with no
+  // bench step, so every one of them is a ~0-hour "turnaround" that is not a
+  // turnaround at all. Measured on prod: 7,399 of 25,576 released lines are
+  // doctor lines and ALL of them clock under half an hour, dragging the mean
+  // TAT from 0.1197h to 0.0851h — and since the consultation anchor carries
+  // no `section`, they piled into the "(unset)" row (7,399 of its 9,890) and
+  // into the CSV as rows with a blank Section column.
   const { rows: released, truncated } = await fetchAllRows<ReleasedRow>((from, to) => {
     let q = client
       .from("test_requests")
@@ -214,6 +229,7 @@ export async function loadLabTat(
       .eq("status", "released")
       .gte("released_at", fromIso!)
       .lt("released_at", toIso!)
+      .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
       .order("released_at", { ascending: true })
       .order("id", { ascending: true })
       .range(from, to);
@@ -222,12 +238,15 @@ export async function loadLabTat(
   }, maxRows);
 
   // Pending = requested but not yet released, regardless of window (what is
-  // currently stuck). Live lines only (0125).
+  // currently stuck). Live lines only (0125), lab lines only — a consultation
+  // is never "awaiting release", so counting one here would put the Pending
+  // tile permanently in its amber state over work nobody owes.
   let pendingQ = client
     .from("test_requests")
     .select("id, services!inner ( section )", { count: "exact", head: true })
     .in("status", ["requested", "in_progress", "result_uploaded", "ready_for_release"])
-    .is("deleted_at", null);
+    .is("deleted_at", null)
+    .not("services.kind", "in", DOCTOR_KINDS_PG_LIST);
   if (params.section) pendingQ = pendingQ.eq("services.section", params.section);
   const { count: pendingTotal } = await pendingQ;
 

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { ALL_SECTIONS, sectionsForRole } from "./role-sections";
+import {
+  ALL_SECTIONS,
+  DOCTOR_SECTIONS,
+  LAB_SECTIONS,
+  sectionsForRole,
+} from "./role-sections";
 import { scopeToAllowedSections } from "@/lib/visits/bulk-selection";
 
 const ROLES = [
@@ -75,5 +80,37 @@ describe("doctor lines (section null) through scopeToAllowedSections", () => {
       (role) => scopeToAllowedSections([chem], sectionsForRole(role)).length === 1,
     );
     expect(passing).toEqual(["medtech", "pathologist", "admin"]);
+  });
+});
+
+describe("LAB_SECTIONS", () => {
+  it("is ALL_SECTIONS minus the doctor sections, order preserved", () => {
+    expect(LAB_SECTIONS).toEqual(
+      ALL_SECTIONS.filter((s) => s !== "consultation" && s !== "procedure"),
+    );
+  });
+
+  it("holds no doctor section", () => {
+    for (const d of DOCTOR_SECTIONS) expect(LAB_SECTIONS).not.toContain(d);
+  });
+
+  it("partitions ALL_SECTIONS exactly — nothing dropped, nothing double-counted", () => {
+    expect(LAB_SECTIONS.length + DOCTOR_SECTIONS.length).toBe(ALL_SECTIONS.length);
+    expect(new Set([...LAB_SECTIONS, ...DOCTOR_SECTIONS])).toEqual(
+      new Set(ALL_SECTIONS),
+    );
+  });
+
+  it("keeps every non-doctor section, including ones a reader might mistake for doctor work", () => {
+    // vaccine and home_service are lab-side kinds (classifyKind buckets them
+    // as lab), so their sections belong to the lab report.
+    expect(LAB_SECTIONS).toContain("vaccine");
+    expect(LAB_SECTIONS).toContain("home_service");
+    expect(LAB_SECTIONS).toContain("package");
+  });
+
+  it("names each doctor section, and only ones ALL_SECTIONS actually knows", () => {
+    expect([...DOCTOR_SECTIONS]).toEqual(["consultation", "procedure"]);
+    for (const d of DOCTOR_SECTIONS) expect(ALL_SECTIONS).toContain(d);
   });
 });

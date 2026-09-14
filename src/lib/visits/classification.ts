@@ -38,6 +38,17 @@ export const DOCTOR_KIND_VALUES: readonly string[] = [
   ...PROCEDURE_KINDS,
 ];
 
+/**
+ * The same enumeration as a PostgREST list literal, for the lab-only surfaces
+ * that exclude doctor lines in the query rather than in JS:
+ *
+ *     .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
+ *
+ * It lives beside the values so a kind added to either set above can never be
+ * added to the predicate and not the classifier, or vice versa.
+ */
+export const DOCTOR_KINDS_PG_LIST = `(${DOCTOR_KIND_VALUES.join(",")})`;
+
 export function isVisitClass(value: string | null | undefined): value is VisitClass {
   return (VISIT_CLASSES as readonly string[]).includes(value ?? "");
 }

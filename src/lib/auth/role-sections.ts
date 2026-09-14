@@ -21,6 +21,24 @@ export const ALL_SECTIONS = [
 ] as const;
 export type ServiceSection = (typeof ALL_SECTIONS)[number];
 
+// The sections that hold doctor work rather than lab work. `test_requests`
+// doubles as the visit's bill line, so consultations and procedures are filed
+// in it alongside lab tests (0090) — a report that means "lab" has to drop
+// them, and dropping them leaves these two section options matching nothing.
+//
+// Enumerated, never allow-listed, for the same reason `classifyKind` treats
+// `lab` as the complement: a section seeded into the catalog later should show
+// up on the lab surfaces by default rather than silently vanish from them.
+export const DOCTOR_SECTIONS: readonly ServiceSection[] = [
+  "consultation",
+  "procedure",
+];
+
+/** `ALL_SECTIONS` minus the doctor sections — the lab-only section vocabulary. */
+export const LAB_SECTIONS: readonly ServiceSection[] = ALL_SECTIONS.filter(
+  (s) => !DOCTOR_SECTIONS.includes(s),
+);
+
 // Per-role list of sections each "lab worker" handles in the queue.
 // `null` means no section restriction (admin/pathologist see everything).
 //

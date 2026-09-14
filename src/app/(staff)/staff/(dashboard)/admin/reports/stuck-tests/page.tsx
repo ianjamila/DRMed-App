@@ -52,7 +52,7 @@ export default async function StuckTestsPage({ searchParams }: SearchProps) {
     <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
       <PageHeader
         title="Stuck tests"
-        subtitle={`Tests sitting longer than ${days} day${days === 1 ? "" : "s"} in any non-final state — unclaimed, in progress, or ready but unreleased — so nothing silently stalls.`}
+        subtitle={`Lab tests sitting longer than ${days} day${days === 1 ? "" : "s"} in any non-final state — unclaimed, in progress, or ready but unreleased — so nothing silently stalls. Consultations and procedures are excluded; they have no bench step, so they are followed up on Visits, not here.`}
         actions={
           <form method="GET" className="flex items-center gap-2 text-sm">
             <label

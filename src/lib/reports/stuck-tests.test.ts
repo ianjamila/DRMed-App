@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ageDays,
   headerCandidateIsSettled,
+  loadStuckTests,
   parseStuckTestsParams,
   STUCK_TESTS_CSV_HEADER,
   stuckTestsCsvFilename,
@@ -90,5 +91,124 @@ describe("href / filename", () => {
   it("carries the threshold", () => {
     expect(stuckTestsCsvHref({ days: 3 })).toBe("/api/admin/reports/stuck-tests.csv?days=3");
     expect(stuckTestsCsvFilename({ days: 3 }, "2026-09-08")).toBe("stuck-tests-3d-2026-09-08.csv");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Query shape — the doctor-line exclusion lives in the PostgREST filters, so
+// it is asserted on the calls the loader makes rather than on its output.
+// ---------------------------------------------------------------------------
+
+const CHAIN_METHODS = [
+  "select", "eq", "in", "is", "not", "gte", "lt", "order", "range", "returns", "limit",
+] as const;
+
+interface RecordedQuery {
+  table: string;
+  calls: { fn: string; args: unknown[] }[];
+}
+
+/**
+ * A chainable stand-in for a supabase-js builder that records every call.
+ * Each method returns the same object and the object is thenable, which is
+ * all `fetchAllRows` and a direct `await` need — enough to assert the SHAPE
+ * of a query with no database in sight (vitest.config: pure logic only).
+ */
+function recordingClient() {
+  const queries: RecordedQuery[] = [];
+  const builderFor = (table: string) => {
+    const q: RecordedQuery = { table, calls: [] };
+    queries.push(q);
+    const b: Record<string, unknown> = {
+      then: (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) =>
+        Promise.resolve({ data: [], error: null, count: 0 }).then(res, rej),
+    };
+    for (const m of CHAIN_METHODS) {
+      b[m] = (...args: unknown[]) => {
+        q.calls.push({ fn: m, args });
+        return b;
+      };
+    }
+    return b;
+  };
+  return { client: { from: builderFor }, queries };
+}
+
+const argsOf = (q: RecordedQuery, fn: string): unknown[][] =>
+  q.calls.filter((c) => c.fn === fn).map((c) => c.args);
+
+const DOCTOR_NOT_IN = ["services.kind", "in", "(doctor_consultation,doctor_procedure)"];
+
+const runLoadStuckTests = async () => {
+  const { client, queries } = recordingClient();
+  await loadStuckTests(
+    client as unknown as Parameters<typeof loadStuckTests>[0],
+    { days: 3 },
+    20_000,
+    NOW,
+  );
+  // Every list comes back empty, so the claimer lookup makes no call and the
+  // four data queries land in a fixed order.
+  return {
+    stuck: queries[0]!,
+    orphanHeaders: queries[1]!,
+    emptyVisits: queries[2]!,
+    packageHeaders: queries[3]!,
+    queries,
+  };
+};
+
+describe("loadStuckTests query shape", () => {
+  it("excludes doctor lines from the stuck list", async () => {
+    const { stuck } = await runLoadStuckTests();
+    expect(stuck.table).toBe("test_requests");
+    expect(argsOf(stuck, "not")).toContainEqual(DOCTOR_NOT_IN);
+  });
+
+  it("enumerates the doctor kinds rather than allow-listing the lab ones", async () => {
+    // An allow-list would make a newly seeded kind vanish from the report
+    // silently (0126). The only `.in()` here is the status list.
+    const { stuck } = await runLoadStuckTests();
+    const inFilters = JSON.stringify(argsOf(stuck, "in"));
+    for (const lab of ["lab_test", "lab_package", "vaccine", "home_service"]) {
+      expect(inFilters).not.toContain(lab);
+    }
+  });
+
+  it("keeps the stuck list's existing filters alongside the new one", async () => {
+    const { stuck } = await runLoadStuckTests();
+    expect(argsOf(stuck, "in")).toContainEqual([
+      "status",
+      ["requested", "in_progress", "result_uploaded", "ready_for_release"],
+    ]);
+    expect(argsOf(stuck, "eq")).toContainEqual(["is_package_header", false]);
+    expect(argsOf(stuck, "is")).toContainEqual(["deleted_at", null]);
+    expect(argsOf(stuck, "is")).toContainEqual(["visits.deleted_at", null]);
+    expect(argsOf(stuck, "lt").map((a) => a[0])).toContain("requested_at");
+  });
+
+  it("leaves the integrity lists unfiltered — a package header is never a doctor line", async () => {
+    const { orphanHeaders, emptyVisits, packageHeaders } = await runLoadStuckTests();
+    expect(orphanHeaders.table).toBe("test_requests");
+    expect(packageHeaders.table).toBe("test_requests");
+    expect(argsOf(orphanHeaders, "eq")).toContainEqual(["is_package_header", true]);
+    expect(argsOf(packageHeaders, "eq")).toContainEqual(["is_package_header", true]);
+    for (const q of [orphanHeaders, emptyVisits, packageHeaders]) {
+      expect(argsOf(q, "not")).not.toContainEqual(DOCTOR_NOT_IN);
+    }
+    // emptyVisits counts test_request ROWS per visit — a consultation-only
+    // visit has a bill line and is correctly not "empty".
+    expect(emptyVisits.table).toBe("visits");
+    expect(argsOf(emptyVisits, "is")).toContainEqual(["lines", null]);
+  });
+
+  it("makes no claimer lookup when nothing is stuck", async () => {
+    const { queries } = await runLoadStuckTests();
+    expect(queries.map((q) => q.table)).toEqual([
+      "test_requests",
+      "test_requests",
+      "visits",
+      "test_requests",
+    ]);
   });
 });
