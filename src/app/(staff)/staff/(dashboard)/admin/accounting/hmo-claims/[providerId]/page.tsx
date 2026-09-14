@@ -95,7 +95,7 @@ export default async function ProviderDetailPage({
   const provider = providerQ.data;
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="px-4 py-8 sm:px-6 lg:px-8">
       <div className="mb-2">
         <Link
           href="/staff/admin/accounting/hmo-claims"

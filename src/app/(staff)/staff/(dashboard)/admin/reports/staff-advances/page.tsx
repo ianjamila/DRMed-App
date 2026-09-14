@@ -16,7 +16,7 @@ export default async function StaffAdvancesPage() {
   const { summary, rows, staffById, truncated } = await loadStaffAdvances(admin, PAGE_MAX_ROWS);
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6">
         <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">Phase 12.C · Admin · Reports</p>
         <div className="flex flex-wrap items-center justify-between gap-2">

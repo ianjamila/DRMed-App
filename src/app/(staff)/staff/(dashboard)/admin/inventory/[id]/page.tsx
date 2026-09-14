@@ -115,7 +115,7 @@ export default async function InventoryItemPage({ params }: PageProps) {
     status === "ok" ? "OK" : status === "low" ? "Low" : "Out of stock";
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="px-4 py-8 sm:px-6 lg:px-8">
       <Link
         href="/staff/admin/inventory"
         className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"

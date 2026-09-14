@@ -25,7 +25,7 @@ export default async function DailyRevenuePage({
   const { byDate, truncated } = await loadDailyRevenue(admin, params, REPORT_EXPORT_MAX_ROWS);
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6">
         <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">Phase 12.C · Admin · Reports</p>
         <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">Daily revenue</h1>

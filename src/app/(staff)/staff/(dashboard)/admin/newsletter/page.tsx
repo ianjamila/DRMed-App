@@ -68,7 +68,7 @@ export default async function NewsletterAdminPage({ searchParams }: PageProps) {
   const totalPages = Math.max(1, Math.ceil(filteredCount / PAGE_SIZE));
 
   return (
-    <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
