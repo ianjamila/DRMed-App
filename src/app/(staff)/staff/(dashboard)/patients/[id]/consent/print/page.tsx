@@ -1,8 +1,11 @@
-import Image from "next/image";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
-import { ConsentNotice } from "@/components/consent/consent-notice";
+import { audit } from "@/lib/audit/log";
+import { ipAndAgent } from "@/lib/server/action-helpers";
+import { ConsentFormSheet } from "@/components/consent/consent-form-sheet";
+import { PrintButton } from "@/components/consent/print-button";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +14,7 @@ export default async function ConsentPrintPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requireActiveStaff();
+  const session = await requireActiveStaff();
   const { id } = await params;
   const admin = createAdminClient();
   const { data: patient } = await admin
@@ -21,52 +24,39 @@ export default async function ConsentPrintPage({
     .maybeSingle();
   if (!patient) notFound();
 
+  // This page discloses the patient's name and DRM-ID (and, once printed, is
+  // a physical artifact that can leave the building) — audit it like every
+  // other print surface that shows patient data.
+  const { ip, ua } = await ipAndAgent();
+  await audit({
+    actor_id: session.user_id,
+    actor_type: "staff",
+    patient_id: patient.id,
+    action: "consent.form_printed",
+    resource_type: "patient",
+    resource_id: patient.id,
+    ip_address: ip,
+    user_agent: ua,
+  });
+
   return (
-    <div className="mx-auto max-w-2xl bg-white p-8 text-[color:var(--color-brand-text)] print:p-0">
-      <div className="h-1.5 bg-[color:var(--color-brand-navy)]" />
-      <div className="mt-4 flex items-center justify-between">
-        <Image src="/logo.png" alt="DR Med Healthcare Inc." width={150} height={43} />
-        <div className="text-right text-xs text-[color:var(--color-brand-text-soft)]">
-          DRM-ID: <b>{patient.drm_id}</b>
-        </div>
+    <div className="consent-print mx-auto max-w-2xl px-4 py-8 sm:px-6 lg:px-8 print:p-0">
+      <div className="mb-4 flex items-center justify-between gap-2 print:hidden">
+        <Link
+          href={`/staff/patients/${patient.id}`}
+          className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
+        >
+          ← Patient
+        </Link>
+        <PrintButton />
       </div>
-      <h1 className="mt-4 text-xl font-extrabold text-[color:var(--color-brand-navy)]">
-        Data Privacy Consent
-      </h1>
-      <p className="text-xs font-semibold uppercase tracking-wide text-[color:var(--color-brand-steel)]">
-        Republic Act 10173 — Data Privacy Act of 2012
-      </p>
-      <p className="mt-3 text-sm">
-        Patient: <b>{patient.last_name}, {patient.first_name}</b>
-      </p>
-
-      <div className="mt-4">
-        <ConsentNotice />
-      </div>
-
-      <div className="mt-10 flex gap-8">
-        <div className="flex-1 border-t border-[color:var(--color-brand-navy)] pt-1 text-[10px] uppercase text-[color:var(--color-brand-text-soft)]">
-          Signature over printed name
-        </div>
-        <div className="w-28 border-t border-[color:var(--color-brand-navy)] pt-1 text-[10px] uppercase text-[color:var(--color-brand-text-soft)]">
-          Date
-        </div>
-      </div>
-
-      <div className="mt-8 border-t border-dashed border-[color:var(--color-brand-bg-mid)] pt-3 text-[11px] text-[color:var(--color-brand-text-soft)]">
-        <b className="text-[color:var(--color-brand-navy)]">
-          If the patient is a minor or unable to sign
-        </b>{" "}
-        — completed by parent / guardian / authorized representative:
-        <div className="mt-6 flex gap-8">
-          <div className="flex-1 border-t border-[color:var(--color-brand-navy)] pt-1 text-[10px] uppercase">
-            Guardian / representative — signature over printed name
-          </div>
-          <div className="flex-1 border-t border-[color:var(--color-brand-navy)] pt-1 text-[10px] uppercase">
-            Relationship to patient
-          </div>
-        </div>
-      </div>
+      <ConsentFormSheet
+        patient={{
+          drm_id: patient.drm_id,
+          first_name: patient.first_name,
+          last_name: patient.last_name,
+        }}
+      />
     </div>
   );
 }

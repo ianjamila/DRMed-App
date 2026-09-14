@@ -475,3 +475,29 @@
     break-after: auto;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * Data-privacy consent form — A4 (staff-list-management branch).
+ *
+ * Its own named page, not the A5 receipt one: the RA 10173 notice text plus
+ * two signature blocks (patient, and guardian/representative) need more room
+ * than A5 offers. Shared by both the per-patient sheet
+ * (patients/[id]/consent/print) and the blank/counter sheet
+ * (patients/consent/print) via the same ConsentFormSheet component.
+ * ------------------------------------------------------------------------- */
+@page consent {
+  size: A4;
+  margin: 15mm;
+}
+
+.consent-print {
+  page: consent;
+}
+
+@media print {
+  /* Fill the A4 content box instead of the on-screen max-w-2xl cap. */
+  .consent-print .consent-sheet {
+    max-width: none;
+    width: 100%;
+  }
+}

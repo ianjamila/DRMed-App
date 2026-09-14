@@ -43,6 +43,12 @@ interface Props {
   referralOptions: { value: string; label: string }[];
 }
 
+// Mirrors the consent-artifacts bucket's allowed MIME types / 5 MB cap
+// (migration 0086) so reception sees a clear message before the upload
+// happens, instead of the bucket's opaque rejection on an oversize file.
+const CONSENT_SCAN_TYPES = ["application/pdf", "image/png", "image/jpeg"];
+const MAX_CONSENT_SCAN_BYTES = 5 * 1024 * 1024;
+
 const RELEASE_OPTIONS: { value: string; label: string }[] = [
   { value: "", label: "—" },
   { value: "physical", label: "Physical pickup at clinic" },
@@ -77,8 +83,26 @@ export function PatientForm({ initial, referralOptions }: Props) {
     initial?.senior_pwd_id_kind ?? "",
   );
   const [consentSignatory, setConsentSignatory] = useState<string>("self");
+  const [scanError, setScanError] = useState<string | null>(null);
 
   const consentAlreadySigned = !!initial?.consent_signed_at;
+
+  function handleScanChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0] ?? null;
+    if (!file) {
+      setScanError(null);
+      return;
+    }
+    if (!CONSENT_SCAN_TYPES.includes(file.type)) {
+      setScanError("Please attach a PDF, PNG, or JPEG file.");
+      return;
+    }
+    if (file.size > MAX_CONSENT_SCAN_BYTES) {
+      setScanError("That file is too large — the largest we can store is 5MB.");
+      return;
+    }
+    setScanError(null);
+  }
 
   // Near-match advisory (create mode only). Fields are tracked via onValueChange
   // callbacks because the inputs are self-controlled inside <Field>.
@@ -127,6 +151,10 @@ export function PatientForm({ initial, referralOptions }: Props) {
       action={formAction}
       className="grid gap-5"
       onSubmit={(e) => {
+        if (scanError) {
+          e.preventDefault();
+          return;
+        }
         const hasExact = dupCandidates.some((c) => c.tier === "exact_dup");
         if (
           hasExact &&
@@ -389,6 +417,29 @@ export function PatientForm({ initial, referralOptions }: Props) {
                 name="consent_signatory_relationship"
                 placeholder="e.g. Mother"
               />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="consent_scan">
+                Attach a scan of the signed form (optional)
+              </Label>
+              <input
+                id="consent_scan"
+                name="consent_scan"
+                type="file"
+                accept="application/pdf,image/png,image/jpeg"
+                onChange={handleScanChange}
+                className="block w-full text-sm file:mr-3 file:rounded-md file:border-0 file:bg-[color:var(--color-brand-bg)] file:px-3 file:py-1.5 file:text-xs file:font-bold file:uppercase file:tracking-wider file:text-[color:var(--color-brand-navy)] hover:file:bg-[color:var(--color-brand-bg-mid)]"
+              />
+              <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+                PDF, PNG, or JPEG, up to 5MB. Only used if &quot;Patient has
+                signed&quot; above is checked — you can also attach it later
+                from the patient&apos;s page.
+              </p>
+              {scanError && (
+                <p className="text-sm text-red-600" role="alert">
+                  {scanError}
+                </p>
+              )}
             </div>
           </>
         )}

@@ -197,6 +197,7 @@ export default async function PatientDetailPage({ params }: Props) {
           current={consent.current}
           signedAt={consent.signedAt}
           noticeVersion={consent.noticeVersion}
+          artifactPath={consent.artifactPath}
           isAdmin={isAdmin}
         />
       </div>

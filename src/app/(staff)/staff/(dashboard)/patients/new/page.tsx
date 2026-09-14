@@ -22,12 +22,24 @@ export default async function NewPatientPage() {
       >
         ← Patients
       </Link>
-      <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-        New patient
-      </h1>
-      <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
-        DRM-ID is auto-generated on save. After creation you can start a visit.
-      </p>
+      <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+            New patient
+          </h1>
+          <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
+            DRM-ID is auto-generated on save. After creation you can start a visit.
+          </p>
+        </div>
+        <Link
+          href="/staff/patients/consent/print"
+          target="_blank"
+          rel="noopener"
+          className="shrink-0 rounded-md border border-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-bg)]"
+        >
+          Print consent form
+        </Link>
+      </div>
       <Panel className="mt-8 p-6">
         <PatientForm referralOptions={referralOptions} />
       </Panel>
