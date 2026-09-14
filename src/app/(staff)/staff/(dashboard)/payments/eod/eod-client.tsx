@@ -16,6 +16,7 @@ import {
   type DenominationCounts,
   type DenominationKey,
 } from "@/lib/accounting/cash-denominations";
+import { manilaDateTime } from "@/lib/dates/manila";
 
 const PESO = (n: number) =>
   new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format(n);
@@ -241,7 +242,7 @@ export function EodClient(props: {
       {closed ? (
         <Alert variant="success" className="mt-5">
           <AlertTitle>
-            ✓ Day closed at {new Date(closed.closed_at).toLocaleString("en-PH", { timeZone: "Asia/Manila" })}
+            ✓ Day closed at {manilaDateTime(closed.closed_at)}
           </AlertTitle>
           <AlertDescription>
             <dl className="mt-3 grid grid-cols-2 gap-2 text-sm">

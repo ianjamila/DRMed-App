@@ -4,6 +4,7 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { PageHeader } from "@/components/staff/page-header";
 import { Panel } from "@/components/ui/panel";
 import { AcknowledgeButton } from "./acknowledge-button";
+import { manilaDateTime } from "@/lib/dates/manila";
 
 export const metadata = {
   title: "Critical alerts — staff",
@@ -22,10 +23,6 @@ type AlertRow = {
   acknowledged_by: string | null;
   patients: { first_name: string; last_name: string } | { first_name: string; last_name: string }[] | null;
 };
-
-function manila(ts: string): string {
-  return new Date(ts).toLocaleString("en-PH", { timeZone: "Asia/Manila" });
-}
 
 function patientName(row: AlertRow): string {
   const p = Array.isArray(row.patients) ? row.patients[0] : row.patients;
@@ -136,7 +133,7 @@ export default async function CriticalAlertsPage() {
               unacked.map((a) => (
                 <tr key={a.id} className="hover:bg-[color:var(--color-brand-bg)]">
                   <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
-                    {manila(a.created_at)}
+                    {manilaDateTime(a.created_at)}
                   </td>
                   <td className="px-4 py-3">
                     <p className="font-semibold text-[color:var(--color-brand-navy)]">
@@ -203,7 +200,7 @@ export default async function CriticalAlertsPage() {
                 recent.map((a) => (
                   <tr key={a.id}>
                     <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
-                      {manila(a.created_at)}
+                      {manilaDateTime(a.created_at)}
                     </td>
                     <td className="px-4 py-3">
                       <p className="font-semibold text-[color:var(--color-brand-navy)]">
@@ -224,7 +221,7 @@ export default async function CriticalAlertsPage() {
                       {a.threshold_si ?? "?"})
                     </td>
                     <td className="px-4 py-3 text-xs text-[color:var(--color-brand-text-mid)]">
-                      {a.acknowledged_at ? manila(a.acknowledged_at) : "—"}
+                      {a.acknowledged_at ? manilaDateTime(a.acknowledged_at) : "—"}
                       <span className="block text-[color:var(--color-brand-text-soft)]">
                         by{" "}
                         {a.acknowledged_by

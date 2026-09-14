@@ -8,6 +8,7 @@ import { audit } from "@/lib/audit/log";
 import { hasRecentAudit } from "@/lib/server/action-helpers";
 import { peekVisitGroupPinFlash } from "@/lib/auth/visit-pin-flash";
 import { formatPhp } from "@/lib/marketing/format";
+import { manilaDate } from "@/lib/dates/manila";
 import { CONTACT, SITE } from "@/lib/marketing/site";
 import { getPatientConsentState } from "@/lib/consent/gate";
 import { formatPatientName } from "@/lib/patients/format-name";
@@ -223,7 +224,7 @@ export default async function GroupReceiptPage({ params }: Props) {
                   Date
                 </p>
                 <p className="mt-0.5 font-semibold">
-                  {new Date(slip.visit.visit_date).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })}
+                  {manilaDate(slip.visit.visit_date)}
                 </p>
               </div>
             </div>

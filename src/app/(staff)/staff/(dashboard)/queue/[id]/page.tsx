@@ -20,6 +20,7 @@ import {
 } from "@/lib/results/types";
 import { loadTemplateParams } from "@/lib/results/loaders";
 import { labQueueGate } from "@/lib/visits/lab-gate";
+import { manilaDateTime } from "@/lib/dates/manila";
 
 export const metadata = {
   title: "Test — staff",
@@ -365,11 +366,11 @@ export default async function QueueTestDetailPage({ params }: Props) {
             Timing
           </p>
           <p className="mt-0.5 text-sm text-[color:var(--color-brand-text-mid)]">
-            Requested {new Date(test.requested_at).toLocaleString("en-PH", { timeZone: "Asia/Manila" })}
+            Requested {manilaDateTime(test.requested_at)}
           </p>
           {test.started_at ? (
             <p className="text-sm text-[color:var(--color-brand-text-mid)]">
-              Started {new Date(test.started_at).toLocaleString("en-PH", { timeZone: "Asia/Manila" })}
+              Started {manilaDateTime(test.started_at)}
             </p>
           ) : null}
           {svc.turnaround_hours ? (
@@ -472,7 +473,7 @@ export default async function QueueTestDetailPage({ params }: Props) {
                 ? `Auto-generated from structured values. Control No. ${result.control_no?.toString().padStart(6, "0") ?? "—"}.`
                 : "Uploaded PDF (legacy / send-out path)."}
               {result.uploaded_at
-                ? ` ${new Date(result.uploaded_at).toLocaleString("en-PH", { timeZone: "Asia/Manila" })}`
+                ? ` ${manilaDateTime(result.uploaded_at)}`
                 : ""}
               {result.file_size_bytes
                 ? ` · ${(result.file_size_bytes / 1024).toFixed(0)} KB`
@@ -530,7 +531,7 @@ export default async function QueueTestDetailPage({ params }: Props) {
                     >
                       <p className="font-semibold text-[color:var(--color-brand-navy)]">
                         v{a.amendment_seq + 1} ·{" "}
-                        {new Date(a.amended_at).toLocaleString("en-PH", { timeZone: "Asia/Manila" })} ·{" "}
+                        {manilaDateTime(a.amended_at)} ·{" "}
                         {amenderMap.get(a.amended_by) ?? "—"}
                       </p>
                       <p className="mt-1 text-[color:var(--color-brand-text-mid)]">
@@ -538,7 +539,7 @@ export default async function QueueTestDetailPage({ params }: Props) {
                       </p>
                       <p className="mt-1 font-mono text-[10px] text-[color:var(--color-brand-text-soft)]">
                         Replaced version uploaded{" "}
-                        {new Date(a.prior_uploaded_at).toLocaleString("en-PH", { timeZone: "Asia/Manila" })}
+                        {manilaDateTime(a.prior_uploaded_at)}
                       </p>
                     </li>
                   ))}
@@ -643,7 +644,7 @@ function PackageHeaderSummary({
           </p>
           {packageCompletedAt ? (
             <p className="text-sm text-emerald-700">
-              Completed {new Date(packageCompletedAt).toLocaleString("en-PH", { timeZone: "Asia/Manila" })}
+              Completed {manilaDateTime(packageCompletedAt)}
             </p>
           ) : (
             <p className="text-xs text-[color:var(--color-brand-text-soft)]">
@@ -697,7 +698,7 @@ function PackageHeaderSummary({
                   </span>
                   {c.released_at ? (
                     <span className="text-[10px] text-[color:var(--color-brand-text-soft)]">
-                      released {new Date(c.released_at).toLocaleString("en-PH", { timeZone: "Asia/Manila" })}
+                      released {manilaDateTime(c.released_at)}
                     </span>
                   ) : null}
                 </div>

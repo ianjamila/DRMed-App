@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { formatPhp } from "@/lib/marketing/format";
 import { sectionsForRole } from "@/lib/auth/role-sections";
+import { manilaDate, manilaDateTime } from "@/lib/dates/manila";
 import { ReleaseButton } from "./release-button";
 import { ReleaseAllButton } from "./release-all-button";
 import { ReleasePackageHeaderButton } from "./release-package-header-button";
@@ -388,7 +389,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
         <div>
           <p className="font-mono text-sm text-[color:var(--color-brand-text-soft)]">
             Visit #{visit.visit_number} ·{" "}
-            {new Date(visit.visit_date).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })}
+            {manilaDate(visit.visit_date)}
           </p>
           {sibling ? (
             <p className="mt-2 rounded-lg border border-dashed border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-bg)] px-3 py-2 text-xs text-[color:var(--color-brand-navy)]">
@@ -471,7 +472,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                   : "Staff"}{" "}
                 deleted this visit
                 {visit.deleted_at
-                  ? ` on ${new Date(visit.deleted_at).toLocaleString("en-PH", { timeZone: "Asia/Manila" })}`
+                  ? ` on ${manilaDateTime(visit.deleted_at)}`
                   : ""}
                 . Nothing is billed and it no longer appears in any queue.
               </p>
@@ -632,9 +633,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                         {h.package_completed_at ? (
                           <p className="mt-1 text-[11px] text-emerald-700">
                             Completed{" "}
-                            {new Date(h.package_completed_at).toLocaleString(
-                              "en-PH",
-                            )}
+                            {manilaDateTime(h.package_completed_at)}
                           </p>
                         ) : null}
                       </Link>
@@ -1090,7 +1089,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                         ? ` by ${deleterNameById.get(t.deleted_by) ?? "staff"}`
                         : ""}
                       {t.deleted_at
-                        ? ` on ${new Date(t.deleted_at).toLocaleString("en-PH", { timeZone: "Asia/Manila" })}`
+                        ? ` on ${manilaDateTime(t.deleted_at)}`
                         : ""}
                       {t.delete_reason ? ` — ${t.delete_reason}` : ""}
                     </p>
@@ -1132,7 +1131,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
               {activePayments.map((p) => (
                 <tr key={p.id}>
                   <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
-                    {new Date(p.received_at).toLocaleString("en-PH", { timeZone: "Asia/Manila" })}
+                    {manilaDateTime(p.received_at)}
                   </td>
                   <td className="px-4 py-3 font-semibold">
                     {formatPhp(p.amount_php)}
@@ -1183,7 +1182,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                   <div className="font-semibold text-[color:var(--color-brand-text-mid)]">
                     {formatPhp(p.amount_php)} · {p.method ? PAYMENT_METHOD_LABEL[p.method] ?? p.method : "—"}
                     <span className="ml-2 text-[color:var(--color-brand-text-soft)]">
-                      voided {p.voided_at ? new Date(p.voided_at).toLocaleString("en-PH", { timeZone: "Asia/Manila" }) : ""}
+                      voided {p.voided_at ? manilaDateTime(p.voided_at) : ""}
                     </span>
                   </div>
                   {p.void_reason ? (
