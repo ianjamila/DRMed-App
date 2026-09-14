@@ -9,7 +9,10 @@ import { useRouter, useSearchParams, usePathname } from "next/navigation";
  * re-runs the patients query. Empty value drops the parameter entirely.
  *
  * Resets pagination (?page=) on every change — typing a new term should
- * always show page 1.
+ * always show page 1. `?sort=`, `?dir=` and `?size=` are preserved: this
+ * clones the FULL current query string (`searchParams.toString()`) and only
+ * touches `q`/`page`, so whatever sort/page-size the list is already on
+ * survives a new search term unchanged.
  */
 export function PatientsSearchInput({ initialQuery }: { initialQuery: string }) {
   const router = useRouter();

@@ -12,38 +12,121 @@ import {
 import { PatientsSearchInput } from "./search-input";
 import { PageHeader } from "@/components/staff/page-header";
 import { Panel } from "@/components/ui/panel";
+import {
+  ariaSortFor,
+  buildListHref,
+  nextSort,
+  pageCount,
+  parsePage,
+  parsePageSize,
+  parseSort,
+  rangeFor,
+  type SortSpec,
+} from "@/lib/ui/table-params";
+import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
+import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
+import { manilaDate } from "@/lib/dates/manila";
 
 export const metadata = {
   title: "Patients — staff",
 };
 
 interface SearchProps {
-  searchParams: Promise<{ q?: string; page?: string }>;
+  searchParams: Promise<{
+    q?: string;
+    sort?: string;
+    dir?: string;
+    page?: string;
+    size?: string;
+  }>;
 }
 
-const PAGE_SIZE = 50;
+const BASE_PATH = "/staff/patients";
 
-async function search(query: string | undefined, page: number) {
+// This page's default page size has always been 50 (not the shared
+// PAGE_SIZES default of 25) — keep it so existing bookmarks/behaviour don't
+// change for reception.
+const PAGE_SIZE_DEFAULT = 50;
+
+// Sortable columns for the patients directory. `parseSort` requires this
+// exact allow-list — it's a security boundary because the value reaches a
+// PostgREST `.order()`; never widen it to a raw search param.
+const SORTABLE_COLUMNS = [
+  "drm_id",
+  "last_name",
+  "phone",
+  "email",
+  "referral_source_label",
+  "last_visit_date",
+  "created_at",
+] as const;
+type SortColumn = (typeof SORTABLE_COLUMNS)[number];
+
+const DEFAULT_SORT: SortSpec<SortColumn> = { key: "created_at", dir: "desc" };
+
+// Nullable columns where "no value" should sink to the bottom regardless of
+// sort direction — 2,758 patients have no referral source and many have
+// never visited, so a plain ASC/DESC would otherwise surface those blanks
+// first on one of the two directions.
+const NULLS_LAST_COLUMNS = new Set<SortColumn>(["referral_source_label", "last_visit_date"]);
+
+/**
+ * Row shape for `public.v_patients_directory` (migration 0143). The view
+ * hasn't been applied locally yet, so it isn't in the generated
+ * `src/types/database.ts` — the `.from()` call is cast past the generated
+ * table/view union and the real shape is restored with `.returns<>()`
+ * below. Remove the cast once `npm run db:types` knows about the view.
+ */
+interface PatientDirectoryRow {
+  id: string;
+  drm_id: string;
+  first_name: string;
+  middle_name: string | null;
+  last_name: string;
+  phone: string | null;
+  email: string | null;
+  pre_registered: boolean;
+  created_at: string;
+  referral_source: string | null;
+  referral_source_label: string | null;
+  last_visit_date: string | null;
+}
+
+async function search(
+  query: string | undefined,
+  sort: SortSpec<SortColumn>,
+  page: number,
+  size: number,
+) {
   const supabase = await createClient();
-  const from = (page - 1) * PAGE_SIZE;
-  const to = from + PAGE_SIZE - 1;
+  const [from, to] = rangeFor(page, size);
 
   let q = supabase
-    .from("patients")
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- v_patients_directory (migration 0143) isn't in the generated Database type yet; row shape is restored below via .returns<PatientDirectoryRow[]>()
+    .from("v_patients_directory" as any)
     .select(
-      "id, drm_id, first_name, middle_name, last_name, phone, email, pre_registered, created_at",
+      "id, drm_id, first_name, middle_name, last_name, phone, email, pre_registered, created_at, referral_source, referral_source_label, last_visit_date",
       { count: "exact" },
-    )
-    .order("created_at", { ascending: false })
-    .range(from, to);
+    );
 
   // Token-based: every word must match some field (any order), so "Jamila, Ian"
-  // finds a patient stored as first_name="Ian", last_name="Jamila".
+  // finds a patient stored as first_name="Ian", last_name="Jamila". The view
+  // exposes every column this touches (drm_id/first_name/middle_name/last_name/
+  // phone/email), so the same clauses apply unchanged.
   for (const clause of patientSearchOrClauses(query)) {
     q = q.or(clause);
   }
 
-  const { data, error, count } = await q;
+  q = q.order(sort.key, {
+    ascending: sort.dir === "asc",
+    ...(NULLS_LAST_COLUMNS.has(sort.key) ? { nullsFirst: false } : {}),
+  });
+  // Tie-break on id — without a total order, .range() can drop or repeat
+  // rows across pages, and with 7,057 patients that's a silent correctness
+  // bug, not a cosmetic one.
+  q = q.order("id", { ascending: true }).range(from, to);
+
+  const { data, error, count } = await q.returns<PatientDirectoryRow[]>();
   if (error) {
     console.error("patients search failed", error);
     return { rows: [], total: 0 };
@@ -54,11 +137,11 @@ async function search(query: string | undefined, page: number) {
 export default async function PatientsPage({ searchParams }: SearchProps) {
   const params = await searchParams;
   const query = params.q ?? "";
-  const page = Math.max(1, parseInt(params.page ?? "1", 10) || 1);
-  const { rows: patients, total } = await search(query, page);
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const showingFrom = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
-  const showingTo = Math.min(page * PAGE_SIZE, total);
+  const sort = parseSort(params.sort, params.dir, SORTABLE_COLUMNS, DEFAULT_SORT);
+  const size = parsePageSize(params.size, PAGE_SIZE_DEFAULT);
+  const page = parsePage(params.page);
+  const { rows: patients, total } = await search(query, sort, page, size);
+  const totalPages = pageCount(total, size);
 
   // Same derivation the Appointments page uses, so the QR points at whatever
   // host reception actually reached the app on (prod, preview or localhost)
@@ -67,12 +150,31 @@ export default async function PatientsPage({ searchParams }: SearchProps) {
   const proto = host.startsWith("localhost") ? "http" : "https";
   const registerUrl = `${proto}://${host}/register?src=staff_qr`;
 
-  const pageHref = (n: number) => {
-    const sp = new URLSearchParams();
-    if (query) sp.set("q", query);
-    if (n > 1) sp.set("page", String(n));
-    return `/staff/patients${sp.size ? `?${sp.toString()}` : ""}`;
+  // Params at their default are omitted so page 1 with the default sort and
+  // size stays the bare /staff/patients URL.
+  const isDefaultSort = sort.key === DEFAULT_SORT.key && sort.dir === DEFAULT_SORT.dir;
+  const baseParams: Record<string, string | null> = {
+    q: query || null,
+    sort: isDefaultSort ? null : sort.key,
+    dir: isDefaultSort ? null : sort.dir,
+    size: size === PAGE_SIZE_DEFAULT ? null : String(size),
   };
+
+  const sortHref = (key: SortColumn) => {
+    const next = nextSort(sort, key);
+    const nextIsDefault = next.key === DEFAULT_SORT.key && next.dir === DEFAULT_SORT.dir;
+    // Any change to sort resets to page 1 — staying on page 7 of a result
+    // set that just reordered is a blank screen with no explanation.
+    return buildListHref(BASE_PATH, baseParams, {
+      sort: nextIsDefault ? null : next.key,
+      dir: nextIsDefault ? null : next.dir,
+      page: null,
+    });
+  };
+
+  const th = (key: SortColumn, label: string) => (
+    <SortableTh key={key} label={label} href={sortHref(key)} state={ariaSortFor(sort, key)} />
+  );
 
   return (
     <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
@@ -104,18 +206,21 @@ export default async function PatientsPage({ searchParams }: SearchProps) {
         <table className="w-full text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
-              <th className="px-4 py-3">DRM-ID</th>
-              <th className="px-4 py-3">Name</th>
-              <th className="px-4 py-3">Phone</th>
-              <th className="px-4 py-3">Email</th>
-              <th className="px-4 py-3">Status</th>
+              {th("drm_id", "DRM-ID")}
+              {th("last_name", "Name")}
+              {th("phone", "Phone")}
+              {th("email", "Email")}
+              {th("referral_source_label", "Source")}
+              {th("last_visit_date", "Last visit")}
+              {th("created_at", "Registered")}
+              <PlainTh label="Status" />
             </tr>
           </thead>
           <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
             {patients.length === 0 ? (
               <tr>
                 <td
-                  colSpan={5}
+                  colSpan={8}
                   className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]"
                 >
                   No patients match.
@@ -155,6 +260,15 @@ export default async function PatientsPage({ searchParams }: SearchProps) {
                     <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
                       {p.email ?? "—"}
                     </td>
+                    <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
+                      {p.referral_source_label ?? "—"}
+                    </td>
+                    <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
+                      {manilaDate(p.last_visit_date)}
+                    </td>
+                    <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
+                      {manilaDate(p.created_at)}
+                    </td>
                     <td className="px-4 py-3">
                       {p.pre_registered ? (
                         <span
@@ -176,54 +290,33 @@ export default async function PatientsPage({ searchParams }: SearchProps) {
         </table>
       </Panel>
 
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-xs text-[color:var(--color-brand-text-soft)]">
-        <p>
-          {total === 0
-            ? "0 patients"
-            : `Showing ${showingFrom.toLocaleString()}–${showingTo.toLocaleString()} of ${total.toLocaleString()}`}
-        </p>
-        {totalPages > 1 && (
-          <nav className="flex items-center gap-1" aria-label="Pagination">
-            <PageLink href={pageHref(1)} disabled={page === 1} label="«" title="First" />
-            <PageLink href={pageHref(page - 1)} disabled={page === 1} label="‹" title="Previous" />
-            <span className="px-2 py-1 text-[color:var(--color-brand-navy)]">
-              Page {page} of {totalPages}
-            </span>
-            <PageLink href={pageHref(page + 1)} disabled={page === totalPages} label="›" title="Next" />
-            <PageLink href={pageHref(totalPages)} disabled={page === totalPages} label="»" title="Last" />
-          </nav>
-        )}
-      </div>
+      <ListPagination
+        page={page}
+        pageCount={totalPages}
+        total={total}
+        size={size}
+        prevHref={
+          page > 1
+            ? buildListHref(BASE_PATH, baseParams, {
+                page: page - 1 > 1 ? String(page - 1) : null,
+              })
+            : null
+        }
+        nextHref={
+          page < totalPages
+            ? buildListHref(BASE_PATH, baseParams, { page: String(page + 1) })
+            : null
+        }
+        sizeOptions={PAGE_SIZES.map((s) => ({
+          size: s,
+          // Changing the page size resets to page 1 — same reasoning as sort.
+          href: buildListHref(BASE_PATH, baseParams, {
+            size: s === PAGE_SIZE_DEFAULT ? null : String(s),
+            page: null,
+          }),
+        }))}
+        noun="patient"
+      />
     </div>
-  );
-}
-
-function PageLink({
-  href,
-  disabled,
-  label,
-  title,
-}: {
-  href: string;
-  disabled: boolean;
-  label: string;
-  title: string;
-}) {
-  const cls =
-    "rounded-md border border-[color:var(--color-brand-bg-mid)] px-2 py-1 font-mono " +
-    (disabled
-      ? "cursor-not-allowed bg-[color:var(--color-brand-bg)] text-[color:var(--color-brand-text-soft)] opacity-50"
-      : "bg-white text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-bg)]");
-  if (disabled) {
-    return (
-      <span className={cls} aria-disabled="true" title={title}>
-        {label}
-      </span>
-    );
-  }
-  return (
-    <Link href={href} className={cls} title={title}>
-      {label}
-    </Link>
   );
 }
