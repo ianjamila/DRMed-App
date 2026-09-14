@@ -427,11 +427,11 @@
         <tr><td>Inquiries</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
         <tr><td>Cash drawer (with End of day tab)</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
         <tr><td colspan="6"><b>Billing</b></td></tr>
-        <tr><td>Visits (queue · new · archive)</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
+        <tr><td>Visit archive (with New visit tab)</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
         <tr><td>Quick quote</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
         <tr><td>Petty cash</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
         <tr><td colspan="6"><b>Services</b></td></tr>
-        <tr><td>New lab request · New imaging request</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
+        <tr><td>New lab request · New imaging request (both open New visit)</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
         <tr><td colspan="6"><b>Lab</b></td></tr>
         <tr><td>Queue</td><td class="no">·</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
         <tr><td>Critical alerts</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td><td class="yes">✓</td></tr>
@@ -601,7 +601,8 @@
     <h3>3.7 The Reception Queue</h3>
     <div class="screen"><div class="where">Sidebar › Front desk › <kbd class="ui">Reception Queue</kbd> · <code class="route">/staff/visits/queue</code></div>
       <dl><dt>Stages</dt><dd><span class="tab">Waiting for payment</span> · <span class="tab">Processing</span> · <span class="tab">Completed</span></dd>
-      <dt>Row actions</dt><dd><kbd class="ui">Record payment</kbd> · <kbd class="ui">Open visit</kbd> · <kbd class="ui">Print billing</kbd></dd></dl></div>
+      <dt>Row actions</dt><dd><kbd class="ui">Record payment</kbd> · <kbd class="ui">Open visit</kbd> · <kbd class="ui">Print billing</kbd></dd>
+      <dt>Page action</dt><dd><kbd class="ui">+ New visit</kbd>, top right — opens the New visit form for the patient at the counter. It also appears in the middle of the page when today's <span class="tab">Waiting for payment</span> stage is empty.</dd></dl></div>
     <p>This is today's worklist. It updates on its own as payments land and tests finish.</p>
     <dl class="defs">
       <dt>Waiting for payment</dt><dd>Visits created but not yet paid, so the lab cannot see them. Collect and <kbd class="ui">Record payment</kbd>. The one exception is an HMO-billed visit: its balance is owed by the HMO, so it stays on this tab while the lab is already running the tests (3.6).</dd>
@@ -609,7 +610,7 @@
       <dt>Completed</dt><dd>Paid and every lab and imaging line released. <kbd class="ui">Print billing</kbd> reprints the receipt (without the PIN).</dd>
     </dl>
     <div class="note why"><span class="k">Why the visit page shows no tests</span><div><p>By clinic policy, reception does not see individual test lines or result PDFs. On a visit page you see the patient, the payments, the receipt and PIN buttons, the attending physician and the HMO details, but not the tests. Use the Reception Queue row for progress, and leave releasing to the lab.</p></div></div>
-    <p>The related <kbd class="ui">Visits</kbd> item in the Billing group has three tabs: <span class="tab">Reception Queue</span>, <span class="tab">New visit</span> and <span class="tab">Archive</span>. The archive filters by <span class="tab">Lab Tests</span> / <span class="tab">Doctor Consults</span> / <span class="tab">Doctor Procedures</span>, shows <span class="tab">Active</span> or <span class="tab">Deleted</span> entries, and searches by visit number. Admin can <kbd class="ui">Export CSV</kbd> from it.</p>
+    <p>The related <kbd class="ui">Visit archive</kbd> item in the Billing group has two tabs: <span class="tab">New visit</span> and <span class="tab">Visit archive</span>. (The Reception Queue is not one of them — reach it from the sidebar, under Front desk.) The archive filters by <span class="tab">Lab Tests</span> / <span class="tab">Doctor Consults</span> / <span class="tab">Doctor Procedures</span>, shows <span class="tab">Active</span> or <span class="tab">Deleted</span> entries, and searches by visit number. Admin can <kbd class="ui">Export CSV</kbd> from it.</p>
   </section>
 
   <!-- 3.8 -->
@@ -617,7 +618,7 @@
     <h3>3.8 When the result is ready</h3>
     <p>Releasing a result (making it visible to the patient, and emailing them if they asked) is done by the medtech or x-ray tech who finished it, or by Admin, from the visit page. Reception's part is everything around it.</p>
     <ol class="steps">
-      <li><p class="step-title">Watch the Reception Queue. A visit moves from <span class="tab">Processing</span> to <span class="tab">Completed</span> when the last result is released.</p><p>If a patient asks by phone, search the visit number in the queue or the Visits archive and read the row.</p></li>
+      <li><p class="step-title">Watch the Reception Queue. A visit moves from <span class="tab">Processing</span> to <span class="tab">Completed</span> when the last result is released.</p><p>If a patient asks by phone, search the visit number in the queue or the Visit archive and read the row.</p></li>
       <li><p class="step-title">If the patient wants a printed copy at the counter, ask the lab to print it when they release.</p><p>Reception cannot open result PDFs. The lab chooses <q>Physical</q> or <q>Pickup</q> as the release method, prints the PDF and hands it to you.</p></li>
       <li><p class="step-title">If the patient wants it by email, nothing more is needed.</p><p>The lab releases with <q>Email</q> and the patient receives <q>Your DRMed lab result is ready</q> with the portal link. They sign in with the DRM-ID and PIN from their receipt.</p></li>
       <li><p class="step-title">If the lab says a release is blocked, fix the cause on your side.</p>
@@ -924,7 +925,7 @@
     <dl class="defs">
       <dt>Import patients</dt><dd>Paste CSV rows with <code class="id">first_name, last_name, birthdate</code> (plus optional middle name, sex, phone, email, address), up to 2,000 at a time. Tick <b>Mark imported rows as pre-registered</b> so reception verifies them at the counter.</dd>
       <dt>Merge duplicate patients</dt><dd><b>Possible duplicate patients</b> lists likely pairs (<span class="tab">Probable+</span> or <span class="tab">Include weak</span>); <kbd class="ui">Merge into DRM-…</kbd> moves every visit and result to the surviving record and can be <kbd class="ui">Undo</kbd>ne within 30 days. For a pair the detector missed, the manual <b>Merge patient profiles</b> page takes <b>Keep this patient</b> and <b>Merge in this patient</b> and asks you to type <code class="id">MERGE</code>.</dd>
-      <dt>Visits archive export</dt><dd>Billing › Visits › <span class="tab">Archive</span> › <kbd class="ui">Export CSV</kbd>. Capped at 20,000 rows, logged as an export.</dd>
+      <dt>Visit archive export</dt><dd>Billing › <kbd class="ui">Visit archive</kbd> › <kbd class="ui">Export CSV</kbd>. Capped at 20,000 rows, logged as an export.</dd>
     </dl>
   </section>
 

@@ -25,6 +25,18 @@ interface Props {
 
 const PICKER_LIMIT = 25;
 
+// Services > "New lab request" / "New imaging request" and this page are the same
+// destination, so the picker heading has to be the words on the item you clicked —
+// otherwise reception lands on a differently-named screen and wonders if it misfired.
+// (It used to say "Visits", which the Visit archive is also called.) The filter is
+// soft: once a patient is picked, the form is titled "New visit" because you can
+// still add a consultation or a package to it.
+const PICKER_TITLE = {
+  lab: "New lab request",
+  imaging: "New imaging request",
+  none: "New visit",
+} as const;
+
 export default async function NewVisitPage({ searchParams }: Props) {
   const { patient_id, appointment_id, q, filter } = await searchParams;
   const initialCategory: "lab" | "imaging" | undefined =
@@ -203,7 +215,7 @@ async function PatientPicker({
       <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            Visits
+            {PICKER_TITLE[filter ?? "none"]}
           </h1>
           <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
             Pick the patient this visit is for, or register a new one.

@@ -10,6 +10,7 @@ import {
 } from "@/lib/dates/manila";
 import { formatPatientName } from "@/lib/patients/format-name";
 import { paymentStatusLabel } from "@/lib/ui/payment-status";
+import { PageHeader } from "@/components/staff/page-header";
 import { RealtimeRefresher } from "@/components/staff/realtime-refresher";
 import {
   sectionTabsNavClass,
@@ -26,7 +27,6 @@ import {
 import { visitDeletability } from "@/lib/visits/deletion";
 import { shouldPrintReceipt } from "@/lib/visits/receipt-policy";
 import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
-import { VisitsTabs } from "../_components/visits-tabs";
 
 export const metadata = {
   title: "Reception Queue — staff",
@@ -57,6 +57,22 @@ const STAGE_TABS: { value: QueueStage; label: string }[] = [
   { value: "processing", label: "Processing" },
   { value: "completed", label: "Completed" },
 ];
+
+// Reception's next move when the counter is clear: start the visit for whoever
+// just walked up. This used to be the "New visit" entry in the Visits section-tab
+// bar, which grouped the queue with /staff/visits purely because they share a URL
+// prefix — a live worklist, a records archive and a creation form are three jobs,
+// not three views of one. The shortcut is real, so it stays; as an action, not a tab.
+function NewVisitLink() {
+  return (
+    <Link
+      href="/staff/visits/new"
+      className="inline-flex min-h-11 items-center rounded-md border border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-cyan)] px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-[color:var(--color-brand-cyan-mid)]"
+    >
+      + New visit
+    </Link>
+  );
+}
 
 const STAGE_EMPTY_TODAY: Record<QueueStage, string> = {
   waiting: "No visits waiting for payment. The counter's all caught up.",
@@ -209,19 +225,16 @@ export default async function VisitsQueuePage({ searchParams }: SearchProps) {
         />
       ) : null}
 
-      <header className="mb-4">
-        <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Reception Queue
-        </h1>
-        <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
-          {isToday ? "Today's visits" : "Visits"} ({friendlyManilaDate(date)}) ·{" "}
-          {visits.length} total — pay, process, done.
-        </p>
-      </header>
-
-      <div className="mb-6">
-        <VisitsTabs />
-      </div>
+      <PageHeader
+        title="Reception Queue"
+        subtitle={
+          <>
+            {isToday ? "Today's visits" : "Visits"} ({friendlyManilaDate(date)}) ·{" "}
+            {visits.length} total — pay, process, done.
+          </>
+        }
+        actions={<NewVisitLink />}
+      />
 
       <form
         className="mb-4 flex flex-wrap items-end gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4"
@@ -313,6 +326,15 @@ export default async function VisitsQueuePage({ searchParams }: SearchProps) {
       {rows.length === 0 ? (
         <Panel className="mt-6 p-8 text-center text-sm text-[color:var(--color-brand-text-soft)]">
           {(isToday ? STAGE_EMPTY_TODAY : STAGE_EMPTY_PAST)[stage]}
+          {/* Today's Waiting bucket only — that's the landing view, and an empty
+              counter is the one moment starting a visit is the obvious next step.
+              Past days read as history, and Processing/Completed being empty says
+              nothing about whether a new visit is wanted. */}
+          {isToday && stage === "waiting" ? (
+            <div className="mt-4 flex justify-center">
+              <NewVisitLink />
+            </div>
+          ) : null}
         </Panel>
       ) : (
         <>
