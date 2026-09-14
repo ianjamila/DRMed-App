@@ -2,7 +2,16 @@
 // categories: Doctor / Professional Fee vs Lab & Services. No server-only
 // imports — unit-testable.
 
-const DOCTOR_KINDS = new Set(["doctor_consultation", "doctor_procedure"]);
+import { DOCTOR_KIND_VALUES } from "./classification";
+
+// Sourced from ./classification rather than re-listed here. The two modules
+// split the same way for different outputs (that one names three
+// reception-facing classes, this one two billing buckets), and they used to
+// keep independent copies of the kind list — so a new doctor kind had to be
+// added in two places or the buckets would silently disagree. One list now
+// feeds the classifier, this predicate, and the `DOCTOR_KINDS_PG_LIST`
+// literal the lab surfaces filter on.
+const DOCTOR_KINDS = new Set<string>(DOCTOR_KIND_VALUES);
 
 /** True for doctor consultation/procedure kinds; everything else is Lab & Services. */
 export function isDoctorKind(kind: string): boolean {

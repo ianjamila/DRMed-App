@@ -889,12 +889,24 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                       ) : null}
                     </td>
                     <td className="px-4 py-3">
-                      <Link
-                        href={`/staff/queue/${t.id}`}
-                        className="text-[color:var(--color-brand-navy)] hover:text-[color:var(--color-brand-cyan)] hover:underline"
-                      >
-                        {svc.name}
-                      </Link>
+                      {/* A doctor line has no bench page to open: /staff/queue/<id>
+                          is the lab worklist detail (claim, upload, key a result)
+                          and now refuses a consultation outright. Linking one
+                          there was a normal click that landed on the wrong screen,
+                          so the name stays plain text for doctor work — the
+                          actions it DOES have live in this row's own column. */}
+                      {isConsult || isProcedure ? (
+                        <span className="text-[color:var(--color-brand-navy)]">
+                          {svc.name}
+                        </span>
+                      ) : (
+                        <Link
+                          href={`/staff/queue/${t.id}`}
+                          className="text-[color:var(--color-brand-navy)] hover:text-[color:var(--color-brand-cyan)] hover:underline"
+                        >
+                          {svc.name}
+                        </Link>
+                      )}
                       <p className="font-mono text-[10px] text-[color:var(--color-brand-text-soft)]">
                         {svc.code}
                         {isConsult ? (
@@ -1318,6 +1330,36 @@ function TestAction({
 }: TestActionProps) {
   const sizeCls = size === "compact" ? "text-[10px]" : "text-xs";
 
+  // Kind is checked BEFORE status. A doctor line is completed with "Mark
+  // done" (markDoctorLineDoneAction) in every state it can be actioned from,
+  // and that action deliberately sends no patient notification — there is no
+  // result to collect.
+  //
+  // Keying this branch on status alone leaked a real notification: undoing a
+  // released consultation (to correct the attending physician, say) parks it
+  // at `ready_for_release`, which used to fall into the generic Release
+  // button below. Pressing it called releaseTestAction → notifyResultReleased
+  // unconditionally, and the patient was emailed "Your DRMed lab result is
+  // ready" for a doctor visit that produced no result and no file to open.
+  // (The literal comparison rather than isDoctorKind() is what narrows `kind`
+  // to the union MarkDoneButton accepts.)
+  if (kind === "doctor_consultation" || kind === "doctor_procedure") {
+    if (
+      status === "ready_for_release" ||
+      status === "requested" ||
+      status === "in_progress"
+    ) {
+      return (
+        <MarkDoneButton
+          testRequestId={testRequestId}
+          visitId={visitId}
+          moneySettled={moneySettled}
+          kind={kind}
+        />
+      );
+    }
+  }
+
   if (status === "ready_for_release") {
     return (
       <ReleaseButton
@@ -1333,16 +1375,6 @@ function TestAction({
   }
 
   if (status === "requested" || status === "in_progress") {
-    if (kind === "doctor_consultation" || kind === "doctor_procedure") {
-      return (
-        <MarkDoneButton
-          testRequestId={testRequestId}
-          visitId={visitId}
-          moneySettled={moneySettled}
-          kind={kind}
-        />
-      );
-    }
     const hint = status === "requested" ? "Awaiting claim" : "Awaiting result";
     return (
       <div className="flex flex-col items-end gap-0.5">

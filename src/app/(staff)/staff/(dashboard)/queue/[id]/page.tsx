@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { sectionsForRole } from "@/lib/auth/role-sections";
 import { isSectionAllowed } from "@/lib/auth/section-access";
+import { isDoctorKind } from "@/lib/visits/order-lines";
 import { ClaimButton } from "../claim-button";
 import { ReassignPanel } from "./reassign-panel";
 import { UnclaimOwnButton } from "./unclaim-own-button";
@@ -54,7 +55,7 @@ export default async function QueueTestDetailPage({ params }: Props) {
         id, status, requested_at, started_at, completed_at, assigned_to,
         is_package_header, parent_id, package_completed_at, final_price_php,
         deleted_at, delete_reason,
-        services!inner ( id, code, name, section, turnaround_hours, requires_signoff, is_send_out ),
+        services!inner ( id, code, name, kind, section, turnaround_hours, requires_signoff, is_send_out ),
         visits!inner (
           id, visit_number, deleted_at, payment_status, hmo_provider_id,
           patients!inner ( id, drm_id, first_name, last_name, phone, sex, birthdate )
@@ -72,6 +73,18 @@ export default async function QueueTestDetailPage({ params }: Props) {
   if (!svc || !visit) notFound();
   const patient = Array.isArray(visit.patients) ? visit.patients[0] : visit.patients;
   if (!patient) notFound();
+
+  // Doctor gate. This page IS the lab bench — claim, upload a PDF, key a
+  // structured result, amend one — and none of it applies to a consultation
+  // or procedure, which reception completes on the visit page with "Mark
+  // done". The queue list now excludes doctor lines, but this route is
+  // reachable directly: the visit page links every line's service name to
+  // /staff/queue/<id>, so an ordinary click on a consultation landed here and
+  // rendered the full bench UI for it. The section gate below cannot catch
+  // this — doctor services carry a null `section`, which `isSectionAllowed`
+  // passes for the unrestricted roles by design (that same predicate is what
+  // lets an admin mark a consultation done).
+  if (isDoctorKind(svc.kind)) notFound();
 
   // N1 (go-live): section gate. This route shows/amends the actual result
   // (test names, values, PDF) — RLS on `results` includes reception (0051),

@@ -10,6 +10,7 @@ import {
   renderEmailShell, emailParagraph, emailDetailBox, emailButton, emailFinePrint, escapeHtml, emailReviewCta,
 } from "./branded-email";
 import { patientAlreadyAskedForReview } from "./review-cta";
+import { isDoctorKind } from "@/lib/visits/order-lines";
 
 interface Input {
   testRequestId: string;
@@ -36,7 +37,7 @@ export async function notifyResultReleased({
     .select(
       `
         id, visit_id,
-        services!inner ( name ),
+        services!inner ( name, kind ),
         visits!inner (
           id,
           patients!inner ( id, drm_id, first_name, phone, email )
@@ -54,6 +55,16 @@ export async function notifyResultReleased({
     : visit.patients;
   const svc = Array.isArray(row.services) ? row.services[0] : row.services;
   if (!patient || !svc) return;
+
+  // A doctor line has no result to collect, so there is nothing to announce:
+  // this message says "Your DRMed lab result is ready" and links the portal,
+  // where a consultation shows no document. The visit page routes doctor work
+  // to "Mark done" (which never calls here), but this is the last line of
+  // defence — every release path in the app funnels through this function,
+  // and one of them reached it with a consultation before (undo a released
+  // consult → it parks at ready_for_release → the generic Release button).
+  // Cheaper to refuse by kind here than to re-audit every caller.
+  if (isDoctorKind(svc.kind)) return;
 
   // M7: physical hand-off (printout collected in person) — record the notified
   // audit row as skipped on both channels and send nothing.

@@ -193,6 +193,7 @@ All Server Actions return `{ ok: true, data } | { ok: false, error }`. User-faci
 | Staff list-page URL contract (sort/dir/page/size parsing, sort-column allow-list) | `src/lib/ui/table-params.ts`; components `src/components/staff/{sortable-th,list-pagination}.tsx` |
 | Rate-limit checker (per-bucket) | `src/lib/rate-limit/check.ts` |
 | Pure visit-domain rules (classification, deletability, lab payment gate, receipt policy, doctor-fee split, visit # search) | `src/lib/visits/{classification,deletion,lab-gate,receipt-policy,consultation-fee,visit-number-filter}.ts` |
+| Which `test_requests` surfaces mean "lab" vs "the whole bill" (the `SURFACES` map — the canonical answer) | `src/lib/visits/lab-surfaces.test.ts` |
 | Discount arithmetic (form preview AND server recompute) | `src/lib/pricing/discounts.ts` |
 | Shared visit actions (queue delete/restore, PIN re-issue) | `src/lib/actions/visits/{queue-deletion,reissue-pin}.ts` |
 | Cash denominations, amount-in-words, PF labels | `src/lib/accounting/{cash-denominations,amount-in-words,pf-labels}.ts` |
@@ -216,6 +217,8 @@ All Server Actions return `{ ok: true, data } | { ok: false, error }`. User-faci
 - **Every paged ordering needs a unique final tie-break** (`id`). Without a total order, `.range()` silently drops or repeats rows between pages — and a chunked export (`fetchArchiveAll`) corrupts worse than the table, because the instability compounds across 1000-row chunks.
 - **Soft delete:** filter `deleted_at is null` on `visits` / `test_requests` in every read surface (queues, results, dashboards, receipts, exports, portal, sheet export). Deletability is `payment_status = 'unpaid'` only.
 - **Role sections:** `sectionsForRole(role) === []` is a deny. The lab queue once treated it as "no filter" and showed reception every section.
+- **`test_requests` is the visit's BILL LINE, not a lab table.** Doctor consultations and procedures are rows in it, told apart only by the joined `services.kind` (0090). Any surface that MEANS "lab" — results archive, portal, TAT, stuck tests, lab dashboards — must exclude them with `.not("services.kind", "in", DOCTOR_KINDS_PG_LIST)` (`src/lib/visits/classification.ts`); any surface that means "the whole bill" — receipts, money, accounting, deletion ledgers — must not. This bug has shipped three times (#160, #162); `src/lib/visits/lab-surfaces.test.ts` now fails on any file that reads the table without declaring which kind it is.
+- **PostgREST ignores a filter on a LEFT-joined embed.** `.not("services.kind", …)` against a plain `services ( … )` embed compiles, runs, and returns the *unfiltered* rows — it looks exactly like a working fix. The embed must be `services!inner ( … )`.
 - **Exports** run under the RLS-scoped server client with an admin gate, a row ceiling, and an audit row — never the service-role client.
 - **Print surfaces** each append a named `@page` + `@media print` block at the tail of `src/app/globals.css`; two print PRs in flight always conflict there and the resolution is keep both.
 - **`<input pattern>`** is compiled with the RegExp `v` flag — a bare trailing `-` in a class makes the whole pattern silently ignored; write `[a-z0-9\-]+`.

@@ -1,6 +1,7 @@
 import type { StaffSession } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
 import { sectionsForRole, type ServiceSection } from "@/lib/auth/role-sections";
+import { DOCTOR_KINDS_PG_LIST } from "@/lib/visits/classification";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { loadHiddenCardIds } from "@/lib/dashboards/card-prefs";
 import { LAB_QUEUE_GATE_VISITS_OR } from "@/lib/visits/lab-gate";
@@ -141,15 +142,24 @@ async function loadLabStats(
           .or(LAB_QUEUE_GATE_VISITS_OR, { foreignTable: "visits" })
       : SKIP_COUNT;
 
+  // The doctor-kind exclusion on this and the tiles below is deliberate
+  // belt-and-braces. Each was safe only by an INVARIANT — "a doctor line
+  // never gets an assigned_to", "a doctor line never reaches
+  // result_uploaded" — and one such invariant has already turned out to be
+  // false in this codebase (undoing a released consultation parks it at
+  // `ready_for_release`, which the reception tile was counting). An invariant
+  // that lives only in a comment is one refactor from being wrong; the filter
+  // is one line and makes the tile correct by construction.
   const myClaimedPromise =
     show("lab.my_claimed") && (role === "medtech" || role === "xray_technician")
       ? supabase
           .from("test_requests")
-          .select("id, visits!inner(id)", { count: "exact", head: true })
+          .select("id, services!inner(id), visits!inner(id)", { count: "exact", head: true })
           .eq("assigned_to", userId)
           .in("status", ["requested", "in_progress"])
           .is("deleted_at", null)
           .is("visits.deleted_at", null)
+          .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
       : SKIP_COUNT;
 
   // "Ready for sign-off" surfaces results the pathologist hasn't looked at
@@ -162,10 +172,11 @@ async function loadLabStats(
     show("lab.ready_for_signoff") && role === "pathologist"
       ? supabase
           .from("test_requests")
-          .select("id, visits!inner(id)", { count: "exact", head: true })
+          .select("id, services!inner(id), visits!inner(id)", { count: "exact", head: true })
           .eq("status", "result_uploaded")
           .is("deleted_at", null)
           .is("visits.deleted_at", null)
+          .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
       : SKIP_COUNT;
 
   const criticalAlertsPromise =
@@ -188,17 +199,19 @@ async function loadLabStats(
           .is("deleted_at", null)
           .is("visits.deleted_at", null)
           .or(LAB_QUEUE_GATE_VISITS_OR, { foreignTable: "visits" })
+          .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
       : SKIP_COUNT;
 
   const releasedTodayPromise =
     show("lab.released_today")
       ? supabase
           .from("test_requests")
-          .select("id", { count: "exact", head: true })
+          .select("id, services!inner(id)", { count: "exact", head: true })
           .eq("status", "released")
           .eq("assigned_to", userId)
           .gte("released_at", startOfTodayUtc)
           .lt("released_at", startOfTomorrowUtc)
+          .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
       : SKIP_COUNT;
 
   // test_requests has no FK to patients — the name has to come through
@@ -248,11 +261,16 @@ async function loadLabStats(
       ? supabase
           .from("test_requests")
           .select(
-            "id, services ( name ), visits!inner ( id, patients ( first_name, last_name ) )",
+            // `services!inner`, not `services` — a filter on a LEFT-joined
+            // embed is silently ignored by PostgREST, so the doctor-kind
+            // exclusion below would compile, run, and return the unfiltered
+            // rows while looking like a working filter.
+            "id, services!inner ( name ), visits!inner ( id, patients ( first_name, last_name ) )",
           )
           .eq("status", "result_uploaded")
           .is("deleted_at", null)
           .is("visits.deleted_at", null)
+          .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
           .order("requested_at", { ascending: true })
           .limit(5)
           .returns<SignoffRow[]>()

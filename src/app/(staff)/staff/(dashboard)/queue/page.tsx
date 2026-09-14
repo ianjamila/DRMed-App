@@ -18,6 +18,7 @@ import { matchesAllTokens } from "@/lib/patients/search";
 import { visitNumberFilter } from "@/lib/visits/visit-number-filter";
 import { testDeletability } from "@/lib/visits/deletion";
 import { LAB_QUEUE_GATE_VISITS_OR } from "@/lib/visits/lab-gate";
+import { DOCTOR_KINDS_PG_LIST } from "@/lib/visits/classification";
 import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
 
 // ---------------------------------------------------------------------------
@@ -155,6 +156,20 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           : ["requested", "in_progress"],
     )
     .eq("is_package_header", false)
+    // This is the LAB bench worklist. `test_requests` doubles as the visit's
+    // bill line, so consultations and procedures sit in it too (0090) — and
+    // they are never worked here: reception completes them over the counter
+    // with "Mark done", which writes `released` directly.
+    //
+    // The section gate below only excluded them BY ACCIDENT, and only for
+    // some roles: doctor services carry a null `section`, which fails the
+    // medtech/xray `services.section in (…)` test — but admin and pathologist
+    // resolve to `null` (unrestricted), so no section filter ran for them at
+    // all. A pending consultation therefore sat in the admin/pathologist
+    // queue looking claimable, and on prod it was the ONLY row in it.
+    // Filtering by kind is what makes "no doctor lines here" true for EVERY
+    // role, independent of the section gate.
+    .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
     .order(dateColumn, { ascending: filter !== "released_today" })
     .range(offset, offset + PAGE_SIZE - 1);
 

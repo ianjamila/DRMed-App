@@ -1,6 +1,7 @@
 import type { StaffSession } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { DOCTOR_KINDS_PG_LIST } from "@/lib/visits/classification";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { loadHiddenCardIds } from "@/lib/dashboards/card-prefs";
 import { loadCandidatePairs } from "@/lib/patients/find-duplicates";
@@ -90,18 +91,34 @@ async function loadAdminStats(show: (id: string) => boolean) {
     show("admin.queue_total")
       ? supabase
           .from("test_requests")
-          .select("id, visits!inner ( id )", { count: "exact", head: true })
+          .select("id, services!inner ( id ), visits!inner ( id )", {
+            count: "exact",
+            head: true,
+          })
           .in("status", ["requested", "in_progress"])
           .is("deleted_at", null)
           .is("visits.deleted_at", null)
+          // This tile links to /staff/queue, which is the LAB worklist and
+          // now excludes doctor lines for every role. The count has to agree
+          // with the page it opens, or the admin taps a "3" and lands on a
+          // list of 1.
+          .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
       : SKIP_COUNT,
     show("admin.released_today")
       ? supabase
           .from("test_requests")
-          .select("id", { count: "exact", head: true })
+          .select("id, services!inner ( id )", { count: "exact", head: true })
           .eq("status", "released")
           .gte("released_at", startOfTodayUtc)
           .lt("released_at", startOfTomorrowUtc)
+          // "Results released to patients" means LAB results. `test_requests`
+          // doubles as the visit's bill line, and "Mark done" on a
+          // consultation writes status='released' with a released_at — so
+          // every consultation completed today was landing in this number.
+          // Measured on prod: on 2026-01-17 the tile would have read 53 when
+          // only 13 were lab results, and on the worst day doctor lines were
+          // 75% of the count.
+          .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
       : SKIP_COUNT,
     show("admin.revenue_today")
       ? admin
