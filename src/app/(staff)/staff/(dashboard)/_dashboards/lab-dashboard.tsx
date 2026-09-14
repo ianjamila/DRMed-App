@@ -206,11 +206,19 @@ async function loadLabStats(
     show("lab.released_today")
       ? supabase
           .from("test_requests")
-          .select("id, services!inner(id)", { count: "exact", head: true })
+          .select("id, services!inner(id), visits!inner(id)", {
+            count: "exact",
+            head: true,
+          })
           .eq("status", "released")
           .eq("assigned_to", userId)
           .gte("released_at", startOfTodayUtc)
           .lt("released_at", startOfTomorrowUtc)
+          // Same pair as every other tile on this dashboard — see the
+          // admin dashboard's released-today tile for why "released implies
+          // never deleted" is not an invariant the database enforces.
+          .is("deleted_at", null)
+          .is("visits.deleted_at", null)
           .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
       : SKIP_COUNT;
 
