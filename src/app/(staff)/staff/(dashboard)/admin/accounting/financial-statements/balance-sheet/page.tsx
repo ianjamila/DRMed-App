@@ -3,6 +3,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { paginatedFetch } from "@/lib/supabase/paginated-fetch";
 import { todayManilaISODate } from "@/lib/dates/manila";
+import { buildAsOfPresets } from "@/lib/reports/period-presets";
 import { StatementTabs } from "../_components/statement-tabs";
 
 export const metadata = { title: "Balance sheet — staff" };
@@ -364,25 +365,11 @@ function TotalRow({
 }
 
 function BalanceSheetAsOfPresets({ asOf, todayISO }: { asOf: string; todayISO: string }) {
-  const today = new Date(`${todayISO}T00:00:00+08:00`);
-  const y = today.getUTCFullYear();
-  const m = today.getUTCMonth();
-  const iso = (d: Date) => d.toISOString().slice(0, 10);
-  const endOfPrevMonth = new Date(Date.UTC(y, m, 0));
-  const endOfPrevQuarter = (() => {
-    const qStartMonth = Math.floor(m / 3) * 3; // 0, 3, 6, 9
-    return new Date(Date.UTC(y, qStartMonth, 0));
-  })();
-  const endOfLastYear = new Date(Date.UTC(y - 1, 11, 31));
-  const endOfTwoYearsAgo = new Date(Date.UTC(y - 2, 11, 31));
-
-  const presets = [
-    { key: "today", label: "Today", date: todayISO },
-    { key: "prev-month", label: "End of last month", date: iso(endOfPrevMonth) },
-    { key: "prev-q", label: "End of last quarter", date: iso(endOfPrevQuarter) },
-    { key: "prev-year", label: `End of ${y - 1}`, date: iso(endOfLastYear) },
-    { key: "two-years", label: `End of ${y - 2}`, date: iso(endOfTwoYearsAgo) },
-  ];
+  // M2: this used to derive the year/month from `new Date(\`${todayISO}T00:00:00+08:00\`)`
+  // and `getUTCMonth()`, which reads the PREVIOUS month on the 1st — so on
+  // 1 September "End of last month" offered 31 July. The dates now come from
+  // the string's own integers; see @/lib/reports/period-presets.
+  const presets = buildAsOfPresets(todayISO);
 
   return (
     <div className="mb-3 flex flex-wrap items-center gap-2">

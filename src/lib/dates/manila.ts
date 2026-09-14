@@ -175,3 +175,63 @@ function toManilaInstant(value: string | Date | null | undefined): Date | null {
     : new Date(value);
   return Number.isNaN(d.getTime()) ? null : d;
 }
+
+// ---------------------------------------------------------------------------
+// Manila calendar arithmetic — integers and strings only, never a Date
+// ---------------------------------------------------------------------------
+// A YYYY-MM-DD Manila date is a CALENDAR date, not an instant, so month/year
+// arithmetic on it must never round-trip through `Date`. The financial-statement
+// presets used to do exactly that: they stamped `${todayISO}T00:00:00+08:00`
+// (correctly pinning Manila midnight) and then read `getUTCFullYear()` /
+// `getUTCMonth()` back out — but Manila midnight is 16:00 UTC the *previous*
+// day, so on the 1st of any month the UTC month was the month before. "This
+// month" returned last month, and on 1 January "Year-to-date" returned the
+// whole previous year — on precisely the day someone opens those presets to
+// close the books. Parsing the string into integers removes the class of bug.
+
+const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+/** Proleptic Gregorian leap year. */
+function isLeapYear(year: number): boolean {
+  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+}
+
+/**
+ * Fold a (year, month) pair whose month falls outside 1-12 into the
+ * neighbouring year, so callers can say "11 months back" as `month - 11` and
+ * not hand-roll the December wrap.
+ */
+function normaliseMonth(year: number, month: number): { year: number; month: number } {
+  const idx = year * 12 + (month - 1);
+  return { year: Math.floor(idx / 12), month: (((idx % 12) + 12) % 12) + 1 };
+}
+
+/** Calendar parts of a YYYY-MM-DD Manila date. `month` is 1-12, not 0-11. */
+export function isoDateParts(isoDate: string): {
+  year: number;
+  month: number;
+  day: number;
+} {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  return { year, month, day };
+}
+
+/** Days in (year, month), leap years included. Month may be outside 1-12. */
+export function daysInMonth(year: number, month: number): number {
+  const n = normaliseMonth(year, month);
+  return n.month === 2 && isLeapYear(n.year) ? 29 : DAYS_IN_MONTH[n.month - 1];
+}
+
+/** YYYY-MM-DD for the 1st of (year, month). Month may be outside 1-12. */
+export function firstOfMonthISO(year: number, month: number): string {
+  const n = normaliseMonth(year, month);
+  return `${n.year}-${pad2(n.month)}-01`;
+}
+
+/** YYYY-MM-DD for the last day of (year, month). Month may be outside 1-12. */
+export function lastOfMonthISO(year: number, month: number): string {
+  const n = normaliseMonth(year, month);
+  return `${n.year}-${pad2(n.month)}-${pad2(daysInMonth(n.year, n.month))}`;
+}
