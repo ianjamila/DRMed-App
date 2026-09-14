@@ -21,6 +21,7 @@ import { StaffSearchInput } from "./search-input";
 import { RestoreButton } from "./restore-button";
 import { PageHeader } from "@/components/staff/page-header";
 import { Panel } from "@/components/ui/panel";
+import { manilaDateTime } from "@/lib/dates/manila";
 
 export const metadata = {
   title: "Staff users — staff",
@@ -94,15 +95,6 @@ async function loadStaff(): Promise<{
   };
 }
 
-function formatManila(iso: string): string {
-  // Brief, locale-aware presentation of a timestamp.
-  return new Date(iso).toLocaleString("en-PH", {
-    timeZone: "Asia/Manila",
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
-}
-
 function RoleBadge({ role }: { role: string }) {
   return (
     <span className="rounded-md bg-[color:var(--color-brand-bg)] px-2 py-0.5 text-xs font-semibold text-[color:var(--color-brand-text-mid)]">
@@ -168,7 +160,7 @@ function LastSignIn({ iso, now }: { iso: string | null; now: Date }) {
       <div>{relativeSignIn(iso, now)}</div>
       {iso ? (
         <div className="mt-0.5 text-xs text-[color:var(--color-brand-text-soft)]">
-          {formatManila(iso)}
+          {manilaDateTime(iso)}
         </div>
       ) : null}
     </>
@@ -514,7 +506,7 @@ export default async function StaffUsersPage({ searchParams }: SearchProps) {
                       {roleLabel(u.role)}
                     </td>
                     <td className="px-4 py-3 text-rose-900/80">
-                      <div>{u.deleted_at ? formatManila(u.deleted_at) : "—"}</div>
+                      <div>{u.deleted_at ? manilaDateTime(u.deleted_at) : "—"}</div>
                       {u.deleted_by ? (
                         <div className="mt-0.5 text-xs text-rose-900/60">
                           by {deleterNames.get(u.deleted_by) ?? "(removed admin)"}

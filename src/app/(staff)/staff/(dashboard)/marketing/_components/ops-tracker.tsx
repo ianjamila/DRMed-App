@@ -18,7 +18,7 @@ import {
   RotateCcw,
   type LucideIcon,
 } from "lucide-react";
-import { todayManilaISODate } from "@/lib/dates/manila";
+import { friendlyManilaDate, todayManilaISODate } from "@/lib/dates/manila";
 
 /* ---------- palette (matches ad-dashboard.tsx) ---------- */
 const C = {
@@ -332,13 +332,7 @@ export function OpsTracker() {
     }));
   };
 
-  const dateStr = new Date().toLocaleDateString("en-PH", {
-    timeZone: "Asia/Manila",
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
+  const dateStr = friendlyManilaDate(todayManilaISODate());
 
   if (!hydrated) return null;
 

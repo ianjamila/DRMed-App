@@ -15,6 +15,7 @@ import {
   PRE_REGISTERED_BADGE_CLASS,
 } from "@/lib/patients/labels";
 import { Panel } from "@/components/ui/panel";
+import { manilaDate } from "@/lib/dates/manila";
 
 export const metadata = {
   title: "Patient — staff",
@@ -130,7 +131,7 @@ export default async function PatientDetailPage({ params }: Props) {
         <Field label="Address" value={patient.address ?? "—"} />
         <Field
           label="Registered"
-          value={new Date(patient.created_at).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })}
+          value={manilaDate(patient.created_at)}
         />
       </section>
 
@@ -242,7 +243,7 @@ export default async function PatientDetailPage({ params }: Props) {
                       </Link>
                     </td>
                     <td className="px-4 py-3">
-                      {new Date(v.visit_date).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })}
+                      {manilaDate(v.visit_date)}
                     </td>
                     <td className="px-4 py-3">{formatPhp(v.total_php)}</td>
                     <td className="px-4 py-3">{formatPhp(v.paid_php)}</td>

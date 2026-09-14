@@ -5,6 +5,7 @@ import { reportError } from "@/lib/observability/report-error";
 import { SITE } from "@/lib/marketing/site";
 import { sendEmail } from "./email";
 import { buildReminderEmail } from "./reminder-email";
+import { formatManilaDateTime } from "./format-manila-datetime";
 
 interface Input {
   appointmentId: string;
@@ -47,11 +48,7 @@ export async function notifyAppointmentReminder({
   const email = patient?.email ?? null;
   const serviceName = svc?.name ?? "your appointment";
   const when = appt.scheduled_at
-    ? new Date(appt.scheduled_at).toLocaleString("en-PH", {
-        dateStyle: "long",
-        timeStyle: "short",
-        timeZone: "Asia/Manila",
-      })
+    ? formatManilaDateTime(appt.scheduled_at)
     : "your scheduled time";
   const cancelUrl = `${SITE.url.replace(/\/$/, "")}/appointments/cancel/${appt.id}`;
 

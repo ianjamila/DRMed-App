@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Panel } from "@/components/ui/panel";
 import { voidPettyCashExpenseAction } from "./actions";
+import { manilaTime } from "@/lib/dates/manila";
 
 export interface PettyCashRow {
   /** `eod_cash_adjustments.id` — what the void acts on. */
@@ -23,14 +24,6 @@ const peso = new Intl.NumberFormat("en-PH", {
   style: "currency",
   currency: "PHP",
 });
-
-function timeManila(iso: string): string {
-  return new Date(iso).toLocaleTimeString("en-PH", {
-    timeZone: "Asia/Manila",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
 
 export function PettyCashList({
   rows,
@@ -113,7 +106,7 @@ function PettyCashItem({ row }: { row: PettyCashRow }) {
             {title}
           </p>
           <p className="mt-0.5 text-xs text-[color:var(--color-brand-text-soft)]">
-            {timeManila(row.recorded_at)}
+            {manilaTime(row.recorded_at)}
             {voided ? " · voided" : ""}
           </p>
           {row.uncategorised && !voided && (

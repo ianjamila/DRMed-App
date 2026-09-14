@@ -12,6 +12,7 @@ import {
   parseStuckTestsParams,
   stuckTestsCsvHref,
 } from "@/lib/reports/stuck-tests";
+import { manilaDateTime } from "@/lib/dates/manila";
 
 export const metadata = { title: "Stuck tests — staff" };
 export const dynamic = "force-dynamic";
@@ -33,10 +34,6 @@ const PAYMENT_STYLE: Record<string, string> = {
   unpaid: "bg-red-100 text-red-900",
   partial: "bg-amber-100 text-amber-900",
 };
-
-function manila(ts: string): string {
-  return new Date(ts).toLocaleString("en-PH", { timeZone: "Asia/Manila" });
-}
 
 export default async function StuckTestsPage({ searchParams }: SearchProps) {
   await requireAdminStaff();
@@ -126,7 +123,7 @@ export default async function StuckTestsPage({ searchParams }: SearchProps) {
                         {ageDays(r.requested_at)}d
                       </p>
                       <p className="text-xs text-[color:var(--color-brand-text-soft)]">
-                        {manila(r.requested_at)}
+                        {manilaDateTime(r.requested_at)}
                       </p>
                     </td>
                     <td className="px-4 py-3">
@@ -232,7 +229,7 @@ export default async function StuckTestsPage({ searchParams }: SearchProps) {
                           {ageDays(h.requested_at)}d
                         </p>
                         <p className="text-xs text-[color:var(--color-brand-text-soft)]">
-                          {manila(h.requested_at)}
+                          {manilaDateTime(h.requested_at)}
                         </p>
                       </td>
                       <td className="px-4 py-3">
@@ -318,7 +315,7 @@ export default async function StuckTestsPage({ searchParams }: SearchProps) {
                           {ageDays(h.requested_at)}d
                         </p>
                         <p className="text-xs text-[color:var(--color-brand-text-soft)]">
-                          {manila(h.requested_at)}
+                          {manilaDateTime(h.requested_at)}
                         </p>
                       </td>
                       <td className="px-4 py-3">
@@ -411,7 +408,7 @@ export default async function StuckTestsPage({ searchParams }: SearchProps) {
                           {ageDays(v.created_at)}d
                         </p>
                         <p className="text-xs text-[color:var(--color-brand-text-soft)]">
-                          {manila(v.created_at)}
+                          {manilaDateTime(v.created_at)}
                         </p>
                       </td>
                       <td className="px-4 py-3">

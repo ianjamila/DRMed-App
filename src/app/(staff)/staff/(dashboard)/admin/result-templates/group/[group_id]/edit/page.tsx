@@ -10,6 +10,7 @@ import type {
   TemplateEditorPayload,
   TemplateParamPayload,
 } from "@/lib/validations/result-template";
+import { manilaDateTime } from "@/lib/dates/manila";
 
 export const metadata = { title: "Edit group template — staff" };
 
@@ -317,11 +318,7 @@ export default async function EditGroupTemplatePage({ params }: Props) {
                       </p>
                     </div>
                     <time className="shrink-0 font-mono text-xs text-[color:var(--color-brand-text-soft)]">
-                      {new Date(h.created_at).toLocaleString("en-PH", {
-                        timeZone: "Asia/Manila",
-                        dateStyle: "medium",
-                        timeStyle: "short",
-                      })}
+                      {manilaDateTime(h.created_at)}
                     </time>
                   </li>
                 );

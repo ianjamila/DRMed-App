@@ -18,6 +18,7 @@ import {
   Stethoscope,
 } from "lucide-react";
 import { formatPhp } from "@/lib/marketing/format";
+import { formatManilaDateTime } from "@/lib/notifications/format-manila-datetime";
 import { hoursWithLastRegistration, streetAddressLine } from "@/lib/marketing/nap";
 import {
   SlotPicker,
@@ -1369,11 +1370,7 @@ function ReviewStep(props: {
     null;
 
   const whenLabel = scheduledAt
-    ? new Date(scheduledAt).toLocaleString("en-PH", {
-        dateStyle: "long",
-        timeStyle: "short",
-        timeZone: "Asia/Manila",
-      })
+    ? formatManilaDateTime(scheduledAt)
     : null;
 
   const rows = [

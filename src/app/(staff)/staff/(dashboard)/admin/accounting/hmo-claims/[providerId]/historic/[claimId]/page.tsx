@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { SingleClaimActions } from "../../../_components/single-claim-actions";
+import { manilaDate, manilaDateTime } from "@/lib/dates/manila";
 
 export const metadata = { title: "Historic HMO claim — staff" };
 export const dynamic = "force-dynamic";
@@ -101,11 +102,6 @@ export default async function HistoricClaimDetail({
   const totalBase = (siblings ?? []).reduce((s, r) => s + Number(r.base_amount_php), 0);
   const totalFinal = (siblings ?? []).reduce((s, r) => s + Number(r.final_amount_php), 0);
 
-  function fmtDate(d: string | null): string {
-    if (!d) return "—";
-    return new Date(d).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" });
-  }
-
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
       <div className="mb-4">
@@ -126,7 +122,7 @@ export default async function HistoricClaimDetail({
             {claim.patient_name}
           </h1>
           <p className="mt-2 text-sm text-[color:var(--color-brand-text-soft)]">
-            {claim.hmo_provider} · {fmtDate(claim.claim_date)} ·{" "}
+            {claim.hmo_provider} · {manilaDate(claim.claim_date)} ·{" "}
             <span
               className={
                 "ml-2 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider " +
@@ -159,9 +155,9 @@ export default async function HistoricClaimDetail({
         <Field label="Base price" value={PHP.format(Number(claim.base_amount_php))} />
         <Field label="Final price" value={PHP.format(Number(claim.final_amount_php))} />
         <Field label="Service" value={claim.service_description ?? "—"} />
-        <Field label="Date submitted (invoice sent)" value={fmtDate(claim.date_submitted)} />
-        <Field label="Deadline" value={fmtDate(claim.deadline_date)} />
-        <Field label="Date paid" value={fmtDate(claim.date_paid)} />
+        <Field label="Date submitted (invoice sent)" value={manilaDate(claim.date_submitted)} />
+        <Field label="Deadline" value={manilaDate(claim.deadline_date)} />
+        <Field label="Date paid" value={manilaDate(claim.date_paid)} />
         <Field label="OR #" value={claim.or_number ?? "—"} />
         <Field label="Source" value={`${claim.source_tab} row ${claim.source_row}`} />
         <Field
@@ -193,7 +189,7 @@ export default async function HistoricClaimDetail({
           <ol className="mt-3 space-y-2 text-xs">
             {auditRows.map((a) => {
               const actorName = a.actor_id ? actorMap.get(a.actor_id) ?? "(unknown)" : "(system)";
-              const when = new Date(a.created_at).toLocaleString("en-PH", { timeZone: "Asia/Manila" });
+              const when = manilaDateTime(a.created_at);
               const label = a.action.replace("historic_hmo.", "");
               const meta = a.metadata ?? {};
               const datePaid = (meta as Record<string, unknown>).date_paid;
@@ -232,7 +228,7 @@ export default async function HistoricClaimDetail({
       <section className="mb-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4">
         <div className="mb-3 flex items-baseline justify-between">
           <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
-            All tests / services on {fmtDate(claim.claim_date)}
+            All tests / services on {manilaDate(claim.claim_date)}
           </h2>
           <div className="text-xs text-[color:var(--color-brand-text-soft)]">
             {(siblings ?? []).length} item{(siblings ?? []).length === 1 ? "" : "s"} · Total{" "}

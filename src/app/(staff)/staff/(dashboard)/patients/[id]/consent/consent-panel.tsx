@@ -10,6 +10,7 @@ import {
   uploadConsentArtifactAction,
   viewConsentArtifactAction,
 } from "@/lib/actions/consent/artifact";
+import { manilaDate } from "@/lib/dates/manila";
 
 type Signatory = "self" | "guardian" | "representative";
 
@@ -143,7 +144,7 @@ export function ConsentPanel({
           <span className="text-green-700">
             On file
             {signedAt
-              ? ` — ${new Date(signedAt).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })}`
+              ? ` — ${manilaDate(signedAt)}`
               : ""}
             {noticeVersion ? ` (notice ${noticeVersion})` : ""}
           </span>

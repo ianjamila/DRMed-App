@@ -7,6 +7,7 @@ import {
   getPatientLabRequestFormUrl,
   deletePatientLabRequestUpload,
 } from "./actions";
+import { manilaDate } from "@/lib/dates/manila";
 
 export interface UploadRow {
   id: string;
@@ -78,12 +79,7 @@ export function LabRequestUploads({ rows }: { rows: UploadRow[] }) {
                 </p>
                 <p className="truncate text-xs text-[color:var(--color-brand-text-soft)]">
                   {row.filename} · uploaded{" "}
-                  {new Date(row.createdAt).toLocaleDateString("en-PH", {
-                    timeZone: "Asia/Manila",
-                    year: "numeric",
-                    month: "short",
-                    day: "numeric",
-                  })}
+                  {manilaDate(row.createdAt)}
                 </p>
               </div>
               <div className="flex shrink-0 items-center gap-2">

@@ -121,6 +121,24 @@ export function manilaDate(value: string | Date | null | undefined): string {
   }).format(d);
 }
 
+/**
+ * The long-form date, "September 11, 2026" — for the few places a date is the
+ * page's headline rather than a cell in a table (the patient portal's visit
+ * header). Same normalisation as `manilaDate`, so a bare YYYY-MM-DD cannot
+ * slide to the previous day the way `new Date("2026-09-11")` does in a
+ * westward zone.
+ */
+export function manilaLongDate(value: string | Date | null | undefined): string {
+  const d = toManilaInstant(value);
+  if (!d) return "—";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    timeZone: MANILA_TZ,
+  }).format(d);
+}
+
 /** The canonical date + time: "Sep 11, 2026, 2:06 PM". */
 export function manilaDateTime(value: string | Date | null | undefined): string {
   const d = toManilaInstant(value);
