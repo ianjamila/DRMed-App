@@ -135,6 +135,11 @@ export function translatePgError(err: PgError): string {
     // PR N — EOD cash denomination count (0132)
     case "P0048":
       return err.message ?? "The denomination counts don't add up to the counted total. Re-check the count sheet.";
+    // M1 — till cash has one write path (0145). Reception should never see
+    // this: both doors now write eod_cash_adjustments. It fires only if some
+    // future code path tries to post a petty-cash journal entry directly.
+    case "P0049":
+      return "Cash paid from the till has to go through the cash drawer so the day's count stays right. Record it on the Petty cash page.";
     default:
       return err.message ?? "Database error. Please try again.";
   }

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   EXPENSE_CATEGORIES,
   MOP_OPTIONS,
+  isTillCashMop,
   type ExpenseCategory,
   type Mop,
 } from "@/lib/accounting/expense-mappings";
@@ -67,7 +68,15 @@ export function QuickExpenseForm({ defaultDate }: Props) {
         setErr(r.error);
         return;
       }
-      setOk(`Posted ${r.data.entry_number}.`);
+      // A "Clinic Cash" expense is recorded as a cash-drawer payout, so say so
+      // — it moves the till, not just the books. Its entry number comes from
+      // the journal entry the DB bridge posts, which can read back empty.
+      const posted = r.data.entry_number ? `Posted ${r.data.entry_number}.` : "Posted.";
+      setOk(
+        isTillCashMop(mop as Mop)
+          ? `${posted} Recorded as a cash-drawer payout — it also shows on the Petty cash page.`
+          : posted,
+      );
       reset();
       router.refresh();
     });

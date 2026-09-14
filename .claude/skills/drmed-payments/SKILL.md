@@ -64,7 +64,7 @@ eod_close_records       counted_cash_php + counted_denominations jsonb (0132: bi
 | `src/lib/visits/classification.ts` | Lab Tests is the COMPLEMENT of the two doctor kinds, never an allow-list. `foldVisitGroups` merges split encounters. |
 | `src/lib/accounting/cash-denominations.ts` | The 11 denomination slugs; totals in **centavos** (₱0.25 × n drifts in float). Mirrored by the SQL values table + P0048 whitelist — `cash-denominations.parity.test.ts` parses migration 0132 to keep all three in step. |
 | `src/lib/accounting/amount-in-words.ts`, `pf-labels.ts` | Peso amounts spelled out (voucher convention); bookkeeper vs doctor-facing basis labels. |
-| `src/lib/accounting/pg-errors.ts` — `translatePgError` | P0001–P0034, P0040–P0048 → user-facing strings. Add a case for every new `raise`. |
+| `src/lib/accounting/pg-errors.ts` — `translatePgError` | P0001–P0034, P0040–P0049 → user-facing strings. Add a case for every new `raise`. |
 | `src/lib/dates/manila.ts` — `manilaRangeUtc`, `isISODate`, `shiftISODate`, `todayManilaISODate` | Every date bound is a **half-open Manila window** (`gte` start, `lt` next day). Never build `${d}T00:00:00` strings — Postgres reads them as UTC, 8 hours early. |
 
 ## Server actions & routes
@@ -98,8 +98,9 @@ Admin-managed `discount_types` catalog. Kinds `percent` / `fixed` / `custom` (cu
 
 ## Cash close / EOD
 
-- `cash_shifts` (`morning`/`afternoon`), `eod_close_records` per `business_date` + shift, `eod_cash_adjustments` (`float_initial`, `float_topup`, `float_pullout`, `petty_cash_in/out`, `salary_advance`, `courier_fee`, `salary_payout`).
+- `cash_shifts` (a lookup of shift definitions — `code`/`label`/`is_active`/`sort_order`, not per-day instances; "the shift" is the first active row by `sort_order, code`, which is how `payments_block_after_close`, the cash-drawer page and `postTillCashExpense` all resolve it), `eod_close_records` per `business_date` + shift, `eod_cash_adjustments` with `kind` in exactly `petty_cash`, `salary_advance`, `courier`, `other_payout`, `float_topup`, `float_pullout`, `salary_payout`, `gift_code_sale` (the live CHECK; `float_topup` is the only cash-IN payout kind besides `gift_code_sale`). The Zod `CashAdjustmentKindEnum` is deliberately narrower — it omits `salary_payout` and `gift_code_sale`, which their own actions write directly.
 - The close grid is the source of truth: counted total and difference are computed from denominations, never typed.
+- **Cash out of the till has ONE write path: `eod_cash_adjustments`.** `postTillCashExpense()` (`src/lib/actions/accounting/post-till-cash-expense.ts`) is the only correct writer, and both doors use it — the reception Petty cash page and admin Quick expense whenever the payment source is "Clinic Cash". It inserts the adjustment row and lets `trg_bridge_cash_adjustment_insert` post the JE; voiding is a plain `voided_at` update that `trg_bridge_cash_adjustment_void` mirrors. Never post a journal entry that credits 1010 for a till expense: `cash_drawer_state.expected_cash_php` derives payouts *solely* from `eod_cash_adjustments` and never reads `journal_entries`, so a direct JE moves the books but not the drawer — reception counts short and the close credits cash a second time into 6900 Cash Short/Over. `postExpenseJournalEntry()` refuses `MOP = "CLINIC CASH"` and migration 0145's P0049 guard blocks `source_kind='petty_cash'` journal entries outright (that enum value is retired; `reverse_petty_cash_entry` from 0102 was dropped with it). Still-open doors of the same shape, deliberately out of M1's scope: an AP **cash bill payment** and a hand-posted **manual JE** from the admin journal can both still credit 1010 without touching the drawer.
 - `cash_drawer_state` is **service_role-only** (0118; re-created in 0132 with the ACL restated). Don't re-grant `authenticated`.
 - **Trends panel wording is deliberately loose** ("consistent with …"): payments record amounts, not the notes handed over, so no per-denomination expectation exists. Attribution is arithmetic only; centavo residue = keyed amount, not a miscount. Don't tighten it.
 
@@ -112,7 +113,7 @@ Admin-managed `discount_types` catalog. Kinds `percent` / `fixed` / `custom` (cu
 - Payment insert → JE (DR cash account per `payment_method_account_map` / CR AR-Patient or AR-HMO).
 - Test release → revenue JE with HMO splits + discount lines + doctor PF accrual (`bridge_test_request_released`).
 - Void / undo-release → reversal JE.
-- Everything routes through service-role RPCs (`ap_*`, `reverse_petty_cash_entry`, …) that take `p_actor_id` from `requireAdminStaff()` — that is NOT a spoofing hole (0118 revoked JWT callers; investigated and closed).
+- Everything routes through service-role RPCs (`ap_*` incl. `ap_reverse_je_for_source`, …) that take `p_actor_id` from `requireAdminStaff()` — that is NOT a spoofing hole (0118 revoked JWT callers; investigated and closed).
 
 ## Hard rules
 

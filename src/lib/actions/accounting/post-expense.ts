@@ -5,6 +5,7 @@ import { translatePgError } from "@/lib/accounting/pg-errors";
 import {
   CATEGORY_TO_COA,
   MOP_TO_COA,
+  isTillCashMop,
   type ExpenseCategory,
   type Mop,
 } from "@/lib/accounting/expense-mappings";
@@ -20,9 +21,16 @@ export type PostExpenseResult =
  * Posts a balanced, already-paid expense as a single posted journal entry:
  *   DR <expense category account>  /  CR <payment source account>
  *
- * Shared by the admin "Quick expense" form (source_kind 'manual') and the
- * reception "Petty cash" form (source_kind 'petty_cash'). The `notesTag`
- * is stored in `journal_entries.notes` so each surface is traceable.
+ * Used by the admin "Quick expense" form (source_kind 'manual') for every
+ * payment source EXCEPT physical cash out of the till. The `notesTag` is
+ * stored in `journal_entries.notes` so each surface is traceable.
+ *
+ * **This function must never credit 1010 Cash on Hand.** A till expense has to
+ * be written as an `eod_cash_adjustments` row via `postTillCashExpense()`, or
+ * the drawer never learns the money left — see `TILL_CASH_MOP` for the full
+ * consequence. Both the reception Petty cash page and Quick expense on
+ * "Clinic Cash" used to come through here; the refusal below is what keeps a
+ * future caller from quietly restoring that.
  *
  * Ordering matters: insert the JE as `draft`, insert both balanced lines, THEN
  * flip to `posted` — `trg_je_status_balance_check` validates debits == credits
@@ -42,6 +50,18 @@ export async function postExpenseJournalEntry(args: {
   sourceKind: SourceKind;
   notesTag: string;
 }): Promise<PostExpenseResult> {
+  // Unreachable from the UI — createQuickExpenseAction routes this MOP to
+  // postTillCashExpense() before ever calling here. This is the backstop that
+  // keeps a future caller from reopening M1, so the message stays user-safe
+  // rather than naming the internal helper.
+  if (isTillCashMop(args.mop)) {
+    return {
+      ok: false,
+      error:
+        "Cash paid from the till has to go through the cash drawer so the day's count stays right. Record it on the Petty cash page.",
+    };
+  }
+
   const drCode = CATEGORY_TO_COA[args.category];
   const crCode = MOP_TO_COA[args.mop];
   if (!drCode) return { ok: false, error: `Unknown category: ${args.category}` };
