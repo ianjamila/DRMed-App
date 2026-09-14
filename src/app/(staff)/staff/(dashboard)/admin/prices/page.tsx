@@ -86,7 +86,7 @@ export default async function PricesAdminPage() {
   });
 
   return (
-    <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="px-4 py-8 sm:px-6 lg:px-8">
       <PageHeader
         title="Prices"
         subtitle="Edit DRMed and HMO pricing for every service. Senior/PWD is a flat statutory 20% managed on the Discounts page. Each change is recorded automatically — click any row to see its full history."

@@ -103,11 +103,16 @@ no outer container at all**. These are the three rules that fix it. Apply them
 to any page you touch; don't blind-sweep the whole tree.
 
 **1 · Width belongs to the shell, not the page.**
-`StaffShell`'s `<main>` owns the container:
-`mx-auto w-full max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8`. A page therefore
-adds **no** `mx-auto max-w-* px-* py-*` wrapper of its own — doing so
-double-pads it, and a different `max-w` per page is exactly what made the
-column shift sideways between routes.
+`StaffShell`'s `<main>` owns the width: `mx-auto w-full max-w-screen-2xl`.
+A page adds **no** `mx-auto max-w-*` of its own — a different `max-w` per page
+is exactly what made the column shift sideways between routes.
+
+**The shell deliberately does NOT own the padding.** Pages keep their own
+`px-4 py-8 sm:px-6 lg:px-8`. This is the whole reason conversion can be
+incremental: if the shell padded too, every page still carrying its own would
+double-pad, so the sweep would have to be all-or-nothing across 151 files.
+Converting a page therefore means deleting only its `mx-auto max-w-*` and
+leaving the padding alone.
 
 A page that is *deliberately* narrow — a single-column focused form (new visit,
 new journal entry, login) — keeps a narrow wrapper on its FORM, inside the

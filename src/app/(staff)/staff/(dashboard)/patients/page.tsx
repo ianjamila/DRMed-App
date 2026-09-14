@@ -177,7 +177,7 @@ export default async function PatientsPage({ searchParams }: SearchProps) {
   );
 
   return (
-    <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="px-4 py-8 sm:px-6 lg:px-8">
       <PageHeader
         title="Patients"
         subtitle="Search by DRM-ID, name, phone, or email — filters as you type."

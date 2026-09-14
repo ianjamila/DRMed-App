@@ -60,7 +60,7 @@ export default async function PettyCashPage({
   });
 
   return (
-    <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="px-4 py-8 sm:px-6 lg:px-8">
       <PageHeader
         title="Petty cash"
         subtitle="Log small cash expenses paid from the till — transport, courier, office or lab supplies, minor repairs. Each entry is recorded in the books so the day's cash count adds up. For anything paid by GCash, bank transfer, or a vendor invoice, ask admin."

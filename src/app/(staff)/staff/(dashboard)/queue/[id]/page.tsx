@@ -319,7 +319,7 @@ export default async function QueueTestDetailPage({ params }: Props) {
     (!result || result.generation_kind === "uploaded");
 
   return (
-    <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="px-4 py-8 sm:px-6 lg:px-8">
       <Link
         href="/staff/queue"
         className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
@@ -595,7 +595,7 @@ function PackageHeaderSummary({
   components: PackageComponentSummary[];
 }) {
   return (
-    <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="px-4 py-8 sm:px-6 lg:px-8">
       <Link
         href="/staff/queue"
         className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"

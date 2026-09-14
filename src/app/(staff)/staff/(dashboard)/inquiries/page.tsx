@@ -116,7 +116,7 @@ export default async function InquiriesPage({ searchParams }: PageProps) {
   }));
 
   return (
-    <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="px-4 py-8 sm:px-6 lg:px-8">
       <PageHeader
         title="Inquiries"
         subtitle="Phone leads, FB messages, and walk-ins that haven't booked yet. Confirm them when reception books an appointment, or drop with a reason if they decided not to push through."

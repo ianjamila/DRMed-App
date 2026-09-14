@@ -197,7 +197,7 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
   const hasFilters = Boolean(start || end || q || status !== "all");
 
   return (
-    <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="px-4 py-8 sm:px-6 lg:px-8">
       <PageHeader
         title="Results"
         subtitle={

@@ -498,7 +498,7 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
   const exitFlatHref = buildListHref(BASE_PATH, { type: typeParam }, {});
 
   return (
-    <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="px-4 py-8 sm:px-6 lg:px-8">
       <RealtimeRefresher
         channelName="appointments-page"
         subscriptions={[

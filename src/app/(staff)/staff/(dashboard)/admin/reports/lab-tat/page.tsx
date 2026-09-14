@@ -46,7 +46,7 @@ export default async function LabTatPage({ searchParams }: SearchProps) {
   const { median: overallMedian, p95: overallP95, totalReleased, totalBreaches, breachPct: overallBreachPct } = overall;
 
   return (
-    <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="px-4 py-8 sm:px-6 lg:px-8">
       <Link
         href="/staff"
         className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"

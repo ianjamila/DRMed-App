@@ -49,7 +49,7 @@ export default async function StuckTestsPage({ searchParams }: SearchProps) {
     await loadStuckTests(admin, params, PAGE_MAX_ROWS);
 
   return (
-    <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="px-4 py-8 sm:px-6 lg:px-8">
       <PageHeader
         title="Stuck tests"
         subtitle={`Tests sitting longer than ${days} day${days === 1 ? "" : "s"} in any non-final state — unclaimed, in progress, or ready but unreleased — so nothing silently stalls.`}

@@ -233,7 +233,8 @@ export function EodClient(props: {
   };
 
   return (
-    <main className="mx-auto max-w-2xl px-4 py-6 sm:px-6">
+    <main className="px-4 py-6 sm:px-6">
+    <div className="mx-auto max-w-2xl">
       <PaymentsTabs />
       <h1 className="font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
         Close &amp; count cash · {formatBusinessDate(props.businessDate)}
@@ -341,6 +342,7 @@ export function EodClient(props: {
           </div>
         </section>
       )}
+    </div>
     </main>
   );
 }
