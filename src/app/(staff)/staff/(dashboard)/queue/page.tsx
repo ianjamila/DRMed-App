@@ -9,6 +9,7 @@ import { PageHeader } from "@/components/staff/page-header";
 import { Panel } from "@/components/ui/panel";
 import {
   isISODate,
+  manilaDateTime,
   manilaDayWindowUtc,
   manilaRangeUtc,
   todayManilaISODate,
@@ -372,7 +373,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   }
 
   return (
-    <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="px-4 py-8 sm:px-6 lg:px-8">
       {viewingHistory ? null : (
         <RealtimeRefresher
           channelName="queue-page"
@@ -582,9 +583,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                       className="hover:bg-[color:var(--color-brand-bg)]"
                     >
                       <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
-                        {new Date(card.requestedAt).toLocaleString("en-PH", {
-                          timeZone: "Asia/Manila",
-                        })}
+                        {manilaDateTime(card.requestedAt)}
                       </td>
                       <td className="px-4 py-3">
                         <Link
@@ -663,9 +662,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                     className="hover:bg-[color:var(--color-brand-bg)]"
                   >
                     <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
-                      {new Date(card.requestedAt).toLocaleString("en-PH", {
-                        timeZone: "Asia/Manila",
-                      })}
+                      {manilaDateTime(card.requestedAt)}
                     </td>
                     <td className="px-4 py-3">
                       <Link

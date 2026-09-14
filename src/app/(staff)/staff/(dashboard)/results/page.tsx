@@ -3,6 +3,7 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   isISODate,
+  manilaDateTime,
   manilaRangeUtc,
   todayManilaISODate,
 } from "@/lib/dates/manila";
@@ -196,7 +197,7 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
   const hasFilters = Boolean(start || end || q || status !== "all");
 
   return (
-    <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="px-4 py-8 sm:px-6 lg:px-8">
       <PageHeader
         title="Results"
         subtitle={
@@ -382,13 +383,13 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
                         ) : null}
                       </td>
                       <td className="px-4 py-3 text-xs text-[color:var(--color-brand-text-soft)]">
-                        {formatDateTime(g.requestedAt)}
+                        {manilaDateTime(g.requestedAt)}
                       </td>
                       <td className="px-4 py-3 text-xs text-[color:var(--color-brand-text-soft)]">
-                        {g.completedAt ? formatDateTime(g.completedAt) : "—"}
+                        {g.completedAt ? manilaDateTime(g.completedAt) : "—"}
                       </td>
                       <td className="px-4 py-3 text-xs text-[color:var(--color-brand-text-soft)]">
-                        {g.releasedAt ? formatDateTime(g.releasedAt) : "—"}
+                        {g.releasedAt ? manilaDateTime(g.releasedAt) : "—"}
                       </td>
                       <td className="px-4 py-3 text-xs">
                         <div className="flex flex-col gap-0.5">
@@ -555,11 +556,3 @@ function summarizeStatuses(statuses: string[]): StatusSummary {
   return { kind: "mixed", entries };
 }
 
-function formatDateTime(iso: string): string {
-  // e.g. "5/28/2026, 11:42 AM"
-  return new Date(iso).toLocaleString("en-PH", {
-    timeZone: "Asia/Manila",
-    dateStyle: "short",
-    timeStyle: "short",
-  });
-}

@@ -210,7 +210,7 @@ export default async function VisitsQueuePage({ searchParams }: SearchProps) {
   const countFor = (s: QueueStage) => buckets[s].length;
 
   return (
-    <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="px-4 py-8 sm:px-6 lg:px-8">
       {/* Live updates only matter for today — a past day can't change under you. */}
       {isToday ? (
         <RealtimeRefresher

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
-import { isISODate, todayManilaISODate } from "@/lib/dates/manila";
+import { isISODate, manilaDate, todayManilaISODate } from "@/lib/dates/manila";
 import { VisitsTabs } from "./_components/visits-tabs";
 import { paymentStatusLabel } from "@/lib/ui/payment-status";
 import { formatPatientName } from "@/lib/patients/format-name";
@@ -9,7 +9,26 @@ import { Panel } from "@/components/ui/panel";
 import { ExportCsvLink } from "@/components/staff/export-csv-link";
 import { PageHeader } from "@/components/staff/page-header";
 import { sectionTabClass } from "@/components/staff/section-tabs-style";
-import { fetchArchiveWindow, type ArchiveRow } from "@/lib/visits/archive-query";
+import {
+  ariaSortFor,
+  buildListHref,
+  DEFAULT_PAGE_SIZE,
+  nextSort,
+  pageCount,
+  parsePage,
+  parsePageSize,
+  parseSort,
+  rangeFor,
+} from "@/lib/ui/table-params";
+import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
+import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
+import {
+  ARCHIVE_SORT_COLUMNS,
+  DEFAULT_ARCHIVE_SORT,
+  fetchArchiveWindow,
+  type ArchiveRow,
+  type ArchiveSortColumn,
+} from "@/lib/visits/archive-query";
 import {
   isVisitView,
   parseVisitClasses,
@@ -27,6 +46,18 @@ import {
 
 export const metadata = {
   title: "Visit archive — staff",
+};
+
+const BASE_PATH = "/staff/visits";
+
+/** Column labels for the sortable headers — kept beside the allow-list. */
+const SORT_LABEL: Record<ArchiveSortColumn, string> = {
+  visit_date: "Date",
+  visit_number: "Visit #",
+  patient_last_name: "Patient",
+  total_php: "Total",
+  paid_php: "Paid",
+  payment_status: "Status",
 };
 
 const PHP = new Intl.NumberFormat("en-PH", {
@@ -61,13 +92,14 @@ const CLASS_ACCENT: Record<VisitClass, string> = {
   procedure: "text-fuchsia-800",
 };
 
-const PAGE_SIZE = 25;
-
 interface SearchProps {
   searchParams: Promise<{
     start?: string;
     end?: string;
     page?: string;
+    size?: string;
+    sort?: string;
+    dir?: string;
     kind?: string;
     view?: string;
   }>;
@@ -85,8 +117,10 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
   const end = isISODate(params.end) ? params.end : "";
   const classes = parseVisitClasses(params.kind);
   const view = isVisitView(params.view) ? params.view : "active";
-  const page = Math.max(1, Number(params.page) || 1);
-  const offset = (page - 1) * PAGE_SIZE;
+  const sort = parseSort(params.sort, params.dir, ARCHIVE_SORT_COLUMNS, DEFAULT_ARCHIVE_SORT);
+  const size = parsePageSize(params.size);
+  const page = parsePage(params.page);
+  const [offset] = rangeFor(page, size);
 
   const supabase = await createClient();
   const filters = { start, end, classes, view };
@@ -95,7 +129,7 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
   // (applying them would zero every column the reader is trying to compare)
   // while tracking the date range and the deleted view.
   const [{ rows, count }, summaryRes] = await Promise.all([
-    fetchArchiveWindow(supabase, filters, offset, PAGE_SIZE),
+    fetchArchiveWindow(supabase, filters, sort, offset, size),
     supabase.rpc("visits_classification_summary", {
       p_start: start || undefined,
       p_end: end || undefined,
@@ -111,27 +145,58 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
   // encounters only exist when one counter order mixes doctor and lab lines,
   // so this is at most a row or two of drift per page; the header says
   // "visits", which stays true either way.
-  const totalPages = Math.max(1, Math.ceil(count / PAGE_SIZE));
+  const totalPages = pageCount(count, size);
   const safePage = Math.min(page, totalPages);
   const splitCount = rows.filter((r) => r.split).length;
   const isAdmin = session.role === "admin";
 
+  const isDefaultSort = sort.key === DEFAULT_ARCHIVE_SORT.key && sort.dir === DEFAULT_ARCHIVE_SORT.dir;
+
+  // Every filter/sort/size param at its default is omitted, so page 1 with the
+  // default sort and size stays the bare `/staff/visits` URL. `page` is
+  // deliberately NOT here — every call site below states its own page
+  // (`null` to reset to 1, or an explicit number), same convention as
+  // `/staff/patients`.
+  const baseParams: Record<string, string | null> = {
+    start: start || null,
+    end: end || null,
+    kind: serialiseVisitClasses(classes) || null,
+    view: view === "active" ? null : view,
+    size: size === DEFAULT_PAGE_SIZE ? null : String(size),
+    sort: isDefaultSort ? null : sort.key,
+    dir: isDefaultSort ? null : sort.dir,
+  };
+
   function buildHref(overrides: Record<string, string | null>): string {
-    const sp = new URLSearchParams();
-    const base: Record<string, string> = {
-      start,
-      end,
-      kind: serialiseVisitClasses(classes),
-      view: view === "active" ? "" : view,
-      page: safePage > 1 ? String(safePage) : "",
-    };
-    for (const [k, v] of Object.entries({ ...base, ...overrides })) {
-      if (v) sp.set(k, v);
-    }
-    const qs = sp.toString();
-    return `/staff/visits${qs ? `?${qs}` : ""}`;
+    return buildListHref(BASE_PATH, baseParams, overrides);
   }
 
+  const sortHref = (key: ArchiveSortColumn) => {
+    const next = nextSort(sort, key);
+    const nextIsDefault =
+      next.key === DEFAULT_ARCHIVE_SORT.key && next.dir === DEFAULT_ARCHIVE_SORT.dir;
+    // Any change to sort resets to page 1 — staying on page 7 of a result
+    // set that just reordered is a blank screen with no explanation.
+    return buildHref({
+      sort: nextIsDefault ? null : next.key,
+      dir: nextIsDefault ? null : next.dir,
+      page: null,
+    });
+  };
+
+  const th = (key: ArchiveSortColumn, align?: "right") => (
+    <SortableTh
+      key={key}
+      label={SORT_LABEL[key]}
+      href={sortHref(key)}
+      state={ariaSortFor(sort, key)}
+      align={align}
+    />
+  );
+
+  // Same sort/dir as the table, so the file always matches what's on screen —
+  // fetchArchiveAll (the CSV's query) threads it into the identical
+  // archiveOrderPlan `fetchArchiveWindow` uses here.
   const exportQs = new URLSearchParams();
   if (start) exportQs.set("start", start);
   if (end) exportQs.set("end", end);
@@ -139,6 +204,10 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
     exportQs.set("kind", serialiseVisitClasses(classes));
   }
   if (view !== "active") exportQs.set("view", view);
+  if (!isDefaultSort) {
+    exportQs.set("sort", sort.key);
+    exportQs.set("dir", sort.dir);
+  }
   const exportHref = `/api/admin/visits.csv${exportQs.toString() ? `?${exportQs}` : ""}`;
 
   const rangeLabel =
@@ -160,7 +229,7 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
   const hasFilters = Boolean(start || end || chipLabel || view !== "active");
 
   return (
-    <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="px-4 py-8 sm:px-6 lg:px-8">
       <PageHeader
         title="Visit archive"
         subtitle={
@@ -173,34 +242,43 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
               : null}
           </>
         }
-        actions={
-          <div className="flex flex-wrap items-center gap-2">
-            <nav
-              aria-label="Filter by classification"
-              className="flex flex-wrap gap-2 text-sm"
-            >
-              <FilterTab
-                href={buildHref({ kind: null, page: null })}
-                label="All"
-                active={classes.size === 0}
-              />
-              {VISIT_CLASSES.map((c) => (
-                <FilterTab
-                  key={c}
-                  // Chips are additive — each toggles itself in or out.
-                  href={buildHref({
-                    kind: serialiseVisitClasses(toggleVisitClass(classes, c)) || null,
-                    page: null,
-                  })}
-                  label={VISIT_CLASS_LABEL[c]}
-                  active={classes.has(c)}
-                />
-              ))}
-            </nav>
-            {isAdmin ? <ExportCsvLink href={exportHref} /> : null}
-          </div>
-        }
       />
+
+      {/* The classification chips + export button used to live in PageHeader's
+          `actions` slot, sharing its `flex flex-wrap items-start
+          justify-between` row with the subtitle above. That subtitle's length
+          changes constantly (the count, the date range, the chip echo, the
+          view label, "N split visits shown as one row"), so a longer subtitle
+          pushed this row onto a new line and a shorter one pulled it back up
+          beside the title — the chips and the export button visibly jumped
+          position on every filter change. Standalone below the header, they
+          sit in the same place regardless of what the subtitle says — the
+          same fix the lab queue (`queue/page.tsx`) applies to its filter bar. */}
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+        <nav
+          aria-label="Filter by classification"
+          className="flex flex-wrap gap-2 text-sm"
+        >
+          <FilterTab
+            href={buildHref({ kind: null, page: null })}
+            label="All"
+            active={classes.size === 0}
+          />
+          {VISIT_CLASSES.map((c) => (
+            <FilterTab
+              key={c}
+              // Chips are additive — each toggles itself in or out.
+              href={buildHref({
+                kind: serialiseVisitClasses(toggleVisitClass(classes, c)) || null,
+                page: null,
+              })}
+              label={VISIT_CLASS_LABEL[c]}
+              active={classes.has(c)}
+            />
+          ))}
+        </nav>
+        {isAdmin ? <ExportCsvLink href={exportHref} /> : null}
+      </div>
 
       <div className="mb-6"><VisitsTabs /></div>
 
@@ -305,33 +383,21 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
             <table className="w-full text-sm">
               <thead className="bg-[color:var(--color-brand-bg)] text-[color:var(--color-brand-text-soft)]">
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">
-                    Date
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">
-                    Visit #
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">
-                    Patient
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">
-                    Classification
-                  </th>
-                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider">
-                    Tests
-                  </th>
-                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider">
-                    Total
-                  </th>
-                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider">
-                    Paid
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">
-                    Method
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">
-                    Status
-                  </th>
+                  {th("visit_date")}
+                  {th("visit_number")}
+                  {th("patient_last_name")}
+                  <PlainTh label="Classification" />
+                  {/* Not sortable: the count comes from a second query run
+                      after this window is fetched (package components can't
+                      be counted from the visits row), so it can't be
+                      expressed in the same .order() call. */}
+                  <PlainTh label="Tests" align="right" />
+                  {th("total_php", "right")}
+                  {th("paid_php", "right")}
+                  {/* Not sortable: aggregated from the payments join, not a
+                      single visits column. */}
+                  <PlainTh label="Method" />
+                  {th("payment_status")}
                 </tr>
               </thead>
               <tbody>
@@ -343,7 +409,7 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
                     }`}
                   >
                     <td className="whitespace-nowrap px-4 py-3 text-[color:var(--color-brand-text-soft)]">
-                      {r.visitDate}
+                      {manilaDate(r.visitDate)}
                     </td>
                     <td className="px-4 py-3 font-mono text-xs">
                       <VisitNumbers row={r} />
@@ -411,7 +477,7 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
                   {formatPatientName(r.patient)}
                 </Link>
                 <div className="text-xs text-[color:var(--color-brand-text-soft)]">
-                  {r.patient.drm_id} · {r.visitDate} · {r.testCount} test
+                  {r.patient.drm_id} · {manilaDate(r.visitDate)} · {r.testCount} test
                   {r.testCount === 1 ? "" : "s"}
                 </div>
                 <div className="mt-2">
@@ -433,39 +499,23 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
             ))}
           </div>
 
-          {totalPages > 1 ? (
-            <nav className="mt-6 flex flex-wrap items-center justify-between gap-3">
-              <p className="text-sm text-[color:var(--color-brand-text-soft)]">
-                Page {safePage} of {totalPages}
-              </p>
-              <div className="flex gap-2">
-                {safePage > 1 ? (
-                  <Link
-                    href={buildHref({ page: String(safePage - 1) })}
-                    className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-4 py-1.5 text-sm transition-colors hover:border-[color:var(--color-brand-cyan)]"
-                  >
-                    ← Previous
-                  </Link>
-                ) : (
-                  <span className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-4 py-1.5 text-sm text-[color:var(--color-brand-text-soft)] opacity-50">
-                    ← Previous
-                  </span>
-                )}
-                {safePage < totalPages ? (
-                  <Link
-                    href={buildHref({ page: String(safePage + 1) })}
-                    className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-4 py-1.5 text-sm transition-colors hover:border-[color:var(--color-brand-cyan)]"
-                  >
-                    Next →
-                  </Link>
-                ) : (
-                  <span className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-4 py-1.5 text-sm text-[color:var(--color-brand-text-soft)] opacity-50">
-                    Next →
-                  </span>
-                )}
-              </div>
-            </nav>
-          ) : null}
+          <ListPagination
+            page={safePage}
+            pageCount={totalPages}
+            total={count}
+            size={size}
+            prevHref={safePage > 1 ? buildHref({ page: safePage - 1 > 1 ? String(safePage - 1) : null }) : null}
+            nextHref={safePage < totalPages ? buildHref({ page: String(safePage + 1) }) : null}
+            sizeOptions={PAGE_SIZES.map((s) => ({
+              size: s,
+              // Changing the page size resets to page 1 — same reasoning as sort.
+              href: buildHref({
+                size: s === DEFAULT_PAGE_SIZE ? null : String(s),
+                page: null,
+              }),
+            }))}
+            noun="visit"
+          />
         </>
       )}
     </div>

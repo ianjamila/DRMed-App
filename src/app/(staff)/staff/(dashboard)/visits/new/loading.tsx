@@ -3,7 +3,7 @@ import { Panel } from "@/components/ui/panel";
 
 export default function Loading() {
   return (
-    <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="px-4 py-8 sm:px-6 lg:px-8">
       {/* Header: title + "New patient" button */}
       <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>

@@ -194,7 +194,7 @@ export default async function PfYtdSummaryPage({ searchParams }: SearchProps) {
   for (let y = currentYear; y >= 2023; y--) years.push(y);
 
   return (
-    <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6">
         <Link
           href="/staff"

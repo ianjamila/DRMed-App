@@ -10,10 +10,22 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { PatientCreateSchema } from "@/lib/validations/patient";
 import { findCandidatesForInput } from "@/lib/patients/find-duplicates";
 import { recordConsentGrantAction } from "@/lib/actions/consent/grant";
+import { uploadConsentArtifactAction } from "@/lib/actions/consent/artifact";
 
 export type PatientCreateResult =
   | { ok: true; patient_id: string }
   | { ok: false; error: string };
+
+// Mirrors the consent-artifacts bucket's 5 MB cap / allowed MIME types
+// (migration 0086). Client-side (patient-form.tsx) enforces the same limits
+// with a clear message before submit; this is defense-in-depth against a
+// direct POST bypassing the browser check.
+const MAX_ARTIFACT_BYTES = 5 * 1024 * 1024;
+const ARTIFACT_EXT_BY_MIME: Record<string, "png" | "jpg" | "pdf"> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "application/pdf": "pdf",
+};
 
 function readForm(formData: FormData) {
   return {
@@ -95,12 +107,38 @@ export async function createPatientAction(
   // Record consent grant; the AFTER-INSERT trigger sets patients.consent_signed_at
   // and patients.consent_current — application code must NOT write those columns.
   if (consentGivenToday) {
+    // Optional scan of the signed paper form, attached beside the checkbox.
+    // Only meaningful here because a consent row is about to be written —
+    // with the box unticked there is no row to attach it to.
+    let artifactPath: string | undefined;
+    const scan = formData.get("consent_scan");
+    if (scan instanceof File && scan.size > 0) {
+      const ext = ARTIFACT_EXT_BY_MIME[scan.type];
+      if (ext && scan.size <= MAX_ARTIFACT_BYTES) {
+        const bytes = Buffer.from(await scan.arrayBuffer());
+        const dataUrl = `data:${scan.type};base64,${bytes.toString("base64")}`;
+        const up = await uploadConsentArtifactAction({
+          patientId: data.id,
+          dataUrl,
+          ext,
+        });
+        if (up.ok) artifactPath = up.path;
+        // An upload failure is not fatal here either — the grant below still
+        // records the paper signature; the scan can be attached later from
+        // the patient's consent panel.
+      }
+      // An unrecognised type or an oversize file (bypassing the client-side
+      // check) is silently skipped rather than failing the whole
+      // registration — the consent grant itself still goes through below.
+    }
+
     await recordConsentGrantAction({
       patientId: data.id,
       method: "paper_wet_signature",
       signatory: consentSignatory,
       signatoryName: consentSignatoryName,
       signatoryRelationship: consentSignatoryRelationship,
+      artifactPath,
     });
     // Patient is already created; a grant failure is not fatal — consent can
     // be captured later via the patient detail page.

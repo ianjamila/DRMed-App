@@ -7,7 +7,12 @@ import { csvDocument } from "@/lib/csv/escape";
 import { isISODate } from "@/lib/dates/manila";
 import { formatPatientName } from "@/lib/patients/format-name";
 import { paymentStatusLabel } from "@/lib/ui/payment-status";
-import { fetchArchiveAll } from "@/lib/visits/archive-query";
+import { parseSort } from "@/lib/ui/table-params";
+import {
+  ARCHIVE_SORT_COLUMNS,
+  DEFAULT_ARCHIVE_SORT,
+  fetchArchiveAll,
+} from "@/lib/visits/archive-query";
 import {
   isVisitView,
   parseVisitClasses,
@@ -40,11 +45,20 @@ export async function GET(req: NextRequest) {
   const classes = parseVisitClasses(sp.get("kind") ?? undefined);
   const viewParam = sp.get("view");
   const view = isVisitView(viewParam) ? viewParam : "active";
+  // Same allow-list and fallback as the table, so the CSV rows come out in
+  // exactly the order the exporting staffer was looking at.
+  const sort = parseSort(
+    sp.get("sort") ?? undefined,
+    sp.get("dir") ?? undefined,
+    ARCHIVE_SORT_COLUMNS,
+    DEFAULT_ARCHIVE_SORT,
+  );
 
   const supabase = await createClient();
   const { rows, count, truncated } = await fetchArchiveAll(
     supabase,
     { start, end, classes, view },
+    sort,
     MAX_ROWS,
   );
 
@@ -100,6 +114,8 @@ export async function GET(req: NextRequest) {
       end: end || null,
       kind: serialiseVisitClasses(classes) || "all",
       view,
+      sort: sort.key,
+      dir: sort.dir,
       rows_exported: rows.length,
       visits_matched: count,
       truncated,

@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { recordCashAdjustmentAction, voidCashAdjustmentAction }
   from "./actions";
 import { PaymentsTabs } from "../_components/payments-tabs";
@@ -35,7 +36,9 @@ const kindLabel = (k: string) => KIND_LABEL[k] ?? k;
 
 export function CashDrawerClient(props: {
   sessionUserId: string;
+  isAdmin: boolean;
   businessDate: string;
+  today: string;
   shifts: Shift[];
   currentShiftId: string;
   state: Record<string, unknown>;
@@ -57,6 +60,7 @@ export function CashDrawerClient(props: {
     closed?: { id: string; closed_at: string; closed_by: string } | null;
   };
   const closed = !!s.closed;
+  const isToday = props.businessDate === props.today;
 
   const handleVoid = (id: string) => {
     const reason = window.prompt("Why are you removing this entry?");
@@ -69,7 +73,7 @@ export function CashDrawerClient(props: {
   };
 
   return (
-    <main className="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8">
+    <main className="px-4 py-8 sm:px-6 lg:px-8">
       <PaymentsTabs />
       <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
@@ -83,6 +87,7 @@ export function CashDrawerClient(props: {
             <input
               type="date"
               value={props.businessDate}
+              max={props.today}
               onChange={(e) =>
                 router.push(`/staff/payments/cash-drawer?date=${e.target.value}&shift=${props.currentShiftId}`)
               }
@@ -101,14 +106,37 @@ export function CashDrawerClient(props: {
                 ))}
               </select>
             )}
+            {!isToday && (
+              <Link
+                href={`/staff/payments/cash-drawer?shift=${props.currentShiftId}`}
+                className="rounded border border-[color:var(--color-brand-navy)] px-3 py-1 font-semibold text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-navy)] hover:text-white"
+              >
+                Back to today
+              </Link>
+            )}
           </div>
         </div>
       </header>
 
       <section className="rounded-lg border bg-white p-4 shadow-sm">
-        <div className="flex justify-between border-b py-2">
-          <strong className="text-[color:var(--color-brand-navy)]">Starting cash</strong>
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b py-2">
+          <span className="flex items-center gap-2">
+            <strong className="text-[color:var(--color-brand-navy)]">Starting cash</strong>
+            {props.isAdmin && (
+              <Link
+                href="/staff/admin/accounting/cash-routing"
+                className="text-xs font-semibold text-[color:var(--color-brand-cyan)] underline hover:text-[color:var(--color-brand-navy)]"
+              >
+                Edit
+              </Link>
+            )}
+          </span>
           <span className="font-mono">{PESO(Number(s.opening_float_php ?? 0))}</span>
+          {props.isAdmin && (
+            <span className="basis-full text-xs text-[color:var(--color-brand-text-soft)]">
+              Admin only — changes the starting amount for every day, not just today.
+            </span>
+          )}
         </div>
         <div className="flex justify-between border-b py-2">
           <strong className="text-[color:var(--color-brand-navy)]">Cash received today</strong>

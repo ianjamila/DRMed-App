@@ -261,7 +261,7 @@ export default async function StaffUsersPage({ searchParams }: SearchProps) {
   };
 
   return (
-    <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="px-4 py-8 sm:px-6 lg:px-8">
       <PageHeader
         title="Staff users"
         subtitle="Manage who can sign into the staff portal and what role they have."

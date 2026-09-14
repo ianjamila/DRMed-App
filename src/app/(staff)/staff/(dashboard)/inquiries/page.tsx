@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { Button } from "@/components/ui/button";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
+import { PageHeader } from "@/components/staff/page-header";
 import {
   CHANNEL_LABELS,
   STATUS_LABELS,
@@ -10,6 +11,7 @@ import {
   type InquiryStatus,
 } from "@/lib/inquiries/labels";
 import { Panel } from "@/components/ui/panel";
+import { NewInquirySheet } from "./new-inquiry-sheet";
 
 export const metadata = {
   title: "Inquiries — staff",
@@ -100,29 +102,31 @@ export default async function InquiriesPage({ searchParams }: PageProps) {
     for (const p of profiles ?? []) nameMap.set(p.id, p.full_name);
   }
 
+  // Options for the "+ New inquiry" sheet's Received by picker — same query
+  // the standalone /staff/inquiries/new page runs.
+  const { data: staff } = await supabase
+    .from("staff_profiles")
+    .select("id, full_name, role, is_active")
+    .eq("is_active", true)
+    .in("role", ["reception", "admin"])
+    .order("full_name", { ascending: true });
+  const staffOptions = (staff ?? []).map((s) => ({
+    id: s.id,
+    full_name: s.full_name,
+  }));
+
   return (
-    <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
-      <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-            Front desk
-          </p>
-          <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            Inquiries
-          </h1>
-          <p className="mt-1 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
-            Phone leads, FB messages, and walk-ins that haven&apos;t booked yet.
-            Confirm them when reception books an appointment, or drop with a
-            reason if they decided not to push through.
-          </p>
-        </div>
-        <Link
-          href="/staff/inquiries/new"
-          className="rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
-        >
-          + New inquiry
-        </Link>
-      </header>
+    <div className="px-4 py-8 sm:px-6 lg:px-8">
+      <PageHeader
+        title="Inquiries"
+        subtitle="Phone leads, FB messages, and walk-ins that haven't booked yet. Confirm them when reception books an appointment, or drop with a reason if they decided not to push through."
+        actions={
+          <NewInquirySheet
+            staffOptions={staffOptions}
+            defaultReceivedById={session.user_id}
+          />
+        }
+      />
 
       <nav className="mb-4 flex flex-wrap gap-2">
         {STATUS_FILTERS.map((f) => {

@@ -1,7 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { redirect } from "next/navigation";
-import { todayManilaISODate } from "@/lib/dates/manila";
+import { isISODate, todayManilaISODate } from "@/lib/dates/manila";
 import { CashDrawerClient } from "./cash-drawer-client";
 
 export const metadata = { title: "Cash drawer — staff" };
@@ -16,7 +16,8 @@ export default async function CashDrawerPage({
   if (session.role !== "reception" && session.role !== "admin") redirect("/staff");
 
   const params = await searchParams;
-  const business_date = params.date ?? todayManilaISODate();
+  const today = todayManilaISODate();
+  const business_date = isISODate(params.date) ? params.date : today;
   const admin = createAdminClient();
 
   const { data: shifts } = await admin
@@ -55,7 +56,9 @@ export default async function CashDrawerPage({
   return (
     <CashDrawerClient
       sessionUserId={session.user_id}
+      isAdmin={session.role === "admin"}
       businessDate={business_date}
+      today={today}
       shifts={shifts ?? []}
       currentShiftId={shift_id}
       state={(state as Record<string, unknown>) ?? {}}

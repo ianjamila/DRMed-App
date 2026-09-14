@@ -13,6 +13,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
+import type { SortSpec } from "@/lib/ui/table-params";
 import {
   classesForKinds,
   classifyKind,
@@ -110,6 +111,108 @@ function kindOf(line: LineRow): string {
   return svc?.kind ?? "";
 }
 
+// ---------------------------------------------------------------------------
+// Column sorting
+// ---------------------------------------------------------------------------
+
+/**
+ * Columns the Visits archive can sort by in ONE PostgREST query. Declared
+ * `as const` and passed as `parseSort`'s allow-list — the value reaches a
+ * `.order()` call, so this is a security boundary, not just a UI list.
+ *
+ * "Tests" isn't here: that count comes from a SECOND query run after this
+ * window is already fetched (package components can't be counted from the
+ * `visits` row), so it can't be expressed in this `.order()` at all — the
+ * page renders it with `PlainTh`.
+ *
+ * `patient_last_name` sorts by the embedded `patients.last_name`, which
+ * needs care: supabase-js's documented `referencedTable` option does NOT do
+ * this — verified empirically (local PostgREST, both directions) — it only
+ * reorders the nested rows *inside* a to-many embed and leaves the parent
+ * (`visits`) rows in their original order; the client's own order() doc
+ * comment says as much a few lines under the overload that implies
+ * otherwise. What actually reorders the parent is passing the raw
+ * PostgREST embedded-path — `"patients(last_name)"` — as the column
+ * string itself, with no `referencedTable` option (see `ORDER_COLUMN`
+ * below). That only works because PostgREST requires an inner join to let
+ * an embed drive parent ordering, and `patients!inner` is already part of
+ * `VISIT_SELECT` for every query here.
+ */
+export const ARCHIVE_SORT_COLUMNS = [
+  "visit_date",
+  "visit_number",
+  "total_php",
+  "paid_php",
+  "payment_status",
+  "patient_last_name",
+] as const;
+export type ArchiveSortColumn = (typeof ARCHIVE_SORT_COLUMNS)[number];
+
+/** Fallback sort — the archive's original hardcoded order, unchanged. */
+export const DEFAULT_ARCHIVE_SORT: SortSpec<ArchiveSortColumn> = {
+  key: "visit_date",
+  dir: "desc",
+};
+
+/** The real column (or embedded path) each sort key orders by. */
+const ORDER_COLUMN: Record<ArchiveSortColumn, string> = {
+  visit_date: "visit_date",
+  visit_number: "visit_number",
+  total_php: "total_php",
+  paid_php: "paid_php",
+  payment_status: "payment_status",
+  patient_last_name: "patients(last_name)",
+};
+
+/**
+ * NOTE on `total_php` / `paid_php` / `payment_status`: these sort the raw
+ * per-visit row, not the folded encounter total the row displays. A split
+ * visit's two halves can therefore land in slightly different positions than
+ * its combined (folded) value would predict — the same documented
+ * approximation this file already accepts for the visit count and the test
+ * count. Split visits are rare, so this is cosmetic drift, not a correctness
+ * bug.
+ */
+
+export interface OrderStep {
+  column: string;
+  ascending: boolean;
+}
+
+/**
+ * The full, ordered list of `.order()` calls for one sort choice — pure, so
+ * it's unit-testable without a live query builder.
+ *
+ * `visit_date` keeps its pre-existing secondary key (`created_at`, same
+ * direction) so the default sort's output is byte-for-byte what it always
+ * was — bookmarked `/staff/visits` URLs with no `sort`/`dir` param see no
+ * change. Every other column gets no secondary beyond the tie-break.
+ *
+ * The LAST step is always `id` ascending — the total-order tie-break
+ * without which `.range()` can drop or repeat rows across pages whenever the
+ * leading column(s) tie (two visits sharing a date, a total, a status…).
+ */
+export function archiveOrderPlan(sort: SortSpec<ArchiveSortColumn>): OrderStep[] {
+  const ascending = sort.dir === "asc";
+  const steps: OrderStep[] = [{ column: ORDER_COLUMN[sort.key], ascending }];
+  if (sort.key === "visit_date") {
+    steps.push({ column: "created_at", ascending });
+  }
+  steps.push({ column: "id", ascending: true });
+  return steps;
+}
+
+function applyOrderPlan<T extends { order: (c: string, o: { ascending: boolean }) => T }>(
+  q: T,
+  sort: SortSpec<ArchiveSortColumn>,
+): T {
+  let out = q;
+  for (const step of archiveOrderPlan(sort)) {
+    out = out.order(step.column, { ascending: step.ascending });
+  }
+  return out;
+}
+
 /** Apply the deleted-view predicate. `active` is the default everywhere. */
 function applyView<T extends { is: (c: string, v: null) => T; not: (c: string, o: string, v: null) => T }>(
   q: T,
@@ -132,6 +235,7 @@ function applyView<T extends { is: (c: string, v: null) => T; not: (c: string, o
 export async function fetchArchiveWindow(
   supabase: AnyClient,
   filters: ArchiveFilters,
+  sort: SortSpec<ArchiveSortColumn>,
   offset: number,
   limit: number,
 ): Promise<{ rows: ArchiveRow[]; count: number }> {
@@ -152,13 +256,9 @@ export async function fetchArchiveWindow(
         : VISIT_SELECT,
       { count: "exact" },
     )
-    .order("visit_date", { ascending: false })
-    .order("created_at", { ascending: false })
-    // Total order — without a tie-break, `range()` can drop or repeat rows
-    // across pages when two visits share a date and a timestamp.
-    .order("id", { ascending: true })
     .range(offset, offset + limit - 1);
 
+  query = applyOrderPlan(query, sort);
   query = applyView(query, view);
   if (start) query = query.gte("visit_date", start);
   if (end) query = query.lte("visit_date", end);
@@ -276,6 +376,7 @@ export async function fetchArchiveWindow(
 export async function fetchArchiveAll(
   supabase: AnyClient,
   filters: ArchiveFilters,
+  sort: SortSpec<ArchiveSortColumn>,
   maxRows: number,
 ): Promise<{ rows: ArchiveRow[]; count: number; truncated: boolean }> {
   const CHUNK = 1000;
@@ -286,7 +387,11 @@ export async function fetchArchiveAll(
   for (;;) {
     const take = Math.min(CHUNK, maxRows - offset);
     if (take <= 0) break;
-    const win = await fetchArchiveWindow(supabase, filters, offset, take);
+    // The same `sort` on every chunk is what keeps this stable: since every
+    // plan (see `archiveOrderPlan`) ends on `id`, the set is a genuine total
+    // order and chunk boundaries never drop or duplicate a row — an unstable
+    // sort here would do both, silently, across a 1000-row seam.
+    const win = await fetchArchiveWindow(supabase, filters, sort, offset, take);
     count = win.count;
     out.push(...win.rows);
     offset += take;

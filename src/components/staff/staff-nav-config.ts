@@ -70,6 +70,12 @@ export const STAFF_NAV: StaffNavSection[] = [
     heading: "Front desk",
     items: [
       {
+        href: "/staff/inquiries",
+        label: "Inquiries",
+        description: "Inquiries that came in through the website chat or Messenger but haven't been converted into a real appointment yet. Follow up here to book them or close the thread.",
+        roles: ["reception", "admin"],
+      },
+      {
         href: "/staff/patients/new",
         label: "New patient registration",
         description: "Register a brand-new patient at the counter — name, contact, birthday, address. Creates the patient record so you can then start their visit. For returning patients, search under Patients instead.",
@@ -94,21 +100,6 @@ export const STAFF_NAV: StaffNavSection[] = [
         href: "/staff/visits/queue",
         label: "Reception Queue",
         description: "Today's live front-desk worklist in three stages: Waiting for payment (record the payment), Processing (lab/imaging still working on results) and Completed (paid, nothing outstanding — print the patient's billing). Updates on its own as payments come in and tests finish.",
-        roles: ["reception", "admin"],
-      },
-      {
-        href: "/staff/inquiries",
-        label: "Inquiries",
-        description: "Inquiries that came in through the website chat or Messenger but haven't been converted into a real appointment yet. Follow up here to book them or close the thread.",
-        roles: ["reception", "admin"],
-      },
-      {
-        href: "/staff/payments/cash-drawer",
-        label: "Cash drawer",
-        // Lands on the Cash drawer tab; End of day is the second tab on the
-        // same page. activePrefix keeps this item lit on the eod route too.
-        activePrefix: "/staff/payments/eod",
-        description: "Your shift cash workspace — start your drawer with a counted amount of starting cash, then count it again at End of day to see the difference.",
         roles: ["reception", "admin"],
       },
     ],
@@ -139,6 +130,15 @@ export const STAFF_NAV: StaffNavSection[] = [
         href: "/staff/payments/petty-cash",
         label: "Petty cash",
         description: "Log small cash expenses paid from the till — transport, courier, office / lab supplies, minor repairs. Each entry is recorded in the books so the day's cash count adds up. Anything paid by GCash, bank transfer, or a vendor invoice goes through admin.",
+        roles: ["reception", "admin"],
+      },
+      {
+        href: "/staff/payments/cash-drawer",
+        label: "Cash drawer",
+        // Lands on the Cash drawer tab; End of day is the second tab on the
+        // same page. activePrefix keeps this item lit on the eod route too.
+        activePrefix: "/staff/payments/eod",
+        description: "Your shift cash workspace — start your drawer with a counted amount of starting cash, then count it again at End of day to see the difference.",
         roles: ["reception", "admin"],
       },
     ],

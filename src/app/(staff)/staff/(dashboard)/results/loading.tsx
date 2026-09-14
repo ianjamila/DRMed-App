@@ -3,7 +3,7 @@ import { Panel } from "@/components/ui/panel";
 
 export default function Loading() {
   return (
-    <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="px-4 py-8 sm:px-6 lg:px-8">
       {/* Page header */}
       <header className="mb-6">
         <Skeleton className="h-9 w-32 mb-2" />

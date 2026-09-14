@@ -14,8 +14,36 @@ import {
   sectionTabClass,
 } from "@/components/staff/section-tabs-style";
 import { LabRequestLinks, type LabRequestAttachment } from "./lab-request-links";
+import { AppointmentsSearchInput } from "./appointments-search-input";
+import {
+  BUCKET_LABEL,
+  BUCKET_STYLE,
+  compareFlat,
+  FLAT_DEFAULT_SORT,
+  FLAT_SORTABLE_COLUMNS,
+  groupHaystack,
+  tagBucket,
+  type BucketKey,
+  type FlatSortColumn,
+} from "./flat-view";
 import { appointmentStatusLabel } from "@/lib/appointments/labels";
 import { fetchAllRows, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
+import { matchesAllTokens } from "@/lib/patients/search";
+import { manilaDateTime } from "@/lib/dates/manila";
+import {
+  ariaSortFor,
+  buildListHref,
+  DEFAULT_PAGE_SIZE,
+  nextSort,
+  pageCount,
+  parsePage,
+  parsePageSize,
+  parseSort,
+  rangeFor,
+  type SortSpec,
+} from "@/lib/ui/table-params";
+import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
+import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 
 export const metadata = {
   title: "Appointments — staff",
@@ -148,25 +176,41 @@ function groupRows(rows: ApptRow[]): ApptGroup[] {
   return groups;
 }
 
-async function loadScheduledRange(
-  fromIso: string,
-  toIso: string,
-): Promise<ApptRow[]> {
-  const supabase = await createClient();
-  const { data } = await supabase
-    .from("appointments")
-    .select(APPT_SELECT)
-    .gte("scheduled_at", fromIso)
-    .lt("scheduled_at", toIso)
-    .order("scheduled_at", { ascending: true });
-  return (data ?? []).map(rowFrom);
-}
-
 interface LoadedAppts {
   rows: ApptRow[];
   // True only if the open set genuinely exceeds REPORT_EXPORT_MAX_ROWS —
   // the page says so rather than silently dropping the remainder.
   truncated: boolean;
+}
+
+// N14: this was a bare `.select()` with `.order()` and no `.range()` — a
+// plain PostgREST select silently caps at 1000 rows, the exact defect the
+// comments on loadOpenWalkIns/loadPendingCallback below say was already
+// fixed once for the other two loaders. Only ~98 appointment rows exist in
+// production today so it wasn't yet biting, but "today" + "next 30 days"
+// together are unbounded as the clinic grows, so it gets the same
+// fetchAllRows treatment: walk the range in 1000-row pages up to
+// REPORT_EXPORT_MAX_ROWS, oldest-scheduled-first, with an id tie-break so
+// `.range()` can't drop or repeat a row across pages.
+async function loadScheduledRange(
+  fromIso: string,
+  toIso: string,
+): Promise<LoadedAppts> {
+  const supabase = await createClient();
+  const { rows, truncated } = await fetchAllRows<ApptSourceRow>(
+    (rFrom, rTo) =>
+      supabase
+        .from("appointments")
+        .select(APPT_SELECT)
+        .gte("scheduled_at", fromIso)
+        .lt("scheduled_at", toIso)
+        .order("scheduled_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(rFrom, rTo)
+        .returns<ApptSourceRow[]>(),
+    REPORT_EXPORT_MAX_ROWS,
+  );
+  return { rows: rows.map(rowFrom), truncated };
 }
 
 async function loadOpenWalkIns(): Promise<LoadedAppts> {
@@ -251,9 +295,30 @@ function applyFilter(groups: ApptGroup[], type: FilterType): ApptGroup[] {
   );
 }
 
-interface SearchProps {
-  searchParams: Promise<{ type?: string }>;
+// A group tagged with which of the four loaders it came from — shown as a
+// badge in the flat search/sort view, where groups from all four sections
+// are mixed together (the badge is how reception tells them apart once
+// they're no longer under their own section heading). `BucketKey`,
+// `BUCKET_LABEL`/`BUCKET_STYLE`, `tagBucket`, `groupHaystack`,
+// `FLAT_SORTABLE_COLUMNS`/`FlatSortColumn`, `FLAT_DEFAULT_SORT` and
+// `compareFlat` all live in `./flat-view.ts` — pure logic, vitest-tested,
+// with no dependency on this page's DB-shaped types.
+interface BucketedGroup extends ApptGroup {
+  bucket: BucketKey;
 }
+
+interface SearchProps {
+  searchParams: Promise<{
+    type?: string;
+    q?: string;
+    sort?: string;
+    dir?: string;
+    page?: string;
+    size?: string;
+  }>;
+}
+
+const BASE_PATH = "/staff/appointments";
 
 export default async function AppointmentsPage({ searchParams }: SearchProps) {
   const session = await requireActiveStaff();
@@ -264,6 +329,21 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
   const sp = await searchParams;
   const type: FilterType =
     sp.type === "consult" || sp.type === "home" ? sp.type : "all";
+  const typeParam = type === "all" ? null : type;
+
+  // The flat/sorted view and the grouped default view are mutually
+  // exclusive — see the doc comment on FlatTable below for why. Presence of
+  // `?sort=` (however it got there — a column click, or the "Sort this
+  // list" link) is what keeps the page in flat mode across further link
+  // clicks, so it — unlike every other param here — is never omitted from
+  // a built href once flat mode is active, even when it names the default
+  // column/direction.
+  const query = (sp.q ?? "").trim();
+  const hasExplicitSort = typeof sp.sort === "string" && sp.sort.length > 0;
+  const isFlatView = query.length > 0 || hasExplicitSort;
+  const sort = parseSort(sp.sort, sp.dir, FLAT_SORTABLE_COLUMNS, FLAT_DEFAULT_SORT);
+  const size = parsePageSize(sp.size);
+  const page = parsePage(sp.page);
 
   // eslint-disable-next-line react-hooks/purity -- per-request bounds.
   const nowMs = Date.now();
@@ -278,14 +358,21 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
     new Date(`${manilaToday}T00:00:00+08:00`).getTime() + 31 * 24 * 60 * 60 * 1000,
   ).toISOString();
 
-  const [todayScheduled, walkInsResult, upcoming, pendingResult] = await Promise.all([
+  const [todayResult, walkInsResult, upcomingResult, pendingResult] = await Promise.all([
     loadScheduledRange(startOfTodayUtc, startOfTomorrowUtc),
     loadOpenWalkIns(),
     loadScheduledRange(startOfTomorrowUtc, endOfRangeUtc),
     loadPendingCallback(),
   ]);
+  const todayScheduled = todayResult.rows;
   const openWalkIns = walkInsResult.rows;
+  const upcoming = upcomingResult.rows;
   const pending = pendingResult.rows;
+  const anyTruncated =
+    pendingResult.truncated ||
+    walkInsResult.truncated ||
+    todayResult.truncated ||
+    upcomingResult.truncated;
 
   const supabase = await createClient();
   const [{ data: serviceRows }, { data: physicianRows }] = await Promise.all([
@@ -342,8 +429,76 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
   const todayGroups = applyFilter(allTodayGroups, type);
   const upcomingGroups = applyFilter(allUpcomingGroups, type);
 
+  // Flat/sorted view: one table mixing all four sections, tagged with which
+  // section each row came from. Built from the SAME already-fully-loaded
+  // (fetchAllRows, up to REPORT_EXPORT_MAX_ROWS) row sets the grouped view
+  // uses — nothing extra is fetched for search or sort, and nothing here can
+  // silently miss a row that the grouped view would have shown, because the
+  // "q" search box's ILIKE-style match runs on that same complete in-memory
+  // set (`groupHaystack` / `matchesAllTokens`) rather than as a database
+  // filter. That's the part this page genuinely cannot push into the
+  // database query in one round trip: PostgREST can't ILIKE across an
+  // *embedded* resource (the `patients` join) without an inner join that
+  // would also silently drop every walk-in row (they have no patient to
+  // join to) — see `groupHaystack`'s doc comment. Sorting is likewise
+  // applied in JS, not a PostgREST `.order()` — the data is already fully
+  // materialised, so there is nothing left to push down.
+  let flatGroups: BucketedGroup[] = [];
+  let flatTotal = 0;
+  let flatTotalPages = 1;
+  if (isFlatView) {
+    const combined: BucketedGroup[] = [
+      ...tagBucket(pendingGroups, "pending"),
+      ...tagBucket(walkInGroups, "walkin"),
+      ...tagBucket(todayGroups, "today"),
+      ...tagBucket(upcomingGroups, "upcoming"),
+    ];
+    const searched = query
+      ? combined.filter((g) => matchesAllTokens(groupHaystack(g), query))
+      : combined;
+    const sorted = [...searched].sort((a, b) => compareFlat(a, b, sort));
+    flatTotal = sorted.length;
+    flatTotalPages = pageCount(flatTotal, size);
+    const [from, to] = rangeFor(page, size);
+    flatGroups = sorted.slice(from, to + 1);
+  }
+
+  // Every param this page's links round-trip, at its default omitted so
+  // page 1 with no search/sort stays the bare /staff/appointments?type=…
+  // URL. `sort`/`dir` are the one exception (see the `isFlatView` comment
+  // above) — they're kept once flat mode is active even at their default
+  // value, since their PRESENCE is what keeps the page in flat mode.
+  const baseParams: Record<string, string | null> = {
+    type: typeParam,
+    q: query || null,
+    sort: isFlatView ? sort.key : null,
+    dir: isFlatView ? sort.dir : null,
+    size: isFlatView && size !== DEFAULT_PAGE_SIZE ? String(size) : null,
+  };
+
+  const tabHref = (t: FilterType) =>
+    buildListHref(BASE_PATH, baseParams, { type: t === "all" ? null : t, page: null });
+
+  const sortHref = (key: FlatSortColumn) => {
+    const next = nextSort(sort, key);
+    // Any change to sort resets to page 1 — staying on page 7 of a result
+    // set that just reordered is a blank screen with no explanation.
+    return buildListHref(BASE_PATH, baseParams, { sort: next.key, dir: next.dir, page: null });
+  };
+
+  // Opts into the flat view without a search term — column headers only
+  // exist inside the flat table, so this is how a column gets sorted for
+  // the very first time.
+  const enterFlatHref = buildListHref(
+    BASE_PATH,
+    { type: typeParam },
+    { sort: FLAT_DEFAULT_SORT.key, dir: FLAT_DEFAULT_SORT.dir },
+  );
+  // Drops q/sort/dir/page/size entirely — back to the grouped default.
+  const exitFlatHref = buildListHref(BASE_PATH, { type: typeParam }, {});
+
   return (
-    <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="px-4 py-8 sm:px-6 lg:px-8">
       <RealtimeRefresher
         channelName="appointments-page"
         subscriptions={[
@@ -362,13 +517,47 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
         }
       />
 
+      {/* Search + the grouped/sorted toggle get their own row below the
+          header, never inside PageHeader's `actions` — actions sit beside
+          the subtitle in one flex row, so a control there jumps up/down
+          whenever the subtitle's rendered length changes (drmed-staff-ui
+          skill, §4a rule 2). Neither of these varies the subtitle, so both
+          are safe here regardless. */}
+      <div className="mb-3 flex flex-wrap items-center gap-3">
+        <AppointmentsSearchInput initialQuery={query} />
+        {isFlatView ? (
+          <Link
+            href={exitFlatHref}
+            className="text-sm font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
+          >
+            ← Back to grouped view
+          </Link>
+        ) : (
+          <Link
+            href={enterFlatHref}
+            className="text-sm font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
+          >
+            Sort this list →
+          </Link>
+        )}
+      </div>
+      {isFlatView ? (
+        <p className="mb-4 text-xs text-[color:var(--color-brand-text-soft)]">
+          Search checks the patient&apos;s name, DRM-ID and phone, or the
+          walk-in name and phone. It covers pending callbacks, walk-ins
+          waiting, today, and the next 30 days — the same appointments this
+          page always shows — so it won&apos;t find older, cancelled, or
+          already-completed appointments.
+        </p>
+      ) : null}
+
       <nav className={sectionTabsNavClass} aria-label="Appointment type filter">
         {FILTER_TABS.map((tab) => {
           const active = type === tab.value;
           return (
             <Link
               key={tab.value}
-              href={`/staff/appointments?type=${tab.value}`}
+              href={tabHref(tab.value)}
               className={sectionTabClass(active)}
               aria-current={active ? "page" : undefined}
             >
@@ -378,44 +567,104 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
         })}
       </nav>
 
-      <Section
-        title={`Pending callback (${pendingGroups.length})`}
-        groups={pendingGroups}
-        empty="No pending callbacks. Nice."
-        isAdmin={session.role === "admin"}
-        attachmentsByGroup={attachmentsByGroup}
-        truncatedNotice={
-          pendingResult.truncated
-            ? `Showing the first ${REPORT_EXPORT_MAX_ROWS.toLocaleString("en-PH")} pending-callback appointment rows (oldest first) — there are more than that still open.`
-            : null
-        }
-      />
-      <Section
-        title={`Walk-ins waiting (${walkInGroups.length})`}
-        groups={walkInGroups}
-        empty="No walk-ins waiting — diagnostic packages and untimed lab requests land here until reception acts on them."
-        isAdmin={session.role === "admin"}
-        attachmentsByGroup={attachmentsByGroup}
-        truncatedNotice={
-          walkInsResult.truncated
-            ? `Showing the first ${REPORT_EXPORT_MAX_ROWS.toLocaleString("en-PH")} walk-in appointment rows (oldest first) — there are more than that still open.`
-            : null
-        }
-      />
-      <Section
-        title={`Today (${todayGroups.length})`}
-        groups={todayGroups}
-        empty="No appointments today."
-        isAdmin={session.role === "admin"}
-        attachmentsByGroup={attachmentsByGroup}
-      />
-      <Section
-        title={`Next 30 days (${upcomingGroups.length})`}
-        groups={upcomingGroups}
-        empty="No upcoming appointments."
-        isAdmin={session.role === "admin"}
-        attachmentsByGroup={attachmentsByGroup}
-      />
+      {isFlatView ? (
+        <>
+          {anyTruncated ? (
+            <p
+              role="status"
+              className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+            >
+              Showing the first {REPORT_EXPORT_MAX_ROWS.toLocaleString("en-PH")} appointment
+              rows from one or more sections — there are more than that still open or
+              scheduled, so this list and search may not cover every one.
+            </p>
+          ) : null}
+          <FlatTable
+            groups={flatGroups}
+            sort={sort}
+            sortHref={sortHref}
+            isAdmin={session.role === "admin"}
+            attachmentsByGroup={attachmentsByGroup}
+          />
+          <ListPagination
+            page={page}
+            pageCount={flatTotalPages}
+            total={flatTotal}
+            size={size}
+            prevHref={
+              page > 1
+                ? buildListHref(BASE_PATH, baseParams, {
+                    page: page - 1 > 1 ? String(page - 1) : null,
+                  })
+                : null
+            }
+            nextHref={
+              page < flatTotalPages
+                ? buildListHref(BASE_PATH, baseParams, { page: String(page + 1) })
+                : null
+            }
+            sizeOptions={PAGE_SIZES.map((s) => ({
+              size: s,
+              href: buildListHref(BASE_PATH, baseParams, {
+                size: s === DEFAULT_PAGE_SIZE ? null : String(s),
+                page: null,
+              }),
+            }))}
+            noun="appointment"
+          />
+        </>
+      ) : (
+        <>
+          <Section
+            title={`Pending callback (${pendingGroups.length})`}
+            groups={pendingGroups}
+            empty="No pending callbacks. Nice."
+            isAdmin={session.role === "admin"}
+            attachmentsByGroup={attachmentsByGroup}
+            truncatedNotice={
+              pendingResult.truncated
+                ? `Showing the first ${REPORT_EXPORT_MAX_ROWS.toLocaleString("en-PH")} pending-callback appointment rows (oldest first) — there are more than that still open.`
+                : null
+            }
+          />
+          <Section
+            title={`Walk-ins waiting (${walkInGroups.length})`}
+            groups={walkInGroups}
+            empty="No walk-ins waiting — diagnostic packages and untimed lab requests land here until reception acts on them."
+            isAdmin={session.role === "admin"}
+            attachmentsByGroup={attachmentsByGroup}
+            truncatedNotice={
+              walkInsResult.truncated
+                ? `Showing the first ${REPORT_EXPORT_MAX_ROWS.toLocaleString("en-PH")} walk-in appointment rows (oldest first) — there are more than that still open.`
+                : null
+            }
+          />
+          <Section
+            title={`Today (${todayGroups.length})`}
+            groups={todayGroups}
+            empty="No appointments today."
+            isAdmin={session.role === "admin"}
+            attachmentsByGroup={attachmentsByGroup}
+            truncatedNotice={
+              todayResult.truncated
+                ? `Showing the first ${REPORT_EXPORT_MAX_ROWS.toLocaleString("en-PH")} of today's appointment rows (earliest first) — there are more than that today.`
+                : null
+            }
+          />
+          <Section
+            title={`Next 30 days (${upcomingGroups.length})`}
+            groups={upcomingGroups}
+            empty="No upcoming appointments."
+            isAdmin={session.role === "admin"}
+            attachmentsByGroup={attachmentsByGroup}
+            truncatedNotice={
+              upcomingResult.truncated
+                ? `Showing the first ${REPORT_EXPORT_MAX_ROWS.toLocaleString("en-PH")} upcoming appointment rows (earliest first) — there are more than that in the next 30 days.`
+                : null
+            }
+          />
+        </>
+      )}
     </div>
   );
 }
@@ -492,35 +741,107 @@ function Section({
   );
 }
 
+/**
+ * The flat/sorted view: all four sections merged into one table, with a
+ * "From" badge (see BUCKET_LABEL/BUCKET_STYLE) standing in for the section
+ * heading each row lost by being mixed in with the other three. Column
+ * headers are real `SortableTh` links — sorting across sections is only
+ * meaningful once they're merged like this, which is why the grouped
+ * default view has no sort controls at all.
+ */
+function FlatTable({
+  groups,
+  sort,
+  sortHref,
+  isAdmin,
+  attachmentsByGroup,
+}: {
+  groups: BucketedGroup[];
+  sort: SortSpec<FlatSortColumn>;
+  sortHref: (key: FlatSortColumn) => string;
+  isAdmin: boolean;
+  attachmentsByGroup: Map<string, LabRequestAttachment[]>;
+}) {
+  return (
+    <Panel className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+          <tr>
+            <SortableTh
+              label="Requested"
+              href={sortHref("created_at")}
+              state={ariaSortFor(sort, "created_at")}
+            />
+            <SortableTh
+              label="When"
+              href={sortHref("scheduled_at")}
+              state={ariaSortFor(sort, "scheduled_at")}
+            />
+            <SortableTh
+              label="Patient"
+              href={sortHref("patient")}
+              state={ariaSortFor(sort, "patient")}
+            />
+            <PlainTh label="Services" />
+            <SortableTh label="Status" href={sortHref("status")} state={ariaSortFor(sort, "status")} />
+            <PlainTh label="From" />
+            <PlainTh label="Action" align="right" />
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
+          {groups.length === 0 ? (
+            <tr>
+              <td
+                colSpan={7}
+                className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]"
+              >
+                No appointments match.
+              </td>
+            </tr>
+          ) : (
+            groups.map((g) => (
+              <GroupRow
+                key={g.key}
+                group={g}
+                isAdmin={isAdmin}
+                bucket={g.bucket}
+                attachments={
+                  g.lead.booking_group_id
+                    ? attachmentsByGroup.get(g.lead.booking_group_id) ?? []
+                    : []
+                }
+              />
+            ))
+          )}
+        </tbody>
+      </table>
+    </Panel>
+  );
+}
+
 function GroupRow({
   group,
   isAdmin,
   attachments,
+  bucket,
 }: {
   group: ApptGroup;
   isAdmin: boolean;
   attachments: LabRequestAttachment[];
+  // Only set from FlatTable — renders an extra "From" cell so a row mixed
+  // in with the other three sections still says which one it came from.
+  bucket?: BucketKey;
 }) {
   const r = group.lead;
   const ids = group.rows.map((row) => row.id);
   return (
     <tr className="align-top hover:bg-[color:var(--color-brand-bg)]">
       <td className="px-4 py-3 whitespace-nowrap text-xs text-[color:var(--color-brand-text-soft)]">
-        {new Date(r.created_at).toLocaleString("en-PH", {
-          timeZone: "Asia/Manila",
-          month: "short",
-          day: "numeric",
-          hour: "numeric",
-          minute: "2-digit",
-        })}
+        {manilaDateTime(r.created_at)}
       </td>
       <td className="px-4 py-3 whitespace-nowrap text-[color:var(--color-brand-text-mid)]">
         {r.scheduled_at ? (
-          new Date(r.scheduled_at).toLocaleString("en-PH", {
-            timeZone: "Asia/Manila",
-            dateStyle: "medium",
-            timeStyle: "short",
-          })
+          manilaDateTime(r.scheduled_at)
         ) : r.status === "pending_callback" ? (
           <span className="text-xs italic text-amber-700">
             Pending callback
@@ -599,6 +920,15 @@ function GroupRow({
           {appointmentStatusLabel(r.status)}
         </span>
       </td>
+      {bucket ? (
+        <td className="px-4 py-3">
+          <span
+            className={`rounded-md px-2 py-0.5 text-xs font-semibold ${BUCKET_STYLE[bucket]}`}
+          >
+            {BUCKET_LABEL[bucket]}
+          </span>
+        </td>
+      ) : null}
       <td className="px-4 py-3 text-right">
         <TransitionButtons
           appointmentIds={ids}

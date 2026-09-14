@@ -69,22 +69,30 @@ function toManilaLocalInput(iso?: string): string {
   return `${get("year")}-${get("month")}-${get("day")}T${hour}:${get("minute")}`;
 }
 
-export function InquiryForm({
+interface FieldsProps {
+  initial?: InquiryDefaults;
+  staffOptions: StaffOption[];
+  defaultReceivedById?: string;
+  error?: string | null;
+}
+
+// The actual inquiry fields, with no <form> wrapper and no submit/cancel
+// buttons of its own — those differ between callers (a real page's
+// useActionState + submit button vs. a sheet's SheetFooter). Rendered by
+// InquiryForm (the standalone /new and /[id]/edit pages, which keep
+// createInquiryAction/updateInquiryAction's redirect-on-success behaviour
+// for the no-JS fallback) and by NewInquirySheet (the "+ New inquiry"
+// slide-over on the list page, which submits via useTransition and never
+// navigates). Keep this the ONE copy of the field markup — extend it here,
+// not in either caller.
+export function InquiryFormFields({
   initial,
   staffOptions,
   defaultReceivedById,
-}: Props) {
-  const router = useRouter();
+  error,
+}: FieldsProps) {
   const isEdit = Boolean(initial?.id);
   const isLocked = initial?.status === "confirmed";
-
-  const action = isEdit
-    ? updateInquiryAction.bind(null, initial!.id!)
-    : createInquiryAction;
-  const [state, formAction, pending] = useActionState<
-    InquiryResult | null,
-    FormData
-  >(action, null);
 
   const initialStatus = isLocked
     ? "pending"
@@ -92,7 +100,7 @@ export function InquiryForm({
   const [status, setStatus] = useState<"pending" | "dropped">(initialStatus);
 
   return (
-    <form action={formAction} className="grid gap-5">
+    <>
       {isLocked ? (
         <Alert variant="success">
           <AlertTitle>This inquiry is confirmed.</AlertTitle>
@@ -289,11 +297,39 @@ export function InquiryForm({
         </fieldset>
       )}
 
-      {state && !state.ok ? (
+      {error ? (
         <p className="text-sm text-red-600" role="alert">
-          {state.error}
+          {error}
         </p>
       ) : null}
+    </>
+  );
+}
+
+export function InquiryForm({
+  initial,
+  staffOptions,
+  defaultReceivedById,
+}: Props) {
+  const router = useRouter();
+  const isEdit = Boolean(initial?.id);
+
+  const action = isEdit
+    ? updateInquiryAction.bind(null, initial!.id!)
+    : createInquiryAction;
+  const [state, formAction, pending] = useActionState<
+    InquiryResult | null,
+    FormData
+  >(action, null);
+
+  return (
+    <form action={formAction} className="grid gap-5">
+      <InquiryFormFields
+        initial={initial}
+        staffOptions={staffOptions}
+        defaultReceivedById={defaultReceivedById}
+        error={state && !state.ok ? state.error : null}
+      />
 
       <div className="flex gap-3">
         <Button

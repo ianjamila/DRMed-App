@@ -189,7 +189,8 @@ All Server Actions return `{ ok: true, data } | { ok: false, error }`. User-faci
 | Audit-log writer — call from every write action | `src/lib/audit/log.ts` (`audit()`) |
 | Server Action helpers (`ipAndAgent`, `firstIssue`) | `src/lib/server/action-helpers.ts` |
 | PG error → user-facing message translator | `src/lib/accounting/pg-errors.ts` (`translatePgError`) |
-| Manila/PHT date helpers (`todayManilaISODate`, `isISODate`, `shiftISODate`, `manilaRangeUtc`, `friendlyManilaDate`) | `src/lib/dates/manila.ts` |
+| Manila/PHT date helpers (`todayManilaISODate`, `isISODate`, `shiftISODate`, `manilaRangeUtc`, `friendlyManilaDate`) + the canonical display formatters `manilaDate` / `manilaDateTime` / `manilaTime` — never call `toLocaleDateString` in a page | `src/lib/dates/manila.ts` |
+| Staff list-page URL contract (sort/dir/page/size parsing, sort-column allow-list) | `src/lib/ui/table-params.ts`; components `src/components/staff/{sortable-th,list-pagination}.tsx` |
 | Rate-limit checker (per-bucket) | `src/lib/rate-limit/check.ts` |
 | Pure visit-domain rules (classification, deletability, lab payment gate, receipt policy, doctor-fee split, visit # search) | `src/lib/visits/{classification,deletion,lab-gate,receipt-policy,consultation-fee,visit-number-filter}.ts` |
 | Discount arithmetic (form preview AND server recompute) | `src/lib/pricing/discounts.ts` |
@@ -211,6 +212,8 @@ All Server Actions return `{ ok: true, data } | { ok: false, error }`. User-faci
 
 - **Dates:** the DB runs in UTC and the clinic in Asia/Manila. Every date filter is a half-open Manila window from `manilaRangeUtc` (`gte` start, `lt` next day) — never a naive `${d}T00:00:00` / `T23:59:59` string (read as UTC, 8 hours early). DB `date` defaults use `(now() at time zone 'Asia/Manila')::date`, never `current_date`.
 - **PostgREST limits:** aggregates are disabled (`PGRST123`) and a bare select caps at 1000 rows — real aggregates need a SQL function (`visits_classification_summary` is the model); exports chunk with `.range()`. Multi-row inserts NULL-fill keys missing from some rows (not column defaults) — send a uniform key set.
+- **Ordering by an EMBEDDED column:** `.order(col, { referencedTable: "patients" })` does **not** reorder the parent rows — it emits `patients.order=…`, which PostgREST applies *within* the embedded array, so `visits` comes back in the same order both directions. Pass the path as the column instead: `.order("patients(last_name)")` (needs `patients!inner` in the select). Verified empirically 2026-09-14; `archive-query.test.ts` pins the emitted plan.
+- **Every paged ordering needs a unique final tie-break** (`id`). Without a total order, `.range()` silently drops or repeats rows between pages — and a chunked export (`fetchArchiveAll`) corrupts worse than the table, because the instability compounds across 1000-row chunks.
 - **Soft delete:** filter `deleted_at is null` on `visits` / `test_requests` in every read surface (queues, results, dashboards, receipts, exports, portal, sheet export). Deletability is `payment_status = 'unpaid'` only.
 - **Role sections:** `sectionsForRole(role) === []` is a deny. The lab queue once treated it as "no filter" and showed reception every section.
 - **Exports** run under the RLS-scoped server client with an admin gate, a row ceiling, and an audit row — never the service-role client.

@@ -23,7 +23,7 @@ export type UploadArtifactResult =
 export async function uploadConsentArtifactAction(
   raw: z.input<typeof UploadSchema>,
 ): Promise<UploadArtifactResult> {
-  await requireActiveStaff();
+  const session = await requireActiveStaff();
   const parsed = UploadSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, error: firstIssue(parsed.error) };
   const { patientId, dataUrl, ext } = parsed.data;
@@ -47,6 +47,19 @@ export async function uploadConsentArtifactAction(
       ok: false,
       error: "Could not store the signed form. Try again.",
     };
+
+  const { ip, ua } = await ipAndAgent();
+  await audit({
+    actor_id: session.user_id,
+    actor_type: "staff",
+    patient_id: patientId,
+    action: "consent.artifact_uploaded",
+    resource_type: "patient",
+    resource_id: patientId,
+    metadata: { path },
+    ip_address: ip,
+    user_agent: ua,
+  });
 
   return { ok: true, path };
 }

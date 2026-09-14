@@ -6,29 +6,55 @@ import { Button } from "@/components/ui/button";
 import { SignaturePad } from "@/components/consent/signature-pad";
 import { recordConsentGrantAction } from "@/lib/actions/consent/grant";
 import { withdrawConsentAction } from "@/lib/actions/consent/withdraw";
-import { uploadConsentArtifactAction } from "@/lib/actions/consent/artifact";
+import {
+  uploadConsentArtifactAction,
+  viewConsentArtifactAction,
+} from "@/lib/actions/consent/artifact";
 
 type Signatory = "self" | "guardian" | "representative";
+
+// Mirrors the consent-artifacts bucket's allowed MIME types / 5 MB cap
+// (migration 0086) so this shows a clear message before the upload happens,
+// instead of the bucket's opaque rejection on an oversize file.
+const SCAN_TYPES = ["application/pdf", "image/png", "image/jpeg"] as const;
+const MAX_SCAN_BYTES = 5 * 1024 * 1024;
+const EXT_BY_TYPE: Record<(typeof SCAN_TYPES)[number], "png" | "jpg" | "pdf"> = {
+  "application/pdf": "pdf",
+  "image/png": "png",
+  "image/jpeg": "jpg",
+};
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
 
 export function ConsentPanel({
   patientId,
   current,
   signedAt,
   noticeVersion,
+  artifactPath,
   isAdmin,
 }: {
   patientId: string;
   current: boolean;
   signedAt: string | null;
   noticeVersion: string | null;
+  artifactPath: string | null;
   isAdmin: boolean;
 }) {
   const [pending, start] = useTransition();
-  const [mode, setMode] = useState<"idle" | "pad">("idle");
+  const [mode, setMode] = useState<"idle" | "pad" | "paper">("idle");
   const [signatory, setSignatory] = useState<Signatory>("self");
   const [name, setName] = useState("");
   const [rel, setRel] = useState("");
   const [err, setErr] = useState<string | null>(null);
+  const [viewing, startViewing] = useTransition();
 
   function saveSignature(png: string) {
     setErr(null);
@@ -49,6 +75,51 @@ export function ConsentPanel({
       });
       if (!res.ok) return setErr(res.error);
       setMode("idle");
+    });
+  }
+
+  function attachPaperScan(file: File) {
+    setErr(null);
+    if (!SCAN_TYPES.includes(file.type as (typeof SCAN_TYPES)[number])) {
+      setErr("Please attach a PDF, PNG, or JPEG file.");
+      return;
+    }
+    if (file.size > MAX_SCAN_BYTES) {
+      setErr("That file is too large — the largest we can store is 5MB.");
+      return;
+    }
+    const ext = EXT_BY_TYPE[file.type as (typeof SCAN_TYPES)[number]];
+    start(async () => {
+      const dataUrl = await readFileAsDataUrl(file);
+      const up = await uploadConsentArtifactAction({
+        patientId,
+        dataUrl,
+        ext,
+      });
+      if (!up.ok) return setErr(up.error);
+      const res = await recordConsentGrantAction({
+        patientId,
+        method: "paper_wet_signature",
+        signatory,
+        signatoryName: signatory === "self" ? undefined : name,
+        signatoryRelationship: signatory === "self" ? undefined : rel,
+        artifactPath: up.path,
+      });
+      if (!res.ok) return setErr(res.error);
+      setMode("idle");
+    });
+  }
+
+  function viewSignedForm() {
+    if (!artifactPath) return;
+    setErr(null);
+    startViewing(async () => {
+      const res = await viewConsentArtifactAction({
+        patientId,
+        path: artifactPath,
+      });
+      if (!res.ok) return setErr(res.error);
+      window.open(res.url, "_blank", "noopener");
     });
   }
 
@@ -102,6 +173,28 @@ export function ConsentPanel({
             Capture signature
           </Button>
         )}
+        {mode === "idle" && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setMode("paper")}
+            disabled={pending}
+          >
+            Attach signed paper form
+          </Button>
+        )}
+        {artifactPath && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={viewSignedForm}
+            disabled={viewing}
+          >
+            {viewing ? "Opening…" : "View signed form"}
+          </Button>
+        )}
         {current && isAdmin && (
           <Button
             type="button"
@@ -115,7 +208,7 @@ export function ConsentPanel({
         )}
       </div>
 
-      {mode === "pad" && (
+      {(mode === "pad" || mode === "paper") && (
         <div className="mt-3 space-y-2">
           <div className="grid gap-2 sm:grid-cols-3">
             <select
@@ -144,7 +237,26 @@ export function ConsentPanel({
               </>
             )}
           </div>
-          <SignaturePad onSave={saveSignature} saving={pending} />
+          {mode === "pad" ? (
+            <SignaturePad onSave={saveSignature} saving={pending} />
+          ) : (
+            <div className="grid gap-1.5">
+              <input
+                type="file"
+                accept="application/pdf,image/png,image/jpeg"
+                disabled={pending}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) attachPaperScan(file);
+                }}
+                className="block w-full text-sm file:mr-3 file:rounded-md file:border-0 file:bg-[color:var(--color-brand-bg)] file:px-3 file:py-1.5 file:text-xs file:font-bold file:uppercase file:tracking-wider file:text-[color:var(--color-brand-navy)] hover:file:bg-[color:var(--color-brand-bg-mid)]"
+              />
+              <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+                PDF, PNG, or JPEG, up to 5MB — a scan or photo of the signed
+                paper form.
+              </p>
+            </div>
+          )}
         </div>
       )}
     </section>

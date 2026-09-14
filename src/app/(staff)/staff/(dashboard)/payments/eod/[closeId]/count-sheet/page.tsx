@@ -12,6 +12,7 @@ import {
   type CashDenomination,
   type DenominationCounts,
 } from "@/lib/accounting/cash-denominations";
+import { manilaDateTime } from "@/lib/dates/manila";
 import { PrintButton } from "./print-button";
 
 export const metadata = { title: "Cash count sheet — staff" };
@@ -208,7 +209,7 @@ export default async function CashCountSheetPage({
 
         <p className="mt-3 text-[10px] text-[color:var(--color-brand-text-soft)]">
           Closed by {closer?.full_name ?? "—"} at{" "}
-          {new Date(close.closed_at).toLocaleString("en-PH", { timeZone: "Asia/Manila" })}
+          {manilaDateTime(close.closed_at)}
         </p>
 
         <div className="mt-8 flex gap-6">
