@@ -99,8 +99,45 @@ export const MOP_TO_COA: Record<Mop, string> = {
   FREYA: "2500",
 };
 
+/**
+ * The one MOP that is physical cash out of the reception till (CR 1010).
+ *
+ * Anything paid this way MUST be written as an `eod_cash_adjustments` row
+ * (`kind='petty_cash'`) rather than as a direct journal entry, because
+ * `cash_drawer_state.expected_cash_php` derives the day's payouts *solely*
+ * from that table — it never reads `journal_entries`, and the bridge trigger
+ * runs one way only (adjustment → JE, never the reverse).
+ *
+ * Posting the JE directly instead moves the books but not the drawer: reception
+ * counts short, the EOD close books the shortage to 6900 Cash Short/Over, and
+ * the same peso gets credited to cash twice. `postTillCashExpense()` is the
+ * only correct writer; `postExpenseJournalEntry()` refuses this MOP outright so
+ * a future caller can't quietly reopen the hole.
+ */
+export const TILL_CASH_MOP = "CLINIC CASH" as const satisfies Mop;
+
+/** True when a payment source is physical cash out of the till (see TILL_CASH_MOP). */
+export function isTillCashMop(mop: Mop): boolean {
+  return mop === TILL_CASH_MOP;
+}
+
+/**
+ * Reverse of `CATEGORY_TO_COA`, restricted to the petty-cash subset.
+ *
+ * A till expense stores its category as `eod_cash_adjustments.contra_account_id`,
+ * so the Petty cash history list maps the account back to the everyday phrase
+ * reception picked. Restricted to the subset on purpose: the full map is not
+ * injective (Benefits and "Past HMO of Doctors" share 6120), whereas the eight
+ * petty-cash categories are one-to-one. Anything outside the subset — an admin
+ * Quick expense booked to, say, Rent — falls back to the account name.
+ */
+export const PETTY_CASH_COA_TO_CATEGORY: Record<string, ExpenseCategory> =
+  Object.fromEntries(
+    PETTY_CASH_CATEGORY_OPTIONS.map((o) => [CATEGORY_TO_COA[o.value], o.value]),
+  );
+
 export const MOP_OPTIONS: { value: Mop; label: string; hint: string }[] = [
-  { value: "CLINIC CASH", label: "Clinic Cash", hint: "Paid from petty cash on hand" },
+  { value: "CLINIC CASH", label: "Clinic Cash", hint: "Cash out of the reception till — recorded as a drawer payout, not a plain journal entry" },
   { value: "CLINIC GCASH", label: "Clinic GCash", hint: "Paid from clinic's GCash wallet" },
   { value: "CHEQUE", label: "Cheque (BPI)", hint: "Cheque drawn from BPI account" },
   { value: "BPI", label: "BPI transfer", hint: "Direct transfer from BPI" },

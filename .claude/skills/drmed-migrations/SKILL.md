@@ -42,7 +42,8 @@ supabase/migrations/
 ├── 0132_eod_denomination_count.sql      ← eod_close_records.counted_denominations jsonb, P0048 guard, cash_drawer_state re-created
 ├── 0133_hmo_release_gate.sql            ← enforce_payment_before_release now passes an HMO-billed visit; ACL back to postgres + service_role
 ├── 0134_harden_0043_report_views.sql    ← the two 0043 admin-report views: security_invoker = on + revoke anon (authenticated KEEPS its grant — the CSV routes read them via the RLS client)
-└── 0135_harden_hmo_and_inventory_views.sql ← the four v_hmo_* views + v_inventory_balances: security_invoker = on + revoke anon AND authenticated. Closed a LIVE anon-readable disclosure (2,031 rows / 292 named patients + their tests). 0134's "the last views still running as their owner" was wrong.
+├── 0135_harden_hmo_and_inventory_views.sql ← the four v_hmo_* views + v_inventory_balances: security_invoker = on + revoke anon AND authenticated. Closed a LIVE anon-readable disclosure (2,031 rows / 292 named patients + their tests). 0134's "the last views still running as their owner" was wrong.
+└── 0145_till_cash_single_write_path.sql ← M1: cash out of the till has ONE write path. P0049 guard blocks source_kind='petty_cash' journal entries outright (that enum value is retired — till expenses now reach the GL as source_kind='cash_adjustment' via the eod_cash_adjustments bridge), and drops the now-dead reverse_petty_cash_entry (0102). No backfill: prod had ZERO petty_cash JEs and an empty eod_cash_adjustments/eod_close_records when it landed.
 
 supabase/seed.sql                        ← post-`db reset` grants (tables + sequences ONLY, never routines) + named re-revokes (0134, 0135)
 scripts/lib/                             ← load-env.ts, env-guard.ts (+ guard-coverage.test.ts) — every runner is guarded
@@ -97,7 +98,7 @@ DRMed prod project ref: `qhptbmafrosgibooelpp` (the org's other project `zzcbzei
 - **`revoke … from public` alone is NOT enough on hosted Supabase** — it also grants EXECUTE to anon/authenticated directly; revoke those by name too. Local lacks those default grants, so local tests MASK the gap.
 - **Revoking EXECUTE on a trigger function does not break the trigger** (privilege is checked at `create trigger` time). A SECURITY INVOKER function that nest-calls a SECURITY DEFINER helper DOES need the caller to hold EXECUTE — that's why `eod_lock_check` / `employee_leave_balance` keep `authenticated`.
 - **`has_role` / `is_staff` / `staff_role` / `current_patient_id` MUST stay anon-executable** — 123 RLS policies reference `has_role`; revoking makes them RAISE instead of filter.
-- **Custom error codes** — every `raise exception … using errcode = 'P00NN'` needs a translation in `src/lib/accounting/pg-errors.ts`. Codes in use: P0001–P0034, P0040–P0048. **Next free code: P0049.** A BEFORE trigger runs before column CHECK constraints, so if your guard could blow up on malformed input (e.g. `jsonb_each` on a scalar), claim that case yourself and raise a P-code — a raw 22023 has no translation.
+- **Custom error codes** — every `raise exception … using errcode = 'P00NN'` needs a translation in `src/lib/accounting/pg-errors.ts`. Codes in use: P0001–P0034, P0040–P0049. **Next free code: P0050.** A BEFORE trigger runs before column CHECK constraints, so if your guard could blow up on malformed input (e.g. `jsonb_each` on a scalar), claim that case yourself and raise a P-code — a raw 22023 has no translation.
 
 ## RLS policy templates the skill carries
 

@@ -11,9 +11,11 @@ import { createPettyCashExpenseAction } from "./actions";
 
 interface Props {
   defaultDate: string;
+  /** Manila today — a till payout can not be dated into the future. */
+  maxDate: string;
 }
 
-export function PettyCashForm({ defaultDate }: Props) {
+export function PettyCashForm({ defaultDate, maxDate }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [err, setErr] = useState<string | null>(null);
@@ -63,7 +65,14 @@ export function PettyCashForm({ defaultDate }: Props) {
         setErr(r.error);
         return;
       }
-      setOk(`Recorded — ${r.data.entry_number}.`);
+      // entry_number comes from the journal entry the DB bridge posts; fall
+      // back to a plain confirmation rather than "Recorded — ." if that
+      // read-back ever comes up empty.
+      setOk(
+        r.data.entry_number
+          ? `Recorded — ${r.data.entry_number}. Taken out of the drawer.`
+          : "Recorded. Taken out of the drawer.",
+      );
       reset();
       router.refresh();
     });
@@ -90,9 +99,9 @@ export function PettyCashForm({ defaultDate }: Props) {
         )}
 
         <div className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg-soft)] px-3 py-2 text-xs text-[color:var(--color-brand-text-soft)]">
-          Paid from <strong>petty cash on hand</strong> (the till). This records a
-          small cash expense — it doesn&apos;t move money in the system, it just
-          keeps the books right.
+          Paid from <strong>petty cash on hand</strong> (the till). This takes the
+          money out of the drawer: the day&apos;s expected cash drops by this
+          amount, so the count at closing still ties.
         </div>
 
         <Field label="Date" required>
@@ -100,6 +109,7 @@ export function PettyCashForm({ defaultDate }: Props) {
             type="date"
             value={expenseDate}
             onChange={(e) => setExpenseDate(e.target.value)}
+            max={maxDate}
             required
             className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm"
           />

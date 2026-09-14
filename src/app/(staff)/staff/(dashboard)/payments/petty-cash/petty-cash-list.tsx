@@ -6,12 +6,17 @@ import { Panel } from "@/components/ui/panel";
 import { voidPettyCashExpenseAction } from "./actions";
 
 export interface PettyCashRow {
+  /** `eod_cash_adjustments.id` — what the void acts on. */
   id: string;
-  entry_number: string;
-  description: string;
+  /** Everyday phrase for the category (from the contra account). */
+  label: string;
+  /** No expense account was chosen — the entry is parked in 9999 Suspense. */
+  uncategorised: boolean;
+  payee: string | null;
+  note: string | null;
   amount_php: number;
-  status: "posted" | "reversed" | "draft";
-  created_at: string;
+  voided: boolean;
+  recorded_at: string;
 }
 
 const peso = new Intl.NumberFormat("en-PH", {
@@ -35,7 +40,7 @@ export function PettyCashList({
   isToday: boolean;
 }) {
   const total = rows
-    .filter((r) => r.status === "posted")
+    .filter((r) => !r.voided)
     .reduce((sum, r) => sum + r.amount_php, 0);
   const dayLabel = isToday ? "today" : "this day";
 
@@ -56,7 +61,7 @@ export function PettyCashList({
       </ul>
       <div className="flex items-center justify-between border-t border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg-soft)] px-4 py-3 text-sm">
         <span className="font-semibold text-[color:var(--color-brand-text-soft)]">
-          Total {dayLabel} (not counting reversed)
+          Total taken from the till {dayLabel} (not counting voided)
         </span>
         <span className="font-mono font-bold text-[color:var(--color-brand-navy)]">
           {peso.format(total)}
@@ -73,7 +78,8 @@ function PettyCashItem({ row }: { row: PettyCashRow }) {
   const [reason, setReason] = useState("");
   const [err, setErr] = useState<string | null>(null);
 
-  const reversed = row.status === "reversed";
+  const voided = row.voided;
+  const title = row.payee ? `${row.label} — ${row.payee}` : row.label;
 
   function submitVoid() {
     setErr(null);
@@ -99,29 +105,39 @@ function PettyCashItem({ row }: { row: PettyCashRow }) {
         <div className="min-w-0">
           <p
             className={`text-sm font-semibold ${
-              reversed
+              voided
                 ? "text-[color:var(--color-brand-text-soft)] line-through"
                 : "text-[color:var(--color-brand-navy)]"
             }`}
           >
-            {row.description}
+            {title}
           </p>
           <p className="mt-0.5 text-xs text-[color:var(--color-brand-text-soft)]">
-            {timeManila(row.created_at)} · {row.entry_number}
-            {reversed ? " · reversed" : ""}
+            {timeManila(row.recorded_at)}
+            {voided ? " · voided" : ""}
           </p>
+          {row.uncategorised && !voided && (
+            <p className="mt-1 text-xs font-semibold text-amber-800">
+              No expense account picked — ask Admin to file this properly.
+            </p>
+          )}
+          {row.note && (
+            <p className="mt-0.5 text-xs text-[color:var(--color-brand-text-soft)]">
+              {row.note}
+            </p>
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-3">
           <span
             className={`font-mono text-sm font-bold ${
-              reversed
+              voided
                 ? "text-[color:var(--color-brand-text-soft)] line-through"
                 : "text-[color:var(--color-brand-navy)]"
             }`}
           >
             {peso.format(row.amount_php)}
           </span>
-          {!reversed && !confirming && (
+          {!voided && !confirming && (
             <button
               type="button"
               onClick={() => setConfirming(true)}
