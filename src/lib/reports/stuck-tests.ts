@@ -4,6 +4,7 @@ import type { Database } from "@/types/database";
 import { chunk, fetchAllRows, IN_CHUNK, unique } from "./paging";
 import { csvManilaStamp, pluckOne } from "./format";
 import { moneySettled } from "@/lib/visits/money-settled";
+import { DOCTOR_KINDS_PG_LIST } from "@/lib/visits/classification";
 
 type AnyClient = SupabaseClient<Database>;
 
@@ -100,6 +101,19 @@ export async function loadStuckTests(
   // Non-final tests older than the threshold. No direct patients embed on
   // test_requests — join via visits(patients(...)). A deleted line isn't
   // stuck — it's not owed at all (0125).
+  //
+  // Doctor lines are excluded. `test_requests` doubles as the visit's bill
+  // line, so consultations and procedures sit in it alongside lab tests
+  // (0090), but nobody ever works a consult on the bench: it has no queue
+  // step that could clear it. A pending one therefore ages forever, and this
+  // list is the one place that reads that as a problem to chase.
+  //
+  // Prod holds 3 such lines (71–106 days old); 2 of them are on soft-deleted
+  // visits the `visits.deleted_at` filter above already dropped, so exactly
+  // one reached the report — and it was the report's ONLY row, so the page
+  // now correctly reads "nothing stuck" instead of naming work no one could
+  // ever finish. They still surface on /staff/visits under the "Doctor
+  // Consults" chip, which is where that follow-up belongs.
   const { rows: stuck, truncated } = await fetchAllRows<StuckRow>(
     (from, to) =>
       client
@@ -110,6 +124,7 @@ export async function loadStuckTests(
         .lt("requested_at", cutoff)
         .is("deleted_at", null)
         .is("visits.deleted_at", null)
+        .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
         .order("requested_at", { ascending: true })
         .order("id", { ascending: true })
         .range(from, to)
@@ -126,6 +141,12 @@ export async function loadStuckTests(
   // The three integrity lists below keep a flat 100-row cap and do not feed
   // `truncated`: they describe anomalies that should be ~0, not a ledger to
   // export in full. If one ever fills up, the fix is upstream, not a bigger cap.
+  //
+  // None of them needs the doctor-kind filter the `stuck` query above carries.
+  // The two header lists select `is_package_header = true`, and a package
+  // header is a `lab_package` by construction — prod has zero doctor-kind
+  // headers. `emptyVisits` counts test_request ROWS per visit, so a
+  // consultation-only visit is correctly not empty: it has a bill line.
 
   // Zero-child package headers — 0130's Population-A predicates, live. Since
   // the atomic visit-creation fix these can no longer be minted, so anything

@@ -13,6 +13,7 @@ import {
   summaryTotals,
   toggleVisitClass,
   DOCTOR_KIND_VALUES,
+  DOCTOR_KINDS_PG_LIST,
   VISIT_CLASS_LABEL,
   type VisitClass,
 } from "./classification";
@@ -359,5 +360,29 @@ describe("foldVisitGroups", () => {
       v("y", null, "2026-07-20", "2026-07-20T01:00:00Z"),
     ]);
     expect(folded.map((f) => f.key)).toEqual(["g1", "y"]);
+  });
+});
+
+describe("DOCTOR_KINDS_PG_LIST", () => {
+  it("renders the enumeration as a PostgREST list literal", () => {
+    expect(DOCTOR_KINDS_PG_LIST).toBe("(doctor_consultation,doctor_procedure)");
+  });
+
+  it("stays in lock-step with DOCTOR_KIND_VALUES", () => {
+    expect(DOCTOR_KINDS_PG_LIST.slice(1, -1).split(",")).toEqual([
+      ...DOCTOR_KIND_VALUES,
+    ]);
+  });
+
+  it("is never the empty list PostgREST would reject as invalid SQL", () => {
+    expect(DOCTOR_KIND_VALUES.length).toBeGreaterThan(0);
+    expect(DOCTOR_KINDS_PG_LIST).not.toBe("()");
+  });
+
+  it("excludes exactly the kinds classifyKind calls non-lab", () => {
+    for (const k of DOCTOR_KIND_VALUES) expect(classifyKind(k)).not.toBe("lab");
+    for (const k of ["lab_test", "lab_package", "vaccine", "home_service"]) {
+      expect(DOCTOR_KINDS_PG_LIST).not.toContain(k);
+    }
   });
 });

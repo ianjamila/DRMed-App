@@ -2,7 +2,7 @@ import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
-import { ALL_SECTIONS } from "@/lib/auth/role-sections";
+import { LAB_SECTIONS } from "@/lib/auth/role-sections";
 import { Panel } from "@/components/ui/panel";
 import { ExportCsvLink } from "@/components/staff/export-csv-link";
 import { REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
@@ -62,7 +62,9 @@ export default async function LabTatPage({ searchParams }: SearchProps) {
           selected window. TAT is computed from{" "}
           <code>released_at − requested_at</code>; samples beyond 60 days are
           excluded as outliers. SLA breaches use{" "}
-          <code>services.turnaround_hours</code>.
+          <code>services.turnaround_hours</code>. Consultations and procedures
+          are excluded — they are released at the counter, so they have no
+          turnaround to measure.
         </p>
       </header>
 
@@ -116,7 +118,7 @@ export default async function LabTatPage({ searchParams }: SearchProps) {
             className="mt-1 rounded-md border border-[color:var(--color-brand-bg-mid)] px-2 py-1.5 text-sm"
           >
             <option value="">All sections</option>
-            {ALL_SECTIONS.map((s) => (
+            {LAB_SECTIONS.map((s) => (
               <option key={s} value={s}>
                 {SECTION_LABEL[s] ?? s}
               </option>
