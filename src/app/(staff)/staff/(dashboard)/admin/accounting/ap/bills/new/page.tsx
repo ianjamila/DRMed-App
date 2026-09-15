@@ -29,7 +29,7 @@ export default async function NewBillPage() {
       .from("vendors")
       .select("id, default_wt_classification, default_wt_rate, default_account_id")
       .eq("is_active", true),
-    // 0147: paid-on-entry can pay a bill out of the till, so the form needs to
+    // 0149: paid-on-entry can pay a bill out of the till, so the form needs to
     // know which days are already closed.
     loadClosedDayContext(),
   ]);

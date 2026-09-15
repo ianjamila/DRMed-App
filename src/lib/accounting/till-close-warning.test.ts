@@ -29,7 +29,7 @@ describe("tillPaymentBlockedByClose", () => {
   });
 
   it("never blocks a payment from a bank account, closed day or not", () => {
-    // The 0147 trigger keys on the account, so a non-till payment writes no
+    // The 0149 trigger keys on the account, so a non-till payment writes no
     // drawer row and never meets the lock.
     expect(
       tillPaymentBlockedByClose({

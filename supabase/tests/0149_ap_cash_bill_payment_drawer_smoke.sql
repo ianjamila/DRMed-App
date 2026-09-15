@@ -1,7 +1,7 @@
 -- =============================================================================
--- 0147_ap_cash_bill_payment_drawer_smoke.sql
+-- 0149_ap_cash_bill_payment_drawer_smoke.sql
 -- =============================================================================
--- The third cash door. Proves the property 0147 exists for — an AP bill paid
+-- The third cash door. Proves the property 0149 exists for — an AP bill paid
 -- in cash moves the DRAWER as well as the books, exactly once — plus the four
 -- ways it could have gone wrong:
 --
@@ -12,13 +12,15 @@
 --   C  a payment against 1020 BPI      → NO drawer row (it never touched the till)
 --   D  the paid-on-entry door          → drawer row written too
 --   E  voiding the AP payment          → drawer row voided, expected cash restored
---   F  voiding the drawer row directly → P0051
+--   F  voiding the drawer row directly → P0052
 --   G  the biconditional CHECK         → a bare bill_payment row is rejected
 --   H  a closed day                    → P0015, and the whole payment rolls back
+--   I  VOIDING on a closed day          → P0015 too (the lock guards UPDATE, and
+--      the void mirror is an UPDATE) — the common case, not an edge one
 --
 -- Run it against the LOCAL stack, not prod:
 --   supabase db reset && psql "$(supabase status -o json | jq -r .DB_URL)" \
---     -f supabase/tests/0147_ap_cash_bill_payment_drawer_smoke.sql
+--     -f supabase/tests/0149_ap_cash_bill_payment_drawer_smoke.sql
 --
 -- It runs inside BEGIN/ROLLBACK, so nothing survives; via Supabase MCP (which
 -- does not honour BEGIN/ROLLBACK) use the explicit cleanup at the bottom.
@@ -54,9 +56,9 @@ begin
     insert into auth.users (id, instance_id, aud, role, email, encrypted_password,
                             email_confirmed_at, created_at, updated_at)
     values (v_actor_id, '00000000-0000-0000-0000-000000000000', 'authenticated',
-            'authenticated', 'smoke-0147@example.test', '', now(), now(), now());
+            'authenticated', 'smoke-0149@example.test', '', now(), now(), now());
     insert into public.staff_profiles (id, full_name, role, is_active)
-    values (v_actor_id, 'SMOKE 0147 Admin', 'admin', true);
+    values (v_actor_id, 'SMOKE 0149 Admin', 'admin', true);
   end if;
 
   select id into v_shift_id
@@ -73,7 +75,7 @@ begin
   end if;
 
   insert into public.vendors (name, is_active)
-  values ('SMOKE 0147 Vendor', true)
+  values ('SMOKE 0149 Vendor', true)
   returning id into v_vendor_id;
 
   select (jsonb_build_object('x', public.cash_drawer_state(v_date, v_shift_id))->'x'->>'expected_cash_php')::numeric
@@ -84,7 +86,7 @@ begin
       'vendor_id', v_vendor_id,
       'bill_date', v_date,
       'due_date',  v_date,
-      'description', 'SMOKE 0147 bill',
+      'description', 'SMOKE 0149 bill',
       'wt_exempt', true,
       'lines', jsonb_build_array(jsonb_build_object(
         'line_no', 1, 'description', 'smoke', 'amount_php', v_amount,
@@ -165,7 +167,7 @@ begin
       'vendor_id', v_vendor_id,
       'bill_date', v_date,
       'due_date',  v_date,
-      'description', 'SMOKE 0147 paid on entry',
+      'description', 'SMOKE 0149 paid on entry',
       'wt_exempt', true,
       'lines', jsonb_build_array(jsonb_build_object(
         'line_no', 1, 'description', 'smoke poe', 'amount_php', 50.00,
@@ -182,14 +184,14 @@ begin
     raise exception 'D FAIL: paid-on-entry left the till without telling the drawer';
   end if;
 
-  -- ---- F: the drawer row cannot be voided on its own (P0051) ------------
+  -- ---- F: the drawer row cannot be voided on its own (P0052) ------------
   -- Before E, because E voids the payment and frees the row.
   begin
     update public.eod_cash_adjustments
       set voided_at = now(), voided_by = v_actor_id, void_reason = 'smoke'
       where id = v_adj.id;
     raise exception 'F FAIL: a direct void of a bill_payment drawer row was allowed';
-  exception when sqlstate 'P0051' then
+  exception when sqlstate 'P0052' then
     null;
   end;
 
@@ -249,7 +251,21 @@ begin
     null;
   end;
 
-  raise notice '0147 SMOKE PASS: A B C D E F G H';
+  -- ---- I: voiding on a closed day is refused too ------------------------
+  -- The paid-on-entry payment from D is still live and dated to the day just
+  -- closed. Its void mirror is an UPDATE on the drawer row, and the day-close
+  -- lock guards UPDATE as well as INSERT — so the whole cascade, reversal JE
+  -- included, rolls back. Correct (the count is signed off) and the same way
+  -- voidTillCashExpense has behaved since 0043, but it is why the AP payment
+  -- page pre-flights the void and P0015 gets a void-specific message.
+  begin
+    perform public.ap_void_bill_payment_cascade(v_poe_pay_id, 'smoke void on closed day', v_actor_id);
+    raise exception 'I FAIL: a till payment was voided out of an already-closed day';
+  exception when sqlstate 'P0015' then
+    null;
+  end;
+
+  raise notice '0149 SMOKE PASS: A B C D E F G H I';
 end;
 $$;
 
@@ -263,13 +279,13 @@ rollback;
 -- delete from public.eod_close_records   where business_date = '2026-05-18';
 -- delete from public.bill_payment_allocations where payment_id in (
 --   select id from public.bill_payments where vendor_id in (
---     select id from public.vendors where name = 'SMOKE 0147 Vendor'));
+--     select id from public.vendors where name = 'SMOKE 0149 Vendor'));
 -- delete from public.bill_payments where vendor_id in (
---   select id from public.vendors where name = 'SMOKE 0147 Vendor');
+--   select id from public.vendors where name = 'SMOKE 0149 Vendor');
 -- delete from public.bill_lines where bill_id in (
 --   select id from public.bills where vendor_id in (
---     select id from public.vendors where name = 'SMOKE 0147 Vendor'));
+--     select id from public.vendors where name = 'SMOKE 0149 Vendor'));
 -- delete from public.bills   where vendor_id in (
---   select id from public.vendors where name = 'SMOKE 0147 Vendor');
--- delete from public.vendors where name = 'SMOKE 0147 Vendor';
+--   select id from public.vendors where name = 'SMOKE 0149 Vendor');
+-- delete from public.vendors where name = 'SMOKE 0149 Vendor';
 -- -- plus the journal_entries / journal_lines cleanup shown in the 0043 smoke.

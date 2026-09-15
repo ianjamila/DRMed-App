@@ -198,7 +198,7 @@ export async function createBillPaymentAction(
     p_actor_id: profile.user_id,
   });
 
-  // 0147: paying a bill out of 1010 now writes the cash-drawer row in the same
+  // 0149: paying a bill out of 1010 now writes the cash-drawer row in the same
   // transaction, so a closed day refuses the whole payment with P0015.
   if (error) return { ok: false, error: translateBillPaymentError(error) };
 
@@ -268,7 +268,10 @@ export async function voidBillPaymentAction(
     p_actor_id: profile.user_id,
   });
 
-  if (error) return { ok: false, error: translatePgError(error) };
+  // 0149: the void mirror updates the payment's cash-drawer row, and the
+  // day-close lock guards UPDATE as well as INSERT — so a till payment whose
+  // day has since been closed refuses the whole void with P0015.
+  if (error) return { ok: false, error: translateBillPaymentError(error, "void") };
 
   const out = asRpcObject(data);
   const paymentId = String(out.payment_id ?? "");

@@ -1,7 +1,7 @@
 /**
  * "Will this AP payment be refused because the day is already closed?"
  *
- * Since 0147 a bill payment whose cash account is 1010 Cash on Hand writes an
+ * Since 0149 a bill payment whose cash account is 1010 Cash on Hand writes an
  * `eod_cash_adjustments` row in the same transaction, which puts it under the
  * day-close lock (P0015) for the first time. The database is the authority —
  * this is only the pre-flight the two AP payment forms use so the bookkeeper

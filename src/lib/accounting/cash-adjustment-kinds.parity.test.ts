@@ -13,7 +13,7 @@
  *
  * That is not hypothetical. `salary_payout` shipped in 0044 and was left out
  * of the `payouts` list until 0139 found it, so for 95 migrations a cash
- * payroll payout silently inflated the day's expected cash. 0147 adds
+ * payroll payout silently inflated the day's expected cash. 0149 adds
  * `bill_payment` and would have made the same mistake just as quietly.
  *
  * The parity is checked against the migration TEXT rather than a database, for
@@ -31,7 +31,7 @@ import { fileURLToPath } from "node:url";
 
 const MIGRATION = fileURLToPath(
   new URL(
-    "../../../supabase/migrations/0147_ap_cash_bill_payment_drawer_link.sql",
+    "../../../supabase/migrations/0149_ap_cash_bill_payment_drawer_link.sql",
     import.meta.url,
   ),
 );
@@ -54,7 +54,7 @@ function checkConstraintKinds(): string[] {
   const m = sql.match(
     /add constraint eod_cash_adjustments_kind_check check \(kind in \(([\s\S]*?)\)\)/,
   );
-  if (!m) throw new Error("could not locate eod_cash_adjustments_kind_check in 0147");
+  if (!m) throw new Error("could not locate eod_cash_adjustments_kind_check in 0149");
   return quoted(m[1]);
 }
 
@@ -63,7 +63,7 @@ function cteBody(name: string): string {
   const fn = sql.match(
     /create or replace function public\.cash_drawer_state\(([\s\S]*?)\n\$\$;/,
   );
-  if (!fn) throw new Error("could not locate cash_drawer_state in 0147");
+  if (!fn) throw new Error("could not locate cash_drawer_state in 0149");
   const m = fn[1].match(new RegExp(`\\n    ${name} as \\(([\\s\\S]*?)\\n    \\),`));
   if (!m) throw new Error(`could not locate the ${name} CTE in cash_drawer_state`);
   return m[1];
@@ -86,7 +86,7 @@ function zodKinds(): string[] {
 describe("eod_cash_adjustments kind parity", () => {
   const kinds = checkConstraintKinds();
 
-  it("0147 widens the CHECK to admit bill_payment without dropping a kind", () => {
+  it("0149 widens the CHECK to admit bill_payment without dropping a kind", () => {
     expect(kinds).toEqual([
       "petty_cash",
       "salary_advance",

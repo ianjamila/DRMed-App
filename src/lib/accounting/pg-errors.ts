@@ -112,7 +112,7 @@ export function translatePgError(err: PgError): string {
       return "An attending physician is required for consults and procedures that pay the doctor a PF. Please select a physician on the visit before releasing this test.";
     // 12.5 sibling — send-out services have no structured template (0059).
     // Reachable from admin/result-templates/[service_id]/edit, which already
-    // routes through this translator; it had no case until 0147 added the
+    // routes through this translator; it had no case until 0149 added the
     // coverage test that found it.
     case "P0035":
       return err.message ?? "Send-out services use the partner lab's PDF and cannot have a structured result template.";

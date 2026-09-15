@@ -19,7 +19,7 @@ export default async function NewPaymentPage() {
       .eq("is_active", true)
       .like("code", "10__")
       .order("code"),
-    // 0147: so the form can warn before submit when the till day is closed.
+    // 0149: so the form can warn before submit when the till day is closed.
     loadClosedDayContext(),
   ]);
 

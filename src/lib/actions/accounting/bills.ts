@@ -317,7 +317,7 @@ export async function createBillPaidOnEntryAction(
     p_actor_id: profile.user_id,
   });
 
-  // 0147: "Mark as paid" inserts a bill_payment directly, so this door reaches
+  // 0149: "Mark as paid" inserts a bill_payment directly, so this door reaches
   // the cash drawer (and its day-close lock) exactly like the payments page.
   if (error) return { ok: false, error: translateBillPaymentError(error) };
 

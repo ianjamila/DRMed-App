@@ -18,7 +18,7 @@ export interface ClosedDayContext {
  * What the AP payment forms need to warn about a closed day *before* the form
  * is submitted.
  *
- * Since 0147 a bill payment against 1010 writes an `eod_cash_adjustments` row
+ * Since 0149 a bill payment against 1010 writes an `eod_cash_adjustments` row
  * in the same transaction, so `trg_eod_cash_adjustments_block_after_close_iu`
  * refuses the whole payment (P0015) when the payment date lands on a closed
  * day. The refusal is correct, but discovering it only at submit — after the
@@ -28,7 +28,7 @@ export interface ClosedDayContext {
  *
  * The shift is resolved the same way every shift-less path resolves it (first
  * active by `sort_order, code`): `payments_block_after_close`,
- * `cash_drawer_state`'s callers, `postTillCashExpense`, and the 0147 link
+ * `cash_drawer_state`'s callers, `postTillCashExpense`, and the 0149 link
  * trigger itself. Reading a different shift here would warn about the wrong
  * days.
  */

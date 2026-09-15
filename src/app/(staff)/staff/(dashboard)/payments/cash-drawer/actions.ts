@@ -154,6 +154,23 @@ export async function voidCashAdjustmentAction(
     .eq("id", parsed.data.id)
     .maybeSingle();
   if (readErr) return { ok: false, error: translatePgError(readErr) };
+
+  // 0149: same shape as the gift-code case below, for the same reason. This
+  // row was written by the AP subledger, and voiding it alone would put the
+  // cash back in the drawer while the books still record the supplier as
+  // paid. The drawer hides its Void button for the kind and P0052 refuses the
+  // update anyway; say which control to use rather than let either be the
+  // only answer.
+  if (adjustment?.kind === "bill_payment") {
+    return {
+      ok: false,
+      error:
+        "This is a supplier bill paid in cash. To undo it, void the payment itself " +
+        "(Admin → Expenses → Bill payments) — that puts the money back in " +
+        "the drawer and reverses the accounting together.",
+    };
+  }
+
   if (adjustment?.kind === "gift_code_sale") {
     const { data: code } = adjustment.gift_code_id
       ? await admin

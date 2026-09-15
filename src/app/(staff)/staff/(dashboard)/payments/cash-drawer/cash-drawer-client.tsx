@@ -31,7 +31,7 @@ const KIND_LABEL: Record<string, string> = {
   salary_payout: "Salary payout",
   // N14 (0139): a cash gift-code sale.
   gift_code_sale: "Gift code sold",
-  // 0147: written by the AP subledger, not by this page — a supplier bill paid
+  // 0149: written by the AP subledger, not by this page — a supplier bill paid
   // in cash out of the till.
   bill_payment: "Supplier bill paid",
 };
@@ -160,7 +160,7 @@ export function CashDrawerClient(props: {
           <strong className="text-[color:var(--color-brand-navy)]">Cash paid out</strong>
           <span className="font-mono">−{PESO(Number(s.cash_payouts_php ?? 0))}</span>
         </div>
-        {/* 0147: broken out of "Cash paid out" because nobody on this page
+        {/* 0149: broken out of "Cash paid out" because nobody on this page
             recorded it — it arrives from Admin → Accounting → AP. Without the
             line, reception sees the drawer drop with no matching action of
             theirs. */}
@@ -232,14 +232,14 @@ export function CashDrawerClient(props: {
                 <td className="px-3 py-2">
                   {!r.voided_at && !closed && (
                     r.kind === "bill_payment" ? (
-                      // 0147: same reasoning as the gift-code row below. The
+                      // 0149: same reasoning as the gift-code row below. The
                       // generic Void would hand the cash back to the till while
-                      // the books still record the supplier as paid; P0051
+                      // the books still record the supplier as paid; P0052
                       // refuses it at the database anyway. Voiding the AP
                       // payment is the one control that moves both.
                       <span
                         className="text-xs text-[color:var(--color-brand-text-soft)]"
-                        title="Void the payment instead (Admin → Accounting → AP → Payments) — that reverses this entry too."
+                        title="Void the payment instead (Admin → Expenses → Bill payments) — that reverses this entry too."
                       >
                         Void via AP payments
                       </span>

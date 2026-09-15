@@ -1,5 +1,5 @@
 -- =============================================================================
--- 0147_ap_cash_bill_payment_drawer_link.sql
+-- 0149_ap_cash_bill_payment_drawer_link.sql
 -- =============================================================================
 -- The THIRD cash door (SectionTabs audit, flagged when M1 shipped as 0145).
 --
@@ -50,7 +50,7 @@
 --
 --   2. THE AP PAYMENT OWNS THE ROW. Voiding the drawer row on its own would
 --      hand the cash back to the till while the books still say the supplier
---      was paid. P0051 blocks that (and any edit of the linked row's money
+--      was paid. P0052 blocks that (and any edit of the linked row's money
 --      fields); the void arrives by mirror from `bill_payments.voided_at`
 --      instead, so the one control — void the AP payment — moves both. This
 --      is the same reasoning that made the drawer suppress its generic Void
@@ -80,14 +80,26 @@
 -- ---- BEHAVIOUR CHANGE THE BOOKKEEPER WILL SEE -------------------------------
 --
 -- `trg_eod_cash_adjustments_block_after_close_iu` now applies to AP cash bill
--- payments, because the drawer row is written in the same transaction. A cash
--- bill payment dated into an already-closed (business_date, shift) is REFUSED
--- with P0015 and the whole payment rolls back. That is correct — a closed day
--- has been counted and its variance posted, so adding a payout to it after the
--- fact would falsify a count that has already been signed off — but it is new,
--- and it is why the app layer gives P0015 a bill-payment-specific message and
--- the two payment forms warn about a closed date before the form is submitted.
--- The escape hatch is the existing one: an admin reopens the close.
+-- payments, because the drawer row is written in the same transaction. That
+-- lock fires on INSERT **and** UPDATE, so it catches both AP writes:
+--
+--   CREATE — a cash bill payment dated into an already-closed (business_date,
+--   shift) is refused with P0015 and the whole payment rolls back.
+--
+--   VOID — the void mirror below UPDATEs that same drawer row, so voiding a
+--   cash payment whose day has since been closed is refused too, and the whole
+--   `ap_void_bill_payment_cascade` transaction (reversal JE included) rolls
+--   back. This is the COMMON case, not an edge one: a void almost always
+--   happens after the payment's own business day has been counted.
+--
+-- Both are correct — a closed day has been counted and its variance posted, so
+-- changing what left the till on it would falsify a count that has already been
+-- signed off, and the petty-cash sibling (`voidTillCashExpense`) has behaved
+-- this way since 0043. But both are new here, which is why the app layer gives
+-- P0015 create- and void-specific messages, the two payment forms warn about a
+-- closed date before submit, and the payment detail page disables Void with the
+-- reason on screen. The escape hatch is the existing one: an admin reopens the
+-- close.
 -- =============================================================================
 
 -- ---- Schema: the link column, the kind, the biconditional -------------------
@@ -139,7 +151,7 @@ declare
   v_debit_acct     uuid;
   v_credit_acct    uuid;
 begin
-  -- 0147: the AP subledger already posted DR 2100 / CR 1010 for this outflow
+  -- 0149: the AP subledger already posted DR 2100 / CR 1010 for this outflow
   -- (ap_bill_payment_bridge, source_kind='bill_payment'). Posting again here
   -- would credit 1010 twice. The row exists only so cash_drawer_state sees the
   -- payout; its GL life belongs to the bill_payment, including the reversal
@@ -221,7 +233,7 @@ revoke execute on function public.bridge_cash_adjustment_insert() from public, a
 grant  execute on function public.bridge_cash_adjustment_insert() to service_role;
 
 -- ---- The link trigger: every credit to 1010 reaches the drawer --------------
--- P0050 covers the two ways the drawer row cannot be built at all. Both are
+-- P0051 covers the two ways the drawer row cannot be built at all. Both are
 -- configuration faults, not data-entry ones, and both are better as a named
 -- refusal than as the raw not-null violation the insert would otherwise throw:
 -- letting the payment through without the row is the one outcome that must
@@ -252,7 +264,7 @@ begin
   if v_shift_id is null then
     raise exception
       'No active cash shift is configured, so this cash payment cannot be recorded against the cash drawer. Ask an admin to set one up.'
-      using errcode = 'P0050';
+      using errcode = 'P0051';
   end if;
 
   -- eod_cash_adjustments.recorded_by is not null and references
@@ -266,7 +278,7 @@ begin
   if v_recorded_by is null then
     raise exception
       'This cash payment has no recording staff member, so it cannot be recorded against the cash drawer.'
-      using errcode = 'P0050';
+      using errcode = 'P0051';
   end if;
 
   select name into v_vendor_name from public.vendors where id = NEW.vendor_id;
@@ -336,7 +348,7 @@ create trigger trg_bill_payment_drawer_void_mirror
   when (old.voided_at is null and new.voided_at is not null)
   execute function public.ap_bill_payment_drawer_void_mirror();
 
--- ---- Guard P0051: the AP payment owns the drawer row ------------------------
+-- ---- Guard P0052: the AP payment owns the drawer row ------------------------
 -- P0017 (cash adjustment immutable after JE) is inert for this kind, because
 -- it keys on a posted source_kind='cash_adjustment' JE and these rows have
 -- none. Without this guard the drawer's generic Void — and any direct UPDATE —
@@ -364,14 +376,14 @@ begin
      or NEW.shift_id      is distinct from OLD.shift_id then
     raise exception
       'This cash drawer entry belongs to an AP bill payment and can only be changed on the payment itself.'
-      using errcode = 'P0051';
+      using errcode = 'P0052';
   end if;
 
   -- Un-voiding is never allowed: the reversal JE the AP cascade posted stands.
   if OLD.voided_at is not null and NEW.voided_at is null then
     raise exception
       'This cash drawer entry belongs to an AP bill payment and cannot be un-voided. Record a new payment instead.'
-      using errcode = 'P0051';
+      using errcode = 'P0052';
   end if;
 
   if OLD.voided_at is null and NEW.voided_at is not null then
@@ -381,8 +393,8 @@ begin
 
     if v_parent_voided is null then
       raise exception
-        'This cash drawer entry belongs to an AP bill payment. Void the payment itself (Admin → Accounting → AP → Payments) so the books and the drawer come back together.'
-        using errcode = 'P0051';
+        'This cash drawer entry belongs to an AP bill payment. Void the payment itself (Admin → Expenses → Bill payments) so the books and the drawer come back together.'
+        using errcode = 'P0052';
     end if;
   end if;
 
@@ -506,7 +518,7 @@ begin
     where table_schema = 'public' and table_name = 'eod_cash_adjustments'
       and column_name = 'bill_payment_id'
   ) then
-    raise exception '0147: eod_cash_adjustments.bill_payment_id is missing';
+    raise exception '0149: eod_cash_adjustments.bill_payment_id is missing';
   end if;
 
   if not exists (
@@ -514,7 +526,7 @@ begin
     where conname = 'eod_cash_adjustments_bill_payment_has_link'
       and conrelid = 'public.eod_cash_adjustments'::regclass
   ) then
-    raise exception '0147: the bill_payment biconditional CHECK is missing';
+    raise exception '0149: the bill_payment biconditional CHECK is missing';
   end if;
 
   -- The kind CHECK is stored as `= ANY (ARRAY[...])`, so match the value, not
@@ -525,7 +537,7 @@ begin
       and conrelid = 'public.eod_cash_adjustments'::regclass
       and pg_get_constraintdef(oid) like '%bill_payment%'
   ) then
-    raise exception '0147: eod_cash_adjustments_kind_check does not admit bill_payment';
+    raise exception '0149: eod_cash_adjustments_kind_check does not admit bill_payment';
   end if;
 
   foreach v_src in array array[
@@ -537,7 +549,7 @@ begin
       select 1 from pg_trigger
       where tgname = v_src and tgrelid = 'public.bill_payments'::regclass
     ) then
-      raise exception '0147: trigger % is missing on bill_payments', v_src;
+      raise exception '0149: trigger % is missing on bill_payments', v_src;
     end if;
   end loop;
 
@@ -546,24 +558,24 @@ begin
     where tgname = 'trg_eod_cash_adjustments_bill_payment_owned'
       and tgrelid = 'public.eod_cash_adjustments'::regclass
   ) then
-    raise exception '0147: the P0051 ownership guard is missing';
+    raise exception '0149: the P0052 ownership guard is missing';
   end if;
 
   -- The whole migration is inert without this line, and it is the one change
   -- that lives inside a re-created function body rather than in DDL.
   if position('bill_payment' in pg_get_functiondef(
        'public.cash_drawer_state(date, uuid)'::regprocedure)) = 0 then
-    raise exception '0147: cash_drawer_state does not count bill_payment as a payout';
+    raise exception '0149: cash_drawer_state does not count bill_payment as a payout';
   end if;
 
   if position('bill_payment' in pg_get_functiondef(
        'public.bridge_cash_adjustment_insert()'::regprocedure)) = 0 then
-    raise exception '0147: bridge_cash_adjustment_insert lacks the bill_payment early return';
+    raise exception '0149: bridge_cash_adjustment_insert lacks the bill_payment early return';
   end if;
 
   -- 1010 has to resolve, or the link trigger silently never fires.
   if public.coa_uuid_for_code('1010') is null then
-    raise exception '0147: chart_of_accounts has no 1010 Cash on Hand';
+    raise exception '0149: chart_of_accounts has no 1010 Cash on Hand';
   end if;
 end;
 $$;

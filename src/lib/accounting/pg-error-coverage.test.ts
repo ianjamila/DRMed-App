@@ -99,10 +99,10 @@ describe("P-code translation coverage", () => {
     }
   });
 
-  it("registers the two codes 0147 introduces", () => {
-    expect(raised.get("P0050")).toContain("0147_ap_cash_bill_payment_drawer_link.sql");
-    expect(raised.get("P0051")).toContain("0147_ap_cash_bill_payment_drawer_link.sql");
-    expect(translated.has("P0050")).toBe(true);
+  it("registers the two codes 0149 introduces", () => {
+    expect(raised.get("P0051")).toContain("0149_ap_cash_bill_payment_drawer_link.sql");
+    expect(raised.get("P0052")).toContain("0149_ap_cash_bill_payment_drawer_link.sql");
     expect(translated.has("P0051")).toBe(true);
+    expect(translated.has("P0052")).toBe(true);
   });
 });

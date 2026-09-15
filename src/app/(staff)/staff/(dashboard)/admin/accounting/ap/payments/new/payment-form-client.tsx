@@ -202,7 +202,7 @@ export function PaymentFormClient({
 
   // --- JSX ---
 
-  // 0147: paying out of 1010 writes the cash-drawer row in the same
+  // 0149: paying out of 1010 writes the cash-drawer row in the same
   // transaction, so a closed day refuses the whole payment with P0015. Say so
   // while the date is still under their cursor instead of at submit.
   const tillDayClosed = tillPaymentBlockedByClose({
