@@ -20,7 +20,8 @@ export type DeleteBlockedReason =
   | "has_payments"
   | "waived"
   | "released"
-  | "package_component";
+  | "package_component"
+  | "hmo_claimed";
 
 export type Deletability =
   | { ok: true }
@@ -33,10 +34,30 @@ const HINTS: Record<DeleteBlockedReason, string> = {
   waived: "Balance was waived — deletion not available.",
   released: "Has a released result — undo the release first.",
   package_component: "Part of a package — delete the whole package instead.",
+  hmo_claimed: "Already claimed from an HMO — void the claim batch first.",
 };
 
 function blocked(reason: DeleteBlockedReason): Deletability {
   return { ok: false, reason, hint: HINTS[reason] };
+}
+
+/** An `hmo_claim_items ( batch_voided )` embed, as PostgREST returns it. */
+export interface ClaimItemEmbed {
+  batch_voided: boolean;
+}
+
+/**
+ * Is this line's money still out with an HMO? (0147, P0050.)
+ *
+ * Select the flag and filter HERE — never `.eq("hmo_claim_items.batch_voided",
+ * false)` on the embed. PostgREST silently ignores a filter on a LEFT-joined
+ * embed and hands back every row, so that spelling compiles, runs, and reports
+ * an open claim for a batch that was voided months ago.
+ */
+export function hasOpenHmoClaim(
+  items: readonly ClaimItemEmbed[] | null | undefined,
+): boolean {
+  return (items ?? []).some((ci) => !ci.batch_voided);
 }
 
 export interface VisitDeleteShape {
@@ -44,6 +65,12 @@ export interface VisitDeleteShape {
   deleted_at: string | null;
   /** Statuses of the visit's test_requests (all of them, incl. headers). */
   test_statuses: readonly string[];
+  /**
+   * Does ANY of the visit's lines carry a non-voided `hmo_claim_item`? (0147,
+   * P0050.) Required rather than optional so a new caller has to answer it —
+   * defaulting it to false would quietly re-offer a delete the DB refuses.
+   */
+  has_open_hmo_claim: boolean;
 }
 
 export function visitDeletability(
@@ -55,6 +82,7 @@ export function visitDeletability(
   if (visit.payment_status === "waived") return blocked("waived");
   if (visit.payment_status !== "unpaid") return blocked("has_payments");
   if (visit.test_statuses.includes("released")) return blocked("released");
+  if (visit.has_open_hmo_claim) return blocked("hmo_claimed");
   return { ok: true };
 }
 
@@ -64,6 +92,8 @@ export interface TestDeleteShape {
   parent_id: string | null;
   visit_payment_status: string;
   visit_deleted_at: string | null;
+  /** Does THIS line carry a non-voided `hmo_claim_item`? (0147, P0050.) */
+  has_open_hmo_claim: boolean;
 }
 
 export function testDeletability(
@@ -76,6 +106,9 @@ export function testDeletability(
   }
   if (test.status === "released") return blocked("released");
   if (test.parent_id !== null) return blocked("package_component");
+  // Mirrors the trigger's order: the specific money reason wins over the
+  // generic "not unpaid" (which an HMO visit never trips anyway — 0133).
+  if (test.has_open_hmo_claim) return blocked("hmo_claimed");
   if (test.visit_payment_status === "waived") return blocked("waived");
   if (test.visit_payment_status !== "unpaid") return blocked("has_payments");
   return { ok: true };

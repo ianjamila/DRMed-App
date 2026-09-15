@@ -29,7 +29,7 @@ import {
 } from "@/lib/dates/manila";
 import { matchesAllTokens } from "@/lib/patients/search";
 import { visitNumberFilter } from "@/lib/visits/visit-number-filter";
-import { testDeletability } from "@/lib/visits/deletion";
+import { testDeletability, hasOpenHmoClaim } from "@/lib/visits/deletion";
 import { LAB_QUEUE_GATE_VISITS_OR } from "@/lib/visits/lab-gate";
 import { DOCTOR_KINDS_PG_LIST } from "@/lib/visits/classification";
 import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
@@ -194,6 +194,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
     .select(
       `
         id, status, requested_at, released_at, assigned_to, started_at, visit_id, parent_id,
+        hmo_claim_items ( batch_voided ),
         services!inner ( id, code, name, turnaround_hours, section, report_group_id,
           report_groups ( code, name ) ),
         visits!inner (
@@ -331,6 +332,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
       parent_id: r.parent_id,
       visit_payment_status: visit.payment_status,
       visit_deleted_at: null,
+      has_open_hmo_claim: hasOpenHmoClaim(r.hmo_claim_items),
     }).ok;
 
     if (svc.report_group_id && rg) {

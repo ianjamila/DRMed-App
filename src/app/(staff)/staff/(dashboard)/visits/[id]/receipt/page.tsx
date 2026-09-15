@@ -14,7 +14,11 @@ import { getPatientConsentState } from "@/lib/consent/gate";
 import { formatPatientName } from "@/lib/patients/format-name";
 import { shouldPrintReceipt } from "@/lib/visits/receipt-policy";
 import { hasStatutoryDiscountLine } from "@/lib/pricing/statutory";
-import { visibleReceiptLines, receiptTotals } from "@/lib/visits/receipt-totals";
+import {
+  visibleReceiptLines,
+  receiptTotals,
+  toReceiptLine,
+} from "@/lib/visits/receipt-totals";
 import { NoReceiptNotice } from "@/components/staff/no-receipt-notice";
 import { PrintButton } from "./print-button";
 import { logReceiptPrintAction } from "./log-print-action";
@@ -175,21 +179,7 @@ export default async function ReceiptPage({ params }: Props) {
   // charged for — on a reprint. `lines` is the VISIBLE set used for every
   // render and total below; `allLines` only exists to preserve the deleted
   // count in the view audit's metadata.
-  const allLines = (visit.test_requests ?? []).map((tr) => {
-    const svc = Array.isArray(tr.services) ? tr.services[0] : tr.services;
-    const base = tr.base_price_php ?? svc?.price_php ?? 0;
-    const discount = tr.discount_amount_php ?? 0;
-    const final = tr.final_price_php ?? base - discount;
-    return {
-      id: tr.id,
-      svc,
-      base,
-      discount,
-      final,
-      discountKind: tr.discount_kind,
-      deleted: tr.deleted_at !== null,
-    };
-  });
+  const allLines = (visit.test_requests ?? []).map(toReceiptLine);
   const lines = visibleReceiptLines(allLines);
 
   // Plain PIN — present only on the redirect from createVisit, or from a

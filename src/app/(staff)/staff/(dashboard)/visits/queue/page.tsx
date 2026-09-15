@@ -24,7 +24,7 @@ import {
   type QueueStage,
   type QueueTestLike,
 } from "@/lib/visits/queue-stage";
-import { visitDeletability } from "@/lib/visits/deletion";
+import { visitDeletability, hasOpenHmoClaim } from "@/lib/visits/deletion";
 import { shouldPrintReceipt } from "@/lib/visits/receipt-policy";
 import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
 
@@ -101,6 +101,10 @@ type QueueTestRow = {
   status: string;
   deleted_at: string | null;
   is_package_header: boolean;
+  // Hand-written row types are `.returns<>()`-asserted, so tsc cannot tell you
+  // this is missing — it just types the embed as absent. Keep it in step with
+  // the select above by hand.
+  hmo_claim_items: { batch_voided: boolean }[] | null;
   services:
     | { section: string | null; kind: string; name: string }
     | { section: string | null; kind: string; name: string }[]
@@ -180,7 +184,7 @@ export default async function VisitsQueuePage({ searchParams }: SearchProps) {
       `
         id, visit_number, visit_date, payment_status, total_php, paid_php, created_at,
         patients!inner ( id, drm_id, first_name, middle_name, last_name ),
-        test_requests ( id, status, deleted_at, is_package_header, services ( section, kind, name ) )
+        test_requests ( id, status, deleted_at, is_package_header, hmo_claim_items ( batch_voided ), services ( section, kind, name ) )
       `,
     )
     .eq("visit_date", date)
@@ -397,6 +401,12 @@ function canDeleteEntry(role: string, entry: QueueEntry): boolean {
     payment_status: entry.visit.payment_status,
     deleted_at: null,
     test_statuses: entry.tests.map((t) => t.status),
+    // Off the RAW rows, not the deleted-filtered `entry.tests`: the P0050
+    // trigger does not filter `tr.deleted_at` either, because a line deleted
+    // earlier whose claim is still open is exactly the receivable it protects.
+    has_open_hmo_claim: (entry.visit.test_requests ?? []).some((t) =>
+      hasOpenHmoClaim(t.hmo_claim_items),
+    ),
   }).ok;
 }
 

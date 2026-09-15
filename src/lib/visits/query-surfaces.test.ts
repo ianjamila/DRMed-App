@@ -536,7 +536,7 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
   },
   "app/(staff)/staff/(dashboard)/visits/group/[groupId]/receipt/log-print-action.ts": {
     lifecycle: "any",
-    why: "Same audit-attribution reason as the single-visit sibling above, which is why it reads unfiltered — but it then splits in JS: the visit_ids/totals it logs are the live rows only, mirroring what the page actually printed, while the patient id survives a mid-print deletion.",
+    why: "Same audit-attribution reason as the single-visit sibling above, on BOTH levels: what was printed is decided by the page's render-time snapshot, and this read only hydrates it, so a visit or line deleted between render and print must still resolve or the disclosure goes unrecorded. It used to keep the rows that were live at print time instead, which both dropped a visit deleted after the render and counted consultation-only slips the page had suppressed. See lib/visits/receipt-print-snapshot.ts.",
   },
 
   // --- Live: release, notification and the patient's own view ---------------

@@ -140,6 +140,11 @@ export function translatePgError(err: PgError): string {
     // future code path tries to post a petty-cash journal entry directly.
     case "P0049":
       return "Cash paid from the till has to go through the cash drawer so the day's count stays right. Record it on the Petty cash page.";
+    // 0147 — the entry is already billed to an HMO. Deleting it would drop a
+    // real receivable out of the HMO reports (which skip deleted rows since
+    // 0146), so the claim has to be withdrawn first.
+    case "P0050":
+      return "This entry has already been claimed from an HMO and cannot be deleted. Void the claim batch first.";
     default:
       return err.message ?? "Database error. Please try again.";
   }
