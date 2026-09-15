@@ -2,9 +2,28 @@ import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { Panel } from "@/components/ui/panel";
 import { ExportCsvLink } from "@/components/staff/export-csv-link";
-import { fetchEmailLog, PAGE_SIZE } from "@/lib/emails-log/query";
+import {
+  DEFAULT_EMAIL_LOG_SORT,
+  EMAIL_LOG_SORT_COLUMNS,
+  fetchEmailLog,
+  PAGE_SIZE,
+  type EmailLogSortColumn,
+} from "@/lib/emails-log/query";
 import type { EmailStatus, EmailType } from "@/lib/emails-log/types";
 import { manilaDateTime } from "@/lib/dates/manila";
+import {
+  ariaSortFor,
+  buildListHref,
+  nextSort,
+  pageCount,
+  parsePage,
+  parsePageSize,
+  parseSort,
+} from "@/lib/ui/table-params";
+import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
+import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
+
+const BASE_PATH = "/staff/admin/emails-sent";
 
 export const metadata = { title: "Emails sent — staff" };
 
@@ -40,7 +59,10 @@ interface Props {
     drm?: string;
     since?: string;
     until?: string;
+    sort?: string;
+    dir?: string;
     page?: string;
+    size?: string;
   }>;
 }
 
@@ -56,7 +78,14 @@ export default async function EmailsSentPage({ searchParams }: Props) {
     params.status && VALID_STATUS.has(params.status as EmailStatus)
       ? (params.status as EmailStatus)
       : null;
-  const page = Math.max(1, Number(params.page ?? "1") || 1);
+  const sort = parseSort(
+    params.sort,
+    params.dir,
+    EMAIL_LOG_SORT_COLUMNS,
+    DEFAULT_EMAIL_LOG_SORT,
+  );
+  const size = parsePageSize(params.size, PAGE_SIZE);
+  const page = parsePage(params.page);
 
   const { entries, total, failures7d, since7Date, resolvedDrmId, drmNoMatch } =
     await fetchEmailLog({
@@ -65,27 +94,47 @@ export default async function EmailsSentPage({ searchParams }: Props) {
       drmId: params.drm ?? null,
       since: params.since ?? null,
       until: params.until ?? null,
+      sort,
       page,
+      size,
     });
 
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const offset = (page - 1) * PAGE_SIZE;
+  const totalPages = pageCount(total, size);
+
+  // Params at their default are omitted, so the log's own URL stays bare.
+  const isDefaultSort =
+    sort.key === DEFAULT_EMAIL_LOG_SORT.key && sort.dir === DEFAULT_EMAIL_LOG_SORT.dir;
+  const baseParams: Record<string, string | null> = {
+    type,
+    status,
+    drm: params.drm ?? null,
+    since: params.since ?? null,
+    until: params.until ?? null,
+    sort: isDefaultSort ? null : sort.key,
+    dir: isDefaultSort ? null : sort.dir,
+    size: size === PAGE_SIZE ? null : String(size),
+  };
 
   function buildHref(overrides: Record<string, string | null>): string {
-    const sp = new URLSearchParams();
-    const base: Record<string, string | null> = {
-      type,
-      status,
-      drm: params.drm ?? null,
-      since: params.since ?? null,
-      until: params.until ?? null,
-    };
-    for (const [k, v] of Object.entries({ ...base, ...overrides })) {
-      if (v) sp.set(k, v);
-    }
-    const qs = sp.toString();
-    return `/staff/admin/emails-sent${qs ? `?${qs}` : ""}`;
+    return buildListHref(BASE_PATH, baseParams, overrides);
   }
+
+  const sortHref = (key: EmailLogSortColumn) => {
+    const next = nextSort(sort, key);
+    const nextIsDefault =
+      next.key === DEFAULT_EMAIL_LOG_SORT.key && next.dir === DEFAULT_EMAIL_LOG_SORT.dir;
+    // A re-sort goes back to page 1 — page 7 of a set that just reordered is
+    // a screenful of unrelated rows.
+    return buildHref({
+      sort: nextIsDefault ? null : next.key,
+      dir: nextIsDefault ? null : next.dir,
+      page: null,
+    });
+  };
+
+  const th = (key: EmailLogSortColumn, label: string) => (
+    <SortableTh key={key} label={label} href={sortHref(key)} state={ariaSortFor(sort, key)} />
+  );
 
   const hasFilter = Boolean(
     type || status || params.drm || params.since || params.until,
@@ -124,7 +173,18 @@ export default async function EmailsSentPage({ searchParams }: Props) {
         </Link>
       ) : null}
 
+      {/* A GET form submits only the fields it carries, so without these the
+          Filter button would silently reset the reader's sort and page size. */}
       <form className="mb-2 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-6">
+        {isDefaultSort ? null : (
+          <>
+            <input type="hidden" name="sort" value={sort.key} />
+            <input type="hidden" name="dir" value={sort.dir} />
+          </>
+        )}
+        {size === PAGE_SIZE ? null : (
+          <input type="hidden" name="size" value={String(size)} />
+        )}
         <select
           name="type"
           defaultValue={type ?? ""}
@@ -183,8 +243,16 @@ export default async function EmailsSentPage({ searchParams }: Props) {
             Filter
           </button>
           {hasFilter ? (
+            // Clears the filters, keeps the view: sort and page size survive.
             <Link
-              href="/staff/admin/emails-sent"
+              href={buildHref({
+                type: null,
+                status: null,
+                drm: null,
+                since: null,
+                until: null,
+                page: null,
+              })}
               className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-2 text-sm font-semibold text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-bg)]"
             >
               Clear
@@ -216,13 +284,13 @@ export default async function EmailsSentPage({ searchParams }: Props) {
         <table className="w-full min-w-[960px] text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
-              <th className="px-4 py-3">Sent</th>
-              <th className="px-4 py-3">Type</th>
-              <th className="px-4 py-3">Recipient</th>
-              <th className="px-4 py-3">Email</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3">Details</th>
-              <th className="px-4 py-3">Resource</th>
+              {th("created_at", "Sent")}
+              {th("action", "Type")}
+              <PlainTh label="Recipient" />
+              <PlainTh label="Email" />
+              <PlainTh label="Status" />
+              <PlainTh label="Details" />
+              <PlainTh label="Resource" />
             </tr>
           </thead>
           <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
@@ -318,31 +386,26 @@ export default async function EmailsSentPage({ searchParams }: Props) {
         </table>
       </Panel>
 
-      <div className="mt-4 flex items-center justify-between text-xs text-[color:var(--color-brand-text-soft)]">
-        <span>
-          {total > 0
-            ? `Showing ${offset + 1}–${Math.min(offset + PAGE_SIZE, total)} of ${total}`
-            : "0 emails"}
-        </span>
-        <div className="flex gap-2">
-          {page > 1 ? (
-            <Link
-              href={buildHref({ page: String(page - 1) })}
-              className="rounded-md border border-[color:var(--color-brand-bg-mid)] px-3 py-1.5 hover:bg-white"
-            >
-              ← Prev
-            </Link>
-          ) : null}
-          {page < totalPages ? (
-            <Link
-              href={buildHref({ page: String(page + 1) })}
-              className="rounded-md border border-[color:var(--color-brand-bg-mid)] px-3 py-1.5 hover:bg-white"
-            >
-              Next →
-            </Link>
-          ) : null}
-        </div>
-      </div>
+      <ListPagination
+        page={page}
+        pageCount={totalPages}
+        total={total}
+        size={size}
+        prevHref={
+          page > 1
+            ? buildHref({ page: page - 1 > 1 ? String(page - 1) : null })
+            : null
+        }
+        nextHref={page < totalPages ? buildHref({ page: String(page + 1) }) : null}
+        sizeOptions={PAGE_SIZES.map((s) => ({
+          size: s,
+          href: buildHref({
+            size: s === PAGE_SIZE ? null : String(s),
+            page: null,
+          }),
+        }))}
+        noun="email"
+      />
     </div>
   );
 }

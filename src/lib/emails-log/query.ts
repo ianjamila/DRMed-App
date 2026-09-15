@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows } from "@/lib/reports/paging";
 import { resolvePatientsByIdChunked } from "./resolve-patients";
 import { parseEmailLogRow } from "./parse-row";
+import { rangeFor, type SortSpec } from "@/lib/ui/table-params";
 import {
   EMAIL_ACTIONS,
   type EmailAuditRow,
@@ -12,7 +13,33 @@ import {
   type PatientLite,
 } from "./types";
 
+/** The page size this log has always defaulted to; the picker can override it. */
 export const PAGE_SIZE = 50;
+
+/**
+ * Columns the log can be ordered by, and the allow-list `parseSort` checks —
+ * the value reaches a PostgREST `.order()`, so it is a security boundary.
+ *
+ * Only two of the seven displayed columns are real `audit_log` columns.
+ * Recipient and Email are resolved by a SECOND query after this window is
+ * already fetched (the audit row carries a `patient_id`, not a name), and
+ * Status is derived from the `metadata.email` JSONB by `parseEmailLogRow` —
+ * none of the three can be expressed in this `.order()`, so the page renders
+ * them with `PlainTh`.
+ *
+ * "Type" orders by the underlying `action`, which is what the type label is
+ * derived from: the two reminder actions (sent / failed) sort together, and
+ * the booking action sorts beside them.
+ */
+export const EMAIL_LOG_SORT_COLUMNS = ["created_at", "action"] as const;
+export type EmailLogSortColumn = (typeof EMAIL_LOG_SORT_COLUMNS)[number];
+
+/** Newest first — the order this page has always opened in. */
+export const DEFAULT_EMAIL_LOG_SORT: SortSpec<EmailLogSortColumn> = {
+  key: "created_at",
+  dir: "desc",
+};
+
 // H8: the true row cap the export is allowed to reach. Previously requested
 // via a single `.range(0, EXPORT_CAP - 1)`, which reads as "give me up to
 // 10,000 rows" but PostgREST hard-caps ONE response at 1000 regardless of the
@@ -43,13 +70,20 @@ function manilaEndUtc(d: string): string | null {
   return /^\d{4}-\d{2}-\d{2}$/.test(d) ? `${d}T23:59:59.999+08:00` : null;
 }
 
+/** What both surfaces filter by. The page adds its own sort/page window. */
 export interface EmailLogFilters {
   type: EmailType | null;
   status: EmailStatus | null; // "sent" | "failed" | "no_email" (bulk not a filter)
   drmId: string | null;
   since: string | null; // YYYY-MM-DD
   until: string | null;
+}
+
+/** One on-screen window of the log: the filters plus where to slice them. */
+export interface EmailLogPageRequest extends EmailLogFilters {
+  sort: SortSpec<EmailLogSortColumn>;
   page: number;
+  size: number;
 }
 
 type RlsClient = Awaited<ReturnType<typeof createClient>>;
@@ -137,7 +171,10 @@ export interface EmailLogResult {
   drmNoMatch: boolean;
 }
 
-export async function fetchEmailLog(filters: EmailLogFilters): Promise<EmailLogResult> {
+export async function fetchEmailLog(
+  request: EmailLogPageRequest,
+): Promise<EmailLogResult> {
+  const filters: EmailLogFilters = request;
   // M16: RLS-scoped client, not service-role — `audit_log: admin select` and
   // `patients: staff full` both let an admin staff JWT read what this page
   // needs; every caller is already behind requireAdminStaff().
@@ -145,12 +182,17 @@ export async function fetchEmailLog(filters: EmailLogFilters): Promise<EmailLogR
   const { patientId, resolvedDrmId } = await resolvePatientFilter(supabase, filters.drmId);
   const drmNoMatch = patientId === NO_MATCH;
 
-  const offset = (filters.page - 1) * PAGE_SIZE;
+  const [from, to] = rangeFor(request.page, request.size);
   const base = supabase
     .from("audit_log")
     .select(SELECT, { count: "exact" })
-    .order("created_at", { ascending: false })
-    .range(offset, offset + PAGE_SIZE - 1);
+    .order(request.sort.key, { ascending: request.sort.dir === "asc" })
+    // Tie-break on id — a bulk send writes many rows in the same millisecond,
+    // and ordering by `action` ties across thousands, so without a total
+    // order `.range()` drops and repeats rows between pages. Descending, to
+    // match the export below: same column, same direction, one reading order.
+    .order("id", { ascending: false })
+    .range(from, to);
 
   // The failures-7d banner count is a global heads-up (all types, all patients)
   // over the last 7 Manila days. It's independent of the page query, so run
@@ -196,7 +238,7 @@ export interface EmailLogExportResult {
 // Full filtered set for CSV export (capped). No UI pagination — but the set
 // itself is walked in PostgREST-sized pages under the hood (H8).
 export async function fetchEmailLogForExport(
-  filters: Omit<EmailLogFilters, "page">,
+  filters: EmailLogFilters,
 ): Promise<EmailLogExportResult> {
   // M16: RLS-scoped client — see fetchEmailLog.
   const supabase = await createClient();
@@ -216,7 +258,7 @@ export async function fetchEmailLogForExport(
         .select(SELECT)
         .order("created_at", { ascending: false })
         .order("id", { ascending: false });
-      return applyFilters(base, { ...filters, page: 1 }, patientId).range(from, to);
+      return applyFilters(base, filters, patientId).range(from, to);
     },
     EXPORT_CAP,
   );

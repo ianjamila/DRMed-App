@@ -18,6 +18,19 @@ import {
 import { Panel } from "@/components/ui/panel";
 import { ExportCsvButton } from "@/components/staff/export-csv-link";
 import { manilaDate } from "@/lib/dates/manila";
+import {
+  ariaSortFor,
+  nextSort,
+  pageCount,
+  type PageSize,
+  type SortDir,
+  type SortSpec,
+} from "@/lib/ui/table-params";
+import {
+  ClientListPagination,
+  ClientSortableTh,
+} from "@/components/staff/client-table-controls";
+import { PlainTh } from "@/components/staff/sortable-th";
 
 type SummaryRow =
   Database["public"]["Views"]["v_hmo_provider_summary"]["Row"];
@@ -52,6 +65,130 @@ const KIND_LABELS: Record<Kind, string> = {
 function matchesKind<T extends { kind?: string | null }>(row: T, kind: Kind): boolean {
   if (kind === "all") return true;
   return (row.kind ?? "lab") === kind;
+}
+
+// ---------------------------------------------------------------------------
+// Sorting for the two detail tables
+//
+// These sort IN THE BROWSER, over rows the server already walked in full, and
+// they page in browser state rather than through the URL — see
+// `client-table-controls`. The pure helpers (`nextSort`, `ariaSortFor`,
+// `pageCount`) are the same ones the URL-driven list pages use, so a first
+// click means the same thing here as it does on Patients or Visits.
+// ---------------------------------------------------------------------------
+
+function compareText(a: string, b: string, dir: SortDir): number {
+  return dir === "asc" ? a.localeCompare(b) : b.localeCompare(a);
+}
+
+function compareNumber(a: number, b: number, dir: SortDir): number {
+  return dir === "asc" ? a - b : b - a;
+}
+
+/** A view row with a null in the sorted column sinks either way, not to the top on ASC. */
+function compareBlankLast(
+  a: string | null | undefined,
+  b: string | null | undefined,
+  dir: SortDir,
+): number {
+  if (!a && !b) return 0;
+  if (!a) return 1;
+  if (!b) return -1;
+  return compareText(a, b, dir);
+}
+
+/** `null` amounts and ages read as zero, the same way the cells render them. */
+function num(v: number | null | undefined): number {
+  return Number(v ?? 0);
+}
+
+/**
+ * A plain union rather than the `as const` allow-list the URL-driven pages
+ * declare. Those need one because `?sort=` is user input that reaches a
+ * PostgREST `.order()`; here the key only ever arrives from a typed
+ * `onSort` callback on a header this file rendered, and it indexes an
+ * in-memory row — there is nothing to validate it against.
+ */
+type UnbilledSortColumn =
+  | "provider_name"
+  | "released_at"
+  | "kind"
+  | "patient_name"
+  | "service_description"
+  | "days_since_release"
+  | "billed_amount_php";
+
+/** Oldest unbilled first — the order the server query already returns. */
+const UNBILLED_DEFAULT_SORT: SortSpec<UnbilledSortColumn> = {
+  key: "days_since_release",
+  dir: "desc",
+};
+
+function compareUnbilled(
+  a: UnbilledRow,
+  b: UnbilledRow,
+  sort: SortSpec<UnbilledSortColumn>,
+): number {
+  let cmp: number;
+  switch (sort.key) {
+    case "released_at":
+      cmp = compareBlankLast(a.released_at, b.released_at, sort.dir);
+      break;
+    case "days_since_release":
+      cmp = compareNumber(num(a.days_since_release), num(b.days_since_release), sort.dir);
+      break;
+    case "billed_amount_php":
+      cmp = compareNumber(num(a.billed_amount_php), num(b.billed_amount_php), sort.dir);
+      break;
+    default:
+      cmp = compareBlankLast(a[sort.key], b[sort.key], sort.dir);
+  }
+  // The id tie-break is what keeps the page SLICE stable: rows that tie on
+  // the visible column would otherwise hold whatever order the view returned
+  // and could shift between renders.
+  return cmp !== 0 ? cmp : (a.test_request_id ?? "").localeCompare(b.test_request_id ?? "");
+}
+
+/** Same shape, same reasoning as `UnbilledSortColumn`. */
+type AgingSortColumn =
+  | "provider_name"
+  | "submitted_at"
+  | "kind"
+  | "patient_name"
+  | "service_description"
+  | "days_since_submission"
+  | "unresolved_balance_php";
+
+/** Longest-stuck first — the order the server query already returns. */
+const AGING_DEFAULT_SORT: SortSpec<AgingSortColumn> = {
+  key: "days_since_submission",
+  dir: "desc",
+};
+
+function compareAging(a: StuckRow, b: StuckRow, sort: SortSpec<AgingSortColumn>): number {
+  let cmp: number;
+  switch (sort.key) {
+    case "submitted_at":
+      cmp = compareBlankLast(a.submitted_at, b.submitted_at, sort.dir);
+      break;
+    case "days_since_submission":
+      cmp = compareNumber(
+        num(a.days_since_submission),
+        num(b.days_since_submission),
+        sort.dir,
+      );
+      break;
+    case "unresolved_balance_php":
+      cmp = compareNumber(
+        num(a.unresolved_balance_php),
+        num(b.unresolved_balance_php),
+        sort.dir,
+      );
+      break;
+    default:
+      cmp = compareBlankLast(a[sort.key], b[sort.key], sort.dir);
+  }
+  return cmp !== 0 ? cmp : (a.item_id ?? "").localeCompare(b.item_id ?? "");
 }
 
 export function HmoClaimsClient({
@@ -408,7 +545,11 @@ function ByProvider({
       : [...rows].sort((a, b) => {
           const aT = a.provider_id ? (perProvider.get(a.provider_id)?.unresolved ?? 0) : 0;
           const bT = b.provider_id ? (perProvider.get(b.provider_id)?.unresolved ?? 0) : 0;
-          return bT - aT;
+          // Providers tie on the total routinely — two on zero is the common
+          // case — so break by name, or the cards reshuffle between renders.
+          return bT !== aT
+            ? bT - aT
+            : (a.provider_name ?? "").localeCompare(b.provider_name ?? "");
         });
 
   return (
@@ -511,7 +652,53 @@ function ProviderCard({
   );
 }
 
-const TOP_PAGE_SIZE = 100;
+/**
+ * Rows per page before the picker changes it. 100 is what both tables have
+ * always shown; unlike the URL-driven pages there is no `?size=` to remember
+ * it across a reload, because paging here never leaves the page.
+ */
+const TOP_PAGE_SIZE: PageSize = 100;
+
+/**
+ * Everything one of these tables needs to sort and page itself.
+ *
+ * Both tables hold identical state, and both had the same defect: the `kind`
+ * toggle lives in the PARENT, so switching it shrank `rows` without resetting
+ * `page` — leaving the reader on, say, page 5 of a set that now has one page,
+ * looking at an empty table with the pager hidden (it only rendered when
+ * there was more than one page) and no way back. Clamping the page against
+ * the current page count fixes that wherever the row set changes, not just on
+ * the two state changes that remembered to reset it.
+ */
+function useTableState<K extends string>(defaultSort: SortSpec<K>) {
+  const [filter, setFilter] = useState("");
+  const [sort, setSort] = useState<SortSpec<K>>(defaultSort);
+  const [size, setSize] = useState<number>(TOP_PAGE_SIZE);
+  // 1-based, like the rest of the list contract.
+  const [page, setPage] = useState(1);
+
+  return {
+    filter,
+    sort,
+    size,
+    page,
+    onFilter(next: string) {
+      setFilter(next);
+      setPage(1);
+    },
+    onSort(key: K) {
+      setSort((current) => nextSort(current, key));
+      // A re-sort goes back to page 1 — page 5 of a set that just reordered
+      // is a screenful of unrelated rows.
+      setPage(1);
+    },
+    onSize(next: number) {
+      setSize(next);
+      setPage(1);
+    },
+    setPage,
+  };
+}
 
 /** Returns whether a file was actually produced — an empty set discloses nothing. */
 function exportRowsCsv(
@@ -611,8 +798,8 @@ function AllUnbilled({
   paymentMethods: PaymentMethod[];
 }) {
   const csv = useAuditedCsvExport("hmo_unbilled");
-  const [filter, setFilter] = useState("");
-  const [page, setPage] = useState(0);
+  const table = useTableState<UnbilledSortColumn>(UNBILLED_DEFAULT_SORT);
+  const { filter, sort, size } = table;
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkModal, setBulkModal] = useState<null | "billed" | "paid" | "writeoff">(null);
   const [rowModal, setRowModal] = useState<null | {
@@ -631,9 +818,26 @@ function AllUnbilled({
         (r.service_description ?? "").toLowerCase().includes(q),
     );
   }, [rows, filter]);
-  const totalPages = Math.max(1, Math.ceil(filtered.length / TOP_PAGE_SIZE));
-  const pageRows = filtered.slice(page * TOP_PAGE_SIZE, (page + 1) * TOP_PAGE_SIZE);
+  const ordered = useMemo(
+    () => [...filtered].sort((a, b) => compareUnbilled(a, b, sort)),
+    [filtered, sort],
+  );
+  const totalPages = pageCount(ordered.length, size);
+  // Clamped, not trusted: the parent's kind toggle can shrink the set under a
+  // page the reader is already on.
+  const page = Math.min(table.page, totalPages);
+  const pageRows = ordered.slice((page - 1) * size, page * size);
   const today = new Date().toISOString().slice(0, 10);
+
+  const th = (key: UnbilledSortColumn, label: string, align?: "left" | "right") => (
+    <ClientSortableTh
+      key={key}
+      label={label}
+      onSort={() => table.onSort(key)}
+      state={ariaSortFor(sort, key)}
+      align={align}
+    />
+  );
 
   const historicIdsOnPage = useMemo(
     () =>
@@ -707,7 +911,7 @@ function AllUnbilled({
           type="search"
           placeholder="Filter by provider / patient / service..."
           value={filter}
-          onChange={(e) => { setFilter(e.target.value); setPage(0); }}
+          onChange={(e) => table.onFilter(e.target.value)}
           className="min-w-[260px] flex-1 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm"
         />
         <ExportCsvButton
@@ -724,8 +928,9 @@ function AllUnbilled({
           <p className="w-full rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
             Showing the first {REPORT_EXPORT_MAX_ROWS.toLocaleString()} rows —
             more matched, so this list, its total and its export are all
-            incomplete. The filter box only searches what is on this page; open
-            a provider from “By provider” to see all of theirs.
+            incomplete — and so is what the filter box can find, since it only
+            searches rows that were loaded. Open a provider from “By provider”
+            to see all of theirs.
           </p>
         )}
       </div>
@@ -745,14 +950,14 @@ function AllUnbilled({
                   />
                 </label>
               </th>
-              <th className="px-4 py-3">Provider</th>
-              <th className="px-4 py-3">Released</th>
-              <th className="px-4 py-3">Kind</th>
-              <th className="px-4 py-3">Patient</th>
-              <th className="px-4 py-3">Service</th>
-              <th className="px-4 py-3 text-right">Age</th>
-              <th className="px-4 py-3 text-right">Amount</th>
-              <th className="px-4 py-3 text-right">Actions</th>
+              {th("provider_name", "Provider")}
+              {th("released_at", "Released")}
+              {th("kind", "Kind")}
+              {th("patient_name", "Patient")}
+              {th("service_description", "Service")}
+              {th("days_since_release", "Age", "right")}
+              {th("billed_amount_php", "Amount", "right")}
+              <PlainTh label="Actions" align="right" />
             </tr>
           </thead>
           <tbody>
@@ -905,15 +1110,15 @@ function AllUnbilled({
           </div>
         </Panel>
       )}
-      {totalPages > 1 && (
-        <Panel className="flex items-center justify-between p-3 text-xs">
-          <span>Page {page + 1} of {totalPages}</span>
-          <div className="flex gap-2">
-            <button type="button" disabled={page === 0} onClick={() => setPage((p) => p - 1)} className="rounded border px-3 py-1 disabled:opacity-40">Prev</button>
-            <button type="button" disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)} className="rounded border px-3 py-1 disabled:opacity-40">Next</button>
-          </div>
-        </Panel>
-      )}
+      <ClientListPagination
+        page={page}
+        pageCount={totalPages}
+        total={ordered.length}
+        size={size}
+        onPage={table.setPage}
+        onSize={table.onSize}
+        noun="row"
+      />
       {bulkModal === "billed" && (
         <MarkHistoricBilledModal
           claimIds={selectedHistoricIds}
@@ -984,8 +1189,8 @@ function AllAging({
   // "All aging" is the v_hmo_stuck detail — submitted claims still unresolved.
   // v_hmo_ar_aging feeds the separate matrix view.
   const csv = useAuditedCsvExport("hmo_aging");
-  const [filter, setFilter] = useState("");
-  const [page, setPage] = useState(0);
+  const table = useTableState<AgingSortColumn>(AGING_DEFAULT_SORT);
+  const { filter, sort, size } = table;
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkModal, setBulkModal] = useState<null | "paid" | "writeoff">(null);
   const [rowModal, setRowModal] = useState<null | {
@@ -1004,9 +1209,25 @@ function AllAging({
         (r.service_description ?? "").toLowerCase().includes(q),
     );
   }, [rows, filter]);
-  const totalPages = Math.max(1, Math.ceil(filtered.length / TOP_PAGE_SIZE));
-  const pageRows = filtered.slice(page * TOP_PAGE_SIZE, (page + 1) * TOP_PAGE_SIZE);
+  const ordered = useMemo(
+    () => [...filtered].sort((a, b) => compareAging(a, b, sort)),
+    [filtered, sort],
+  );
+  const totalPages = pageCount(ordered.length, size);
+  // Clamped — see AllUnbilled.
+  const page = Math.min(table.page, totalPages);
+  const pageRows = ordered.slice((page - 1) * size, page * size);
   const today = new Date().toISOString().slice(0, 10);
+
+  const th = (key: AgingSortColumn, label: string, align?: "left" | "right") => (
+    <ClientSortableTh
+      key={key}
+      label={label}
+      onSort={() => table.onSort(key)}
+      state={ariaSortFor(sort, key)}
+      align={align}
+    />
+  );
 
   // For bulk-select: only historic rows can be acted on in bulk (live rows
   // resolve via their batch).
@@ -1086,7 +1307,7 @@ function AllAging({
           type="search"
           placeholder="Filter by provider / patient / service..."
           value={filter}
-          onChange={(e) => { setFilter(e.target.value); setPage(0); }}
+          onChange={(e) => table.onFilter(e.target.value)}
           className="min-w-[260px] flex-1 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm"
         />
         <ExportCsvButton
@@ -1103,8 +1324,9 @@ function AllAging({
           <p className="w-full rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
             Showing the first {REPORT_EXPORT_MAX_ROWS.toLocaleString()} rows —
             more matched, so this list, its total and its export are all
-            incomplete. The filter box only searches what is on this page; open
-            a provider from “By provider” to see all of theirs.
+            incomplete — and so is what the filter box can find, since it only
+            searches rows that were loaded. Open a provider from “By provider”
+            to see all of theirs.
           </p>
         )}
       </div>
@@ -1124,14 +1346,14 @@ function AllAging({
                   />
                 </label>
               </th>
-              <th className="px-4 py-3">Provider</th>
-              <th className="px-4 py-3">Submitted</th>
-              <th className="px-4 py-3">Kind</th>
-              <th className="px-4 py-3">Patient</th>
-              <th className="px-4 py-3">Service</th>
-              <th className="px-4 py-3 text-right">Days late</th>
-              <th className="px-4 py-3 text-right">Unresolved</th>
-              <th className="px-4 py-3 text-right">Actions</th>
+              {th("provider_name", "Provider")}
+              {th("submitted_at", "Submitted")}
+              {th("kind", "Kind")}
+              {th("patient_name", "Patient")}
+              {th("service_description", "Service")}
+              {th("days_since_submission", "Days late", "right")}
+              {th("unresolved_balance_php", "Unresolved", "right")}
+              <PlainTh label="Actions" align="right" />
             </tr>
           </thead>
           <tbody>
@@ -1274,15 +1496,15 @@ function AllAging({
           </div>
         </Panel>
       )}
-      {totalPages > 1 && (
-        <Panel className="flex items-center justify-between p-3 text-xs">
-          <span>Page {page + 1} of {totalPages}</span>
-          <div className="flex gap-2">
-            <button type="button" disabled={page === 0} onClick={() => setPage((p) => p - 1)} className="rounded border px-3 py-1 disabled:opacity-40">Prev</button>
-            <button type="button" disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)} className="rounded border px-3 py-1 disabled:opacity-40">Next</button>
-          </div>
-        </Panel>
-      )}
+      <ClientListPagination
+        page={page}
+        pageCount={totalPages}
+        total={ordered.length}
+        size={size}
+        onPage={table.setPage}
+        onSize={table.onSize}
+        noun="row"
+      />
       {bulkModal === "paid" && (
         <MarkHistoricPaidModal
           claimIds={selectedHistoricIds}

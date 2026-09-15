@@ -6,6 +6,19 @@ import { RealtimeRefresher } from "@/components/staff/realtime-refresher";
 import { ClaimButton } from "./claim-button";
 import { sectionTabClass, sectionTabsNavClass } from "@/components/staff/section-tabs-style";
 import { PageHeader } from "@/components/staff/page-header";
+import {
+  ariaSortFor,
+  buildListHref,
+  nextSort,
+  pageCount,
+  parsePage,
+  parsePageSize,
+  parseSort,
+  rangeFor,
+  type SortSpec,
+} from "@/lib/ui/table-params";
+import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
+import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 import { Panel } from "@/components/ui/panel";
 import {
   isISODate,
@@ -86,6 +99,34 @@ type QueueFilter = "mine" | "all" | "pending_release" | "released_today";
 // every tab, so switching tabs doesn't resize the page under you.
 const PAGE_SIZE = 100;
 
+const BASE_PATH = "/staff/queue";
+
+/**
+ * Sortable columns. `parseSort` requires this exact allow-list — the value
+ * reaches a PostgREST `.order()`, so it is a security boundary.
+ *
+ * Patient is absent for the same reason as on the sibling results archive: it
+ * lives two embeds down (`test_requests` → `visits` → `patients`), and only
+ * a one-level embedded path is documented to reorder the parent rows. Test is
+ * absent because a consolidated chemistry card folds several services into
+ * one row, so it has no single service to order by.
+ */
+const SORTABLE_COLUMNS = ["requested_at", "released_at", "status", "visit_number"] as const;
+type SortColumn = (typeof SORTABLE_COLUMNS)[number];
+
+/** The real column (or embedded path) each sort key orders by. */
+const ORDER_COLUMN: Record<SortColumn, string> = {
+  requested_at: "requested_at",
+  released_at: "released_at",
+  status: "status",
+  // Needs `visits!inner`, which the select already has.
+  visit_number: "visits(visit_number)",
+};
+
+// A test still on the bench has no `released_at`. Sink those to the bottom
+// either way rather than opening on a screenful of blanks.
+const NULLS_LAST_COLUMNS = new Set<SortColumn>(["released_at"]);
+
 /** Everything a free-text search should be able to hit on one queue card. */
 function cardHaystack(card: QueueCard): string {
   const tests =
@@ -102,7 +143,10 @@ interface SearchProps {
     end?: string;
     q?: string;
     visit?: string;
+    sort?: string;
+    dir?: string;
     page?: string;
+    size?: string;
   }>;
 }
 
@@ -113,8 +157,6 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   const end = isISODate(params.end) ? params.end : "";
   const q = params.q?.trim() ?? "";
   const visit = params.visit?.trim() ?? "";
-  const page = Math.max(1, Number(params.page) || 1);
-  const offset = (page - 1) * PAGE_SIZE;
   const todayISO = todayManilaISODate();
 
   const session = await requireActiveStaff();
@@ -126,8 +168,26 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   // pathologist see everything.
   const allowedSections = sectionsForRole(session.role);
 
-  const dateColumn = filter === "released_today" ? "released_at" : "requested_at";
+  // "Released today" is a record of work that LEFT the bench; every other tab
+  // is a worklist of work still on it. That split decides the date column, the
+  // default order and which timestamp the first column shows.
+  const releasedTab = filter === "released_today";
+  const dateColumn: SortColumn = releasedTab ? "released_at" : "requested_at";
   const hasDateRange = Boolean(start || end);
+
+  // The default ORDER is per tab: "Released today" is a record and reads
+  // newest-released first, every other tab is a worklist and reads
+  // oldest-requested first — the oldest job is the next one to pick up. So
+  // "is this the default sort?", which decides whether `sort`/`dir` appear in
+  // the URL at all, has to be asked against the tab in hand.
+  const defaultSort: SortSpec<SortColumn> = {
+    key: dateColumn,
+    dir: releasedTab ? "desc" : "asc",
+  };
+  const sort = parseSort(params.sort, params.dir, SORTABLE_COLUMNS, defaultSort);
+  const size = parsePageSize(params.size, PAGE_SIZE);
+  const page = parsePage(params.page);
+  const [from, to] = rangeFor(page, size);
 
   let query = supabase
     .from("test_requests")
@@ -170,8 +230,16 @@ export default async function QueuePage({ searchParams }: SearchProps) {
     // Filtering by kind is what makes "no doctor lines here" true for EVERY
     // role, independent of the section gate.
     .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
-    .order(dateColumn, { ascending: filter !== "released_today" })
-    .range(offset, offset + PAGE_SIZE - 1);
+    .order(ORDER_COLUMN[sort.key], {
+      ascending: sort.dir === "asc",
+      ...(NULLS_LAST_COLUMNS.has(sort.key) ? { nullsFirst: false } : {}),
+    })
+    // Tie-break on id. A visit's tests are written in one transaction and
+    // share a `requested_at` to the millisecond, and a whole tab shares one
+    // `status` — without a total order `.range()` drops and repeats rows
+    // between pages.
+    .order("id", { ascending: true })
+    .range(from, to);
 
   // Payment gate (item 10, decision 1): the worklist tabs hide every test of a
   // visit that's still waiting for payment — fully paid, waived, or HMO-billed
@@ -193,7 +261,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
 
   // "Released today" keeps its implicit day window only while no explicit range
   // is set — an explicit range is the staffer overriding the tab.
-  if (filter === "released_today" && !hasDateRange) {
+  if (releasedTab && !hasDateRange) {
     const { startIso, endIso } = manilaDayWindowUtc(0);
     query = query.gte("released_at", startIso).lt("released_at", endIso);
   }
@@ -230,6 +298,12 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   // -------------------------------------------------------------------------
   // Fold chemistry rows by (visit_id, report_group_id). Non-grouped rows
   // stay as single cards; grouped rows collapse to one card per group.
+  //
+  // `cards` keeps the QUERY's order: a grouped card is pushed when its FIRST
+  // member is seen and mutated in place afterwards, so it sits exactly where
+  // that member sat. Appending the grouped cards at the end instead — which
+  // is what this did — lost the order and needed a re-sort by `requestedAt`
+  // to recover it, and that re-sort silently undid any other column sort.
   // -------------------------------------------------------------------------
   const cards: QueueCard[] = [];
   const groupedAcc = new Map<string, QueueCardGrouped>();
@@ -282,7 +356,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           existing.releasedAt = r.released_at;
         }
       } else {
-        groupedAcc.set(key, {
+        const created: QueueCardGrouped = {
           kind: "grouped",
           visitId: r.visit_id,
           groupId: svc.report_group_id,
@@ -299,7 +373,9 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           href: `/staff/queue/consolidated/${r.visit_id}/${svc.report_group_id}`,
           memberIds: [r.id],
           canDelete: rowDeletable,
-        });
+        };
+        groupedAcc.set(key, created);
+        cards.push(created);
       }
     } else {
       cards.push({
@@ -320,7 +396,6 @@ export default async function QueuePage({ searchParams }: SearchProps) {
       });
     }
   }
-  cards.push(...groupedAcc.values());
 
   // Free-text search runs after the fold, not in the query: an ILIKE across the
   // patients join is awkward in PostgREST (the same reason /staff/results
@@ -345,16 +420,6 @@ export default async function QueuePage({ searchParams }: SearchProps) {
       for (const p of claimers ?? []) claimerNames.set(p.id, p.full_name);
     }
   }
-  // Re-apply the query's own ordering: grouped cards are appended after the
-  // single ones, so the fold loses it. "Released today" reads newest-released
-  // first (that's also the order its 200-row cap selects by); every other tab
-  // is a worklist and reads oldest-requested first.
-  matched.sort((a, b) =>
-    filter === "released_today"
-      ? (b.releasedAt ?? "").localeCompare(a.releasedAt ?? "")
-      : a.requestedAt.localeCompare(b.requestedAt),
-  );
-
   // `q` is applied after the fetch, so it can only narrow the page in hand —
   // everything else is a real DB filter and counts against the whole table.
   const hasServerFilters = hasDateRange || Boolean(visit);
@@ -367,25 +432,49 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   // Paging counts test_request rows (pre-fold), which is what the range applies
   // to — a page of rows can fold into fewer chemistry cards.
   const total = count ?? 0;
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const totalPages = pageCount(total, size);
   const safePage = Math.min(page, totalPages);
 
+  // Params at their default are omitted, so the All tab on page 1 stays the
+  // bare /staff/queue URL.
+  const isDefaultSort = sort.key === defaultSort.key && sort.dir === defaultSort.dir;
+  const baseParams: Record<string, string | null> = {
+    filter: filter === "all" ? null : filter,
+    start,
+    end,
+    q,
+    visit,
+    sort: isDefaultSort ? null : sort.key,
+    dir: isDefaultSort ? null : sort.dir,
+    size: size === PAGE_SIZE ? null : String(size),
+    page: page > 1 ? String(page) : null,
+  };
+
   function buildHref(overrides: Record<string, string | null>): string {
-    const params = new URLSearchParams();
-    const base: Record<string, string> = {
-      filter: filter === "all" ? "" : filter,
-      start,
-      end,
-      q,
-      visit,
-      page: page > 1 ? String(page) : "",
-    };
-    for (const [k, v] of Object.entries({ ...base, ...overrides })) {
-      if (v) params.set(k, v);
-    }
-    const qs = params.toString();
-    return `/staff/queue${qs ? `?${qs}` : ""}`;
+    return buildListHref(BASE_PATH, baseParams, overrides);
   }
+
+  const sortHref = (key: SortColumn) => {
+    const next = nextSort(sort, key);
+    const nextIsDefault = next.key === defaultSort.key && next.dir === defaultSort.dir;
+    // A re-sort goes back to page 1 — page 3 of a worklist that just
+    // reordered is a screenful of unrelated tests.
+    return buildHref({
+      sort: nextIsDefault ? null : next.key,
+      dir: nextIsDefault ? null : next.dir,
+      page: null,
+    });
+  };
+
+  const th = (key: SortColumn, label: string, align?: "left" | "right") => (
+    <SortableTh
+      key={key}
+      label={label}
+      href={sortHref(key)}
+      state={ariaSortFor(sort, key)}
+      align={align}
+    />
+  );
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
@@ -427,7 +516,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           (visits/queue, appointments, patient-ar). */}
       <nav className={sectionTabsNavClass} aria-label="Queue filter">
         <FilterTab
-          href={buildHref({ filter: "", page: null })}
+          href={buildHref({ filter: null, page: null })}
           label="All"
           active={filter === "all"}
         />
@@ -454,6 +543,17 @@ export default async function QueuePage({ searchParams }: SearchProps) {
       >
         {/* Keep the open tab when filters are applied. */}
         <input type="hidden" name="filter" value={filter === "all" ? "" : filter} />
+        {/* A GET form submits only the fields it carries, so without these
+            Apply would silently reset the reader's sort and page size. */}
+        {isDefaultSort ? null : (
+          <>
+            <input type="hidden" name="sort" value={sort.key} />
+            <input type="hidden" name="dir" value={sort.dir} />
+          </>
+        )}
+        {size === PAGE_SIZE ? null : (
+          <input type="hidden" name="size" value={String(size)} />
+        )}
         <div className="flex flex-col">
           <label
             htmlFor="start"
@@ -560,7 +660,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           role="status"
           className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
         >
-          The search box only looks at the {PAGE_SIZE} tests on this page. Narrow
+          The search box only looks at the {size} tests on this page. Narrow
           the dates or use Visit # to search the whole queue.
         </p>
       ) : null}
@@ -569,12 +669,20 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         <table className="w-full text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
-              <th className="px-4 py-3">Requested</th>
-              <th className="px-4 py-3">Patient</th>
-              <th className="px-4 py-3">Visit</th>
-              <th className="px-4 py-3">Test</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3 text-right">Action</th>
+              {/* "Released today" is about when work LEFT the bench, and the
+                  tab has always ordered by `released_at` — but the column was
+                  labelled "Requested" and printed the request time, so the
+                  order it was in matched nothing on screen. On that tab the
+                  column now shows, and sorts by, the release time. */}
+              {releasedTab
+                ? th("released_at", "Released")
+                : th("requested_at", "Requested")}
+              {/* Patient and Test can't be ordered — see SORTABLE_COLUMNS. */}
+              <PlainTh label="Patient" />
+              {th("visit_number", "Visit")}
+              <PlainTh label="Test" />
+              {th("status", "Status")}
+              <PlainTh label="Action" align="right" />
             </tr>
           </thead>
           <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
@@ -598,7 +706,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                       className="hover:bg-[color:var(--color-brand-bg)]"
                     >
                       <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
-                        {manilaDateTime(card.requestedAt)}
+                        {manilaDateTime(releasedTab ? card.releasedAt : card.requestedAt)}
                       </td>
                       <td className="px-4 py-3">
                         <Link
@@ -677,7 +785,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                     className="hover:bg-[color:var(--color-brand-bg)]"
                   >
                     <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
-                      {manilaDateTime(card.requestedAt)}
+                      {manilaDateTime(releasedTab ? card.releasedAt : card.requestedAt)}
                     </td>
                     <td className="px-4 py-3">
                       <Link
@@ -749,51 +857,29 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         </table>
       </Panel>
 
-      {totalPages > 1 ? (
-        <nav
-          className="mt-6 flex flex-wrap items-center justify-between gap-3"
-          aria-label="Queue pages"
-        >
-          <p className="text-sm text-[color:var(--color-brand-text-soft)]">
-            Page {safePage} of {totalPages} · {total} test
-            {total === 1 ? "" : "s"}
-          </p>
-          <div className="flex gap-2">
-            {safePage > 1 ? (
-              <Link
-                href={buildHref({
-                  page: safePage > 2 ? String(safePage - 1) : null,
-                })}
-                className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-4 py-1.5 text-sm transition-colors hover:border-[color:var(--color-brand-cyan)]"
-              >
-                ← Previous
-              </Link>
-            ) : (
-              <span
-                aria-disabled="true"
-                className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-4 py-1.5 text-sm text-[color:var(--color-brand-text-soft)] opacity-50"
-              >
-                ← Previous
-              </span>
-            )}
-            {safePage < totalPages ? (
-              <Link
-                href={buildHref({ page: String(safePage + 1) })}
-                className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-4 py-1.5 text-sm transition-colors hover:border-[color:var(--color-brand-cyan)]"
-              >
-                Next →
-              </Link>
-            ) : (
-              <span
-                aria-disabled="true"
-                className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-4 py-1.5 text-sm text-[color:var(--color-brand-text-soft)] opacity-50"
-              >
-                Next →
-              </span>
-            )}
-          </div>
-        </nav>
-      ) : null}
+      {/* The pager counts TESTS, which is what `.range()` slices; a
+          consolidated chemistry card folds several of them into one row. */}
+      <ListPagination
+        page={safePage}
+        pageCount={totalPages}
+        total={total}
+        size={size}
+        prevHref={
+          safePage > 1
+            ? buildHref({ page: safePage > 2 ? String(safePage - 1) : null })
+            : null
+        }
+        nextHref={safePage < totalPages ? buildHref({ page: String(safePage + 1) }) : null}
+        sizeOptions={PAGE_SIZES.map((n) => ({
+          size: n,
+          // Resizing resets to page 1 — same reasoning as a re-sort.
+          href: buildHref({
+            size: n === PAGE_SIZE ? null : String(n),
+            page: null,
+          }),
+        }))}
+        noun="test"
+      />
     </div>
   );
 }
