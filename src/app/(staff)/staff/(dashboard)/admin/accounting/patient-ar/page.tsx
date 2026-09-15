@@ -1,13 +1,26 @@
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { todayManilaISODate } from "@/lib/dates/manila";
+import { manilaDate, todayManilaISODate } from "@/lib/dates/manila";
 import { fetchAllRows, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 import {
   sectionTabsNavClass,
   sectionTabClass,
 } from "@/components/staff/section-tabs-style";
 import { paymentStatusLabel } from "@/lib/ui/payment-status";
+import {
+  ariaSortFor,
+  buildListHref,
+  nextSort,
+  pageCount,
+  parsePage,
+  parsePageSize,
+  parseSort,
+  type SortDir,
+  type SortSpec,
+} from "@/lib/ui/table-params";
+import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
+import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 
 export const metadata = { title: "Patient AR aging — staff" };
 export const dynamic = "force-dynamic";
@@ -27,10 +40,48 @@ type Scope = "non_hmo" | "hmo" | "all";
 // row count) and paging only the on-screen TABLE from that already-fetched
 // set — real "page N of M" navigation, not a silent cut. `DISPLAY_PAGE_SIZE`
 // governs the table only; the totals never depend on it.
-const DISPLAY_PAGE_SIZE = 200;
+// The picker's largest offering. This used to be a fixed 200 — the pager now
+// makes every row reachable either way, so it steps down to a size the reader
+// can actually change.
+const DEFAULT_PAGE_SIZE = 100;
+
+const BASE_PATH = "/staff/admin/accounting/patient-ar";
+
+/**
+ * Sortable columns. Every one of them is sorted IN MEMORY, over the set
+ * `fetchAllRows` already walked — which is what makes it honest: the pager's
+ * total is that same set, so sorting can't reorder rows into or out of a page
+ * the way a server-side sort over a truncated fetch would.
+ *
+ * "Outstanding" is the clearest case for it: it is `total_php - paid_php`,
+ * computed per row below, so no `.order()` could express it at all.
+ *
+ * "Age" has no key of its own — it is `visit_date` counted backwards, so
+ * "Visit date ▲" (oldest first) already IS "oldest first by age", and a
+ * second header claiming its own sort state for the same order would just be
+ * two carets disagreeing.
+ */
+const SORTABLE_COLUMNS = [
+  "visit_date",
+  "visit_number",
+  "patient",
+  "hmo",
+  "outstanding",
+  "payment_status",
+] as const;
+type SortColumn = (typeof SORTABLE_COLUMNS)[number];
+
+/** Oldest first — what an aging report opens on, and what it always did. */
+const DEFAULT_SORT: SortSpec<SortColumn> = { key: "visit_date", dir: "asc" };
 
 interface SearchProps {
-  searchParams: Promise<{ scope?: Scope; page?: string }>;
+  searchParams: Promise<{
+    scope?: Scope;
+    sort?: string;
+    dir?: string;
+    page?: string;
+    size?: string;
+  }>;
 }
 
 interface VisitRow {
@@ -80,6 +131,74 @@ function pluckProviderName(
   return row?.name ?? null;
 }
 
+/** One enriched table row — a visit plus what the page derives from it. */
+interface ArRow {
+  v: VisitRow;
+  outstanding: number;
+  bucket: keyof BucketTotals;
+  days: number;
+}
+
+function compareText(a: string, b: string, dir: SortDir): number {
+  return dir === "asc" ? a.localeCompare(b) : b.localeCompare(a);
+}
+
+function compareNumber(a: number, b: number, dir: SortDir): number {
+  return dir === "asc" ? a - b : b - a;
+}
+
+/** A walk-in (no patient) or a non-HMO visit sinks either way, not to the top on ASC. */
+function compareBlankLast(a: string | null, b: string | null, dir: SortDir): number {
+  if (!a && !b) return 0;
+  if (!a) return 1;
+  if (!b) return -1;
+  return compareText(a, b, dir);
+}
+
+function patientSortKey(v: VisitRow): string | null {
+  const p = pluckPatient(v.patients);
+  return p ? `${p.last_name}, ${p.first_name}` : null;
+}
+
+function compareArRows(a: ArRow, b: ArRow, sort: SortSpec<SortColumn>): number {
+  let cmp: number;
+  switch (sort.key) {
+    case "visit_date":
+      // Plain YYYY-MM-DD, so Date.parse gives a real number to order by.
+      cmp = compareNumber(Date.parse(a.v.visit_date), Date.parse(b.v.visit_date), sort.dir);
+      break;
+    case "visit_number":
+      // TEXT, not numeric. `visit_number` is a text column: new visits are
+      // `lpad(seq, 4, "0")` so they order correctly as strings, but the
+      // historical import wrote non-numeric ones too — prod holds `H-100` and
+      // `H-LAB_SERVICE-0-3`. `Number()` on those is NaN, and a comparator
+      // that returns NaN never reaches the id tie-break below (NaN !== 0) and
+      // leaves Array.sort free to order the rows however it likes.
+      cmp = compareText(a.v.visit_number, b.v.visit_number, sort.dir);
+      break;
+    case "patient":
+      cmp = compareBlankLast(patientSortKey(a.v), patientSortKey(b.v), sort.dir);
+      break;
+    case "hmo":
+      cmp = compareBlankLast(
+        pluckProviderName(a.v.hmo_providers),
+        pluckProviderName(b.v.hmo_providers),
+        sort.dir,
+      );
+      break;
+    case "outstanding":
+      cmp = compareNumber(a.outstanding, b.outstanding, sort.dir);
+      break;
+    case "payment_status":
+      cmp = compareText(a.v.payment_status, b.v.payment_status, sort.dir);
+      break;
+  }
+  // The id tie-break is what keeps the page SLICE stable: Array.sort is
+  // stable, but rows that tie on the visible column would otherwise hold
+  // whatever order the query returned and could shift between renders.
+  return cmp !== 0 ? cmp : a.v.id.localeCompare(b.v.id);
+}
+
 const SCOPE_LABEL: Record<Scope, string> = {
   non_hmo: "Non-HMO (patient pays)",
   hmo: "HMO co-pay residue",
@@ -93,9 +212,9 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
   const sp = await searchParams;
   const scope: Scope =
     sp.scope === "hmo" || sp.scope === "all" ? sp.scope : "non_hmo";
-  const requestedPage = Number(sp.page);
-  const currentPage =
-    Number.isInteger(requestedPage) && requestedPage >= 1 ? requestedPage : 1;
+  const sort = parseSort(sp.sort, sp.dir, SORTABLE_COLUMNS, DEFAULT_SORT);
+  const size = parsePageSize(sp.size, DEFAULT_PAGE_SIZE);
+  const currentPage = parsePage(sp.page);
 
   const today = todayManilaISODate();
   const admin = createAdminClient();
@@ -135,7 +254,7 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
     d90_plus: { count: 0, amount: 0 },
   };
 
-  const enriched = rows.map((v) => {
+  const enriched: ArRow[] = rows.map((v) => {
     const outstanding = Number(v.total_php ?? 0) - Number(v.paid_php ?? 0);
     const bucket = bucketFor(v.visit_date, today);
     if (outstanding > 0) {
@@ -159,27 +278,48 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
     totals.d61_90.count +
     totals.d90_plus.count;
 
-  // Table pagination — over the already-fetched, already-totalled set. Real
-  // navigation (every row is reachable on some page) rather than a hard cut.
-  const totalPages = Math.max(1, Math.ceil(enriched.length / DISPLAY_PAGE_SIZE));
+  // Sorting and paging both run over the already-fetched, already-totalled
+  // set, so every row is reachable on some page and the bucket cards above
+  // never depend on which page is showing.
+  const ordered = [...enriched].sort((a, b) => compareArRows(a, b, sort));
+  const totalPages = pageCount(ordered.length, size);
   const page = Math.min(currentPage, totalPages);
-  const pageStart = (page - 1) * DISPLAY_PAGE_SIZE;
-  const pageRows = enriched.slice(pageStart, pageStart + DISPLAY_PAGE_SIZE);
+  const pageStart = (page - 1) * size;
+  const pageRows = ordered.slice(pageStart, pageStart + size);
 
-  function tabHref(s: Scope) {
-    const params = new URLSearchParams();
-    if (s !== "non_hmo") params.set("scope", s);
-    const qs = params.toString();
-    return `/staff/admin/accounting/patient-ar${qs ? `?${qs}` : ""}`;
+  // Params at their default are omitted, so the Non-HMO tab on page 1 stays
+  // the bare /staff/admin/accounting/patient-ar URL.
+  const isDefaultSort = sort.key === DEFAULT_SORT.key && sort.dir === DEFAULT_SORT.dir;
+  const baseParams: Record<string, string | null> = {
+    scope: scope === "non_hmo" ? null : scope,
+    sort: isDefaultSort ? null : sort.key,
+    dir: isDefaultSort ? null : sort.dir,
+    size: size === DEFAULT_PAGE_SIZE ? null : String(size),
+  };
+
+  function href(overrides: Record<string, string | null>): string {
+    return buildListHref(BASE_PATH, baseParams, overrides);
   }
 
-  function pageHref(p: number) {
-    const params = new URLSearchParams();
-    if (scope !== "non_hmo") params.set("scope", scope);
-    if (p > 1) params.set("page", String(p));
-    const qs = params.toString();
-    return `/staff/admin/accounting/patient-ar${qs ? `?${qs}` : ""}`;
-  }
+  const sortHref = (key: SortColumn) => {
+    const next = nextSort(sort, key);
+    const nextIsDefault = next.key === DEFAULT_SORT.key && next.dir === DEFAULT_SORT.dir;
+    return href({
+      sort: nextIsDefault ? null : next.key,
+      dir: nextIsDefault ? null : next.dir,
+      page: null,
+    });
+  };
+
+  const th = (key: SortColumn, label: string, align?: "left" | "right") => (
+    <SortableTh
+      key={key}
+      label={label}
+      href={sortHref(key)}
+      state={ariaSortFor(sort, key)}
+      align={align}
+    />
+  );
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
@@ -205,7 +345,10 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
           return (
             <Link
               key={s}
-              href={tabHref(s)}
+              // Switching scope keeps the sort and page size — the same
+              // columns over a different slice of receivables — but goes back
+              // to page 1, since the set changes shape.
+              href={href({ scope: s === "non_hmo" ? null : s, page: null })}
               className={sectionTabClass(active)}
               aria-current={active ? "page" : undefined}
             >
@@ -243,13 +386,14 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
             <table className="w-full min-w-[720px] text-sm">
               <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                 <tr>
-                  <th className="px-4 py-3">Visit date</th>
-                  <th className="px-4 py-3">Age</th>
-                  <th className="px-4 py-3">Visit #</th>
-                  <th className="px-4 py-3">Patient</th>
-                  <th className="px-4 py-3">HMO</th>
-                  <th className="px-4 py-3 text-right">Outstanding</th>
-                  <th className="px-4 py-3">Status</th>
+                  {th("visit_date", "Visit date")}
+                  {/* Age is visit_date counted backwards — see SORTABLE_COLUMNS. */}
+                  <PlainTh label="Age" />
+                  {th("visit_number", "Visit #")}
+                  {th("patient", "Patient")}
+                  {th("hmo", "HMO")}
+                  {th("outstanding", "Outstanding", "right")}
+                  {th("payment_status", "Status")}
                 </tr>
               </thead>
               <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
@@ -259,7 +403,9 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
                   return (
                     <tr key={v.id} className="hover:bg-[color:var(--color-brand-bg)]">
                       <td className="whitespace-nowrap px-4 py-3 text-[color:var(--color-brand-text-soft)]">
-                        {v.visit_date}
+                        {/* Sorting keys off the underlying ISO value — this
+                            is the label only. */}
+                        {manilaDate(v.visit_date)}
                       </td>
                       <td className="whitespace-nowrap px-4 py-3">
                         <span
@@ -317,40 +463,26 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
         )}
       </section>
 
-      {enriched.length > 0 ? (
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-[color:var(--color-brand-text-soft)]">
-          <p>
-            Showing {pageStart + 1}–{pageStart + pageRows.length} of{" "}
-            {enriched.length} visit{enriched.length === 1 ? "" : "s"}
-            {totalPages > 1 ? ` (page ${page} of ${totalPages})` : ""}.
-          </p>
-          {totalPages > 1 ? (
-            <nav className="flex items-center gap-2" aria-label="Table pages">
-              {/* Rows are oldest-first (ascending visit_date), so a lower
-                  page number is OLDER and a higher one is NEWER. */}
-              {page > 1 ? (
-                <Link
-                  href={pageHref(page - 1)}
-                  className="font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
-                >
-                  ← Older
-                </Link>
-              ) : (
-                <span className="opacity-40">← Older</span>
-              )}
-              {page < totalPages ? (
-                <Link
-                  href={pageHref(page + 1)}
-                  className="font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
-                >
-                  Newer →
-                </Link>
-              ) : (
-                <span className="opacity-40">Newer →</span>
-              )}
-            </nav>
-          ) : null}
-        </div>
+      {/* "Older / Newer" was only right while the order was fixed to
+          oldest-first; any column header can reverse it now, so the pager
+          reads Previous / Next like every other list page. */}
+      {ordered.length > 0 ? (
+        <ListPagination
+          page={page}
+          pageCount={totalPages}
+          total={ordered.length}
+          size={size}
+          prevHref={page > 1 ? href({ page: page - 1 > 1 ? String(page - 1) : null }) : null}
+          nextHref={page < totalPages ? href({ page: String(page + 1) }) : null}
+          sizeOptions={PAGE_SIZES.map((n) => ({
+            size: n,
+            href: href({
+              size: n === DEFAULT_PAGE_SIZE ? null : String(n),
+              page: null,
+            }),
+          }))}
+          noun="visit"
+        />
       ) : null}
 
       {truncated ? (

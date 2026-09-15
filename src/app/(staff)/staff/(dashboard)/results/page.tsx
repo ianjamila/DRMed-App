@@ -19,11 +19,64 @@ import {
   resultStatusSpec,
   type ResultStatusFilter,
 } from "@/lib/results/status-filter";
+import {
+  ariaSortFor,
+  buildListHref,
+  nextSort,
+  pageCount,
+  parsePage,
+  parsePageSize,
+  parseSort,
+  rangeFor,
+  type SortSpec,
+} from "@/lib/ui/table-params";
+import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
+import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 
 export const metadata = { title: "Results — staff" };
 export const dynamic = "force-dynamic";
 
-const PAGE_SIZE = 50;
+const BASE_PATH = "/staff/results";
+
+/** This archive has always shown 50 rows; the picker can change it. */
+const DEFAULT_SIZE = 50;
+
+/**
+ * Sortable columns. `parseSort` requires this exact allow-list — the value
+ * reaches a PostgREST `.order()`, so it is a security boundary.
+ *
+ * Patient is NOT here. It lives two embeds down (`test_requests` → `visits`
+ * → `patients`), and the embedded-path form that reorders parent rows —
+ * `.order("patients(last_name)")`, see the Visits archive — is only
+ * documented one level deep. Visit # is one level (`visits`), which is why it
+ * can be sorted and Patient can't.
+ *
+ * Tests and PDF are per-row lists folded from several `test_requests`, so
+ * they have no single value to order by at all.
+ */
+const SORTABLE_COLUMNS = [
+  "requested_at",
+  "completed_at",
+  "released_at",
+  "status",
+  "visit_number",
+] as const;
+type SortColumn = (typeof SORTABLE_COLUMNS)[number];
+
+/** The real column (or embedded path) each sort key orders by. */
+const ORDER_COLUMN: Record<SortColumn, string> = {
+  requested_at: "requested_at",
+  completed_at: "completed_at",
+  released_at: "released_at",
+  status: "status",
+  // Needs `visits!inner`, which the select already has.
+  visit_number: "visits(visit_number)",
+};
+
+// A test that hasn't been completed or released yet renders "—". Sink those
+// to the bottom either way, so ordering by Released doesn't just surface
+// every unfinished test first.
+const NULLS_LAST_COLUMNS = new Set<SortColumn>(["completed_at", "released_at"]);
 
 const STATUS_BADGE: Record<string, string> = {
   released: "bg-emerald-50 text-emerald-700 border-emerald-200",
@@ -40,7 +93,10 @@ interface SearchProps {
     start?: string;
     end?: string;
     q?: string;
+    sort?: string;
+    dir?: string;
     page?: string;
+    size?: string;
   }>;
 }
 
@@ -67,8 +123,18 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
 
   const status: ResultStatusFilter = parseResultStatusFilter(sp.status);
   const spec = resultStatusSpec(status);
-  const page = Math.max(1, Number(sp.page) || 1);
-  const offset = (page - 1) * PAGE_SIZE;
+  // The default ORDER is per tab: Unclaimed is a worklist and reads
+  // oldest-first, every other tab is a record and reads newest-first. So
+  // "is this the default sort?" — which decides whether `sort`/`dir` appear
+  // in the URL at all — has to be asked against the tab in hand.
+  const defaultSort: SortSpec<SortColumn> = {
+    key: "requested_at",
+    dir: spec?.oldestFirst === true ? "asc" : "desc",
+  };
+  const sort = parseSort(sp.sort, sp.dir, SORTABLE_COLUMNS, defaultSort);
+  const size = parsePageSize(sp.size, DEFAULT_SIZE);
+  const page = parsePage(sp.page);
+  const [from, to] = rangeFor(page, size);
   const todayISO = todayManilaISODate();
   const start = isISODate(sp.start) ? sp.start : "";
   const end = isISODate(sp.end) ? sp.end : "";
@@ -89,8 +155,17 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
     )
     .is("deleted_at", null)
     .is("visits.deleted_at", null)
-    .order("requested_at", { ascending: spec?.oldestFirst === true })
-    .range(offset, offset + PAGE_SIZE - 1);
+    .order(ORDER_COLUMN[sort.key], {
+      ascending: sort.dir === "asc",
+      ...(NULLS_LAST_COLUMNS.has(sort.key) ? { nullsFirst: false } : {}),
+    })
+    // Tie-break on id. Every column here ties heavily — a visit's tests share
+    // a `requested_at` to the millisecond, and a whole tab shares one
+    // `status` — so without a total order `.range()` drops and repeats rows
+    // between pages, which on a folded table shows up as a visit appearing
+    // twice or not at all.
+    .order("id", { ascending: true })
+    .range(from, to);
 
   if (spec) {
     query = query.in("status", spec.statuses);
@@ -176,23 +251,47 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
     : rows;
 
   const total = count ?? 0;
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const totalPages = pageCount(total, size);
   const safePage = Math.min(page, totalPages);
 
+  // Params at their default are omitted, so the All tab on page 1 stays the
+  // bare /staff/results URL.
+  const isDefaultSort = sort.key === defaultSort.key && sort.dir === defaultSort.dir;
+  const baseParams: Record<string, string | null> = {
+    status: status === "all" ? null : status,
+    start,
+    end,
+    q,
+    sort: isDefaultSort ? null : sort.key,
+    dir: isDefaultSort ? null : sort.dir,
+    size: size === DEFAULT_SIZE ? null : String(size),
+  };
+
   function buildHref(overrides: Record<string, string | null>): string {
-    const params = new URLSearchParams();
-    const base: Record<string, string> = {
-      status: status === "all" ? "" : status,
-      start,
-      end,
-      q,
-    };
-    for (const [k, v] of Object.entries({ ...base, ...overrides })) {
-      if (v) params.set(k, v);
-    }
-    const qs = params.toString();
-    return `/staff/results${qs ? `?${qs}` : ""}`;
+    return buildListHref(BASE_PATH, baseParams, overrides);
   }
+
+  const sortHref = (key: SortColumn) => {
+    const next = nextSort(sort, key);
+    const nextIsDefault = next.key === defaultSort.key && next.dir === defaultSort.dir;
+    // A re-sort goes back to page 1 — page 7 of a set that just reordered is
+    // a screenful of unrelated visits.
+    return buildHref({
+      sort: nextIsDefault ? null : next.key,
+      dir: nextIsDefault ? null : next.dir,
+      page: null,
+    });
+  };
+
+  const th = (key: SortColumn, label: string, align?: "left" | "right") => (
+    <SortableTh
+      key={key}
+      label={label}
+      href={sortHref(key)}
+      state={ariaSortFor(sort, key)}
+      align={align}
+    />
+  );
 
   const hasFilters = Boolean(start || end || q || status !== "all");
 
@@ -208,7 +307,15 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
             <Link href="/staff/visits?kind=consult" className="font-semibold text-[color:var(--color-brand-cyan)] hover:underline">
               Visits
             </Link>
-            .{hasFilters ? ` · ${total} matching` : ` · ${total} total`}
+            .
+            {/* `q` is applied after the fetch (see below), so `total` is the
+                count BEFORE it — say what it actually counts rather than
+                calling a larger number "matching". */}
+            {q
+              ? ` · ${total.toLocaleString("en-PH")} match the filters · ${filtered.length} on this page match “${q}”`
+              : hasFilters
+                ? ` · ${total.toLocaleString("en-PH")} matching`
+                : ` · ${total.toLocaleString("en-PH")} total`}
           </>
         }
       />
@@ -219,7 +326,10 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
           return (
             <Link
               key={s}
-              href={buildHref({ status: s === "all" ? "" : s, page: null })}
+              // Switching tab keeps the sort, the dates and the search — the
+              // same columns over a different status set — but goes back to
+              // page 1.
+              href={buildHref({ status: s === "all" ? null : s, page: null })}
               className={`min-h-11 rounded-full border px-4 py-2 text-sm font-medium transition-colors ${
                 active
                   ? "border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-cyan)] text-white"
@@ -237,6 +347,17 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
         action="/staff/results"
       >
         <input type="hidden" name="status" value={status === "all" ? "" : status} />
+        {/* A GET form submits only the fields it carries, so without these
+            Apply would silently reset the reader's sort and page size. */}
+        {isDefaultSort ? null : (
+          <>
+            <input type="hidden" name="sort" value={sort.key} />
+            <input type="hidden" name="dir" value={sort.dir} />
+          </>
+        )}
+        {size === DEFAULT_SIZE ? null : (
+          <input type="hidden" name="size" value={String(size)} />
+        )}
         <div className="flex flex-col">
           <label htmlFor="start" className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             Requested from
@@ -285,7 +406,14 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
           </button>
           {hasFilters ? (
             <Link
-              href="/staff/results"
+              // Clears the FILTERS, not the view: sort and page size survive.
+              href={buildHref({
+                status: null,
+                start: null,
+                end: null,
+                q: null,
+                page: null,
+              })}
               className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-4 py-1.5 text-sm text-[color:var(--color-brand-text-soft)] transition-colors hover:border-[color:var(--color-brand-cyan)]"
             >
               Clear filters
@@ -293,6 +421,19 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
           ) : null}
         </div>
       </form>
+
+      {/* The search box narrows the fetched page only — the dates and the tab
+          are real DB filters, this one is not. Say so, the way the lab queue
+          does, rather than let a page-1 miss read as "not in the archive". */}
+      {q && totalPages > 1 ? (
+        <p
+          role="status"
+          className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+        >
+          The search box only looks at the {size} tests on this page. Narrow the
+          dates, or pick a tab, to search a smaller set.
+        </p>
+      ) : null}
 
       <section className="overflow-hidden rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
         {filtered.length === 0 ? (
@@ -306,18 +447,19 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
             <table className="w-full min-w-[900px] text-sm">
               <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                 <tr>
-                  <th className="px-4 py-3">Patient</th>
-                  <th className="px-4 py-3">Tests</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">Requested</th>
-                  <th className="px-4 py-3">Completed</th>
-                  <th className="px-4 py-3">Released</th>
-                  <th className="px-4 py-3">PDF</th>
-                  <th className="px-4 py-3 text-right">Visit</th>
+                  {/* Patient, Tests and PDF can't be ordered — see SORTABLE_COLUMNS. */}
+                  <PlainTh label="Patient" />
+                  <PlainTh label="Tests" />
+                  {th("status", "Status")}
+                  {th("requested_at", "Requested")}
+                  {th("completed_at", "Completed")}
+                  {th("released_at", "Released")}
+                  <PlainTh label="PDF" />
+                  {th("visit_number", "Visit", "right")}
                 </tr>
               </thead>
               <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
-                {groupByVisit(filtered, hasPdfByTrId, spec?.oldestFirst === true).map((g) => {
+                {groupByVisit(filtered, hasPdfByTrId).map((g) => {
                   const pat = g.patient;
                   const patientLabel = pat
                     ? `${pat.last_name}, ${pat.first_name}`
@@ -432,39 +574,29 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
         )}
       </section>
 
-      {totalPages > 1 ? (
-        <nav className="mt-6 flex flex-wrap items-center justify-between gap-3">
-          <p className="text-sm text-[color:var(--color-brand-text-soft)]">
-            Page {safePage} of {totalPages}
-          </p>
-          <div className="flex gap-2">
-            {safePage > 1 ? (
-              <Link
-                href={buildHref({ page: String(safePage - 1) })}
-                className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-4 py-1.5 text-sm transition-colors hover:border-[color:var(--color-brand-cyan)]"
-              >
-                ← Previous
-              </Link>
-            ) : (
-              <span className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-4 py-1.5 text-sm text-[color:var(--color-brand-text-soft)] opacity-50">
-                ← Previous
-              </span>
-            )}
-            {safePage < totalPages ? (
-              <Link
-                href={buildHref({ page: String(safePage + 1) })}
-                className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-4 py-1.5 text-sm transition-colors hover:border-[color:var(--color-brand-cyan)]"
-              >
-                Next →
-              </Link>
-            ) : (
-              <span className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-4 py-1.5 text-sm text-[color:var(--color-brand-text-soft)] opacity-50">
-                Next →
-              </span>
-            )}
-          </div>
-        </nav>
-      ) : null}
+      {/* The pager counts TESTS, which is what `.range()` slices; the table
+          folds them by visit, so a page of 50 tests renders as fewer rows. */}
+      <ListPagination
+        page={safePage}
+        pageCount={totalPages}
+        total={total}
+        size={size}
+        prevHref={
+          safePage > 1
+            ? buildHref({ page: safePage - 1 > 1 ? String(safePage - 1) : null })
+            : null
+        }
+        nextHref={safePage < totalPages ? buildHref({ page: String(safePage + 1) }) : null}
+        sizeOptions={PAGE_SIZES.map((n) => ({
+          size: n,
+          // Resizing resets to page 1 — same reasoning as a re-sort.
+          href: buildHref({
+            size: n === DEFAULT_SIZE ? null : String(n),
+            page: null,
+          }),
+        }))}
+        noun="test"
+      />
     </div>
   );
 }
@@ -489,10 +621,23 @@ interface VisitGroup {
   awaitingPayment: boolean;
 }
 
+/**
+ * Fold the window's test rows into one row per visit.
+ *
+ * The result keeps the QUERY's order: `Map` iterates in insertion order, and
+ * a group is inserted when its first test is seen, so a group sits exactly
+ * where its first test sat. That is what lets the column headers order this
+ * table at all — the previous version re-sorted by `requestedAt` afterwards,
+ * which silently undid any other sort.
+ *
+ * A visit whose tests straddle a page boundary still renders on both pages,
+ * holding the tests that landed on each. Ordering by `requested_at` (the
+ * default) keeps a visit's tests together in practice, since they are written
+ * in one transaction.
+ */
 function groupByVisit(
   rows: ResultRow[],
   hasPdfByTrId: Map<string, boolean>,
-  oldestFirst: boolean,
 ): VisitGroup[] {
   const groups = new Map<string, VisitGroup>();
   for (const r of rows) {
@@ -529,13 +674,7 @@ function groupByVisit(
       });
     }
   }
-  // Same direction the query ordered rows in, so the fold doesn't undo the
-  // tab's sort: oldest-first on the Unclaimed worklist, newest-first elsewhere.
-  return Array.from(groups.values()).sort((a, b) => {
-    if (a.requestedAt === b.requestedAt) return 0;
-    const newestFirst = a.requestedAt < b.requestedAt ? 1 : -1;
-    return oldestFirst ? -newestFirst : newestFirst;
-  });
+  return Array.from(groups.values());
 }
 
 type StatusSummary =

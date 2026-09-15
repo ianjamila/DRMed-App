@@ -33,11 +33,11 @@ src/lib/results/
 └── types.ts                ← ResultLayout, ParamValue, TemplateParam, EffectiveRange, ResultDocumentInput
 
 src/app/(staff)/staff/(dashboard)/
-├── queue/page.tsx                      ← lab worklist: All / Mine / Pending release / Released today + date-range, patient/test search, visit #, paging
+├── queue/page.tsx                      ← lab worklist: All / Mine / Pending release / Released today + date-range, patient/test search, visit #, shared sort/paging
 ├── queue/[id]/page.tsx                 ← single-test detail; REDIRECTS to the consolidated form when the service has a report_group_id
 ├── queue/[id]/structured-form.tsx      ← form UI for structured entry + finalize
 ├── queue/consolidated/[visitId]/[groupId]/ ← consolidated (chemistry) form — one report for every test in the group
-├── results/page.tsx                    ← results archive (status tabs incl. Unclaimed; Manila date bounds)
+├── results/page.tsx                    ← results archive (status tabs incl. Unclaimed; Manila date bounds; shared sort/paging)
 ├── admin/result-templates/[service_id]/edit ← per-service template editor
 ├── admin/result-templates/group/[group_id]/edit ← GROUP template editor + per-service param mappings (PR #120)
 ├── admin/result-templates/preview/[service_id]/route.ts, preview/group/[group_id] ← admin preview endpoints

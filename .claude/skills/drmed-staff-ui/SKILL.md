@@ -94,6 +94,36 @@ No migration is required — absence of a prefs row means visible.
 
 The lab queue (`/staff/queue`) and the Visits archive (`/staff/visits`) are the reference list pages: `PageHeader` on top, status tabs via `SectionTabs`, filter chips that round-trip through search params (multi-select chips serialise to a comma list — see `parseVisitClasses` / `serialiseVisitClasses` in `src/lib/visits/classification.ts`), a date picker with prev/next/"Back to today", and real paging (`count: "exact"` + `.range()`, one page size for every tab so the page doesn't resize when switching). Tab links and Clear reset to page 1; page links keep the filters. When a search can only run post-fetch (an ILIKE across an embed isn't expressible in one PostgREST query), say so in the subtitle rather than implying a miss means "not in the list".
 
+### The shared list contract — use it, don't re-hand-roll it
+
+Every staff list page speaks one URL contract: `?sort=&dir=&page=&size=`,
+parsed by `src/lib/ui/table-params.ts` and rendered by
+`src/components/staff/{sortable-th,list-pagination}.tsx`. A new list page wires
+these, it does not grow its own pager.
+
+- `parseSort(raw, rawDir, allowed, fallback)` — `allowed` is a **security
+  boundary**, not a UI list: the key reaches a PostgREST `.order()`. Declare it
+  `as const` on the page and include only columns the table visibly shows.
+- Every ordering ends `.order("id", { ascending: true })`. Without a total
+  order `.range()` drops and repeats rows between pages.
+- A column computed AFTER the fetch cannot be ordered — render it with
+  `PlainTh` (Visits' Tests count, Journal's Type/Amount, Emails sent's
+  Recipient/Email/Status, the Patient column on the two `test_requests`
+  worklists, which sits two embeds down).
+- Sort, filter and size changes all reset to page 1; tab and chip links keep
+  the sort. A plain-GET filter `<form>` needs hidden `sort`/`dir`/`size`
+  inputs or Apply silently resets them.
+- Where the default order differs per tab (`/staff/results` Unclaimed,
+  `/staff/queue` Released today), compute `defaultSort` from the tab and ask
+  "is this the default?" against THAT, so the URL stays bare on each tab.
+- **Client-state twin:** `src/components/staff/client-table-controls.tsx`
+  (`ClientSortableTh` / `ClientListPagination`) renders the same chrome as
+  buttons, from the same class helpers and the same pure decision functions.
+  It exists for exactly one case — HMO claims, whose rows are already in the
+  browser and whose checkbox selection a URL navigation would discard. Reach
+  for it only when moving page state into the URL would cost a refetch or lose
+  state; everything else uses the link version and its zero hydration.
+
 ## 4a · The three page-shape standards (agreed 2026-09-11)
 
 Staff pages visibly jumped as you navigated between them. Measured across the

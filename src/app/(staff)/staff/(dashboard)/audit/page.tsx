@@ -4,6 +4,19 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { Panel } from "@/components/ui/panel";
 import { manilaDateTime } from "@/lib/dates/manila";
+import {
+  ariaSortFor,
+  buildListHref,
+  nextSort,
+  pageCount,
+  parsePage,
+  parsePageSize,
+  parseSort,
+  rangeFor,
+  type SortSpec,
+} from "@/lib/ui/table-params";
+import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
+import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 
 export const metadata = {
   title: "Audit log — staff",
@@ -23,17 +36,43 @@ interface Props {
     drm?: string;
     since?: string;
     until?: string;
+    sort?: string;
+    dir?: string;
     page?: string;
+    size?: string;
   }>;
 }
 
-const PAGE_SIZE = 50;
+const BASE_PATH = "/staff/audit";
+
+// Sortable columns. `parseSort` requires this exact allow-list — the value
+// reaches a PostgREST `.order()`, so it is a security boundary, not just a UI
+// list. Actor and Resource are the two columns an investigator re-orders by:
+// "everything this actor type did" and "all the rows about one resource kind"
+// are the questions the log gets asked. IP and Metadata stay plain — an IP
+// sorts as text (10.x before 9.x) and metadata is JSONB with no meaningful
+// order.
+const SORTABLE_COLUMNS = ["created_at", "action", "actor_type", "resource_type"] as const;
+type SortColumn = (typeof SORTABLE_COLUMNS)[number];
+
+const DEFAULT_SORT: SortSpec<SortColumn> = { key: "created_at", dir: "desc" };
+
+// `resource_type` is null on rows that aren't about one stored object (a
+// sign-in, a rate-limit trip) and renders as "—". Sink those to the bottom
+// either way, so ordering by Resource doesn't just surface every blank first.
+const NULLS_LAST_COLUMNS = new Set<SortColumn>(["resource_type"]);
+
+// This page has always shown 50 rows; the picker can change it, but an
+// existing bookmark keeps the size it was written with.
+const DEFAULT_SIZE = 50;
 
 export default async function AuditLogPage({ searchParams }: Props) {
   await requireAdminStaff();
   const params = await searchParams;
-  const page = Math.max(1, Number(params.page ?? "1") || 1);
-  const offset = (page - 1) * PAGE_SIZE;
+  const sort = parseSort(params.sort, params.dir, SORTABLE_COLUMNS, DEFAULT_SORT);
+  const size = parsePageSize(params.size, DEFAULT_SIZE);
+  const page = parsePage(params.page);
+  const [offset, rangeTo] = rangeFor(page, size);
 
   // Resolve a DRM-ID to its patient_id once, then filter audit rows by
   // that patient_id. We use the admin client because the staff_profiles
@@ -65,8 +104,15 @@ export default async function AuditLogPage({ searchParams }: Props) {
       "id, actor_id, actor_type, patient_id, action, resource_type, resource_id, ip_address, created_at, metadata",
       { count: "exact" },
     )
-    .order("created_at", { ascending: false })
-    .range(offset, offset + PAGE_SIZE - 1);
+    .order(sort.key, {
+      ascending: sort.dir === "asc",
+      ...(NULLS_LAST_COLUMNS.has(sort.key) ? { nullsFirst: false } : {}),
+    })
+    // Tie-break on id — without a total order, `.range()` can drop or repeat
+    // rows across pages, and every column here ties freely (a burst of rows
+    // can share a `created_at`, and thousands share an `actor_type`).
+    .order("id", { ascending: true })
+    .range(offset, rangeTo);
 
   if (params.action) {
     query = query.ilike("action", `${params.action}%`);
@@ -95,19 +141,37 @@ export default async function AuditLogPage({ searchParams }: Props) {
 
   const { data: rows, count } = await query;
   const total = count ?? 0;
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const totalPages = pageCount(total, size);
 
-  function pageHref(p: number) {
-    const sp = new URLSearchParams();
-    if (params.action) sp.set("action", params.action);
-    if (params.actor) sp.set("actor", params.actor);
-    if (params.drm) sp.set("drm", params.drm);
-    if (params.since) sp.set("since", params.since);
-    if (params.until) sp.set("until", params.until);
-    if (p > 1) sp.set("page", String(p));
-    const qs = sp.toString();
-    return `/staff/audit${qs ? `?${qs}` : ""}`;
-  }
+  // Params sitting at their default are left out, so page 1 with the default
+  // sort and size stays the bare /staff/audit URL.
+  const isDefaultSort = sort.key === DEFAULT_SORT.key && sort.dir === DEFAULT_SORT.dir;
+  const baseParams: Record<string, string | null> = {
+    action: params.action ?? null,
+    actor: params.actor ?? null,
+    drm: params.drm ?? null,
+    since: params.since ?? null,
+    until: params.until ?? null,
+    sort: isDefaultSort ? null : sort.key,
+    dir: isDefaultSort ? null : sort.dir,
+    size: size === DEFAULT_SIZE ? null : String(size),
+  };
+
+  const sortHref = (key: SortColumn) => {
+    const next = nextSort(sort, key);
+    const nextIsDefault = next.key === DEFAULT_SORT.key && next.dir === DEFAULT_SORT.dir;
+    // A re-sort resets to page 1 — staying on page 7 of a set that just
+    // reordered is a screenful of unrelated rows with no explanation.
+    return buildListHref(BASE_PATH, baseParams, {
+      sort: nextIsDefault ? null : next.key,
+      dir: nextIsDefault ? null : next.dir,
+      page: null,
+    });
+  };
+
+  const th = (key: SortColumn, label: string) => (
+    <SortableTh key={key} label={label} href={sortHref(key)} state={ariaSortFor(sort, key)} />
+  );
 
   const hasAnyFilter = Boolean(
     params.action || params.actor || params.drm || params.since || params.until,
@@ -125,7 +189,19 @@ export default async function AuditLogPage({ searchParams }: Props) {
         </p>
       </header>
 
+      {/* A browser submits only the fields the form carries, so without these
+          hidden inputs pressing Filter would silently reset the sort and the
+          page size the reader had chosen. */}
       <form className="mb-2 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-5">
+        {isDefaultSort ? null : (
+          <>
+            <input type="hidden" name="sort" value={sort.key} />
+            <input type="hidden" name="dir" value={sort.dir} />
+          </>
+        )}
+        {size === DEFAULT_SIZE ? null : (
+          <input type="hidden" name="size" value={String(size)} />
+        )}
         <input
           type="search"
           name="action"
@@ -175,8 +251,18 @@ export default async function AuditLogPage({ searchParams }: Props) {
             Filter
           </button>
           {hasAnyFilter ? (
+            // Clears the FILTERS, not the view: the chosen sort and page size
+            // survive, the same way gift codes' "Clear batch" keeps the
+            // active search.
             <Link
-              href="/staff/audit"
+              href={buildListHref(BASE_PATH, baseParams, {
+                action: null,
+                actor: null,
+                drm: null,
+                since: null,
+                until: null,
+                page: null,
+              })}
               className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-2 text-sm font-semibold text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-bg)]"
             >
               Clear
@@ -200,12 +286,12 @@ export default async function AuditLogPage({ searchParams }: Props) {
         <table className="w-full min-w-[820px] text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
-              <th className="px-4 py-3">Time</th>
-              <th className="px-4 py-3">Action</th>
-              <th className="px-4 py-3">Actor</th>
-              <th className="px-4 py-3">Resource</th>
-              <th className="px-4 py-3">IP</th>
-              <th className="px-4 py-3">Metadata</th>
+              {th("created_at", "Time")}
+              {th("action", "Action")}
+              {th("actor_type", "Actor")}
+              {th("resource_type", "Resource")}
+              <PlainTh label="IP" />
+              <PlainTh label="Metadata" />
             </tr>
           </thead>
           <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
@@ -258,31 +344,34 @@ export default async function AuditLogPage({ searchParams }: Props) {
         </table>
       </Panel>
 
-      <div className="mt-4 flex items-center justify-between text-xs text-[color:var(--color-brand-text-soft)]">
-        <span>
-          {total > 0
-            ? `Showing ${offset + 1}–${Math.min(offset + PAGE_SIZE, total)} of ${total}`
-            : "0 entries"}
-        </span>
-        <div className="flex gap-2">
-          {page > 1 ? (
-            <a
-              href={pageHref(page - 1)}
-              className="rounded-md border border-[color:var(--color-brand-bg-mid)] px-3 py-1.5 hover:bg-white"
-            >
-              ← Prev
-            </a>
-          ) : null}
-          {page < totalPages ? (
-            <a
-              href={pageHref(page + 1)}
-              className="rounded-md border border-[color:var(--color-brand-bg-mid)] px-3 py-1.5 hover:bg-white"
-            >
-              Next →
-            </a>
-          ) : null}
-        </div>
-      </div>
+      <ListPagination
+        page={page}
+        pageCount={totalPages}
+        total={total}
+        size={size}
+        prevHref={
+          page > 1
+            ? buildListHref(BASE_PATH, baseParams, {
+                page: page - 1 > 1 ? String(page - 1) : null,
+              })
+            : null
+        }
+        nextHref={
+          page < totalPages
+            ? buildListHref(BASE_PATH, baseParams, { page: String(page + 1) })
+            : null
+        }
+        sizeOptions={PAGE_SIZES.map((s) => ({
+          size: s,
+          // Resizing resets to page 1 — same reasoning as a re-sort.
+          href: buildListHref(BASE_PATH, baseParams, {
+            size: s === DEFAULT_SIZE ? null : String(s),
+            page: null,
+          }),
+        }))}
+        noun="entry"
+        plural="entries"
+      />
     </div>
   );
 }

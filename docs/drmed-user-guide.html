@@ -247,7 +247,7 @@
 <div class="layout">
 <nav class="toc" aria-label="Contents">
   <p class="toc-brand">drmed<span>.</span>ph</p>
-  <p class="toc-tag">User guide · v2.3</p>
+  <p class="toc-tag">User guide · v2.4</p>
   <div class="filter" role="group" aria-label="Show chapters for">
     <button type="button" data-filter="all" aria-pressed="true">All roles</button>
     <button type="button" data-filter="reception">Reception</button>
@@ -446,8 +446,10 @@
 
     <div class="note why"><span class="k">Sorting and paging, on every list</span><div>
       <p>Wherever the app shows a list of records, the same two controls work the same way. <b>Click a column heading to sort by it; click it again to reverse the order.</b> A small arrow marks the column currently in use. At the bottom, <b>Rows</b> picks how many rows a page holds (5 / 10 / 25 / 50 / 100) and the line beside it reads, for example, <q>Showing 1–25 of 300 services</q> — so you always know how many records matched, not just how many you can see.</p>
-      <p>The screens with sorting and paging are: <b>Patients</b>, <b>Appointments</b>, <b>Visit archive</b>, <b>Services</b>, <b>Inventory</b>, <b>Inquiries</b>, <b>Gift codes</b>, <b>Critical alerts</b> (the acknowledged list), <b>Users</b>, <b>Chart of accounts</b>, <b>Vendor bills</b>, <b>Vendor payments</b>, <b>Vendors</b>, and <b>Pay doctors › Already paid</b>. <b>Clinic closures</b> sorts but has no pager — it is only ever a handful of rows.</p>
-      <p>Sorting and the row count live in the address bar, so a sorted list can be bookmarked or pasted to a colleague and it opens the same way for them. Changing a filter, a sort or the rows-per-page always returns you to page 1, so you are never left staring at an empty page 7 of a list that just got shorter.</p>
+      <p>The screens with sorting and paging are: <b>Patients</b>, <b>Appointments</b>, <b>Visit archive</b>, <b>Services</b>, <b>Inventory</b>, <b>Inquiries</b>, <b>Gift codes</b>, <b>Critical alerts</b> (the acknowledged list), <b>Users</b>, <b>Chart of accounts</b>, <b>Vendor bills</b>, <b>Vendor payments</b>, <b>Vendors</b>, <b>Pay doctors › Already paid</b>, <b>Lab queue</b>, <b>Results</b>, <b>Audit log</b>, <b>Emails sent</b>, <b>Journal entries</b>, <b>Patient AR aging</b>, <b>Newsletter</b> (the subscriber list), and <b>HMO claims</b> (the <span class="tab">All unbilled</span> and <span class="tab">All aging</span> tables). <b>Clinic closures</b> sorts but has no pager — it is only ever a handful of rows.</p>
+      <p>Two things are worth knowing about the columns. A heading with no arrow on hover cannot be sorted, and that is deliberate: it usually means the column is worked out after the rows are fetched — <b>Tests</b> on the Visit archive, <b>Type (DR)</b> and <b>Amount</b> on Journal entries, <b>Recipient</b>, <b>Email</b> and <b>Status</b> on Emails sent, <b>Patient</b> on the Lab queue and Results. And on <b>HMO claims</b> the sort and rows-per-page are not kept in the address bar the way they are elsewhere, because that screen loads its rows once and keeps your ticked checkboxes while you page.</p>
+      <p>Sorting and the row count live in the address bar, so a sorted list can be bookmarked or pasted to a colleague and it opens the same way for them. Changing a filter, a sort or the rows-per-page always returns you to page 1, so you are never left staring at an empty page 7 of a list that just got shorter. Switching a tab or a filter chip keeps the sort you chose — the columns are the same, only the set is narrower.</p>
+      <div class="note warn"><span class="k">Two search boxes only look at the page in front of you</span><div><p>On the <b>Lab queue</b> and on <b>Results</b>, the free-text search box narrows the rows already on screen rather than searching the whole table — a patient on page 3 will not be found from page 1. Both screens say so above the table when it matters. The date range, the tab, and the Lab queue's <b>Visit #</b> box are real searches over everything, so use those to narrow the set first.</p></div></div>
       <p><b>Two lists deliberately have no pager:</b> <b>Pay doctors › Ready to pay</b> and <b>Waiting on insurance</b> show every doctor at once, because a doctor who is owed money must never be hidden behind a <q>next page</q> on payout day. Critical alerts that nobody has acknowledged are shown in full for the same reason.</p>
     </div></div>
   </section>
@@ -721,7 +723,7 @@
       <dl><dt>Tabs</dt><dd><span class="tab">All</span> · <span class="tab">Pending release</span> · <span class="tab">Released today</span> · <span class="tab">Mine</span></dd>
       <dt>Filters</dt><dd><b>Requested from</b> / <b>…to</b> · <b>Patient / test search</b> (name, test or DRM-ID) · <b>Visit #</b> · <kbd class="ui">Apply</kbd> · <kbd class="ui">Clear filters</kbd></dd>
       <dt>Row button</dt><dd><kbd class="ui">Claim</kbd></dd></dl></div>
-    <p>Rows are oldest first. Each shows the patient, the test (code and name), the visit number and a status chip. A chemistry order shows as one row, for example <q>Chemistry Panel (3 tests)</q>, because the whole panel is reported on one form (4.4). Package headers never appear; only the tests inside them do.</p>
+    <p>Rows are oldest first — click <b>Requested</b>, <b>Visit</b> or <b>Status</b> to re-sort, and a rows-per-page picker sits at the bottom. On <span class="tab">Released today</span> the first column reads <b>Released</b> and shows when the test left the bench, which is the order that tab is in. Each row shows the patient, the test (code and name), the visit number and a status chip. A chemistry order shows as one row, for example <q>Chemistry Panel (3 tests)</q>, because the whole panel is reported on one form (4.4). Package headers never appear; only the tests inside them do.</p>
     <ol class="steps">
       <li><p class="step-title">Start on <span class="tab">All</span>. Pick the oldest row you can run.</p><p>The subtitle reminds you: <q>Visits waiting for payment appear once they're paid or HMO-covered.</q> If a patient says they have paid and the test is not here, reception has not recorded it yet.</p></li>
       <li><p class="step-title">Click <kbd class="ui">Claim</kbd>.</p><p>The test becomes <span class="status">in progress</span> under your name, moves to your <span class="tab">Mine</span> tab, and the entry page opens. Claim only what you are about to run; a claimed test is invisible to colleagues as available work. You can only claim work in your own sections — anything else answers <q>This test is outside the sections you can claim.</q></p></li>
@@ -848,7 +850,7 @@
       <dl><dt>Tabs</dt><dd><span class="tab">All</span> · <span class="tab">Released</span> · <span class="tab">Ready for release</span> · <span class="tab">In progress</span> · <span class="tab">Unclaimed</span> · <span class="tab">Cancelled</span></dd>
       <dt>Filters</dt><dd><b>Requested from</b> / <b>…to</b> · <b>Patient / service search</b></dd>
       <dt>Per row</dt><dd>one line per visit with its tests, timestamps, a <b>PDF →</b> link per finished test, and a link to the visit</dd></dl></div>
-    <p>This is the look-up screen, not a work screen: nothing here releases or amends. Use it to find an old result, open or print its PDF, or spot tests nobody has picked up. <span class="tab">Unclaimed</span> is sorted oldest first; a row marked <b>awaiting payment</b> is one reception hasn't been paid for yet, which is why it isn't on your queue.</p>
+    <p>This is the look-up screen, not a work screen: nothing here releases or amends. Use it to find an old result, open or print its PDF, or spot tests nobody has picked up. <span class="tab">Unclaimed</span> opens sorted oldest first (every other tab opens newest first), and you can re-sort by <b>Status</b>, <b>Requested</b>, <b>Completed</b>, <b>Released</b> or <b>Visit</b>; a row marked <b>awaiting payment</b> is one reception hasn't been paid for yet, which is why it isn't on your queue.</p>
   </section>
 </section>
 
@@ -1099,7 +1101,7 @@
 </section>
 
 <footer class="end">
-  <p>drmed.ph User Guide · v2.2 · 14 September 2026 · Matches the production release at migration 0145. Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
+  <p>drmed.ph User Guide · v2.4 · 15 September 2026 · Matches the production release at migration 0145. Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
 </footer>
 </main>
 </div>

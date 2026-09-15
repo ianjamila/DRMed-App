@@ -1,5 +1,36 @@
 import Link from "next/link";
 
+/** Header-cell chrome, shared by the link and button variants. */
+export function thClass(align: "left" | "right"): string {
+  return `px-4 py-3 text-xs font-semibold uppercase tracking-wider ${
+    align === "right" ? "text-right" : "text-left"
+  }`;
+}
+
+/** The clickable label inside a sortable header. */
+export function sortTriggerClass(active: boolean): string {
+  return `group inline-flex items-center gap-1 hover:text-[color:var(--color-brand-navy)] ${
+    active ? "text-[color:var(--color-brand-navy)]" : ""
+  }`;
+}
+
+/**
+ * The direction caret. Decorative — `aria-sort` on the `th` already carries
+ * the state, so announcing it again would just be noise.
+ */
+export function SortCaret({ state }: { state: SortState }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={state !== "none" ? "" : "opacity-0 group-hover:opacity-40"}
+    >
+      {state === "ascending" ? "▲" : "▼"}
+    </span>
+  );
+}
+
+export type SortState = "ascending" | "descending" | "none";
+
 /**
  * A sortable column header for the staff list tables.
  *
@@ -9,7 +40,9 @@ import Link from "next/link";
  * which column is ordering the table.
  *
  * Props are serialisable data only — the caller builds the href (see
- * `buildListHref` / `nextSort` in `@/lib/ui/table-params`).
+ * `buildListHref` / `nextSort` in `@/lib/ui/table-params`). A table whose
+ * rows live in client state instead of the URL uses `ClientSortableTh` from
+ * `./client-table-controls`, which renders the same chrome as a button.
  */
 export function SortableTh({
   label,
@@ -19,30 +52,14 @@ export function SortableTh({
 }: {
   label: string;
   href: string;
-  state: "ascending" | "descending" | "none";
+  state: SortState;
   align?: "left" | "right";
 }) {
-  const active = state !== "none";
   return (
-    <th
-      scope="col"
-      aria-sort={state}
-      className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider ${
-        align === "right" ? "text-right" : "text-left"
-      }`}
-    >
-      <Link
-        href={href}
-        className={`group inline-flex items-center gap-1 hover:text-[color:var(--color-brand-navy)] ${
-          active ? "text-[color:var(--color-brand-navy)]" : ""
-        }`}
-      >
+    <th scope="col" aria-sort={state} className={thClass(align)}>
+      <Link href={href} className={sortTriggerClass(state !== "none")}>
         {label}
-        {/* The caret is decorative — `aria-sort` on the th already carries the
-            state, so announcing it again would just be noise. */}
-        <span aria-hidden="true" className={active ? "" : "opacity-0 group-hover:opacity-40"}>
-          {state === "ascending" ? "▲" : "▼"}
-        </span>
+        <SortCaret state={state} />
       </Link>
     </th>
   );
@@ -57,12 +74,7 @@ export function PlainTh({
   align?: "left" | "right";
 }) {
   return (
-    <th
-      scope="col"
-      className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider ${
-        align === "right" ? "text-right" : "text-left"
-      }`}
-    >
+    <th scope="col" className={thClass(align)}>
       {label}
     </th>
   );

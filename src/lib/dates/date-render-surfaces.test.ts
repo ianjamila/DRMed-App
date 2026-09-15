@@ -123,7 +123,6 @@ const INLINE_FORMAT_FILES: Record<string, string> = {
   "src/app/(staff)/staff/(dashboard)/admin/reports/patients-without-consent/page.tsx":
     "house date, built inline",
   "src/app/(staff)/staff/(dashboard)/admin/seo/page.tsx": "house date + time, built inline",
-  "src/app/(staff)/staff/(dashboard)/admin/newsletter/page.tsx": "date + time, send log",
 };
 
 /** Option keys that make a call a date/time render rather than a number one. */
