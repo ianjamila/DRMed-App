@@ -20,6 +20,26 @@
  * `cash-denominations.parity.test.ts`. A raise is any `using errcode = 'P00NN'`
  * in `supabase/migrations/`.
  *
+ * THE SECOND RULE: NO BARE RAISE
+ * ------------------------------
+ * The coverage rule above can only see a raise that HAS a code. A raise with no
+ * `using errcode` at all is untranslatable BY CONSTRUCTION — `translatePgError`
+ * never gets a key to match, so the `default:` branch hands the raw Postgres
+ * string to the UI no matter how many cases `pg-errors.ts` grows. That is the
+ * same failure the first rule exists to prevent, one level further back, and
+ * nothing was checking it.
+ *
+ * Two kinds of raise are deliberately NOT covered:
+ *
+ *   - Anything inside a `do $$ … $$` block. Those run ONCE, at migration time,
+ *     and are the post-condition assertions this repo requires — they abort a
+ *     deploy, they never reach a user, and giving them P-codes would put
+ *     migration-time failures into a registry meant for UI messages. There are
+ *     42 of them.
+ *   - A raise carrying a standard SQLSTATE rather than a P-code
+ *     (`check_violation`, `42501`). The release gates use `check_violation`
+ *     deliberately; they have a code, so they are translatable.
+ *
  * THE ALLOWLIST CAN ONLY SHRINK
  * -----------------------------
  * `DEAD_CODES` is not "codes we decided not to translate" — it is codes whose
@@ -56,6 +76,70 @@ function raisedCodes(): Map<string, string[]> {
     }
   }
   return byCode;
+}
+
+/**
+ * Runtime raises that predate this rule and still carry no errcode. FROZEN —
+ * the list may only SHRINK. Each entry is `file :: owning function`.
+ *
+ * The four `ap_*` ones and `employees_require_daily_rate` ARE reachable from
+ * the UI (voiding a bill, editing a draft, running payroll), so they are the
+ * ones worth a P-code next. The other two are internal-consistency guards a
+ * user should not be able to trip. Giving any of them a code needs a new
+ * migration, which is why this freezes the set rather than changing behaviour.
+ */
+const BARE_RAISES = new Set([
+  "0033_op_gl_bridge_polish.sql :: public.coa_uuid_for_code",
+  "0040_package_decomposition.sql :: public.fn_test_request_parent_is_header",
+  "0044_payroll.sql :: public.employees_require_daily_rate",
+  "0049_ap_subledger_behavior.sql :: public.ap_bill_void_guard",
+  "0049_ap_subledger_behavior.sql :: public.ap_reverse_je_for_source",
+  "0049_ap_subledger_behavior.sql :: public.ap_update_bill_draft",
+  "0049_ap_subledger_behavior.sql :: public.ap_void_bill_with_guard",
+]);
+
+/** Blank out line and block comments, preserving every character offset. */
+function stripComments(text: string): string {
+  const noBlock = text.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "));
+  return noBlock
+    .split("\n")
+    .map((line) => {
+      const i = line.indexOf("--");
+      return i === -1 ? line : line.slice(0, i) + " ".repeat(line.length - i);
+    })
+    .join("\n");
+}
+
+/** Character ranges of every `do $tag$ … $tag$` block. */
+function doBlockRanges(text: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  const re = /\bdo\s+(\$[A-Za-z_]*\$)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const end = text.indexOf(m[1], m.index + m[0].length);
+    if (end === -1) continue;
+    ranges.push([m.index, end + m[1].length]);
+    re.lastIndex = end + m[1].length;
+  }
+  return ranges;
+}
+
+/** `file :: function` for every RUNTIME raise that carries no errcode. */
+function bareRuntimeRaises(): string[] {
+  const found: string[] = [];
+  for (const file of readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith(".sql")).sort()) {
+    const text = stripComments(readFileSync(join(MIGRATIONS_DIR, file), "utf8"));
+    const blocks = doBlockRanges(text);
+    for (const m of text.matchAll(/raise\s+exception\b[\s\S]*?;/gi)) {
+      if (/\busing\b[\s\S]*errcode/i.test(m[0])) continue;
+      if (blocks.some(([a, b]) => m.index >= a && m.index < b)) continue;
+      const fn = [
+        ...text.slice(0, m.index).matchAll(/create\s+(?:or\s+replace\s+)?function\s+([\w.]+)/gi),
+      ].pop();
+      found.push(`${file} :: ${fn ? fn[1] : "(top level)"}`);
+    }
+  }
+  return found;
 }
 
 function translatedCodes(): Set<string> {
@@ -97,6 +181,43 @@ describe("P-code translation coverage", () => {
         `${code} is translated now — drop it from DEAD_CODES`,
       ).toBe(false);
     }
+  });
+
+  it("no migration adds a runtime raise with no errcode at all", () => {
+    const novel = [...new Set(bareRuntimeRaises())].filter((r) => !BARE_RAISES.has(r)).sort();
+
+    expect(
+      novel,
+      "A `raise exception` with no `using errcode` cannot be translated by " +
+        "translatePgError — there is no key to match, so the UI shows the raw " +
+        "Postgres string however many cases pg-errors.ts grows. Add " +
+        "`using errcode = 'P00NN'` plus a case in pg-errors.ts (CLAUDE.md " +
+        "names the next free code), or a standard SQLSTATE like " +
+        "`check_violation` if that is genuinely what it is. Post-condition " +
+        "asserts inside a `do $$ … $$` block are exempt and need no code.",
+    ).toEqual([]);
+  });
+
+  it("keeps the bare-raise allowlist honest", () => {
+    // Same contract as DEAD_CODES: the list may only shrink, so an entry that
+    // no longer matches anything is an entry to delete.
+    const live = new Set(bareRuntimeRaises());
+    const stale = [...BARE_RAISES].filter((r) => !live.has(r)).sort();
+    expect(
+      stale,
+      "These no longer raise without an errcode — delete them from " +
+        "BARE_RAISES so the list stays a true map of what is left.",
+    ).toEqual([]);
+  });
+
+  it("does not count a migration-time assertion as a bare raise", () => {
+    // 0148 and 0149 both end with `do $$ … $$` post-conditions that raise with
+    // no code, which is correct — they abort a deploy and never reach a user.
+    // If the do-block detection breaks, this goes red BEFORE the rule above
+    // starts demanding P-codes for every migration assertion in the repo.
+    const raises = bareRuntimeRaises().join("\n");
+    expect(raises).not.toContain("0148_ops_daily_view_grants.sql");
+    expect(raises).not.toContain("0149_ap_cash_bill_payment_drawer_link.sql");
   });
 
   it("registers the two codes 0149 introduces", () => {
