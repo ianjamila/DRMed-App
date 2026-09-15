@@ -6,7 +6,7 @@ import { todayManilaISODate } from "@/lib/dates/manila";
 import { buildAsOfPresets } from "@/lib/reports/period-presets";
 import { StatementTabs } from "../_components/statement-tabs";
 
-export const metadata = { title: "Balance sheet — staff" };
+export const metadata = { title: "Balance Sheet — staff" };
 export const dynamic = "force-dynamic";
 
 const PHP = new Intl.NumberFormat("en-PH", {
@@ -159,7 +159,7 @@ export default async function BalanceSheetPage({ searchParams }: SearchProps) {
           ← Dashboard
         </Link>
         <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Financial statements
+          Financial Statements
         </h1>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
           Balance sheet as of <strong>{asOf}</strong>. Cumulative posted

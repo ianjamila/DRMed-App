@@ -6,7 +6,7 @@ import { shiftISODate, todayManilaISODate } from "@/lib/dates/manila";
 import { StatementTabs } from "../_components/statement-tabs";
 import { PeriodPresets } from "../_components/period-presets";
 
-export const metadata = { title: "Cash flow — staff" };
+export const metadata = { title: "Cash Flow — staff" };
 export const dynamic = "force-dynamic";
 
 const PHP = new Intl.NumberFormat("en-PH", {
@@ -220,7 +220,7 @@ export default async function CashFlowPage({ searchParams }: SearchProps) {
           ← Dashboard
         </Link>
         <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Financial statements
+          Financial Statements
         </h1>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
           Cash flow from <strong>{start}</strong> → <strong>{end}</strong>{" "}

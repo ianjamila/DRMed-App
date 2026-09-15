@@ -185,12 +185,12 @@ export const STAFF_NAV: StaffNavSection[] = [
         roles: ["admin"],
       },
       {
-        // Lands on the Quick expense tab (the most-used action); activePrefixes
+        // Lands on the Quick Expense tab (the most-used action); activePrefixes
         // keeps "Expenses" highlighted across the other AP tabs too.
         href: "/staff/admin/accounting/ap/quick-expense",
         label: "Expenses",
         activePrefixes: ["/staff/admin/accounting/ap"],
-        description: "Everything expense-related in one place. Tabs inside: Quick expense (already-paid same-day expenses — cash, GCash, owner OOP), Overview (what's outstanding), Vendor bills (invoices with due dates), Bill payments (the outflows), Vendors (master list), Recurring (monthly auto-bills).",
+        description: "Everything expense-related in one place. Tabs inside: Quick Expense (already-paid same-day expenses — cash, GCash, owner OOP), Overview (what's outstanding), Vendor Bills (invoices with due dates), Bill Payments (the outflows), Vendors (master list), Recurring (monthly auto-bills).",
         roles: ["admin"],
       },
       {
@@ -301,10 +301,10 @@ export const STAFF_NAV: StaffNavSection[] = [
           {
             href: "/staff/admin/accounting/financial-statements",
             label: "Financial Statements",
-            // One tabbed page: Income statement (P&L) / Balance sheet / Cash
+            // One tabbed page: Income Statement (P&L) / Balance Sheet / Cash
             // flow. href is the bare route (Income statement); the default
             // prefix match keeps it lit on the balance-sheet & cash-flow tabs.
-            description: "The three core reports on one page, as tabs: Income statement (P&L) — revenue minus expenses for a date range; Balance sheet — what you own, owe, and the owner's equity on a date; Cash flow — how cash actually moved. Pick a date range and switch tabs.",
+            description: "The three core reports on one page, as tabs: Income Statement (P&L) — revenue minus expenses for a date range; Balance Sheet — what you own, owe, and the owner's equity on a date; Cash Flow — how cash actually moved. Pick a date range and switch tabs.",
             roles: ["admin"],
           },
           {
@@ -414,7 +414,7 @@ export const STAFF_NAV: StaffNavSection[] = [
             // prefix match keeps this item lit on the /ops tab too.
             href: "/staff/marketing",
             label: "Marketing",
-            description: "The marketing workspace, in two tabs: Ad performance (upload your Meta + Google ad CSV exports to see spend, cost per booking, and the lead funnel) and Ops tracker (daily/weekly/monthly checklists, the 12-week launch roadmap, and the campaign status board). Data is saved in this browser only.",
+            description: "The marketing workspace, in two tabs: Ad Performance (upload your Meta + Google ad CSV exports to see spend, cost per booking, and the lead funnel) and Ops Tracker (daily/weekly/monthly checklists, the 12-week launch roadmap, and the campaign status board). Data is saved in this browser only.",
             roles: ["admin"],
           },
         ],

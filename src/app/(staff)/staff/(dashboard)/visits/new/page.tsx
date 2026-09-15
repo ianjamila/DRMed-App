@@ -24,7 +24,7 @@ interface Props {
 
 const PICKER_LIMIT = 25;
 
-// The picker heading is "New visit", the same words as the Reception Queue's
+// The picker heading is "New Visit", the same words as the Reception Queue's
 // + New visit button that leads here — it used to say "Visits", which the Visit
 // archive is also called, and reception wondered if the click had misfired.
 

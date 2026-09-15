@@ -239,7 +239,7 @@ export function CashDrawerClient(props: {
                       // payment is the one control that moves both.
                       <span
                         className="text-xs text-[color:var(--color-brand-text-soft)]"
-                        title="Void the payment instead (Admin → Expenses → Bill payments) — that reverses this entry too."
+                        title="Void the payment instead (Admin → Expenses → Bill Payments) — that reverses this entry too."
                       >
                         Void via AP payments
                       </span>
@@ -252,7 +252,7 @@ export function CashDrawerClient(props: {
                       // both at once (admin only).
                       <span
                         className="text-xs text-[color:var(--color-brand-text-soft)]"
-                        title="Cancel the gift code instead (Admin → Gift codes) — that reverses this entry too."
+                        title="Cancel the gift code instead (Admin → Gift Codes) — that reverses this entry too."
                       >
                         Cancel via Gift codes
                       </span>

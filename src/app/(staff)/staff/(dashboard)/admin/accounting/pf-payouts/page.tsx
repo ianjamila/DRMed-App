@@ -4,7 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { pluckOne } from "@/lib/reports/format";
 import { PfPayoutsClient } from "./pf-payouts-client";
 
-export const metadata = { title: "Pay doctors — DRMed" };
+export const metadata = { title: "Pay Doctors — DRMed" };
 export const dynamic = "force-dynamic";
 
 export default async function PfPayoutsPage() {

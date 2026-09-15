@@ -39,7 +39,7 @@ export default async function PaymentsIndexPage({
             Phase 12.4 · Admin · AP
           </p>
           <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            Bill payments
+            Bill Payments
           </h1>
           <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
             Outflows to vendors. Each payment may settle multiple bills via
