@@ -5,6 +5,10 @@ import { useRouter } from "next/navigation";
 import { createBillPaymentAction } from "@/lib/actions/accounting/bill-payments";
 import { listBillsAction } from "@/lib/actions/accounting/bills";
 import { todayManilaISODate } from "@/lib/dates/manila";
+import {
+  tillPaymentBlockedByClose,
+  TILL_CLOSE_WARNING,
+} from "@/lib/accounting/till-close-warning";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,9 +41,15 @@ function isPaymentMethod(v: string): v is PaymentMethod {
 export function PaymentFormClient({
   vendors,
   cashAccounts,
+  tillAccountId,
+  closedDates,
 }: {
   vendors: Vendor[];
   cashAccounts: Account[];
+  /** chart_of_accounts.id for 1010 Cash on Hand. */
+  tillAccountId: string | null;
+  /** Manila ISO dates whose EOD close is already signed off. */
+  closedDates: string[];
 }) {
   const router = useRouter();
 
@@ -192,10 +202,27 @@ export function PaymentFormClient({
 
   // --- JSX ---
 
-  const canSubmit = !!vendorId && !!cashAccountId && allocValid && !isPending;
+  // 0147: paying out of 1010 writes the cash-drawer row in the same
+  // transaction, so a closed day refuses the whole payment with P0015. Say so
+  // while the date is still under their cursor instead of at submit.
+  const tillDayClosed = tillPaymentBlockedByClose({
+    cashAccountId,
+    tillAccountId,
+    paymentDate,
+    closedDates,
+  });
+
+  const canSubmit =
+    !!vendorId && !!cashAccountId && allocValid && !tillDayClosed && !isPending;
 
   return (
     <div className="space-y-6">
+      {tillDayClosed && (
+        <Alert>
+          <CircleAlert className="size-4" />
+          <AlertDescription>{TILL_CLOSE_WARNING}</AlertDescription>
+        </Alert>
+      )}
       {error && (
         <Alert variant="destructive">
           <CircleAlert />

@@ -25,7 +25,10 @@ Key reference artifacts:
   every post-1.0 programme (partner revisions, release lifecycle, group templates, EOD
   denomination count…). Read the spec before re-deriving a design decision.
 
-Migration ledger: **prod head = 0148**, repo↔prod in sync (2026-09-15). There is ONE
+Migration ledger: **prod head = 0148**, repo↔prod in sync (2026-09-15). **0149** is in
+flight on `fix/ap-cash-drawer` and must be pushed before its PR merges. Check
+`ls supabase/migrations | tail -3` against the live ledger before naming a new one — a
+duplicate number makes `db push` report success and apply nothing. There is ONE
 Supabase project (= prod, ref `qhptbmafrosgibooelpp`); there is no staging project — the
 local stack is staging.
 

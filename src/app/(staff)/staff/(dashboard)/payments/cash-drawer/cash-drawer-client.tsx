@@ -31,6 +31,9 @@ const KIND_LABEL: Record<string, string> = {
   salary_payout: "Salary payout",
   // N14 (0139): a cash gift-code sale.
   gift_code_sale: "Gift code sold",
+  // 0147: written by the AP subledger, not by this page — a supplier bill paid
+  // in cash out of the till.
+  bill_payment: "Supplier bill paid",
 };
 const kindLabel = (k: string) => KIND_LABEL[k] ?? k;
 
@@ -54,6 +57,7 @@ export function CashDrawerClient(props: {
     opening_float_php?: number;
     cash_payments_php?: number;
     gift_code_sales_php?: number;
+    bill_payments_php?: number;
     cash_payouts_php?: number;
     expected_cash_php?: number;
     payments_by_method?: Record<string, number>;
@@ -156,6 +160,16 @@ export function CashDrawerClient(props: {
           <strong className="text-[color:var(--color-brand-navy)]">Cash paid out</strong>
           <span className="font-mono">−{PESO(Number(s.cash_payouts_php ?? 0))}</span>
         </div>
+        {/* 0147: broken out of "Cash paid out" because nobody on this page
+            recorded it — it arrives from Admin → Accounting → AP. Without the
+            line, reception sees the drawer drop with no matching action of
+            theirs. */}
+        {Number(s.bill_payments_php ?? 0) !== 0 ? (
+          <div className="flex justify-between border-b py-2 pl-4 text-[color:var(--color-brand-text-soft)]">
+            <span>of which supplier bills paid in cash</span>
+            <span className="font-mono">−{PESO(Number(s.bill_payments_php ?? 0))}</span>
+          </div>
+        ) : null}
         <div className="flex justify-between pt-3 text-lg">
           <strong className="text-[color:var(--color-brand-navy)]">Cash you should have now</strong>
           <span className="font-mono font-bold text-[color:var(--color-brand-navy)]">
@@ -217,7 +231,19 @@ export function CashDrawerClient(props: {
                 <td className="px-3 py-2">{r.payee ?? r.notes ?? "—"}</td>
                 <td className="px-3 py-2">
                   {!r.voided_at && !closed && (
-                    r.kind === "gift_code_sale" ? (
+                    r.kind === "bill_payment" ? (
+                      // 0147: same reasoning as the gift-code row below. The
+                      // generic Void would hand the cash back to the till while
+                      // the books still record the supplier as paid; P0051
+                      // refuses it at the database anyway. Voiding the AP
+                      // payment is the one control that moves both.
+                      <span
+                        className="text-xs text-[color:var(--color-brand-text-soft)]"
+                        title="Void the payment instead (Admin → Accounting → AP → Payments) — that reverses this entry too."
+                      >
+                        Void via AP payments
+                      </span>
+                    ) : r.kind === "gift_code_sale" ? (
                       // Finding 8 (go-live review): this row can't be
                       // undone with the generic Void — that never touches
                       // `gift_codes`, so the code would stay redeemable

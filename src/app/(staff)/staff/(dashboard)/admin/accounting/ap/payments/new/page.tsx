@@ -1,6 +1,7 @@
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { listVendorsAction } from "@/lib/actions/accounting/vendors";
+import { loadClosedDayContext } from "@/lib/accounting/eod-closed-dates";
 import { PaymentFormClient } from "./payment-form-client";
 
 export const metadata = { title: "New payment — AP — DRMed" };
@@ -10,7 +11,7 @@ export default async function NewPaymentPage() {
   await requireAdminStaff();
 
   const admin = createAdminClient();
-  const [vendorsR, cashR] = await Promise.all([
+  const [vendorsR, cashR, closedDays] = await Promise.all([
     listVendorsAction({ active: true }),
     admin
       .from("chart_of_accounts")
@@ -18,6 +19,8 @@ export default async function NewPaymentPage() {
       .eq("is_active", true)
       .like("code", "10__")
       .order("code"),
+    // 0147: so the form can warn before submit when the till day is closed.
+    loadClosedDayContext(),
   ]);
 
   return (
@@ -38,6 +41,8 @@ export default async function NewPaymentPage() {
       <PaymentFormClient
         vendors={vendorsR.ok ? vendorsR.data.map((v) => ({ id: v.id, name: v.name })) : []}
         cashAccounts={cashR.data ?? []}
+        tillAccountId={closedDays.tillAccountId}
+        closedDates={closedDays.closedDates}
       />
     </div>
   );

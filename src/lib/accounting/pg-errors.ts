@@ -110,6 +110,12 @@ export function translatePgError(err: PgError): string {
     // 12.5 — COGS + Doctor PF subledger
     case "P0034":
       return "An attending physician is required for consults and procedures that pay the doctor a PF. Please select a physician on the visit before releasing this test.";
+    // 12.5 sibling — send-out services have no structured template (0059).
+    // Reachable from admin/result-templates/[service_id]/edit, which already
+    // routes through this translator; it had no case until 0147 added the
+    // coverage test that found it.
+    case "P0035":
+      return err.message ?? "Send-out services use the partner lab's PDF and cannot have a structured result template.";
     // PR 7 — booking hardening
     case "P0040":
       // appointments_insert_slot_guarded raise; byte-identical to the
@@ -145,6 +151,16 @@ export function translatePgError(err: PgError): string {
     // 0146), so the claim has to be withdrawn first.
     case "P0050":
       return "This entry has already been claimed from an HMO and cannot be deleted. Void the claim batch first.";
+    // The third cash door — AP cash bill payments reach the drawer (0149).
+    case "P0051":
+      // Configuration faults, not data entry: no active cash shift, or a
+      // payment with no staff member behind it. The DB message names which.
+      return err.message ?? "This cash payment cannot be recorded against the cash drawer. Ask an admin to check the cash shift setup.";
+    case "P0052":
+      // Someone tried to void or edit the drawer row instead of the payment.
+      // Doing that would hand the cash back to the till while the books still
+      // show the supplier as paid.
+      return err.message ?? "This cash drawer entry belongs to an AP bill payment. Void the payment itself so the books and the drawer stay together.";
     default:
       return err.message ?? "Database error. Please try again.";
   }
