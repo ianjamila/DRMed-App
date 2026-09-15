@@ -427,3 +427,37 @@ recon — see G-detail below.)
 - **The notification bell and the Quick quote quicklink need no change.** Both were
   finding 1's collateral under the *old* rule; reception may now see service names
   and prices, so they are legitimate.
+
+---
+
+## Rebase note — `main` moved mid-implementation (2026-09-15)
+
+Three PRs landed on `origin/main` after this branch was cut at e96bd77:
+
+- **#170** and **#176** — sorting/paging on the list pages that lacked it, a new
+  `src/lib/ui/table-params.ts` contract and a new client-state twin
+  `src/components/staff/client-table-controls.tsx`. Between them they rewrote
+  five files this batch also wanted to touch: `queue/page.tsx` (+264),
+  `critical-alerts/page.tsx` (+159), `hmo-claims-client.tsx` (+322),
+  `patient-ar/page.tsx` (+268), `pf-payouts-client.tsx` (+198).
+- **#171** — migration **0146**, which added `deleted_at` predicates to all ten
+  SQL views that read `visits` / `test_requests`, **`v_hmo_unbilled` included**.
+  Prod ledger head is now 0146.
+
+Consequences for this plan:
+
+1. The note under item 7 that `v_hmo_unbilled` has no `deleted_at` filters is
+   **obsolete** — 0146 added them. Only the UTC-clock (`current_date`) caveat
+   still stands.
+2. `critical-alerts` already got its paging from #176, so this batch does not
+   add any. What it still needs from decision 3 is only the **medtech role gate
+   plus the `test_requests.assigned_to = me` filter**.
+3. The `?mine=1` queue param, the `?age=` HMO contract, the `?tab=` PF-payouts
+   contract and the positive-balance patient-AR row list are reapplied by hand
+   onto the **post-#176** versions of those files rather than merged, to avoid
+   resolving ~800 lines of conflict. The dashboard cards keep pointing at those
+   params.
+4. `main`'s own user guide carries **three disagreeing version strings** (toc
+   `v2.4`, Version line `2.3 · 14 September`, footer `v2.4 · 15 September`) and
+   still cites migration 0145. This PR lands **v2.5**, makes all three agree,
+   and cites 0146.
