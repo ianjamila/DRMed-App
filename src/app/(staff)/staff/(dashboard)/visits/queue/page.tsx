@@ -119,6 +119,7 @@ type QueueVisitRow = {
   total_php: number;
   paid_php: number;
   created_at: string;
+  hmo_provider_id: string | null;
   patients: {
     id: string;
     drm_id: string;
@@ -126,8 +127,21 @@ type QueueVisitRow = {
     middle_name: string | null;
     last_name: string;
   };
+  hmo_providers: { name: string } | { name: string }[] | null;
   test_requests: QueueTestRow[] | null;
 };
+
+// PostgREST returns an embedded row as either an object or a one-element
+// array depending on the join shape — handle both (mirrors patient-ar's
+// pluckProviderName). Falls back to a bare "HMO" chip when the name is
+// missing rather than hiding the HMO status.
+function pluckProviderName(
+  v: { name: string } | { name: string }[] | null,
+): string | null {
+  if (!v) return null;
+  const row = Array.isArray(v) ? v[0] : v;
+  return row?.name ?? null;
+}
 
 // A classified visit: the raw row plus its flattened tests (services join
 // collapsed to section/name) so the pure stage helpers can read it.
@@ -183,7 +197,9 @@ export default async function VisitsQueuePage({ searchParams }: SearchProps) {
     .select(
       `
         id, visit_number, visit_date, payment_status, total_php, paid_php, created_at,
+        hmo_provider_id,
         patients!inner ( id, drm_id, first_name, middle_name, last_name ),
+        hmo_providers ( name ),
         test_requests ( id, status, deleted_at, is_package_header, hmo_claim_items ( batch_voided ), services ( section, kind, name ) )
       `,
     )
@@ -203,7 +219,7 @@ export default async function VisitsQueuePage({ searchParams }: SearchProps) {
   };
   for (const visit of visits) {
     const tests = flattenTests(visit);
-    buckets[visitStage(visit.payment_status, tests)].push({ visit, tests });
+    buckets[visitStage(visit, tests)].push({ visit, tests });
   }
 
   // Waiting / Processing read as a FIFO worklist (oldest at the top, already
@@ -516,6 +532,29 @@ function PatientCell({ visit }: { visit: QueueVisitRow }) {
   );
 }
 
+// An HMO visit's payment_status is legitimately "unpaid" until the insurer
+// settles months later — reusing the red "Unpaid" badge here is actively
+// misleading now that HMO visits leave the Waiting bucket the moment
+// they're created. Text carries the HMO/provider fact, not colour alone.
+function PaymentBadge({ visit }: { visit: QueueVisitRow }) {
+  if (visit.hmo_provider_id != null) {
+    const providerName = pluckProviderName(visit.hmo_providers);
+    return (
+      <span className="inline-block rounded-md border px-2 py-0.5 text-xs font-semibold bg-blue-50 text-blue-700 border-blue-200">
+        {providerName ? `HMO · ${providerName}` : "HMO"}
+      </span>
+    );
+  }
+  const status = visit.payment_status;
+  return (
+    <span
+      className={`inline-block rounded-md border px-2 py-0.5 text-xs font-semibold ${STATUS_BADGE[status] ?? ""}`}
+    >
+      {paymentStatusLabel(status)}
+    </span>
+  );
+}
+
 function QueueRow({
   entry,
   stage,
@@ -526,7 +565,6 @@ function QueueRow({
   canDelete: boolean;
 }) {
   const { visit } = entry;
-  const status = visit.payment_status;
   return (
     <tr className="align-top hover:bg-[color:var(--color-brand-bg)]">
       <td className="px-4 py-3 font-mono text-xs">
@@ -544,11 +582,7 @@ function QueueRow({
         {stage === "processing" ? (
           <ProcessingTestsSummary tests={entry.tests} />
         ) : (
-          <span
-            className={`inline-block rounded-md border px-2 py-0.5 text-xs font-semibold ${STATUS_BADGE[status] ?? ""}`}
-          >
-            {paymentStatusLabel(status)}
-          </span>
+          <PaymentBadge visit={visit} />
         )}
       </td>
       <td className="px-4 py-3 text-right font-mono">
@@ -589,7 +623,6 @@ function QueueCard({
   canDelete: boolean;
 }) {
   const { visit } = entry;
-  const status = visit.payment_status;
   return (
     <article className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4">
       <div className="flex items-center justify-between">
@@ -599,11 +632,7 @@ function QueueCard({
         >
           #{String(visit.visit_number).padStart(4, "0")}
         </Link>
-        <span
-          className={`inline-block rounded-md border px-2 py-0.5 text-xs font-semibold ${STATUS_BADGE[status] ?? ""}`}
-        >
-          {paymentStatusLabel(status)}
-        </span>
+        <PaymentBadge visit={visit} />
       </div>
       <div className="mt-1">
         <PatientCell visit={visit} />

@@ -5,13 +5,24 @@
  * stages. The rules live here as pure functions (no `server-only`, no DB) so
  * they are unit-tested and reusable:
  *
- *   - waiting    — payment_status is unpaid or partial. Money comes first.
- *   - processing — paid/waived AND at least one lab/imaging test_request is
+ *   - waiting    — the counter still has money to collect. An HMO visit is
+ *                  never here: the receivable belongs to the insurer, not the
+ *                  patient, and is booked at release (months before the claim
+ *                  settles) rather than collected at the counter — so an HMO
+ *                  visit leaves "waiting" the moment it's created.
+ *   - processing — money settled AND at least one lab/imaging test_request is
  *                  still outstanding (not released/cancelled).
- *   - completed  — paid/waived AND nothing lab/imaging is outstanding. Consult-
- *                  only visits land here once paid: on main there's no consult
- *                  "done" signal, so there's nothing left to wait on.
+ *   - completed  — money settled AND nothing lab/imaging is outstanding.
+ *                  Consult-only visits land here once settled: on main there's
+ *                  no consult "done" signal, so there's nothing left to wait on.
+ *
+ * "Money settled" is one predicate (`moneySettled`, ./money-settled.ts)
+ * shared with the lab-claim gate and the DB release trigger (migration
+ * 0133) — this module just asks the same question for a fourth purpose: is
+ * there still cash for reception to collect on this visit.
  */
+
+import { moneySettled } from "./money-settled";
 
 // Sections a lab/imaging worker acts on in the queue — the union of medtech's
 // bench and the imaging tech's modalities (mirrors sectionsForRole). Anything
@@ -58,11 +69,10 @@ export function isOutstandingLabImaging(t: QueueTestLike): boolean {
 }
 
 export function visitStage(
-  paymentStatus: string,
+  visit: { payment_status: string; hmo_provider_id: string | null },
   tests: readonly QueueTestLike[],
 ): QueueStage {
-  const paid = paymentStatus === "paid" || paymentStatus === "waived";
-  if (!paid) return "waiting";
+  if (!moneySettled(visit)) return "waiting";
   return tests.some(isOutstandingLabImaging) ? "processing" : "completed";
 }
 

@@ -392,3 +392,38 @@ recon — see G-detail below.)
    a medtech test user — the HMO chip, the reception visit page, the critical
    strip.
 4. Codex review of the diff, then a Fable review, before asking for merge.
+
+---
+
+## Measured on prod (2026-09-15, read-only) — what these fixes actually move
+
+| Surface | Today | After |
+|---|---|---|
+| Admin **Patient AR outstanding** count | **4,153 visits** | **6** — only six owe anything (₱28,003). The peso total was already right; zero-balance unpaid visits added ₱0 each while inflating the count 692×. |
+| Admin **Past-due open periods** | **80** (all fiscal years) | **8** (current year, matching the destination's own default) |
+| Reception **Pending release** | counts 2 package headers whose components aren't ready | headers excluded |
+| HMO visits parked in **Waiting for payment** | **2,420** | 0 — they move to Processing / Completed by their tests |
+| Services requiring pathologist sign-off | **0** | — suppressing the sign-off widgets strands nothing |
+| Stranded `result_uploaded` test lines | **0** | — so no "stranded work" notice is needed (the audit's finding-2 exception does not apply) |
+| Payroll runs (any status) | **0** | — the ₱0-draft-payslip fix is preventive, before the first run |
+| AP draft bills with an outstanding amount | **0** | — the draft exclusion is likewise preventive |
+
+## Resolved open questions
+
+- **Payslip visibility = `payroll_runs.status = 'finalised'`.** The owner asked for
+  "finalised or paid", but there is no `'paid'` run status: `payroll_runs.status` is
+  `draft | computed | finalised | voided` (0044:143) and "paid" is
+  `payroll_employee_runs.payout_status` (0044:212). A DB guard (0044:~1116) freezes the
+  run at `finalised` once anyone on it is paid, so paid implies finalised and the two
+  collapse to one filter. `voided` stays hidden.
+- **Keep the admin client on the payslip loaders.** `payroll_runs` has an admin-only
+  RLS policy, so a non-admin cannot read it even through an embed. Switching these
+  loaders to the RLS-scoped client would return zero rows for every staff member —
+  breaking the page, not merely leaking less.
+- **Admin refresh is an interval, not a subscription.** The `supabase_realtime`
+  publication holds only `appointments` + `test_requests` (0024), `critical_alerts`
+  (0027) and `visits` + `payments` (0100). Admin's money tables are absent, so a
+  subscription there would never fire. Reception and lab subscribe; admin polls.
+- **The notification bell and the Quick quote quicklink need no change.** Both were
+  finding 1's collateral under the *old* rule; reception may now see service names
+  and prices, so they are legitimate.

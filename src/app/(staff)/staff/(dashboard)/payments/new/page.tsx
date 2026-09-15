@@ -24,8 +24,9 @@ export default async function NewPaymentPage({ searchParams }: Props) {
     .from("visits")
     .select(
       `
-        id, visit_number, total_php, paid_php, payment_status,
-        patients!inner ( id, drm_id, first_name, last_name )
+        id, visit_number, total_php, paid_php, payment_status, hmo_provider_id,
+        patients!inner ( id, drm_id, first_name, last_name ),
+        hmo_providers ( name )
       `,
     )
     .eq("id", visit_id)
@@ -41,6 +42,13 @@ export default async function NewPaymentPage({ searchParams }: Props) {
   if (!patient) {
     redirect("/staff/patients");
   }
+  // PostgREST returns an embedded row as either an object or a one-element
+  // array depending on the join shape — handle both (mirrors patient-ar's
+  // pluckProviderName).
+  const hmoProviderRow = Array.isArray(visit.hmo_providers)
+    ? visit.hmo_providers[0]
+    : visit.hmo_providers;
+  const hmoProviderName = hmoProviderRow?.name ?? null;
 
   const balance = Math.max(0, Number(visit.total_php) - Number(visit.paid_php));
 
@@ -87,6 +95,30 @@ export default async function NewPaymentPage({ searchParams }: Props) {
           </p>
         </div>
       </div>
+
+      {/*
+        HMO warning, not a block. An HMO claim that comes back "Bill patient"
+        legitimately moves the amount to the patient, and visits.hmo_provider_id
+        is never cleared when that happens (owner decision 2026-09-15) — so
+        redirecting or disabling the form here would strand a real collection
+        reception needs to take. This just tells staff to check first.
+      */}
+      {visit.hmo_provider_id != null ? (
+        <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <p className="font-bold uppercase tracking-wider text-xs">
+            HMO-billed visit
+          </p>
+          <p className="mt-1">
+            This balance is owed by{" "}
+            <span className="font-semibold">
+              {hmoProviderName ?? "the patient's HMO"}
+            </span>{" "}
+            and is normally settled through HMO claims, not at the counter.
+            Record a payment here only if the claim was resolved as
+            &ldquo;Bill patient.&rdquo;
+          </p>
+        </div>
+      ) : null}
 
       <Panel className="mt-6 p-6">
         <PaymentForm visitId={visit.id} balance={balance} />

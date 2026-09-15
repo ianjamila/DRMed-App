@@ -12,7 +12,9 @@
  * migration 0133 — one definition of "money is settled" across the app. (It
  * did not always: until 0133 the release trigger was paid/waived only, and an
  * HMO visit could reach the bench but never reach the patient.) The reception
- * queue's "waiting" stage (queue-stage.ts) deliberately stays payment-only.
+ * queue's "waiting" stage (queue-stage.ts) shares it too — one definition,
+ * three callers, so an HMO visit leaves "waiting" the same moment it becomes
+ * claimable.
  *
  * This gate is enforced in the claim Server Actions; result RELEASE stays
  * enforced by the DB trigger, which remains the source of truth for money.
