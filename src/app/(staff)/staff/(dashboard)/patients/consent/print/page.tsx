@@ -4,7 +4,10 @@ import { ConsentFormSheet } from "@/components/consent/consent-form-sheet";
 import { PrintButton } from "@/components/consent/print-button";
 
 export const metadata = {
-  title: "Consent form",
+  // Distinct from the bound [id]/consent/print route, which is also a
+  // "Consent form": reception prints both, and two identical browser tabs is
+  // the same one-name-per-route defect #177 fixed everywhere else.
+  title: "Blank consent form",
 };
 
 // Blank, unbound consent form for the counter: the new-patient registration
