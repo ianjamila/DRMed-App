@@ -19,14 +19,16 @@
 -- past the day-close lock (P0015), which only guards `eod_cash_adjustments`
 -- and `payments`.
 --
--- PROD STATE, measured 2026-09-14 before writing this: all 75 `bill_payments`
--- rows are method='cash' against 1010, ₱418,319 in total, every one created
--- 2026-05-28 as a single history-import batch, and nothing in the 90 days
--- since. No `eod_close_records` row covers any of those dates (the EOD close
--- has never been run for them), so no day carries a posted shortage from this
--- defect and there is NOTHING TO BACKFILL — writing drawer rows for a closed,
--- un-counted history would invent payouts against days nobody ever counted.
--- The flow is live, though, and cash is the only method anyone has used.
+-- PROD STATE, re-measured 2026-09-15 immediately before shipping: all 75
+-- `bill_payments` rows are method='cash' against 1010, ₱418,319 in total,
+-- payment dates 2026-01-03 to 2026-05-26, every one created 2026-05-28 as a
+-- single history-import batch — and ALL 75 ARE NOW VOIDED. Nothing live has
+-- ever gone through this path. No `eod_close_records` row covers any of those
+-- dates either (the EOD close has never been run for them), so no day carries
+-- a posted shortage from this defect and there is NOTHING TO BACKFILL —
+-- writing drawer rows for a closed, un-counted history would invent payouts
+-- against days nobody ever counted. The flow is live, though, and cash is the
+-- only method anyone has ever used on it.
 --
 -- ---- SHAPE ------------------------------------------------------------------
 --
