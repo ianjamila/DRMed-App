@@ -85,6 +85,9 @@ export const DASHBOARD_CARDS: readonly CardDef[] = [
 
   // ---- Admin: Attention ---------------------------------------------------
   { id: "admin.strip_audit",         label: "Strip: recent audit anomalies", roles: ["admin"], group: "attention" },
+  // Replaces the bare "Released today" count with who cleared what today —
+  // a name and a number the owner can act on, rather than a throughput total.
+  { id: "admin.strip_released_by_staff", label: "Strip: released today by staff", roles: ["admin"], group: "attention" },
   { id: "admin.strip_stale_drafts",  label: "Strip: stale draft journals",   roles: ["admin"], group: "attention" },
 ] as const;
 

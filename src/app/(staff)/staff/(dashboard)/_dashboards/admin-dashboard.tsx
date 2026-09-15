@@ -67,6 +67,7 @@ type AuditRow = {
   created_at: string;
 };
 type DraftJeRow = { id: string; entry_number: string; posting_date: string; created_at: string };
+type ReleasedByRow = { id: string; assigned_to: string | null };
 
 // Runs `fetchAllRows` but never throws — a failing pager reports to Sentry
 // and marks its own card via `error`, instead of blowing up the whole
@@ -127,6 +128,7 @@ async function loadAdminStats(show: (id: string) => boolean) {
     visitsToday,
     queueTotal,
     releasedToday,
+    releasedByStaff,
     revenueToday,
     openPeriods,
     draftJeCount,
@@ -192,6 +194,33 @@ async function loadAdminStats(show: (id: string) => boolean) {
           .is("visits.deleted_at", null)
           .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
       : SKIP_COUNT,
+    // "Released today by staff" replaces the bare released-today count with
+    // something the owner can act on: who cleared what today. Attributed by
+    // `assigned_to` only — `released_by` is not shown anywhere on the queue
+    // this links to, so attributing by it would name someone the destination
+    // never mentions. Unassigned releases (a package promoted by the 0109
+    // trigger, say) get their own bucket rather than being dropped. Paged
+    // because the worst historical day's volume is unknown, and it carries the
+    // queue's own predicates so the numbers match the screen it opens.
+    show("admin.strip_released_by_staff")
+      ? pagedRows<ReleasedByRow>(
+          (from, to) =>
+            admin
+              .from("test_requests")
+              .select("id, assigned_to, services!inner ( id ), visits!inner ( id )")
+              .eq("status", "released")
+              .eq("is_package_header", false)
+              .gte("released_at", startOfTodayUtc)
+              .lt("released_at", startOfTomorrowUtc)
+              .is("deleted_at", null)
+              .is("visits.deleted_at", null)
+              .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
+              .order("id", { ascending: true })
+              .range(from, to)
+              .returns<ReleasedByRow[]>(),
+          REPORT_EXPORT_MAX_ROWS,
+        )
+      : SKIP_ROWS,
     // H2: was a bare, unpaged `.select()` (silently capped at 1000 payment
     // rows) labelled "Revenue today" and linked to /staff/admin/reports/
     // daily-revenue, which sums RELEASED SERVICE REVENUE and defaults to
@@ -531,6 +560,39 @@ async function loadAdminStats(show: (id: string) => boolean) {
     );
   const netIncomeError = Boolean(netTotalsMtd.error) || Boolean(netExpensesMtd.error);
 
+  // Released-today, grouped by who the test was assigned to. Names come from
+  // staff_profiles in one follow-up read; an id we can't resolve keeps its
+  // bucket and reads "Unknown staff" rather than vanishing from the total.
+  const releasedByCounts = new Map<string, number>();
+  for (const r of releasedByStaff.rows) {
+    const key = r.assigned_to ?? "unassigned";
+    releasedByCounts.set(key, (releasedByCounts.get(key) ?? 0) + 1);
+  }
+  const releasedStaffIds = [...releasedByCounts.keys()].filter(
+    (k) => k !== "unassigned",
+  );
+  const releasedNames = new Map<string, string>();
+  if (releasedStaffIds.length > 0) {
+    const { data: profs } = await admin
+      .from("staff_profiles")
+      .select("id, full_name")
+      .in("id", releasedStaffIds);
+    for (const prof of profs ?? []) releasedNames.set(prof.id, prof.full_name);
+  }
+  const releasedByStaffRows = [...releasedByCounts.entries()]
+    .map(([key, count]) => ({
+      key,
+      name:
+        key === "unassigned"
+          ? "Unassigned"
+          : (releasedNames.get(key) ?? "Unknown staff"),
+      count,
+    }))
+    // Busiest first, with a stable tie-break so equal counts don't reorder
+    // between renders.
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  const releasedByStaffTotal = releasedByStaff.rows.length;
+
   // Possible-duplicate pairs (scored in TS, so not part of the count batch
   // above). H12: now paged (was a bare `.select("*")`, silently capped at
   // 1000 pairs) and distinguishes a failed read from a genuinely clean pass.
@@ -550,6 +612,10 @@ async function loadAdminStats(show: (id: string) => boolean) {
     queueTotalError: Boolean(queueTotal.error),
     releasedToday: releasedToday.count ?? 0,
     releasedTodayError: Boolean(releasedToday.error),
+    releasedByStaffRows,
+    releasedByStaffTotal,
+    releasedByStaffTruncated: releasedByStaff.truncated,
+    releasedByStaffError: Boolean(releasedByStaff.error),
     revenueTotal,
     revenueTruncated,
     revenueError,
@@ -645,9 +711,21 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
     show("admin.payroll_runs") && (stats.payrollRunsError || stats.payrollRunsInProgress > 0);
   const showPeople = show("admin.active_employees") || showPayrollRunsCard;
 
+  const releasedByStaffItems: ActivityItem[] = stats.releasedByStaffRows.map(
+    (r) => ({
+      primary: r.name,
+      secondary: `${r.count} test${r.count === 1 ? "" : "s"} released`,
+      href: "/staff/queue?filter=released_today",
+    }),
+  );
+  const showReleasedByStaffStrip =
+    show("admin.strip_released_by_staff") &&
+    (stats.releasedByStaffError || stats.releasedByStaffTotal > 0);
+
   const showStaleDraftsStrip =
     show("admin.strip_stale_drafts") && (stats.staleDraftsError || stats.staleDrafts.length > 0);
-  const showAttention = show("admin.strip_audit") || showStaleDraftsStrip;
+  const showAttention =
+    show("admin.strip_audit") || showStaleDraftsStrip || showReleasedByStaffStrip;
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
@@ -855,6 +933,19 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
                 emptyMessage="No void / reversal / rejection events in the last 7 days."
                 viewAllHref="/staff/audit"
                 error={stats.auditStripError}
+              />
+            )}
+            {showReleasedByStaffStrip && (
+              <ActivityStrip
+                title={
+                  stats.releasedByStaffTruncated
+                    ? `Released today by staff (${stats.releasedByStaffTotal}+)`
+                    : `Released today by staff (${stats.releasedByStaffTotal})`
+                }
+                items={releasedByStaffItems}
+                emptyMessage="Nothing released yet today."
+                viewAllHref="/staff/queue?filter=released_today"
+                error={stats.releasedByStaffError}
               />
             )}
             {showStaleDraftsStrip && (
