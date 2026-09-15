@@ -2,7 +2,7 @@
 
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { todayManilaISODate } from "@/lib/dates/manila";
+import { shiftISODate, todayManilaISODate } from "@/lib/dates/manila";
 
 type DashboardData = {
   outstanding_total_php: number;
@@ -132,8 +132,11 @@ export async function getAPDashboardAction(): Promise<ActionResult<DashboardData
   // -------------------------------------------------------------------------
   // Query 3 — upcoming recurring templates (next 7 days)
   // -------------------------------------------------------------------------
-  const nextWeek = new Date();
-  nextWeek.setDate(nextWeek.getDate() + 7);
+  // `next_run_date` is a DATE column of Manila calendar dates. Counting
+  // seven days off `new Date()` in the runtime's zone put the bound a day
+  // early between Manila midnight and 08:00, so a template due exactly a week
+  // out dropped off the dashboard for that window.
+  const nextWeek = shiftISODate(todayManilaISODate(), 7);
 
   const { data: upcomingRaw } = await admin
     .from("recurring_bill_templates")
@@ -145,7 +148,7 @@ export async function getAPDashboardAction(): Promise<ActionResult<DashboardData
       vendors:vendors!vendor_id ( name )
     `)
     .eq("is_active", true)
-    .lte("next_run_date", nextWeek.toISOString().slice(0, 10))
+    .lte("next_run_date", nextWeek)
     .order("next_run_date");
 
   const upcomingMapped = ((upcomingRaw ?? []) as UpcomingTemplate[]).map((t) => ({

@@ -7,6 +7,7 @@ import { audit } from "@/lib/audit/log";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { voidPfDisbursementAndUnlink } from "@/lib/accounting/pf-disbursement-void";
 import { PfBulkPayoutSchema } from "@/lib/validations/accounting";
+import { isoDateParts } from "@/lib/dates/manila";
 
 type ActionResult<T = unknown> =
   | { ok: true; data: T }
@@ -53,7 +54,7 @@ export async function createBulkPfPayoutCash(
   // (For simplicity here, we iterate and fail-fast; production-grade transactional
   // semantics would push this into a SECURITY DEFINER PG function. Acceptable for v1.)
   for (const phys of data.by_physician) {
-    const year = new Date(data.posted_date).getFullYear();
+    const year = isoDateParts(data.posted_date).year;
     const { data: nRow, error: nErr } = await admin.rpc(
       "next_pf_disbursement_batch_number",
       { p_year: year }

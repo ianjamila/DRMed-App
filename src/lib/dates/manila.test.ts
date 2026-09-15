@@ -5,6 +5,8 @@ import {
   isoDateParts,
   lastOfMonthISO,
   isISODate,
+  manilaISODate,
+  manilaParts,
   manilaDayWindowUtc,
   manilaRangeUtc,
   shiftISODate,
@@ -131,5 +133,47 @@ describe("Manila calendar arithmetic (isoDateParts / firstOfMonthISO / lastOfMon
   it("normalises out-of-range months when taking the last day too", () => {
     expect(lastOfMonthISO(2026, 0)).toBe("2025-12-31");
     expect(lastOfMonthISO(2027, 13)).toBe("2028-01-31");
+  });
+});
+
+describe("manilaISODate / manilaParts — the Manila day an INSTANT falls on", () => {
+  it("keeps an instant on its Manila day, not its UTC one", () => {
+    // 02:00 Manila on 15 Sep is 18:00 UTC on the 14th. Slicing toISOString()
+    // would say the 14th; the clinic says the 15th.
+    expect(manilaISODate("2026-09-15T02:00:00+08:00")).toBe("2026-09-15");
+    expect(manilaISODate("2026-09-14T18:00:00Z")).toBe("2026-09-15");
+  });
+
+  it("does not drag a bare calendar date to the previous day", () => {
+    // new Date("2026-09-15") is UTC midnight; read in a westward zone that is
+    // the 14th. The noon pin keeps a calendar date on its own day.
+    expect(manilaISODate("2026-09-15")).toBe("2026-09-15");
+  });
+
+  it("round-trips the last second of a Manila day", () => {
+    expect(manilaISODate("2026-09-15T23:59:59+08:00")).toBe("2026-09-15");
+    expect(manilaISODate("2026-09-16T00:00:00+08:00")).toBe("2026-09-16");
+  });
+
+  it("returns null for nothing and for an unparseable value", () => {
+    expect(manilaISODate(null)).toBeNull();
+    expect(manilaISODate(undefined)).toBeNull();
+    expect(manilaISODate("not-a-date")).toBeNull();
+    expect(manilaParts(null)).toBeNull();
+  });
+
+  it("gives calendar parts as integers, month 1-12", () => {
+    expect(manilaParts("2026-09-15T02:00:00+08:00")).toEqual({
+      year: 2026,
+      month: 9,
+      day: 15,
+    });
+    // 08:00 Manila on 1 Jan is midnight UTC the same day; the year must not
+    // read back as the previous one.
+    expect(manilaParts("2026-01-01T00:00:00Z")).toEqual({
+      year: 2026,
+      month: 1,
+      day: 1,
+    });
   });
 });

@@ -29,7 +29,7 @@ import {
 import { appointmentStatusLabel } from "@/lib/appointments/labels";
 import { fetchAllRows, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 import { matchesAllTokens } from "@/lib/patients/search";
-import { manilaDateTime } from "@/lib/dates/manila";
+import { manilaDateTime, todayManilaISODate } from "@/lib/dates/manila";
 import {
   ariaSortFor,
   buildListHref,
@@ -345,11 +345,7 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
   const size = parsePageSize(sp.size);
   const page = parsePage(sp.page);
 
-  // eslint-disable-next-line react-hooks/purity -- per-request bounds.
-  const nowMs = Date.now();
-  const manilaToday = new Date(nowMs + 8 * 60 * 60 * 1000)
-    .toISOString()
-    .slice(0, 10);
+  const manilaToday = todayManilaISODate();
   const startOfTodayUtc = new Date(`${manilaToday}T00:00:00+08:00`).toISOString();
   const startOfTomorrowUtc = new Date(
     new Date(`${manilaToday}T00:00:00+08:00`).getTime() + 24 * 60 * 60 * 1000,

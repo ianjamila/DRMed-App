@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { shiftISODate } from "@/lib/dates/manila";
 import { RerunMatchButton } from "./rerun-match-button";
 import { ManualMatchClient } from "./manual-match-client";
 import { Panel } from "@/components/ui/panel";
@@ -120,8 +121,8 @@ export default async function BankStatementDetailPage({ params }: PageProps) {
       (m, l) => (l.transaction_date > m ? l.transaction_date : m),
       unmatched[0].transaction_date,
     );
-    const start = shiftDate(minD, -7);
-    const end = shiftDate(maxD, 7);
+    const start = shiftISODate(minD, -7);
+    const end = shiftISODate(maxD, 7);
 
     const { data: alreadyMatched } = await admin
       .from("bank_statement_lines")
@@ -390,8 +391,3 @@ function SummaryTile({
   );
 }
 
-function shiftDate(iso: string, days: number): string {
-  const d = new Date(`${iso}T00:00:00+08:00`);
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
-}

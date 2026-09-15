@@ -2,6 +2,8 @@
 // (no React, no @react-pdf/renderer imports) so it can be used from Server
 // Components, Server Actions, and the @react-pdf/renderer document alike.
 
+import { manilaParts } from "@/lib/dates/manila";
+
 export type ResultLayout =
   | "simple"
   | "dual_unit"
@@ -193,9 +195,17 @@ export function calculateAge(
   if (!birthdateIso) return null;
   const b = new Date(birthdateIso);
   if (Number.isNaN(b.getTime())) return null;
-  let age = asOf.getFullYear() - b.getFullYear();
-  const mDiff = asOf.getMonth() - b.getMonth();
-  if (mDiff < 0 || (mDiff === 0 && asOf.getDate() < b.getDate())) age -= 1;
+  // Both sides as MANILA calendar dates. Reading `getFullYear()` off these
+  // instants reads the RUNTIME's zone, so on the server (UTC) a patient's age
+  // ticked over eight hours late — between Manila midnight and 08:00 on their
+  // own birthday the report printed last year's age. Age is a clinical field
+  // on a released result, so it has to be the clinic's calendar.
+  const bParts = manilaParts(b);
+  const aParts = manilaParts(asOf);
+  if (!bParts || !aParts) return null;
+  let age = aParts.year - bParts.year;
+  const mDiff = aParts.month - bParts.month;
+  if (mDiff < 0 || (mDiff === 0 && aParts.day < bParts.day)) age -= 1;
   return age;
 }
 
@@ -206,10 +216,13 @@ export function calculateAgeMonths(
   if (!birthdateIso) return null;
   const b = new Date(birthdateIso);
   if (Number.isNaN(b.getTime())) return null;
+  // Same Manila-calendar rule as calculateAge above.
+  const bParts = manilaParts(b);
+  const aParts = manilaParts(asOf);
+  if (!bParts || !aParts) return null;
   let months =
-    (asOf.getFullYear() - b.getFullYear()) * 12 +
-    (asOf.getMonth() - b.getMonth());
-  if (asOf.getDate() < b.getDate()) months -= 1;
+    (aParts.year - bParts.year) * 12 + (aParts.month - bParts.month);
+  if (aParts.day < bParts.day) months -= 1;
   return Math.max(0, months);
 }
 

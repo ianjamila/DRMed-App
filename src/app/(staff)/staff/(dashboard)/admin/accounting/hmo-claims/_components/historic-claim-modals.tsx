@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { todayManilaISODate } from "@/lib/dates/manila";
 import {
   markHistoricClaimsBilledAction,
   markHistoricClaimsPaidAction,
@@ -102,7 +103,7 @@ export function MarkHistoricBilledModal({
   onClose: () => void;
 }) {
   const router = useRouter();
-  const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
+  const today = todayManilaISODate();
   const [date, setDate] = useState(today);
   const [staffId, setStaffId] = useState(staff[0]?.id ?? "");
   const [err, setErr] = useState<string | null>(null);
@@ -178,7 +179,7 @@ export function MarkHistoricPaidModal({
   onClose: () => void;
 }) {
   const router = useRouter();
-  const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
+  const today = todayManilaISODate();
   const [datePaid, setDatePaid] = useState(today);
   const [method, setMethod] = useState<string>(paymentMethods[0]?.code ?? "");
   const [orNumber, setOrNumber] = useState("");
@@ -296,7 +297,7 @@ export function WriteOffHistoricModal({
   onClose: () => void;
 }) {
   const router = useRouter();
-  const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
+  const today = todayManilaISODate();
   const [date, setDate] = useState(today);
   const [reason, setReason] = useState("");
   const [staffId, setStaffId] = useState(staff[0]?.id ?? "");
