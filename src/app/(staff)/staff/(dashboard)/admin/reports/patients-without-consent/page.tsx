@@ -4,52 +4,124 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { Panel } from "@/components/ui/panel";
 import { ExportCsvLink } from "@/components/staff/export-csv-link";
 import {
+  comparePatientsWithoutConsent,
   loadPatientsWithoutConsent,
   patientsWithoutConsentCsvHref,
+  PATIENTS_WITHOUT_CONSENT_DEFAULT_SORT,
+  PATIENTS_WITHOUT_CONSENT_SORTABLE_COLUMNS,
+  type PatientsWithoutConsentSortColumn,
 } from "@/lib/reports/patients-without-consent";
 import { REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 import {
   PRE_REGISTERED_LABEL,
   PRE_REGISTERED_BADGE_CLASS,
 } from "@/lib/patients/labels";
+import { formatPatientName } from "@/lib/patients/format-name";
+import { manilaDate } from "@/lib/dates/manila";
+import {
+  ariaSortFor,
+  buildListHref,
+  DEFAULT_PAGE_SIZE,
+  nextSort,
+  pageCount,
+  parsePage,
+  parsePageSize,
+  parseSort,
+  rangeFor,
+} from "@/lib/ui/table-params";
+import { SortableTh } from "@/components/staff/sortable-th";
+import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 
 export const metadata = { title: "Patients Without Consent" };
 export const dynamic = "force-dynamic";
 
-// M15: how many patients this page RENDERS. This used to also be the ceiling
-// on which patients were even considered, so the cut fell on registration
-// recency (`created_at desc`) rather than visit recency — an old patient who
-// visited yesterday could be dropped in favor of a brand-new patient who
-// never returned. The candidate set is now the full REPORT_EXPORT_MAX_ROWS
-// walk (same ceiling the CSV export already proves comfortably covers this
-// table — 7,056 patients total, 20,000 row ceiling); this page still shows
-// only the first DISPLAY_LIMIT, but only after `loadPatientsWithoutConsent`
-// has sorted the complete candidate set most-recently-active-first.
-const DISPLAY_LIMIT = 500;
+const BASE_PATH = "/staff/admin/reports/patients-without-consent";
 
-const manilaDate = new Intl.DateTimeFormat("en-PH", {
-  timeZone: "Asia/Manila",
-  dateStyle: "medium",
-});
+interface SearchProps {
+  searchParams: Promise<{
+    sort?: string;
+    dir?: string;
+    page?: string;
+    size?: string;
+  }>;
+}
 
-export default async function PatientsWithoutConsentPage() {
+export default async function PatientsWithoutConsentPage({
+  searchParams,
+}: SearchProps) {
   await requireAdminStaff();
   const admin = createAdminClient();
+  const sp = await searchParams;
+
+  const sort = parseSort(
+    sp.sort,
+    sp.dir,
+    PATIENTS_WITHOUT_CONSENT_SORTABLE_COLUMNS,
+    PATIENTS_WITHOUT_CONSENT_DEFAULT_SORT,
+  );
+  const size = parsePageSize(sp.size);
+  const page = parsePage(sp.page);
 
   const {
-    rows: ordered,
+    rows: all,
     visitCount,
     lastVisit,
     truncated: candidatesIncomplete,
-    displayTruncated,
-  } = await loadPatientsWithoutConsent(admin, REPORT_EXPORT_MAX_ROWS, DISPLAY_LIMIT);
-  const rows = ordered;
-  // Distinct failure modes worth telling the reader apart: `candidatesIncomplete`
-  // means even the sorted set is missing patients (the candidate walk itself
-  // hit REPORT_EXPORT_MAX_ROWS — not expected at today's scale, but the report
-  // must say so rather than look complete). `displayTruncated` is the ordinary,
-  // meaningful cut to the first DISPLAY_LIMIT most-recently-active patients.
-  const capped = displayTruncated;
+  } = await loadPatientsWithoutConsent(admin, REPORT_EXPORT_MAX_ROWS);
+
+  const total = all.length;
+  const totalPages = pageCount(total, size);
+  const [from, to] = rangeFor(page, size);
+  // Sort the FULL candidate set, then slice — the pager's trim now stands in
+  // for what used to be `displayLimit` (see the loader's doc comment). This
+  // keeps the M15 invariant alive: the comparator always runs over the whole
+  // sorted-before-anything-is-cut set, so which page a patient lands on is
+  // never an artifact of the raw `created_at desc` fetch order.
+  const rows = [...all]
+    .sort((a, b) => comparePatientsWithoutConsent(a, b, sort, visitCount, lastVisit))
+    .slice(from, to + 1);
+
+  // Params at their default are omitted so the plain, unfiltered URL stays
+  // bare — this page has no filters, only sort/page/size.
+  const isDefaultSort =
+    sort.key === PATIENTS_WITHOUT_CONSENT_DEFAULT_SORT.key &&
+    sort.dir === PATIENTS_WITHOUT_CONSENT_DEFAULT_SORT.dir;
+  const baseParams: Record<string, string | null> = {
+    sort: isDefaultSort ? null : sort.key,
+    dir: isDefaultSort ? null : sort.dir,
+    size: size === DEFAULT_PAGE_SIZE ? null : String(size),
+  };
+
+  // Every header keeps sort/size and resets to page 1 — changing the sort
+  // while sitting on page 9 of a set whose ranking just changed is a blank
+  // screen with no explanation.
+  const href = (overrides: Record<string, string | null> = {}) =>
+    buildListHref(BASE_PATH, baseParams, { page: null, ...overrides });
+
+  const sortHref = (key: PatientsWithoutConsentSortColumn) => {
+    const next = nextSort(sort, key);
+    const nextIsDefault =
+      next.key === PATIENTS_WITHOUT_CONSENT_DEFAULT_SORT.key &&
+      next.dir === PATIENTS_WITHOUT_CONSENT_DEFAULT_SORT.dir;
+    return href({
+      sort: nextIsDefault ? null : next.key,
+      dir: nextIsDefault ? null : next.dir,
+    });
+  };
+
+  const th = (
+    key: PatientsWithoutConsentSortColumn,
+    label: string,
+    align?: "left" | "right",
+  ) => (
+    <SortableTh
+      key={key}
+      label={label}
+      href={sortHref(key)}
+      state={ariaSortFor(sort, key)}
+      align={align}
+    />
+  );
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
@@ -71,9 +143,7 @@ export default async function PatientsWithoutConsentPage() {
           patient accepting the notice in their portal).
         </p>
         <p className="mt-2 text-sm font-semibold text-[color:var(--color-brand-navy)]">
-          {rows.length} {rows.length === 1 ? "patient" : "patients"} without
-          consent
-          {capped ? ` (showing the first ${DISPLAY_LIMIT})` : ""}.{" "}
+          {total} {total === 1 ? "patient" : "patients"} without consent.{" "}
           <Link
             href="/staff/admin/settings/consent-gate"
             className="text-[color:var(--color-brand-cyan)] hover:underline"
@@ -94,15 +164,8 @@ export default async function PatientsWithoutConsentPage() {
         </p>
       ) : null}
 
-      {capped ? (
-        <p className="mt-4 text-xs text-amber-700">
-          Showing the {DISPLAY_LIMIT} most recently active — clear these and
-          reload to see the rest.
-        </p>
-      ) : null}
-
       <Panel className="mt-6 overflow-hidden">
-        {ordered.length === 0 ? (
+        {total === 0 ? (
           <p className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]">
             Every active patient has consent on file. Safe to enable the consent
             gate.
@@ -112,18 +175,16 @@ export default async function PatientsWithoutConsentPage() {
             <table className="w-full min-w-[820px] text-sm">
               <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                 <tr>
-                  <th className="px-4 py-3">Patient</th>
-                  <th className="px-4 py-3">DRM-ID</th>
-                  <th className="px-4 py-3 text-right">Visits</th>
-                  <th className="px-4 py-3">Last visit</th>
-                  <th className="px-4 py-3">Contact on file</th>
+                  {th("patient", "Patient")}
+                  {th("drm_id", "DRM-ID")}
+                  {th("visits", "Visits", "right")}
+                  {th("last_visit", "Last visit")}
+                  {th("contact", "Contact on file")}
                 </tr>
               </thead>
               <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
-                {ordered.map((p) => {
-                  const name =
-                    `${p.last_name ?? ""}${p.last_name && p.first_name ? ", " : ""}${p.first_name ?? ""}`.trim() ||
-                    "(no name on file)";
+                {rows.map((p) => {
+                  const name = formatPatientName(p) || "(no name on file)";
                   const last = lastVisit.get(p.id);
                   return (
                     <tr key={p.id}>
@@ -150,7 +211,7 @@ export default async function PatientsWithoutConsentPage() {
                       </td>
                       <td className="px-4 py-3 text-xs">
                         {last ? (
-                          manilaDate.format(new Date(`${last}T00:00:00+08:00`))
+                          manilaDate(last)
                         ) : (
                           <span className="text-[color:var(--color-brand-text-soft)]">
                             No visits
@@ -170,6 +231,36 @@ export default async function PatientsWithoutConsentPage() {
             </table>
           </div>
         )}
+
+        {total > 0 ? (
+          <div className="px-4 py-3">
+            <ListPagination
+              page={page}
+              pageCount={totalPages}
+              total={total}
+              size={size}
+              prevHref={
+                page > 1
+                  ? buildListHref(BASE_PATH, baseParams, {
+                      page: page - 1 > 1 ? String(page - 1) : null,
+                    })
+                  : null
+              }
+              nextHref={
+                page < totalPages
+                  ? buildListHref(BASE_PATH, baseParams, {
+                      page: String(page + 1),
+                    })
+                  : null
+              }
+              sizeOptions={PAGE_SIZES.map((s) => ({
+                size: s,
+                href: href({ size: s === DEFAULT_PAGE_SIZE ? null : String(s) }),
+              }))}
+              noun="patient"
+            />
+          </div>
+        ) : null}
       </Panel>
     </div>
   );

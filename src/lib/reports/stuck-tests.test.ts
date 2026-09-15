@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   ageDays,
+  compareStuckRows,
   headerCandidateIsSettled,
   loadStuckTests,
   parseStuckTestsParams,
+  STUCK_DEFAULT_SORT,
   STUCK_TESTS_CSV_HEADER,
   stuckTestsCsvFilename,
   stuckTestsCsvHref,
@@ -91,6 +93,171 @@ describe("href / filename", () => {
   it("carries the threshold", () => {
     expect(stuckTestsCsvHref({ days: 3 })).toBe("/api/admin/reports/stuck-tests.csv?days=3");
     expect(stuckTestsCsvFilename({ days: 3 }, "2026-09-08")).toBe("stuck-tests-3d-2026-09-08.csv");
+  });
+});
+
+describe("compareStuckRows", () => {
+  const claimerNames = new Map<string, string>([
+    ["u1", "Med Tech One"],
+    ["u2", "Med Tech Two"],
+  ]);
+
+  function row(overrides: Partial<StuckRow> & { id: string }): StuckRow {
+    return {
+      status: "in_progress",
+      requested_at: "2026-09-01T00:00:00Z",
+      assigned_to: null,
+      visit_id: "v1",
+      services: { code: "CBC", name: "CBC" },
+      visits: {
+        visit_number: "0001",
+        payment_status: "paid",
+        hmo_provider_id: null,
+        patients: { first_name: "Ana", last_name: "Cruz", drm_id: "DRM-1" },
+      },
+      ...overrides,
+    };
+  }
+
+  it("defaults to age desc, which is requested_at ASCENDING — oldest row first", () => {
+    // Age counts UP the longer a row has sat untouched, so the OLDEST row has
+    // the LARGEST age and the SMALLEST requested_at. Get the sign backwards
+    // and the default silently reads "newest first" instead of "oldest".
+    const oldest = row({ id: "a", requested_at: "2026-08-01T00:00:00Z" });
+    const middle = row({ id: "b", requested_at: "2026-08-15T00:00:00Z" });
+    const newest = row({ id: "c", requested_at: "2026-09-01T00:00:00Z" });
+    const sorted = [newest, oldest, middle].sort((x, y) =>
+      compareStuckRows(x, y, STUCK_DEFAULT_SORT, claimerNames),
+    );
+    expect(sorted.map((r) => r.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("age ascending is the inverse of the default — newest row first", () => {
+    const oldest = row({ id: "a", requested_at: "2026-08-01T00:00:00Z" });
+    const newest = row({ id: "c", requested_at: "2026-09-01T00:00:00Z" });
+    const sorted = [oldest, newest].sort((x, y) =>
+      compareStuckRows(x, y, { key: "age", dir: "asc" }, claimerNames),
+    );
+    expect(sorted.map((r) => r.id)).toEqual(["c", "a"]);
+  });
+
+  it("same requested_at falls through to the uuid id tie-break", () => {
+    const higherId = row({ id: "z1", requested_at: "2026-08-01T00:00:00Z" });
+    const lowerId = row({ id: "a1", requested_at: "2026-08-01T00:00:00Z" });
+    const sorted = [higherId, lowerId].sort((x, y) =>
+      compareStuckRows(x, y, STUCK_DEFAULT_SORT, claimerNames),
+    );
+    expect(sorted.map((r) => r.id)).toEqual(["a1", "z1"]);
+  });
+
+  it("`visit` compares visit_number as TEXT, never Number(), and keeps page slices stable", () => {
+    // The literal prod mix: zero-padded numeric visit numbers alongside three
+    // historical-import shapes. Number() on any of the latter three is NaN,
+    // NaN - NaN is NaN, and `cmp !== 0` is TRUE for NaN — so the id tie-break
+    // below would never be reached, and Array.sort could reorder same-visit
+    // rows however it likes between renders, which is what actually shifts
+    // rows across a page boundary.
+    const withVisit = (id: string, visit_number: string) =>
+      row({
+        id,
+        visits: {
+          visit_number,
+          payment_status: "paid",
+          hmo_provider_id: null,
+          patients: { first_name: "Ana", last_name: "Cruz", drm_id: "DRM-1" },
+        },
+      });
+
+    const a = withVisit("id-a", "#0H-1");
+    const b = withVisit("id-b", "#H-1001");
+    const c = withVisit("id-c", "#H-LAB_SERVICE-0-3");
+    const d = withVisit("id-d", "0042");
+
+    expect(compareStuckRows(a, b, { key: "visit", dir: "asc" }, claimerNames)).toBe(
+      "#0H-1".localeCompare("#H-1001"),
+    );
+
+    // Two rows sharing the SAME visit_number (sibling lines on one visit)
+    // compare 0 on `visit` and must fall through to the id tie-break rather
+    // than whatever order Array.sort happens to leave them in.
+    const sameVisit1 = withVisit("row-2", "0042");
+    const sameVisit2 = withVisit("row-1", "0042");
+    expect(
+      compareStuckRows(sameVisit1, sameVisit2, { key: "visit", dir: "asc" }, claimerNames),
+    ).toBe("row-2".localeCompare("row-1"));
+
+    // Paging proof: sort the same six rows starting from three different
+    // input orders and slice a "page" out of each. If the comparator ever
+    // regressed to Number() (NaN for every non-numeric visit_number here),
+    // ties would stop resolving deterministically and this would flake.
+    const all = [a, b, c, d, sameVisit1, sameVisit2];
+    const sortAndPage = (input: StuckRow[]) =>
+      [...input]
+        .sort((x, y) => compareStuckRows(x, y, { key: "visit", dir: "asc" }, claimerNames))
+        .map((r) => r.id);
+    const forward = sortAndPage(all);
+    const reversed = sortAndPage([...all].reverse());
+    const shuffled = sortAndPage([c, a, sameVisit1, d, b, sameVisit2]);
+    expect(reversed).toEqual(forward);
+    expect(shuffled).toEqual(forward);
+    expect(forward.slice(0, 3)).toEqual(reversed.slice(0, 3));
+    expect(forward.slice(0, 3)).toEqual(shuffled.slice(0, 3));
+  });
+
+  it("`claimed` sinks an unclaimed row regardless of direction", () => {
+    const claimed = row({ id: "a", assigned_to: "u1" });
+    const unclaimed = row({ id: "b", assigned_to: null });
+    expect(
+      compareStuckRows(claimed, unclaimed, { key: "claimed", dir: "asc" }, claimerNames),
+    ).toBeLessThan(0);
+    expect(
+      compareStuckRows(claimed, unclaimed, { key: "claimed", dir: "desc" }, claimerNames),
+    ).toBeLessThan(0);
+  });
+
+  it("`claimed` also sinks an assigned_to whose name never resolved", () => {
+    const resolved = row({ id: "a", assigned_to: "u1" });
+    const unresolved = row({ id: "b", assigned_to: "ghost-staff-id" });
+    expect(
+      compareStuckRows(resolved, unresolved, { key: "claimed", dir: "asc" }, claimerNames),
+    ).toBeLessThan(0);
+  });
+
+  it("`patient`, `test`, `status` and `payment` compare their printed text", () => {
+    const ana = row({ id: "a" });
+    const ben = row({
+      id: "b",
+      visits: {
+        visit_number: "0002",
+        payment_status: "unpaid",
+        hmo_provider_id: null,
+        patients: { first_name: "Ben", last_name: "Dy", drm_id: "DRM-2" },
+      },
+    });
+    expect(compareStuckRows(ana, ben, { key: "patient", dir: "asc" }, claimerNames)).toBeLessThan(0); // Cruz < Dy
+
+    const cbc = row({ id: "c", services: { code: "CBC", name: "CBC" } });
+    const urine = row({ id: "d", services: { code: "UA", name: "Urinalysis" } });
+    expect(compareStuckRows(cbc, urine, { key: "test", dir: "asc" }, claimerNames)).toBeLessThan(0);
+
+    const readyForRelease = row({ id: "e", status: "ready_for_release" });
+    const requested = row({ id: "f", status: "requested" });
+    expect(
+      compareStuckRows(readyForRelease, requested, { key: "status", dir: "asc" }, claimerNames),
+    ).toBeLessThan(0); // "ready_for_release" < "requested"
+
+    expect(compareStuckRows(ana, ben, { key: "payment", dir: "asc" }, claimerNames)).toBeLessThan(0); // "paid" < "unpaid"
+  });
+
+  it("every column ends in the uuid id tie-break, ascending", () => {
+    const first = row({ id: "row-1" });
+    const second = row({ id: "row-2" });
+    // Identical everything except id — every branch must fall through to it.
+    for (const key of ["patient", "test", "status", "payment"] as const) {
+      expect(compareStuckRows(first, second, { key, dir: "asc" }, claimerNames)).toBe(
+        "row-1".localeCompare("row-2"),
+      );
+    }
   });
 });
 

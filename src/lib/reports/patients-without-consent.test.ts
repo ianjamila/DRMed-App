@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
+import type { SortSpec } from "@/lib/ui/table-params";
 import {
+  comparePatientsWithoutConsent,
   orderByLastVisit,
   PATIENTS_WITHOUT_CONSENT_CSV_HEADER,
+  PATIENTS_WITHOUT_CONSENT_DEFAULT_SORT,
   patientsWithoutConsentCsvFilename,
   patientsWithoutConsentCsvHref,
   patientsWithoutConsentCsvRows,
+  type PatientsWithoutConsentSortColumn,
   type PatientWithoutConsentRow,
 } from "./patients-without-consent";
 
@@ -76,6 +80,95 @@ describe("M15: display-limit trims only after sorting by last visit", () => {
     const sorted = orderByLastVisit(registrationOrder, recentVisit);
     const trimmed = sorted.slice(0, 1);
     expect(trimmed.map((r) => r.id)).toEqual(["old"]);
+  });
+});
+
+describe("comparePatientsWithoutConsent", () => {
+  const sort = (
+    key: PatientsWithoutConsentSortColumn,
+    dir: "asc" | "desc",
+  ): SortSpec<PatientsWithoutConsentSortColumn> => ({ key, dir });
+
+  it("default sort (last_visit desc) matches orderByLastVisit, including the null-last rule", () => {
+    // Same fixture as the `orderByLastVisit` suite above — the comparator's
+    // `last_visit` case is a drop-in replacement, so both must agree.
+    const byComparator = [...rows].sort((a, b) =>
+      comparePatientsWithoutConsent(a, b, PATIENTS_WITHOUT_CONSENT_DEFAULT_SORT, visitCount, lastVisit),
+    );
+    expect(byComparator.map((r) => r.id)).toEqual(
+      orderByLastVisit(rows, lastVisit).map((r) => r.id),
+    );
+  });
+
+  it("last_visit: never-visited patients sink to the bottom in ASCENDING order too", () => {
+    const ascending = [...rows].sort((a, b) =>
+      comparePatientsWithoutConsent(a, b, sort("last_visit", "asc"), visitCount, lastVisit),
+    );
+    // p2 has no visit at all and must stay last even though ascending would
+    // otherwise put its "" stand-in value first.
+    expect(ascending.at(-1)?.id).toBe("p2");
+  });
+
+  it("patient: sorts by formatted name and sinks a blank name to the bottom in either direction", () => {
+    const asc = [...rows].sort((a, b) =>
+      comparePatientsWithoutConsent(a, b, sort("patient", "asc"), visitCount, lastVisit),
+    );
+    expect(asc.map((r) => r.id)).toEqual(["p1", "p3", "p2"]); // Cruz, Ana < Dee, Cy; p2 has no name on file
+
+    const desc = [...rows].sort((a, b) =>
+      comparePatientsWithoutConsent(a, b, sort("patient", "desc"), visitCount, lastVisit),
+    );
+    expect(desc.map((r) => r.id)).toEqual(["p3", "p1", "p2"]); // still last, not first
+  });
+
+  it("drm_id: plain text ordering", () => {
+    const desc = [...rows].sort((a, b) =>
+      comparePatientsWithoutConsent(a, b, sort("drm_id", "desc"), visitCount, lastVisit),
+    );
+    expect(desc.map((r) => r.id)).toEqual(["p3", "p2", "p1"]);
+  });
+
+  it("visits: numeric, missing counts default to 0", () => {
+    const desc = [...rows].sort((a, b) =>
+      comparePatientsWithoutConsent(a, b, sort("visits", "desc"), visitCount, lastVisit),
+    );
+    expect(desc.map((r) => r.id)).toEqual(["p1", "p3", "p2"]); // 2, 1, 0
+  });
+
+  it("contact: both on file outranks one, which outranks none, regardless of alphabetical order", () => {
+    const both: PatientWithoutConsentRow = {
+      id: "both",
+      drm_id: "DRM-BOTH",
+      first_name: "Both",
+      last_name: "Contactable",
+      phone: "0917",
+      email: "both@x.ph",
+      pre_registered: false,
+    };
+    const none: PatientWithoutConsentRow = {
+      id: "none",
+      drm_id: "DRM-NONE",
+      first_name: "No",
+      last_name: "Contact",
+      phone: null,
+      email: null,
+      pre_registered: false,
+    };
+    const fixture = [none, ...rows, both]; // p1: phone only, p2: email only
+    const desc = [...fixture].sort((a, b) =>
+      comparePatientsWithoutConsent(a, b, sort("contact", "desc"), visitCount, lastVisit),
+    );
+    // Ties break on ascending id, independent of the requested direction:
+    // {p1, p2} at score 1, then {none, p3} at score 0.
+    expect(desc.map((r) => r.id)).toEqual(["both", "p1", "p2", "none", "p3"]);
+  });
+
+  it("ends every tie in an ascending id tie-break", () => {
+    // p1 and p2 both have a contact score of 1 (one channel each).
+    const desc = [...rows].sort((a, b) =>
+      comparePatientsWithoutConsent(a, b, sort("contact", "desc"), visitCount, lastVisit),
+    );
+    expect(desc.slice(0, 2).map((r) => r.id)).toEqual(["p1", "p2"]);
   });
 });
 

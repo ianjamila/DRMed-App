@@ -1,6 +1,7 @@
 /** Staff advances — shared by the admin report page and its CSV. Not `server-only`. */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
+import type { SortSpec } from "@/lib/ui/table-params";
 import { chunk, fetchAllRows, IN_CHUNK, unique } from "./paging";
 
 type AnyClient = SupabaseClient<Database>;
@@ -31,6 +32,147 @@ export interface StaffAdvancesReport {
   rows: StaffAdvanceRow[];
   staffById: StaffNameMap;
   truncated: boolean;
+}
+
+/**
+ * Sortable columns for the "Recent advances" ledger table.
+ *
+ * This is the only report page with two independently-sortable tables, so
+ * the ledger owns the page's plain `?sort=&dir=&page=&size=` params and the
+ * summary table below owns its own `?ssort=&sdir=` — see the page for how
+ * each table's hrefs carry the other's state along rather than clobbering it.
+ */
+export const STAFF_ADVANCES_SORTABLE_COLUMNS = [
+  "date",
+  "staff",
+  "original",
+  "outstanding",
+  "status",
+] as const;
+export type StaffAdvanceSortColumn = (typeof STAFF_ADVANCES_SORTABLE_COLUMNS)[number];
+
+// Most-recent-first is the useful default for a ledger — "what happened
+// lately" is the question this table exists to answer.
+export const STAFF_ADVANCES_DEFAULT_SORT: SortSpec<StaffAdvanceSortColumn> = {
+  key: "date",
+  dir: "desc",
+};
+
+/**
+ * The ledger comparator needs `staffById` (rule: extra argument for a column
+ * resolved through a lookup map, same shape as `compareStuckRows`'s
+ * `claimerNames`) because `staff_id` alone isn't what the "Staff" column
+ * prints — the resolved name is.
+ */
+export function compareStaffAdvanceRows(
+  a: StaffAdvanceRow,
+  b: StaffAdvanceRow,
+  sort: SortSpec<StaffAdvanceSortColumn>,
+  staffById: StaffNameMap,
+): number {
+  const dirMul = sort.dir === "asc" ? 1 : -1;
+  let cmp: number;
+
+  if (sort.key === "staff") {
+    // A staff row can go missing (deleted profile) while their advances
+    // stay on the ledger — sink those to the bottom regardless of direction,
+    // same rule `users/page.tsx` applies to a never-signed-in staff member.
+    const an = staffById.get(a.staff_id)?.full_name ?? null;
+    const bn = staffById.get(b.staff_id)?.full_name ?? null;
+    if (an === null && bn === null) cmp = 0;
+    else if (an === null) return 1;
+    else if (bn === null) return -1;
+    else cmp = dirMul * an.localeCompare(bn);
+  } else {
+    switch (sort.key) {
+      case "date":
+        // `business_date` is already YYYY-MM-DD, so string compare orders it
+        // by real date — sort keys off the raw ISO value, never the
+        // `manilaDate`-formatted display string the cell renders.
+        cmp = dirMul * a.business_date.localeCompare(b.business_date);
+        break;
+      case "original":
+        cmp = dirMul * (a.original_amount_php - b.original_amount_php);
+        break;
+      case "outstanding":
+        cmp = dirMul * (a.outstanding_balance_php - b.outstanding_balance_php);
+        break;
+      case "status":
+        cmp = dirMul * a.status.localeCompare(b.status);
+        break;
+      default:
+        cmp = 0;
+    }
+  }
+
+  // staff_advances.id is a uuid, not the audit_log's numeric id.
+  return cmp !== 0 ? cmp : a.id.localeCompare(b.id);
+}
+
+/**
+ * Sortable columns for the "Outstanding by staff" summary table. One row per
+ * staff member with an open balance — a handful of rows, same call as
+ * `Closures`: sort, no pager.
+ */
+export const STAFF_ADVANCES_SUMMARY_SORTABLE_COLUMNS = [
+  "staff",
+  "role",
+  "advances",
+  "outstanding",
+  "oldest",
+] as const;
+export type StaffAdvanceSummarySortColumn =
+  (typeof STAFF_ADVANCES_SUMMARY_SORTABLE_COLUMNS)[number];
+
+// Biggest exposure first — "who do we need to settle with" is the question
+// this table answers.
+export const STAFF_ADVANCES_SUMMARY_DEFAULT_SORT: SortSpec<StaffAdvanceSummarySortColumn> = {
+  key: "outstanding",
+  dir: "desc",
+};
+
+export function compareStaffAdvanceSummaryRows(
+  a: StaffAdvanceSummaryRow,
+  b: StaffAdvanceSummaryRow,
+  sort: SortSpec<StaffAdvanceSummarySortColumn>,
+): number {
+  const dirMul = sort.dir === "asc" ? 1 : -1;
+  let cmp: number;
+
+  if (sort.key === "oldest") {
+    // A staff member with zero advances left after settling everything
+    // never appears here (the loader's `.gt("outstanding_php", 0)` keeps
+    // this table to open balances only), but the view's `oldest_advance_date`
+    // is still typed nullable — sink a null to the bottom either direction.
+    const ad = a.oldest_advance_date;
+    const bd = b.oldest_advance_date;
+    if (ad === null && bd === null) cmp = 0;
+    else if (ad === null) return 1;
+    else if (bd === null) return -1;
+    else cmp = dirMul * ad.localeCompare(bd);
+  } else {
+    switch (sort.key) {
+      case "staff":
+        cmp = dirMul * a.full_name.localeCompare(b.full_name);
+        break;
+      case "role":
+        cmp = dirMul * a.role.localeCompare(b.role);
+        break;
+      case "advances":
+        cmp = dirMul * (a.advance_count - b.advance_count);
+        break;
+      case "outstanding":
+        // Typed nullable, but the `.gt("outstanding_php", 0)` filter this
+        // loader applies means every row here already has a positive value —
+        // `?? 0` is a type-safe fallback, not a real null-last rule.
+        cmp = dirMul * ((a.outstanding_php ?? 0) - (b.outstanding_php ?? 0));
+        break;
+      default:
+        cmp = 0;
+    }
+  }
+
+  return cmp !== 0 ? cmp : a.staff_id.localeCompare(b.staff_id);
 }
 
 export async function loadStaffAdvances(

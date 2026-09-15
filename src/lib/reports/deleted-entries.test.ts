@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  compareDeletedEntries,
   DELETED_ENTRIES_CSV_HEADER,
+  DELETED_ENTRIES_DEFAULT_SORT,
   deletedEntriesCsvFilename,
   deletedEntriesCsvHref,
   deletedEntriesCsvRows,
@@ -8,6 +10,7 @@ import {
   parseDeletedEntriesParams,
   summariseDeletedEntries,
   type AuditRow,
+  type DeletedEntry,
   type TestRequestRow,
   type VisitRow,
 } from "./deleted-entries";
@@ -100,5 +103,116 @@ describe("href / filename", () => {
   it("carries the range", () => {
     expect(deletedEntriesCsvHref(p)).toBe("/api/admin/reports/deleted-entries.csv?start=2026-06-10&end=2026-09-08");
     expect(deletedEntriesCsvFilename(p)).toBe("deleted-entries-2026-06-10_2026-09-08.csv");
+  });
+});
+
+describe("compareDeletedEntries", () => {
+  const base: DeletedEntry = {
+    id: 1,
+    createdAt: "2026-09-01T00:00:00Z",
+    isDelete: true,
+    isVisit: true,
+    patient: { first_name: "Ana", last_name: "Cruz", drm_id: "DRM-1" },
+    visitNumber: "0042",
+    visitHref: "/staff/visits/v1",
+    activeTestCount: 3,
+    serviceName: null,
+    serviceCode: null,
+    isPackageHeader: false,
+    actorName: "Admin One",
+    reason: "duplicate entry",
+    amount: 1500,
+    currentlyDeleted: true,
+  };
+  function entry(overrides: Partial<DeletedEntry>): DeletedEntry {
+    return { ...base, ...overrides };
+  }
+
+  it("defaults to most-recent-first on `when`, tie-broken by the numeric audit_log id", () => {
+    const older = entry({ id: 5, createdAt: "2026-09-01T00:00:00Z" });
+    const newer = entry({ id: 2, createdAt: "2026-09-02T00:00:00Z" });
+    const sorted = [older, newer].sort((a, b) =>
+      compareDeletedEntries(a, b, DELETED_ENTRIES_DEFAULT_SORT),
+    );
+    expect(sorted.map((e) => e.id)).toEqual([2, 5]);
+
+    // Same timestamp -> falls through to the id tie-break. audit_log.id is a
+    // number here, unlike the uuid ids everywhere else in this batch, so the
+    // tie-break must be arithmetic, not localeCompare.
+    const sameTimeHigh = entry({ id: 9, createdAt: "2026-09-01T00:00:00Z" });
+    const sameTimeLow = entry({ id: 3, createdAt: "2026-09-01T00:00:00Z" });
+    expect(
+      compareDeletedEntries(sameTimeHigh, sameTimeLow, DELETED_ENTRIES_DEFAULT_SORT),
+    ).toBeGreaterThan(0);
+  });
+
+  it("`event` puts deletes ahead of restores when descending, and flips when ascending", () => {
+    const del = entry({ id: 1, isDelete: true });
+    const restore = entry({ id: 2, isDelete: false });
+    expect(compareDeletedEntries(del, restore, { key: "event", dir: "desc" })).toBeLessThan(0);
+    expect(compareDeletedEntries(del, restore, { key: "event", dir: "asc" })).toBeGreaterThan(0);
+  });
+
+  it("`patient` sorts by last, first and sinks a missing patient regardless of direction", () => {
+    const withPatient = entry({
+      id: 1,
+      patient: { first_name: "Ben", last_name: "Dy", drm_id: "DRM-2" },
+    });
+    const noPatient = entry({ id: 2, patient: null });
+    expect(compareDeletedEntries(withPatient, noPatient, { key: "patient", dir: "asc" })).toBeLessThan(0);
+    expect(compareDeletedEntries(withPatient, noPatient, { key: "patient", dir: "desc" })).toBeLessThan(0);
+  });
+
+  it("`visit` compares visit numbers as text (never Number()) and sinks a missing one", () => {
+    // "H-1001" alongside "0042" is exactly the historical-import mix prod
+    // carries — Number() on the former is NaN, which would silently disable
+    // this comparator's id tie-break.
+    const historical = entry({ id: 1, visitNumber: "H-1001" });
+    const numeric = entry({ id: 2, visitNumber: "0042" });
+    const noVisit = entry({ id: 3, visitNumber: null });
+    expect(compareDeletedEntries(historical, numeric, { key: "visit", dir: "asc" })).toBe(
+      "H-1001".localeCompare("0042"),
+    );
+    expect(compareDeletedEntries(numeric, noVisit, { key: "visit", dir: "desc" })).toBeLessThan(0);
+  });
+
+  it('`what` reads "Entire visit" for a visit delete and the service name otherwise, null last', () => {
+    const visitDelete = entry({ id: 1, isVisit: true, serviceName: null });
+    const testDelete = entry({ id: 2, isVisit: false, serviceName: "CBC" });
+    const unknownService = entry({ id: 3, isVisit: false, serviceName: null });
+    expect(
+      compareDeletedEntries(testDelete, visitDelete, { key: "what", dir: "asc" }),
+    ).toBeLessThan(0); // "CBC" < "Entire visit"
+    expect(
+      compareDeletedEntries(visitDelete, unknownService, { key: "what", dir: "asc" }),
+    ).toBeLessThan(0); // a resolved value always beats a null one
+  });
+
+  it("`by` sinks an unresolved actor regardless of direction", () => {
+    const named = entry({ id: 1, actorName: "Admin One" });
+    const unresolved = entry({ id: 2, actorName: null });
+    expect(compareDeletedEntries(named, unresolved, { key: "by", dir: "desc" })).toBeLessThan(0);
+    expect(compareDeletedEntries(named, unresolved, { key: "by", dir: "asc" })).toBeLessThan(0);
+  });
+
+  it("`amount` compares numerically and sinks a null amount regardless of direction", () => {
+    const small = entry({ id: 1, amount: 100 });
+    const large = entry({ id: 2, amount: 1500 });
+    const noAmount = entry({ id: 3, amount: null });
+    expect(compareDeletedEntries(small, large, { key: "amount", dir: "asc" })).toBeLessThan(0);
+    expect(compareDeletedEntries(large, small, { key: "amount", dir: "desc" })).toBeLessThan(0);
+    expect(compareDeletedEntries(small, noAmount, { key: "amount", dir: "asc" })).toBeLessThan(0);
+    expect(compareDeletedEntries(small, noAmount, { key: "amount", dir: "desc" })).toBeLessThan(0);
+  });
+
+  it("`outcome` puts still-deleted rows ahead of restored ones when descending", () => {
+    const stillDeleted = entry({ id: 1, currentlyDeleted: true });
+    const backInQueue = entry({ id: 2, currentlyDeleted: false });
+    expect(
+      compareDeletedEntries(stillDeleted, backInQueue, { key: "outcome", dir: "desc" }),
+    ).toBeLessThan(0);
+    expect(
+      compareDeletedEntries(stillDeleted, backInQueue, { key: "outcome", dir: "asc" }),
+    ).toBeGreaterThan(0);
   });
 });

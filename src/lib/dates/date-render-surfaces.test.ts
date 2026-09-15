@@ -116,12 +116,6 @@ const INLINE_FORMAT_FILES: Record<string, string> = {
     "house date + time, built inline",
   "src/app/(staff)/staff/(dashboard)/services/[id]/edit/page.tsx":
     "house date + time, built inline",
-  "src/app/(staff)/staff/(dashboard)/admin/reports/deleted-entries/page.tsx":
-    "house date + time, built inline",
-  "src/app/(staff)/staff/(dashboard)/admin/reports/undone-releases/page.tsx":
-    "house date + time, built inline",
-  "src/app/(staff)/staff/(dashboard)/admin/reports/patients-without-consent/page.tsx":
-    "house date, built inline",
   "src/app/(staff)/staff/(dashboard)/admin/seo/page.tsx": "house date + time, built inline",
 };
 
