@@ -256,6 +256,13 @@ export type Database = {
             referencedRelation: "patients"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "appointment_attachments_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "v_patients_directory"
+            referencedColumns: ["id"]
+          },
         ]
       }
       appointments: {
@@ -313,6 +320,13 @@ export type Database = {
             columns: ["patient_id"]
             isOneToOne: false
             referencedRelation: "patients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "appointments_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "v_patients_directory"
             referencedColumns: ["id"]
           },
           {
@@ -391,6 +405,13 @@ export type Database = {
             columns: ["patient_id"]
             isOneToOne: false
             referencedRelation: "patients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "audit_log_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "v_patients_directory"
             referencedColumns: ["id"]
           },
         ]
@@ -1342,6 +1363,13 @@ export type Database = {
             columns: ["patient_id"]
             isOneToOne: false
             referencedRelation: "patients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "critical_alerts_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "v_patients_directory"
             referencedColumns: ["id"]
           },
           {
@@ -3235,6 +3263,13 @@ export type Database = {
             referencedRelation: "patients"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "patient_consents_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "v_patients_directory"
+            referencedColumns: ["id"]
+          },
         ]
       }
       patient_merges: {
@@ -3280,10 +3315,24 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "patient_merges_keep_id_fkey"
+            columns: ["keep_id"]
+            isOneToOne: false
+            referencedRelation: "v_patients_directory"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "patient_merges_source_id_fkey"
             columns: ["source_id"]
             isOneToOne: false
             referencedRelation: "patients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "patient_merges_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: false
+            referencedRelation: "v_patients_directory"
             referencedColumns: ["id"]
           },
         ]
@@ -3401,6 +3450,13 @@ export type Database = {
             columns: ["merged_into_id"]
             isOneToOne: false
             referencedRelation: "patients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "patients_merged_into_id_fkey"
+            columns: ["merged_into_id"]
+            isOneToOne: false
+            referencedRelation: "v_patients_directory"
             referencedColumns: ["id"]
           },
           {
@@ -5853,6 +5909,13 @@ export type Database = {
             referencedRelation: "patients"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "visits_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "v_patients_directory"
+            referencedColumns: ["id"]
+          },
         ]
       }
     }
@@ -6155,6 +6218,31 @@ export type Database = {
         }
         Relationships: []
       }
+      v_patients_directory: {
+        Row: {
+          created_at: string | null
+          drm_id: string | null
+          email: string | null
+          first_name: string | null
+          id: string | null
+          last_name: string | null
+          last_visit_date: string | null
+          middle_name: string | null
+          phone: string | null
+          pre_registered: boolean | null
+          referral_source: string | null
+          referral_source_label: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "patients_referral_source_fk"
+            columns: ["referral_source"]
+            isOneToOne: false
+            referencedRelation: "referral_sources"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       v_staff_advances_outstanding: {
         Row: {
           advance_count: number | null
@@ -6326,10 +6414,6 @@ export type Database = {
       }
       resolve_revenue_account: {
         Args: { p_service_kind: string }
-        Returns: string
-      }
-      reverse_petty_cash_entry: {
-        Args: { p_actor: string; p_je_id: string; p_reason: string }
         Returns: string
       }
       set_patient_context: {

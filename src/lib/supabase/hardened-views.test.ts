@@ -50,6 +50,15 @@ const HARDENED: Record<string, string> = {
   // it, which is exactly when the option is easiest to drop. Registered here so
   // the next recreation cannot lose it silently.
   v_ops_daily_doctor: "0136",
+  // Same shape, four migrations later. These carry security_invoker inline from
+  // 0093/0095/0097 and had gone unregistered ever since, so the guard covered
+  // v_ops_daily_doctor and none of its four siblings — a gap 0146 found by
+  // recreating all five to add the soft-delete filters. Registered together so
+  // the next author cannot recreate one of them and lose the option quietly.
+  v_ops_daily_channel: "0146",
+  v_ops_daily_totals: "0146",
+  v_ops_daily_collections: "0146",
+  v_ops_daily_hmo_provider_ar: "0146",
 };
 
 const migrations = readdirSync(MIGRATIONS_DIR)
@@ -85,7 +94,11 @@ describe("hardened views keep security_invoker", () => {
       "v_hmo_stuck",
       "v_hmo_unbilled",
       "v_inventory_balances",
+      "v_ops_daily_channel",
+      "v_ops_daily_collections",
       "v_ops_daily_doctor",
+      "v_ops_daily_hmo_provider_ar",
+      "v_ops_daily_totals",
       "v_staff_advances_outstanding",
     ]);
   });
@@ -106,10 +119,13 @@ describe("hardened views keep security_invoker", () => {
 
 describe("the guard itself", () => {
   it("finds the redefinitions that really are in the tree", () => {
-    // v_hmo_unbilled was recreated in 0034, 0080, 0081 and 0082 — if this stops
-    // matching, the regex has drifted and every test above passes vacuously.
+    // v_hmo_unbilled was recreated in 0034, 0080, 0081, 0082 and 0146 — if this
+    // stops matching, the regex has drifted and every test above passes
+    // vacuously. 0146 is the first entry here written AFTER the view was
+    // hardened, so it is also the first one whose WITH clause the loop above is
+    // actually checking rather than skipping.
     const hits = migrations.filter((m) => redefinitionsOf(m.sql, "v_hmo_unbilled").length > 0);
-    expect(hits.map((m) => m.number)).toEqual(["0034", "0080", "0081", "0082"]);
+    expect(hits.map((m) => m.number)).toEqual(["0034", "0080", "0081", "0082", "0146"]);
   });
 
   it("treats a redefinition that omits the option as an offender", () => {
