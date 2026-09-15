@@ -3,6 +3,7 @@ import { headers } from "next/headers";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { loadPayslipData } from "@/lib/payroll/payslip-pdf";
+import { payslipVisibleToStaff } from "@/lib/payroll/payslip-visibility";
 import { audit } from "@/lib/audit/log";
 import { reportError } from "@/lib/observability/report-error";
 import { hasRecentAudit } from "@/lib/server/action-helpers";
@@ -18,6 +19,11 @@ export default async function PayslipDetailPage({
 }) {
   const session = await requireActiveStaff();
   const { id: employeeRunId } = await params;
+  // RLS trap: `payroll_runs` has exactly one policy (admin-only), so a
+  // non-admin staff user cannot SELECT it directly or through an embed.
+  // Keep the admin client here — swapping in the RLS-scoped server client
+  // would make the `payroll_runs!inner(...)` embed below return zero rows
+  // for every non-admin and break this page outright, not merely leak less.
   const admin = createAdminClient();
 
   // 1. Authorize. Own payslip OR admin. Anything else → notFound() so we
@@ -25,7 +31,7 @@ export default async function PayslipDetailPage({
   const { data: er, error: erErr } = await admin
     .from("payroll_employee_runs")
     .select(
-      "id, employee_id, payslip_file_path, run_id, employees!inner(staff_profile_id)",
+      "id, employee_id, payslip_file_path, run_id, employees!inner(staff_profile_id), payroll_runs!inner(status)",
     )
     .eq("id", employeeRunId)
     .maybeSingle();
@@ -40,10 +46,26 @@ export default async function PayslipDetailPage({
     notFound();
   }
 
+  // A payslip is visible to staff only once its run is finalised or paid
+  // (see payslip-visibility.ts). Admin is exempt — they may legitimately
+  // need to inspect a draft/computed run's in-progress numbers (debugging a
+  // wrong figure before finalise). A non-admin hitting this route for their
+  // own not-yet-finalised run gets the same notFound() as one they don't
+  // own at all, so we don't leak "this payslip exists but isn't ready".
+  const runStatus = (er.payroll_runs as { status: string }).status;
+  if (!isAdmin && !payslipVisibleToStaff(runStatus)) {
+    notFound();
+  }
+
   // 2. Load full detail data via the shared loader (same shape as the PDF).
+  // Admin may be inspecting a draft/computed run (see gate above), so pass
+  // allowNonFinalisedRun for admin viewers — the loader's own default is to
+  // require a finalised run, matching the non-admin path we already gated.
   let data;
   try {
-    data = await loadPayslipData(admin, employeeRunId);
+    data = await loadPayslipData(admin, employeeRunId, {
+      allowNonFinalisedRun: isAdmin,
+    });
   } catch (err) {
     // Malformed/missing joins — treat as not found rather than crash. Report
     // to Sentry so production 500s don't silently become 404s.
