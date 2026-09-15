@@ -3,7 +3,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ConsentGateToggle } from "./client";
 
-export const metadata = { title: "Consent gate — staff" };
+export const metadata = { title: "Consent Gate — staff" };
 export const dynamic = "force-dynamic";
 
 export default async function ConsentGateSettingsPage() {

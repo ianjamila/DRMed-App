@@ -2,7 +2,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { PaymentRoutingClient } from "./payment-routing-client";
 
-export const metadata = { title: "Payment routing — staff" };
+export const metadata = { title: "Payment Routing — staff" };
 export const dynamic = "force-dynamic";
 
 export default async function PaymentRoutingPage() {
@@ -28,7 +28,7 @@ export default async function PaymentRoutingPage() {
             Phase 12.2 · Admin
           </p>
           <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            Payment routing
+            Payment Routing
           </h1>
           <p className="mt-2 max-w-xl text-sm text-[color:var(--color-brand-text-soft)]">
             Each payment method routes its cash side of the journal entry to one

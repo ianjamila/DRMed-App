@@ -9,7 +9,7 @@ import { PettyCashDatePicker } from "./petty-cash-date-picker";
 import { PettyCashForm } from "./petty-cash-form";
 import { PettyCashList, type PettyCashRow } from "./petty-cash-list";
 
-export const metadata = { title: "Petty cash" };
+export const metadata = { title: "Petty Cash — staff" };
 export const dynamic = "force-dynamic";
 
 interface SearchParams {
@@ -83,7 +83,7 @@ export default async function PettyCashPage({
     <div className="px-4 py-8 sm:px-6 lg:px-8">
       <PaymentsTabs />
       <PageHeader
-        title="Petty cash"
+        title="Petty Cash"
         subtitle="Log small cash expenses paid from the till — transport, courier, office or lab supplies, minor repairs. Each entry comes straight out of the drawer, so the day's expected cash drops by the same amount and the count still ties. For anything paid by GCash, bank transfer, or a vendor invoice, ask admin."
       />
 

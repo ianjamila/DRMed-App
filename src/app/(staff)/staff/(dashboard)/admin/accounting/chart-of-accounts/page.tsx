@@ -3,7 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { CoaListClient } from "./coa-list-client";
 
-export const metadata = { title: "Chart of accounts — staff" };
+export const metadata = { title: "Chart of Accounts — staff" };
 export const dynamic = "force-dynamic";
 
 const TYPE_ORDER: Record<string, number> = {
@@ -51,7 +51,7 @@ export default async function ChartOfAccountsPage() {
             Phase 12.1 · Admin
           </p>
           <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            Chart of accounts
+            Chart of Accounts
           </h1>
           <p className="mt-2 max-w-xl text-sm text-[color:var(--color-brand-text-soft)]">
             The general-ledger account list. Accounts are append-only — codes

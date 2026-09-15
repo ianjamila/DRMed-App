@@ -20,7 +20,7 @@ import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 
 export const metadata = {
-  title: "Critical alerts — staff",
+  title: "Critical Alerts — staff",
 };
 
 const BASE_PATH = "/staff/critical-alerts";
@@ -95,7 +95,7 @@ export default async function CriticalAlertsPage({ searchParams }: SearchProps) 
     return (
       <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6 lg:px-8">
         <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Critical alerts
+          Critical Alerts
         </h1>
         <p className="mt-2 text-sm text-[color:var(--color-brand-text-mid)]">
           This page is for pathologists and admins — critical-value follow-up
@@ -194,7 +194,7 @@ export default async function CriticalAlertsPage({ searchParams }: SearchProps) 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
       <PageHeader
-        title="Critical alerts"
+        title="Critical Alerts"
         subtitle="Results that crossed a critical threshold. Acknowledge each after the clinical follow-up call — acknowledgement is audit-logged."
       />
 

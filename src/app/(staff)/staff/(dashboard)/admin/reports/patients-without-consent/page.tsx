@@ -13,7 +13,7 @@ import {
   PRE_REGISTERED_BADGE_CLASS,
 } from "@/lib/patients/labels";
 
-export const metadata = { title: "Patients without consent — staff" };
+export const metadata = { title: "Patients Without Consent — staff" };
 export const dynamic = "force-dynamic";
 
 // M15: how many patients this page RENDERS. This used to also be the ceiling
@@ -61,7 +61,7 @@ export default async function PatientsWithoutConsentPage() {
       </Link>
       <header className="mt-3">
         <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Patients without consent
+          Patients Without Consent
         </h1>
         <p className="mt-1 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
           Active patients with no data-privacy consent on file (RA 10173). Once

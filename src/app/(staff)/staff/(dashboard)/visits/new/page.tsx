@@ -11,7 +11,7 @@ import { VisitsTabs } from "../_components/visits-tabs";
 import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
-  title: "New visit — staff",
+  title: "New Visit — staff",
 };
 
 interface Props {
@@ -101,7 +101,7 @@ export default async function NewVisitPage({ searchParams }: Props) {
         ← Patient
       </Link>
       <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-        New visit
+        New Visit
       </h1>
       <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
         Visit number is auto-generated. PIN will be shown on the printed
@@ -193,7 +193,7 @@ async function PatientPicker({ query }: { query: string }) {
       <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            New visit
+            New Visit
           </h1>
           <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
             Pick the patient this visit is for, or register a new one.

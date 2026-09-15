@@ -2,7 +2,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { CashRoutingClient } from "./cash-routing-client";
 
-export const metadata = { title: "Cash routing — staff" };
+export const metadata = { title: "Cash Routing — staff" };
 export const dynamic = "force-dynamic";
 
 export default async function CashRoutingPage() {
@@ -30,7 +30,7 @@ export default async function CashRoutingPage() {
           Phase 12.C · Admin
         </p>
         <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Cash routing
+          Cash Routing
         </h1>
         <p className="mt-2 max-w-xl text-sm text-[color:var(--color-brand-text-soft)]">
           Each cash adjustment kind routes the non-cash side of the journal entry to one

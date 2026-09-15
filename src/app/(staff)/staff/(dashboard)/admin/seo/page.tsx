@@ -7,7 +7,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { REVIEW_AUDIT_ACTION } from "@/lib/seo/review";
 import { ResubmitIndexNowButton } from "./resubmit-button";
 
-export const metadata = { title: "Search engines (IndexNow) — staff" };
+export const metadata = { title: "Search Engines (IndexNow) — staff" };
 export const dynamic = "force-dynamic";
 
 export default async function IndexNowAdminPage() {
@@ -62,7 +62,7 @@ export default async function IndexNowAdminPage() {
           ← Dashboard
         </Link>
         <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Search engines (IndexNow)
+          Search Engines (IndexNow)
         </h1>
         <p className="mt-1 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
           When a doctor or service is added or changed, the affected pages are

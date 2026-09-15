@@ -7,7 +7,7 @@ import type { Database } from "@/types/database";
 type UnbilledRow = Database["public"]["Views"]["v_hmo_unbilled"]["Row"];
 type StuckRow = Database["public"]["Views"]["v_hmo_stuck"]["Row"];
 
-export const metadata = { title: "HMO claims — staff" };
+export const metadata = { title: "HMO Claims — staff" };
 export const dynamic = "force-dynamic";
 
 export default async function HmoClaimsIndexPage() {
@@ -70,7 +70,7 @@ export default async function HmoClaimsIndexPage() {
           Phase 12.3 · Admin
         </p>
         <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          HMO claims
+          HMO Claims
         </h1>
         <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
           Per-provider HMO accounts receivable with unbilled / aging

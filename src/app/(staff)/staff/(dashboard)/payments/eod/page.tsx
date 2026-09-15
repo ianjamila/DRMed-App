@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { EodClient } from "./eod-client";
 
-export const metadata = { title: "End of day — staff" };
+export const metadata = { title: "End of Day — staff" };
 export const dynamic = "force-dynamic";
 
 interface SearchParams { date?: string; shift?: string }

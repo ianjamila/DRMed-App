@@ -7,7 +7,7 @@ import { StatementTabs } from "./_components/statement-tabs";
 import { PeriodPresets } from "./_components/period-presets";
 import { priorYearRange } from "@/lib/reports/period-presets";
 
-export const metadata = { title: "Financial statements — staff" };
+export const metadata = { title: "Financial Statements — staff" };
 export const dynamic = "force-dynamic";
 
 const PHP = new Intl.NumberFormat("en-PH", {
@@ -198,7 +198,7 @@ export default async function FinancialStatementsPage({ searchParams }: SearchPr
           ← Dashboard
         </Link>
         <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Financial statements
+          Financial Statements
         </h1>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
           Income statement computed from posted journal entries with{" "}

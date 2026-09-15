@@ -11,7 +11,7 @@ import {
   parseDeletedEntriesParams,
 } from "@/lib/reports/deleted-entries";
 
-export const metadata = { title: "Deleted queue entries — staff" };
+export const metadata = { title: "Deleted Queue Entries — staff" };
 export const dynamic = "force-dynamic";
 
 interface SearchProps {
@@ -51,7 +51,7 @@ export default async function DeletedEntriesPage({ searchParams }: SearchProps) 
       </Link>
       <header className="mt-3">
         <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Deleted queue entries
+          Deleted Queue Entries
         </h1>
         <p className="mt-1 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
           Every visit or test deleted from the queues — who deleted it, why,

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-export const metadata = { title: "Bank reconciliation — staff" };
+export const metadata = { title: "Bank Reconciliation — staff" };
 export const dynamic = "force-dynamic";
 
 const PHP = new Intl.NumberFormat("en-PH", {
@@ -53,7 +53,7 @@ export default async function BankRecPage() {
       <header className="mt-3 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            Bank reconciliation
+            Bank Reconciliation
           </h1>
           <p className="mt-1 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
             Upload a bank statement (CSV), and the system auto-matches each

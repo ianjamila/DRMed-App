@@ -4,7 +4,7 @@ import { ImportPatientsForm } from "./import-form";
 import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
-  title: "Import patients — staff",
+  title: "Import Patients — staff",
 };
 
 export default async function ImportPatientsPage() {
@@ -18,7 +18,7 @@ export default async function ImportPatientsPage() {
         ← Dashboard
       </Link>
       <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-        Import patients
+        Import Patients
       </h1>
       <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-mid)]">
         One-time migration tool. Paste a CSV exported from your existing

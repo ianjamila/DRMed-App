@@ -440,7 +440,7 @@
         <tr><td colspan="6"><b>Hidden Tabs</b> (Admin only; parked pages: Sell Gift Code · Refund Gift Code Sale · Registration Link · Sign-off · Patient Receivables (Aging))</td></tr>
       </tbody>
     </table></div>
-    <div class="note tip"><span class="k">Shortcut</span><div><p>The <kbd class="ui">+ New visit</kbd> button at the top of the Reception Queue opens the New visit screen. It is the fastest way to start a walk-in.</p></div></div>
+    <div class="note tip"><span class="k">Shortcut</span><div><p>The <kbd class="ui">+ New visit</kbd> button at the top of the Reception Queue opens the New Visit screen. It is the fastest way to start a walk-in.</p></div></div>
 
     <div class="note why"><span class="k">Sorting and paging, on every list</span><div>
       <p>Wherever the app shows a list of records, the same two controls work the same way. <b>Click a column heading to sort by it; click it again to reverse the order.</b> A small arrow marks the column currently in use. At the bottom, <b>Rows</b> picks how many rows a page holds (5 / 10 / 25 / 50 / 100) and the line beside it reads, for example, <q>Showing 1–25 of 300 services</q> — so you always know how many records matched, not just how many you can see.</p>
@@ -448,7 +448,7 @@
       <p>Two things are worth knowing about the columns. A heading with no arrow on hover cannot be sorted, and that is deliberate: it usually means the column is worked out after the rows are fetched — <b>Tests</b> on Visit Records, <b>Type (DR)</b> and <b>Amount</b> on Journal Entries, <b>Recipient</b>, <b>Email</b> and <b>Status</b> on Emails Sent, <b>Patient</b> on the Lab queue and Results. And on <b>HMO Claims</b> the sort and rows-per-page are not kept in the address bar the way they are elsewhere, because that screen loads its rows once and keeps your ticked checkboxes while you page.</p>
       <p>Sorting and the row count live in the address bar, so a sorted list can be bookmarked or pasted to a colleague and it opens the same way for them. Changing a filter, a sort or the rows-per-page always returns you to page 1, so you are never left staring at an empty page 7 of a list that just got shorter. Switching a tab or a filter chip keeps the sort you chose — the columns are the same, only the set is narrower.</p>
       <div class="note warn"><span class="k">Two search boxes only look at the page in front of you</span><div><p>On the <b>Lab queue</b> and on <b>Results</b>, the free-text search box narrows the rows already on screen rather than searching the whole table — a patient on page 3 will not be found from page 1. Both screens say so above the table when it matters. The date range, the tab, and the Lab queue's <b>Visit #</b> box are real searches over everything, so use those to narrow the set first.</p></div></div>
-      <p><b>Two lists deliberately have no pager:</b> <b>Pay Doctors › Ready to pay</b> and <b>Waiting on insurance</b> show every doctor at once, because a doctor who is owed money must never be hidden behind a <q>next page</q> on payout day. Critical alerts that nobody has acknowledged are shown in full for the same reason.</p>
+      <p><b>Two lists deliberately have no pager:</b> <b>Pay Doctors › Ready to pay</b> and <b>Waiting on insurance</b> show every doctor at once, because a doctor who is owed money must never be hidden behind a <q>next page</q> on payout day. Critical Alerts that nobody has acknowledged are shown in full for the same reason.</p>
     </div></div>
   </section>
 
@@ -465,7 +465,7 @@
   <div class="chapter-num">Chapter 3</div>
   <h2>Reception</h2>
   <div class="strip"><span class="pill reception">Reception</span><span class="pill admin">Admin</span><span><b>Where:</b> the <b>Front Desk</b> and <b>Billing</b> groups of the sidebar</span></div>
-  <p class="intro">Reception is the front door and the cashier. Almost every patient touches your screens twice: on arrival, to register and pay, and again when they come back for their result. The centre of your day is the <b>Reception Queue</b>; the screen you will use most carefully is <b>New visit</b>. Results themselves are released by the lab team, not by reception (3.8).</p>
+  <p class="intro">Reception is the front door and the cashier. Almost every patient touches your screens twice: on arrival, to register and pay, and again when they come back for their result. The centre of your day is the <b>Reception Queue</b>; the screen you will use most carefully is <b>New Visit</b>. Results themselves are released by the lab team, not by reception (3.8).</p>
 
   <!-- 3.1 -->
   <section class="sub" id="rec-before">
@@ -483,7 +483,7 @@
     <ol class="steps">
       <li><p class="step-title">Work the <span class="tab">Pending callback</span> section first thing.</p><p>Call the patient, agree the time, and confirm the booking.</p></li>
       <li><p class="step-title">When a booked patient walks in, click <kbd class="ui">Mark arrived</kbd> on their row.</p><p>Only a confirmed booking can be marked arrived. Grouped multi-service bookings show one button for all of them.</p></li>
-      <li><p class="step-title">Click <kbd class="ui">+ Start visit</kbd>.</p><p>It opens New visit with the patient already picked. The button appears only after <q>arrived</q> and only if the booking has a patient record. A walk-in booking taken by phone has no record yet, so register the patient first (3.2) and start the visit from their page.</p><p>When you save the visit, the appointment moves to <span class="status">Completed</span> on its own — and so do the others in the same multi-service booking. Nothing else marks an appointment done, so always start the visit from the appointment row rather than from the patient's page when there is a booking: that is what keeps the <b>Walk-ins waiting</b> count on your dashboard honest.</p></li>
+      <li><p class="step-title">Click <kbd class="ui">+ Start visit</kbd>.</p><p>It opens New Visit with the patient already picked. The button appears only after <q>arrived</q> and only if the booking has a patient record. A walk-in booking taken by phone has no record yet, so register the patient first (3.2) and start the visit from their page.</p><p>When you save the visit, the appointment moves to <span class="status">Completed</span> on its own — and so do the others in the same multi-service booking. Nothing else marks an appointment done, so always start the visit from the appointment row rather than from the patient's page when there is a booking: that is what keeps the <b>Walk-ins waiting</b> count on your dashboard honest.</p></li>
     </ol>
 
     <h4>Taking a booking by phone</h4>
@@ -593,7 +593,7 @@
       <li><p class="step-title">Click <kbd class="ui">Record payment</kbd>.</p><p>The visit flips to <span class="status">paid</span> the moment the balance reaches zero. The lab bench sees the tests immediately; nothing else needs clicking.</p></li>
     </ol>
     <h4>HMO visits</h4>
-    <p>The HMO is chosen when the visit is created, not here. New visit has two optional fieldsets, <b>Lab &amp; Services HMO</b> and <b>Doctor / PF HMO</b>, each starting at <q>— Cash / no HMO —</q>, with an <b>Approval date</b> and <b>Authorization no.</b> beside them. There is no HMO option on the payment form. The patient still pays any co-pay or non-covered line at the counter in the normal way.</p>
+    <p>The HMO is chosen when the visit is created, not here. New Visit has two optional fieldsets, <b>Lab &amp; Services HMO</b> and <b>Doctor / PF HMO</b>, each starting at <q>— Cash / no HMO —</q>, with an <b>Approval date</b> and <b>Authorization no.</b> beside them. There is no HMO option on the payment form. The patient still pays any co-pay or non-covered line at the counter in the normal way.</p>
     <p>An HMO-billed visit clears both gates the moment it is created: the lab can run the tests, and since the September 2026 release it can also release the result. Releasing is what books the claim as a receivable, which is why it no longer waits for the money. Admin records the settlement months later under <kbd class="ui">HMO Claims</kbd>.</p>
     <div class="note stop"><span class="k">Never waive an HMO balance</span><div><p>The visit keeps its <span class="status">unpaid</span> status until the HMO settles, and Admin's <kbd class="ui">Waive balance</kbd> button is still offered on it. That balance is money the HMO owes, not money the clinic decided not to collect: waiving it writes off a real receivable and the claim disappears from the books. Leave it alone.</p></div></div>
     <p>One thing to expect at the counter: the Reception Queue's <span class="tab">Waiting for payment</span> stage goes by payment status alone, so an HMO visit sits on that tab while the lab is already working on it. Read the row, not the tab.</p>
@@ -612,7 +612,7 @@
     <div class="screen"><div class="where">Sidebar › Front Desk › <kbd class="ui">Reception Queue</kbd> · <code class="route">/staff/visits/queue</code></div>
       <dl><dt>Stages</dt><dd><span class="tab">Waiting for payment</span> · <span class="tab">Processing</span> · <span class="tab">Completed</span></dd>
       <dt>Row actions</dt><dd><kbd class="ui">Record payment</kbd> · <kbd class="ui">Open visit</kbd> · <kbd class="ui">Print billing</kbd></dd>
-      <dt>Page action</dt><dd><kbd class="ui">+ New visit</kbd>, top right — opens the New visit form for the patient at the counter. It also appears in the middle of the page when today's <span class="tab">Waiting for payment</span> stage is empty.</dd></dl></div>
+      <dt>Page action</dt><dd><kbd class="ui">+ New visit</kbd>, top right — opens the New Visit form for the patient at the counter. It also appears in the middle of the page when today's <span class="tab">Waiting for payment</span> stage is empty.</dd></dl></div>
     <p>This is today's worklist. It updates on its own as payments land and tests finish.</p>
     <dl class="defs">
       <dt>Waiting for payment</dt><dd>Visits created but not yet paid, so the lab cannot see them. Collect and <kbd class="ui">Record payment</kbd>. The one exception is an HMO-billed visit: its balance is owed by the HMO, so it stays on this tab while the lab is already running the tests (3.6).</dd>
@@ -644,7 +644,7 @@
   <section class="sub" id="rec-fix">
     <h3>3.9 Fix-ups on the visit page</h3>
     <dl class="defs">
-      <dt>Wrong test billed, not yet paid</dt><dd><kbd class="ui">Delete</kbd> the visit and give a reason, then create it again correctly. Nothing is billed for a deleted visit; it moves to <b>Deleted entries</b> and to Admin's <b>Deleted queue entries</b> report, and <kbd class="ui">Restore</kbd> brings it back. Removing a single line instead of the whole visit needs Admin, who can see the lines. Once any payment is recorded, deletion is no longer possible: void the payment first.</dd>
+      <dt>Wrong test billed, not yet paid</dt><dd><kbd class="ui">Delete</kbd> the visit and give a reason, then create it again correctly. Nothing is billed for a deleted visit; it moves to <b>Deleted entries</b> and to Admin's <b>Deleted Queue Entries</b> report, and <kbd class="ui">Restore</kbd> brings it back. Removing a single line instead of the whole visit needs Admin, who can see the lines. Once any payment is recorded, deletion is no longer possible: void the payment first.</dd>
       <dt>Patient lost the receipt / PIN</dt><dd>Open the patient's page, <kbd class="ui">Re-issue PIN</kbd>. A fresh 60-day PIN for their latest visit prints on a <b>Patient portal access</b> slip, replacing that visit's PIN in place. If the patient also has an older, separate visit whose PIN hasn't expired yet, that one still works — remind them to destroy any old receipts too. (The visit page's <kbd class="ui">Issue portal PIN</kbd> appears only on consult-only visits, which never had a receipt.)</dd>
       <dt>Forgot the doctor</dt><dd><b>Attending physician</b> section → <kbd class="ui">Assign physician</kbd> (or <kbd class="ui">Change</kbd>).</dd>
       <dt>Result needs correcting after release</dt><dd>Tell the lab. They undo the release, amend with a reason, and release again (4.7). If the patient had already opened it, phone them.</dd>
@@ -673,16 +673,16 @@
       <li><p class="step-title">Click <kbd class="ui">Close day</kbd>, then print the <b>End-of-day cash count</b> sheet and sign it (<b>Counted by</b> / <b>Witness</b>).</p></li>
     </ol>
     <div class="note why"><span class="k">&ldquo;Supplier bill paid&rdquo; rows you did not record</span><div><p>If Admin pays a supplier bill in cash, that money comes out of this same drawer, so the entry appears here as <b>Supplier bill paid</b> and <b>Cash paid out</b> shows an <i>of which supplier bills paid in cash</i> line beneath it. Nobody at reception recorded it, and that is expected &mdash; it is there so the drawer still ties at closing time. There is no <kbd class="ui">Void</kbd> on those rows: undoing one has to happen on the payment itself (Admin &rsaquo; <b>Expenses</b> &rsaquo; <span class="tab">Bill payments</span>), which puts the money back in the drawer and reverses the accounting together.</p></div></div>
-    <h4>Petty cash</h4>
+    <h4>Petty Cash</h4>
     <p>Sidebar › Billing › <kbd class="ui">Cash Drawer</kbd> › tab <span class="tab">Petty Cash</span>. Record a small purchase: <b>Date</b>, <b>What was it for?</b> (Office Supplies, Lab Supplies, Maintenance &amp; Repair, Travel, Permits, Utilities, Telecommunication/Internet, Marketing), <b>Amount (₱)</b>, <b>Paid to</b>, <b>Note</b>, then <kbd class="ui">Record petty cash</kbd>. Keep the paper receipt for Admin.</p>
     <p>The page opens on today by default, but it is not today-only: a date picker beside the heading lets you look at any past day's petty cash, with a <kbd class="ui">Back to today</kbd> link to return once you're done.</p>
     <p><b>This money comes straight out of the drawer.</b> The day's expected cash drops by the amount you enter, so the count at closing still ties — you should <em>not</em> come up short because of a petty cash entry. <b>Today's petty cash</b> below the form lists every till payout for the day, including ones made from the <kbd class="ui">Cash Drawer</kbd> screen and any Clinic Cash expense Admin recorded, so the two screens always agree. <kbd class="ui">Void</kbd> puts the money back and needs a short reason.</p>
-    <p>The date can't be in the future, and once a day has been closed you can't add to it — you'll see <i>"End of day is already closed for that date. Ask an admin to reopen first."</i> Ask Admin to reopen the close, then record it.</p>
+    <p>The date can't be in the future, and once a day has been closed you can't add to it — you'll see <i>"End of Day is already closed for that date. Ask an admin to reopen first."</i> Ask Admin to reopen the close, then record it.</p>
   </section>
 
   <!-- 3.11 -->
   <section class="sub" id="rec-other">
-    <h3>3.11 Quick quote, inquiries and gift codes</h3>
+    <h3>3.11 Quick Quote, inquiries and gift codes</h3>
     <dl class="defs">
       <dt>Quick Quote</dt><dd>Billing › <kbd class="ui">Quick Quote</kbd>. A searchable price list you can read out or copy into a chat reply. Nothing is saved. Press <kbd class="ui">Cmd/Ctrl + K</kbd> to jump to the search box.</dd>
       <dt>Inquiries</dt><dd>Front Desk › Inquiries &amp; Bookings › <kbd class="ui">Inquiries</kbd>. Log a phone or Messenger enquiry with <kbd class="ui">+ New inquiry</kbd>: a panel slides in from the right for caller, contact, channel and what they asked. When they decide to come in, open it and use <kbd class="ui">Book from inquiry</kbd>, which turns it into an appointment.</dd>
@@ -838,7 +838,7 @@
   <!-- 4.9 -->
   <section class="sub" id="lab-path">
     <h3>4.9 For pathologists</h3>
-    <p>You see every section in the queue and can claim, enter and finalise like a medtech. Your extra duties today are the <b>Critical Alerts</b> page and reviewing amended results. Your dashboard adds <b>Critical alerts unacked</b>.</p>
+    <p>You see every section in the queue and can claim, enter and finalise like a medtech. Your extra duties today are the <b>Critical Alerts</b> page and reviewing amended results. Your dashboard adds <b>Critical Alerts unacked</b>.</p>
     <div class="note warn"><span class="k">Sign-off is not active yet</span><div><p>The system has a place for a formal pathologist sign-off step before release, but the screen is not built and no service has <q>Requires pathologist sign-off</q> switched on. Results go from the bench straight to <span class="status">ready for release</span>.</p><p>Your dashboard's <b>Ready for sign-off</b> card and its <b>Pending sign-off</b> strip both count tests sitting at <span class="status">result uploaded</span> — the status a finished test takes only when its service requires sign-off. Both therefore read zero today, which is correct, and they will agree with each other the day the flag is switched on. The card's hint says as much: <q>Sign-off screen not built yet</q>. (Until the September 2026 release the strip counted ready-for-release tests instead, so a list headed <q>Pending sign-off</q> was showing work already past it.) See <a href="#limits">Known limitations</a>.</p></div></div>
   </section>
 
@@ -871,7 +871,7 @@
       <li><p class="step-title">Services</p><p><kbd class="ui">+ New service</kbd>: Code, Name, Description, <b>DRMed price (PHP)</b>, <b>HMO price (PHP, optional)</b>, tick <b>Senior / PWD 20% discount applies</b> where the law applies, Turnaround (hours), <b>Kind</b> (Lab test · Lab package · Doctor consultation · Doctor procedure · Home service · Vaccine), <b>Section</b>, and <b>Send-out test</b> with the partner lab and unit cost when the test leaves the building. <b>Active</b> makes it visible on the website. Changing a price asks you to <kbd class="ui">Confirm price change</kbd> and keeps the history.</p></li>
       <li><p class="step-title">Prices</p><p>A spreadsheet-style view of every service's <b>DRMed (₱)</b> and <b>HMO (₱)</b> price for bulk updates. Consultations show <q>priced at counter</q> because reception types the fee per visit.</p></li>
       <li><p class="step-title">Discounts</p><p>The list reception sees on every visit line. The Senior / PWD row is <b>Statutory</b>, fixed at 20% by law and cannot be edited or switched off. <kbd class="ui">+ New discount</kbd> for promos: Label, Code, <b>Percent off</b> or <b>Fixed peso amount</b>, Active, Order. Retire a promo by unticking Active; never rely on deleting.</p></li>
-      <li><p class="step-title">HMO Providers</p><p><kbd class="ui">+ New provider</kbd>: Provider name, Active, <b>Days to pay invoice</b>, contract dates, primary contact. This list feeds the two HMO drop-downs on New visit and the claims aging.</p></li>
+      <li><p class="step-title">HMO Providers</p><p><kbd class="ui">+ New provider</kbd>: Provider name, Active, <b>Days to pay invoice</b>, contract dates, primary contact. This list feeds the two HMO drop-downs on New Visit and the claims aging.</p></li>
       <li><p class="step-title">Result Templates</p><p>The index groups services into <b>Report groups (consolidated templates)</b>, <b>With template</b>, <b>Eligible without template</b> and <b>Send-out (templates not applicable)</b>, and warns about templates with zero parameters or no mapped services. Edit a template's <b>Layout</b> (Simple · Dual unit · Multi-section · Imaging report), header and footer notes, and its parameters (name, input type, units, reference ranges by sex and age band, allowed and abnormal values, critical thresholds). Use <kbd class="ui">Preview PDF</kbd> to see the printed result before it goes live. The chemistry panel is one <b>group</b> template; the per-service chemistry templates are switched off on purpose and changing them does nothing.</p></li>
       <li><p class="step-title">Closures, consent gate, dashboard cards</p>
         <ul><li><b>Closures</b> (Operations): add a date and reason; the public booking page hides that day. If bookings already exist, <kbd class="ui">Move to callback</kbd> first.</li>
@@ -1043,7 +1043,7 @@
     <dt>I need to remove a test that was billed by mistake.</dt><dd>If unpaid: <kbd class="ui">Delete</kbd> the line with a reason. If paid: void the payment first, delete, then re-record the payment for the corrected total.</dd>
     <dt>A result is wrong and it's already released.</dt><dd>The lab clicks <kbd class="ui">Undo</kbd> on the line, amends with a reason, and releases again. Reception phones the patient if they had already opened it.</dd>
     <dt>The chemistry form is all greyed out.</dt><dd>Template configuration problem. Tell Admin; don't work around it.</dd>
-    <dt>End of day won't close.</dt><dd>A non-zero <b>Difference</b> needs a <b>Reason for the difference</b>. Also check the ₱20 bill and ₱20 coin rows are in the right columns.</dd>
+    <dt>End of Day won't close.</dt><dd>A non-zero <b>Difference</b> needs a <b>Reason for the difference</b>. Also check the ₱20 bill and ₱20 coin rows are in the right columns.</dd>
     <dt>The doctor's fee isn't showing under Pay Doctors.</dt><dd>Admin or the pathologist must click <kbd class="ui">Mark consultation done</kbd> on the visit (reception and medtechs cannot see doctor lines), and the visit must be paid, waived or HMO-billed. Once marked done, an HMO visit's fee waits under <b>Waiting on insurance</b> until the claim settles.</dd>
     <dt>My phone shows no sidebar.</dt><dd>Tap <b>☰</b> at the top left.</dd>
     <dt>The system says my session expired.</dt><dd>Sign in again. Draft results you saved are still there.</dd>
@@ -1093,9 +1093,9 @@
     <dt>Attending physician</dt><dd>The doctor recorded on a visit. Required whenever a line earns PF.</dd>
     <dt>Critical alert</dt><dd>An automatic flag when a finalised value crosses a critical threshold. Acknowledged by a pathologist or admin.</dd>
     <dt>Amendment</dt><dd>A correction to a finalised result, with a reason. The original is kept.</dd>
-    <dt>EOD</dt><dd>End of day: counting the drawer by denomination and closing the shift.</dd>
+    <dt>EOD</dt><dd>End of Day: counting the drawer by denomination and closing the shift.</dd>
     <dt>Audit Log</dt><dd>The tamper-evident record of every action, view, print and download. Required by RA 10173.</dd>
-    <dt>Consent gate</dt><dd>An admin switch that blocks release for patients without consent on file. Off today.</dd>
+    <dt>Consent Gate</dt><dd>An admin switch that blocks release for patients without consent on file. Off today.</dd>
   </dl>
 </section>
 
