@@ -168,9 +168,13 @@ function compareArRows(a: ArRow, b: ArRow, sort: SortSpec<SortColumn>): number {
       cmp = compareNumber(Date.parse(a.v.visit_date), Date.parse(b.v.visit_date), sort.dir);
       break;
     case "visit_number":
-      // Visit numbers are zero-padded on screen but stored unpadded, so
-      // compare them numerically — as text, "#10" would sort before "#9".
-      cmp = compareNumber(Number(a.v.visit_number), Number(b.v.visit_number), sort.dir);
+      // TEXT, not numeric. `visit_number` is a text column: new visits are
+      // `lpad(seq, 4, "0")` so they order correctly as strings, but the
+      // historical import wrote non-numeric ones too — prod holds `H-100` and
+      // `H-LAB_SERVICE-0-3`. `Number()` on those is NaN, and a comparator
+      // that returns NaN never reaches the id tie-break below (NaN !== 0) and
+      // leaves Array.sort free to order the rows however it likes.
+      cmp = compareText(a.v.visit_number, b.v.visit_number, sort.dir);
       break;
     case "patient":
       cmp = compareBlankLast(patientSortKey(a.v), patientSortKey(b.v), sort.dir);

@@ -312,10 +312,10 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
                 count BEFORE it — say what it actually counts rather than
                 calling a larger number "matching". */}
             {q
-              ? ` · ${total} match the filters · ${filtered.length} on this page match “${q}”`
+              ? ` · ${total.toLocaleString("en-PH")} match the filters · ${filtered.length} on this page match “${q}”`
               : hasFilters
-                ? ` · ${total} matching`
-                : ` · ${total} total`}
+                ? ` · ${total.toLocaleString("en-PH")} matching`
+                : ` · ${total.toLocaleString("en-PH")} total`}
           </>
         }
       />
