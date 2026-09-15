@@ -78,3 +78,20 @@ revoke all on public.v_inventory_balances   from anon, authenticated;
 -- nothing while prod hard-denies at the grant, and the replay stops matching
 -- what it is supposed to prove.
 revoke all on public.physician_compensation from anon;
+
+-- And 0148's nine operational daily views. Unlike 0134/0135, nothing granted
+-- these explicitly — the `alter default privileges` lines above hand every new
+-- view in `public` to anon/authenticated on creation, which is exactly how the
+-- grants 0148 removes got there in the first place. So this carve-out is not
+-- undoing a deliberate grant, it is stopping the blanket from re-applying one.
+-- RLS + security_invoker already return zero rows to either role; this keeps
+-- the local ACL identical to prod so a replay proves what it claims to.
+revoke all on public.v_ops_daily_channel          from anon, authenticated;
+revoke all on public.v_ops_daily_collections      from anon, authenticated;
+revoke all on public.v_ops_daily_doctor           from anon, authenticated;
+revoke all on public.v_ops_daily_expense_accounts from anon, authenticated;
+revoke all on public.v_ops_daily_expenses         from anon, authenticated;
+revoke all on public.v_ops_daily_hmo_provider_ar  from anon, authenticated;
+revoke all on public.v_ops_daily_hmo_received     from anon, authenticated;
+revoke all on public.v_ops_daily_pnl              from anon, authenticated;
+revoke all on public.v_ops_daily_totals           from anon, authenticated;
