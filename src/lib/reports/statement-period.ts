@@ -92,3 +92,35 @@ export function statementPeriodQueries(params: URLSearchParams): {
 
   return { range: "", asOf: "" };
 }
+
+/**
+ * The Operations bar and the Financial-statements bar name the same period with
+ * different keys: Operations reads `from`/`to`, the income statement and cash
+ * flow read `start`/`end`. Every cross-link between the two sections therefore
+ * has to REMAP, exactly as `statementPeriodQueries` remaps period ↔ `as_of` —
+ * forwarding `location.search` unchanged would hand each page a pair of
+ * parameters it does not read, and it would silently land on that page's own
+ * default range while the sentence that linked there said "for this range".
+ *
+ * Unlike `carryParams`, these take the page's ALREADY-RESOLVED dates rather
+ * than raw params, and so deliberately do forward a defaulted range. The two
+ * sections happen to share a year-to-date default today, but that is a
+ * coincidence of two independent `?? ` fallbacks, not a contract — and both
+ * callers sit on prose naming a specific range and a specific figure computed
+ * over it, so the link has to pin the range it is talking about.
+ *
+ * An invalid date yields `""`, which leaves the target on its own default
+ * rather than pushing junk from a hand-edited URL into the next page's query.
+ */
+export function operationsToStatementQuery(from: string, to: string): string {
+  const start = validDate(from);
+  const end = validDate(to);
+  return start && end ? `?start=${start}&end=${end}` : "";
+}
+
+/** The same remap in the other direction: `start`/`end` → `from`/`to`. */
+export function statementToOperationsQuery(start: string, end: string): string {
+  const from = validDate(start);
+  const to = validDate(end);
+  return from && to ? `?from=${from}&to=${to}` : "";
+}

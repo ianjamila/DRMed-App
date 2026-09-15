@@ -1,7 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { redirect } from "next/navigation";
-import { todayManilaISODate } from "@/lib/dates/manila";
+import { isISODate, todayManilaISODate } from "@/lib/dates/manila";
 import { EodClient } from "./eod-client";
 
 export const metadata = { title: "End of Day" };
@@ -16,7 +16,12 @@ export default async function EodPage({
   if (session.role !== "reception" && session.role !== "admin") redirect("/staff");
 
   const params = await searchParams;
-  const business_date = params.date ?? todayManilaISODate();
+  // Operations › Cash & cards now deep-links here per day, so `date` arrives
+  // from another page's data rather than only from this page's own controls.
+  // Fall back to today on anything that isn't a calendar date instead of
+  // handing it to the RPC — a hand-edited URL should land on today, not on a
+  // Postgres error page. Matches how the financial statements validate theirs.
+  const business_date = isISODate(params.date) ? params.date : todayManilaISODate();
   const admin = createAdminClient();
 
   const { data: shifts } = await admin

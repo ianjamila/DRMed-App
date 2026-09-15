@@ -59,7 +59,21 @@ export function CashReconPanel({ rows }: { rows: CashReconRow[] }) {
                       return (
                         <Fragment key={r.day}>
                           <TableRow>
-                            <TableCell className="px-3 py-1">{r.day}</TableCell>
+                            <TableCell className="px-3 py-1">
+                              {/* Every row here IS an end-of-day close, so the
+                                  day is the natural way back to the screen it
+                                  was counted on. The count-sheet link below
+                                  goes to the signed sheet for ONE close; this
+                                  goes to the close itself, which is where an
+                                  admin chasing a variance can see the shift,
+                                  the adjustments and the reason. */}
+                              <Link
+                                href={`/staff/payments/eod?date=${r.day}`}
+                                className="font-medium text-[color:var(--color-brand-cyan)] hover:underline"
+                              >
+                                {r.day}
+                              </Link>
+                            </TableCell>
                             <TableCell className="px-3 py-1 text-right font-mono tabular-nums">
                               {PESO(r.expected)}
                             </TableCell>
