@@ -38,7 +38,7 @@ import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 
 export const metadata = {
-  title: "Staff users — staff",
+  title: "Staff users",
 };
 
 type StaffRow = {

@@ -5,7 +5,7 @@ import { listBillsAction } from "@/lib/actions/accounting/bills";
 import { listBillPaymentsAction } from "@/lib/actions/accounting/bill-payments";
 import { VendorDetailClient } from "./vendor-detail-client";
 
-export const metadata = { title: "Vendor — AP — DRMed" };
+export const metadata = { title: "Vendor" };
 export const dynamic = "force-dynamic";
 
 export default async function VendorDetailPage({

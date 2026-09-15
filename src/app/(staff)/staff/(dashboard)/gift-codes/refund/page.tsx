@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { RefundGiftCodeForm } from "./refund-form";
 
-export const metadata = { title: "Refund gift code sale — staff" };
+export const metadata = { title: "Refund gift code sale" };
 
 export const dynamic = "force-dynamic";
 

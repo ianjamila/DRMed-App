@@ -37,6 +37,8 @@ interface SearchParams {
   to?: string;
 }
 
+export const metadata = { title: "Expenses & P&L" };
+
 export default async function ExpensesPnlPage({
   searchParams,
 }: {

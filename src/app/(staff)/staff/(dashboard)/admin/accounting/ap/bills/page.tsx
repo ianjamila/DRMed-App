@@ -5,7 +5,7 @@ import { listVendorsAction } from "@/lib/actions/accounting/vendors";
 import { BillsIndexClient } from "./bills-index-client";
 import Link from "next/link";
 
-export const metadata = { title: "Bills — AP — DRMed" };
+export const metadata = { title: "Bills" };
 export const dynamic = "force-dynamic";
 
 export default async function BillsIndexPage({

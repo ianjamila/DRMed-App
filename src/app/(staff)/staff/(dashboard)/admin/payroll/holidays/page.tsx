@@ -3,7 +3,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { HolidaysClient, type HolidayRow } from "./holidays-client";
 
-export const metadata = { title: "Holidays — payroll admin" };
+export const metadata = { title: "Holidays" };
 export const dynamic = "force-dynamic";
 
 interface PageProps {

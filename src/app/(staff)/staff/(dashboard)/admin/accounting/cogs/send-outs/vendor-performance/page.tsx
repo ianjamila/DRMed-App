@@ -4,7 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { pluckOne } from "@/lib/reports/format";
 
-export const metadata = { title: "Send-out vendor performance — staff" };
+export const metadata = { title: "Send-out vendor performance" };
 export const dynamic = "force-dynamic";
 
 const PHP = new Intl.NumberFormat("en-PH", {

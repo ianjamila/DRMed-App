@@ -7,7 +7,7 @@ import { AddBlockForm } from "./add-block-form";
 import { AddOverrideForm } from "./add-override-form";
 import { DeleteBlockButton, DeleteOverrideButton } from "./delete-buttons";
 
-export const metadata = { title: "Schedule — staff" };
+export const metadata = { title: "Schedule" };
 
 export const dynamic = "force-dynamic";
 

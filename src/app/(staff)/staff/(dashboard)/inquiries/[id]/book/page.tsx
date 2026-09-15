@@ -5,7 +5,7 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { BookFromInquiryForm } from "./book-form";
 import { Panel } from "@/components/ui/panel";
 
-export const metadata = { title: "Book from inquiry — staff" };
+export const metadata = { title: "Book from inquiry" };
 
 export const dynamic = "force-dynamic";
 

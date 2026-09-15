@@ -4,7 +4,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ItemForm } from "../../item-form";
 
-export const metadata = { title: "Edit inventory item — staff" };
+export const metadata = { title: "Edit inventory item" };
 export const dynamic = "force-dynamic";
 
 interface PageProps {

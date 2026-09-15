@@ -4,7 +4,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { AccountForm } from "../../account-form";
 import { updateAccountAction } from "../../actions";
 
-export const metadata = { title: "Edit account — staff" };
+export const metadata = { title: "Edit account" };
 export const dynamic = "force-dynamic";
 
 export default async function EditAccountPage({

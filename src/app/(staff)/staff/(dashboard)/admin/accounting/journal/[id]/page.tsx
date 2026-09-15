@@ -3,7 +3,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { getJournalEntryAction } from "@/lib/actions/accounting/journal-entries";
 import { JournalDetailClient } from "./journal-detail-client";
 
-export const metadata = { title: "Journal entry — DRMed" };
+export const metadata = { title: "Journal entry" };
 export const dynamic = "force-dynamic";
 
 export default async function JournalDetailPage({

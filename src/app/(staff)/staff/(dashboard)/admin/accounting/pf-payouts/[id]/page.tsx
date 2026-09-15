@@ -3,7 +3,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { DisbursementDetailClient } from "./disbursement-detail-client";
 
-export const metadata = { title: "PF Disbursement — DRMed" };
+export const metadata = { title: "PF Disbursement" };
 export const dynamic = "force-dynamic";
 
 export default async function PfDisbursementDetailPage({

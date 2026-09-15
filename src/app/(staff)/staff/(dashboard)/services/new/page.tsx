@@ -4,7 +4,7 @@ import { ServiceForm } from "../service-form";
 import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
-  title: "New service — staff",
+  title: "New service",
 };
 
 export default async function NewServicePage() {

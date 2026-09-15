@@ -7,7 +7,7 @@ import { StatementTabs } from "./_components/statement-tabs";
 import { PeriodPresets } from "./_components/period-presets";
 import { priorYearRange } from "@/lib/reports/period-presets";
 
-export const metadata = { title: "Financial statements — staff" };
+export const metadata = { title: "Financial statements" };
 export const dynamic = "force-dynamic";
 
 const PHP = new Intl.NumberFormat("en-PH", {

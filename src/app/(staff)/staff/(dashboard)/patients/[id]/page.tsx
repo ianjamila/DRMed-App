@@ -18,7 +18,7 @@ import { Panel } from "@/components/ui/panel";
 import { manilaDate } from "@/lib/dates/manila";
 
 export const metadata = {
-  title: "Patient — staff",
+  title: "Patient",
 };
 
 interface Props {

@@ -11,7 +11,7 @@ import {
   type EmployeeRunHistoryRow,
 } from "./employee-detail-client";
 
-export const metadata = { title: "Employee — payroll admin" };
+export const metadata = { title: "Employee" };
 export const dynamic = "force-dynamic";
 
 interface PageProps {

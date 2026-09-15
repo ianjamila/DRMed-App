@@ -3,7 +3,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { AccrualTemplateForm } from "../template-form";
 
-export const metadata = { title: "New accrual template — staff" };
+export const metadata = { title: "New accrual template" };
 export const dynamic = "force-dynamic";
 
 export default async function NewAccrualTemplatePage() {

@@ -10,7 +10,7 @@ import {
   undoneReleasesCsvHref,
 } from "@/lib/reports/undone-releases";
 
-export const metadata = { title: "Undone releases — staff" };
+export const metadata = { title: "Undone releases" };
 export const dynamic = "force-dynamic";
 
 interface SearchProps {

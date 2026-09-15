@@ -2,7 +2,7 @@ import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 
-export const metadata = { title: "HMO providers — staff" };
+export const metadata = { title: "HMO providers" };
 
 export const dynamic = "force-dynamic";
 

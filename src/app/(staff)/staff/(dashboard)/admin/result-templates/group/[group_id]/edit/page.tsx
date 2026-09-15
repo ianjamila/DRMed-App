@@ -12,7 +12,7 @@ import type {
 } from "@/lib/validations/result-template";
 import { manilaDateTime } from "@/lib/dates/manila";
 
-export const metadata = { title: "Edit group template — staff" };
+export const metadata = { title: "Edit group template" };
 
 interface Props {
   params: Promise<{ group_id: string }>;

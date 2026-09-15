@@ -670,7 +670,7 @@ export function AdPerformanceDashboard() {
                 DRMed
               </div>
               <h1 className="text-xl font-semibold" style={{ color: C.ink }}>
-                Ad Performance
+                Ad performance
               </h1>
             </div>
             <p className="text-sm mt-1" style={{ color: C.sub }}>

@@ -24,7 +24,7 @@ import { PrintButton } from "./print-button";
 import { logReceiptPrintAction } from "./log-print-action";
 
 export const metadata = {
-  title: "Receipt — staff",
+  title: "Receipt",
 };
 export const dynamic = "force-dynamic";
 

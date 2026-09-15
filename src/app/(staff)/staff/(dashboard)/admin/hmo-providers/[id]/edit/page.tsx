@@ -5,7 +5,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { HmoProviderForm } from "../../hmo-provider-form";
 import { Panel } from "@/components/ui/panel";
 
-export const metadata = { title: "Edit HMO provider — staff" };
+export const metadata = { title: "Edit HMO provider" };
 
 interface Props {
   params: Promise<{ id: string }>;

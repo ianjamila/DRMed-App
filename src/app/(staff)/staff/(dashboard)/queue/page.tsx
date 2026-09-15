@@ -83,7 +83,7 @@ function statusRank(s: string): number {
 }
 
 export const metadata = {
-  title: "Queue — staff",
+  title: "Queue",
 };
 
 const TEST_STATUS_STYLE: Record<string, string> = {

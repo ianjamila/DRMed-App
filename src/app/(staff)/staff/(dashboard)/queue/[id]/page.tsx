@@ -24,7 +24,7 @@ import { labQueueGate } from "@/lib/visits/lab-gate";
 import { manilaDateTime } from "@/lib/dates/manila";
 
 export const metadata = {
-  title: "Test — staff",
+  title: "Test",
 };
 
 interface Props {

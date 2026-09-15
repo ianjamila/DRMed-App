@@ -15,6 +15,8 @@ interface ExpenseRow {
   expense_php: number | null;
 }
 
+export const metadata = { title: "Trends" };
+
 export default async function OperationsTrendsPage() {
   await requireAdminStaff();
 

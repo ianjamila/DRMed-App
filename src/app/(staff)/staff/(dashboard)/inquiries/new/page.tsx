@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { InquiryForm } from "../inquiry-form";
 
-export const metadata = { title: "New inquiry — staff" };
+export const metadata = { title: "New inquiry" };
 
 export const dynamic = "force-dynamic";
 

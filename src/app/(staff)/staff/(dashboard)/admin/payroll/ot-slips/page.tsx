@@ -8,7 +8,7 @@ import {
   type StatusFilter,
 } from "./ot-slips-client";
 
-export const metadata = { title: "OT slips — payroll admin" };
+export const metadata = { title: "OT slips" };
 export const dynamic = "force-dynamic";
 
 const STATUS_FILTERS: ReadonlySet<StatusFilter> = new Set<StatusFilter>([
