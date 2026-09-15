@@ -9,7 +9,7 @@ import { EmailForm } from "./email-form";
 import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
-  title: "Edit staff user — staff",
+  title: "Edit staff user",
 };
 
 interface Props {

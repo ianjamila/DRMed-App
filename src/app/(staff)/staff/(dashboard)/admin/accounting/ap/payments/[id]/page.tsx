@@ -6,7 +6,7 @@ import { loadClosedDayContext } from "@/lib/accounting/eod-closed-dates";
 import { tillPaymentBlockedByClose } from "@/lib/accounting/till-close-warning";
 import { PaymentDetailClient } from "./payment-detail-client";
 
-export const metadata = { title: "Payment — AP — DRMed" };
+export const metadata = { title: "Payment" };
 export const dynamic = "force-dynamic";
 
 export default async function PaymentDetailPage({

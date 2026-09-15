@@ -5,7 +5,7 @@ import { formatPhp } from "@/lib/marketing/format";
 import { Panel } from "@/components/ui/panel";
 import { ExportCsvLink } from "@/components/staff/export-csv-link";
 
-export const metadata = { title: "Gift code sales — staff" };
+export const metadata = { title: "Gift code sales" };
 
 export const dynamic = "force-dynamic";
 

@@ -3,7 +3,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { MergeClient } from "./merge-client";
 
 export const metadata = {
-  title: "Patient merge — staff",
+  title: "Patient merge",
 };
 
 export const dynamic = "force-dynamic";

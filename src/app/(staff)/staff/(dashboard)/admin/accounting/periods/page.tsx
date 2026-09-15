@@ -4,7 +4,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { todayManilaISO } from "@/lib/marketing/closures";
 import { PeriodActionsClient } from "./period-actions-client";
 
-export const metadata = { title: "Accounting periods — staff" };
+export const metadata = { title: "Accounting periods" };
 export const dynamic = "force-dynamic";
 
 const MONTH_LABEL = [

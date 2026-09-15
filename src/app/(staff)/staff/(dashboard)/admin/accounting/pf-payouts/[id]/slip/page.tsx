@@ -9,7 +9,7 @@ import { formatPfMethod, pfBasisShortLabel } from "@/lib/accounting/pf-labels";
 import { SlipPrintButton } from "./slip-print-button";
 import { manilaDate, manilaDateTime } from "@/lib/dates/manila";
 
-export const metadata = { title: "PF payout slip — staff" };
+export const metadata = { title: "PF payout slip" };
 export const dynamic = "force-dynamic";
 
 // ---------------------------------------------------------------------------

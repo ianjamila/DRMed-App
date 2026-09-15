@@ -6,7 +6,7 @@ import {
   type EligibleStaffOption,
 } from "./employees-client";
 
-export const metadata = { title: "Employees — payroll admin" };
+export const metadata = { title: "Employees" };
 export const dynamic = "force-dynamic";
 
 export default async function PayrollEmployeesPage() {

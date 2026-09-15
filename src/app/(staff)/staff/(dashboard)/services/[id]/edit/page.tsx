@@ -8,7 +8,7 @@ import { ServiceForm, type VendorLite } from "../../service-form";
 import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
-  title: "Edit service — staff",
+  title: "Edit service",
 };
 
 interface Props {

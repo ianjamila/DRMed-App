@@ -3,7 +3,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { ExportCsvLink } from "@/components/staff/export-csv-link";
 import { loadStaffAdvances, staffAdvancesCsvHref } from "@/lib/reports/staff-advances";
 
-export const metadata = { title: "Staff advances — staff" };
+export const metadata = { title: "Staff advances" };
 export const dynamic = "force-dynamic";
 
 const PESO = (n: number) =>

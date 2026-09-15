@@ -6,7 +6,7 @@ import { PaymentForm } from "./payment-form";
 import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
-  title: "Record payment — staff",
+  title: "Record payment",
 };
 
 interface Props {

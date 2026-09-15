@@ -3,7 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { CoaListClient } from "./coa-list-client";
 
-export const metadata = { title: "Chart of accounts — staff" };
+export const metadata = { title: "Chart of accounts" };
 export const dynamic = "force-dynamic";
 
 const TYPE_ORDER: Record<string, number> = {

@@ -4,7 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { VarianceRow } from "./variance-row";
 
-export const metadata = { title: "Budget vs actual — staff" };
+export const metadata = { title: "Budget vs actual" };
 export const dynamic = "force-dynamic";
 
 const PHP = new Intl.NumberFormat("en-PH", {

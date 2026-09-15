@@ -2,7 +2,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import Link from "next/link";
 
-export const metadata = { title: "Unconfigured Send-outs — DRMed" };
+export const metadata = { title: "Unconfigured Send-outs" };
 export const dynamic = "force-dynamic";
 
 export default async function UnconfiguredPage() {

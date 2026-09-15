@@ -3,7 +3,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { DiscountTypeForm } from "../discount-type-form";
 import { Panel } from "@/components/ui/panel";
 
-export const metadata = { title: "New discount — staff" };
+export const metadata = { title: "New discount" };
 
 export default async function NewDiscountTypePage() {
   await requireAdminStaff();

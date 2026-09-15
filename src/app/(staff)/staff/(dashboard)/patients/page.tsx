@@ -28,7 +28,7 @@ import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 import { manilaDate } from "@/lib/dates/manila";
 
 export const metadata = {
-  title: "Patients — staff",
+  title: "Patients",
 };
 
 interface SearchProps {

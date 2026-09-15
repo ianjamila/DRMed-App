@@ -12,7 +12,7 @@ import { giftCodeRefundEligibility } from "@/lib/gift-codes/refund";
 import { CancelButton } from "./cancel-button";
 import { RefundButton } from "./refund-button";
 
-export const metadata = { title: "Gift code — staff" };
+export const metadata = { title: "Gift code" };
 
 export const dynamic = "force-dynamic";
 

@@ -4,7 +4,7 @@ import { listRecurringTemplatesAction } from "@/lib/actions/accounting/recurring
 import { listVendorsAction } from "@/lib/actions/accounting/vendors";
 import { RecurringClient } from "./recurring-client";
 
-export const metadata = { title: "Recurring bills — AP — DRMed" };
+export const metadata = { title: "Recurring bills" };
 export const dynamic = "force-dynamic";
 
 export default async function RecurringPage() {

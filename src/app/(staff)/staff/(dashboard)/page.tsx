@@ -4,7 +4,7 @@ import { LabDashboard } from "./_dashboards/lab-dashboard";
 import { AdminDashboard } from "./_dashboards/admin-dashboard";
 
 export const metadata = {
-  title: "Dashboard — staff",
+  title: "Dashboard",
 };
 
 export const dynamic = "force-dynamic";

@@ -8,7 +8,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 
-export const metadata = { title: "Result templates — staff" };
+export const metadata = { title: "Result templates" };
 
 interface ServiceRow {
   id: string;

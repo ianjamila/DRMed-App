@@ -4,7 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { ManualJeForm } from "./manual-je-form";
 
-export const metadata = { title: "New journal entry — staff" };
+export const metadata = { title: "New journal entry" };
 export const dynamic = "force-dynamic";
 
 interface SearchProps {

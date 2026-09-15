@@ -7,7 +7,7 @@ import {
 } from "@/lib/accounting/sync";
 import { AccountingActions } from "./accounting-actions";
 
-export const metadata = { title: "Accounting sync — staff" };
+export const metadata = { title: "Accounting sync" };
 export const dynamic = "force-dynamic";
 
 export default async function AccountingAdminPage() {

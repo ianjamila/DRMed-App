@@ -3,7 +3,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { ClosuresClient } from "./closures-client";
 
 export const metadata = {
-  title: "Closures — staff",
+  title: "Closures",
 };
 
 export const dynamic = "force-dynamic";

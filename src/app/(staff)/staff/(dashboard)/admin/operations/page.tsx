@@ -24,6 +24,8 @@ interface SearchParams {
   to?: string;
 }
 
+export const metadata = { title: "Daily report" };
+
 export default async function OperationsDailyReportPage({
   searchParams,
 }: {

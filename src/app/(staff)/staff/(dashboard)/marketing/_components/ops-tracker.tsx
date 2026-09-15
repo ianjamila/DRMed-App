@@ -357,7 +357,7 @@ export function OpsTracker() {
                 DRMed
               </div>
               <h1 className="text-xl font-semibold" style={{ color: C.ink }}>
-                Marketing Operations
+                Ops tracker
               </h1>
             </div>
             <p className="text-sm mt-1" style={{ color: C.sub }}>

@@ -4,7 +4,7 @@ import { ConsentFormSheet } from "@/components/consent/consent-form-sheet";
 import { PrintButton } from "@/components/consent/print-button";
 
 export const metadata = {
-  title: "Consent form — staff",
+  title: "Consent form",
 };
 
 // Blank, unbound consent form for the counter: the new-patient registration

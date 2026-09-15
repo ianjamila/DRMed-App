@@ -3,7 +3,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { HmoProviderForm } from "../hmo-provider-form";
 import { Panel } from "@/components/ui/panel";
 
-export const metadata = { title: "New HMO provider — staff" };
+export const metadata = { title: "New HMO provider" };
 
 export default async function NewHmoProviderPage() {
   await requireAdminStaff();

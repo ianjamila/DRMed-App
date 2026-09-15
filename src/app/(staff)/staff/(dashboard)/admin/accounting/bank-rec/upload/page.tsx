@@ -4,7 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { UploadForm } from "./upload-form";
 
-export const metadata = { title: "Upload bank statement — staff" };
+export const metadata = { title: "Upload bank statement" };
 export const dynamic = "force-dynamic";
 
 export default async function UploadBankStatementPage() {

@@ -3,7 +3,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { GenerateBatchForm } from "./generate-form";
 import { Panel } from "@/components/ui/panel";
 
-export const metadata = { title: "Generate gift codes — staff" };
+export const metadata = { title: "Generate gift codes" };
 
 export const dynamic = "force-dynamic";
 

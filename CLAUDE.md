@@ -247,6 +247,7 @@ All Server Actions return `{ ok: true, data } | { ok: false, error }`. User-faci
 - **TypeScript strict mode on.** No `any` without a comment explaining why.
 - **Naming:** routes kebab-case, DB columns snake_case, TS variables camelCase, types/components PascalCase, route files kebab-case, component files PascalCase.
 - **Commits:** Conventional Commits (`feat:`, `fix:`, `chore:`, `docs:`). Each phase ends with a tagged release (`v0.1.0` after Phase 1, etc.).
+- **Page titles: `metadata.title` is the route's name and nothing else.** `src/app/(staff)/layout.tsx` owns the suffix for every staff route (`template: "%s — DRMed staff"`), so a page that hand-writes one renders it twice — which is exactly what 140 pages did before it existed. Never append `— staff`, `— DRMed` or a section name; a page with no `metadata` export inherits the *marketing* site's title, so every staff `page.tsx` needs one.
 - **Plain language by audience.** Reception-facing pages (cash drawer, pay doctors, new visit) use everyday words — humanize raw enum codes shown to users (`petty_cash` → "Petty cash") and avoid accounting jargon (Opening float → "Starting cash", Variance → "Difference"). Bookkeeper/accounting pages (journal, AP, financial statements) keep load-bearing terms (debit/credit, BIR codes, "Pending HMO settlement") and add a plain hint rather than renaming — renaming would be wrong. When unsure which audience a screen serves, ask. (See the `drmed-staff-ui` skill.)
 
 ## Schema changes — order of operations

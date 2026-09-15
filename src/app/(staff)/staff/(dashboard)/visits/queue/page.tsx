@@ -29,7 +29,7 @@ import { shouldPrintReceipt } from "@/lib/visits/receipt-policy";
 import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
 
 export const metadata = {
-  title: "Reception Queue — staff",
+  title: "Reception Queue",
 };
 
 // Day-scoped, live reception worklist — today by default, any past day via the

@@ -5,7 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { AccrualTemplateForm } from "../template-form";
 import { DeactivateButton } from "./deactivate-button";
 
-export const metadata = { title: "Edit accrual template — staff" };
+export const metadata = { title: "Edit accrual template" };
 export const dynamic = "force-dynamic";
 
 interface PageProps {

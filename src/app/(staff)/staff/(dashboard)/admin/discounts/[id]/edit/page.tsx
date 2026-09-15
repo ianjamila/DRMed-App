@@ -5,7 +5,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { DiscountTypeForm } from "../../discount-type-form";
 import { Panel } from "@/components/ui/panel";
 
-export const metadata = { title: "Edit discount — staff" };
+export const metadata = { title: "Edit discount" };
 
 interface Props {
   params: Promise<{ id: string }>;

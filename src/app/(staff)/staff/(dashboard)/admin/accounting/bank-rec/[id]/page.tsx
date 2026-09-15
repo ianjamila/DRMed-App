@@ -6,7 +6,7 @@ import { RerunMatchButton } from "./rerun-match-button";
 import { ManualMatchClient } from "./manual-match-client";
 import { Panel } from "@/components/ui/panel";
 
-export const metadata = { title: "Bank statement — staff" };
+export const metadata = { title: "Bank statement" };
 export const dynamic = "force-dynamic";
 
 const PHP = new Intl.NumberFormat("en-PH", {

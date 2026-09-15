@@ -38,7 +38,7 @@ import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
 import { ReissuePinButton } from "@/components/staff/reissue-pin-button";
 
 export const metadata = {
-  title: "Visit — staff",
+  title: "Visit",
 };
 
 interface Props {

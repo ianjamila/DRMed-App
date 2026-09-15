@@ -3,7 +3,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { RunsClient, type RunListRow } from "./runs-client";
 
-export const metadata = { title: "Pay runs — payroll admin" };
+export const metadata = { title: "Pay runs" };
 export const dynamic = "force-dynamic";
 
 type RunStatus = "draft" | "computed" | "finalised" | "voided";

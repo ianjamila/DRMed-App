@@ -3,7 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { ComposeForm } from "./compose-form";
 
-export const metadata = { title: "New campaign — staff" };
+export const metadata = { title: "New campaign" };
 
 export const dynamic = "force-dynamic";
 

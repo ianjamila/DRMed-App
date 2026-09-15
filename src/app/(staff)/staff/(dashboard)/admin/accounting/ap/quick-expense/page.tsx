@@ -2,7 +2,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { QuickExpenseForm } from "./quick-expense-form";
 
-export const metadata = { title: "Quick expense — DRMed" };
+export const metadata = { title: "Quick expense" };
 export const dynamic = "force-dynamic";
 
 export default async function QuickExpensePage() {

@@ -6,7 +6,7 @@ import { formatPhp } from "@/lib/marketing/format";
 import { defaultClinicFee } from "@/lib/visits/consultation-fee";
 import { RecomputeClinicFeeButton } from "./recompute-clinic-fee-button";
 
-export const metadata = { title: "Physicians — staff" };
+export const metadata = { title: "Physicians" };
 
 export const dynamic = "force-dynamic";
 

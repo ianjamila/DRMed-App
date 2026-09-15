@@ -7,7 +7,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { REVIEW_AUDIT_ACTION } from "@/lib/seo/review";
 import { ResubmitIndexNowButton } from "./resubmit-button";
 
-export const metadata = { title: "Search engines (IndexNow) — staff" };
+export const metadata = { title: "Search engines (IndexNow)" };
 export const dynamic = "force-dynamic";
 
 export default async function IndexNowAdminPage() {
