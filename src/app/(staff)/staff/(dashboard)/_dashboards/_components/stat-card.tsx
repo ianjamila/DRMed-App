@@ -6,9 +6,22 @@ interface StatCardProps {
   hint?: string;
   href?: string;
   accent?: "default" | "warn" | "good";
+  // The widget's own query failed. A zero on a dashboard used to mean either
+  // "nothing to do" or "the query blew up", and the reader could not tell
+  // which — an unreadable AP total showed as ₱0.00 / "All caught up". When
+  // this is set the card says so instead of inventing an all-clear, and
+  // `value` / `hint` / `accent` are ignored.
+  error?: boolean;
 }
 
-export function StatCard({ label, value, hint, href, accent = "default" }: StatCardProps) {
+export function StatCard({
+  label,
+  value,
+  hint,
+  href,
+  accent = "default",
+  error = false,
+}: StatCardProps) {
   const valueColor =
     accent === "warn"
       ? "text-[color:var(--color-brand-navy)]"
@@ -16,14 +29,27 @@ export function StatCard({ label, value, hint, href, accent = "default" }: StatC
         ? "text-[color:var(--color-brand-navy)]"
         : "text-[color:var(--color-brand-navy)]";
 
-  const accentBar =
-    accent === "warn"
+  const accentBar = error
+    ? "before:bg-amber-500"
+    : accent === "warn"
       ? "before:bg-amber-400"
       : accent === "good"
         ? "before:bg-emerald-400"
         : "before:bg-[color:var(--color-brand-cyan)]";
 
-  const body = (
+  const body = error ? (
+    <>
+      <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+        {label}
+      </p>
+      <p className="mt-2 font-heading text-2xl font-extrabold text-amber-700">
+        Couldn&apos;t load
+      </p>
+      <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
+        Reload the page — this figure is not zero, it is unknown.
+      </p>
+    </>
+  ) : (
     <>
       <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
         {label}

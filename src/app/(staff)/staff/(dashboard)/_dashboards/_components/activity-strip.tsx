@@ -12,9 +12,20 @@ interface ActivityStripProps {
   items: ActivityItem[];
   emptyMessage?: string;
   viewAllHref?: string;
+  // The strip's own query failed. An empty list on a dashboard used to mean
+  // either "nothing waiting" or "the query blew up"; the strip could not tell
+  // the two apart, so a failed read rendered as a reassuring all-clear. When
+  // this is set the strip says so instead, and `emptyMessage` is ignored.
+  error?: boolean;
 }
 
-export function ActivityStrip({ title, items, emptyMessage, viewAllHref }: ActivityStripProps) {
+export function ActivityStrip({
+  title,
+  items,
+  emptyMessage,
+  viewAllHref,
+  error = false,
+}: ActivityStripProps) {
   return (
     <article className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
       <header className="mb-3 flex items-center justify-between">
@@ -30,7 +41,11 @@ export function ActivityStrip({ title, items, emptyMessage, viewAllHref }: Activ
           </Link>
         ) : null}
       </header>
-      {items.length === 0 ? (
+      {error ? (
+        <p className="py-3 text-sm font-medium text-amber-700">
+          Couldn&apos;t load — this list is unknown, not empty. Reload the page.
+        </p>
+      ) : items.length === 0 ? (
         <p className="py-3 text-sm text-[color:var(--color-brand-text-soft)]">
           {emptyMessage ?? "Nothing here."}
         </p>

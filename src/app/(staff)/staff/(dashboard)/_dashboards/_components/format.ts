@@ -1,7 +1,15 @@
+// Dashboard money is shown to the CENTAVO. It used to round to whole pesos
+// (maximumFractionDigits: 0), which turned a ₱0.25 unpaid balance into "₱0"
+// and a ₱100.40 balance into "₱100" — an actionable amount rendered as
+// nothing to collect. Every figure these cards carry (collections, drawer,
+// payables, receivables) is a real amount someone has to reconcile, so the
+// centavos are load-bearing. Both fraction digits are pinned so a whole
+// amount still reads "₱1,200.00" rather than "₱1,200".
 const PESO_FORMAT = new Intl.NumberFormat("en-PH", {
   style: "currency",
   currency: "PHP",
-  maximumFractionDigits: 0,
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
 });
 
 const TIME_FORMAT = new Intl.DateTimeFormat("en-PH", {

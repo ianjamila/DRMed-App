@@ -40,12 +40,17 @@ export const DASHBOARD_CARDS: readonly CardDef[] = [
   // ---- Lab ----------------------------------------------------------------
   { id: "lab.my_unclaimed",         label: "Unclaimed in my sections", roles: ["medtech", "xray_technician"], group: "snapshot" },
   { id: "lab.my_claimed",           label: "Claimed by me",            roles: ["medtech", "xray_technician"], group: "snapshot" },
-  { id: "lab.ready_for_signoff",    label: "Ready for sign-off",       roles: ["pathologist"], group: "snapshot" },
+  // Sign-off ships OFF: /staff/signoff is still a placeholder, so both of
+  // these advertise a review-and-approve action nobody can perform, and the
+  // count's destination tab (status-filter.ts `ready`) covers
+  // ready_for_release too — a zero card opening a populated list. Admin can
+  // re-enable both from Dashboard settings the day the gate goes live.
+  { id: "lab.ready_for_signoff",    label: "Ready for sign-off",       roles: ["pathologist"], group: "snapshot", defaultHidden: true },
   { id: "lab.critical_alerts",      label: "Critical alerts unacked",  roles: ["pathologist"], group: "snapshot" },
   { id: "lab.send_out_awaiting",    label: "Send-out awaiting result", roles: ["medtech"], group: "snapshot" },
   { id: "lab.released_today",       label: "Released today",           roles: ["medtech", "xray_technician", "pathologist"], group: "snapshot" },
   { id: "lab.strip_oldest_unclaimed", label: "Strip: oldest unclaimed", roles: ["medtech", "xray_technician"], group: "attention" },
-  { id: "lab.strip_pending_signoff",  label: "Strip: pending sign-off", roles: ["pathologist"], group: "attention" },
+  { id: "lab.strip_pending_signoff",  label: "Strip: pending sign-off", roles: ["pathologist"], group: "attention", defaultHidden: true },
   { id: "lab.strip_recent_criticals", label: "Strip: recent criticals", roles: ["medtech", "pathologist"], group: "attention" },
 
   // ---- Admin: Operations --------------------------------------------------
@@ -58,7 +63,10 @@ export const DASHBOARD_CARDS: readonly CardDef[] = [
   // ---- Admin: Money -------------------------------------------------------
   { id: "admin.net_income_mtd",        label: "Net income (this month)",  roles: ["admin"], group: "money", sensitive: true },
   { id: "admin.past_due_periods",     label: "Past-due open periods",    roles: ["admin"], group: "money" },
-  { id: "admin.draft_jes",            label: "Draft journal entries",    roles: ["admin"], group: "money" },
+  // Draft inventory is not a problem in itself, and the stale-drafts strip
+  // below already names the actionable subset. Off by default at the owner's
+  // request (2026-09-15); the count and its filter were otherwise correct.
+  { id: "admin.draft_jes",            label: "Draft journal entries",    roles: ["admin"], group: "money", defaultHidden: true },
   { id: "admin.ap_outstanding",       label: "AP outstanding",           roles: ["admin"], group: "money", sensitive: true },
   { id: "admin.ap_overdue",           label: "AP bills overdue",         roles: ["admin"], group: "money" },
   { id: "admin.hmo_unbilled_aged",    label: "HMO unbilled aged 90+",    roles: ["admin"], group: "money", sensitive: true },
