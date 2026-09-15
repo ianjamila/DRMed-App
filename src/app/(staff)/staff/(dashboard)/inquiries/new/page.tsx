@@ -30,7 +30,7 @@ export default async function NewInquiryPage() {
     <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6">
         <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-          Front desk
+          Front Desk
         </p>
         <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
           New inquiry

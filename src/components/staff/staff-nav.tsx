@@ -31,6 +31,9 @@ function NavLink({
       href={item.href}
       // Native browser tooltip on hover. Cheap, accessible, works on touch.
       title={item.description ?? undefined}
+      // Same signal SectionTabs gives: screen readers announce the current
+      // page, and the styling below is the visual twin of it.
+      aria-current={active ? "page" : undefined}
       className={cn(
         "group/navlink relative flex items-center justify-between gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
         active
@@ -138,7 +141,7 @@ function SectionBody({
 }
 
 // A whole section rendered as a collapsed-by-default <details> (partner
-// revision 8, "Hidden tabs"). Same auto-expand trick as Subgroup: <details> is
+// revision 8, "Hidden Tabs"). Same auto-expand trick as Subgroup: <details> is
 // uncontrolled, so keying on the open state remounts it when the user
 // navigates into or out of the section.
 function CollapsibleSection({

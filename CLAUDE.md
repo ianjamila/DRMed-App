@@ -18,7 +18,7 @@ Key reference artifacts:
 - `IMPLEMENTATION_PLAN.md` — original phase plan (historical; cross-check before relying on it)
 - `README.md` — operational setup
 - `.env.example` — env-var inventory
-- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.3, 14 Sep 2026): every
+- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.4, 15 Sep 2026): every
   screen, label and blocked-message the app shows, checked against the code. Update it in the
   PR that changes a flow it describes.
 - `docs/superpowers/specs/` and `docs/superpowers/audits/` — design specs and audits for

@@ -16,15 +16,18 @@ export interface StaffNavItem {
   // The current path is "active" if it equals href OR starts with `${href}/`.
   // Override with a custom matcher when needed (e.g. /staff is too broad).
   exact?: boolean;
-  // Extra prefix that also marks this item active. Use when href points at a
-  // sub-route (e.g. /staff/visits/new) but the item should still light up on
-  // sibling routes (/staff/visits archive, /staff/visits/[id] detail).
-  activePrefix?: string;
+  // Extra prefixes that also mark this item active. Use when href points at
+  // one tab of a tabbed page and the item should stay lit on the sibling tabs
+  // (Cash Drawer lands on /staff/payments/cash-drawer and stays lit on the
+  // Petty Cash and End of Day tabs). List the sibling routes individually —
+  // never a shared parent like /staff/payments, which would also light the
+  // item on /staff/payments/new (Record payment), a route no sidebar item owns.
+  activePrefixes?: string[];
   // Sub-trees that should NOT mark this item active even though they fall under
-  // `href`'s prefix. Mirrors SectionTabs' excludePrefixes — e.g. "Billing &
-  // receipts" at /staff/visits excludes /staff/visits/new (the New visit form,
-  // which no sidebar item owns — it is reached from the Reception Queue's
-  // + New visit button).
+  // `href`'s prefix (or one of `activePrefixes`). Mirrors SectionTabs'
+  // excludePrefixes — e.g. "Visit Records" at /staff/visits excludes
+  // /staff/visits/new (the New visit form, which no sidebar item owns — it is
+  // reached from the Reception Queue's + New visit button).
   excludePrefixes?: string[];
   roles: readonly StaffRole[];
 }
@@ -68,40 +71,44 @@ export const STAFF_NAV: StaffNavSection[] = [
     ],
   },
   {
-    heading: "Front desk",
+    // Ordered by the daily flow (sidebar cleanup, 2026-09-15): the queue is
+    // where reception lives, Patients is the second-most-used page, and the
+    // two "someone is asking" pages sit together in a subgroup below them.
+    heading: "Front Desk",
     items: [
-      {
-        href: "/staff/inquiries",
-        label: "Inquiries",
-        description: "Inquiries that came in through the website chat or Messenger but haven't been converted into a real appointment yet. Follow up here to book them or close the thread.",
-        roles: ["reception", "admin"],
-      },
-      {
-        href: "/staff/patients/new",
-        label: "New patient registration",
-        description: "Register a brand-new patient at the counter — name, contact, birthday, address. Creates the patient record so you can then start their visit. For returning patients, search under Patients instead.",
-        roles: ["reception", "admin"],
-      },
-      {
-        href: "/staff/patients",
-        label: "Patients",
-        // New patient registration owns /staff/patients/new — keep this item
-        // from lighting there so only one Front-desk item is active at a time.
-        excludePrefixes: ["/staff/patients/new"],
-        description: "Search the patient database by name, contact number, or DRM ID. Open a patient to see their full visit history, attached IDs, contact info, and previous test results.",
-        roles: ["reception", "admin"],
-      },
-      {
-        href: "/staff/appointments",
-        label: "Appointments",
-        description: "Today's scheduled patients and walk-in slots, filterable by Consultations / Home service. Mark patients arrived to start their visit, or reschedule no-shows. View other days using the date picker.",
-        roles: ["reception", "admin"],
-      },
       {
         href: "/staff/visits/queue",
         label: "Reception Queue",
         description: "Today's live front-desk worklist in three stages: Waiting for payment (record the payment), Processing (lab/imaging still working on results) and Completed (paid, nothing outstanding — print the patient's billing). Updates on its own as payments come in and tests finish.",
         roles: ["reception", "admin"],
+      },
+      {
+        href: "/staff/patients",
+        label: "Patients",
+        // The default prefix match also covers /staff/patients/new — the
+        // "New patient registration" sidebar item was removed in the 2026-09-15
+        // cleanup, so this item is the one that stays lit on the form.
+        description: "Search the patient database by name, contact number, or DRM ID. Open a patient to see their full visit history, attached IDs, contact info, and previous test results. Use the + New patient button at the top to register a brand-new patient.",
+        roles: ["reception", "admin"],
+      },
+    ],
+    subgroups: [
+      {
+        heading: "Inquiries & Bookings",
+        items: [
+          {
+            href: "/staff/appointments",
+            label: "Appointments",
+            description: "Today's scheduled patients and walk-in slots, filterable by Consultations / Home service. Mark patients arrived to start their visit, or reschedule no-shows. View other days using the date picker.",
+            roles: ["reception", "admin"],
+          },
+          {
+            href: "/staff/inquiries",
+            label: "Inquiries",
+            description: "Inquiries that came in through the website chat or Messenger but haven't been converted into a real appointment yet. Follow up here to book them or close the thread.",
+            roles: ["reception", "admin"],
+          },
+        ],
       },
     ],
   },
@@ -110,44 +117,43 @@ export const STAFF_NAV: StaffNavSection[] = [
     items: [
       {
         href: "/staff/visits",
-        label: "Visit archive",
-        // /staff/visits is the visit archive (every visit ever); each visit
-        // opens to its printable A5 billing. "Visit archive" is the one name for
-        // this route — the in-page tab and the reception dashboard quicklink use
-        // it too, and the page's own h1 matches. excludePrefixes keeps this item
-        // from lighting on /staff/visits/new (reached from the Reception Queue's
-        // + New visit button, a patient page, or the Visits tab bar — no sidebar
-        // item owns it) or /staff/visits/queue (the Front-desk Reception Queue
-        // item owns that route).
+        label: "Visit Records",
+        // /staff/visits is the visit records page (every visit ever); each
+        // visit opens to its printable A5 billing. "Visit Records" is the one
+        // name for this route — the in-page tab and the reception dashboard
+        // quicklink use it too, and the page's own h1 matches. excludePrefixes
+        // keeps this item from lighting on /staff/visits/new (reached from the
+        // Reception Queue's + New visit button, a patient page, or the Visits
+        // tab bar — no sidebar item owns it) or /staff/visits/queue (the
+        // Front Desk Reception Queue item owns that route).
         excludePrefixes: ["/staff/visits/new", "/staff/visits/queue"],
         description: "Every visit ever, searchable by date / patient / status. Open a visit to print its patient billing (A5) and re-issue receipts. This is the record side of billing — to start a new charge, use + New visit on the Reception Queue.",
         roles: ["reception", "admin"],
       },
       {
+        // Stays a flat Billing item (not in a Front Desk subgroup): medtech
+        // reaches it from the lab dashboard and Cmd+K, and has no Front Desk.
         href: "/staff/quote",
-        label: "Quick quote",
+        label: "Quick Quote",
         description: "Build a price quote without creating a visit. Useful for phone inquiries: 'How much for a CBC + Urinalysis + Lipid panel?' Generates a shareable quote with HMO or cash pricing.",
         roles: ["reception", "medtech", "admin"],
       },
       {
-        href: "/staff/payments/petty-cash",
-        label: "Petty cash",
-        description: "Log small cash expenses paid from the till — transport, courier, office / lab supplies, minor repairs. Each entry is recorded in the books so the day's cash count adds up. Anything paid by GCash, bank transfer, or a vendor invoice goes through admin.",
-        roles: ["reception", "admin"],
-      },
-      {
         href: "/staff/payments/cash-drawer",
-        label: "Cash drawer",
-        // Lands on the Cash drawer tab; End of day is the second tab on the
-        // same page. activePrefix keeps this item lit on the eod route too.
-        activePrefix: "/staff/payments/eod",
-        description: "Your shift cash workspace — start your drawer with a counted amount of starting cash, then count it again at End of day to see the difference.",
+        label: "Cash Drawer",
+        // One item for the whole till: lands on the Cash Drawer tab; Petty
+        // Cash and End of Day are the other two tabs of the same page
+        // (PaymentsTabs). activePrefixes keeps this item lit on both sibling
+        // routes. NOT the /staff/payments parent — that would also light it on
+        // /staff/payments/new (Record payment), which no sidebar item owns.
+        activePrefixes: ["/staff/payments/petty-cash", "/staff/payments/eod"],
+        description: "Your shift cash workspace, in three tabs. Cash Drawer: start your drawer with a counted amount of starting cash. Petty Cash: log small cash expenses paid from the till (transport, courier, supplies, minor repairs) so the day's count still ties. End of Day: count the drawer again to see the difference. Anything paid by GCash, bank transfer, or a vendor invoice goes through admin.",
         roles: ["reception", "admin"],
       },
     ],
   },
   {
-    heading: "Lab",
+    heading: "Lab & Imaging",
     items: [
       {
         href: "/staff/queue",
@@ -157,7 +163,7 @@ export const STAFF_NAV: StaffNavSection[] = [
       },
       {
         href: "/staff/critical-alerts",
-        label: "Critical alerts",
+        label: "Critical Alerts",
         description: "Results that crossed a critical threshold (dangerously high or low values). Review each one, make the clinical follow-up call, then acknowledge it here so the whole team can see it's been handled.",
         roles: ["pathologist", "admin"],
       },
@@ -174,45 +180,49 @@ export const STAFF_NAV: StaffNavSection[] = [
     items: [
       {
         href: "/staff/admin/accounting/hmo-claims",
-        label: "HMO claims",
+        label: "HMO Claims",
         description: "Where you manage the entire HMO billing cycle: which patient visits still need to be invoiced, which invoices are awaiting payment, which HMOs are slow payers, and which to write off. Drill into a provider (e.g., Maxicare) to see every claim and its status.",
         roles: ["admin"],
       },
       {
-        // Lands on the Quick expense tab (the most-used action); activePrefix
+        // Lands on the Quick expense tab (the most-used action); activePrefixes
         // keeps "Expenses" highlighted across the other AP tabs too.
         href: "/staff/admin/accounting/ap/quick-expense",
         label: "Expenses",
-        activePrefix: "/staff/admin/accounting/ap",
+        activePrefixes: ["/staff/admin/accounting/ap"],
         description: "Everything expense-related in one place. Tabs inside: Quick expense (already-paid same-day expenses — cash, GCash, owner OOP), Overview (what's outstanding), Vendor bills (invoices with due dates), Bill payments (the outflows), Vendors (master list), Recurring (monthly auto-bills).",
         roles: ["admin"],
       },
       {
         href: "/staff/admin/accounting/cogs/send-outs",
-        label: "Outside-lab costs",
+        label: "Outside-Lab Costs",
+        // Outside-Lab Performance lives UNDER this href
+        // (…/send-outs/vendor-performance), so exclude it or both items light
+        // at once on that page.
+        excludePrefixes: ["/staff/admin/accounting/cogs/send-outs/vendor-performance"],
         description: "Costs for tests the clinic doesn't run in-house and sends to another lab (e.g. Hi Precision). Two tabs: Accrued (you billed the patient but the other lab's invoice isn't in yet) and True-ups (matching your estimate to the real bill once it arrives).",
         roles: ["admin"],
       },
       {
         href: "/staff/admin/accounting/cogs/send-outs/vendor-performance",
-        label: "Outside-lab performance",
+        label: "Outside-Lab Performance",
         description: "How each outside lab is doing: average cost per test, turnaround time, and how close your cost estimates were. Use it when deciding whether to switch outside labs or renegotiate rates.",
         roles: ["admin"],
       },
     ],
     subgroups: [
       {
-        heading: "Pay doctors",
+        heading: "Pay Doctors",
         items: [
           {
             href: "/staff/admin/accounting/pf-payouts",
-            label: "Pay doctors",
+            label: "Pay Doctors",
             description: "Pay each doctor their share of the consults they did (their professional fee). Ready to pay = ready now; Waiting on insurance = held until the HMO pays the clinic; Already paid = past payouts. Pick a doctor, send them the amount by GCash or cash, then record it here.",
             roles: ["admin"],
           },
           {
             href: "/staff/admin/accounting/pf-ytd-summary",
-            label: "Doctor pay (this year)",
+            label: "Doctor Pay (This Year)",
             description: "Per-doctor scoreboard for the year: how much each doctor earned, how much you've already paid out, and how much is still owed. Handy for year-end tax forms (BIR 2316 / 2307) and answering 'how much do we still owe Dr. X?'.",
             roles: ["admin"],
           },
@@ -223,13 +233,13 @@ export const STAFF_NAV: StaffNavSection[] = [
         items: [
           {
             href: "/staff/admin/payroll/runs",
-            label: "Run payroll",
+            label: "Run Payroll",
             description: "The actual payroll computation for a given period — gross pay, overtime, deductions (SSS, PhilHealth, Pag-IBIG, withholding tax, loans), and net pay per employee. Reviewing the output and clicking 'Finalize' generates payslips and books the JE.",
             roles: ["admin"],
           },
           {
             href: "/staff/admin/payroll/periods",
-            label: "Pay periods",
+            label: "Pay Periods",
             description: "The semi-monthly pay cycles (1st-15th, 16th-end). Each period progresses through stages: open → cutoff → paid → locked. Lock a period after paying out so nobody adjusts past payroll by accident.",
             roles: ["admin"],
           },
@@ -241,7 +251,7 @@ export const STAFF_NAV: StaffNavSection[] = [
           },
           {
             href: "/staff/admin/payroll/ot-slips",
-            label: "Overtime slips",
+            label: "Overtime Slips",
             description: "Overtime hours submitted by employees that need admin approval before the next pay run. Approve here and the OT amount automatically flows into the payroll computation.",
             roles: ["admin"],
           },
@@ -259,38 +269,38 @@ export const STAFF_NAV: StaffNavSection[] = [
           },
           {
             href: "/staff/admin/payroll/rates",
-            label: "Government rates (SSS, PhilHealth, Pag-IBIG, tax)",
+            label: "Government Rates (SSS, PhilHealth, Pag-IBIG, Tax)",
             description: "The current government contribution tables — SSS, PhilHealth, Pag-IBIG, and BIR withholding tax brackets. Update these when the government issues new rate schedules (usually January 1).",
             roles: ["admin"],
           },
           {
             href: "/staff/admin/payroll/settings",
-            label: "Payroll settings",
+            label: "Payroll Settings",
             description: "Global payroll configuration — pay cycle dates (e.g., pay on the 5th and 20th), minimum wage compliance threshold, default tax status, and 13th-month bonus settings.",
             roles: ["admin"],
           },
           {
             href: "/staff/admin/reports/staff-advances",
-            label: "Staff cash advances",
+            label: "Staff Cash Advances",
             description: "When staff borrow against future salary (cash advances, loans), the unpaid balance shows here. The next payroll auto-deducts toward repayment. Use to see who still owes what.",
             roles: ["admin"],
           },
         ],
       },
       {
-        heading: "Books & reports",
+        heading: "Books & Reports",
         items: [
           {
             href: "/staff/admin/accounting/journal",
             // The list page's "+ New journal entry" button reaches /journal/new,
             // so the manual-entry route no longer needs its own sidebar item.
-            label: "Journal entries",
+            label: "Journal Entries",
             description: "The full transaction log of the clinic — every revenue, expense, payment, and adjustment ever booked. Each entry has matching debits and credits that must balance. Search or filter by source to find an entry, or click + New journal entry to hand-post a correction, opening balance, or one-off the system didn't auto-book.",
             roles: ["admin"],
           },
           {
             href: "/staff/admin/accounting/financial-statements",
-            label: "Financial statements",
+            label: "Financial Statements",
             // One tabbed page: Income statement (P&L) / Balance sheet / Cash
             // flow. href is the bare route (Income statement); the default
             // prefix match keeps it lit on the balance-sheet & cash-flow tabs.
@@ -299,74 +309,73 @@ export const STAFF_NAV: StaffNavSection[] = [
           },
           {
             href: "/staff/admin/accounting/variance",
-            label: "Budget vs actual",
+            label: "Budget vs Actual",
             description: "Set a monthly budget for each expense category (e.g., 'Salaries: ₱400K, Rent: ₱270K') then compare it to what actually happened. Highlights where you went over or under budget so you can investigate. Useful for spotting unusual spending early.",
             roles: ["admin"],
           },
           {
             href: "/staff/admin/accounting/bank-rec",
-            label: "Bank reconciliation",
+            label: "Bank Reconciliation",
             description: "Cross-check the system's record of your bank account against the real bank statement. Upload the bank's CSV here — the system matches each transaction to a journal entry and flags anything that doesn't match (missing deposits, bank fees you forgot to book, etc.). Do this monthly to catch errors.",
             roles: ["admin"],
           },
           {
             href: "/staff/admin/accounting/periods",
-            label: "Monthly periods",
+            label: "Monthly Periods",
             description: "Monthly accounting windows (Jan 2026, Feb 2026, etc.). After you finish closing the books for a month, lock it here so no one accidentally posts new entries into a finished period. The bookkeeper does this monthly, usually 15 days after month-end.",
             roles: ["admin"],
           },
           {
             href: "/staff/admin/accounting/accrual-templates",
-            label: "Recurring monthly entries",
+            label: "Recurring Monthly Entries",
             description: "For expenses that happen every month on a predictable schedule (rent, internet, insurance), set up a template here once. The system auto-posts a draft entry on the chosen day each month — you just review and post. Saves repetitive typing.",
             roles: ["admin"],
           },
           {
             href: "/staff/admin/reports/daily-revenue",
-            label: "Daily revenue",
+            label: "Daily Revenue",
             description: "How much the clinic billed each day, broken down by service type (lab vs. consult vs. imaging) and payment method (cash, GCash, HMO, etc.). Use to spot trends or compare days/weeks.",
             roles: ["admin"],
           },
           {
             href: "/staff/admin/operations",
-            label: "Daily report",
+            label: "Daily Report",
             description: "The clinic's full operational day-by-day report (reproduces the manual DAILY MONITORING sheet): lab + consult by payment channel and HMO, distinct customers, discounts, gross profit, PF collected, and per-doctor / per-specialty productivity. Pick any month or custom date range; export to CSV.",
-            activePrefix: "/staff/admin/operations",
             roles: ["admin"],
           },
           {
             href: "/staff/admin/reports/lab-tat",
-            label: "Lab turnaround time",
+            label: "Lab Turnaround Time",
             description: "Measures how long tests take to complete — from sample collection to result release. Broken down by test type. Use to spot bottlenecks (e.g., 'why are FBSs taking 3 hours when they should take 1?').",
             roles: ["admin"],
           },
           {
             href: "/staff/admin/reports/stuck-tests",
-            label: "Stuck tests",
+            label: "Stuck Tests",
             description: "Tests sitting too long in any non-final state — unclaimed, in progress, or ready but unreleased — so nothing silently stalls like Visit #0037 did.",
             roles: ["admin"],
           },
           {
             href: "/staff/admin/reports/undone-releases",
-            label: "Undone releases",
+            label: "Undone Releases",
             description: "Every result release that was withdrawn — who undid it, why, whether the patient had already seen it, and whether it has since been re-released or cancelled (RA 10173 oversight).",
             roles: ["admin"],
           },
           {
             href: "/staff/admin/reports/deleted-entries",
-            label: "Deleted queue entries",
+            label: "Deleted Queue Entries",
             description: "Every visit or test deleted from the queues — who deleted it, why, what it was worth, and whether it was restored. Only unpaid entries can be deleted; paid ones need a payment void first.",
             roles: ["admin"],
           },
           {
             href: "/staff/admin/reports/patients-without-consent",
-            label: "Patients without consent",
+            label: "Patients Without Consent",
             description: "Active patients with no data-privacy consent on file — clear this list before enabling the consent gate, or their releases will block.",
             roles: ["admin"],
           },
           {
             href: "/staff/admin/accounting",
-            label: "External sync status",
+            label: "External Sync Status",
             description: "Status board for the daily export that pushes accounting data out to Google Sheets (where your external bookkeeper or auditor can pull it). Check here if the bookkeeper says they didn't get today's data — you can re-run a failed sync from this page.",
             exact: true,
             roles: ["admin"],
@@ -390,7 +399,7 @@ export const STAFF_NAV: StaffNavSection[] = [
           },
           {
             href: "/staff/admin/gift-codes",
-            label: "Gift codes",
+            label: "Gift Codes",
             description: "Every prepaid gift code ever sold (active, redeemed, expired), with the buyer and recipient details. Use to look up a specific code if a customer can't find theirs, or to track total outstanding gift-code liability.",
             roles: ["admin"],
           },
@@ -411,7 +420,7 @@ export const STAFF_NAV: StaffNavSection[] = [
         ],
       },
       {
-        heading: "Catalog & setup",
+        heading: "Catalog & Setup",
         items: [
           {
             href: "/staff/admin/prices",
@@ -433,13 +442,13 @@ export const STAFF_NAV: StaffNavSection[] = [
           },
           {
             href: "/staff/admin/result-templates",
-            label: "Result templates",
+            label: "Result Templates",
             description: "The blueprints behind every lab result PDF. For each test, you set up the parameters (e.g., for a CBC: WBC, RBC, hemoglobin) and the normal/abnormal reference ranges by age and sex. Edit a template here when a manufacturer changes the reference range or you add a new test.",
             roles: ["admin"],
           },
           {
             href: "/staff/admin/hmo-providers",
-            label: "HMO providers",
+            label: "HMO Providers",
             description: "The list of HMO companies the clinic accepts (Maxicare, Intellicare, Etiqa, Cocolife, etc.) with their billing thresholds and contact info. Add a new provider here when you start accepting a new HMO.",
             roles: ["admin"],
           },
@@ -451,72 +460,72 @@ export const STAFF_NAV: StaffNavSection[] = [
           },
           {
             href: "/staff/admin/accounting/chart-of-accounts",
-            label: "Chart of accounts",
+            label: "Chart of Accounts",
             description: "Master list of every 'bucket' your money lives in: Cash on Hand, BPI, BDO, GCash, Accounts Receivable, Revenue, Rent expense, etc. Each bucket has a 4-digit code. Add a new account when you open a new bank, start using a new wallet (Maya), or need to track a new kind of expense.",
             roles: ["admin"],
           },
           {
             href: "/staff/admin/accounting/payment-routing",
-            label: "Payment routing",
+            label: "Payment Routing",
             description: "The rules that tell the system 'when reception accepts payment via X, book it to account Y.' For example: GCash payments → 1030 GCash Wallet, Cheques → 1020 BPI, Cash → 1010 Cash on Hand. Edit if you switch banks or add a new payment method.",
             roles: ["admin"],
           },
           {
             href: "/staff/admin/accounting/cash-routing",
-            label: "Cash routing",
+            label: "Cash Routing",
             description: "Tracks the journey of physical cash from the moment a patient pays at reception, through the end-of-day count, to the bank deposit. Helps make sure no cash 'disappears' between collection and deposit.",
             roles: ["admin"],
           },
         ],
       },
       {
-        heading: "Admin tools",
+        heading: "Admin Tools",
         items: [
           {
             href: "/staff/users",
-            label: "Staff users",
+            label: "Staff Users",
             description: "Create new staff logins, change roles (reception/medtech/pathologist/admin/xray), reset passwords, and deactivate former employees. Each user maps to one role with specific page access.",
             roles: ["admin"],
           },
           {
             href: "/staff/audit",
-            label: "Audit log",
+            label: "Audit Log",
             description: "Searchable record of every meaningful action in the system — who logged in, who released a result, who voided a payment, who marked a claim paid. Filter by user, action type, or date. Essential for compliance reviews.",
             roles: ["admin"],
           },
           {
             href: "/staff/admin/emails-sent",
-            label: "Emails sent",
+            label: "Emails Sent",
             description: "Every transactional email the system sent — result alerts, booking confirmations, day-before reminders, newsletters, and registration welcomes. Filter by type, status, date, or patient; export to CSV.",
             roles: ["admin"],
           },
           {
             href: "/staff/admin/settings/dashboard-cards",
-            label: "Dashboard settings",
+            label: "Dashboard Settings",
             description: "Pick which summary cards (today's revenue, pending releases, low inventory, etc.) appear on each role's home dashboard. Different roles see different cards by default.",
             roles: ["admin"],
           },
           {
             href: "/staff/admin/seo",
-            label: "Search engines (IndexNow)",
+            label: "Search Engines (IndexNow)",
             description: "Push new or changed pages to Bing, Yandex and other IndexNow engines for faster indexing, and re-submit the whole site after setup or a content update. (Google indexes via the sitemap, not IndexNow.)",
             roles: ["admin"],
           },
           {
             href: "/staff/admin/settings/consent-gate",
-            label: "Consent gate",
+            label: "Consent Gate",
             description: "Turn the RA 10173 data-privacy consent requirement on or off. When ON, lab results can't be released for a patient without consent on file. Ships OFF — flip it on once reception is briefed.",
             roles: ["admin"],
           },
           {
             href: "/staff/admin/import-patients",
-            label: "Import patients",
+            label: "Import Patients",
             description: "Bulk-import patients from a CSV file — used during initial setup or when migrating from another system. Reads name, DOB, phone, email columns and creates one patient record per row.",
             roles: ["admin"],
           },
           {
             href: "/staff/admin/patient-merge",
-            label: "Merge duplicate patients",
+            label: "Merge Duplicate Patients",
             description: "When the same person was accidentally registered twice (different spellings, different contact numbers), combine the two records into one. Visit history from both gets merged onto the surviving record.",
             roles: ["admin"],
           },
@@ -529,15 +538,15 @@ export const STAFF_NAV: StaffNavSection[] = [
     items: [
       {
         href: "/staff/profile",
-        label: "My profile",
+        label: "My Profile",
         roles: ["reception", "medtech", "pathologist", "admin", "xray_technician"],
       },
       {
-        // Moved out of "Hidden tabs" when that section went admin-only
+        // Moved out of "Hidden Tabs" when that section went admin-only
         // (partner revision 8): payslips are self-service for EVERY role, so
         // they belong in the per-user Personal section, not the parked one.
         href: "/staff/payslips",
-        label: "My payslips",
+        label: "My Payslips",
         description: "Your own payslip history — open a pay period to see gross pay, overtime, deductions (SSS, PhilHealth, Pag-IBIG, tax, loans) and net pay, and download the PDF.",
         roles: ["reception", "medtech", "pathologist", "admin", "xray_technician"],
       },
@@ -552,27 +561,27 @@ export const STAFF_NAV: StaffNavSection[] = [
     // Partner revision 8: the section is now ADMIN-ONLY and collapsed by
     // default, so day-to-day roles never see the parked clutter. Two items
     // moved OUT first so nobody lost access to something they need — Cash
-    // drawer back to Front desk (revisions 2/9) and My payslips to Personal
+    // drawer back to Front Desk (revisions 2/9) and My payslips to Personal
     // (all roles draw a payslip). Everything left here is admin housekeeping.
-    heading: "Hidden tabs",
+    heading: "Hidden Tabs",
     adminOnly: true,
     collapsible: true,
     items: [
       {
         href: "/staff/gift-codes/sell",
-        label: "Sell gift code",
+        label: "Sell Gift Code",
         description: "Sell a prepaid gift code to a customer — they pay now, the recipient redeems later for services. Generates a printable code with QR + expiration date. Parked here for now; reception sells these rarely.",
         roles: ["reception", "admin"],
       },
       {
         href: "/staff/gift-codes/refund",
-        label: "Refund gift code sale",
+        label: "Refund Gift Code Sale",
         description: "Undo a mis-keyed gift-code sale — wrong buyer details, wrong payment method, customer changed their mind — while the code is still unused. Reverses the payment and puts the code back on sale; a code already redeemed on a visit needs the payment void instead.",
         roles: ["reception", "admin"],
       },
       {
         href: "/staff/registration",
-        label: "Registration link",
+        label: "Registration Link",
         description: "Share the public pre-registration page with patients — show the QR to scan, copy the link to text them, or print a desk poster. Parked here because registration is optional; it just saves counter time on arrival.",
         roles: ["reception", "admin"],
       },
@@ -584,7 +593,7 @@ export const STAFF_NAV: StaffNavSection[] = [
       },
       {
         href: "/staff/admin/accounting/patient-ar",
-        label: "Patient receivables (aging)",
+        label: "Patient Receivables (Aging)",
         description: "Cash patients with unpaid balances. Hidden from the main Admin section because the clinic uses all-or-nothing payments (no partial / no HMO co-pay) so this list is almost always empty. Re-surface if partial payments or co-pay are introduced.",
         roles: ["admin"],
       },
@@ -635,13 +644,11 @@ export function isItemActive(item: StaffNavItem, pathname: string): boolean {
     return false;
   }
   if (pathname === item.href || pathname.startsWith(`${item.href}/`)) return true;
-  if (item.activePrefix) {
-    return (
-      pathname === item.activePrefix ||
-      pathname.startsWith(`${item.activePrefix}/`)
-    );
-  }
-  return false;
+  return (
+    item.activePrefixes?.some(
+      (p) => pathname === p || pathname.startsWith(`${p}/`),
+    ) ?? false
+  );
 }
 
 // True if any item in the subgroup matches the current path. Drives

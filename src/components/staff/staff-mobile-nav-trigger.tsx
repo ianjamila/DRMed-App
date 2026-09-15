@@ -49,6 +49,7 @@ function MobileNavLink({
       <Link
         href={item.href}
         onClick={onClick}
+        aria-current={active ? "page" : undefined}
         className={
           active
             ? "block rounded-md bg-[color:var(--color-brand-navy)] px-3 py-3 text-sm font-medium text-white"

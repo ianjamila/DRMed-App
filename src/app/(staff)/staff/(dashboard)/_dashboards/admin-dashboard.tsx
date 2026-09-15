@@ -14,15 +14,15 @@ import { ActivityStrip, type ActivityItem } from "./_components/activity-strip";
 import { formatPeso, relativeAge } from "./_components/format";
 
 const QUICK_LINKS = [
-  { href: "/staff/admin/reports/daily-revenue", label: "Daily revenue" },
-  { href: "/staff/admin/accounting/ap", label: "AP dashboard" },
-  { href: "/staff/admin/accounting/hmo-claims", label: "HMO claims" },
-  { href: "/staff/admin/payroll/runs", label: "Pay runs" },
+  { href: "/staff/admin/reports/daily-revenue", label: "Daily Revenue" },
+  { href: "/staff/admin/accounting/ap", label: "AP Dashboard" },
+  { href: "/staff/admin/accounting/hmo-claims", label: "HMO Claims" },
+  { href: "/staff/admin/payroll/runs", label: "Pay Runs" },
   { href: "/staff/admin/accounting/periods", label: "Periods" },
-  { href: "/staff/admin/accounting/chart-of-accounts", label: "Chart of accounts" },
-  { href: "/staff/admin/settings/dashboard-cards", label: "Dashboard settings" },
-  { href: "/staff/audit", label: "Audit log" },
-  { href: "/staff/users", label: "Staff users" },
+  { href: "/staff/admin/accounting/chart-of-accounts", label: "Chart of Accounts" },
+  { href: "/staff/admin/settings/dashboard-cards", label: "Dashboard Settings" },
+  { href: "/staff/audit", label: "Audit Log" },
+  { href: "/staff/users", label: "Staff Users" },
 ];
 
 const SKIP_COUNT = Promise.resolve({ count: 0, data: null });

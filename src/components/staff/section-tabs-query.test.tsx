@@ -71,9 +71,25 @@ describe("StatementTabs", () => {
 });
 
 describe("PaymentsTabs", () => {
-  it("still carries date and shift together", () => {
+  it("renders Cash Drawer | Petty Cash | End of Day, in that order", () => {
+    const html = renderToStaticMarkup(<PaymentsTabs />);
+    expect(hrefs(html)).toEqual([
+      "/staff/payments/cash-drawer",
+      "/staff/payments/petty-cash",
+      "/staff/payments/eod",
+    ]);
+    expect(html.replace(/<[^>]+>/g, "|")).toMatch(
+      /Cash Drawer\|+Petty Cash\|+End of Day/,
+    );
+  });
+
+  it("carries date and shift onto every tab, Petty Cash included", () => {
     const got = render(<PaymentsTabs />, "date=2026-05-30&shift=am");
-    expect(got[1]).toBe("/staff/payments/eod?date=2026-05-30&shift=am");
+    expect(got).toEqual([
+      "/staff/payments/cash-drawer?date=2026-05-30&shift=am",
+      "/staff/payments/petty-cash?date=2026-05-30&shift=am",
+      "/staff/payments/eod?date=2026-05-30&shift=am",
+    ]);
   });
 
   it("builds a well-formed href when only the shift is set", () => {

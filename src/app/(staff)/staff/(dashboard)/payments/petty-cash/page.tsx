@@ -3,6 +3,7 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isISODate, todayManilaISODate } from "@/lib/dates/manila";
 import { PageHeader } from "@/components/staff/page-header";
+import { PaymentsTabs } from "../_components/payments-tabs";
 import { PETTY_CASH_COA_TO_CATEGORY } from "@/lib/accounting/expense-mappings";
 import { PettyCashDatePicker } from "./petty-cash-date-picker";
 import { PettyCashForm } from "./petty-cash-form";
@@ -80,6 +81,7 @@ export default async function PettyCashPage({
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
+      <PaymentsTabs />
       <PageHeader
         title="Petty cash"
         subtitle="Log small cash expenses paid from the till — transport, courier, office or lab supplies, minor repairs. Each entry comes straight out of the drawer, so the day's expected cash drops by the same amount and the count still ties. For anything paid by GCash, bank transfer, or a vendor invoice, ask admin."

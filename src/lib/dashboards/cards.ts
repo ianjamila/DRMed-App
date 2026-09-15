@@ -28,9 +28,9 @@ export const DASHBOARD_CARDS: readonly CardDef[] = [
   { id: "reception.walk_ins_waiting",  label: "Walk-ins waiting",  roles: ["reception"], group: "snapshot" },
   { id: "reception.open_inquiries",    label: "Open inquiries",    roles: ["reception"], group: "snapshot" },
   // Off by default since partner revision 8 sent "Sell gift code" to the
-  // admin-only Hidden tabs section: counter sales are rare enough that a
+  // admin-only Hidden Tabs section: counter sales are rare enough that a
   // standing tile (usually reading 0) isn't worth the space. Reception reaches
-  // the sell page from the Front desk quicklink instead.
+  // the sell page from the Front Desk quicklink instead.
   { id: "reception.gift_codes_sold",   label: "Gift codes sold",   roles: ["reception"], group: "snapshot", defaultHidden: true },
   { id: "reception.cash_drawer",       label: "Cash drawer",       roles: ["reception"], group: "snapshot", sensitive: true },
   { id: "reception.strip_appointments", label: "Strip: next appointments", roles: ["reception"], group: "attention" },
