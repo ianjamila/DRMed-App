@@ -61,7 +61,7 @@ export const DASHBOARD_CARDS: readonly CardDef[] = [
   // its destination excludes (now fixed). Off by default rather than deleted,
   // so Dashboard settings can bring it back. Visits today and Queue stay ON —
   // the owner deferred those two to a later re-review.
-  { id: "admin.released_today",    label: "Released today",  roles: ["admin"], group: "operations", defaultHidden: true },
+  { id: "admin.released_today",    label: "Released today (plain count)",  roles: ["admin"], group: "operations", defaultHidden: true },
   { id: "admin.dup_candidates",    label: "Possible duplicates", roles: ["admin"], group: "operations" },
 
   // ---- Admin: Money -------------------------------------------------------

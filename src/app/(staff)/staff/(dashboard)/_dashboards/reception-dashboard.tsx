@@ -659,7 +659,7 @@ export async function ReceptionDashboard({
               <StatCard
                 label="Arrivals awaiting registration"
                 value={stats.walkInsWaiting}
-                hint="Distinct arrivals, not yet registered"
+                hint="Checked in, not yet registered — one per booking"
                 href="/staff/appointments"
                 error={stats.walkInsError}
               />
@@ -729,18 +729,24 @@ export async function ReceptionDashboard({
       {hasAttention && (
         <SectionHeading title="What needs attention">
           <div className="grid gap-4 lg:grid-cols-3">
+            {/* Deliberately a WIDER set than the "Arrivals awaiting
+                registration" card above, which counts checked-in arrivals
+                only. This strip is the whole front-desk action list: today's
+                bookings still to come, arrivals already waiting, and callbacks
+                owed. The two are not meant to reconcile, so the titles say
+                different things. */}
             {show("reception.strip_appointments") && (
               <ActivityStrip
-                title="Arrivals & callbacks"
+                title="Today's bookings, arrivals & callbacks"
                 items={arrivalItems}
-                emptyMessage="No arrivals or callbacks waiting."
+                emptyMessage="Nothing booked or waiting."
                 viewAllHref="/staff/appointments"
                 error={stats.arrivalsError}
               />
             )}
             {show("reception.strip_unpaid") && (
               <ActivityStrip
-                title="To collect from today's patients"
+                title="Patients waiting to pay"
                 items={unpaidItems}
                 emptyMessage="No payments waiting"
                 viewAllHref="/staff/visits/queue?stage=waiting"

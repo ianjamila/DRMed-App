@@ -770,7 +770,7 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
             )}
             {show("admin.released_today") && (
               <StatCard
-                label="Released today"
+                label="Released today (plain count)"
                 value={stats.releasedToday}
                 hint="Lab & imaging results released today"
                 href="/staff/queue?filter=released_today"
