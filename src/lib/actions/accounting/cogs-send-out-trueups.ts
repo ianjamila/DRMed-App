@@ -6,7 +6,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { audit } from "@/lib/audit/log";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { SendOutTrueupCreateSchema } from "@/lib/validations/accounting";
-import { manilaRangeUtc } from "@/lib/dates/manila";
+import { isoDateParts, manilaRangeUtc, todayManilaISODate } from "@/lib/dates/manila";
 
 type ActionResult<T = unknown> =
   | { ok: true; data: T }
@@ -129,13 +129,16 @@ export async function voidSendOutTrueup(input: {
       .order("line_order");
 
     // Insert reversal JE
-    const revYear = new Date().getFullYear();
+    // posting_date below is a Manila calendar date, and an accounting period
+    // is closed by Manila date — posting the reversal to yesterday because UTC
+    // had not ticked over could land it in an already-closed period.
+    const revYear = isoDateParts(todayManilaISODate()).year;
     const revEntryNumber = `REV-SO-${revYear}-${Date.now()}`;
     const { data: revJe } = await admin
       .from("journal_entries")
       .insert({
         entry_number: revEntryNumber,
-        posting_date: new Date().toISOString().slice(0, 10),
+        posting_date: todayManilaISODate(),
         status: "draft",
         source_kind: "reversal",
         source_id: null,

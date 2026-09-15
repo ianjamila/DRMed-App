@@ -7,6 +7,7 @@ import { audit } from "@/lib/audit/log";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { voidPfDisbursementAndUnlink } from "@/lib/accounting/pf-disbursement-void";
 import { PfDisbursementCreateSchema } from "@/lib/validations/accounting";
+import { isoDateParts } from "@/lib/dates/manila";
 
 type ActionResult<T = unknown> =
   | { ok: true; data: T }
@@ -25,7 +26,7 @@ export async function createPfDisbursement(
   const admin = createAdminClient();
 
   // Assign batch_number via the counter function.
-  const year = new Date(data.posted_date).getFullYear();
+  const year = isoDateParts(data.posted_date).year;
   const { data: nRow, error: nErr } = await admin.rpc(
     "next_pf_disbursement_batch_number",
     { p_year: year }

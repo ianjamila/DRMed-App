@@ -3,6 +3,7 @@ import { CONTACT, SITE, SOCIAL } from "@/lib/marketing/site";
 import { NewsletterForm } from "./newsletter-form";
 import { CookiePreferencesLink } from "./cookie-consent";
 import { TrackedTelLink } from "@/components/marketing/tracked-tel-link";
+import { isoDateParts, todayManilaISODate } from "@/lib/dates/manila";
 
 export function MarketingFooter() {
   return (
@@ -177,7 +178,7 @@ export function MarketingFooter() {
       <div className="border-t border-white/10">
         <div className="mx-auto flex max-w-7xl flex-col items-start justify-between gap-3 px-4 py-6 text-xs text-white/65 sm:flex-row sm:items-center sm:px-6 lg:px-8">
           <p>
-            © {new Date().getFullYear()} {SITE.name}. Protected under the
+            © {isoDateParts(todayManilaISODate()).year} {SITE.name}. Protected under the
             Philippine Data Privacy Act (RA 10173).
           </p>
           <Link

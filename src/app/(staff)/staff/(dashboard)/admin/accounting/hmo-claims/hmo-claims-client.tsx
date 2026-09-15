@@ -17,7 +17,7 @@ import {
 } from "./_components/historic-claim-modals";
 import { Panel } from "@/components/ui/panel";
 import { ExportCsvButton } from "@/components/staff/export-csv-link";
-import { manilaDate } from "@/lib/dates/manila";
+import { manilaDate, manilaISODate, todayManilaISODate } from "@/lib/dates/manila";
 import {
   ariaSortFor,
   nextSort,
@@ -827,7 +827,7 @@ function AllUnbilled({
   // page the reader is already on.
   const page = Math.min(table.page, totalPages);
   const pageRows = ordered.slice((page - 1) * size, page * size);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayManilaISODate();
 
   const th = (key: UnbilledSortColumn, label: string, align?: "left" | "right") => (
     <ClientSortableTh
@@ -883,7 +883,7 @@ function AllUnbilled({
         provider: r.provider_name ?? "",
         is_historic: r.is_historic ? "yes" : "no",
         kind: r.kind ?? "lab",
-        released_at: r.released_at ? new Date(r.released_at).toISOString().slice(0, 10) : "",
+        released_at: manilaISODate(r.released_at) ?? "",
         days_since_release: r.days_since_release ?? "",
         patient: r.patient_name ?? "",
         service: r.service_description ?? "",
@@ -1217,7 +1217,7 @@ function AllAging({
   // Clamped — see AllUnbilled.
   const page = Math.min(table.page, totalPages);
   const pageRows = ordered.slice((page - 1) * size, page * size);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayManilaISODate();
 
   const th = (key: AgingSortColumn, label: string, align?: "left" | "right") => (
     <ClientSortableTh
@@ -1560,7 +1560,7 @@ function AgingMatrix({ rows }: { rows: AgingRow[] }) {
 
   const [pending, startTransition] = useTransition();
   const [snapResult, setSnapResult] = useState<string | null>(null);
-  const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
+  const today = todayManilaISODate();
   const [snapDate, setSnapDate] = useState(today);
 
   function snapshot() {

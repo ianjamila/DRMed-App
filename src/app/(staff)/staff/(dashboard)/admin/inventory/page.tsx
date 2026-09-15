@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { todayManilaISODate } from "@/lib/dates/manila";
+import { shiftISODate, todayManilaISODate } from "@/lib/dates/manila";
 import {
   ariaSortFor,
   buildListHref,
@@ -88,9 +88,13 @@ export default async function InventoryPage({ searchParams }: SearchProps) {
 
   const admin = createAdminClient();
   const today = todayManilaISODate();
-  const sixtyDaysFromNow = new Date(`${today}T00:00:00+08:00`);
-  sixtyDaysFromNow.setDate(sixtyDaysFromNow.getDate() + 60);
-  const expirySoonCutoff = sixtyDaysFromNow.toISOString().slice(0, 10);
+  // This pinned Manila midnight correctly and then read it back out through
+  // the runtime's own zone, which undoes the pin: Manila midnight is 16:00 UTC
+  // the PREVIOUS day, so `getDate()` returned yesterday and the cutoff landed
+  // a day early EVERY day, not just in a window. Same shape as the
+  // financial-statement preset bug (#173). Calendar arithmetic on a calendar
+  // date stays in strings.
+  const expirySoonCutoff = shiftISODate(today, 60);
 
   // Main, paginated query — the "low" / "expiring" scopes used to be a JS
   // filter applied AFTER an unbounded fetch, which made a server-side count

@@ -8,6 +8,7 @@ import { translatePgError } from "@/lib/accounting/pg-errors";
 import { reportError } from "@/lib/observability/report-error";
 import { revalidatePath } from "next/cache";
 import type { z } from "zod";
+import { firstOfMonthISO, isoDateParts, todayManilaISODate } from "@/lib/dates/manila";
 
 type VendorCreateInput = z.infer<typeof vendorCreateSchema>;
 type VendorUpdateInput = z.infer<typeof vendorUpdateSchema>;
@@ -48,7 +49,10 @@ export async function listVendorsAction(filter?: {
     return { ok: false, error: "Failed to load vendors" };
   }
 
-  const yearStart = new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0, 10);
+  // Jan 1 of the MANILA year. `new Date().getFullYear()` reads the runtime's
+  // zone, so for the first eight hours of 1 January the server was still on
+  // the old year and this reached back to the wrong January.
+  const yearStart = firstOfMonthISO(isoDateParts(todayManilaISODate()).year, 1);
 
   type BillAgg = { outstanding_amount: number | null; gross_amount: number | null; bill_date: string; status: string };
   type VendorRow = { id: string; name: string; tin: string | null; is_active: boolean; bills: BillAgg[] | null };

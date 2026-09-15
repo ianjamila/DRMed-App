@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { pluckOne } from "@/lib/reports/format";
+import { shiftISODate, todayManilaISODate } from "@/lib/dates/manila";
 import { PfPayoutsClient } from "./pf-payouts-client";
 
 export const metadata = { title: "Pay doctors" };
@@ -63,10 +64,13 @@ export default async function PfPayoutsPage() {
     .is("voided_at", null)
     .order("created_at", { ascending: false });
 
-  // Tab 3 data: History (last 90 days)
-  const now = new Date();
-  now.setDate(now.getDate() - 90);
-  const ninetyDaysAgo = now.toISOString().slice(0, 10);
+  // Tab 3 data: History (last 90 days).
+  // `posted_date` is a DATE column holding Manila calendar dates, so the
+  // cutoff has to be a Manila calendar date too. Counting back from `new
+  // Date()` through `getDate()` counts in the RUNTIME's zone — UTC on the
+  // server — which is still on yesterday between Manila midnight and 08:00,
+  // so the window silently reached back 91 days for most of a working morning.
+  const ninetyDaysAgo = shiftISODate(todayManilaISODate(), -90);
   const { data: history } = await admin
     .from("doctor_pf_disbursements")
     .select(

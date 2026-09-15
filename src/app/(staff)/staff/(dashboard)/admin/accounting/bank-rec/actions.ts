@@ -6,6 +6,7 @@ import { z } from "zod";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
+import { shiftISODate } from "@/lib/dates/manila";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -263,8 +264,8 @@ async function runAutoMatch(
     (max, b) => (b.transaction_date > max ? b.transaction_date : max),
     bankLines[0].transaction_date,
   );
-  const windowStart = shiftDate(minDate, -3);
-  const windowEnd = shiftDate(maxDate, 3);
+  const windowStart = shiftISODate(minDate, -3);
+  const windowEnd = shiftISODate(maxDate, 3);
 
   const { data: alreadyMatched } = await admin
     .from("bank_statement_lines")
@@ -353,12 +354,6 @@ async function runAutoMatch(
   }
 
   return { matched: matches.length };
-}
-
-function shiftDate(iso: string, days: number): string {
-  const d = new Date(`${iso}T00:00:00+08:00`);
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
 }
 
 export async function rerunAutoMatch(statementId: string): Promise<ActionResult> {
