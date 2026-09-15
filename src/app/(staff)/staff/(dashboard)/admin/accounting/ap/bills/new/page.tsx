@@ -1,6 +1,7 @@
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { listVendorsAction } from "@/lib/actions/accounting/vendors";
+import { loadClosedDayContext } from "@/lib/accounting/eod-closed-dates";
 import { BillFormClient } from "./bill-form-client";
 
 export const metadata = { title: "New bill — AP — DRMed" };
@@ -10,7 +11,7 @@ export default async function NewBillPage() {
   await requireAdminStaff();
   const admin = createAdminClient();
 
-  const [vendorsR, accountsR, cashR, vendorDefaultsR] = await Promise.all([
+  const [vendorsR, accountsR, cashR, vendorDefaultsR, closedDays] = await Promise.all([
     listVendorsAction({ active: true }),
     admin
       .from("chart_of_accounts")
@@ -28,6 +29,9 @@ export default async function NewBillPage() {
       .from("vendors")
       .select("id, default_wt_classification, default_wt_rate, default_account_id")
       .eq("is_active", true),
+    // 0149: paid-on-entry can pay a bill out of the till, so the form needs to
+    // know which days are already closed.
+    loadClosedDayContext(),
   ]);
 
   const vendorDefaults = Object.fromEntries(
@@ -41,6 +45,8 @@ export default async function NewBillPage() {
       vendorDefaults={vendorDefaults}
       allAccounts={accountsR.data ?? []}
       cashAccounts={cashR.data ?? []}
+      tillAccountId={closedDays.tillAccountId}
+      closedDates={closedDays.closedDates}
     />
   );
 }

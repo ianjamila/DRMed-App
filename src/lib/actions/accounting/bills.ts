@@ -10,6 +10,7 @@ import {
   billUpdateDraftSchema,
 } from "@/lib/validations/accounting";
 import { translatePgError } from "@/lib/accounting/pg-errors";
+import { translateBillPaymentError } from "@/lib/accounting/bill-payment-errors";
 import { reportError } from "@/lib/observability/report-error";
 import { revalidatePath } from "next/cache";
 import type { z } from "zod";
@@ -316,7 +317,9 @@ export async function createBillPaidOnEntryAction(
     p_actor_id: profile.user_id,
   });
 
-  if (error) return { ok: false, error: translatePgError(error) };
+  // 0149: "Mark as paid" inserts a bill_payment directly, so this door reaches
+  // the cash drawer (and its day-close lock) exactly like the payments page.
+  if (error) return { ok: false, error: translateBillPaymentError(error) };
 
   const out = asRpcObject(data);
   const billId = String(out.bill_id ?? "");

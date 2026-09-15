@@ -25,7 +25,13 @@ Key reference artifacts:
   every post-1.0 programme (partner revisions, release lifecycle, group templates, EOD
   denomination count…). Read the spec before re-deriving a design decision.
 
-Migration ledger: **prod head = 0148**, repo↔prod in sync (2026-09-15). There is ONE
+Migration ledger: **prod head = 0148**, repo↔prod in sync (2026-09-15). **0149** is in
+flight on `fix/ap-cash-drawer` and must be pushed before its PR merges.
+`ls supabase/migrations | tail -3` is NOT enough to pick the next number — it only sees your
+own worktree, and on 2026-09-15 two branches claimed 0147 (and P0050) the same afternoon.
+Check the open branches too:
+`for b in $(git branch -r --format='%(refname:short)'); do git ls-tree --name-only $b supabase/migrations/ | tail -1; done`.
+A duplicate number makes `db push` report success and apply nothing. There is ONE
 Supabase project (= prod, ref `qhptbmafrosgibooelpp`); there is no staging project — the
 local stack is staging.
 
@@ -145,7 +151,7 @@ Other DB-side automation to be aware of (details and P-codes in the `drmed-migra
 - **Soft delete (0125):** `visits` and `test_requests` carry `deleted_at/by/reason`; guard triggers P0042–P0046 decide deletability (only `unpaid`) and block payments/status changes on deleted visits. **Every read of those tables filters `deleted_at is null`.** **0147 adds P0050** to both delete guards: an entry carrying a non-voided `hmo_claim_item` is money already billed to an HMO, and since 0146 the HMO reports skip deleted rows, so deleting it would drop a real receivable out of AR. Reachable via undo-release — a claimed line goes back to `ready_for_release`, 0110 does not void its claim, and 0133 keeps an HMO visit `unpaid` forever, so neither P0042 nor P0043 fires. `src/lib/visits/deletion.ts` mirrors it for the UI (`hasOpenHmoClaim`, reason `hmo_claimed`) and `deletion.test.ts` pins the migration's SQL text so the two can't drift.
 - Package headers (0040) auto-promote to `ready_for_release`; components are ₱0 rows with `parent_id`. Multi-row inserts list headers before components.
 - The statutory Senior/PWD discount row is locked at 20% (P0047, 0128); the EOD denomination breakdown must tie to the counted total (P0048, 0132).
-- Every `raise exception` with a `P00NN` code needs a translation in `src/lib/accounting/pg-errors.ts` (in use: P0001–P0034, P0040–P0050; next free P0051).
+- Every `raise exception` with a `P00NN` code needs a translation in `src/lib/accounting/pg-errors.ts` (in use: P0001–P0034, P0040–P0052; next free P0053).
 
 ### Three Supabase clients with strict separation
 

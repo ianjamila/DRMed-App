@@ -1943,6 +1943,7 @@ export type Database = {
       eod_cash_adjustments: {
         Row: {
           amount_php: number
+          bill_payment_id: string | null
           business_date: string
           contra_account_id: string | null
           gift_code_id: string | null
@@ -1960,6 +1961,7 @@ export type Database = {
         }
         Insert: {
           amount_php: number
+          bill_payment_id?: string | null
           business_date: string
           contra_account_id?: string | null
           gift_code_id?: string | null
@@ -1977,6 +1979,7 @@ export type Database = {
         }
         Update: {
           amount_php?: number
+          bill_payment_id?: string | null
           business_date?: string
           contra_account_id?: string | null
           gift_code_id?: string | null
@@ -1993,6 +1996,13 @@ export type Database = {
           voided_by?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "eod_cash_adjustments_bill_payment_id_fkey"
+            columns: ["bill_payment_id"]
+            isOneToOne: false
+            referencedRelation: "bill_payments"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "eod_cash_adjustments_contra_account_id_fkey"
             columns: ["contra_account_id"]

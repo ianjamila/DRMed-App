@@ -77,9 +77,12 @@ type JournalEntry = {
 export function PaymentDetailClient({
   payment,
   journalEntries,
+  voidBlockedByClose,
 }: {
   payment: Payment;
   journalEntries: JournalEntry[];
+  /** 0149: this payment left the till on a day whose cash count is closed. */
+  voidBlockedByClose: boolean;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -189,6 +192,12 @@ export function PaymentDetailClient({
               variant="outline"
               size="touch"
               onClick={() => setVoidOpen(true)}
+              disabled={voidBlockedByClose}
+              title={
+                voidBlockedByClose
+                  ? "This payment left the till on a day whose cash count is already closed. Reopen the end-of-day close for that date first."
+                  : undefined
+              }
               className="border-red-300 text-red-700 hover:bg-red-50 hover:text-red-800"
             >
               Void
@@ -197,6 +206,17 @@ export function PaymentDetailClient({
         )}
       </header>
 
+      {!isVoided && voidBlockedByClose && (
+        <Alert>
+          <CircleAlert />
+          <AlertDescription>
+            This payment came out of the till on a day whose cash count is
+            already closed, so it can&apos;t be voided yet — undoing it would
+            change a count that has been signed off. Ask an admin to reopen the
+            end-of-day close for {payment.payment_date} first.
+          </AlertDescription>
+        </Alert>
+      )}
       {error && (
         <Alert variant="destructive">
           <CircleAlert />

@@ -2,6 +2,8 @@ import { notFound } from "next/navigation";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getBillPaymentAction } from "@/lib/actions/accounting/bill-payments";
+import { loadClosedDayContext } from "@/lib/accounting/eod-closed-dates";
+import { tillPaymentBlockedByClose } from "@/lib/accounting/till-close-warning";
 import { PaymentDetailClient } from "./payment-detail-client";
 
 export const metadata = { title: "Payment — AP — DRMed" };
@@ -27,5 +29,25 @@ export default async function PaymentDetailPage({
     .eq("source_kind", "bill_payment")
     .order("created_at", { ascending: true });
 
-  return <PaymentDetailClient payment={r.data} journalEntries={jes ?? []} />;
+  // 0149: voiding a till payment updates its cash-drawer row, and the
+  // day-close lock guards UPDATE too — so once that business day is closed the
+  // void is refused and the whole cascade (reversal JE included) rolls back.
+  // A void almost always happens after the payment's own day has been counted,
+  // so this is the common case; say it on the page rather than in a dialog the
+  // admin has already typed a reason into.
+  const closedDays = await loadClosedDayContext();
+  const voidBlockedByClose = tillPaymentBlockedByClose({
+    cashAccountId: r.data.cash_account_id,
+    tillAccountId: closedDays.tillAccountId,
+    paymentDate: r.data.payment_date,
+    closedDates: closedDays.closedDates,
+  });
+
+  return (
+    <PaymentDetailClient
+      payment={r.data}
+      journalEntries={jes ?? []}
+      voidBlockedByClose={voidBlockedByClose}
+    />
+  );
 }

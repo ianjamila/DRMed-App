@@ -23,6 +23,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CircleAlert } from "lucide-react";
+import {
+  tillPaymentBlockedByClose,
+  TILL_CLOSE_WARNING,
+} from "@/lib/accounting/till-close-warning";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -91,6 +95,10 @@ type Props =
       vendorDefaults: Record<string, VendorDefaults>;
       allAccounts: Account[];
       cashAccounts: Account[];
+      /** chart_of_accounts.id for 1010 Cash on Hand (0149). */
+      tillAccountId: string | null;
+      /** Manila ISO dates whose EOD close is already signed off (0149). */
+      closedDates: string[];
     }
   | {
       mode: "edit";
@@ -100,6 +108,10 @@ type Props =
       vendorDefaults: Record<string, VendorDefaults>;
       allAccounts: Account[];
       cashAccounts: Account[];
+      // Paid-on-entry is create-mode only, so the edit form never pays out of
+      // the till and needs no closed-day pre-flight.
+      tillAccountId?: undefined;
+      closedDates?: undefined;
     };
 
 function isPaymentMethod(v: string): v is PaymentMethod {
@@ -160,6 +172,19 @@ export function BillFormClient(props: Props) {
   const [cashAccountId, setCashAccountId] = useState<string>("");
   const [paymentDate, setPaymentDate] = useState(todayManilaISODate());
   const [paymentReference, setPaymentReference] = useState("");
+
+  // 0149: "Save, post, and pay" inserts a bill_payment directly, so a cash
+  // payment out of 1010 writes the cash-drawer row in the same transaction and
+  // a closed day refuses the WHOLE bill (P0015) — the bill would not be
+  // created either. Warn before the button is reachable.
+  const tillDayClosed =
+    paidOnEntry &&
+    tillPaymentBlockedByClose({
+      cashAccountId,
+      tillAccountId: props.mode === "create" ? props.tillAccountId : null,
+      paymentDate,
+      closedDates: props.mode === "create" ? props.closedDates : [],
+    });
   const [chequeNumber, setChequeNumber] = useState("");
   const [chequeDate, setChequeDate] = useState(todayManilaISODate());
 
@@ -328,6 +353,12 @@ export function BillFormClient(props: Props) {
         </h1>
       </header>
 
+      {tillDayClosed && (
+        <Alert>
+          <CircleAlert />
+          <AlertDescription>{TILL_CLOSE_WARNING}</AlertDescription>
+        </Alert>
+      )}
       {error && (
         <Alert variant="destructive">
           <CircleAlert />
@@ -660,7 +691,7 @@ export function BillFormClient(props: Props) {
                 variant="brand"
                 size="touch"
                 onClick={() => handleSubmit("save-paid-on-entry")}
-                disabled={isPending}
+                disabled={isPending || tillDayClosed}
                 className="bg-green-700 hover:bg-green-800 focus-visible:ring-green-700/60"
               >
                 {isPending ? "Saving…" : "Save, post, and pay"}
