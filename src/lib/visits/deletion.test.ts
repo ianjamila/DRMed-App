@@ -1,5 +1,8 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  hasOpenHmoClaim,
   testDeletability,
   visitDeletability,
   type TestDeleteShape,
@@ -11,6 +14,7 @@ function visit(overrides: Partial<VisitDeleteShape> = {}): VisitDeleteShape {
     payment_status: "unpaid",
     deleted_at: null,
     test_statuses: ["requested", "in_progress"],
+    has_open_hmo_claim: false,
     ...overrides,
   };
 }
@@ -22,6 +26,7 @@ function test_(overrides: Partial<TestDeleteShape> = {}): TestDeleteShape {
     parent_id: null,
     visit_payment_status: "unpaid",
     visit_deleted_at: null,
+    has_open_hmo_claim: false,
     ...overrides,
   };
 }
@@ -115,5 +120,151 @@ describe("testDeletability", () => {
       ok: false,
       reason: "role",
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 0147 / P0050 — money already claimed from an HMO
+// ---------------------------------------------------------------------------
+
+describe("open HMO claims block deletion", () => {
+  it("blocks a visit whose money is already claimed", () => {
+    const got = visitDeletability("reception", visit({ has_open_hmo_claim: true }));
+    expect(got).toEqual({
+      ok: false,
+      reason: "hmo_claimed",
+      hint: "Already claimed from an HMO — void the claim batch first.",
+    });
+  });
+
+  it("blocks a line whose money is already claimed", () => {
+    const got = testDeletability("reception", test_({ has_open_hmo_claim: true }));
+    expect(got.ok).toBe(false);
+    expect(got.ok === false && got.reason).toBe("hmo_claimed");
+  });
+
+  it("is reachable on an unreleased line — the undo-release path", () => {
+    // The case the guard exists for: the line was released and claimed, the
+    // release was undone (0110 does not touch hmo_claim_items), and 0133 keeps
+    // an HMO visit 'unpaid' forever — so nothing else blocks the delete.
+    const got = testDeletability(
+      "reception",
+      test_({
+        status: "ready_for_release",
+        visit_payment_status: "unpaid",
+        has_open_hmo_claim: true,
+      }),
+    );
+    expect(got.ok === false && got.reason).toBe("hmo_claimed");
+  });
+
+  it("still reports 'released' first — the trigger checks that first too", () => {
+    const got = testDeletability(
+      "reception",
+      test_({ status: "released", has_open_hmo_claim: true }),
+    );
+    expect(got.ok === false && got.reason).toBe("released");
+  });
+
+  it("reports the claim before the generic not-unpaid reason", () => {
+    // Mirrors the trigger's order, so the hint names the real obstacle.
+    const got = testDeletability(
+      "reception",
+      test_({ visit_payment_status: "partial", has_open_hmo_claim: true }),
+    );
+    expect(got.ok === false && got.reason).toBe("hmo_claimed");
+  });
+
+  it("a voided claim batch does not block anything", () => {
+    expect(visitDeletability("reception", visit({ has_open_hmo_claim: false })).ok).toBe(true);
+    expect(testDeletability("reception", test_({ has_open_hmo_claim: false })).ok).toBe(true);
+  });
+});
+
+describe("hasOpenHmoClaim", () => {
+  it("is false for no embed, a null embed and an empty one", () => {
+    expect(hasOpenHmoClaim(undefined)).toBe(false);
+    expect(hasOpenHmoClaim(null)).toBe(false);
+    expect(hasOpenHmoClaim([])).toBe(false);
+  });
+
+  it("is false when every batch is voided", () => {
+    expect(hasOpenHmoClaim([{ batch_voided: true }, { batch_voided: true }])).toBe(false);
+  });
+
+  it("is true when any batch is still open", () => {
+    expect(hasOpenHmoClaim([{ batch_voided: true }, { batch_voided: false }])).toBe(true);
+  });
+});
+
+describe("migration 0147 — the DB delete guard encodes the same rule", () => {
+  // The triggers are the source of truth; visitDeletability/testDeletability
+  // are only the UX mirror, deciding whether to render a delete affordance at
+  // all. Edit one without the other and staff get a button that throws. There
+  // is no pgTAP runner in `npm test`, so pin the SQL text.
+  const sql = readFileSync(
+    join(process.cwd(), "supabase/migrations/0147_hmo_claim_delete_guard.sql"),
+    "utf8",
+  );
+
+  it("replaces both 0125 guard functions", () => {
+    expect(sql).toMatch(/create or replace function public\.enforce_deletable_visit\(\)/);
+    expect(sql).toMatch(
+      /create or replace function public\.enforce_deletable_test_request\(\)/,
+    );
+  });
+
+  it("raises P0050 on each of them", () => {
+    expect(sql.match(/errcode = 'P0050'/g)).toHaveLength(2);
+  });
+
+  it("treats only a non-voided claim item as blocking", () => {
+    expect(sql.match(/not ci\.batch_voided/g)).toHaveLength(2);
+  });
+
+  it("reaches the visit's claims through test_requests — a visit delete does not cascade", () => {
+    expect(sql).toMatch(
+      /join public\.test_requests tr on tr\.id = ci\.test_request_id\s+where tr\.visit_id = new\.id/,
+    );
+  });
+
+  it("does NOT filter tr.deleted_at — an open claim on a deleted line still counts", () => {
+    const visitGuard = sql.slice(
+      sql.indexOf("enforce_deletable_visit"),
+      sql.indexOf("enforce_deletable_test_request"),
+    );
+    const claimCheck = visitGuard.slice(visitGuard.indexOf("hmo_claim_items"));
+    expect(claimCheck).not.toMatch(/tr\.deleted_at/);
+  });
+
+  it("keeps every guard 0125 already had", () => {
+    for (const code of ["P0042", "P0043", "P0044"]) {
+      expect(sql).toMatch(new RegExp(`errcode = '${code}'`));
+    }
+    // The package-component rule is the subtle one: losing the depth test
+    // would let a direct component delete through.
+    expect(sql).toMatch(/old\.parent_id is not null and pg_trigger_depth\(\) <= 1/);
+    // And the restore path must stay unguarded on both functions.
+    expect(
+      sql.match(/if not \(old\.deleted_at is null and new\.deleted_at is not null\) then/g),
+    ).toHaveLength(2);
+  });
+
+  it("restates both function ACLs and keeps search_path pinned", () => {
+    expect(sql).toMatch(
+      /revoke all on function public\.enforce_deletable_visit\(\) from public, anon, authenticated;/,
+    );
+    expect(sql).toMatch(
+      /revoke all on function public\.enforce_deletable_test_request\(\) from public, anon, authenticated;/,
+    );
+    expect(sql.match(/set search_path = public/g)).toHaveLength(2);
+  });
+
+  it("has a user-facing translation for P0050", () => {
+    const pgErrors = readFileSync(
+      join(process.cwd(), "src/lib/accounting/pg-errors.ts"),
+      "utf8",
+    );
+    expect(pgErrors).toMatch(/case "P0050":/);
   });
 });

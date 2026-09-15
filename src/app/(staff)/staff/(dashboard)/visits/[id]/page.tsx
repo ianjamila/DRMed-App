@@ -24,6 +24,7 @@ import { Panel } from "@/components/ui/panel";
 import {
   testDeletability,
   visitDeletability,
+  hasOpenHmoClaim,
   QUEUE_DELETE_ROLES,
 } from "@/lib/visits/deletion";
 import {
@@ -155,6 +156,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
           procedure_description, hmo_approved_amount_php,
           deleted_at, deleted_by, delete_reason,
           parent_id, is_package_header, package_completed_at,
+          hmo_claim_items ( batch_voided ),
           services!inner ( id, code, name, kind, section, price_php )
         `,
         )
@@ -283,6 +285,12 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
     test_statuses: (tests ?? [])
       .filter((t) => t.deleted_at === null)
       .map((t) => t.status),
+    // Unfiltered on deleted_at, unlike test_statuses above — the P0050 trigger
+    // reaches every line of the visit, since a line deleted earlier whose
+    // claim is still open is exactly the receivable it protects.
+    has_open_hmo_claim: (tests ?? []).some((t) =>
+      hasOpenHmoClaim(t.hmo_claim_items),
+    ),
   }).ok;
 
   // Section gate: hide tests outside this role's sections (medtech sees
@@ -686,6 +694,15 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                           parent_id: h.parent_id,
                           visit_payment_status: visit.payment_status,
                           visit_deleted_at: visit.deleted_at,
+                          // Deleting a header cascades to its components, so a
+                          // component with an open claim raises P0050 at depth
+                          // 2 and aborts the whole delete. Check both here or
+                          // the button offers a delete the DB refuses.
+                          has_open_hmo_claim:
+                            hasOpenHmoClaim(h.hmo_claim_items) ||
+                            components.some((c) =>
+                              hasOpenHmoClaim(c.hmo_claim_items),
+                            ),
                         }).ok ? (
                           <QueueDeleteDialog
                             visitId={visit.id}
@@ -1011,6 +1028,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                         parent_id: t.parent_id,
                         visit_payment_status: visit.payment_status,
                         visit_deleted_at: visit.deleted_at,
+                        has_open_hmo_claim: hasOpenHmoClaim(t.hmo_claim_items),
                       }).ok ? (
                         <div className="mt-1.5 flex justify-end">
                           <QueueDeleteDialog
