@@ -4,7 +4,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { paginatedFetch } from "@/lib/supabase/paginated-fetch";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { StatementTabs } from "./_components/statement-tabs";
-import { PeriodPresets, priorYearRange } from "./_components/period-presets";
+import { PeriodPresets } from "./_components/period-presets";
+import { priorYearRange } from "@/lib/reports/period-presets";
 
 export const metadata = { title: "Financial statements — staff" };
 export const dynamic = "force-dynamic";

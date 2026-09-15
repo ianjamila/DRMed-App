@@ -2,7 +2,7 @@ import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { paginatedFetch } from "@/lib/supabase/paginated-fetch";
-import { todayManilaISODate } from "@/lib/dates/manila";
+import { shiftISODate, todayManilaISODate } from "@/lib/dates/manila";
 import { StatementTabs } from "../_components/statement-tabs";
 import { PeriodPresets } from "../_components/period-presets";
 
@@ -110,9 +110,16 @@ export default async function CashFlowPage({ searchParams }: SearchProps) {
   }
 
   // ---- Beginning balance (cumulative through start-1) --------------------
-  const dayBefore = new Date(`${start}T00:00:00+08:00`);
-  dayBefore.setDate(dayBefore.getDate() - 1);
-  const beginningDate = dayBefore.toISOString().slice(0, 10);
+  // This used to stamp `+08:00` and then step back with `setDate(getDate() - 1)`.
+  // Those are LOCAL-timezone methods, and the runtime is UTC in production, so
+  // the +08:00 instant already read as the previous calendar day — and the step
+  // took a SECOND day off. `beginningDate` landed on start-2, which left the day
+  // immediately before the period in neither query: not in the beginning balance
+  // (`lte(beginningDate)`) and not in the period (`gte(start)`). Both the
+  // beginning and the ending balance were short by that day's cash movement, on
+  // every start date rather than just the 1st. `shiftISODate` is pure
+  // string arithmetic and cannot drift.
+  const beginningDate = shiftISODate(start, -1);
 
   const beginningLines = await paginatedFetch<LineRow>((from, to) =>
     admin

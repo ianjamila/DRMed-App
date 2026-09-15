@@ -15,6 +15,12 @@ export interface SectionTab {
   // this tab. Use when a sibling tab lives under this tab's href (e.g. Archive
   // at /staff/visits must exclude /staff/visits/new).
   excludePrefixes?: string[];
+  // Query string for THIS tab, overriding the bar-level `query`. Use when the
+  // tabs in one bar take different parameters for the same selection — the
+  // Financial statements bar carries a period as `start`/`end` to the income
+  // statement and cash flow, but as a single `as_of` closing date to the
+  // balance sheet.
+  query?: string;
   // Props are plain data only — this component is a client boundary and
   // server-rendered callers (BillsTabs, VisitsTabs, …) can't pass functions.
 }
@@ -54,7 +60,7 @@ export function SectionTabs({
         return (
           <Link
             key={t.href}
-            href={`${t.href}${query}`}
+            href={`${t.href}${t.query ?? query}`}
             className={sectionTabClass(active)}
             aria-current={active ? "page" : undefined}
           >

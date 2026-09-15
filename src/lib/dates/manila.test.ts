@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
+  firstOfMonthISO,
   friendlyManilaDate,
+  isoDateParts,
+  lastOfMonthISO,
   isISODate,
   manilaDayWindowUtc,
   manilaRangeUtc,
@@ -93,5 +96,40 @@ describe("manilaRangeUtc", () => {
 describe("friendlyManilaDate", () => {
   it("renders weekday and long date in Manila time", () => {
     expect(friendlyManilaDate("2026-07-27")).toBe("Monday, July 27, 2026");
+  });
+});
+
+describe("Manila calendar arithmetic (isoDateParts / firstOfMonthISO / lastOfMonthISO)", () => {
+  it("reads the calendar parts straight off the string, with no Date in between", () => {
+    // The bug these replace: `new Date("2026-09-01T00:00:00+08:00")` is
+    // 2026-08-31T16:00Z, so getUTCMonth() said August on the 1st of September.
+    expect(isoDateParts("2026-09-01")).toEqual({ year: 2026, month: 9, day: 1 });
+    expect(isoDateParts("2026-01-01")).toEqual({ year: 2026, month: 1, day: 1 });
+    expect(isoDateParts("2024-02-29")).toEqual({ year: 2024, month: 2, day: 29 });
+  });
+
+  it("builds the first of a month", () => {
+    expect(firstOfMonthISO(2026, 9)).toBe("2026-09-01");
+    expect(firstOfMonthISO(2026, 12)).toBe("2026-12-01");
+  });
+
+  it("normalises a month outside 1-12 into the neighbouring year", () => {
+    expect(firstOfMonthISO(2026, 0)).toBe("2025-12-01"); // month before January
+    expect(firstOfMonthISO(2026, 13)).toBe("2027-01-01");
+    expect(firstOfMonthISO(2026, -2)).toBe("2025-10-01"); // 12 months back from Sep
+  });
+
+  it("builds the last of a month, including February in leap and common years", () => {
+    expect(lastOfMonthISO(2026, 2)).toBe("2026-02-28");
+    expect(lastOfMonthISO(2024, 2)).toBe("2024-02-29"); // divisible by 4
+    expect(lastOfMonthISO(2000, 2)).toBe("2000-02-29"); // divisible by 400
+    expect(lastOfMonthISO(1900, 2)).toBe("1900-02-28"); // divisible by 100, not 400
+    expect(lastOfMonthISO(2026, 4)).toBe("2026-04-30");
+    expect(lastOfMonthISO(2026, 12)).toBe("2026-12-31");
+  });
+
+  it("normalises out-of-range months when taking the last day too", () => {
+    expect(lastOfMonthISO(2026, 0)).toBe("2025-12-31");
+    expect(lastOfMonthISO(2027, 13)).toBe("2028-01-31");
   });
 });

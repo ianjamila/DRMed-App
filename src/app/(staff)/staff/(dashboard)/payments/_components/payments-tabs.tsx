@@ -2,6 +2,7 @@
 
 import { useSearchParams } from "next/navigation";
 import { SectionTabs } from "@/components/staff/section-tabs";
+import { carryParams } from "@/lib/reports/statement-period";
 
 // Cash drawer is first so it's the default landing tab (nav points here too).
 const TABS = [
@@ -12,13 +13,9 @@ const TABS = [
 export function PaymentsTabs() {
   // Carry the date/shift selection across tabs so reception can open the
   // drawer for a given day and close it out without re-picking the date.
-  const params = useSearchParams();
-  const next = new URLSearchParams();
-  for (const key of ["date", "shift"]) {
-    const v = params.get(key);
-    if (v) next.set(key, v);
-  }
-  const query = next.toString() ? `?${next.toString()}` : "";
+  const query = carryParams(useSearchParams(), ["date", "shift"], {
+    unvalidated: ["shift"],
+  });
 
   return <SectionTabs label="Cash sections" tabs={TABS} query={query} />;
 }
