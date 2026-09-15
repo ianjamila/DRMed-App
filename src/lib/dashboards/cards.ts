@@ -57,7 +57,11 @@ export const DASHBOARD_CARDS: readonly CardDef[] = [
   { id: "admin.revenue_today",     label: "Revenue today",   roles: ["admin"], group: "operations", sensitive: true },
   { id: "admin.visits_today",      label: "Visits today",    roles: ["admin"], group: "operations" },
   { id: "admin.queue_total",       label: "Queue",           roles: ["admin"], group: "operations" },
-  { id: "admin.released_today",    label: "Released today",  roles: ["admin"], group: "operations" },
+  // Throughput, not an owner action, and it double-counted package headers
+  // its destination excludes (now fixed). Off by default rather than deleted,
+  // so Dashboard settings can bring it back. Visits today and Queue stay ON —
+  // the owner deferred those two to a later re-review.
+  { id: "admin.released_today",    label: "Released today",  roles: ["admin"], group: "operations", defaultHidden: true },
   { id: "admin.dup_candidates",    label: "Possible duplicates", roles: ["admin"], group: "operations" },
 
   // ---- Admin: Money -------------------------------------------------------

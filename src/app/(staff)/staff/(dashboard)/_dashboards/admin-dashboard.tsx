@@ -2,10 +2,23 @@ import type { StaffSession } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { DOCTOR_KINDS_PG_LIST } from "@/lib/visits/classification";
+import { LAB_QUEUE_GATE_VISITS_OR } from "@/lib/visits/lab-gate";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { loadHiddenCardIds } from "@/lib/dashboards/card-prefs";
-import { loadCandidatePairs } from "@/lib/patients/find-duplicates";
-import { fetchAllRows, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
+import { loadCandidatePairsWithStatus } from "@/lib/patients/find-duplicates";
+import {
+  fetchAllRows,
+  REPORT_EXPORT_MAX_ROWS,
+  type PageFetcher,
+} from "@/lib/reports/paging";
+import { reportError } from "@/lib/observability/report-error";
+import { RealtimeRefresher } from "@/components/staff/realtime-refresher";
+import {
+  HMO_UNBILLED_AGE_BANDS,
+  matchesHmoUnbilledAgeBand,
+  type HmoUnbilledAgeBand,
+} from "@/lib/reports/hmo-unbilled-bands";
+import { HmoUnbilledCard } from "./_admin-components/hmo-unbilled-card";
 import { DashboardHeader } from "./_components/dashboard-header";
 import { SectionHeading } from "./_components/section-heading";
 import { StatCard } from "./_components/stat-card";
@@ -13,23 +26,25 @@ import { QuickLinks } from "./_components/quick-links";
 import { ActivityStrip, type ActivityItem } from "./_components/activity-strip";
 import { formatPeso, relativeAge } from "./_components/format";
 
+// H4: trimmed to money actions only — Chart of accounts, Dashboard settings,
+// Periods, Audit log and Staff users are all reachable from the sidebar and
+// aren't an owner money action.
 const QUICK_LINKS = [
+  { href: "/staff/admin/operations/cash", label: "Cash & Cards" },
   { href: "/staff/admin/reports/daily-revenue", label: "Daily Revenue" },
   { href: "/staff/admin/accounting/ap", label: "AP Dashboard" },
   { href: "/staff/admin/accounting/hmo-claims", label: "HMO Claims" },
   { href: "/staff/admin/payroll/runs", label: "Pay Runs" },
-  { href: "/staff/admin/accounting/periods", label: "Periods" },
-  { href: "/staff/admin/accounting/chart-of-accounts", label: "Chart of Accounts" },
-  { href: "/staff/admin/settings/dashboard-cards", label: "Dashboard Settings" },
-  { href: "/staff/audit", label: "Audit Log" },
-  { href: "/staff/users", label: "Staff Users" },
 ];
 
-const SKIP_COUNT = Promise.resolve({ count: 0, data: null });
-const SKIP_DATA = Promise.resolve({ data: null });
-// H1/M9: the paged equivalent of SKIP_DATA, for cards walked with
-// `fetchAllRows` instead of a bare `.select()`.
-const SKIP_ROWS = Promise.resolve({ rows: [], truncated: false });
+const SKIP_COUNT = Promise.resolve({ count: 0, data: null, error: null });
+const SKIP_DATA = Promise.resolve({ data: null, error: null });
+// H1/M9: the paged equivalent of SKIP_COUNT/SKIP_DATA, for cards walked with
+// `fetchAllRows` instead of a bare `.select()`. `error` sits alongside
+// `rows`/`truncated` so a failing pager marks its own card instead of
+// throwing the whole dashboard to an error page (see `pagedRows` below).
+const SKIP_ROWS: Promise<{ rows: never[]; truncated: boolean; error: unknown }> =
+  Promise.resolve({ rows: [], truncated: false, error: null });
 
 type BillRow = { id: string; outstanding_amount: number | null; due_date: string; status: string };
 type PatientArRow = { id: string; total_php: number | null; paid_php: number | null };
@@ -38,10 +53,12 @@ type UnbilledRow = {
   released_at: string;
   days_since_release: number;
   billed_amount_php: number | null;
+  past_threshold: boolean | null;
 };
 type AdvanceRow = { id: string; outstanding_balance_php: number | null };
 type PfRow = { id: string; pf_php: number };
 type PfToPayRow = { id: string; pf_php: number; physician_id: string };
+type PaymentRow = { id: string; amount_php: number };
 type AuditRow = {
   id: string;
   action: string;
@@ -49,12 +66,57 @@ type AuditRow = {
   created_at: string;
 };
 type DraftJeRow = { id: string; entry_number: string; posting_date: string; created_at: string };
-type PaymentRow = { amount_php: number };
+
+// Runs `fetchAllRows` but never throws — a failing pager reports to Sentry
+// and marks its own card via `error`, instead of blowing up the whole
+// server render the way a bare `fetchAllRows` await would (it throws on a
+// page error by design, which is right for a report page but wrong for one
+// tile among many on a dashboard).
+async function pagedRows<T>(
+  fetchPage: PageFetcher<T>,
+  maxRows: number,
+): Promise<{ rows: T[]; truncated: boolean; error: unknown }> {
+  try {
+    const { rows, truncated } = await fetchAllRows<T>(fetchPage, maxRows);
+    return { rows, truncated, error: null };
+  } catch (error) {
+    return { rows: [], truncated: false, error };
+  }
+}
+
+function truncatedHint(truncated: boolean, fallback: string): string {
+  return truncated
+    ? `Capped at ${REPORT_EXPORT_MAX_ROWS.toLocaleString()} rows, true total is higher`
+    : fallback;
+}
+
+function doctorsToPayHint(s: {
+  doctorsToPayCount: number;
+  doctorsToPayTruncated: boolean;
+  pfPendingTotal: number;
+  pfPendingTruncated: boolean;
+  pfPendingError: boolean;
+}): string {
+  if (s.doctorsToPayTruncated) {
+    return `Capped at ${REPORT_EXPORT_MAX_ROWS.toLocaleString()} rows, true total is higher`;
+  }
+  const base =
+    s.doctorsToPayCount === 0
+      ? "All caught up"
+      : `${s.doctorsToPayCount} doctor${s.doctorsToPayCount === 1 ? "" : "s"} ready to pay`;
+  // N9: PF pending is folded into this card's hint rather than its own tile
+  // — nothing is payable until the HMO settles, so it isn't a standing card.
+  if (s.pfPendingError) return `${base} · PF pending: unknown (reload)`;
+  if (s.pfPendingTruncated) return `${base} · PF pending capped at ${REPORT_EXPORT_MAX_ROWS.toLocaleString()} rows`;
+  if (s.pfPendingTotal > 0) return `${base} · ${formatPeso(s.pfPendingTotal)} pending HMO settlement`;
+  return base;
+}
 
 async function loadAdminStats(show: (id: string) => boolean) {
   const supabase = await createClient();
   const admin = createAdminClient();
   const today = todayManilaISODate();
+  const currentFiscalYear = Number(today.slice(0, 4));
   const monthStart = `${today.slice(0, 7)}-01`;
   const startOfTodayUtc = new Date(`${today}T00:00:00+08:00`).toISOString();
   const startOfTomorrowUtc = new Date(`${today}T24:00:00+08:00`).toISOString();
@@ -80,6 +142,16 @@ async function loadAdminStats(show: (id: string) => boolean) {
     netTotalsMtd,
     netExpensesMtd,
   ] = await Promise.all([
+    // The audit wanted all three of these cut as "throughput decoration".
+    // The owner deferred Visits today and Queue to a LATER re-review, so
+    // they stay on screen and were corrected in place instead: Visits today
+    // now carries the date into its link, and Queue applies the money gate
+    // and the package-header exclusion so it finally counts the same work
+    // /staff/queue shows (it used to count unpaid lines the queue withholds).
+    // Only Released today is retired, and reversibly — `defaultHidden: true`
+    // in cards.ts rather than a deleted render, so Dashboard settings can
+    // genuinely bring it back. Deleting the JSX would have made the toggle
+    // a no-op.
     show("admin.visits_today")
       ? supabase
           .from("visits")
@@ -95,13 +167,14 @@ async function loadAdminStats(show: (id: string) => boolean) {
             head: true,
           })
           .in("status", ["requested", "in_progress"])
+          .eq("is_package_header", false)
           .is("deleted_at", null)
           .is("visits.deleted_at", null)
-          // This tile links to /staff/queue, which is the LAB worklist and
-          // now excludes doctor lines for every role. The count has to agree
-          // with the page it opens, or the admin taps a "3" and lands on a
-          // list of 1.
           .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
+          // The destination withholds work whose visit hasn't settled, so
+          // counting it here made the card read higher than the queue it
+          // opens. Same predicate, same numbers.
+          .or(LAB_QUEUE_GATE_VISITS_OR, { foreignTable: "visits" })
       : SKIP_COUNT,
     show("admin.released_today")
       ? supabase
@@ -111,39 +184,47 @@ async function loadAdminStats(show: (id: string) => boolean) {
             head: true,
           })
           .eq("status", "released")
+          .eq("is_package_header", false)
           .gte("released_at", startOfTodayUtc)
           .lt("released_at", startOfTomorrowUtc)
-          // Both deleted_at filters, like the Queue tile above. A released
-          // line can normally not be deleted (P0043 refuses it), but that
-          // guard runs on the DELETE, not on the release — a line deleted at
-          // ready_for_release could still be released afterwards, and a
-          // deleted VISIT never cascaded to its lines at all.
           .is("deleted_at", null)
           .is("visits.deleted_at", null)
-          // "Results released to patients" means LAB results. `test_requests`
-          // doubles as the visit's bill line, and "Mark done" on a
-          // consultation writes status='released' with a released_at — so
-          // every consultation completed today was landing in this number.
-          // Measured on prod: on 2026-01-17 the tile would have read 53 when
-          // only 13 were lab results, and on the worst day doctor lines were
-          // 75% of the count.
           .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
       : SKIP_COUNT,
+    // H2: was a bare, unpaged `.select()` (silently capped at 1000 payment
+    // rows) labelled "Revenue today" and linked to /staff/admin/reports/
+    // daily-revenue, which sums RELEASED SERVICE REVENUE and defaults to
+    // month-to-date — a different figure entirely from money collected at
+    // the counter today. Relabelled "Payments collected today", kept the
+    // collections definition, paged it, and pointed it at the actual
+    // collections destination (/staff/admin/operations/cash) with explicit
+    // today bounds instead.
     show("admin.revenue_today")
-      ? admin
-          .from("payments")
-          .select("amount_php")
-          .gte("received_at", startOfTodayUtc)
-          .lt("received_at", startOfTomorrowUtc)
-          .is("voided_at", null)
-          .returns<PaymentRow[]>()
-      : SKIP_DATA,
+      ? pagedRows<PaymentRow>(
+          (from, to) =>
+            admin
+              .from("payments")
+              .select("id, amount_php")
+              .gte("received_at", startOfTodayUtc)
+              .lt("received_at", startOfTomorrowUtc)
+              .is("voided_at", null)
+              .order("id", { ascending: true })
+              .range(from, to)
+              .returns<PaymentRow[]>(),
+          REPORT_EXPORT_MAX_ROWS,
+        )
+      : SKIP_ROWS,
+    // H10: `.lte` flagged the current month as past-due on its own final
+    // morning, hours before it actually ends; also counted every fiscal
+    // year, while /staff/admin/accounting/periods defaults to the current
+    // one (`.eq("fiscal_year", year)`). Both fixed to match.
     show("admin.past_due_periods")
       ? admin
           .from("accounting_periods")
           .select("id", { count: "exact", head: true })
           .eq("status", "open")
-          .lte("period_end", today)
+          .lt("period_end", today)
+          .eq("fiscal_year", currentFiscalYear)
       : SKIP_COUNT,
     show("admin.draft_jes")
       ? admin
@@ -151,25 +232,22 @@ async function loadAdminStats(show: (id: string) => boolean) {
           .select("id", { count: "exact", head: true })
           .eq("status", "draft")
       : SKIP_COUNT,
-    // H1/M9: these five cards used a bare `.select()` with no `.range()`,
-    // silently capped by PostgREST at 1000 rows — the "HMO unbilled aged
-    // 90+" card read ₱954,157 on prod against a true ₱2,110,365.40 across
-    // 2,031 rows (H1). Bills / patient AR / advances / PF read 0/0/0/13 rows
-    // today, so they aren't wrong yet, but the identical pattern would break
-    // silently as each grows (M9) — walked with `fetchAllRows` (the same
-    // pager the HMO claims page already uses for this exact view) up to the
-    // 20,000-row export ceiling. No existing SQL aggregate returns "unbilled
-    // aged 90+ days" specifically (`v_hmo_provider_summary.total_unbilled_php`
-    // is unbilled at ANY age, per provider) — see the report for why a SQL
-    // function would still be the better long-term fix.
+    // H4: bills merges "AP outstanding" + "AP bills overdue" into one card
+    // below. `.neq("status", "voided")` used to also count DRAFT bills —
+    // a draft computes an outstanding_amount but can't receive a payment
+    // allocation until it's posted (see actions/accounting/bills.ts,
+    // "Only draft bills can be posted"), so it isn't actually payable.
+    // Restricted to the two statuses the AP subledger's own CHECK
+    // constraint (0048_ap_subledger_schema.sql) says can carry a real
+    // balance: 'posted' and 'partially_paid'.
     show("admin.ap_outstanding") || show("admin.ap_overdue")
-      ? fetchAllRows<BillRow>(
+      ? pagedRows<BillRow>(
           (from, to) =>
             admin
               .from("bills")
               .select("id, outstanding_amount, due_date, status")
               .gt("outstanding_amount", 0)
-              .neq("status", "voided")
+              .in("status", ["posted", "partially_paid"])
               .order("id", { ascending: true })
               .range(from, to)
               .returns<BillRow[]>(),
@@ -177,7 +255,7 @@ async function loadAdminStats(show: (id: string) => boolean) {
         )
       : SKIP_ROWS,
     show("admin.patient_ar")
-      ? fetchAllRows<PatientArRow>(
+      ? pagedRows<PatientArRow>(
           (from, to) =>
             admin
               .from("visits")
@@ -191,12 +269,19 @@ async function loadAdminStats(show: (id: string) => boolean) {
           REPORT_EXPORT_MAX_ROWS,
         )
       : SKIP_ROWS,
+    // H5: `past_threshold` is the view's own per-provider comparison
+    // (days_since_release > hmo_providers.unbilled_threshold_days,
+    // default 14) — selected alongside the fixed-90-day column so both
+    // bands (plus "all") can be computed client-side from one fetch. See
+    // src/lib/reports/hmo-unbilled-bands.ts for the shared definition.
     show("admin.hmo_unbilled_aged")
-      ? fetchAllRows<UnbilledRow>(
+      ? pagedRows<UnbilledRow>(
           (from, to) =>
             admin
               .from("v_hmo_unbilled")
-              .select("test_request_id, released_at, days_since_release, billed_amount_php")
+              .select(
+                "test_request_id, released_at, days_since_release, billed_amount_php, past_threshold",
+              )
               .order("days_since_release", { ascending: false })
               .order("test_request_id", { ascending: true })
               .range(from, to)
@@ -205,7 +290,7 @@ async function loadAdminStats(show: (id: string) => boolean) {
         )
       : SKIP_ROWS,
     show("admin.advances_outstanding")
-      ? fetchAllRows<AdvanceRow>(
+      ? pagedRows<AdvanceRow>(
           (from, to) =>
             admin
               .from("staff_advances")
@@ -218,7 +303,7 @@ async function loadAdminStats(show: (id: string) => boolean) {
         )
       : SKIP_ROWS,
     show("admin.pf_pending")
-      ? fetchAllRows<PfRow>(
+      ? pagedRows<PfRow>(
           (from, to) =>
             admin
               .from("doctor_pf_entries")
@@ -232,15 +317,23 @@ async function loadAdminStats(show: (id: string) => boolean) {
           REPORT_EXPORT_MAX_ROWS,
         )
       : SKIP_ROWS,
+    // H3: joined `physicians!inner` and required `is_active` so this
+    // matches the payout screen's own predicate exactly
+    // (pf-payouts-client.tsx OpenTab: `g.isActive && g.total > 0`) — an
+    // inactive doctor with a balance was counted here but unpayable there.
+    // `!inner` is required for the `.eq("physicians.is_active", …)` filter
+    // to actually apply — the same embed against a left join silently
+    // ignores the filter and returns every row (see CLAUDE.md).
     show("admin.pf_to_pay")
-      ? fetchAllRows<PfToPayRow>(
+      ? pagedRows<PfToPayRow>(
           (from, to) =>
             admin
               .from("doctor_pf_entries")
-              .select("id, pf_php, physician_id")
+              .select("id, pf_php, physician_id, physicians!inner(is_active)")
               .is("disbursement_id", null)
               .not("recognized_at", "is", null)
               .is("voided_at", null)
+              .eq("physicians.is_active", true)
               .order("id", { ascending: true })
               .range(from, to)
               .returns<PfToPayRow[]>(),
@@ -254,12 +347,32 @@ async function loadAdminStats(show: (id: string) => boolean) {
           .eq("is_active", true)
           .is("termination_date", null)
       : SKIP_COUNT,
+    // H11: scoped to the current fiscal year (the destination's own
+    // default) and rendered only when nonzero below. PostgREST does not
+    // honour a filter against an ALIASED embedded resource
+    // (`payroll_periods.period_start`) — the payroll/runs page's own
+    // comment confirms this is silently dropped — so the period ids for
+    // the year are resolved first, exactly like that page does.
     show("admin.payroll_runs")
-      ? admin
-          .from("payroll_runs")
-          .select("id", { count: "exact", head: true })
-          .in("status", ["draft", "computed"])
+      ? (async () => {
+          const { data: periodRows, error: periodErr } = await admin
+            .from("payroll_periods")
+            .select("id")
+            .gte("period_start", `${currentFiscalYear}-01-01`)
+            .lt("period_start", `${currentFiscalYear + 1}-01-01`);
+          if (periodErr) return { count: 0, data: null, error: periodErr };
+          const ids = (periodRows ?? []).map((p) => p.id);
+          if (ids.length === 0) return { count: 0, data: null, error: null };
+          return admin
+            .from("payroll_runs")
+            .select("id", { count: "exact", head: true })
+            .in("period_id", ids)
+            .in("status", ["draft", "computed"]);
+        })()
       : SKIP_COUNT,
+    // N14: added the 7-day recency window the strip never had — without
+    // one, an old setup/void event sits here indefinitely. Mirrors
+    // `sevenDaysAgoIso`, already used by the stale-drafts strip below.
     show("admin.strip_audit")
       ? admin
           .from("audit_log")
@@ -267,6 +380,7 @@ async function loadAdminStats(show: (id: string) => boolean) {
           .or(
             "action.ilike.%void%,action.ilike.%reverse%,action.ilike.%rejected%,action.ilike.%failed%",
           )
+          .gte("created_at", sevenDaysAgoIso)
           .order("created_at", { ascending: false })
           .limit(5)
           .returns<AuditRow[]>()
@@ -281,6 +395,8 @@ async function loadAdminStats(show: (id: string) => boolean) {
           .limit(5)
           .returns<DraftJeRow[]>()
       : SKIP_DATA,
+    // Both bounded to at most a month's worth of daily rows (≤31/62) — no
+    // paging needed, unlike the six report-shaped cards above.
     show("admin.net_income_mtd")
       ? admin
           .from("v_ops_daily_totals")
@@ -299,52 +415,95 @@ async function loadAdminStats(show: (id: string) => boolean) {
       : SKIP_DATA,
   ]);
 
-  const revenueRows = (revenueToday.data ?? []) as PaymentRow[];
-  const revenueTotal = revenueRows.reduce(
-    (s, p) => s + Number(p.amount_php ?? 0),
-    0,
+  // N19: this file used to read no `.error` at all — a failed query and a
+  // genuinely empty one both rendered as a reassuring zero. Collect every
+  // scope's error, report the failing ones, and keep a per-widget boolean
+  // below so StatCard/ActivityStrip can say "Couldn't load" instead.
+  const namedResults: { scope: string; error: unknown }[] = [
+    { scope: "revenue_today", error: revenueToday.error },
+    { scope: "past_due_periods", error: openPeriods.error },
+    { scope: "draft_jes", error: draftJeCount.error },
+    { scope: "ap_bills", error: bills.error },
+    { scope: "patient_ar", error: patientAr.error },
+    { scope: "hmo_unbilled", error: unbilled.error },
+    { scope: "advances_outstanding", error: advances.error },
+    { scope: "pf_pending", error: pfPending.error },
+    { scope: "pf_to_pay", error: doctorsToPay.error },
+    { scope: "active_employees", error: activeEmployees.error },
+    { scope: "payroll_runs", error: payrollRunsInProgress.error },
+    { scope: "strip_audit", error: recentAudit.error },
+    { scope: "strip_stale_drafts", error: staleDrafts.error },
+    { scope: "net_income_totals", error: netTotalsMtd.error },
+    { scope: "net_income_expenses", error: netExpensesMtd.error },
+  ];
+  await Promise.all(
+    namedResults
+      .filter((r) => r.error)
+      .map((r) => reportError({ scope: `admin-dashboard.${r.scope}`, error: r.error })),
   );
+
+  const revenueRows = revenueToday.rows;
+  const revenueTotal = revenueRows.reduce((s, p) => s + Number(p.amount_php ?? 0), 0);
+  const revenueTruncated = revenueToday.truncated;
+  const revenueError = Boolean(revenueToday.error);
 
   const billRows = bills.rows;
-  const apOutstanding = billRows.reduce(
-    (s, b) => s + Number(b.outstanding_amount ?? 0),
-    0,
-  );
-  const apOverdue = billRows.filter((b) => b.due_date < today).length;
+  const apOutstanding = billRows.reduce((s, b) => s + Number(b.outstanding_amount ?? 0), 0);
+  const apOverdueCount = billRows.filter((b) => b.due_date < today).length;
+  const apTruncated = bills.truncated;
+  const apError = Boolean(bills.error);
 
-  const patientArRows = patientAr.rows;
-  const patientArTotal = patientArRows.reduce(
+  // H7: only POSITIVE balances count and display — the destination page
+  // only buckets `outstanding > 0` (patient-ar/page.tsx), so a zero-balance
+  // unpaid/partial visit was inflating this card's count against what the
+  // page itself shows.
+  // Known edge (not fixed here): resolving an HMO claim as "Bill patient"
+  // never clears visits.hmo_provider_id, so those visits stay invisible to
+  // this card (which filters `.is("hmo_provider_id", null)`) — reachable
+  // only via patient-ar's own `?scope=hmo|all` tabs.
+  const patientArPositive = patientAr.rows.filter(
+    (v) => Number(v.total_php ?? 0) - Number(v.paid_php ?? 0) > 0,
+  );
+  const patientArTotal = patientArPositive.reduce(
     (s, v) => s + (Number(v.total_php ?? 0) - Number(v.paid_php ?? 0)),
     0,
   );
-  const patientArCount = patientArRows.length;
+  const patientArCount = patientArPositive.length;
+  const patientArTruncated = patientAr.truncated;
+  const patientArError = Boolean(patientAr.error);
 
-  // H1: real total over every matching row (chunk-paged past the 1000-row
-  // PostgREST cap), not the first page — this is the fix for the
-  // ₱954,157-vs-₱2,110,365.40 discrepancy confirmed live on prod.
-  const unbilledRows = unbilled.rows;
-  const unbilledAgedRows = unbilledRows.filter(
-    (u) => Number(u.days_since_release ?? 0) >= 90,
-  );
-  const unbilledAgedTotal = unbilledAgedRows.reduce(
-    (s, u) => s + Number(u.billed_amount_php ?? 0),
-    0,
-  );
-  const unbilledAgedCount = unbilledAgedRows.length;
-  const unbilledAgedTruncated = unbilled.truncated;
+  // H5: one fetch, three precomputed totals — see hmo-unbilled-bands.ts.
+  const unbilledBandStats = Object.fromEntries(
+    HMO_UNBILLED_AGE_BANDS.map((band) => {
+      const rows = unbilled.rows.filter((u) => matchesHmoUnbilledAgeBand(u, band));
+      return [
+        band,
+        {
+          count: rows.length,
+          total: rows.reduce((s, u) => s + Number(u.billed_amount_php ?? 0), 0),
+        },
+      ];
+    }),
+  ) as Record<HmoUnbilledAgeBand, { count: number; total: number }>;
+  const unbilledTruncated = unbilled.truncated;
+  const unbilledError = Boolean(unbilled.error);
 
   const advancesTotal = advances.rows.reduce(
     (s, a) => s + Number(a.outstanding_balance_php ?? 0),
     0,
   );
+  const advancesTruncated = advances.truncated;
+  const advancesError = Boolean(advances.error);
 
-  const pfPendingTotal = pfPending.rows.reduce(
-    (s, p) => s + Number(p.pf_php ?? 0),
-    0,
-  );
+  const pfPendingTotal = pfPending.rows.reduce((s, p) => s + Number(p.pf_php ?? 0), 0);
+  const pfPendingTruncated = pfPending.truncated;
+  const pfPendingError = Boolean(pfPending.error);
 
   // "Ready to pay" PF, grouped per doctor: total owed + how many doctors have
   // a positive balance (matches the Pay doctors page's Ready-to-pay tab).
+  // The query above already restricts to active physicians, matching that
+  // page's `g.isActive` half of the predicate; `> 0` below matches its
+  // `g.total > 0` half.
   const toPayByDoctor = new Map<string, number>();
   for (const r of doctorsToPay.rows) {
     toPayByDoctor.set(
@@ -352,11 +511,11 @@ async function loadAdminStats(show: (id: string) => boolean) {
       (toPayByDoctor.get(r.physician_id) ?? 0) + Number(r.pf_php ?? 0),
     );
   }
-  const positiveDoctorTotals = Array.from(toPayByDoctor.values()).filter(
-    (v) => v > 0,
-  );
+  const positiveDoctorTotals = Array.from(toPayByDoctor.values()).filter((v) => v > 0);
   const doctorsToPayCount = positiveDoctorTotals.length;
   const doctorsToPayTotal = positiveDoctorTotals.reduce((s, v) => s + v, 0);
+  const doctorsToPayTruncated = doctorsToPay.truncated;
+  const doctorsToPayError = Boolean(doctorsToPay.error);
 
   const netIncomeMtd =
     ((netTotalsMtd.data ?? []) as { net: number | string }[]).reduce(
@@ -367,36 +526,71 @@ async function loadAdminStats(show: (id: string) => boolean) {
       (s, r) => s + Number(r.expense_php ?? 0),
       0,
     );
+  const netIncomeError = Boolean(netTotalsMtd.error) || Boolean(netExpensesMtd.error);
 
-  // Possible-duplicate pairs (scored in TS, so not part of the count batch above).
-  const dupCandidates = show("admin.dup_candidates")
-    ? (await loadCandidatePairs(admin, { minTier: "probable" })).length
-    : 0;
+  // Possible-duplicate pairs (scored in TS, so not part of the count batch
+  // above). H12: now paged (was a bare `.select("*")`, silently capped at
+  // 1000 pairs) and distinguishes a failed read from a genuinely clean pass.
+  const dup = show("admin.dup_candidates")
+    ? await loadCandidatePairsWithStatus(admin, { minTier: "probable" })
+    : { pairs: [], truncated: false, error: false };
+  const dupCandidates = dup.pairs.length;
+  const dupTruncated = dup.truncated;
+  const dupError = dup.error;
 
   return {
+    // Visits today and Queue render below; Released today ships hidden via
+    // cards.ts but keeps its render so the toggle works.
     visitsToday: visitsToday.count ?? 0,
+    visitsTodayError: Boolean(visitsToday.error),
     queueTotal: queueTotal.count ?? 0,
+    queueTotalError: Boolean(queueTotal.error),
     releasedToday: releasedToday.count ?? 0,
-    dupCandidates,
+    releasedTodayError: Boolean(releasedToday.error),
     revenueTotal,
+    revenueTruncated,
+    revenueError,
     openPeriods: openPeriods.count ?? 0,
+    openPeriodsError: Boolean(openPeriods.error),
     draftJeCount: draftJeCount.count ?? 0,
+    draftJeError: Boolean(draftJeCount.error),
     apOutstanding,
-    apOverdue,
+    apOverdueCount,
+    apTruncated,
+    apError,
     patientArTotal,
     patientArCount,
-    unbilledAgedTotal,
-    unbilledAgedCount,
-    unbilledAgedTruncated,
+    patientArTruncated,
+    patientArError,
+    unbilledBandStats,
+    unbilledTruncated,
+    unbilledError,
     advancesTotal,
+    advancesTruncated,
+    advancesError,
     pfPendingTotal,
+    pfPendingTruncated,
+    pfPendingError,
     doctorsToPayTotal,
     doctorsToPayCount,
+    doctorsToPayTruncated,
+    doctorsToPayError,
     netIncomeMtd,
+    netIncomeError,
     activeEmployees: activeEmployees.count ?? 0,
+    activeEmployeesError: Boolean(activeEmployees.error),
     payrollRunsInProgress: payrollRunsInProgress.count ?? 0,
+    payrollRunsError: Boolean(payrollRunsInProgress.error),
     recentAudit: (recentAudit.data ?? []) as AuditRow[],
+    auditStripError: Boolean(recentAudit.error),
     staleDrafts: (staleDrafts.data ?? []) as DraftJeRow[],
+    staleDraftsError: Boolean(staleDrafts.error),
+    dupCandidates,
+    dupTruncated,
+    dupError,
+    currentFiscalYear,
+    today,
+    monthStart,
   };
 }
 
@@ -419,216 +613,259 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
     href: `/staff/admin/accounting/journal/${d.id}`,
   }));
 
+  // N18: SectionHeading's own `if (!children)` fallback can never fire when
+  // the caller always hands it a (truthy) <div> — which is what every
+  // section here did. Compute "does this section have anything to show"
+  // at the call site instead, and skip the whole section when it doesn't;
+  // this is only live now because N13's cuts + the nonzero-only gates below
+  // can genuinely empty a section.
+  const showDupCard = show("admin.dup_candidates") && (stats.dupError || stats.dupCandidates > 0);
+  const showOperations =
+    show("admin.revenue_today") ||
+    show("admin.visits_today") ||
+    show("admin.queue_total") ||
+    show("admin.released_today") ||
+    showDupCard;
+
+  const showMoney =
+    show("admin.net_income_mtd") ||
+    show("admin.past_due_periods") ||
+    show("admin.draft_jes") ||
+    show("admin.ap_outstanding") ||
+    show("admin.ap_overdue") ||
+    show("admin.hmo_unbilled_aged") ||
+    show("admin.patient_ar") ||
+    show("admin.advances_outstanding") ||
+    show("admin.pf_to_pay");
+
+  const showPayrollRunsCard =
+    show("admin.payroll_runs") && (stats.payrollRunsError || stats.payrollRunsInProgress > 0);
+  const showPeople = show("admin.active_employees") || showPayrollRunsCard;
+
+  const showStaleDraftsStrip =
+    show("admin.strip_stale_drafts") && (stats.staleDraftsError || stats.staleDrafts.length > 0);
+  const showAttention = show("admin.strip_audit") || showStaleDraftsStrip;
+
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
+      <RealtimeRefresher subscriptions={[]} intervalMs={60000} />
       <DashboardHeader
         firstName={session.full_name.split(" ")[0]}
         roleLabel="Admin"
         title="Clinic command centre"
+        updatedAt={new Date()}
       />
 
-      <SectionHeading title="Operations">
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {show("admin.revenue_today") && (
-          <StatCard
-            label="Revenue today"
-            value={formatPeso(stats.revenueTotal)}
-            hint="Collected payments, today"
-            href="/staff/admin/reports/daily-revenue"
-            accent="good"
-          />
-        )}
-        {show("admin.visits_today") && (
-          <StatCard
-            label="Visits today"
-            value={stats.visitsToday}
-            hint="Registered today"
-            href="/staff/visits"
-          />
-        )}
-        {show("admin.queue_total") && (
-          <StatCard
-            label="Queue"
-            value={stats.queueTotal}
-            hint="Requested + in progress"
-            href="/staff/queue"
-          />
-        )}
-        {show("admin.released_today") && (
-          <StatCard
-            label="Released today"
-            value={stats.releasedToday}
-            hint="Results released to patients"
-            href="/staff/queue?filter=released_today"
-          />
-        )}
-        {show("admin.dup_candidates") && (
-          <StatCard
-            label="Possible duplicates"
-            value={stats.dupCandidates}
-            hint="Patient records to review & merge"
-            href="/staff/admin/patient-merge/candidates"
-            accent={stats.dupCandidates > 0 ? "warn" : "default"}
-          />
-        )}
-        </div>
-      </SectionHeading>
+      {showOperations && (
+        <SectionHeading title="Operations">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {show("admin.revenue_today") && (
+              <StatCard
+                label="Payments collected today"
+                value={formatPeso(stats.revenueTotal)}
+                hint={truncatedHint(stats.revenueTruncated, "Collected payments, today")}
+                href={`/staff/admin/operations/cash?from=${stats.today}&to=${stats.today}`}
+                accent="good"
+                error={stats.revenueError}
+              />
+            )}
+            {show("admin.visits_today") && (
+              <StatCard
+                label="Visits today"
+                value={stats.visitsToday}
+                hint="Visits opened today"
+                href={`/staff/visits?start=${stats.today}&end=${stats.today}`}
+                error={stats.visitsTodayError}
+              />
+            )}
+            {show("admin.queue_total") && (
+              <StatCard
+                label="Queue"
+                value={stats.queueTotal}
+                hint="Lab & imaging lines awaiting a result"
+                href="/staff/queue"
+                error={stats.queueTotalError}
+              />
+            )}
+            {show("admin.released_today") && (
+              <StatCard
+                label="Released today"
+                value={stats.releasedToday}
+                hint="Lab & imaging results released today"
+                href="/staff/queue?filter=released_today"
+                error={stats.releasedTodayError}
+              />
+            )}
+            {showDupCard && (
+              <StatCard
+                label="Possible duplicates"
+                value={stats.dupCandidates}
+                hint={truncatedHint(stats.dupTruncated, "Patient records to review & merge")}
+                href="/staff/admin/patient-merge/candidates"
+                accent={stats.dupCandidates > 0 ? "warn" : "default"}
+                error={stats.dupError}
+              />
+            )}
+          </div>
+        </SectionHeading>
+      )}
 
-      <SectionHeading title="Money">
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {show("admin.net_income_mtd") && (
-          <StatCard
-            label="Net income (this month)"
-            value={formatPeso(stats.netIncomeMtd)}
-            hint="Gross profit − expenses, month to date"
-            href="/staff/admin/operations/expenses"
-            accent={stats.netIncomeMtd >= 0 ? "good" : "warn"}
-          />
-        )}
-        {show("admin.past_due_periods") && (
-          <StatCard
-            label="Past-due open periods"
-            value={stats.openPeriods}
-            hint="Months ended but still open"
-            href="/staff/admin/accounting/periods"
-            accent={stats.openPeriods > 0 ? "warn" : "default"}
-          />
-        )}
-        {show("admin.draft_jes") && (
-          <StatCard
-            label="Draft journal entries"
-            value={stats.draftJeCount}
-            hint="Awaiting posting"
-            href="/staff/admin/accounting/journal?status=draft"
-            accent={stats.draftJeCount > 0 ? "warn" : "default"}
-          />
-        )}
-        {show("admin.ap_outstanding") && (
-          <StatCard
-            label="AP outstanding"
-            value={formatPeso(stats.apOutstanding)}
-            hint="Total bills payable"
-            href="/staff/admin/accounting/ap/bills"
-          />
-        )}
-        {show("admin.ap_overdue") && (
-          <StatCard
-            label="AP bills overdue"
-            value={stats.apOverdue}
-            hint="Past due date"
-            href="/staff/admin/accounting/ap/bills"
-            accent={stats.apOverdue > 0 ? "warn" : "default"}
-          />
-        )}
-        {show("admin.hmo_unbilled_aged") && (
-          <StatCard
-            label="HMO unbilled aged 90+"
-            value={formatPeso(stats.unbilledAgedTotal)}
-            hint={
-              stats.unbilledAgedTruncated
-                ? `${stats.unbilledAgedCount}+ tests ≥ 90d unbilled — capped at ${REPORT_EXPORT_MAX_ROWS.toLocaleString()} rows, true total is higher`
-                : `${stats.unbilledAgedCount} test${stats.unbilledAgedCount === 1 ? "" : "s"} ≥ 90d unbilled`
-            }
-            href="/staff/admin/accounting/hmo-claims"
-            accent={stats.unbilledAgedCount > 0 ? "warn" : "default"}
-          />
-        )}
-        {show("admin.patient_ar") && (
-          <StatCard
-            label="Patient AR outstanding"
-            value={formatPeso(stats.patientArTotal)}
-            hint={`${stats.patientArCount} non-HMO visit${stats.patientArCount === 1 ? "" : "s"} unpaid / partial`}
-            href="/staff/admin/accounting/patient-ar"
-            accent={stats.patientArCount > 0 ? "warn" : "default"}
-          />
-        )}
-        {show("admin.advances_outstanding") && (
-          <StatCard
-            label="Staff advances outstanding"
-            value={formatPeso(stats.advancesTotal)}
-            hint="Receivable from payroll deductions"
-            href="/staff/admin/reports/staff-advances"
-          />
-        )}
-        {show("admin.pf_to_pay") && (
-          <StatCard
-            label="Doctors to pay"
-            value={stats.doctorsToPayCount === 0 ? "—" : formatPeso(stats.doctorsToPayTotal)}
-            hint={
-              stats.doctorsToPayCount === 0
-                ? "All caught up"
-                : `${stats.doctorsToPayCount} doctor${stats.doctorsToPayCount === 1 ? "" : "s"} ready to pay`
-            }
-            href="/staff/admin/accounting/pf-payouts"
-            accent={stats.doctorsToPayCount > 0 ? "warn" : "default"}
-          />
-        )}
-        {show("admin.pf_pending") && (
-          <StatCard
-            label="Doctor PF pending"
-            value={formatPeso(stats.pfPendingTotal)}
-            hint="Awaiting HMO settlement"
-            href="/staff/admin/accounting/pf-payouts"
-          />
-        )}
-        </div>
-      </SectionHeading>
+      {showMoney && (
+        <SectionHeading title="Money">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {show("admin.net_income_mtd") && (
+              <StatCard
+                label="Net income (this month)"
+                value={formatPeso(stats.netIncomeMtd)}
+                hint="Operational basis (see Expenses & P&L) — gross profit − expenses, MTD"
+                href={`/staff/admin/operations/expenses?from=${stats.monthStart}&to=${stats.today}`}
+                accent={stats.netIncomeMtd >= 0 ? "good" : "warn"}
+                error={stats.netIncomeError}
+              />
+            )}
+            {show("admin.past_due_periods") && (
+              <StatCard
+                label="Past-due open periods"
+                value={stats.openPeriods}
+                hint={`Ended, still open — FY ${stats.currentFiscalYear}`}
+                href={`/staff/admin/accounting/periods?year=${stats.currentFiscalYear}`}
+                accent={stats.openPeriods > 0 ? "warn" : "default"}
+                error={stats.openPeriodsError}
+              />
+            )}
+            {show("admin.draft_jes") && (
+              <StatCard
+                label="Draft journal entries"
+                value={stats.draftJeCount}
+                hint="Awaiting posting"
+                href="/staff/admin/accounting/journal?status=draft"
+                accent={stats.draftJeCount > 0 ? "warn" : "default"}
+                error={stats.draftJeError}
+              />
+            )}
+            {show("admin.ap_outstanding") ? (
+              <StatCard
+                label="AP outstanding"
+                value={formatPeso(stats.apOutstanding)}
+                hint={truncatedHint(
+                  stats.apTruncated,
+                  show("admin.ap_overdue")
+                    ? `${stats.apOverdueCount} overdue`
+                    : "Posted / partially paid",
+                )}
+                href="/staff/admin/accounting/ap/bills"
+                accent={stats.apOverdueCount > 0 ? "warn" : "default"}
+                error={stats.apError}
+              />
+            ) : (
+              show("admin.ap_overdue") && (
+                <StatCard
+                  label="AP bills overdue"
+                  value={stats.apOverdueCount}
+                  hint={truncatedHint(stats.apTruncated, "Past due date")}
+                  href="/staff/admin/accounting/ap/bills"
+                  accent={stats.apOverdueCount > 0 ? "warn" : "default"}
+                  error={stats.apError}
+                />
+              )
+            )}
+            {show("admin.hmo_unbilled_aged") && (
+              <HmoUnbilledCard
+                stats={stats.unbilledBandStats}
+                truncated={stats.unbilledTruncated}
+                error={stats.unbilledError}
+              />
+            )}
+            {show("admin.patient_ar") && (
+              <StatCard
+                label="Patient AR outstanding"
+                value={formatPeso(stats.patientArTotal)}
+                hint={truncatedHint(
+                  stats.patientArTruncated,
+                  `${stats.patientArCount} non-HMO visit${stats.patientArCount === 1 ? "" : "s"} with an outstanding balance`,
+                )}
+                href="/staff/admin/accounting/patient-ar"
+                accent={stats.patientArCount > 0 ? "warn" : "default"}
+                error={stats.patientArError}
+              />
+            )}
+            {show("admin.advances_outstanding") && (
+              <StatCard
+                label="Staff advances outstanding"
+                value={formatPeso(stats.advancesTotal)}
+                hint={truncatedHint(stats.advancesTruncated, "Receivable from payroll deductions")}
+                href="/staff/admin/reports/staff-advances"
+                error={stats.advancesError}
+              />
+            )}
+            {show("admin.pf_to_pay") && (
+              <StatCard
+                label="Doctors to pay"
+                value={stats.doctorsToPayCount === 0 ? "—" : formatPeso(stats.doctorsToPayTotal)}
+                hint={doctorsToPayHint(stats)}
+                href="/staff/admin/accounting/pf-payouts?tab=open"
+                accent={stats.doctorsToPayCount > 0 ? "warn" : "default"}
+                error={stats.doctorsToPayError}
+              />
+            )}
+          </div>
+        </SectionHeading>
+      )}
 
-      <SectionHeading title="People">
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {show("admin.active_employees") && (
-          <StatCard
-            label="Active employees"
-            value={stats.activeEmployees}
-            hint="On the roster today"
-            href="/staff/admin/payroll/employees"
-          />
-        )}
-        {show("admin.payroll_runs") && (
-          <StatCard
-            label="Payroll runs in progress"
-            value={stats.payrollRunsInProgress}
-            hint="Draft or computed, awaiting finalise"
-            href="/staff/admin/payroll/runs"
-            accent={stats.payrollRunsInProgress > 0 ? "warn" : "default"}
-          />
-        )}
-        </div>
-      </SectionHeading>
+      {showPeople && (
+        <SectionHeading title="People">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {show("admin.active_employees") && (
+              <StatCard
+                label="Active employees"
+                value={stats.activeEmployees}
+                hint="On the roster today"
+                href="/staff/admin/payroll/employees"
+                error={stats.activeEmployeesError}
+              />
+            )}
+            {showPayrollRunsCard && (
+              <StatCard
+                label="Payroll runs in progress"
+                value={stats.payrollRunsInProgress}
+                hint={`Draft or computed — FY ${stats.currentFiscalYear}`}
+                href={`/staff/admin/payroll/runs?year=${stats.currentFiscalYear}`}
+                accent="warn"
+                error={stats.payrollRunsError}
+              />
+            )}
+          </div>
+        </SectionHeading>
+      )}
 
       <SectionHeading title="Quicklinks">
         <QuickLinks items={QUICK_LINKS} />
       </SectionHeading>
 
-      <SectionHeading title="What needs attention">
-        <div className="grid gap-4 lg:grid-cols-2">
-        {show("admin.strip_audit") && (
-          <ActivityStrip
-            title="Recent audit anomalies"
-            items={auditItems}
-            emptyMessage="No void / reversal / rejection events recently."
-            viewAllHref="/staff/audit"
-          />
-        )}
-        {show("admin.strip_stale_drafts") && (
-          <ActivityStrip
-            title="Stale draft journals (7d+)"
-            items={draftItems}
-            emptyMessage="No drafts older than a week."
-            viewAllHref="/staff/admin/accounting/journal?status=draft"
-          />
-        )}
-        </div>
-      </SectionHeading>
-
-      <SectionHeading
-        title="Coming soon"
-        subtitle="Roadmap modules — not yet live"
-        defaultOpen={false}
-      >
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        </div>
-      </SectionHeading>
+      {showAttention && (
+        <SectionHeading title="What needs attention">
+          <div className="grid gap-4 lg:grid-cols-2">
+            {show("admin.strip_audit") && (
+              <ActivityStrip
+                title="Recent audit anomalies (7d)"
+                items={auditItems}
+                emptyMessage="No void / reversal / rejection events in the last 7 days."
+                viewAllHref="/staff/audit"
+                error={stats.auditStripError}
+              />
+            )}
+            {showStaleDraftsStrip && (
+              <ActivityStrip
+                title="Stale draft journals (7d+)"
+                items={draftItems}
+                emptyMessage="No drafts older than a week."
+                viewAllHref="/staff/admin/accounting/journal?status=draft"
+                error={stats.staleDraftsError}
+              />
+            )}
+          </div>
+        </SectionHeading>
+      )}
     </div>
   );
 }
