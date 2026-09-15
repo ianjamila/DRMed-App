@@ -14,7 +14,12 @@ import { getPatientConsentState } from "@/lib/consent/gate";
 import { formatPatientName } from "@/lib/patients/format-name";
 import { shouldPrintReceipt } from "@/lib/visits/receipt-policy";
 import { hasStatutoryDiscountLine } from "@/lib/pricing/statutory";
-import { visibleReceiptLines, receiptTotals } from "@/lib/visits/receipt-totals";
+import {
+  visibleReceiptLines,
+  receiptTotals,
+  toReceiptLine,
+} from "@/lib/visits/receipt-totals";
+import type { GroupPrintSnapshot } from "@/lib/visits/receipt-print-snapshot";
 import { NoReceiptNotice } from "@/components/staff/no-receipt-notice";
 import { PrintButton } from "./print-button";
 import { logGroupReceiptPrintAction } from "./log-print-action";
@@ -93,21 +98,7 @@ export default async function GroupReceiptPage({ params }: Props) {
   // shouldPrintReceipt check, the render, the totals) sees only live lines.
   const slips = visits
     .map((v) => {
-      const allLines = (v.test_requests ?? []).map((tr) => {
-        const svc = Array.isArray(tr.services) ? tr.services[0] : tr.services;
-        const base = tr.base_price_php ?? svc?.price_php ?? 0;
-        const discount = tr.discount_amount_php ?? 0;
-        const final = tr.final_price_php ?? base - discount;
-        return {
-          id: tr.id,
-          svc,
-          base,
-          discount,
-          final,
-          discountKind: tr.discount_kind,
-          deleted: tr.deleted_at !== null,
-        };
-      });
+      const allLines = (v.test_requests ?? []).map(toReceiptLine);
       const lines = visibleReceiptLines(allLines);
       const isDoctor = lines.some((l) => l.svc && DOCTOR_KINDS.has(l.svc.kind));
       const prints = shouldPrintReceipt(
@@ -129,6 +120,18 @@ export default async function GroupReceiptPage({ params }: Props) {
       />
     );
   }
+
+  // What this render actually puts on paper: the slips that survived the
+  // suppression rule above, each with the live lines it lists. The print
+  // action cannot re-derive this (see `lib/visits/receipt-print-snapshot.ts`),
+  // so it is handed down. Ids only — every figure on the audit row is
+  // recomputed server-side from them.
+  const printSnapshot: GroupPrintSnapshot = {
+    slips: slips.map((s) => ({
+      visitId: s.visit.id,
+      lineIds: s.lines.map((l) => l.id),
+    })),
+  };
 
   const plainPin = await peekVisitGroupPinFlash(groupId);
 
@@ -173,7 +176,7 @@ export default async function GroupReceiptPage({ params }: Props) {
         </Link>
         <PrintButton
           hasFlash={Boolean(plainPin)}
-          onPrint={logGroupReceiptPrintAction.bind(null, groupId)}
+          onPrint={logGroupReceiptPrintAction.bind(null, groupId, printSnapshot)}
         />
       </div>
 

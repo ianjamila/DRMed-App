@@ -54,3 +54,57 @@ export function receiptTotals(
     total: lines.reduce((s, l) => s + Number(l.final), 0),
   };
 }
+
+/**
+ * A raw `test_requests` row as both receipt pages and the group print action
+ * select it. `services` is typed loosely because PostgREST returns an embedded
+ * to-one either as an object or as a one-element array depending on how the
+ * relationship is inferred, and each caller selects a different column set off
+ * it — only `price_php` is read here.
+ */
+export interface RawReceiptLine<S> {
+  id: string;
+  deleted_at: string | null;
+  base_price_php: number | null;
+  discount_kind?: string | null;
+  discount_amount_php: number | null;
+  final_price_php: number | null;
+  services: S | S[] | null;
+}
+
+export interface MappedReceiptLine<S>
+  extends PricedReceiptLine,
+    DeletableReceiptLine {
+  id: string;
+  svc: S | undefined;
+  discountKind: string | null;
+}
+
+/**
+ * Map one raw row into the priced, deletable shape the receipts render and
+ * total from.
+ *
+ * This lived inline and identically in both receipt pages until the group
+ * print action needed the same numbers: the audit row's `total_php` has to be
+ * the figure that was on the paper, so it must be derived by exactly the same
+ * fallback chain (`base_price_php` → the service's list price → 0, and
+ * `final_price_php` → base − discount) rather than a second one that drifts.
+ */
+export function toReceiptLine<S extends { price_php?: number | null }>(
+  tr: RawReceiptLine<S>,
+): MappedReceiptLine<S> {
+  const embedded = Array.isArray(tr.services) ? tr.services[0] : tr.services;
+  const svc = embedded ?? undefined;
+  const base = tr.base_price_php ?? svc?.price_php ?? 0;
+  const discount = tr.discount_amount_php ?? 0;
+  const final = tr.final_price_php ?? base - discount;
+  return {
+    id: tr.id,
+    svc,
+    base,
+    discount,
+    final,
+    discountKind: tr.discount_kind ?? null,
+    deleted: tr.deleted_at !== null,
+  };
+}
