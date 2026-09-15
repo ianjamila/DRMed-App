@@ -29,6 +29,7 @@ import {
 import { CircleAlert } from "lucide-react";
 import { StatusBadge } from "@/lib/ui/status-badge";
 import { pluckOne } from "@/lib/reports/format";
+import { manilaDate } from "@/lib/dates/manila";
 
 const PHP = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
 
@@ -175,7 +176,7 @@ export function BillDetailClient({
             {bill.bill_number}
           </h1>
           <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
-            {vendor?.name ?? "—"} · Invoice {bill.vendor_invoice_number ?? "—"} · billed {bill.bill_date} · due {bill.due_date}
+            {vendor?.name ?? "—"} · Invoice {bill.vendor_invoice_number ?? "—"} · billed {manilaDate(bill.bill_date)} · due {manilaDate(bill.due_date)}
           </p>
           {bill.description && (
             <p className="mt-2 text-sm text-[color:var(--color-brand-text-soft)]">{bill.description}</p>
@@ -352,7 +353,7 @@ export function BillDetailClient({
                     )}
                     {payment && (
                       <span className="ml-2 text-xs text-[color:var(--color-brand-text-soft)]">
-                        {payment.method} · {payment.payment_date}
+                        {payment.method} · {manilaDate(payment.payment_date)}
                       </span>
                     )}
                     {isVoided && (

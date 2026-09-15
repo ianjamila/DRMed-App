@@ -28,6 +28,7 @@ import {
 import { CircleAlert } from "lucide-react";
 import { StatusBadge } from "@/lib/ui/status-badge";
 import { pluckOne } from "@/lib/reports/format";
+import { manilaDate } from "@/lib/dates/manila";
 
 const PHP = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
 
@@ -159,7 +160,7 @@ export function PaymentDetailClient({
             {payment.payment_number}
           </h1>
           <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
-            {vendor?.name ?? "—"} · {payment.method} · {payment.payment_date}
+            {vendor?.name ?? "—"} · {payment.method} · {manilaDate(payment.payment_date)}
             {payment.cheque_number && (
               <> · Cheque #{payment.cheque_number} dated {payment.cheque_date}</>
             )}

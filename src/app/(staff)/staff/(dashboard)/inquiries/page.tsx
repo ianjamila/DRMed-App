@@ -12,6 +12,19 @@ import {
 } from "@/lib/inquiries/labels";
 import { Panel } from "@/components/ui/panel";
 import { NewInquirySheet } from "./new-inquiry-sheet";
+import {
+  ariaSortFor,
+  buildListHref,
+  nextSort,
+  pageCount,
+  parsePage,
+  parsePageSize,
+  parseSort,
+  rangeFor,
+  type SortSpec,
+} from "@/lib/ui/table-params";
+import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
+import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 
 export const metadata = {
   title: "Inquiries — staff",
@@ -28,8 +41,81 @@ const STATUS_FILTERS: ReadonlyArray<{ value: StatusFilter; label: string }> = [
   { value: "all", label: "All" },
 ];
 
+const BASE_PATH = "/staff/inquiries";
+
+// The old cap matched what reception actually needed to see at a glance —
+// keep it as the default page size so bookmarks/behaviour don't change.
+const PAGE_SIZE_DEFAULT = 50;
+
+// Sortable columns for the inquiry log. `parseSort` requires this exact
+// allow-list — it's a security boundary because the value reaches a
+// PostgREST `.order()`; never widen it to a raw search param. "Received by"
+// isn't here: the name shown is resolved by a second query against
+// staff_profiles (received_by_id is a bare FK to auth.users), so there's no
+// single column to order by that would match what's displayed.
+const SORTABLE_COLUMNS = [
+  "caller_name",
+  "contact",
+  "channel",
+  "called_at",
+  "status",
+] as const;
+type SortColumn = (typeof SORTABLE_COLUMNS)[number];
+
+const DEFAULT_SORT: SortSpec<SortColumn> = { key: "called_at", dir: "desc" };
+
 interface PageProps {
-  searchParams: Promise<{ status?: string; q?: string }>;
+  searchParams: Promise<{
+    status?: string;
+    q?: string;
+    sort?: string;
+    dir?: string;
+    page?: string;
+    size?: string;
+  }>;
+}
+
+async function search(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  status: StatusFilter,
+  q: string,
+  sort: SortSpec<SortColumn>,
+  page: number,
+  size: number,
+) {
+  const [from, to] = rangeFor(page, size);
+
+  let query = supabase
+    .from("inquiries")
+    .select(
+      "id, caller_name, contact, channel, called_at, status, notes, received_by_id, linked_appointment_id, linked_visit_id",
+      { count: "exact" },
+    );
+
+  if (status !== "all") query = query.eq("status", status);
+
+  if (q) {
+    const like = `%${q.replace(/[%_]/g, (c) => `\\${c}`)}%`;
+    query = query.or(
+      [
+        `caller_name.ilike.${like}`,
+        `contact.ilike.${like}`,
+        `service_interest.ilike.${like}`,
+      ].join(","),
+    );
+  }
+
+  query = query.order(sort.key, { ascending: sort.dir === "asc" });
+  // Tie-break on id — without a total order, .range() can drop or repeat
+  // rows across pages once there's more than one page of inquiries.
+  query = query.order("id", { ascending: true }).range(from, to);
+
+  const { data, error, count } = await query;
+  if (error) {
+    console.error("inquiries query failed", error);
+    return { rows: [], total: 0 };
+  }
+  return { rows: data ?? [], total: count ?? 0 };
 }
 
 export default async function InquiriesPage({ searchParams }: PageProps) {
@@ -46,10 +132,15 @@ export default async function InquiriesPage({ searchParams }: PageProps) {
     ? (params.status as StatusFilter)
     : "pending";
   const q = params.q?.trim() ?? "";
+  const sort = parseSort(params.sort, params.dir, SORTABLE_COLUMNS, DEFAULT_SORT);
+  const size = parsePageSize(params.size, PAGE_SIZE_DEFAULT);
+  const page = parsePage(params.page);
 
   const supabase = await createClient();
 
   // Counts per status — drives the filter chips. Cheap (small table, indexed).
+  // Independent of the search box and the pager's total: these always count
+  // the whole table per status, not the current `q` filter.
   const [pending, confirmed, dropped] = await Promise.all([
     supabase.from("inquiries").select("id", { count: "exact", head: true }).eq("status", "pending"),
     supabase.from("inquiries").select("id", { count: "exact", head: true }).eq("status", "confirmed"),
@@ -62,31 +153,9 @@ export default async function InquiriesPage({ searchParams }: PageProps) {
     all: (pending.count ?? 0) + (confirmed.count ?? 0) + (dropped.count ?? 0),
   } as const;
 
-  let query = supabase
-    .from("inquiries")
-    .select(
-      "id, caller_name, contact, channel, called_at, status, notes, received_by_id, linked_appointment_id, linked_visit_id",
-    )
-    .order("called_at", { ascending: false })
-    .limit(50);
-
-  if (status !== "all") query = query.eq("status", status);
-
-  if (q) {
-    const like = `%${q.replace(/[%_]/g, (c) => `\\${c}`)}%`;
-    query = query.or(
-      [
-        `caller_name.ilike.${like}`,
-        `contact.ilike.${like}`,
-        `service_interest.ilike.${like}`,
-      ].join(","),
-    );
-  }
-
-  const { data: rows, error } = await query;
-  if (error) console.error("inquiries query failed", error);
-
-  const inquiries = rows ?? [];
+  const { rows, total } = await search(supabase, status, q, sort, page, size);
+  const inquiries = rows;
+  const totalPages = pageCount(total, size);
 
   // Resolve received_by names via staff_profiles (FK is to auth.users; we
   // join through staff_profiles.id).
@@ -115,6 +184,33 @@ export default async function InquiriesPage({ searchParams }: PageProps) {
     full_name: s.full_name,
   }));
 
+  // Params at their default are omitted so page 1 with the default sort,
+  // size, and status stays the bare /staff/inquiries URL.
+  const isDefaultSort = sort.key === DEFAULT_SORT.key && sort.dir === DEFAULT_SORT.dir;
+  const baseParams: Record<string, string | null> = {
+    status: status === "pending" ? null : status,
+    q: q || null,
+    sort: isDefaultSort ? null : sort.key,
+    dir: isDefaultSort ? null : sort.dir,
+    size: size === PAGE_SIZE_DEFAULT ? null : String(size),
+  };
+
+  const sortHref = (key: SortColumn) => {
+    const next = nextSort(sort, key);
+    const nextIsDefault = next.key === DEFAULT_SORT.key && next.dir === DEFAULT_SORT.dir;
+    // Any change to sort resets to page 1 — staying on page 3 of a result
+    // set that just reordered is a blank screen with no explanation.
+    return buildListHref(BASE_PATH, baseParams, {
+      sort: nextIsDefault ? null : next.key,
+      dir: nextIsDefault ? null : next.dir,
+      page: null,
+    });
+  };
+
+  const th = (key: SortColumn, label: string) => (
+    <SortableTh key={key} label={label} href={sortHref(key)} state={ariaSortFor(sort, key)} />
+  );
+
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
       <PageHeader
@@ -131,13 +227,12 @@ export default async function InquiriesPage({ searchParams }: PageProps) {
       <nav className="mb-4 flex flex-wrap gap-2">
         {STATUS_FILTERS.map((f) => {
           const active = f.value === status;
-          const href = (() => {
-            const sp = new URLSearchParams();
-            if (f.value !== "pending") sp.set("status", f.value);
-            if (q) sp.set("q", q);
-            const qs = sp.toString();
-            return qs ? `/staff/inquiries?${qs}` : "/staff/inquiries";
-          })();
+          // Changing the status filter resets to page 1, same reasoning as
+          // sort — and preserves the current search/sort/size via baseParams.
+          const href = buildListHref(BASE_PATH, baseParams, {
+            status: f.value === "pending" ? null : f.value,
+            page: null,
+          });
           return (
             <Link
               key={f.value}
@@ -158,6 +253,18 @@ export default async function InquiriesPage({ searchParams }: PageProps) {
         {status !== "pending" ? (
           <input type="hidden" name="status" value={status} />
         ) : null}
+        {/* Native GET form: any field not carried as a hidden input drops out
+            of the query string on submit, so sort/size ride along here too —
+            and `page` deliberately does NOT, so a search resets to page 1. */}
+        {!isDefaultSort ? (
+          <>
+            <input type="hidden" name="sort" value={sort.key} />
+            <input type="hidden" name="dir" value={sort.dir} />
+          </>
+        ) : null}
+        {size !== PAGE_SIZE_DEFAULT ? (
+          <input type="hidden" name="size" value={String(size)} />
+        ) : null}
         <input
           type="search"
           name="q"
@@ -177,14 +284,14 @@ export default async function InquiriesPage({ searchParams }: PageProps) {
         <table className="w-full min-w-[900px] text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
-              <th className="px-4 py-3">Caller</th>
-              <th className="px-4 py-3">Contact</th>
-              <th className="px-4 py-3">Channel</th>
-              <th className="px-4 py-3">Called</th>
-              <th className="px-4 py-3">Received by</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3">Notes</th>
-              <th className="px-4 py-3 text-right">Action</th>
+              {th("caller_name", "Caller")}
+              {th("contact", "Contact")}
+              {th("channel", "Channel")}
+              {th("called_at", "Called")}
+              <PlainTh label="Received by" />
+              {th("status", "Status")}
+              <PlainTh label="Notes" />
+              <PlainTh label="Action" align="right" />
             </tr>
           </thead>
           <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
@@ -249,16 +356,41 @@ export default async function InquiriesPage({ searchParams }: PageProps) {
         </table>
       </Panel>
 
-      {inquiries.length === 50 ? (
-        <p className="mt-4 text-xs text-[color:var(--color-brand-text-soft)]">
-          Showing the most recent 50. Refine your search to find older
-          inquiries.
-        </p>
-      ) : null}
+      <ListPagination
+        page={page}
+        pageCount={totalPages}
+        total={total}
+        size={size}
+        prevHref={
+          page > 1
+            ? buildListHref(BASE_PATH, baseParams, {
+                page: page - 1 > 1 ? String(page - 1) : null,
+              })
+            : null
+        }
+        nextHref={
+          page < totalPages
+            ? buildListHref(BASE_PATH, baseParams, { page: String(page + 1) })
+            : null
+        }
+        sizeOptions={PAGE_SIZES.map((s) => ({
+          size: s,
+          // Changing the page size resets to page 1 — same reasoning as sort.
+          href: buildListHref(BASE_PATH, baseParams, {
+            size: s === PAGE_SIZE_DEFAULT ? null : String(s),
+            page: null,
+          }),
+        }))}
+        noun="inquiry"
+        plural="inquiries"
+      />
     </div>
   );
 }
 
+// Allow-listed in src/lib/dates/date-render-surfaces.test.ts (tier 2 —
+// "no year — current inquiries only"): this deliberately omits the year, so
+// it isn't a drop-in for manilaDateTime and stays inline on purpose.
 function formatCalled(iso: string): string {
   return new Intl.DateTimeFormat("en-PH", {
     timeZone: "Asia/Manila",

@@ -2,12 +2,35 @@ import Link from "next/link";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
+import {
+  ariaSortFor,
+  buildListHref,
+  DEFAULT_PAGE_SIZE,
+  nextSort,
+  pageCount,
+  parsePage,
+  parsePageSize,
+  parseSort,
+  rangeFor,
+  type SortSpec,
+} from "@/lib/ui/table-params";
+import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
+import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 
 export const metadata = { title: "Inventory — staff" };
 export const dynamic = "force-dynamic";
 
+const BASE_PATH = "/staff/admin/inventory";
+
 interface SearchProps {
-  searchParams: Promise<{ scope?: "all" | "low" | "expiring"; section?: string }>;
+  searchParams: Promise<{
+    scope?: "all" | "low" | "expiring";
+    section?: string;
+    sort?: string;
+    dir?: string;
+    page?: string;
+    size?: string;
+  }>;
 }
 
 interface BalanceRow {
@@ -36,6 +59,19 @@ const STATUS_LABEL: Record<string, string> = {
   out_of_stock: "Out",
 };
 
+// Sortable columns for the balances table. `parseSort` requires this exact
+// allow-list — it's a security boundary because the value reaches a
+// PostgREST `.order()`; never widen it to a raw search param.
+const SORTABLE_COLUMNS = ["name", "section", "on_hand", "reorder_threshold"] as const;
+type SortColumn = (typeof SORTABLE_COLUMNS)[number];
+
+const DEFAULT_SORT: SortSpec<SortColumn> = { key: "name", dir: "asc" };
+
+// section is nullable (not every item has one set) — sink blanks to the
+// bottom regardless of direction rather than surfacing every unsectioned
+// item first on one of the two directions.
+const NULLS_LAST_COLUMNS = new Set<SortColumn>(["section"]);
+
 export default async function InventoryPage({ searchParams }: SearchProps) {
   const session = await requireActiveStaff();
   if (session.role === "reception" || session.role === "pathologist") {
@@ -46,6 +82,9 @@ export default async function InventoryPage({ searchParams }: SearchProps) {
   const sp = await searchParams;
   const scope = sp.scope === "low" || sp.scope === "expiring" ? sp.scope : "all";
   const sectionFilter = sp.section ?? "";
+  const sort = parseSort(sp.sort, sp.dir, SORTABLE_COLUMNS, DEFAULT_SORT);
+  const size = parsePageSize(sp.size);
+  const page = parsePage(sp.page);
 
   const admin = createAdminClient();
   const today = todayManilaISODate();
@@ -53,44 +92,115 @@ export default async function InventoryPage({ searchParams }: SearchProps) {
   sixtyDaysFromNow.setDate(sixtyDaysFromNow.getDate() + 60);
   const expirySoonCutoff = sixtyDaysFromNow.toISOString().slice(0, 10);
 
+  // Main, paginated query — the "low" / "expiring" scopes used to be a JS
+  // filter applied AFTER an unbounded fetch, which made a server-side count
+  // (and therefore a real pager) impossible: the count of rows returned by
+  // Postgres wouldn't match the count of rows left after the JS filter. Both
+  // scopes are now WHERE clauses on the same view, so `count: "exact"` and
+  // `.range()` agree with what's actually shown.
+  const [from, to] = rangeFor(page, size);
   let q = admin
     .from("v_inventory_balances")
-    .select("*")
-    .eq("is_active", true)
-    .order("name");
+    .select("*", { count: "exact" })
+    .eq("is_active", true);
   if (sectionFilter) q = q.eq("section", sectionFilter);
-  const { data } = await q.returns<BalanceRow[]>();
-
-  let rows = data ?? [];
   if (scope === "low") {
-    rows = rows.filter(
-      (r) => r.stock_status === "low" || r.stock_status === "out_of_stock",
-    );
+    q = q.in("stock_status", ["low", "out_of_stock"]);
   } else if (scope === "expiring") {
-    rows = rows.filter(
-      (r) => r.next_expiry !== null && r.next_expiry <= expirySoonCutoff,
-    );
+    q = q.not("next_expiry", "is", null).lte("next_expiry", expirySoonCutoff);
   }
+  q = q.order(sort.key, {
+    ascending: sort.dir === "asc",
+    ...(NULLS_LAST_COLUMNS.has(sort.key) ? { nullsFirst: false } : {}),
+  });
+  // Tie-break on item_id — the view groups by inventory_items.id, so it's
+  // unique per row. Without a total order, .range() can drop or repeat rows
+  // across pages.
+  q = q.order("item_id", { ascending: true }).range(from, to);
 
-  // Sections present in current rows for the filter dropdown.
+  const { data, count } = await q.returns<BalanceRow[]>();
+  const rows = data ?? [];
+  const total = count ?? 0;
+  const totalPages = pageCount(total, size);
+
+  // Tab badge counts are independent of the current scope (all three show
+  // at once) but still respect the section filter, same as before. Each is
+  // a head-only exact count against the same WHERE clauses as the main
+  // query above, not a JS filter over a fetched page.
+  let allCountQ = admin
+    .from("v_inventory_balances")
+    .select("*", { count: "exact", head: true })
+    .eq("is_active", true);
+  let lowCountQ = admin
+    .from("v_inventory_balances")
+    .select("*", { count: "exact", head: true })
+    .eq("is_active", true)
+    .in("stock_status", ["low", "out_of_stock"]);
+  let expiringCountQ = admin
+    .from("v_inventory_balances")
+    .select("*", { count: "exact", head: true })
+    .eq("is_active", true)
+    .not("next_expiry", "is", null)
+    .lte("next_expiry", expirySoonCutoff);
+  if (sectionFilter) {
+    allCountQ = allCountQ.eq("section", sectionFilter);
+    lowCountQ = lowCountQ.eq("section", sectionFilter);
+    expiringCountQ = expiringCountQ.eq("section", sectionFilter);
+  }
+  const [{ count: allCount }, { count: lowCount }, { count: expiringCount }] =
+    await Promise.all([allCountQ, lowCountQ, expiringCountQ]);
+
+  // Sections for the filter dropdown — deliberately unfiltered by the
+  // current section selection (only by is_active) so picking a section
+  // doesn't collapse the dropdown down to just that one option.
+  const { data: sectionRows } = await admin
+    .from("v_inventory_balances")
+    .select("section")
+    .eq("is_active", true)
+    .returns<{ section: string | null }[]>();
   const sectionsSet = new Set<string>();
-  for (const r of data ?? []) if (r.section) sectionsSet.add(r.section);
+  for (const r of sectionRows ?? []) if (r.section) sectionsSet.add(r.section);
   const sections = Array.from(sectionsSet).sort();
 
-  const lowCount = (data ?? []).filter(
-    (r) => r.stock_status === "low" || r.stock_status === "out_of_stock",
-  ).length;
-  const expiringCount = (data ?? []).filter(
-    (r) => r.next_expiry !== null && r.next_expiry <= expirySoonCutoff,
-  ).length;
+  // Params at their default are omitted so the bare scope/section/sort/size
+  // combination stays a clean /staff/admin/inventory URL.
+  const isDefaultSort = sort.key === DEFAULT_SORT.key && sort.dir === DEFAULT_SORT.dir;
+  const baseParams: Record<string, string | null> = {
+    scope: scope === "all" ? null : scope,
+    section: sectionFilter || null,
+    sort: isDefaultSort ? null : sort.key,
+    dir: isDefaultSort ? null : sort.dir,
+    size: size === DEFAULT_PAGE_SIZE ? null : String(size),
+  };
 
   function scopeHref(s: "all" | "low" | "expiring") {
-    const params = new URLSearchParams();
-    if (s !== "all") params.set("scope", s);
-    if (sectionFilter) params.set("section", sectionFilter);
-    const qs = params.toString();
-    return `/staff/admin/inventory${qs ? `?${qs}` : ""}`;
+    // Changing scope resets to page 1 — staying on page 7 of a result set
+    // that just changed shape is a blank screen with no explanation.
+    return buildListHref(BASE_PATH, baseParams, {
+      scope: s === "all" ? null : s,
+      page: null,
+    });
   }
+
+  const sortHref = (key: SortColumn) => {
+    const next = nextSort(sort, key);
+    const nextIsDefault = next.key === DEFAULT_SORT.key && next.dir === DEFAULT_SORT.dir;
+    return buildListHref(BASE_PATH, baseParams, {
+      sort: nextIsDefault ? null : next.key,
+      dir: nextIsDefault ? null : next.dir,
+      page: null,
+    });
+  };
+
+  const th = (key: SortColumn, label: string, align?: "left" | "right") => (
+    <SortableTh
+      key={key}
+      label={label}
+      href={sortHref(key)}
+      state={ariaSortFor(sort, key)}
+      align={align}
+    />
+  );
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
@@ -128,37 +238,50 @@ export default async function InventoryPage({ searchParams }: SearchProps) {
               : "border-[color:var(--color-brand-bg-mid)] bg-white text-[color:var(--color-brand-navy)] hover:border-[color:var(--color-brand-cyan)]"
           }`}
         >
-          All ({(data ?? []).length})
+          All ({allCount ?? 0})
         </Link>
         <Link
           href={scopeHref("low")}
           className={`min-h-11 rounded-full border px-4 py-2 text-sm font-medium transition-colors ${
             scope === "low"
               ? "border-amber-500 bg-amber-500 text-white"
-              : lowCount > 0
+              : (lowCount ?? 0) > 0
                 ? "border-amber-300 bg-amber-50 text-amber-900 hover:border-amber-500"
                 : "border-[color:var(--color-brand-bg-mid)] bg-white text-[color:var(--color-brand-navy)]"
           }`}
         >
-          Low / out ({lowCount})
+          Low / out ({lowCount ?? 0})
         </Link>
         <Link
           href={scopeHref("expiring")}
           className={`min-h-11 rounded-full border px-4 py-2 text-sm font-medium transition-colors ${
             scope === "expiring"
               ? "border-orange-500 bg-orange-500 text-white"
-              : expiringCount > 0
+              : (expiringCount ?? 0) > 0
                 ? "border-orange-300 bg-orange-50 text-orange-900 hover:border-orange-500"
                 : "border-[color:var(--color-brand-bg-mid)] bg-white text-[color:var(--color-brand-navy)]"
           }`}
         >
-          Expiring ≤ 60d ({expiringCount})
+          Expiring ≤ 60d ({expiringCount ?? 0})
         </Link>
 
         {sections.length > 0 ? (
           <form action="" className="ml-auto flex items-center gap-2">
             {scope !== "all" ? (
               <input type="hidden" name="scope" value={scope} />
+            ) : null}
+            {/* Preserve sort/size across a plain GET form submit — the browser
+                only sends the fields present in the form, so anything not
+                restated here as a hidden input would silently drop. Page is
+                deliberately NOT restated: a changed filter resets to page 1. */}
+            {!isDefaultSort ? (
+              <>
+                <input type="hidden" name="sort" value={sort.key} />
+                <input type="hidden" name="dir" value={sort.dir} />
+              </>
+            ) : null}
+            {size !== DEFAULT_PAGE_SIZE ? (
+              <input type="hidden" name="size" value={String(size)} />
             ) : null}
             <select
               name="section"
@@ -194,12 +317,12 @@ export default async function InventoryPage({ searchParams }: SearchProps) {
             <table className="w-full min-w-[900px] text-sm">
               <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                 <tr>
-                  <th className="px-4 py-3">Item</th>
-                  <th className="px-4 py-3">Section</th>
-                  <th className="px-4 py-3 text-right">On hand</th>
-                  <th className="px-4 py-3 text-right">Reorder ≤</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">Next expiry</th>
+                  {th("name", "Item")}
+                  {th("section", "Section")}
+                  {th("on_hand", "On hand", "right")}
+                  {th("reorder_threshold", "Reorder ≤", "right")}
+                  <PlainTh label="Status" />
+                  <PlainTh label="Next expiry" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
@@ -269,6 +392,34 @@ export default async function InventoryPage({ searchParams }: SearchProps) {
           </div>
         )}
       </section>
+
+      <ListPagination
+        page={page}
+        pageCount={totalPages}
+        total={total}
+        size={size}
+        prevHref={
+          page > 1
+            ? buildListHref(BASE_PATH, baseParams, {
+                page: page - 1 > 1 ? String(page - 1) : null,
+              })
+            : null
+        }
+        nextHref={
+          page < totalPages
+            ? buildListHref(BASE_PATH, baseParams, { page: String(page + 1) })
+            : null
+        }
+        sizeOptions={PAGE_SIZES.map((s) => ({
+          size: s,
+          // Changing the page size resets to page 1 — same reasoning as sort.
+          href: buildListHref(BASE_PATH, baseParams, {
+            size: s === DEFAULT_PAGE_SIZE ? null : String(s),
+            page: null,
+          }),
+        }))}
+        noun="item"
+      />
     </div>
   );
 }

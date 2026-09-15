@@ -22,6 +22,20 @@ import { RestoreButton } from "./restore-button";
 import { PageHeader } from "@/components/staff/page-header";
 import { Panel } from "@/components/ui/panel";
 import { manilaDateTime } from "@/lib/dates/manila";
+import {
+  ariaSortFor,
+  buildListHref,
+  DEFAULT_PAGE_SIZE,
+  nextSort,
+  pageCount,
+  parsePage,
+  parsePageSize,
+  parseSort,
+  rangeFor,
+  type SortSpec,
+} from "@/lib/ui/table-params";
+import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
+import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 
 export const metadata = {
   title: "Staff users — staff",
@@ -39,6 +53,82 @@ type StaffRow = {
   sign_in: SignInSummary;
   last_sign_in_at: string | null;
 };
+
+const BASE_PATH = "/staff/users";
+
+/**
+ * Sortable columns for the "Existing users" table.
+ *
+ * Unlike the patients/critical-alerts sort keys, this value never reaches a
+ * PostgREST `.order()` — the row set here is already fully in memory (see
+ * the comment on `src/lib/staff/user-filters.ts` for why: email, sign-in
+ * method and last-sign-in all come from the Auth admin API, which Postgres
+ * can't join). It still goes through the shared `parseSort` allow-list
+ * rather than trusting the raw param, so a hand-edited/junk `?sort=` falls
+ * back to the default instead of hitting `compareStaffRows`'s `switch` with
+ * a key it doesn't handle.
+ */
+const SORTABLE_COLUMNS = [
+  "full_name",
+  "email",
+  "role",
+  "is_active",
+  "last_sign_in_at",
+] as const;
+type SortColumn = (typeof SORTABLE_COLUMNS)[number];
+
+// Alphabetical is the legible default for a "manage these people" screen —
+// more useful than the implicit `created_at desc` this page used to render
+// in, which only mattered because nothing else was on offer. Last sign-in
+// stays one click away for the "who's dormant" view.
+const DEFAULT_SORT: SortSpec<SortColumn> = { key: "full_name", dir: "asc" };
+
+// "Never signed in" sinks to the bottom regardless of direction, same rule
+// the patients page's NULLS_LAST_COLUMNS applies — otherwise flipping to
+// ascending would surface every staff member who's never logged in first.
+const NULLS_LAST_COLUMNS = new Set<SortColumn>(["last_sign_in_at"]);
+
+function compareStaffRows(
+  a: StaffRow,
+  b: StaffRow,
+  sort: SortSpec<SortColumn>,
+): number {
+  const dirMul = sort.dir === "asc" ? 1 : -1;
+  let cmp: number;
+
+  if (NULLS_LAST_COLUMNS.has(sort.key)) {
+    const av = a.last_sign_in_at;
+    const bv = b.last_sign_in_at;
+    if (av === null && bv === null) cmp = 0;
+    else if (av === null) return 1; // always last, independent of direction
+    else if (bv === null) return -1; // always last, independent of direction
+    else cmp = dirMul * av.localeCompare(bv);
+  } else {
+    switch (sort.key) {
+      case "full_name":
+        cmp = dirMul * a.full_name.localeCompare(b.full_name);
+        break;
+      case "email":
+        cmp = dirMul * a.email.localeCompare(b.email);
+        break;
+      case "role":
+        cmp = dirMul * roleLabel(a.role).localeCompare(roleLabel(b.role));
+        break;
+      case "is_active":
+        cmp = dirMul * (Number(a.is_active) - Number(b.is_active));
+        break;
+      default:
+        cmp = 0;
+    }
+  }
+
+  // Tie-break on id, ascending — mirrors the rule every Postgres-ordered
+  // list page here follows (table-params.ts) even though `Array#sort` is
+  // stable: it keeps the order deterministic rather than depending on that
+  // implementation detail, and matches this codebase's "every ordering ends
+  // in an id tie-break" convention.
+  return cmp !== 0 ? cmp : a.id.localeCompare(b.id);
+}
 
 async function loadStaff(): Promise<{
   existing: StaffRow[];
@@ -214,6 +304,10 @@ interface SearchProps {
     role?: string;
     status?: string;
     signin?: string;
+    sort?: string;
+    dir?: string;
+    page?: string;
+    size?: string;
   }>;
 }
 
@@ -227,9 +321,21 @@ export default async function StaffUsersPage({ searchParams }: SearchProps) {
   const signIn: SignInFilter = parseSignInFilter(params.signin);
   const filtering =
     q.trim() !== "" || role !== "all" || status !== "all" || signIn !== "all";
+  const sort = parseSort(params.sort, params.dir, SORTABLE_COLUMNS, DEFAULT_SORT);
+  const size = parsePageSize(params.size);
+  const page = parsePage(params.page);
 
   const { existing, deleted, deleterNames } = await loadStaff();
-  const rows = filterStaffRows(existing, { q, role, status, signIn });
+  const filtered = filterStaffRows(existing, { q, role, status, signIn });
+  const total = filtered.length;
+  const totalPages = pageCount(total, size);
+  const [from, to] = rangeFor(page, size);
+  // Sort, then slice — the whole filtered set is already in memory (see the
+  // SORTABLE_COLUMNS comment), so pagination here is a plain array slice
+  // rather than a second round-trip.
+  const rows = [...filtered]
+    .sort((a, b) => compareStaffRows(a, b, sort))
+    .slice(from, to + 1);
 
   // Rendered once per request rather than per row, so every relative label on
   // the page is measured from the same instant.
@@ -237,20 +343,34 @@ export default async function StaffUsersPage({ searchParams }: SearchProps) {
 
   const onGoogle = existing.filter((u) => u.sign_in.google).length;
 
-  // Every chip keeps the other three parameters, so filters compose.
-  const href = (patch: {
-    role?: StaffRoleFilter;
-    status?: StaffStatusFilter;
-    signin?: SignInFilter;
-  }) => {
-    const merged = { role, status, signin: signIn, ...patch };
-    const sp = new URLSearchParams();
-    if (q.trim()) sp.set("q", q.trim());
-    if (merged.role !== "all") sp.set("role", merged.role);
-    if (merged.status !== "all") sp.set("status", merged.status);
-    if (merged.signin !== "all") sp.set("signin", merged.signin);
-    return `/staff/users${sp.size ? `?${sp.toString()}` : ""}`;
+  // Params at their default are omitted so the plain filter/sort state stays
+  // the bare /staff/users URL.
+  const isDefaultSort = sort.key === DEFAULT_SORT.key && sort.dir === DEFAULT_SORT.dir;
+  const baseParams: Record<string, string | null> = {
+    q: q.trim() || null,
+    role: role !== "all" ? role : null,
+    status: status !== "all" ? status : null,
+    signin: signIn !== "all" ? signIn : null,
+    sort: isDefaultSort ? null : sort.key,
+    dir: isDefaultSort ? null : sort.dir,
+    size: size === DEFAULT_PAGE_SIZE ? null : String(size),
   };
+
+  // Every chip/header keeps the other parameters and resets to page 1 —
+  // changing a filter or the sort while sitting on page 7 of a result set
+  // that just changed shape is a blank screen with no explanation.
+  const href = (overrides: Record<string, string | null> = {}) =>
+    buildListHref(BASE_PATH, baseParams, { page: null, ...overrides });
+
+  const sortHref = (key: SortColumn) => {
+    const next = nextSort(sort, key);
+    const nextIsDefault = next.key === DEFAULT_SORT.key && next.dir === DEFAULT_SORT.dir;
+    return href({ sort: nextIsDefault ? null : next.key, dir: nextIsDefault ? null : next.dir });
+  };
+
+  const th = (key: SortColumn, label: string) => (
+    <SortableTh key={key} label={label} href={sortHref(key)} state={ariaSortFor(sort, key)} />
+  );
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
@@ -339,7 +459,7 @@ export default async function StaffUsersPage({ searchParams }: SearchProps) {
         <h2 className="mb-3 font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">
           Existing users
           <span className="ml-2 rounded-md bg-[color:var(--color-brand-bg)] px-2 py-0.5 text-xs font-semibold text-[color:var(--color-brand-text-mid)]">
-            {filtering ? `${rows.length} of ${existing.length}` : rows.length}
+            {filtering ? `${total} of ${existing.length}` : total}
           </span>
         </h2>
 
@@ -409,13 +529,13 @@ export default async function StaffUsersPage({ searchParams }: SearchProps) {
               <table className="w-full text-sm">
                 <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                   <tr>
-                    <th className="px-4 py-3">Name</th>
-                    <th className="px-4 py-3">Email</th>
-                    <th className="px-4 py-3">Sign-in</th>
-                    <th className="px-4 py-3">Last sign-in</th>
-                    <th className="px-4 py-3">Role</th>
-                    <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3 text-right">Action</th>
+                    {th("full_name", "Name")}
+                    {th("email", "Email")}
+                    <PlainTh label="Sign-in" />
+                    {th("last_sign_in_at", "Last sign-in")}
+                    {th("role", "Role")}
+                    {th("is_active", "Status")}
+                    <PlainTh label="Action" align="right" />
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
@@ -464,6 +584,30 @@ export default async function StaffUsersPage({ searchParams }: SearchProps) {
             </Panel>
           </>
         )}
+
+        <ListPagination
+          page={page}
+          pageCount={totalPages}
+          total={total}
+          size={size}
+          prevHref={
+            page > 1
+              ? buildListHref(BASE_PATH, baseParams, {
+                  page: page - 1 > 1 ? String(page - 1) : null,
+                })
+              : null
+          }
+          nextHref={
+            page < totalPages
+              ? buildListHref(BASE_PATH, baseParams, { page: String(page + 1) })
+              : null
+          }
+          sizeOptions={PAGE_SIZES.map((s) => ({
+            size: s,
+            href: href({ size: s === DEFAULT_PAGE_SIZE ? null : String(s) }),
+          }))}
+          noun="staff user"
+        />
       </section>
 
       {/* Deleted users — hidden entirely when empty so the section doesn't

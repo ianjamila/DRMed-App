@@ -105,3 +105,17 @@ export function buildListHref(
   const qs = sp.toString();
   return qs ? `${basePath}?${qs}` : basePath;
 }
+
+/**
+ * Ceiling on rows an AP index page fetches before paging them in the browser.
+ *
+ * These pages sort and page client-side over one fetched set, so the fetch IS
+ * the universe the pager describes. They used to fetch 50 and page through
+ * that, which made the pager assert "of 50" however many bills matched, with
+ * the remainder unreachable and nothing on screen admitting it.
+ *
+ * 1000 is PostgREST's own per-response cap, so asking for more would not get
+ * more. A page that comes back with exactly this many rows may have been
+ * truncated and says so, the same way the report pages do.
+ */
+export const AP_INDEX_MAX_ROWS = 1000;

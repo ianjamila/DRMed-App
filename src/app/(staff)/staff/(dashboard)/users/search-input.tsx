@@ -11,6 +11,9 @@ import { useRouter, useSearchParams, usePathname } from "next/navigation";
  *
  * Deliberately keeps every OTHER parameter, so typing while a role or
  * sign-in chip is active narrows within that filter instead of clearing it.
+ * `?page=` is the one exception — reset on every change, like the patients
+ * search, since a new query narrowing the result set should always show
+ * page 1 rather than leaving the admin on a now-mismatched page.
  */
 export function StaffSearchInput({ initialQuery }: { initialQuery: string }) {
   const router = useRouter();
@@ -25,6 +28,7 @@ export function StaffSearchInput({ initialQuery }: { initialQuery: string }) {
       const trimmed = value.trim();
       if (trimmed) next.set("q", trimmed);
       else next.delete("q");
+      next.delete("page"); // reset pagination on any query change
       const newUrl = `${pathname}${next.size ? `?${next.toString()}` : ""}`;
       startTransition(() => {
         router.replace(newUrl, { scroll: false });

@@ -1,5 +1,6 @@
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { listBillsAction } from "@/lib/actions/accounting/bills";
+import { AP_INDEX_MAX_ROWS } from "@/lib/ui/table-params";
 import { listVendorsAction } from "@/lib/actions/accounting/vendors";
 import { BillsIndexClient } from "./bills-index-client";
 import Link from "next/link";
@@ -23,7 +24,12 @@ export default async function BillsIndexPage({
       date_to: sp.date_to,
       has_wt: sp.has_wt === "1",
       search: sp.q,
-      limit: 50,
+      // Was 50, which the page then paged through client-side — so the pager
+      // read "of 50" no matter how many bills actually matched, and the rest
+      // were unreachable with nothing on screen saying so. AP_INDEX_MAX_ROWS
+      // is PostgREST's own per-response ceiling, and the client shows a
+      // truncation notice on the (currently hypothetical) day it is reached.
+      limit: AP_INDEX_MAX_ROWS,
     }),
     listVendorsAction({ active: true }),
   ]);

@@ -10,6 +10,19 @@ import {
   type GiftCodeStatus,
 } from "@/lib/gift-codes/labels";
 import { Panel } from "@/components/ui/panel";
+import {
+  ariaSortFor,
+  buildListHref,
+  nextSort,
+  pageCount,
+  parsePage,
+  parsePageSize,
+  parseSort,
+  rangeFor,
+  type SortSpec,
+} from "@/lib/ui/table-params";
+import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
+import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 
 export const metadata = { title: "Gift codes — staff" };
 
@@ -25,8 +38,87 @@ const STATUS_FILTERS: ReadonlyArray<{ value: StatusFilter; label: string }> = [
   { value: "all", label: "All" },
 ];
 
+const BASE_PATH = "/staff/admin/gift-codes";
+
+// The old cap matched what admin actually needed to see at a glance — keep
+// it as the default page size so bookmarks/behaviour don't change.
+const PAGE_SIZE_DEFAULT = 100;
+
+// Sortable columns for the gift-code ledger. `parseSort` requires this exact
+// allow-list — it's a security boundary because the value reaches a
+// PostgREST `.order()`; never widen it to a raw search param. "Last event"
+// isn't here: it's `redeemed_at ?? purchased_at ?? generated_at` computed in
+// JS, and there's no single column that would sort to match what's shown.
+const SORTABLE_COLUMNS = [
+  "code",
+  "face_value_php",
+  "status",
+  "batch_label",
+  "purchased_by_name",
+  "generated_at",
+] as const;
+type SortColumn = (typeof SORTABLE_COLUMNS)[number];
+
+const DEFAULT_SORT: SortSpec<SortColumn> = { key: "generated_at", dir: "desc" };
+
+// Batch/buyer are nullable (a code that's only been generated has neither) —
+// sink blanks to the bottom regardless of direction rather than letting them
+// surface first on one of the two directions.
+const NULLS_LAST_COLUMNS = new Set<SortColumn>(["batch_label", "purchased_by_name"]);
+
 interface PageProps {
-  searchParams: Promise<{ status?: string; q?: string; batch_label?: string }>;
+  searchParams: Promise<{
+    status?: string;
+    q?: string;
+    batch_label?: string;
+    sort?: string;
+    dir?: string;
+    page?: string;
+    size?: string;
+  }>;
+}
+
+async function search(
+  admin: ReturnType<typeof createAdminClient>,
+  status: StatusFilter,
+  q: string,
+  batchLabel: string,
+  sort: SortSpec<SortColumn>,
+  page: number,
+  size: number,
+) {
+  const [from, to] = rangeFor(page, size);
+
+  let query = admin
+    .from("gift_codes")
+    .select(
+      "id, code, face_value_php, status, batch_label, generated_at, purchased_at, redeemed_at, purchased_by_name",
+      { count: "exact" },
+    );
+
+  if (status !== "all") query = query.eq("status", status);
+  if (batchLabel) query = query.eq("batch_label", batchLabel);
+  if (q) {
+    const like = `%${q.replace(/[%_]/g, (c) => `\\${c}`)}%`;
+    query = query.or(
+      [`code.ilike.${like}`, `batch_label.ilike.${like}`].join(","),
+    );
+  }
+
+  query = query.order(sort.key, {
+    ascending: sort.dir === "asc",
+    ...(NULLS_LAST_COLUMNS.has(sort.key) ? { nullsFirst: false } : {}),
+  });
+  // Tie-break on id — without a total order, .range() can drop or repeat
+  // rows across pages once there's more than one page of codes.
+  query = query.order("id", { ascending: true }).range(from, to);
+
+  const { data, error, count } = await query;
+  if (error) {
+    console.error("gift_codes query failed", error);
+    return { rows: [], total: 0 };
+  }
+  return { rows: data ?? [], total: count ?? 0 };
 }
 
 export default async function GiftCodesAdminPage({ searchParams }: PageProps) {
@@ -39,6 +131,9 @@ export default async function GiftCodesAdminPage({ searchParams }: PageProps) {
     : "generated";
   const q = params.q?.trim() ?? "";
   const batchLabel = params.batch_label?.trim() ?? "";
+  const sort = parseSort(params.sort, params.dir, SORTABLE_COLUMNS, DEFAULT_SORT);
+  const size = parsePageSize(params.size, PAGE_SIZE_DEFAULT);
+  const page = parsePage(params.page);
 
   const admin = createAdminClient();
 
@@ -56,26 +151,37 @@ export default async function GiftCodesAdminPage({ searchParams }: PageProps) {
   const totalCount =
     counts.generated + counts.purchased + counts.redeemed + counts.cancelled;
 
-  let query = admin
-    .from("gift_codes")
-    .select(
-      "id, code, face_value_php, status, batch_label, generated_at, purchased_at, redeemed_at, purchased_by_name",
-    )
-    .order("generated_at", { ascending: false })
-    .limit(100);
+  const { rows, total } = await search(admin, status, q, batchLabel, sort, page, size);
+  const codes = rows;
+  const totalPages = pageCount(total, size);
 
-  if (status !== "all") query = query.eq("status", status);
-  if (batchLabel) query = query.eq("batch_label", batchLabel);
-  if (q) {
-    const like = `%${q.replace(/[%_]/g, (c) => `\\${c}`)}%`;
-    query = query.or(
-      [`code.ilike.${like}`, `batch_label.ilike.${like}`].join(","),
-    );
-  }
+  // Params at their default are omitted so page 1 with the default sort,
+  // size, and status stays the bare /staff/admin/gift-codes URL.
+  const isDefaultSort = sort.key === DEFAULT_SORT.key && sort.dir === DEFAULT_SORT.dir;
+  const baseParams: Record<string, string | null> = {
+    status: status === "generated" ? null : status,
+    q: q || null,
+    batch_label: batchLabel || null,
+    sort: isDefaultSort ? null : sort.key,
+    dir: isDefaultSort ? null : sort.dir,
+    size: size === PAGE_SIZE_DEFAULT ? null : String(size),
+  };
 
-  const { data: rows, error } = await query;
-  if (error) console.error("gift_codes query failed", error);
-  const codes = rows ?? [];
+  const sortHref = (key: SortColumn) => {
+    const next = nextSort(sort, key);
+    const nextIsDefault = next.key === DEFAULT_SORT.key && next.dir === DEFAULT_SORT.dir;
+    // Any change to sort resets to page 1 — staying on page 3 of a result
+    // set that just reordered is a blank screen with no explanation.
+    return buildListHref(BASE_PATH, baseParams, {
+      sort: nextIsDefault ? null : next.key,
+      dir: nextIsDefault ? null : next.dir,
+      page: null,
+    });
+  };
+
+  const th = (key: SortColumn, label: string) => (
+    <SortableTh key={key} label={label} href={sortHref(key)} state={ariaSortFor(sort, key)} />
+  );
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
@@ -112,14 +218,13 @@ export default async function GiftCodesAdminPage({ searchParams }: PageProps) {
       <nav className="mb-4 flex flex-wrap gap-2">
         {STATUS_FILTERS.map((f) => {
           const active = f.value === status;
-          const sp = new URLSearchParams();
-          if (f.value !== "generated") sp.set("status", f.value);
-          if (q) sp.set("q", q);
-          if (batchLabel) sp.set("batch_label", batchLabel);
-          const qs = sp.toString();
-          const href = qs
-            ? `/staff/admin/gift-codes?${qs}`
-            : "/staff/admin/gift-codes";
+          // Changing the status filter resets to page 1, same reasoning as
+          // sort — and preserves the current search/batch/sort/size via
+          // baseParams.
+          const href = buildListHref(BASE_PATH, baseParams, {
+            status: f.value === "generated" ? null : f.value,
+            page: null,
+          });
           const count =
             f.value === "all" ? totalCount : counts[f.value];
           return (
@@ -145,6 +250,18 @@ export default async function GiftCodesAdminPage({ searchParams }: PageProps) {
         {batchLabel ? (
           <input type="hidden" name="batch_label" value={batchLabel} />
         ) : null}
+        {/* Native GET form: any field not carried as a hidden input drops out
+            of the query string on submit, so sort/size ride along here too —
+            and `page` deliberately does NOT, so a search resets to page 1. */}
+        {!isDefaultSort ? (
+          <>
+            <input type="hidden" name="sort" value={sort.key} />
+            <input type="hidden" name="dir" value={sort.dir} />
+          </>
+        ) : null}
+        {size !== PAGE_SIZE_DEFAULT ? (
+          <input type="hidden" name="size" value={String(size)} />
+        ) : null}
         <input
           type="search"
           name="q"
@@ -166,9 +283,7 @@ export default async function GiftCodesAdminPage({ searchParams }: PageProps) {
             Filtered to batch <strong>{batchLabel}</strong>
           </span>
           <Link
-            href={`/staff/admin/gift-codes${
-              status !== "generated" ? `?status=${status}` : ""
-            }`}
+            href={buildListHref(BASE_PATH, baseParams, { batch_label: null, page: null })}
             className="font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
           >
             Clear
@@ -180,13 +295,13 @@ export default async function GiftCodesAdminPage({ searchParams }: PageProps) {
         <table className="w-full min-w-[760px] text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
-              <th className="px-4 py-3">Code</th>
-              <th className="px-4 py-3">Face value</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3">Batch</th>
-              <th className="px-4 py-3">Buyer</th>
-              <th className="px-4 py-3">Last event</th>
-              <th className="px-4 py-3 text-right">Action</th>
+              {th("code", "Code")}
+              {th("face_value_php", "Face value")}
+              {th("status", "Status")}
+              {th("batch_label", "Batch")}
+              {th("purchased_by_name", "Buyer")}
+              <PlainTh label="Last event" />
+              <PlainTh label="Action" align="right" />
             </tr>
           </thead>
           <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
@@ -241,12 +356,34 @@ export default async function GiftCodesAdminPage({ searchParams }: PageProps) {
         </table>
       </Panel>
 
-      {codes.length === 100 ? (
-        <p className="mt-4 text-xs text-[color:var(--color-brand-text-soft)]">
-          Showing the most recent 100. Refine the filters to find older
-          codes.
-        </p>
-      ) : null}
+      <ListPagination
+        page={page}
+        pageCount={totalPages}
+        total={total}
+        size={size}
+        prevHref={
+          page > 1
+            ? buildListHref(BASE_PATH, baseParams, {
+                page: page - 1 > 1 ? String(page - 1) : null,
+              })
+            : null
+        }
+        nextHref={
+          page < totalPages
+            ? buildListHref(BASE_PATH, baseParams, { page: String(page + 1) })
+            : null
+        }
+        sizeOptions={PAGE_SIZES.map((s) => ({
+          size: s,
+          // Changing the page size resets to page 1 — same reasoning as sort.
+          href: buildListHref(BASE_PATH, baseParams, {
+            size: s === PAGE_SIZE_DEFAULT ? null : String(s),
+            page: null,
+          }),
+        }))}
+        noun="code"
+        plural="codes"
+      />
     </div>
   );
 }
@@ -257,6 +394,9 @@ interface CodeRow {
   redeemed_at: string | null;
 }
 
+// Allow-listed in src/lib/dates/date-render-surfaces.test.ts (tier 2 —
+// "2-digit year — dense code table"): deliberately denser than the house
+// `manilaDate`, so it stays inline on purpose.
 function formatLastEvent(c: CodeRow): string {
   const iso = c.redeemed_at ?? c.purchased_at ?? c.generated_at;
   return new Intl.DateTimeFormat("en-PH", {
