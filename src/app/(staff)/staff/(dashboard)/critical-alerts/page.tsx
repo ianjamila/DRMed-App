@@ -91,15 +91,24 @@ interface SearchProps {
 export default async function CriticalAlertsPage({ searchParams }: SearchProps) {
   const session = await requireActiveStaff();
 
-  if (session.role !== "pathologist" && session.role !== "admin") {
+  // Medtechs used to be refused outright while the lab dashboard still showed
+  // them a critical-alert strip that linked here — a dead end. They are let in
+  // scoped to the tests currently assigned to them, and read-only:
+  // acknowledging stays pathologist/admin (0027's update policy is the real
+  // boundary; this only decides what to render). X-ray still gets nothing —
+  // imaging has no critical thresholds — and neither does reception.
+  const ownScopeOnly = session.role === "medtech";
+  const canAcknowledge =
+    session.role === "pathologist" || session.role === "admin";
+  if (!canAcknowledge && !ownScopeOnly) {
     return (
       <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6 lg:px-8">
         <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
           Critical Alerts
         </h1>
         <p className="mt-2 text-sm text-[color:var(--color-brand-text-mid)]">
-          This page is for pathologists and admins — critical-value follow-up
-          is a clinical responsibility.
+          This page is for pathologists, admins and the medtech a test is
+          assigned to — critical-value follow-up is a clinical responsibility.
         </p>
       </div>
     );
@@ -113,12 +122,27 @@ export default async function CriticalAlertsPage({ searchParams }: SearchProps) 
 
   const supabase = await createClient();
 
+  // The `!inner` on the test_requests embed is load-bearing for the medtech
+  // scope: a filter on a LEFT-joined embed compiles, runs, and returns the
+  // UNFILTERED rows — it looks exactly like a working fix. It is joined
+  // unconditionally (rather than only for medtech) because the join is
+  // lossless and a constant select keeps PostgREST's result typing: 0027
+  // declares `test_request_id uuid not null references test_requests(id) on
+  // delete cascade`, so every alert has exactly one live test row and an
+  // inner join can never drop one.
   const alertSelect = `
     id, created_at, parameter_name, direction, observed_value_si,
     threshold_si, test_request_id, patient_drm_id, acknowledged_at,
     acknowledged_by,
-    patients ( first_name, last_name )
+    patients ( first_name, last_name ),
+    test_requests!inner ( assigned_to )
   `;
+
+  // `assigned_to` is CURRENT ownership, not a record of who handled the
+  // result: an admin reassignment (queue/actions.ts) moves the alert with the
+  // test. The copy says "assigned to you" for that reason.
+  const scopeToOwn = <T extends { eq: (c: string, v: string) => T }>(q: T): T =>
+    ownScopeOnly ? q.eq("test_requests.assigned_to", session.user_id) : q;
 
   // The unacknowledged worklist is deliberately NOT paginated: it's the "is
   // anything still pending?" view, and a pending critical result must never
@@ -126,23 +150,27 @@ export default async function CriticalAlertsPage({ searchParams }: SearchProps) 
   // small in practice (each row needs a phone call to close out) — if it
   // ever isn't, the fix is closing alerts faster, not paging the worklist.
   const [{ data: unackedRaw }, { data: recentRaw, count }] = await Promise.all([
-    supabase
-      .from("critical_alerts")
-      .select(alertSelect)
-      .is("acknowledged_at", null)
-      .order("created_at", { ascending: false })
-      // Tie-break on id — with no `.range()` here this can't drop/repeat
-      // rows, but it keeps the order deterministic across reloads.
-      .order("id", { ascending: true }),
-    supabase
-      .from("critical_alerts")
-      .select(alertSelect, { count: "exact" })
-      .not("acknowledged_at", "is", null)
-      .order(sort.key, { ascending: sort.dir === "asc" })
-      // Tie-break on id — without a total order, `.range()` below can
-      // silently drop or repeat rows between pages.
-      .order("id", { ascending: true })
-      .range(from, to),
+    scopeToOwn(
+      supabase
+        .from("critical_alerts")
+        .select(alertSelect)
+        .is("acknowledged_at", null)
+        .order("created_at", { ascending: false })
+        // Tie-break on id — with no `.range()` here this can't drop/repeat
+        // rows, but it keeps the order deterministic across reloads.
+        .order("id", { ascending: true }),
+    ),
+    scopeToOwn(
+      supabase
+        .from("critical_alerts")
+        .select(alertSelect, { count: "exact" })
+        .not("acknowledged_at", "is", null)
+        .order(sort.key, { ascending: sort.dir === "asc" })
+        // Tie-break on id — without a total order, `.range()` below can
+        // silently drop or repeat rows between pages.
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
   ]);
 
   const unacked = (unackedRaw ?? []) as AlertRow[];
@@ -195,7 +223,11 @@ export default async function CriticalAlertsPage({ searchParams }: SearchProps) 
     <div className="px-4 py-8 sm:px-6 lg:px-8">
       <PageHeader
         title="Critical Alerts"
-        subtitle="Results that crossed a critical threshold. Acknowledge each after the clinical follow-up call — acknowledgement is audit-logged."
+        subtitle={
+          ownScopeOnly
+            ? "Results that crossed a critical threshold on tests currently assigned to you. A pathologist or admin acknowledges them after the clinical follow-up call."
+            : "Results that crossed a critical threshold. Acknowledge each after the clinical follow-up call — acknowledgement is audit-logged."
+        }
       />
 
       <Panel className="overflow-x-auto">
@@ -209,7 +241,7 @@ export default async function CriticalAlertsPage({ searchParams }: SearchProps) 
               <PlainTh label="Parameter" />
               <PlainTh label="Observed vs threshold" />
               <PlainTh label="Test" />
-              <PlainTh label="Action" align="right" />
+              {canAcknowledge ? <PlainTh label="Action" align="right" /> : null}
             </tr>
           </thead>
           <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
@@ -254,9 +286,11 @@ export default async function CriticalAlertsPage({ searchParams }: SearchProps) 
                       Open test →
                     </Link>
                   </td>
-                  <td className="px-4 py-3 text-right">
-                    <AcknowledgeButton alertId={a.id} />
-                  </td>
+                  {canAcknowledge ? (
+                    <td className="px-4 py-3 text-right">
+                      <AcknowledgeButton alertId={a.id} />
+                    </td>
+                  ) : null}
                 </tr>
               ))
             )}

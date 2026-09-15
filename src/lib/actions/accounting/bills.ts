@@ -1,6 +1,7 @@
 "use server";
 
 import { requireAdminStaff } from "@/lib/auth/require-admin";
+import { PAYABLE_BILL_STATUSES } from "@/lib/accounting/payable-bills";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import {
@@ -59,6 +60,10 @@ type BillRow = {
 export async function listBillsAction(filter?: {
   vendor_id?: string;
   status?: string;
+  /** Restrict to PAYABLE_BILL_STATUSES with an outstanding balance. */
+  payable?: boolean;
+  /** Of those, only the ones already past their due date. */
+  overdue_before?: string;
   date_from?: string;
   date_to?: string;
   has_wt?: boolean;
@@ -97,6 +102,12 @@ export async function listBillsAction(filter?: {
 
   if (filter?.vendor_id) q = q.eq("vendor_id", filter.vendor_id);
   if (filter?.status) q = q.eq("status", filter.status);
+  if (filter?.payable) {
+    q = q
+      .gt("outstanding_amount", 0)
+      .in("status", PAYABLE_BILL_STATUSES as readonly string[]);
+  }
+  if (filter?.overdue_before) q = q.lt("due_date", filter.overdue_before);
   if (filter?.date_from) q = q.gte("bill_date", filter.date_from);
   if (filter?.date_to) q = q.lte("bill_date", filter.date_to);
   if (filter?.has_wt) q = q.gt("wt_amount", 0);

@@ -1,4 +1,5 @@
 import { requireAdminStaff } from "@/lib/auth/require-admin";
+import { todayManilaISODate } from "@/lib/dates/manila";
 import { listBillsAction } from "@/lib/actions/accounting/bills";
 import { AP_INDEX_MAX_ROWS } from "@/lib/ui/table-params";
 import { listVendorsAction } from "@/lib/actions/accounting/vendors";
@@ -20,6 +21,10 @@ export default async function BillsIndexPage({
     listBillsAction({
       vendor_id: sp.vendor_id,
       status: sp.status,
+      // The admin dashboard's AP card counts only bills that can take a
+      // payment today, so its link has to be able to say the same thing.
+      payable: sp.payable === "1",
+      overdue_before: sp.overdue === "1" ? todayManilaISODate() : undefined,
       date_from: sp.date_from,
       date_to: sp.date_to,
       has_wt: sp.has_wt === "1",

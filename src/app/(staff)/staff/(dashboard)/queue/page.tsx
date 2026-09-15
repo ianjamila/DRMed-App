@@ -139,6 +139,12 @@ function cardHaystack(card: QueueCard): string {
 interface SearchProps {
   searchParams: Promise<{
     filter?: QueueFilter;
+    // Orthogonal "only my claims" narrowing, ANDed onto whatever tab is
+    // showing. Deliberately NOT a QueueFilter value: `filter=mine` is its
+    // own tab (the worklist), while this narrows any tab — the lab
+    // dashboard's "Released today (mine)" card needs
+    // ?filter=released_today&mine=1, which no single enum value can express.
+    mine?: string;
     start?: string;
     end?: string;
     q?: string;
@@ -153,6 +159,7 @@ interface SearchProps {
 export default async function QueuePage({ searchParams }: SearchProps) {
   const params = await searchParams;
   const filter = params.filter ?? "all";
+  const mineOnly = params.mine === "1";
   const start = isISODate(params.start) ? params.start : "";
   const end = isISODate(params.end) ? params.end : "";
   const q = params.q?.trim() ?? "";
@@ -281,6 +288,12 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   }
 
   if (filter === "mine" && user) {
+    query = query.eq("assigned_to", user.id);
+  }
+
+  // Same predicate as the Mine tab, applied on top of ANY tab. Harmless to
+  // double up when both are set — it is the identical equality filter.
+  if (mineOnly && user) {
     query = query.eq("assigned_to", user.id);
   }
 
@@ -442,6 +455,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   const isDefaultSort = sort.key === defaultSort.key && sort.dir === defaultSort.dir;
   const baseParams: Record<string, string | null> = {
     filter: filter === "all" ? null : filter,
+    mine: mineOnly ? "1" : null,
     start,
     end,
     q,
@@ -502,6 +516,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
             {filter === "released_today" && hasDateRange
               ? " · showing the dates you picked, not just today"
               : null}
+            {mineOnly ? " · only tests claimed by you" : null}
           </>
         }
       />
@@ -539,12 +554,37 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         />
       </nav>
 
+      {/* "Only mine" narrows whichever tab is open. It sits below the tab bar
+          for the same reason the tabs are not in the header's actions slot —
+          this page's subtitle changes length on every tab, so anything sharing
+          that row visibly jumps. The Mine tab already IS mine, so the toggle
+          would be a no-op there. */}
+      {filter !== "mine" ? (
+        <div className="mb-4">
+          <Link
+            href={buildHref({ mine: mineOnly ? null : "1", page: null })}
+            aria-pressed={mineOnly}
+            className={`inline-flex min-h-11 items-center rounded-full border px-4 py-2 text-sm font-medium transition-colors ${
+              mineOnly
+                ? "border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-cyan)]/10 text-[color:var(--color-brand-navy)]"
+                : "border-[color:var(--color-brand-bg-mid)] bg-white text-[color:var(--color-brand-text-mid)] hover:border-[color:var(--color-brand-cyan)]"
+            }`}
+          >
+            {mineOnly ? "✓ Only tests claimed by me" : "Only tests claimed by me"}
+          </Link>
+        </div>
+      ) : null}
+
       <form
         className="mb-6 grid grid-cols-1 gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4 sm:grid-cols-2 lg:grid-cols-4"
         action="/staff/queue"
       >
         {/* Keep the open tab when filters are applied. */}
         <input type="hidden" name="filter" value={filter === "all" ? "" : filter} />
+        {/* A plain-GET form submits only the fields it carries, so without
+            this the "Only tests claimed by me" toggle silently resets the
+            moment someone applies a date or search filter. */}
+        <input type="hidden" name="mine" value={mineOnly ? "1" : ""} />
         {/* A GET form submits only the fields it carries, so without these
             Apply would silently reset the reader's sort and page size. */}
         {isDefaultSort ? null : (

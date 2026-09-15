@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { DOCTOR_KINDS_PG_LIST } from "@/lib/visits/classification";
 import { LAB_QUEUE_GATE_VISITS_OR } from "@/lib/visits/lab-gate";
+import { PAYABLE_BILL_STATUSES } from "@/lib/accounting/payable-bills";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { loadHiddenCardIds } from "@/lib/dashboards/card-prefs";
 import { loadCandidatePairsWithStatus } from "@/lib/patients/find-duplicates";
@@ -102,7 +103,7 @@ function doctorsToPayHint(s: {
   }
   const base =
     s.doctorsToPayCount === 0
-      ? "All caught up"
+      ? "No doctor payments due"
       : `${s.doctorsToPayCount} doctor${s.doctorsToPayCount === 1 ? "" : "s"} ready to pay`;
   // N9: PF pending is folded into this card's hint rather than its own tile
   // — nothing is payable until the HMO settles, so it isn't a standing card.
@@ -247,7 +248,9 @@ async function loadAdminStats(show: (id: string) => boolean) {
               .from("bills")
               .select("id, outstanding_amount, due_date, status")
               .gt("outstanding_amount", 0)
-              .in("status", ["posted", "partially_paid"])
+              // Same constant the bills list filters on for ?payable=1, so
+              // the card and the screen it opens cannot drift apart.
+              .in("status", PAYABLE_BILL_STATUSES as readonly string[])
               .order("id", { ascending: true })
               .range(from, to)
               .returns<BillRow[]>(),
@@ -753,7 +756,7 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
                     ? `${stats.apOverdueCount} overdue`
                     : "Posted / partially paid",
                 )}
-                href="/staff/admin/accounting/ap/bills"
+                href="/staff/admin/accounting/ap/bills?payable=1"
                 accent={stats.apOverdueCount > 0 ? "warn" : "default"}
                 error={stats.apError}
               />
@@ -763,7 +766,7 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
                   label="AP bills overdue"
                   value={stats.apOverdueCount}
                   hint={truncatedHint(stats.apTruncated, "Past due date")}
-                  href="/staff/admin/accounting/ap/bills"
+                  href="/staff/admin/accounting/ap/bills?payable=1&overdue=1"
                   accent={stats.apOverdueCount > 0 ? "warn" : "default"}
                   error={stats.apError}
                 />

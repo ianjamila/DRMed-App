@@ -30,6 +30,11 @@ import {
   ClientListPagination,
   ClientSortableTh,
 } from "@/components/staff/client-table-controls";
+import {
+  HMO_UNBILLED_AGE_BAND_LABELS,
+  matchesHmoUnbilledAgeBand,
+  type HmoUnbilledAgeBand,
+} from "@/lib/reports/hmo-unbilled-bands";
 import { PlainTh } from "@/components/staff/sortable-th";
 
 type SummaryRow =
@@ -200,6 +205,7 @@ export function HmoClaimsClient({
   aging,
   staff,
   paymentMethods,
+  initialAgeBand,
 }: {
   summary: SummaryRow[];
   unbilled: UnbilledRow[];
@@ -210,13 +216,31 @@ export function HmoClaimsClient({
   aging: AgingRow[];
   staff: StaffPick[];
   paymentMethods: PaymentMethod[];
+  /** From `?age=`, set by the admin dashboard's HMO unbilled card. */
+  initialAgeBand: HmoUnbilledAgeBand | null;
 }) {
-  const [view, setView] = useState<View>("by_provider");
+  // An `?age=` link means "show me the unbilled rows in this band", so it
+  // opens the All-unbilled tab rather than the provider summary this page
+  // otherwise defaults to.
+  const [view, setView] = useState<View>(
+    initialAgeBand ? "all_unbilled" : "by_provider",
+  );
+  const [ageBand, setAgeBand] = useState<HmoUnbilledAgeBand | null>(
+    initialAgeBand,
+  );
   const [kind, setKind] = useState<Kind>("all");
 
+  // The age band narrows the unbilled rows only. The dashboard card and this
+  // table share matchesHmoUnbilledAgeBand() so the arithmetic cannot drift
+  // between the figure and the list it opens.
   const fUnbilled = useMemo(
-    () => unbilled.filter((r) => matchesKind(r, kind)),
-    [unbilled, kind],
+    () =>
+      unbilled.filter(
+        (r) =>
+          matchesKind(r, kind) &&
+          (ageBand === null || matchesHmoUnbilledAgeBand(r, ageBand)),
+      ),
+    [unbilled, kind, ageBand],
   );
   const fStuck = useMemo(
     () => stuck.filter((r) => matchesKind(r, kind)),
@@ -247,6 +271,21 @@ export function HmoClaimsClient({
           kind={kind}
         />
       )}
+      {view === "all_unbilled" && ageBand !== null ? (
+        <p className="flex flex-wrap items-center gap-2 text-sm text-[color:var(--color-brand-text-mid)]">
+          <span>
+            Showing <b>{HMO_UNBILLED_AGE_BAND_LABELS[ageBand].toLowerCase()}</b>{" "}
+            only.
+          </span>
+          <button
+            type="button"
+            onClick={() => setAgeBand(null)}
+            className="font-bold text-[color:var(--color-brand-cyan)] hover:underline"
+          >
+            Show every age
+          </button>
+        </p>
+      ) : null}
       {view === "all_unbilled" && (
         <AllUnbilled
           rows={fUnbilled}
