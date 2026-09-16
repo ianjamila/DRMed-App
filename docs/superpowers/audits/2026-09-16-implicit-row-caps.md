@@ -1,6 +1,6 @@
 # Staff implicit 1,000-row cap audit — 2026-09-16
 
-Branch: `fix/implicit-row-caps`, audit baseline `3ddae51`. Prepared for draft review against current main. No production query, migration edit, or UI/control change was performed by this continuation.
+Branch: `fix/implicit-row-caps`, audit baseline `3ddae51`. Prepared for draft review against main `23d0ed1` (#188). Read-only production count verification completed on 2026-09-16 using the DRMed-scoped Supabase MCP; no production mutations, migrations, or UI/control changes.
 
 ## Priority 1 — SELECTION-SET fixes that drive batch writes
 
@@ -11,8 +11,8 @@ Some server actions already compare fetched length with submitted IDs and reject
 | ID | File (baseline line) | Query / consumer | Classification | Reason / fix shape |
 |---|---|---|---|---|
 | Q222 | `src/lib/actions/accounting/pf-disbursements.ts:39` | PF payout selected-entry validation and server total (`doctor_pf_entries`) | Real | 200-ID chunks, deterministic range walk |
-| Q321 | `src/app/(staff)/staff/(dashboard)/admin/accounting/bank-rec/[id]/page.tsx:137` | Bank manual/automatic journal match candidates (`journal_lines`) | Real | Peer-measured 50,679 journal lines / 22,432 entries (~2.3 lines per entry), 2026-09-16; busy account/date windows can exceed 1,000. Stable 1,000-row pages ordered by id; existing account, posted-status and date bounds retained. |
-| Q324 | `src/app/(staff)/staff/(dashboard)/admin/accounting/bank-rec/actions.ts:280` | Bank manual/automatic journal match candidates (`journal_lines`) | Real | Peer-measured 50,679 journal lines / 22,432 entries (~2.3 lines per entry), 2026-09-16; busy account/date windows can exceed 1,000. Stable 1,000-row pages ordered by id; existing account, posted-status and date bounds retained. |
+| Q321 | `src/app/(staff)/staff/(dashboard)/admin/accounting/bank-rec/[id]/page.tsx:137` | Bank manual/automatic journal match candidates (`journal_lines`) | Real | Independently measured eligible-bank-account quarter spans reach 1,911 (±7 days) / 1,827 (±3 days) posted lines. Existing statement windows are unexercised. Stable 1,000-row pages ordered by id retain account, posted-status and date bounds; see production evidence for shorter windows below the cap. |
+| Q324 | `src/app/(staff)/staff/(dashboard)/admin/accounting/bank-rec/actions.ts:280` | Bank manual/automatic journal match candidates (`journal_lines`) | Real | Independently measured eligible-bank-account quarter spans reach 1,911 (±7 days) / 1,827 (±3 days) posted lines. Existing statement windows are unexercised. Stable 1,000-row pages ordered by id retain account, posted-status and date bounds; see production evidence for shorter windows below the cap. |
 | Q394 | `src/app/(staff)/staff/(dashboard)/admin/accounting/hmo-claims/[providerId]/page.tsx:45` | Provider unbilled tab totals, selection and CSV (`v_hmo_unbilled`) | Real | Stable pages; existing days sort then is_historic/test_request_id |
 | Q397 | `src/app/(staff)/staff/(dashboard)/admin/accounting/hmo-claims/[providerId]/page.tsx:61` | Provider submitted historic claims, selection and CSV (`historic_hmo_claims`) | Real | Stable pages; claim_date then id |
 | Q414 | `src/app/(staff)/staff/(dashboard)/admin/accounting/hmo-claims/batches/new/page.tsx:49` | New/add-to HMO batch select-all candidates (`v_hmo_unbilled`) | Real | Stable pages; days_since_release then test_request_id |
@@ -24,31 +24,35 @@ Some server actions already compare fetched length with submitted IDs and reject
 
 ## Result
 
-**26 Real query instances fixed; 5 Unexercised instances left dormant and unchanged; 220 Harmless instances left alone; 19 Uncertain instances remain unresolved.** Counts are query instances, not files. Another 37 read candidates belong to the explicitly excluded payroll/PF paths and are listed as **already handled elsewhere**. The supplementary inventory records 68 already-paged reads, 29 explicitly bounded reads, and the 25 out-of-scope/non-read candidates removed from the cap audit.
+**26 Real query instances fixed; 16 Unexercised instances left dormant and unchanged; 228 Harmless instances left alone; 0 Uncertain instances remain unresolved.** Counts are query instances, not files. Another 37 read candidates belong to the explicitly excluded payroll/PF paths and are listed as **already handled elsewhere**. The supplementary inventory records 68 already-paged reads, 29 explicitly bounded reads, and the 25 out-of-scope/non-read candidates removed from the cap audit.
 
-Scale reasoning uses the supplied ~6,900 patients / ~6,500 historic visits, ~20 physicians and ~135 services. A Real classification means a valid clinic-scale workload can exceed the cap and a named total, selection, export or completeness result depends on the rows. We did not measure these predicates on prod. The peer counts below resolve the journal-line and bills-family classifications; remaining daily queues and invoice-batch predicates still require their own production counts. Empty bank-input tables are classified separately as Unexercised. Staff/catalogue/single-encounter lookups stay unchanged.
+Scale reasoning uses the supplied ~6,900 patients / ~6,500 historic visits. A Real classification means a supported workload can exceed the cap and a named total, selection, export or completeness result depends on the rows. Production counts do not establish a permanent upper bound. The 30 original questions now have dated evidence: 2 retain their Real bank-candidate fixes, 12 are Harmless at measured size (including the 4 bills-family questions), and 16 are Unexercised. No newly established Real cases required code changes.
 
-## Production-count evidence — peer-measured, not verified by this session
+## Production-count evidence — independently measured 2026-09-16
 
-The user supplied the following counts from a **parallel session’s read-only production measurement on 2026-09-16**. These are **peer-measured** evidence; we did not run production queries, independently verify the counts, or measure the exact bank account/date-window predicates. The journal figures imply about 2.3 lines per entry and support the user’s assessment that a busy period’s ±7-day window (and statement spans extended by ±3 days) can exceed 1,000 candidates.
+Executed through `supabase-drmed.execute_sql`; `transaction_read_only` returned `on`. Reproducible SQL is in [2026-09-16-row-cap-counts.sql](2026-09-16-row-cap-counts.sql), and aggregate results are in [2026-09-16-row-cap-counts.json](2026-09-16-row-cap-counts.json). Only SQL aggregate counts left the database: no patient, employee, appointment or financial row payloads. Measurements are separate read-only statements, not a single frozen snapshot.
 
-| Table | Peer-measured rows | Classification impact |
+The SQL counts the actual predicates or a documented superset across all selectable dates/years. Global counts bound every RLS-visible subset; assigned-staff maxima are also measured for critical alerts. This is cardinality evidence, **not** an authenticated-role test or the separate RLS equivalence proof. That design records owner approval and an anon/patient exact-count/checksum probe; this continuation neither grants approval nor independently executes that proof.
+
+| Scope | Independently measured result | Interpretation |
 |---|---:|---|
-| journal_lines | 50,679 | Q321/Q324 → Real; stable paging implemented |
-| journal_entries | 22,432 | Supports journal scale; monthly exact-count fix retained |
-| accounting_periods | 108 | Multi-year catalogue; year/quarter-scoped queries remain bounded |
-| bills | 75 | Q217/Q218/Q219/Q221 → Harmless at this dated size |
-| bill_payments | 75 | Recorded context; existing explicit AP window/warning unchanged |
-| patient_consents | 7 | Recorded context; does not bound patients or consent-missing patient sets |
-| bank_statements | 0 | Q311 → Unexercised |
-| bank_statement_lines | 0 | Q319/Q320/Q322/Q323 → Unexercised |
-| hmo_claim_items | 0 | Production use is dormant; previously fixed batch reads remain Real for supported >1,000-item selections, with synthetic regression coverage, not a claim of an observed prod truncation |
+| Journal lines / entries | 50,679 / 22,432 | Confirms peer totals, but totals alone do not prove a candidate-window cap |
+| Eligible bank accounts | 4 | Upload UI's asset accounts with codes 1010/1020/1021/1030 |
+| Eligible account, maximum ±7-day window around one posting date | 403 | Earlier peer inference that such a window exceeds 1,000 is **not supported** by this measurement |
+| Eligible account, calendar month expanded ±7 / ±3 days | 918 / 779 | Monthly examples stay below the cap today |
+| Eligible account, calendar quarter expanded ±7 / ±3 days | 1,911 / 1,827 | Supported longer statement spans exceed 1,000 under both loaders' account/status/date predicates; preserve Q321/Q324 paging |
+| Existing statement-derived candidate windows | 0 | No statement exists, so no actual uploaded statement truncation was observed |
+| Vendors / bills / largest vendor's embedded bills | 6 / 75 / 42 | Q217 parent and nested sets fit today |
+| Outstanding nonvoid bills / draft bills / nonvoid bills since month start | 0 / 0 / 0 | Q218/Q219/Q221 exact predicates; all are subsets of the independently measured 75 bills |
+| Bank statements / lines | 0 / 0 | Preserve five dormant bank decisions; zero is not proof of safety |
+
+The unfiltered chart-of-accounts diagnostic in SQL batch 3 reaches 1,089 rows in a month-plus-3-day window, but includes accounts that the upload UI does not offer. **Do not use that number as evidence for an eligible bank account.** Batches 4–5 apply the actual account-picker restriction. The longer-span evidence is a parameterized capacity check against real posted lines, not an observed bank statement.
 
 ## Method and implementation
 
 - Read `CLAUDE.md`, `AGENTS.md`, the local Next.js data-fetching guide, and the project payments/result-template skills.
 - Searched every TypeScript/TSX Supabase select in `src/app/(staff)`, `src/lib`, and `src/app/api`; traced split query builders to their execution sites and staff CSV handlers to shared loaders. RPC reads were checked too: the staff classification summary/cash state/leave balance/compensation reads are aggregate/scalar or physician-bounded; mutation RPCs are not list loaders.
-- The inventory below uses **baseline line numbers** so each finding remains identifiable despite edits. A row describes each original query separately, including secondary `in()` lookups. Singleton reads, exact HEAD counts, write-return selections, and public/auth flows are not unbounded staff reads. Parent singleton visit/result reads embed only one encounter’s bill lines/payments/parameters; the AP bill embeds are Harmless at the peer-measured 75-row size, while the empty bank embeds are Unexercised.
+- The inventory below uses **baseline line numbers** so each finding remains identifiable despite edits. A row describes each original query separately, including secondary `in()` lookups. Singleton reads, exact HEAD counts, write-return selections, and public/auth flows are not unbounded staff reads. Parent singleton visit/result reads embed only one encounter’s bill lines/payments/parameters; the AP bill embeds are Harmless at the independently measured 75-row size, while the empty bank embeds are Unexercised.
 - Accounting periods now use 12 exact HEAD counts, one for each month, retaining the original posted-only calendar-month semantics. No JE rows are downloaded just to count them.
 - Other Real fixes require actual records for amounts, mapping, validation, exports, or classification. They use the existing `fetchAllRows` walker via small `fetchCompleteRows` / `fetchCompleteRowsByIds` adapters. Requests use <=1,000-row ranges and a unique final order. ID inputs are split into <=200 IDs, and each chunk is paged too: 200 parents can have >1,000 children. No new total-row ceiling replaces the old silent cap. Supabase errors are retained and no partial array is returned.
 - Existing primary ordering, role/RLS client choice, filters, controls, layout, and mutations remain in place. Only deterministic tie-breaks are added to page walks. The historic-paid provider read’s ineffective `limit(2000)` is replaced by a complete walk because its client totals/export assume the full set.
@@ -80,47 +84,49 @@ These 16 fixes follow the 10 selection-set fixes ranked first above. Both groups
 
 ## Unexercised queries — dormant, unchanged
 
-**Zero rows means unexercised, not Harmless.** Nothing in production has exercised these five queries. Their first real statement or month of use can exceed a cap even though today’s empty result looks correct. The user reports the same precedent for `eod_close_records`: it is empty on prod and the entire cash-reconciliation panel renders blank. An unused feature can read identically to a working one. That precedent is user-supplied and was not independently verified here.
+**Zero rows means Unexercised, not Harmless.** The five previously identified bank queries remain unchanged. Eleven more original questions now have an explicit empty-predicate finding. None is certified safe: exercise large inputs before enabling or growing these features. For bank reads, include nested statement-line payloads and globally matched-ID sets; for other paths, include >1,000 matching rows under their actual filters.
 
-These five bank query IDs are intentionally left unchanged per the follow-up instructions. Before enabling the feature, exercise a statement with >1,000 lines and >1,000 globally matched lines; check nested statement-line completeness as well as parent totals.
-
-| ID | File (baseline line) | Query / consumer | Classification | Reason / fix shape |
+| ID | File (baseline line) | Query / consumer | Classification | Reason / evidence |
 |---|---|---|---|---|
-| Q311 | `src/app/(staff)/staff/(dashboard)/admin/accounting/bank-rec/page.tsx:30` | Bank statement index and embedded line reconciliation percentages (`bank_statements`) | Unexercised | Peer-measured bank_statements = 0 and bank_statement_lines = 0 on 2026-09-16. Dormant, not proven safe; first real statement/month can expose a cap. No code change; test large statement inputs and global matched-ID sets before use. |
-| Q319 | `src/app/(staff)/staff/(dashboard)/admin/accounting/bank-rec/[id]/page.tsx:84` | Bank statement detail and auto-match input (`bank_statement_lines`) | Unexercised | Peer-measured bank_statements = 0 and bank_statement_lines = 0 on 2026-09-16. Dormant, not proven safe; first real statement/month can expose a cap. No code change; test large statement inputs and global matched-ID sets before use. |
-| Q320 | `src/app/(staff)/staff/(dashboard)/admin/accounting/bank-rec/[id]/page.tsx:127` | Bank manual/automatic match exclusion sets (`bank_statement_lines`) | Unexercised | Peer-measured bank_statements = 0 and bank_statement_lines = 0 on 2026-09-16. Dormant, not proven safe; first real statement/month can expose a cap. No code change; test large statement inputs and global matched-ID sets before use. |
-| Q322 | `src/app/(staff)/staff/(dashboard)/admin/accounting/bank-rec/actions.ts:249` | Bank statement detail and auto-match input (`bank_statement_lines`) | Unexercised | Peer-measured bank_statements = 0 and bank_statement_lines = 0 on 2026-09-16. Dormant, not proven safe; first real statement/month can expose a cap. No code change; test large statement inputs and global matched-ID sets before use. |
-| Q323 | `src/app/(staff)/staff/(dashboard)/admin/accounting/bank-rec/actions.ts:270` | Bank manual/automatic match exclusion sets (`bank_statement_lines`) | Unexercised | Peer-measured bank_statements = 0 and bank_statement_lines = 0 on 2026-09-16. Dormant, not proven safe; first real statement/month can expose a cap. No code change; test large statement inputs and global matched-ID sets before use. |
+| Q69 | `src/app/(staff)/staff/(dashboard)/critical-alerts/page.tsx:154` | Unacknowledged critical-alert list and count (`critical_alerts`) | Unexercised | 0 unacknowledged alerts globally and maximum 0 per assigned staff member, with test_requests inner join. Empty pending-alert path does not establish future safety. |
+| Q131 | `src/app/(staff)/staff/(dashboard)/payments/cash-drawer/page.tsx:37` | Cash drawer/petty-cash adjustment history and derived display (`eod_cash_adjustments`) | Unexercised | eod_cash_adjustments is empty; maximum count per business_date plus shift_id is 0. Service-role loader includes voided rows; no large-day evidence. |
+| Q134 | `src/app/(staff)/staff/(dashboard)/payments/cash-drawer/actions.ts:47` | Cash drawer/petty-cash adjustment history and derived display (`eod_cash_adjustments`) | Unexercised | Same predicate as Q131: business_date plus shift_id; maximum 0, entire adjustment table empty. Unexercised, not safe. |
+| Q135 | `src/app/(staff)/staff/(dashboard)/payments/petty-cash/page.tsx:41` | Cash drawer/petty-cash adjustment history and derived display (`eod_cash_adjustments`) | Unexercised | Maximum petty_cash rows per business_date is 0 (all shifts, including voided rows). Entire adjustment table empty; no large-day evidence. |
+| Q245 | `src/app/(staff)/staff/(dashboard)/admin/accounting/cogs/send-outs/page.tsx:27` | Send-out true-up history and vendor variance totals (`cogs_send_out_trueups`) | Unexercised | 0 cogs_send_out_trueups all-time, including voided rows. Empty invoice/reconciliation history does not bound future batch volume. |
+| Q248 | `src/app/(staff)/staff/(dashboard)/admin/inventory/page.tsx:160` | Inventory section dropdown derived from item balances (`v_inventory_balances`) | Unexercised | 0 is_active=true rows in v_inventory_balances. No active section can currently be lost, but an empty catalogue does not validate completeness. |
+| Q270 | `src/app/(staff)/staff/(dashboard)/admin/accounting/cogs/send-outs/vendor-performance/page.tsx:126` | Send-out true-up history and vendor variance totals (`cogs_send_out_trueups`) | Unexercised | Maximum nonvoid trueups per Manila calendar year is 0; all-time table is empty. Year grouping matches half-open Jan 1 +08:00 bounds and covers every selectable year. |
+| Q311 | `src/app/(staff)/staff/(dashboard)/admin/accounting/bank-rec/page.tsx:30` | Bank statement index and embedded line reconciliation percentages (`bank_statements`) | Unexercised | Independently confirmed 0 statements and 0 lines, including maximum per-statement lines, unmatched per-statement lines and global matched-line count. Preserve dormant decision; test >1,000 statement lines and >1,000 global matches before enabling. |
+| Q315 | `src/app/(staff)/staff/(dashboard)/admin/accounting/pf-ytd-summary/page.tsx:109` | PF YTD disbursed total (`doctor_pf_disbursements`) | Unexercised | Maximum nonvoid doctor_pf_disbursements per posted_date calendar year is 0. Covers all selectable years; physician count is not used as a batch-count bound. |
+| Q319 | `src/app/(staff)/staff/(dashboard)/admin/accounting/bank-rec/[id]/page.tsx:84` | Bank statement detail and auto-match input (`bank_statement_lines`) | Unexercised | Independently confirmed 0 statements and 0 lines, including maximum per-statement lines, unmatched per-statement lines and global matched-line count. Preserve dormant decision; test >1,000 statement lines and >1,000 global matches before enabling. |
+| Q320 | `src/app/(staff)/staff/(dashboard)/admin/accounting/bank-rec/[id]/page.tsx:127` | Bank manual/automatic match exclusion sets (`bank_statement_lines`) | Unexercised | Independently confirmed 0 statements and 0 lines, including maximum per-statement lines, unmatched per-statement lines and global matched-line count. Preserve dormant decision; test >1,000 statement lines and >1,000 global matches before enabling. |
+| Q322 | `src/app/(staff)/staff/(dashboard)/admin/accounting/bank-rec/actions.ts:249` | Bank statement detail and auto-match input (`bank_statement_lines`) | Unexercised | Independently confirmed 0 statements and 0 lines, including maximum per-statement lines, unmatched per-statement lines and global matched-line count. Preserve dormant decision; test >1,000 statement lines and >1,000 global matches before enabling. |
+| Q323 | `src/app/(staff)/staff/(dashboard)/admin/accounting/bank-rec/actions.ts:270` | Bank manual/automatic match exclusion sets (`bank_statement_lines`) | Unexercised | Independently confirmed 0 statements and 0 lines, including maximum per-statement lines, unmatched per-statement lines and global matched-line count. Preserve dormant decision; test >1,000 statement lines and >1,000 global matches before enabling. |
+| Q332 | `src/app/(staff)/staff/(dashboard)/admin/gift-codes/sales/page.tsx:55` | Gift-code sales totals, method breakdown and displayed records (`gift_codes`) | Unexercised | 0 gift_codes with purchased_at IS NOT NULL across all time, a superset of every selectable half-open Manila sales range. No production sales workload exercised. |
+| Q393 | `src/app/(staff)/staff/(dashboard)/admin/accounting/hmo-claims/[providerId]/page.tsx:38` | Provider HMO batch history and count (`hmo_claim_batches`) | Unexercised | Maximum hmo_claim_batches per provider_id is 0. Empty batch history does not bound provider batch frequency. |
+| Q428 | `src/app/(staff)/staff/(dashboard)/admin/accounting/hmo-claims/aging-snapshots/page.tsx:33` | Available aging snapshot dates; deduplicated after fetching bucket rows (`hmo_aging_snapshots`) | Unexercised | 0 snapshot rows / dates; 0 rows within or preceding the oldest of the latest 24 dates, maximum 0 rows per date. Neither date-picker completeness nor selected-date completeness is exercised. |
 
-## Uncertain queries — unchanged, unresolved production questions
+## Original questions resolved Harmless at measured size
 
-Only the 19 genuinely unresolved query instances remain here. Each question must be answered under the actual predicate and role scope. A daily patient count is not a substitute for a daily bill-line count.
+These eight queries have nonempty cardinality evidence below 1,000. This is a dated finding, not a schema bound or a guarantee of future correctness. The four previously classified bills-family rows remain in the main Harmless inventory below.
 
-| ID | File (baseline line) | Query / consumer | Classification | Reason / fix shape |
+| ID | File (baseline line) | Query / consumer | Classification | Reason / evidence |
 |---|---|---|---|---|
-| Q42 | `src/app/(staff)/staff/(dashboard)/visits/queue/page.tsx:195` | Reception visit queue, stage counts and bulk selection (`visits`) | Uncertain | What is the maximum number of live visits on a single selectable visit_date, including import dates? Can it exceed 1,000? |
-| Q69 | `src/app/(staff)/staff/(dashboard)/critical-alerts/page.tsx:154` | Unacknowledged critical-alert list and count (`critical_alerts`) | Uncertain | Can one role-visible unacknowledged alert set exceed 1,000? Count globally for admin/pathologist and by assigned staff for restricted roles. |
-| Q77 | `src/app/(staff)/staff/(dashboard)/appointments/page.tsx:401` | Appointment attachment availability across all four loaded cohorts (`appointment_attachments`) | Uncertain | How many appointment_attachments match the union of today/upcoming/open walk-in/pending-callback booking groups? Can the sum exceed 1,000? |
-| Q81 | `src/app/(staff)/staff/(dashboard)/appointments/actions.ts:428` | Bulk appointment deletion audit coverage and returned count (`appointments`) | Uncertain | Can the appointments screen submit more than 1,000 appointment IDs in one delete? Compare selected booking groups with expanded service appointments. |
-| Q131 | `src/app/(staff)/staff/(dashboard)/payments/cash-drawer/page.tsx:37` | Cash drawer/petty-cash adjustment history and derived display (`eod_cash_adjustments`) | Uncertain | Does any business_date plus shift exceed 1,000 adjustments, or any business_date exceed 1,000 petty_cash rows? |
-| Q134 | `src/app/(staff)/staff/(dashboard)/payments/cash-drawer/actions.ts:47` | Cash drawer/petty-cash adjustment history and derived display (`eod_cash_adjustments`) | Uncertain | Does any business_date plus shift exceed 1,000 adjustments, or any business_date exceed 1,000 petty_cash rows? |
-| Q135 | `src/app/(staff)/staff/(dashboard)/payments/petty-cash/page.tsx:41` | Cash drawer/petty-cash adjustment history and derived display (`eod_cash_adjustments`) | Uncertain | Does any business_date plus shift exceed 1,000 adjustments, or any business_date exceed 1,000 petty_cash rows? |
-| Q152 | `src/app/(staff)/staff/(dashboard)/_dashboards/reception-dashboard.tsx:390` | Reception orders-by-type strip (`test_requests`) | Uncertain | What is the maximum non-cancelled, non-header live test_requests count for one visit_date? More than 1,000 lines is possible even below 1,000 patients. |
-| Q201 | `src/lib/results/viewed-count.ts:20` | Result downloaded/viewed count, union across four audit metadata shapes (`audit_log`) | Uncertain | Can any single test request match more than 1,000 result.downloaded audit rows in any of the four matching branches? If so replace the union with one OR exact count. |
-| Q241 | `src/app/(staff)/staff/(dashboard)/admin/closures/page.tsx:23` | Upcoming clinic closure list (`clinic_closures`) | Uncertain | Are there more than 1,000 future closure dates, including bulk recurring closure imports? |
-| Q245 | `src/app/(staff)/staff/(dashboard)/admin/accounting/cogs/send-outs/page.tsx:27` | Send-out true-up history and vendor variance totals (`cogs_send_out_trueups`) | Uncertain | How many cogs_send_out_trueups exist all-time, and in any selectable year? Unlike entries, these are invoice/reconciliation batches, not one row per visit. |
-| Q248 | `src/app/(staff)/staff/(dashboard)/admin/inventory/page.tsx:160` | Inventory section dropdown derived from item balances (`v_inventory_balances`) | Uncertain | Are there more than 1,000 active inventory items, and would any section appear only beyond the first 1,000? |
-| Q265 | `src/app/(staff)/staff/(dashboard)/admin/prices/page.tsx:28` | Prices last-changed timestamp and staff per service (`service_price_history`) | Uncertain | Does service_price_history exceed 1,000 revisions, and is any service’s most recent revision older than the newest 1,000 rows? |
-| Q270 | `src/app/(staff)/staff/(dashboard)/admin/accounting/cogs/send-outs/vendor-performance/page.tsx:126` | Send-out true-up history and vendor variance totals (`cogs_send_out_trueups`) | Uncertain | How many cogs_send_out_trueups exist all-time, and in any selectable year? Unlike entries, these are invoice/reconciliation batches, not one row per visit. |
-| Q315 | `src/app/(staff)/staff/(dashboard)/admin/accounting/pf-ytd-summary/page.tsx:109` | PF YTD disbursed total (`doctor_pf_disbursements`) | Uncertain | How many non-voided doctor_pf_disbursements occur per selectable year? Twenty physicians do not bound payout batch frequency. |
-| Q332 | `src/app/(staff)/staff/(dashboard)/admin/gift-codes/sales/page.tsx:55` | Gift-code sales totals, method breakdown and displayed records (`gift_codes`) | Uncertain | Can purchased gift codes in a selectable sales date range exceed 1,000? The CSV already pages independently. |
-| Q344 | `src/app/(staff)/staff/(dashboard)/admin/newsletter/actions.ts:43` | Staff newsletter recipient set and sent count (`subscribers`) | Uncertain | Are there more than 1,000 subscribers with unsubscribed_at IS NULL? This is the staff send action; the public signup site is out of scope. |
-| Q393 | `src/app/(staff)/staff/(dashboard)/admin/accounting/hmo-claims/[providerId]/page.tsx:38` | Provider HMO batch history and count (`hmo_claim_batches`) | Uncertain | Can a provider have more than 1,000 hmo_claim_batches? Batch frequency is not determined by claim/visit volume. |
-| Q428 | `src/app/(staff)/staff/(dashboard)/admin/accounting/hmo-claims/aging-snapshots/page.tsx:33` | Available aging snapshot dates; deduplicated after fetching bucket rows (`hmo_aging_snapshots`) | Uncertain | How many provider × kind × bucket rows precede the oldest of the latest 24 snapshot dates? Can the first 1,000 rows hide selectable dates? |
+| Q42 | `src/app/(staff)/staff/(dashboard)/visits/queue/page.tsx:195` | Reception visit queue, stage counts and bulk selection (`visits`) | Harmless | Maximum 68 live visits on any selectable visit_date through Manila today, including import dates; 0 dates exceed 1,000. Inner patient join and visits.deleted_at IS NULL match the loader. Dated cardinality finding, not a future bound. |
+| Q77 | `src/app/(staff)/staff/(dashboard)/appointments/page.tsx:401` | Appointment attachment availability across all four loaded cohorts (`appointment_attachments`) | Harmless | Union of today, upcoming through day +30, open untimed confirmed/arrived, and pending-callback cohorts: 89 distinct appointment rows, 35 nonnull booking groups, 6 matching attachments (6 all-time). The full cohort union is a superset of narrowed UI tabs. |
+| Q81 | `src/app/(staff)/staff/(dashboard)/appointments/actions.ts:428` | Bulk appointment deletion audit coverage and returned count (`appointments`) | Harmless | Delete UI submits one booking group, not all screen groups: maximum 14 loaded service appointments per group and 15 across all stored groups. The action has no intrinsic 1,000-ID guard, so reassess if callers or grouping expand. |
+| Q152 | `src/app/(staff)/staff/(dashboard)/_dashboards/reception-dashboard.tsx:390` | Reception orders-by-type strip (`test_requests`) | Harmless | Maximum 126 nonheader, noncancelled test_requests per visit_date over all dates (today 0); joins services and visits and excludes deleted tests AND visits. Counts bill lines, not patients. |
+| Q201 | `src/lib/results/viewed-count.ts:20` | Result downloaded/viewed count, union across four audit metadata shapes (`audit_log`) | Harmless | 2 result.downloaded/result events total. Per-test maxima: metadata 1, linked-result 1, merged-array 0, normalized-array 1; deduplicated four-shape union maximum 1. Maximum result links per test 1. No 1,000-row branch truncation today; merged shape remains unexercised. |
+| Q241 | `src/app/(staff)/staff/(dashboard)/admin/closures/page.tsx:23` | Upcoming clinic closure list (`clinic_closures`) | Harmless | 12 clinic_closures with closed_on >= Manila today. Exact future-date predicate, including all future imports; dated volume finding. |
+| Q265 | `src/app/(staff)/staff/(dashboard)/admin/prices/page.tsx:28` | Prices last-changed timestamp and staff per service (`service_price_history`) | Harmless | 479 service_price_history revisions for 300 services; 0 services have a latest revision missing from the newest 1,000 rows. All revisions fit today; reassess growth. |
+| Q344 | `src/app/(staff)/staff/(dashboard)/admin/newsletter/actions.ts:43` | Staff newsletter recipient set and sent count (`subscribers`) | Harmless | 22 subscribers with unsubscribed_at IS NULL. Exact staff-send predicate; no send or other mutation performed. |
+
+## Uncertain queries
+
+None remain without a count-based disposition. Dormant paths above remain unverified at scale and are not recategorized as safe.
 
 ## Harmless queries — unchanged
 
-Small catalogue, one-person/encounter, bounded unique-ID lookups, and query builders proven to receive paging before execution. Q217/Q218/Q219/Q221 are now Harmless **at the peer-measured size of 75 bills on 2026-09-16**; this is a dated volume finding, not an intrinsic upper bound.
+Small catalogue, one-person/encounter, bounded unique-ID lookups, and query builders proven to receive paging before execution. Q217/Q218/Q219/Q221 are now Harmless **at the independently measured size of 75 bills on 2026-09-16**; this is a dated volume finding, not an intrinsic upper bound.
 
 **A small table is not automatically correct.** The user-supplied PR #168 precedent fetched 50 rows and printed “of 50” while 75 rows matched. A 1,000-row cap is not the only way a count goes wrong. Resolving the bills-family cap questions does not certify their pagination, filters, or arithmetic; reassess cap risk as the table grows.
 
@@ -250,11 +256,11 @@ Small catalogue, one-person/encounter, bounded unique-ID lookups, and query buil
 | Q211 | `src/lib/actions/visits/reissue-pin.ts:43` | visits → lib/actions/visits/reissue-pin.ts (`visits`) | Harmless | One patient’s arrived bookings/visits; explicitly accepted per-patient bound. |
 | Q214 | `src/app/(staff)/staff/(dashboard)/inquiries/[id]/book/page.tsx:38` | services → staff/inquiries/[id]/book/page.tsx (`services`) | Harmless | Small services configuration/lookup catalogue or primary-key subset; staff/service scale, not patient/visit history. |
 | Q216 | `src/lib/actions/accounting/cogs-send-out-trueups.ts:125` | journal_lines → lib/actions/accounting/cogs-send-out-trueups.ts (`journal_lines`) | Harmless | Journal lines for one generated reversal: bounded accounting legs, not the journal ledger. |
-| Q217 | `src/lib/actions/accounting/vendors.ts:36` | Vendor AP totals derived from embedded bills (`vendors`) | Harmless | Peer-measured bills = 75 on 2026-09-16, so this bill subset/embedded bill history cannot hit 1,000 at the measured size. Count-based classification only, not proof of pager/aggregate correctness; see PR #168 warning. |
-| Q218 | `src/lib/actions/accounting/ap-dashboard.ts:66` | AP aging buckets, outstanding total and top vendors (`bills`) | Harmless | Peer-measured bills = 75 on 2026-09-16, so this bill subset/embedded bill history cannot hit 1,000 at the measured size. Count-based classification only, not proof of pager/aggregate correctness; see PR #168 warning. |
-| Q219 | `src/lib/actions/accounting/ap-dashboard.ts:120` | AP draft count and oldest-draft age (`bills`) | Harmless | Peer-measured bills = 75 on 2026-09-16, so this bill subset/embedded bill history cannot hit 1,000 at the measured size. Count-based classification only, not proof of pager/aggregate correctness; see PR #168 warning. |
+| Q217 | `src/lib/actions/accounting/vendors.ts:36` | Vendor AP totals derived from embedded bills (`vendors`) | Harmless | Independent count: 75 bills, 6 vendors, maximum 42 embedded bills per vendor; outstanding nonvoid = 0, drafts = 0, nonvoid since Manila month start = 0. All four predicates fit today. Count-based classification only, not proof of pager/aggregate correctness; see PR #168 warning. |
+| Q218 | `src/lib/actions/accounting/ap-dashboard.ts:66` | AP aging buckets, outstanding total and top vendors (`bills`) | Harmless | Independent count: 75 bills, 6 vendors, maximum 42 embedded bills per vendor; outstanding nonvoid = 0, drafts = 0, nonvoid since Manila month start = 0. All four predicates fit today. Count-based classification only, not proof of pager/aggregate correctness; see PR #168 warning. |
+| Q219 | `src/lib/actions/accounting/ap-dashboard.ts:120` | AP draft count and oldest-draft age (`bills`) | Harmless | Independent count: 75 bills, 6 vendors, maximum 42 embedded bills per vendor; outstanding nonvoid = 0, drafts = 0, nonvoid since Manila month start = 0. All four predicates fit today. Count-based classification only, not proof of pager/aggregate correctness; see PR #168 warning. |
 | Q220 | `src/lib/actions/accounting/ap-dashboard.ts:141` | recurring_bill_templates → lib/actions/accounting/ap-dashboard.ts (`recurring_bill_templates`) | Harmless | Recurring/accrual template definitions are a small clinic configuration catalogue, not the generated bills/journal entries. |
-| Q221 | `src/lib/actions/accounting/ap-dashboard.ts:165` | AP withholding-tax total (`bills`) | Harmless | Peer-measured bills = 75 on 2026-09-16, so this bill subset/embedded bill history cannot hit 1,000 at the measured size. Count-based classification only, not proof of pager/aggregate correctness; see PR #168 warning. |
+| Q221 | `src/lib/actions/accounting/ap-dashboard.ts:165` | AP withholding-tax total (`bills`) | Harmless | Independent count: 75 bills, 6 vendors, maximum 42 embedded bills per vendor; outstanding nonvoid = 0, drafts = 0, nonvoid since Manila month start = 0. All four predicates fit today. Count-based classification only, not proof of pager/aggregate correctness; see PR #168 warning. |
 | Q224 | `src/lib/actions/accounting/post-expense.ts:72` | chart_of_accounts → lib/actions/accounting/post-expense.ts (`chart_of_accounts`) | Harmless | Small chart_of_accounts configuration/lookup catalogue or primary-key subset; staff/service scale, not patient/visit history. |
 | Q226 | `src/lib/actions/accounting/bills.ts:456` | bill_attachments → lib/actions/accounting/bills.ts (`bill_attachments`) | Harmless | Attachments of one bill; small uploaded document bundle. |
 | Q227 | `src/lib/actions/accounting/recurring-templates.ts:70` | recurring_bill_templates → lib/actions/accounting/recurring-templates.ts (`recurring_bill_templates`) | Harmless | Recurring/accrual template definitions are a small clinic configuration catalogue, not the generated bills/journal entries. |
@@ -528,12 +534,12 @@ This also records paged `in()` walks. The AP index functions receive at most 1,0
 ## Adjacent findings, not changed
 
 - Existing financial-statement walks (Q298–301, Q335–336) have ranges but no explicit unique order; the EOD-close walks (Q23/Q295) order only by business date. These are paging-stability issues, not missing 1,000-row walks, and were not expanded into this audit’s fixes.
-- Bank statement embedded aggregates (Q311) remain Unexercised. The vendor bill aggregate (Q217) is Harmless at 75 total bills as peer-measured on 2026-09-16. If either grows, check parent and nested payloads; paging only a parent list does not establish nested completeness.
+- Bank statement embedded aggregates (Q311) remain Unexercised. The vendor bill aggregate (Q217) is Harmless at 75 total bills as independently measured on 2026-09-16. If either grows, check parent and nested payloads; paging only a parent list does not establish nested completeness.
 - The large selection actions retain their existing mutation semantics. This work corrects row reads; it does not introduce transactions or change write batching.
 
 ## Migration / view work
 
-**None required for the implemented fixes. None created, edited or deleted.** The Uncertain queries have no proposed DDL pending approval. If a future production check leads to a SQL aggregate/distinct-date/latest-price view for performance, that belongs in the separate migration session.
+**None required for the implemented fixes. None created, edited or deleted.** The count verification requires no DDL. If a future production check leads to a SQL aggregate/distinct-date/latest-price view for performance, that belongs in the separate migration session.
 
 ## Concurrency
 
@@ -546,6 +552,8 @@ Tests beside each changed data-loading file exercise the production paging expre
 ## Files changed
 
 - `docs/superpowers/audits/2026-09-16-implicit-row-caps.md`
+- `docs/superpowers/audits/2026-09-16-row-cap-counts.sql`
+- `docs/superpowers/audits/2026-09-16-row-cap-counts.json`
 - `src/app/(staff)/staff/(dashboard)/admin/accounting/bank-rec/[id]/page.row-caps.test.ts`
 - `src/app/(staff)/staff/(dashboard)/admin/accounting/bank-rec/[id]/page.tsx`
 - `src/app/(staff)/staff/(dashboard)/admin/accounting/bank-rec/actions.row-caps.test.ts`
@@ -585,41 +593,12 @@ Tests beside each changed data-loading file exercise the production paging expre
 
 ## Final validation
 
-All three commands ran from the worktree root after rebasing onto main `7457a12` and exited **0**.
+After rebasing onto main `23d0ed1` (#188), `npm test`, `npm run typecheck`, and `npm run lint` all exited 0. **150 test files / 1,882 tests passed**. TypeScript is clean; lint has zero errors and the one pre-existing `booking.ts:101` unused `serviceIds` warning. `git diff --check` passed.
 
-`npx tsc --noEmit`: no output (exit 0).
-
-`npm run lint` final diagnostic lines (the one pre-existing booking.ts warning):
-
-```text
-/Users/jamila/Claude/DRMed/.worktrees/row-cap-audit/src/lib/validations/booking.ts
-  101:7  warning  'serviceIds' is assigned a value but never used  @typescript-eslint/no-unused-vars
-
-✖ 1 problem (0 errors, 1 warning)
-```
-
-`npm test` exact final summary lines:
-
-```text
- Test Files  147 passed (147)
-      Tests  1830 passed (1830)
-   Start at  11:50:53
-   Duration  4.50s (transform 3.40s, setup 0ms, collect 19.11s, tests 8.43s, environment 12ms, prepare 6.25s)
-```
-
-`git diff --check` passed. The branch diff against current main contains no migration,
-excluded payroll/PF-page, or realtime-concurrency file changes. Changes are committed
-for draft review.
+The branch diff against main contains no migrations, excluded payroll/PF-page changes, or protected realtime/subscription changes. No code changes were required by the new count verification.
 
 ## Draft review handoff — 2026-09-16
 
-The continuation preserves the peer-session bank fixes and dormant-feature decisions above.
-The requested production verification is **not complete**: 19 questions remain Uncertain,
-5 remain Unexercised, and the peer-measured classifications have not been independently
-verified. Supabase OAuth is configured, but this Codex session does not expose its MCP
-tools; the Sonnet fallback reached `execute_sql` and received an ungranted-permission
-response. No allow rule or permission bypass was added. Do not interpret the draft PR
-or its passing local checks as completing those production questions.
+All 30 original questions now have independent production count evidence and an explicit disposition. Preserve the 26 Real fixes and the dormant paths; no additional production mutations or migration claims. The final count inventory is 26 Real, 228 Harmless, 16 Unexercised, 0 Uncertain. Production verification here means predicate cardinalities, not proof of future capacity, application-role RLS equivalence, or authenticated browser behavior.
 
-Merge sequencing: the cap fixes should precede the RLS performance rewrite. No migration
-number is claimed by this branch.
+Merge sequencing: the cap fixes should precede the separate RLS performance rewrite. Main already includes 0150 from #187; this branch claims no migration number.
