@@ -1,3 +1,5 @@
+import { incomeStatementTotals, loadIncomeStatementLines } from "@/lib/accounting/income-statement";
+import { quickLinksFor } from "@/components/staff/staff-nav-config";
 import type { StaffSession } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -27,16 +29,8 @@ import { QuickLinks } from "./_components/quick-links";
 import { ActivityStrip, type ActivityItem } from "./_components/activity-strip";
 import { formatPeso, relativeAge } from "./_components/format";
 
-// H4: trimmed to money actions only — Chart of accounts, Dashboard settings,
-// Periods, Audit log and Staff users are all reachable from the sidebar and
-// aren't an owner money action.
-const QUICK_LINKS = [
-  { href: "/staff/admin/operations/cash", label: "Cash & Cards" },
-  { href: "/staff/admin/reports/daily-revenue", label: "Daily Revenue" },
-  { href: "/staff/admin/accounting/ap", label: "AP Dashboard" },
-  { href: "/staff/admin/accounting/hmo-claims", label: "HMO Claims" },
-  { href: "/staff/admin/payroll/runs", label: "Pay Runs" },
-];
+// Owner shortcuts; metric cards above keep their own descriptive labels and IDs.
+const QUICK_LINKS = quickLinksFor("admin", "admin");
 
 const SKIP_COUNT = Promise.resolve({ count: 0, data: null, error: null });
 const SKIP_DATA = Promise.resolve({ data: null, error: null });
@@ -142,8 +136,8 @@ async function loadAdminStats(show: (id: string) => boolean) {
     payrollRunsInProgress,
     recentAudit,
     staleDrafts,
-    netTotalsMtd,
-    netExpensesMtd,
+    grossProfitRows,
+    booksLines,
   ] = await Promise.all([
     // The audit wanted all three of these cut as "throughput decoration".
     // The owner deferred Visits today and Queue to a LATER re-review, so
@@ -427,8 +421,8 @@ async function loadAdminStats(show: (id: string) => boolean) {
           .limit(5)
           .returns<DraftJeRow[]>()
       : SKIP_DATA,
-    // Both bounded to at most a month's worth of daily rows (≤31/62) — no
-    // paging needed, unlike the six report-shaped cards above.
+    // Operations gross profit is v_ops_daily_totals.net, before expenses.
+    // At most two rows per Manila day (lab and consult).
     show("admin.net_income_mtd")
       ? admin
           .from("v_ops_daily_totals")
@@ -437,13 +431,11 @@ async function loadAdminStats(show: (id: string) => boolean) {
           .lte("business_date", today)
           .returns<{ net: number | string }[]>()
       : SKIP_DATA,
-    show("admin.net_income_mtd")
-      ? admin
-          .from("v_ops_daily_expenses")
-          .select("expense_php")
-          .gte("business_date", monthStart)
-          .lte("business_date", today)
-          .returns<{ expense_php: number | string }[]>()
+    show("admin.net_income_books_mtd")
+      ? loadIncomeStatementLines(admin, monthStart, today).then(
+          (data) => ({ data, error: null }),
+          (error: unknown) => ({ data: null, error }),
+        )
       : SKIP_DATA,
   ]);
 
@@ -465,8 +457,8 @@ async function loadAdminStats(show: (id: string) => boolean) {
     { scope: "payroll_runs", error: payrollRunsInProgress.error },
     { scope: "strip_audit", error: recentAudit.error },
     { scope: "strip_stale_drafts", error: staleDrafts.error },
-    { scope: "net_income_totals", error: netTotalsMtd.error },
-    { scope: "net_income_expenses", error: netExpensesMtd.error },
+    { scope: "gross_profit_ops", error: grossProfitRows.error },
+    { scope: "net_income_books", error: booksLines.error },
   ];
   await Promise.all(
     namedResults
@@ -549,16 +541,13 @@ async function loadAdminStats(show: (id: string) => boolean) {
   const doctorsToPayTruncated = doctorsToPay.truncated;
   const doctorsToPayError = Boolean(doctorsToPay.error);
 
-  const netIncomeMtd =
-    ((netTotalsMtd.data ?? []) as { net: number | string }[]).reduce(
-      (s, r) => s + Number(r.net ?? 0),
-      0,
-    ) -
-    ((netExpensesMtd.data ?? []) as { expense_php: number | string }[]).reduce(
-      (s, r) => s + Number(r.expense_php ?? 0),
-      0,
+  const grossProfitMtd =
+    ((grossProfitRows.data ?? []) as { net: number | string }[]).reduce(
+      (sum, row) => sum + Number(row.net ?? 0), 0,
     );
-  const netIncomeError = Boolean(netTotalsMtd.error) || Boolean(netExpensesMtd.error);
+  const grossProfitError = Boolean(grossProfitRows.error);
+  const booksNetIncomeMtd = incomeStatementTotals(booksLines.data ?? []).netIncome;
+  const booksNetIncomeError = Boolean(booksLines.error);
 
   // Released-today, grouped by who the test was assigned to. Names come from
   // staff_profiles in one follow-up read; an id we can't resolve keeps its
@@ -644,8 +633,10 @@ async function loadAdminStats(show: (id: string) => boolean) {
     doctorsToPayCount,
     doctorsToPayTruncated,
     doctorsToPayError,
-    netIncomeMtd,
-    netIncomeError,
+    grossProfitMtd,
+    grossProfitError,
+    booksNetIncomeMtd,
+    booksNetIncomeError,
     activeEmployees: activeEmployees.count ?? 0,
     activeEmployeesError: Boolean(activeEmployees.error),
     payrollRunsInProgress: payrollRunsInProgress.count ?? 0,
@@ -698,6 +689,7 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
 
   const showMoney =
     show("admin.net_income_mtd") ||
+    show("admin.net_income_books_mtd") ||
     show("admin.past_due_periods") ||
     show("admin.draft_jes") ||
     show("admin.ap_outstanding") ||
@@ -794,14 +786,24 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
       {showMoney && (
         <SectionHeading title="Money">
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {show("admin.net_income_books_mtd") && (
+              <StatCard
+                label="Net Income (Books)"
+                value={formatPeso(stats.booksNetIncomeMtd)}
+                hint="This month · posted revenue less contra revenue and expenses"
+                href={`/staff/admin/accounting/financial-statements?start=${stats.monthStart}&end=${stats.today}`}
+                accent={stats.booksNetIncomeMtd >= 0 ? "good" : "warn"}
+                error={stats.booksNetIncomeError}
+              />
+            )}
             {show("admin.net_income_mtd") && (
               <StatCard
-                label="Net income (this month)"
-                value={formatPeso(stats.netIncomeMtd)}
-                hint="Operational basis (see Expenses & P&L) — gross profit − expenses, MTD"
+                label="Gross Profit (Ops)"
+                value={formatPeso(stats.grossProfitMtd)}
+                hint="This month · released lab + consult revenue after discounts, before expenses"
                 href={`/staff/admin/operations/expenses?from=${stats.monthStart}&to=${stats.today}`}
-                accent={stats.netIncomeMtd >= 0 ? "good" : "warn"}
-                error={stats.netIncomeError}
+                accent={stats.grossProfitMtd >= 0 ? "good" : "warn"}
+                error={stats.grossProfitError}
               />
             )}
             {show("admin.past_due_periods") && (

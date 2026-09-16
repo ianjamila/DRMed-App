@@ -1,9 +1,10 @@
+import { PageHeader } from "@/components/staff/page-header";
+import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { Card } from "@/components/ui/card";
 import { buildMonthlyPnl } from "@/lib/operations/trends";
 import { fetchAllRows, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
-import { OperationsTabs } from "../_components/operations-tabs";
 import { PnlTrendChart } from "./_components/pnl-trend-chart";
 
 interface TotalsRow {
@@ -15,7 +16,7 @@ interface ExpenseRow {
   expense_php: number | null;
 }
 
-export const metadata = { title: "Trends" };
+export const metadata = { title: ROUTE_NAME["/staff/admin/operations/trends"] };
 
 export default async function OperationsTrendsPage() {
   await requireAdminStaff();
@@ -56,9 +57,11 @@ export default async function OperationsTrendsPage() {
     ]);
   } catch {
     return (
-      <div className="p-4">
-        <h1 className="text-xl font-semibold text-[color:var(--color-brand-navy)]">Operations</h1>
-        <OperationsTabs />
+      <div className="space-y-4">
+        <PageHeader
+          eyebrow={SECTION_NAME["/staff/admin/operations"]}
+          title={ROUTE_NAME["/staff/admin/operations/trends"]}
+        />
         <Card className="mt-6 px-4 text-sm text-destructive">
           Could not load the trends data. Please try again.
         </Card>
@@ -70,9 +73,11 @@ export default async function OperationsTrendsPage() {
   const data = buildMonthlyPnl(totalsResult.rows, expensesResult.rows);
 
   return (
-    <div className="p-4">
-      <h1 className="text-xl font-semibold text-[color:var(--color-brand-navy)]">Operations</h1>
-      <OperationsTabs />
+    <div className="space-y-4">
+      <PageHeader
+        eyebrow={SECTION_NAME["/staff/admin/operations"]}
+        title={ROUTE_NAME["/staff/admin/operations/trends"]}
+      />
 
       {truncated ? (
         <p className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">

@@ -1,7 +1,8 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { AdPerformanceDashboard } from "./_components/ad-dashboard";
 
-export const metadata = { title: "Ad Performance" };
+export const metadata = { title: ROUTE_NAME["/staff/marketing"] };
 export const dynamic = "force-dynamic";
 
 // Ad-spend analytics (marketing workspace, tab 1 of 2). A read-only client

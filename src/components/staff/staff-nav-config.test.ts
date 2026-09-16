@@ -1,5 +1,10 @@
+import { readdirSync, readFileSync } from "node:fs";
+import ts from "typescript";
+import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
 import { describe, expect, it } from "vitest";
 import {
+  quickLinksFor,
+  quickLinkGroupsFor,
   isItemActive,
   isSectionActive,
   isSubgroupActive,
@@ -230,7 +235,7 @@ describe("Outside-Lab Costs vs Outside-Lab Performance", () => {
 
 describe("activePrefixes", () => {
   it("keeps Expenses lit across every AP tab and dark on unrelated admin routes", () => {
-    const expenses = itemByHref("/staff/admin/accounting/ap/quick-expense");
+    const expenses = itemByHref("/staff/admin/accounting/ap");
     expect(isItemActive(expenses, "/staff/admin/accounting/ap/bills/123")).toBe(true);
     expect(isItemActive(expenses, "/staff/admin/accounting/ap")).toBe(true);
     expect(isItemActive(expenses, "/staff/admin/accounting/journal")).toBe(false);
@@ -379,5 +384,294 @@ describe("isSectionActive", () => {
     const admin = section(visibleNavFor("admin"), "Admin")!;
     expect(isSectionActive(admin, "/staff/admin/payroll/runs")).toBe(true);
     expect(isSectionActive(admin, "/staff/patients")).toBe(false);
+  });
+});
+
+// Naming ownership complements staff-page-titles.test.ts (metadata presence and
+// suffixes). This guard checks navigation DATA, never guesses rendered headings
+// from page source. In particular client headings, error branches, EOD's date,
+// and queueTitleForRole are not a text-scanning problem.
+const NAV_FILE = "src/components/staff/staff-nav-config.ts";
+const DASHBOARD_DIR = "src/app/(staff)/staff/(dashboard)";
+const REGISTRY_MODULE = "@/lib/staff/route-names";
+
+type NameException = { file: string; href: string; label: string; why: string };
+const NAME_EXCEPTIONS: NameException[] = [
+  ...[
+    ["/staff/admin/accounting/ap", "Expenses"],
+    ["/staff/admin/operations", "Daily Monitoring"],
+    ["/staff/admin/accounting/financial-statements", "Financial Statements"],
+    ["/staff/marketing", "Marketing"],
+  ].map(([href, label]) => ({
+    file: NAV_FILE, href, label,
+    why: "An umbrella opens a section containing several views; naming it after its first tab would conceal the other views.",
+  })),
+  {
+    file: `${DASHBOARD_DIR}/admin/accounting/ap/_components/bills-tabs.tsx`,
+    href: "/staff/admin/accounting/ap", label: "Overview",
+    why: "Inside Expenses the Overview tab can omit the section prefix; the standalone page and dashboard link say Expenses Overview.",
+  },
+  ...[NAV_FILE].map((file) => ({
+    file, href: "/staff/queue", label: "Queue",
+    why: "Queue is a shared role-neutral entry point: queueTitleForRole correctly renders Imaging queue for x-ray staff and Lab queue for medtechs.",
+  })),
+];
+
+// Metric-card labels describe the measured subset, not the destination route.
+// Keep these exclusions explicit and file-scoped; preferences use card_id.
+const METRIC_EXCEPTIONS = ["admin", "reception", "lab"].map((role) => ({
+  file: `${DASHBOARD_DIR}/_dashboards/${role}-dashboard.tsx`,
+  component: "StatCard",
+  why: "A metric label names a count or amount (often a filtered subset); changing it to the route name would misdescribe the number. Card IDs remain stable.",
+}));
+
+function sourceFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = `${dir}/${entry.name}`;
+    return entry.isDirectory() ? sourceFiles(path) : /\.tsx?$/.test(path) ? [path] : [];
+  });
+}
+
+/** Bind identifiers through the TS symbol table, so a shadowing local named
+ * ROUTE_NAME or an unused import cannot satisfy the guard. Follow local aliases
+ * and verify the import's module AND exported name, including renamed imports.
+ */
+function navigationNames(file: string, text: string, sectionHref?: string) {
+  const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const host = ts.createCompilerHost({ noLib: true, noResolve: true });
+  host.getSourceFile = (name) => name === file ? sf : undefined;
+  const program = ts.createProgram([file], { noLib: true, noResolve: true }, host);
+  const checker = program.getTypeChecker();
+  const visit = (node: ts.Node, fn: (node: ts.Node) => void) => {
+    fn(node);
+    ts.forEachChild(node, (child) => visit(child, fn));
+  };
+  function resolve(node: ts.Expression, seen = new Set<ts.Node>()): ts.Expression {
+    if (seen.has(node)) return node;
+    seen.add(node);
+    if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isSatisfiesExpression(node)) {
+      return resolve(node.expression, seen);
+    }
+    if (ts.isIdentifier(node)) {
+      const declaration = checker.getSymbolAtLocation(node)?.valueDeclaration;
+      if (declaration && ts.isVariableDeclaration(declaration) && declaration.initializer) {
+        return resolve(declaration.initializer, seen);
+      }
+    }
+    return node;
+  }
+  function stringValue(input: ts.Expression): string | undefined {
+    const node = resolve(input);
+    if (ts.isStringLiteralLike(node)) return node.text;
+    if (ts.isTemplateExpression(node)) {
+      let result = node.head.text;
+      for (const span of node.templateSpans) {
+        const value = stringValue(span.expression);
+        if (value === undefined) return;
+        result += value + span.literal.text;
+      }
+      return result;
+    }
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+      const left = stringValue(node.left), right = stringValue(node.right);
+      if (left !== undefined && right !== undefined) return left + right;
+    }
+  }
+  function registryRead(input: ts.Expression, exportName: string, href: string): boolean {
+    const node = resolve(input);
+    if (!ts.isElementAccessExpression(node) || stringValue(node.argumentExpression) !== href) return false;
+    const receiver = resolve(node.expression);
+    const declarations = checker.getSymbolAtLocation(receiver)?.declarations ?? [];
+    return declarations.some((d) => {
+      if (!ts.isImportSpecifier(d) || (d.propertyName ?? d.name).text !== exportName) return false;
+      const imp = d.parent.parent.parent;
+      return ts.isImportDeclaration(imp) && ts.isStringLiteral(imp.moduleSpecifier) &&
+        imp.moduleSpecifier.text === REGISTRY_MODULE;
+    });
+  }
+  const entries: { href: string; label?: string; routeRead: boolean; sectionRead: boolean }[] = [];
+  const metrics: string[] = [];
+  let derivedQuicklinks = false;
+  const eyebrows: boolean[] = [];
+  const handRolledHeaders: string[] = [];
+  visit(sf, (node) => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+      const decl = checker.getSymbolAtLocation(node.expression)?.declarations?.[0];
+      if (decl && ts.isImportSpecifier(decl) && ["quickLinksFor", "quickLinkGroupsFor"].includes((decl.propertyName ?? decl.name).text)) {
+        const imp = decl.parent.parent.parent;
+        derivedQuicklinks ||= ts.isImportDeclaration(imp) && ts.isStringLiteral(imp.moduleSpecifier) && imp.moduleSpecifier.text === "@/components/staff/staff-nav-config";
+      }
+    }
+    if (sectionHref && (ts.isJsxSelfClosingElement(node) || ts.isJsxOpeningElement(node))) {
+      const tag = node.tagName.getText(sf);
+      if (tag === "PageHeader") {
+        const prop = node.attributes.properties.find((p) => ts.isJsxAttribute(p) && p.name.getText(sf) === "eyebrow");
+        const value = prop && ts.isJsxAttribute(prop) ? prop.initializer : undefined;
+        eyebrows.push(!!value && ts.isJsxExpression(value) && !!value.expression && registryRead(value.expression, "SECTION_NAME", sectionHref));
+      }
+      if (tag === "h1" || (tag === "p" && /uppercase.*tracking-wider/.test(node.getText(sf)))) {
+        let owner: ts.Node | undefined = node.parent;
+        while (owner && !ts.isFunctionDeclaration(owner)) owner = owner.parent;
+        handRolledHeaders.push(`${tag}:${owner && ts.isFunctionDeclaration(owner) ? owner.name?.text : ""}`);
+      }
+    }
+    if (ts.isJsxSelfClosingElement(node) && node.tagName.getText(sf) === "StatCard") metrics.push("StatCard");
+    if (!ts.isObjectLiteralExpression(node)) return;
+    const props = new Map(node.properties.filter(ts.isPropertyAssignment).map((p) => [p.name.getText(sf), p.initializer]));
+    const hrefNode = props.get("href"), label = props.get("label");
+    if (!hrefNode || !label) return;
+    const href = stringValue(hrefNode) ?? "<unresolved href>";
+    entries.push({ href, label: stringValue(label), routeRead: registryRead(label, "ROUTE_NAME", href), sectionRead: registryRead(label, "SECTION_NAME", href) });
+  });
+  return { entries, metrics, eyebrows, handRolledHeaders, derivedQuicklinks };
+}
+
+const namingFiles = [NAV_FILE, ...sourceFiles(DASHBOARD_DIR).filter((file) =>
+  file.endsWith("-tabs.tsx") || /\/_dashboards\/[^/]+-dashboard\.tsx$/.test(file),
+)];
+
+describe("route name registry ownership", () => {
+  it.each(namingFiles)("%s reads registry names at every navigation leaf", (file) => {
+    const { entries, metrics, derivedQuicklinks } = navigationNames(file, readFileSync(file, "utf8"));
+    if (file.includes("/_dashboards/")) {
+      expect(derivedQuicklinks, "dashboard quicklinks must derive from STAFF_NAV").toBe(true);
+      expect(entries, "dashboard must not keep a separate quicklink list").toEqual([]);
+    } else {
+      expect(entries.length, "a migrated surface must not silently stop being inspected").toBeGreaterThan(0);
+    }
+    for (const entry of entries) {
+      const exception = NAME_EXCEPTIONS.find((e) => e.file === file && e.href === entry.href);
+      if (exception) {
+        expect(exception.why.length).toBeGreaterThan(50);
+        expect(entry.sectionRead ? SECTION_NAME[entry.href] : entry.label).toBe(exception.label);
+      } else {
+        expect(entry.routeRead, `${file}: ${entry.href} must read ROUTE_NAME for its own href`).toBe(true);
+        expect(ROUTE_NAME[entry.href], `missing registry entry: ${entry.href}`).toBeTruthy();
+      }
+    }
+    for (const component of metrics) {
+      expect(METRIC_EXCEPTIONS.find((e) => e.file === file && e.component === component)?.why.length).toBeGreaterThan(50);
+    }
+  });
+
+  it("keeps exceptions specific, justified and live", () => {
+    for (const exception of NAME_EXCEPTIONS) {
+      expect(namingFiles).toContain(exception.file);
+      expect(exception.why.length).toBeGreaterThan(50);
+      expect(navigationNames(exception.file, readFileSync(exception.file, "utf8")).entries.some((e) => e.href === exception.href)).toBe(true);
+    }
+    for (const exception of METRIC_EXCEPTIONS) {
+      expect(navigationNames(exception.file, readFileSync(exception.file, "utf8")).metrics).toContain(exception.component);
+    }
+  });
+
+  it("keeps the imported registry dependency-free", () => {
+    const sf = ts.createSourceFile("route-names.ts", readFileSync("src/lib/staff/route-names.ts", "utf8"), ts.ScriptTarget.Latest, true);
+    const dependencies: string[] = [];
+    function visit(node: ts.Node) {
+      if (ts.isImportDeclaration(node) || ts.isImportEqualsDeclaration(node) ||
+          (ts.isExportDeclaration(node) && node.moduleSpecifier) || ts.isCallExpression(node)) {
+        dependencies.push(node.getText(sf));
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(sf);
+    expect(dependencies).toEqual([]);
+  });
+
+  it.each([
+    ['import { ROUTE_NAME } from "@/lib/staff/route-names";', '"Cash Drawer"'],
+    ['import { ROUTE_NAME } from "@/lib/staff/route-names";', 'ROUTE_NAME["/wrong"]'],
+    ['import { ROUTE_NAME } from "./fake";', 'ROUTE_NAME["/staff/payments/cash-drawer"]'],
+    ['const ROUTE_NAME = {"/staff/payments/cash-drawer": "Cash Drawer"};', 'ROUTE_NAME["/staff/payments/cash-drawer"]'],
+  ])("rejects inline names, wrong keys and false registry imports", (prefix, label) => {
+    const source = `${prefix}\nconst tabs = [{href: "/staff/payments/cash-drawer", label: ${label}}];`;
+    expect(navigationNames("fixture.tsx", source).entries[0].routeRead).toBe(false);
+  });
+
+  it("follows renamed imports, local aliases and template hrefs", () => {
+    const source = `import { ROUTE_NAME as names } from "@/lib/staff/route-names";
+      const BASE = "/staff/payments";
+      const label = names[BASE + "/cash-drawer"];
+      const tabs = [{href: \`\${BASE}/cash-drawer\`, label: label}];`;
+    expect(navigationNames("fixture.tsx", source).entries[0].routeRead).toBe(true);
+  });
+});
+
+// The four adopted families use one header API, with no duplicated layout kicker.
+// An exception must identify a file and argue why separate section wording is
+// correct (not merely that it predates this guard). Metric captions are separate.
+const EYEBROW_EXCEPTIONS: Record<string, { nodes: string[]; why: string }> = {
+  [`${DASHBOARD_DIR}/admin/accounting/financial-statements/cash-flow/page.tsx`]: {
+    nodes: ["p:SummaryTile"],
+    why: "SummaryTile labels a cash metric inside an article; it is not the page section eyebrow and must describe its own value.",
+  },
+};
+const HEADER_FAMILIES = ["admin/accounting/ap", "admin/operations", "admin/accounting/financial-statements", "marketing"];
+
+describe("PageHeader section ownership", () => {
+  it.each(HEADER_FAMILIES)("%s reads its eyebrow from SECTION_NAME", (family) => {
+    let headers = 0;
+    for (const file of sourceFiles(`${DASHBOARD_DIR}/${family}`)) {
+      if (file.includes(".test.")) continue;
+      const exception = EYEBROW_EXCEPTIONS[file];
+      if (exception) expect(exception.why.length).toBeGreaterThan(50);
+      const result = navigationNames(file, readFileSync(file, "utf8"), `/staff/${family}`);
+      expect(result.handRolledHeaders, file).toEqual(exception?.nodes ?? []);
+      expect(result.eyebrows.every(Boolean), file).toBe(true);
+      headers += result.eyebrows.length;
+    }
+    expect(headers).toBeGreaterThan(0);
+  });
+
+  it.each(['"Expenses"', '{"Expenses"}', '{ROUTE_NAME["/staff/admin/accounting/ap"]}'])("rejects an eyebrow bypass: %s", (eyebrow) => {
+    const text = `import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
+      const header = <PageHeader title="Example" eyebrow=${eyebrow} />;`;
+    expect(navigationNames("fixture.tsx", text, "/staff/admin/accounting/ap").eyebrows).toEqual([false]);
+  });
+});
+
+describe("derived dashboard shortcuts preserve the visible set", () => {
+  it("preserves reception groups, labels and order, including parked/action links", () => {
+    expect(quickLinkGroupsFor("reception", "reception").map((g) => [g.label, g.items.map((i) => i.label)])).toEqual([
+      ["Front Desk", ["Reception Queue", "Patients", "New Patient", "Appointments", "Inquiries", "Sell Gift Code"]],
+      ["Billing", ["Visit Records", "Quick Quote", "Cash Drawer", "Petty Cash"]],
+    ]);
+    expect(quickLinksFor("reception", "reception").map((i) => i.href)).toEqual([
+      "/staff/visits/queue", "/staff/patients", "/staff/patients/new", "/staff/appointments", "/staff/inquiries", "/staff/gift-codes/sell", "/staff/visits", "/staff/quote", "/staff/payments/cash-drawer", "/staff/payments/petty-cash",
+    ]);
+  });
+  it("preserves all ten admin shortcuts", () => {
+    expect(quickLinksFor("admin", "admin").map((i) => [i.href, i.label])).toEqual([
+      ["/staff/admin/accounting/periods", "Monthly Periods"],
+      ["/staff/admin/accounting/financial-statements", "Financial Statements"],
+      ["/staff/admin/operations", "Daily Monitoring"],
+      ["/staff/admin/accounting/pf-payouts", "Pay Doctors"],
+      ["/staff/admin/accounting/journal", "Journal Entries"],
+      ["/staff/admin/operations/cash", "Cash & Cards"],
+      ["/staff/admin/operations/daily-revenue", "Daily Revenue"],
+      ["/staff/admin/accounting/ap", "Expenses Overview"],
+      ["/staff/admin/accounting/hmo-claims", "HMO Claims"],
+      ["/staff/admin/payroll/runs", "Run Payroll"],
+    ]);
+  });
+  it.each([
+    ["medtech", ["Queue", "Quick Quote"]],
+    ["xray_technician", ["Queue"]],
+    ["pathologist", ["Queue"]],
+    ["admin", ["Queue", "Quick Quote", "Result Templates"]],
+  ] as const)("preserves lab shortcuts for %s", (role, labels) => {
+    expect(quickLinksFor(role, "lab").map((i) => i.label)).toEqual(labels);
+  });
+  it("does not expose admin shortcuts to reception", () => {
+    expect(quickLinksFor("reception", "admin")).toEqual([]);
+  });
+});
+
+describe("Daily Revenue belongs to Daily Monitoring", () => {
+  it("has no duplicate sidebar row and lights only its section", () => {
+    expect(allHrefs(STAFF_NAV)).not.toContain("/staff/admin/operations/daily-revenue");
+    expect(allHrefs(STAFF_NAV)).not.toContain("/staff/admin/reports/daily-revenue");
+    expect(activeHrefs("/staff/admin/operations/daily-revenue")).toEqual(["/staff/admin/operations"]);
   });
 });

@@ -72,7 +72,6 @@ const HMO_RESPONSE_LABEL: Record<string, string> = {
   no_response: "No response",
 };
 
-
 function unresolvedOf(it: ItemRow): number {
   return (
     Number(it.billed_amount_php) -
@@ -287,7 +286,7 @@ function Header({
     <header className="space-y-3">
       <div>
         <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-          Phase 12.3 · Batch
+          HMO Claims
         </p>
         <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
           {batch.reference_no ?? `Batch #${batch.id.slice(0, 8)}`}

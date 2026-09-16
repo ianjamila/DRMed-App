@@ -4,7 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getVendorAction } from "@/lib/actions/accounting/vendors";
 import { VendorFormClient } from "@/app/(staff)/staff/(dashboard)/admin/accounting/ap/vendors/new/vendor-form-client";
 
-export const metadata = { title: "Edit vendor" };
+export const metadata = { title: "Edit Vendor" };
 export const dynamic = "force-dynamic";
 
 export default async function EditVendorPage({

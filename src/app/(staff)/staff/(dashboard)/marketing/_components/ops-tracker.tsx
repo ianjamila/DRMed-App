@@ -1,5 +1,9 @@
 "use client";
 
+import { PageHeader } from "@/components/staff/page-header";
+
+import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
+
 // Marketing operations tracker, ported from the standalone marketing-kit tool
 // (DRMed-marketing-kit/dashboards/drmed-ops-tracker.jsx). Fully client-side:
 // daily/weekly/monthly/quarterly checklists that auto-reset each period, the
@@ -356,9 +360,10 @@ export function OpsTracker() {
               >
                 DRMed
               </div>
-              <h1 className="text-xl font-semibold" style={{ color: C.ink }}>
-                Ops tracker
-              </h1>
+              <PageHeader
+                eyebrow={SECTION_NAME["/staff/marketing"]}
+                title={ROUTE_NAME["/staff/marketing/ops"]}
+              />
             </div>
             <p className="text-sm mt-1" style={{ color: C.sub }}>
               {dateStr} · cadence, roadmap &amp; campaign status (Plan v2 §5, §8, §9)

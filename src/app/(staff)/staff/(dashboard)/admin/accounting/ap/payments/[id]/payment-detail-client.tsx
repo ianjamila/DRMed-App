@@ -1,5 +1,8 @@
 "use client";
 
+import { SECTION_NAME } from "@/lib/staff/route-names";
+import { PageHeader } from "@/components/staff/page-header";
+
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -154,21 +157,17 @@ export function PaymentDetailClient({
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-wrap items-start justify-between gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-            Phase 12.4 · Admin · AP · Payment
-          </p>
-          <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            {payment.payment_number}
-          </h1>
-          <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
-            {vendor?.name ?? "—"} · {payment.method} · {manilaDate(payment.payment_date)}
+          <PageHeader
+            eyebrow={SECTION_NAME["/staff/admin/accounting/ap"]}
+            title={payment.payment_number}
+            subtitle={<>{vendor?.name ?? "—"} · {payment.method} · {manilaDate(payment.payment_date)}
             {payment.cheque_number && (
-              <> · Cheque #{payment.cheque_number} dated {payment.cheque_date}</>
+            <> · Cheque #{payment.cheque_number} dated {payment.cheque_date}</>
             )}
-            {payment.reference && !payment.cheque_number && <> · Ref: {payment.reference}</>}
-          </p>
+            {payment.reference && !payment.cheque_number && <> · Ref: {payment.reference}</>}</>}
+          />
           {isVoided && (
             <p className="mt-2 flex items-center gap-2 text-xs">
               <StatusBadge status="voided" />
@@ -204,7 +203,7 @@ export function PaymentDetailClient({
             </Button>
           </div>
         )}
-      </header>
+      </div>
 
       {!isVoided && voidBlockedByClose && (
         <Alert>

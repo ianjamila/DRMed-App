@@ -1,3 +1,5 @@
+import { PageHeader } from "@/components/staff/page-header";
+import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
@@ -23,7 +25,6 @@ import {
 import { fetchAllRows, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 import { ExportCsvLink } from "@/components/staff/export-csv-link";
 import { Card } from "@/components/ui/card";
-import { OperationsTabs } from "../_components/operations-tabs";
 import { DateControls } from "../_components/date-controls";
 import { ExpenseSummaryCards } from "./_components/expense-summary-cards";
 import { ExpenseMatrixTable } from "./_components/expense-matrix";
@@ -38,7 +39,7 @@ interface SearchParams {
   to?: string;
 }
 
-export const metadata = { title: "Expenses & P&L" };
+export const metadata = { title: ROUTE_NAME["/staff/admin/operations/expenses"] };
 
 export default async function ExpensesPnlPage({
   searchParams,
@@ -132,9 +133,11 @@ export default async function ExpensesPnlPage({
     ]);
   } catch {
     return (
-      <div className="p-4">
-        <h1 className="text-xl font-semibold text-[color:var(--color-brand-navy)]">Operations</h1>
-        <OperationsTabs />
+      <div className="space-y-4">
+        <PageHeader
+          eyebrow={SECTION_NAME["/staff/admin/operations"]}
+          title={ROUTE_NAME["/staff/admin/operations/expenses"]}
+        />
         <Card className="mt-6 px-4 text-sm text-destructive">
           Could not load the expenses &amp; P&amp;L report. Please try again.
         </Card>
@@ -169,12 +172,14 @@ export default async function ExpensesPnlPage({
   const statementHref = `/staff/admin/accounting/financial-statements${operationsToStatementQuery(from, to)}`;
 
   return (
-    <div className="p-4">
+    <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-xl font-semibold text-[color:var(--color-brand-navy)]">Operations</h1>
+        <PageHeader
+          eyebrow={SECTION_NAME["/staff/admin/operations"]}
+          title={ROUTE_NAME["/staff/admin/operations/expenses"]}
+        />
         <ExportCsvLink href={csvHref} />
       </div>
-      <OperationsTabs />
 
       {/* key on the range so the custom From/To inputs re-init after a pill/year
           navigation (useState would otherwise keep its stale initial value). */}

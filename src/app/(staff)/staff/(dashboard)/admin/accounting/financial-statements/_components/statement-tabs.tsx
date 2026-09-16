@@ -1,5 +1,7 @@
 "use client";
 
+import { ROUTE_NAME } from "@/lib/staff/route-names";
+
 import { useSearchParams } from "next/navigation";
 import { SectionTabs } from "@/components/staff/section-tabs";
 import { statementPeriodQueries } from "@/lib/reports/statement-period";
@@ -16,10 +18,10 @@ export function StatementTabs() {
   const tabs = [
     // Income statement lives at the bare route; match it exactly so the
     // balance-sheet / cash-flow sub-routes don't also light it up.
-    { href: FS, label: "Income Statement", exact: true, query: range },
-    { href: `${FS}/balance-sheet`, label: "Balance Sheet", query: asOf },
-    { href: `${FS}/cash-flow`, label: "Cash Flow", query: range },
+    { href: FS, label: ROUTE_NAME["/staff/admin/accounting/financial-statements"], exact: true, query: range },
+    { href: `${FS}/balance-sheet`, label: ROUTE_NAME["/staff/admin/accounting/financial-statements/balance-sheet"], query: asOf },
+    { href: `${FS}/cash-flow`, label: ROUTE_NAME["/staff/admin/accounting/financial-statements/cash-flow"], query: range },
   ];
 
-  return <SectionTabs label="Financial statement sections" tabs={tabs} />;
+  return <SectionTabs label="Financial Statements" tabs={tabs} />;
 }

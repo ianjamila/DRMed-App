@@ -367,7 +367,7 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
           href="/staff/admin/payroll/runs"
           className="hover:text-[color:var(--color-brand-navy)]"
         >
-          {"<-"} Pay runs
+          {"<-"} Run Payroll
         </Link>
       </p>
 

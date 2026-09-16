@@ -1,3 +1,5 @@
+import { PageHeader } from "@/components/staff/page-header";
+import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { listBillsAction } from "@/lib/actions/accounting/bills";
@@ -6,7 +8,7 @@ import { listVendorsAction } from "@/lib/actions/accounting/vendors";
 import { BillsIndexClient } from "./bills-index-client";
 import Link from "next/link";
 
-export const metadata = { title: "Bills" };
+export const metadata = { title: ROUTE_NAME["/staff/admin/accounting/ap/bills"] };
 export const dynamic = "force-dynamic";
 
 export default async function BillsIndexPage({
@@ -41,18 +43,14 @@ export default async function BillsIndexPage({
 
   return (
     <div>
-      <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-            Phase 12.4 · Admin · AP
-          </p>
-          <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            Vendor Bills
-          </h1>
-          <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
-            Invoices with a due date. For expenses already paid (cash, GCash, or
-            the owner&apos;s own pocket), use <strong>Quick expense</strong> instead.
-          </p>
+          <PageHeader
+            eyebrow={SECTION_NAME["/staff/admin/accounting/ap"]}
+            title={ROUTE_NAME["/staff/admin/accounting/ap/bills"]}
+            subtitle={<>Invoices with a due date. For expenses already paid (cash, GCash, or
+            the owner&apos;s own pocket), use <strong>Quick expense</strong> instead.</>}
+          />
         </div>
         <Link
           href="/staff/admin/accounting/ap/bills/new"
@@ -60,7 +58,7 @@ export default async function BillsIndexPage({
         >
           + New bill
         </Link>
-      </header>
+      </div>
 
       {bills.ok ? (
         <BillsIndexClient

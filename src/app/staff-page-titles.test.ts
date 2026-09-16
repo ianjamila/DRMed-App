@@ -1,3 +1,5 @@
+import ts from "typescript";
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -47,7 +49,8 @@ import { describe, expect, it } from "vitest";
  * WHAT IT DOES NOT DO
  * -------------------
  * It does not police the WORDING of a title against the route's tab label —
- * that is the naming registry's job, and the section names are still in flux.
+ * navigation registry references are checked by staff-nav-config.test.ts.
+ * Client headings and branch-dependent titles cannot be inferred from text.
  * It only enforces the shape: a bare route name, exactly once, on every page.
  */
 
@@ -75,6 +78,29 @@ function walkFiles(dir: string, out: string[] = []): string[] {
 const files = walkFiles(STAFF_DIR);
 const rel = (f: string) => relative(process.cwd(), f).split(sep).join("/");
 
+/** Inspect exports, not comments or rendered headings. Both Next metadata APIs
+ * are valid, but exporting both on one route is not. */
+function metadataExports(source: string): string[] {
+  const sf = ts.createSourceFile("page.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const names: string[] = [];
+  const isMetadata = (name: string) => name === "metadata" || name === "generateMetadata";
+  for (const statement of sf.statements) {
+    if (ts.isExportDeclaration(statement) && statement.exportClause && ts.isNamedExports(statement.exportClause)) {
+      for (const item of statement.exportClause.elements) {
+        if (isMetadata(item.name.text)) names.push(item.name.text);
+      }
+    }
+    if (!ts.canHaveModifiers(statement) || !ts.getModifiers(statement)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)) continue;
+    if (ts.isFunctionDeclaration(statement) && statement.name?.text === "generateMetadata" && statement.body) names.push("generateMetadata");
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (ts.isIdentifier(declaration.name) && declaration.initializer && isMetadata(declaration.name.text)) names.push(declaration.name.text);
+      }
+    }
+  }
+  return names;
+}
+
 describe("staff page titles", () => {
   it("no page re-states the site or section suffix — the template adds it", () => {
     const offenders: string[] = [];
@@ -89,6 +115,9 @@ describe("staff page titles", () => {
       }
     }
 
+    for (const [href, title] of Object.entries(ROUTE_NAME)) {
+      if (SUFFIX_RE.test(title)) offenders.push(`${href} — "${title}"`);
+    }
     expect(offenders, "hand-written title suffixes").toEqual([]);
   });
 
@@ -97,14 +126,11 @@ describe("staff page titles", () => {
       .filter((f) => f.endsWith(`${sep}page.tsx`))
       .filter((f) => {
         const src = readFileSync(f, "utf8");
-        return (
-          !/export\s+const\s+metadata\b/.test(src) &&
-          !/export\s+(async\s+)?function\s+generateMetadata\b/.test(src)
-        );
+        return metadataExports(src).length !== 1;
       })
       .map(rel);
 
-    expect(untitled, "staff pages with no title of their own").toEqual([]);
+    expect(untitled, "staff pages must export exactly one metadata API").toEqual([]);
   });
 
   it("exactly one staff layout owns the title template, and it is the group layout", () => {
@@ -114,5 +140,49 @@ describe("staff page titles", () => {
       .map(rel);
 
     expect(owners).toEqual([GROUP_LAYOUT.split(sep).join("/")]);
+  });
+});
+
+// These are the agreed route names, not assertions about rendered page source.
+describe("audited route names", () => {
+  it.each([
+    ["/staff/admin/accounting/ap", "Expenses Overview"],
+    ["/staff/admin/accounting/ap/quick-expense", "Quick Expense"],
+    ["/staff/admin/accounting/ap/bills", "Vendor Bills"],
+    ["/staff/admin/accounting/ap/payments", "Bill Payments"],
+    ["/staff/admin/accounting/ap/vendors", "Vendors"],
+    ["/staff/admin/accounting/ap/recurring", "Recurring Bills"],
+    ["/staff/admin/operations", "Daily Sheet"],
+    ["/staff/admin/operations/cash", "Cash & Cards"],
+    ["/staff/admin/operations/expenses", "Expenses & P&L"],
+    ["/staff/admin/operations/hmo", "HMO Receivables"],
+    ["/staff/admin/operations/trends", "Monthly Trends"],
+    ["/staff/admin/accounting/financial-statements", "Income Statement"],
+    ["/staff/admin/accounting/financial-statements/balance-sheet", "Balance Sheet"],
+    ["/staff/admin/accounting/financial-statements/cash-flow", "Cash Flow"],
+    ["/staff/payments/eod", "End of Day"],
+    ["/staff/marketing", "Ad Performance"],
+    ["/staff/marketing/ops", "Ops Tracker"],
+    ["/staff/admin/accounting/periods", "Monthly Periods"],
+    ["/staff/admin/payroll/runs", "Run Payroll"],
+  ])("%s is %s", (href, title) => {
+    expect(ROUTE_NAME[href]).toBe(title);
+  });
+});
+
+describe("metadata export detection", () => {
+  it.each([
+    'export const metadata = { title: "Bill" };',
+    'export async function generateMetadata() { return { title: "Bill · Vendor" }; }',
+    'export const generateMetadata = async () => ({ title: "Bill" });',
+    'const titleForPage = async () => ({ title: "Bill" }); export { titleForPage as generateMetadata };',
+  ])("accepts a real metadata export: %s", (source) => {
+    expect(metadataExports(source)).toHaveLength(1);
+  });
+  it("does not accept a comment or a non-exported function", () => {
+    expect(metadataExports('// export const metadata = {}\nfunction generateMetadata() { return { title: "Bill" }; }')).toEqual([]);
+  });
+  it("detects both APIs on one route", () => {
+    expect(metadataExports('export const metadata = {}; export async function generateMetadata() { return {}; }')).toHaveLength(2);
   });
 });

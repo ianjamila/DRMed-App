@@ -1,7 +1,8 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { OpsTracker } from "../_components/ops-tracker";
 
-export const metadata = { title: "Ops tracker" };
+export const metadata = { title: ROUTE_NAME["/staff/marketing/ops"] };
 export const dynamic = "force-dynamic";
 
 // Marketing operations tracker (marketing workspace, tab 2 of 2). A read-only

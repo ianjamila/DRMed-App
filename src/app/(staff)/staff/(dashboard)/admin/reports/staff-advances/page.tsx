@@ -147,7 +147,7 @@ export default async function StaffAdvancesPage({
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6">
-        <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">Phase 12.C · Admin · Reports</p>
+        <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">Books &amp; Reports</p>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">Staff advances</h1>
           <ExportCsvLink href={staffAdvancesCsvHref()} />

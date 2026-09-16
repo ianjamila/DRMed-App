@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DAILY_REVENUE_CSV_HEADER,
+  dailyRevenueRedirectHref,
   dailyRevenueCsvFilename,
   dailyRevenueCsvHref,
   dailyRevenueCsvRows,
@@ -58,5 +59,14 @@ describe("href / filename", () => {
   it("carries the same filters the page shows", () => {
     expect(dailyRevenueCsvHref(p)).toBe("/api/admin/reports/daily-revenue.csv?from=2026-09-01&to=2026-09-08");
     expect(dailyRevenueCsvFilename(p)).toBe("daily-revenue-2026-09-01_2026-09-08.csv");
+  });
+});
+
+describe("legacy Daily Revenue redirect", () => {
+  it("preserves selected periods and repeated query values", () => {
+    expect(dailyRevenueRedirectHref({ from: "2026-08-01", to: "2026-08-31", tag: ["a&b", "c"], unset: undefined })).toBe("/staff/admin/operations/daily-revenue?from=2026-08-01&to=2026-08-31&tag=a%26b&tag=c");
+  });
+  it("keeps a bare bookmark bare, preserving month-to-date defaults", () => {
+    expect(dailyRevenueRedirectHref({})).toBe("/staff/admin/operations/daily-revenue");
   });
 });

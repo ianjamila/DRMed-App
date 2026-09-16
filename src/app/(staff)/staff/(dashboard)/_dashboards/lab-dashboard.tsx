@@ -1,3 +1,4 @@
+import { quickLinksFor } from "@/components/staff/staff-nav-config";
 import type { StaffSession } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
 import { sectionsForRole, type ServiceSection } from "@/lib/auth/role-sections";
@@ -10,7 +11,7 @@ import { RealtimeRefresher } from "@/components/staff/realtime-refresher";
 import { DashboardHeader } from "./_components/dashboard-header";
 import { SectionHeading } from "./_components/section-heading";
 import { StatCard } from "./_components/stat-card";
-import { QuickLinks, type QuickLink } from "./_components/quick-links";
+import { QuickLinks } from "./_components/quick-links";
 import { ActivityStrip, type ActivityItem } from "./_components/activity-strip";
 import { relativeAge } from "./_components/format";
 
@@ -35,23 +36,6 @@ const ROLE_LABEL: Record<Role, string> = {
 const SKIP_COUNT = Promise.resolve({ count: 0, data: null, error: null });
 const SKIP_DATA = Promise.resolve({ data: null, error: null });
 
-function buildQuickLinks(role: Role): QuickLink[] {
-  const links: QuickLink[] = [
-    { href: "/staff/queue", label: "Queue" },
-  ];
-  if (role === "medtech" || role === "admin") {
-    links.push({ href: "/staff/quote", label: "Quick Quote" });
-  }
-  if (role === "admin") {
-    links.push({ href: "/staff/admin/result-templates", label: "Result Templates" });
-  }
-  // No /staff/signoff quicklink: that route is still a data-less placeholder
-  // (see the pathologist's ready_for_signoff / strip_pending_signoff cards,
-  // both defaultHidden in cards.ts). No /staff/payslips either — owner
-  // decision 5 (2026-09-15) took both Personal shortcuts off the dashboards;
-  // My Payslips stays reachable from the sidebar's Personal section.
-  return links;
-}
 
 // test_requests has NO foreign key to patients — only via visits. Embedding
 // `patients ( … )` directly on test_requests errors at query time (silently,
@@ -492,7 +476,7 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
 
   const showMyQueue = role === "medtech" || role === "xray_technician";
   const showSignoff = role === "pathologist";
-  const quickLinks = buildQuickLinks(role);
+  const quickLinks = quickLinksFor(role, "lab");
 
   // Each SectionHeading below wraps its cards in a literal <div>, which is
   // always truthy — its own `if (!children)` check can never see "every card

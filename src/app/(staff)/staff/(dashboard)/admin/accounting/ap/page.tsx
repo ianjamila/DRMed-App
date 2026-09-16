@@ -1,8 +1,11 @@
+import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
+import Link from "next/link";
+import { PageHeader } from "@/components/staff/page-header";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { getAPDashboardAction } from "@/lib/actions/accounting/ap-dashboard";
 import { APDashboardClient } from "./ap-dashboard-client";
 
-export const metadata = { title: "Accounts Payable" };
+export const metadata = { title: ROUTE_NAME["/staff/admin/accounting/ap"] };
 export const dynamic = "force-dynamic";
 
 export default async function APDashboardPage() {
@@ -11,19 +14,19 @@ export default async function APDashboardPage() {
 
   return (
     <div className="space-y-6">
-      <header>
-        <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-          Phase 12.4 · Admin · AP
-        </p>
-        <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Bills overview
-        </h1>
-        <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
-          Operating-expense AP at a glance: outstanding by aging bucket,
-          draft-rot detector, upcoming recurring runs, top vendors, and
-          withholding tax so far this month.
-        </p>
-      </header>
+      <PageHeader
+        eyebrow={SECTION_NAME["/staff/admin/accounting/ap"]}
+        title={ROUTE_NAME["/staff/admin/accounting/ap"]}
+        subtitle="Operating expenses (accounts payable) at a glance: outstanding by aging bucket, draft-rot detector, upcoming recurring runs, top vendors, and withholding tax so far this month."
+        actions={
+          <Link
+            href="/staff/admin/accounting/ap/quick-expense"
+            className="inline-flex min-h-11 items-center rounded-md border border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-cyan)] px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-[color:var(--color-brand-cyan-mid)]"
+          >
+            + Quick expense
+          </Link>
+        }
+      />
 
       {r.ok ? (
         <APDashboardClient data={r.data} />

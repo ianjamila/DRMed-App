@@ -1,5 +1,8 @@
 "use client";
 
+import { SECTION_NAME } from "@/lib/staff/route-names";
+import { PageHeader } from "@/components/staff/page-header";
+
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -167,17 +170,13 @@ export function BillDetailClient({
   return (
     <div className="space-y-6">
       {/* HEADER */}
-      <header className="flex flex-wrap items-start justify-between gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-            Phase 12.4 · Admin · AP · Bill
-          </p>
-          <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            {bill.bill_number}
-          </h1>
-          <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
-            {vendor?.name ?? "—"} · Invoice {bill.vendor_invoice_number ?? "—"} · billed {manilaDate(bill.bill_date)} · due {manilaDate(bill.due_date)}
-          </p>
+          <PageHeader
+            eyebrow={SECTION_NAME["/staff/admin/accounting/ap"]}
+            title={bill.bill_number}
+            subtitle={<>{vendor?.name ?? "—"} · Invoice {bill.vendor_invoice_number ?? "—"} · billed {manilaDate(bill.bill_date)} · due {manilaDate(bill.due_date)}</>}
+          />
           {bill.description && (
             <p className="mt-2 text-sm text-[color:var(--color-brand-text-soft)]">{bill.description}</p>
           )}
@@ -228,7 +227,7 @@ export function BillDetailClient({
             </Button>
           )}
         </div>
-      </header>
+      </div>
 
       {error && (
         <Alert variant="destructive">

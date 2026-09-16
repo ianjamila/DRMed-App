@@ -1,3 +1,4 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 import { SectionTabs } from "@/components/staff/section-tabs";
 
 const BASE = "/staff/marketing";
@@ -5,8 +6,8 @@ const BASE = "/staff/marketing";
 const TABS = [
   // Ad performance owns the bare base route; exact keeps it from lighting up
   // on the /ops sibling (same pattern as the AP Overview tab).
-  { href: BASE, label: "Ad Performance", exact: true },
-  { href: `${BASE}/ops`, label: "Ops Tracker" },
+  { href: BASE, label: ROUTE_NAME["/staff/marketing"], exact: true },
+  { href: `${BASE}/ops`, label: ROUTE_NAME["/staff/marketing/ops"] },
 ];
 
 export function MarketingTabs() {

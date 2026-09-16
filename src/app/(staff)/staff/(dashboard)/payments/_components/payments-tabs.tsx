@@ -1,5 +1,7 @@
 "use client";
 
+import { ROUTE_NAME } from "@/lib/staff/route-names";
+
 import { useSearchParams } from "next/navigation";
 import { SectionTabs } from "@/components/staff/section-tabs";
 import { carryParams } from "@/lib/reports/statement-period";
@@ -10,9 +12,9 @@ import { carryParams } from "@/lib/reports/statement-period";
 // — every entry lowers the drawer's expected cash — so it is a view of the
 // drawer, not a separate page (sidebar cleanup, 2026-09-15).
 const TABS = [
-  { href: "/staff/payments/cash-drawer", label: "Cash Drawer" },
-  { href: "/staff/payments/petty-cash", label: "Petty Cash" },
-  { href: "/staff/payments/eod", label: "End of Day" },
+  { href: "/staff/payments/cash-drawer", label: ROUTE_NAME["/staff/payments/cash-drawer"] },
+  { href: "/staff/payments/petty-cash", label: ROUTE_NAME["/staff/payments/petty-cash"] },
+  { href: "/staff/payments/eod", label: ROUTE_NAME["/staff/payments/eod"] },
 ];
 
 export function PaymentsTabs() {

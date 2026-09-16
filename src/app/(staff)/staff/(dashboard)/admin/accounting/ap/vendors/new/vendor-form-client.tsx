@@ -1,5 +1,8 @@
 "use client";
 
+import { SECTION_NAME } from "@/lib/staff/route-names";
+import { PageHeader } from "@/components/staff/page-header";
+
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createVendorAction, updateVendorAction } from "@/lib/actions/accounting/vendors";
@@ -82,14 +85,12 @@ export function VendorFormClient(props: Props) {
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6 lg:px-8">
-      <header className="mb-6">
-        <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-          Phase 12.4 · Admin · AP · Vendor
-        </p>
-        <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          {mode === "create" ? "New vendor" : "Edit vendor"}
-        </h1>
-      </header>
+      <div className="mb-6">
+        <PageHeader
+          eyebrow={SECTION_NAME["/staff/admin/accounting/ap"]}
+          title={mode === "create" ? "New Vendor" : "Edit Vendor"}
+        />
+      </div>
 
       <form onSubmit={submit} className="space-y-4">
         {error && (

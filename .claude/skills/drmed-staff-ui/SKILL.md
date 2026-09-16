@@ -13,11 +13,12 @@ The three "chrome" systems every staff page hangs off of: the **sidebar nav conf
 
 | Concern | Location |
 |---|---|
+| Route and section names | `src/lib/staff/route-names.ts` (`ROUTE_NAME`, `SECTION_NAME`; dependency-free) |
 | Sidebar nav config (the single source) | `src/components/staff/staff-nav-config.ts` |
 | Shared section-tab component | `src/components/staff/section-tabs.tsx` (`SectionTabs`) |
 | Tab styling for non-component bars | `src/components/staff/section-tabs-style.ts` |
 | Per-area tab wrappers | `…/payments/_components/payments-tabs.tsx`, `…/admin/accounting/ap/_components/bills-tabs.tsx`, `…/visits/_components/visits-tabs.tsx`, `…/admin/accounting/financial-statements/_components/statement-tabs.tsx` |
-| Fixed-position tab bar via layout | `…/admin/accounting/ap/layout.tsx` |
+| Fixed-position tab bar via layout | `…/admin/accounting/ap/layout.tsx`, `…/admin/operations/layout.tsx`, `…/admin/accounting/financial-statements/layout.tsx` |
 | Page header (title, subtitle, actions slot) | `src/components/staff/page-header.tsx` (`PageHeader`) — the lab queue and Visits archive are the models for header + filter chips |
 | Print buttons (client `window.print()` wrappers) | `…/visits/[id]/receipt/print-button.tsx`, `…/payments/eod/[closeId]/count-sheet/print-button.tsx`, `…/admin/accounting/pf-payouts/[id]/slip/slip-print-button.tsx` |
 | Dashboard card registry | `src/lib/dashboards/cards.ts` |
@@ -40,6 +41,7 @@ An **item** is a `StaffNavItem`:
 { href, label, description?, exact?, activePrefixes?, excludePrefixes?, roles }
 ```
 
+- `quicklink` — dashboard audiences, order, optional group and role restriction; `quickLinksFor` / `quickLinkGroupsFor` derive every dashboard list from `STAFF_NAV`. Related form/tab links live in `shortcuts`, which never adds a sidebar row. Dashboard inclusion is independent of sidebar parking, but item roles still gate access.
 - `description` — plain-English hover tooltip + small info icon. Add it for any item whose label involves jargon; skip for self-explanatory ones.
 - `exact` — active only when `pathname === href` (use when `href` is too broad, e.g. `/staff`).
 - `activePrefixes` — extra prefixes that ALSO light the item. This is the key to consolidation (below). List sibling routes individually; never a shared parent that also covers a route no item owns.
@@ -49,7 +51,7 @@ An **item** is a `StaffNavItem`:
 **Consolidation pattern (collapse N sidebar items → 1 umbrella that opens to tabs).** Point the umbrella item's `href` at the default/first tab and list the sibling tab routes in `activePrefixes` so it stays highlighted across them. Live examples:
 
 - **Cash Drawer**: `href: /staff/payments/cash-drawer`, `activePrefixes: ["/staff/payments/petty-cash", "/staff/payments/eod"]` (lands on Cash Drawer, stays lit on the Petty Cash and End of Day tabs of `PaymentsTabs`). The routes are listed one by one on purpose: `/staff/payments` would also light it on `/staff/payments/new` (Record payment), which no sidebar item owns.
-- **Expenses**: `href: /staff/admin/accounting/ap/quick-expense`, `activePrefixes: ["/staff/admin/accounting/ap"]` (lands on Quick expense, lit across all AP tabs — here the parent is safe because every AP route is an Expenses tab).
+- **Expenses**: `href: /staff/admin/accounting/ap` (lands on Overview and stays lit across AP descendants; Quick expense is an Overview header action).
 - **Visit Records** (Billing): `href: /staff/visits` with `excludePrefixes: ["/staff/visits/new", "/staff/visits/queue"]` — the queue is owned by Front Desk › Reception Queue and the New visit form by no item (it is the queue's + New visit action), so the umbrella pattern is inverted here: exclusions, not `activePrefixes`.
 - **Patients**: `href: /staff/patients` with NO exclusions — the default prefix match keeps it lit on `/staff/patients/new`, which is reached from the page's own + New patient button (the "New patient registration" item was removed 2026-09-15).
 - **Outside-Lab Costs** excludes `…/send-outs/vendor-performance` because the Outside-Lab Performance item lives under its href.
@@ -76,7 +78,7 @@ interface SectionTab { href: string; label: string; exact?: boolean; excludePref
 
 **A tab bar has to be a set of views, not a set of URLs.** `SectionTabs` promises "different views of the same thing", so only group pages that share a subject. `visits-tabs.tsx` is the cautionary example: it was built as New visit | Archive (create vs browse the visit record), then the Reception Queue was dropped in for sharing the `/staff/visits` prefix — pairing a live day worklist with a records archive, under labels that contradicted the sidebar's own names for the same routes. The queue now renders no bar and carries a `+ New visit` **action** in its `PageHeader` `actions` slot instead. When a cross-page shortcut is genuinely useful but the pages aren't siblings, that's the shape to reach for.
 
-**One route, one name — in every surface that points at it.** A route is named in up to five places: the page `<h1>`, its `metadata.title`, the sidebar item in `staff-nav-config.ts`, any `SectionTabs` label, and the role-dashboard quicklinks in `_dashboards/*-dashboard.tsx`. They drift independently, and the drift is invisible until someone reads two of them side by side — `/staff/visits` was "Visits" in the sidebar, "Archive" in its tab and "Visits" in its own h1, while the `/staff/visits/new` picker *also* titled itself "Visits". Grep all five before renaming (the 2026-09-15 "Visit archive" → "Visit Records" rename touched the sidebar, `visits-tabs.tsx`, `visits/page.tsx` metadata + h1, the reception dashboard quick link and eight lines of the user guide), and when two sidebar items deliberately share one destination, have the page echo the entry point back — `PICKER_TITLE[filter ?? "none"]` — rather than picking one name and contradicting the other.
+**One route, one name — in every surface that points at it.** Navigation leaves, tab configs and dashboard quicklinks read `ROUTE_NAME[href]`. Section umbrellas read `SECTION_NAME[href]` (Expenses, Daily Monitoring, Financial Statements, Marketing); AP’s contextual Overview tab, role-adaptive Queue, and metric-card labels are documented exceptions in `staff-nav-config.test.ts`. That AST guard checks registry references and import bindings; `staff-page-titles.test.ts` owns metadata presence and suffixes. Never infer rendered headings by source-text scanning. A route is named in up to five places: the page `<h1>`, its `metadata.title`, the sidebar item in `staff-nav-config.ts`, any `SectionTabs` label, and the role-dashboard quicklinks in `_dashboards/*-dashboard.tsx`. They drift independently, and the drift is invisible until someone reads two of them side by side — `/staff/visits` was "Visits" in the sidebar, "Archive" in its tab and "Visits" in its own h1, while the `/staff/visits/new` picker *also* titled itself "Visits". Grep all five before renaming (the 2026-09-15 "Visit archive" → "Visit Records" rename touched the sidebar, `visits-tabs.tsx`, `visits/page.tsx` metadata + h1, the reception dashboard quick link and eight lines of the user guide), and when two sidebar items deliberately share one destination, have the page echo the entry point back — `PICKER_TITLE[filter ?? "none"]` — rather than picking one name and contradicting the other.
 
 **Param-driven bars that can't use the component** (e.g. a server-component scope filter like patient-AR's non-HMO/HMO/all) should import `sectionTabsNavClass` and `sectionTabClass(active)` from `section-tabs-style.ts` and apply them inline, so they match the navy style exactly without the client component.
 
@@ -158,8 +160,7 @@ form, not of the route, so the page frame stays put while the content inside it
 is as wide as it should be.
 
 **2 · One header component.** Every page opens with `PageHeader`
-(`title`, optional `subtitle`, optional `actions`). Don't hand-roll an `<h1>`
-block, and don't add an eyebrow line above the title — no sibling has one.
+(`title`, optional `eyebrow`, `subtitle`, and `actions`). In Expenses, Daily Monitoring, Financial Statements and Marketing, use `eyebrow={SECTION_NAME[sectionHref]}`; never repeat the kicker in the layout or hand-roll it above the header. The existing nav guard enforces this component contract.
 
 **Never put controls in `actions` beside a subtitle whose length varies.** They
 share one `flex flex-wrap items-start justify-between` row, so a longer

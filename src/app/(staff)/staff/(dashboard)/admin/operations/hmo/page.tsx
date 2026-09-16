@@ -1,3 +1,5 @@
+import { PageHeader } from "@/components/staff/page-header";
+import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
@@ -10,7 +12,6 @@ import {
 import { fetchAllRows, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 import Link from "next/link";
 import { Card } from "@/components/ui/card";
-import { OperationsTabs } from "../_components/operations-tabs";
 import { DateControls } from "../_components/date-controls";
 import { HmoSummaryCards } from "./_components/hmo-summary-cards";
 import { HmoArMatrixTable } from "./_components/hmo-ar-matrix";
@@ -23,7 +24,7 @@ interface SearchParams {
   to?: string;
 }
 
-export const metadata = { title: "HMO receivables" };
+export const metadata = { title: ROUTE_NAME["/staff/admin/operations/hmo"] };
 
 export default async function HmoReceivablesPage({
   searchParams,
@@ -92,9 +93,11 @@ export default async function HmoReceivablesPage({
     ]);
   } catch {
     return (
-      <div className="p-4">
-        <h1 className="text-xl font-semibold text-[color:var(--color-brand-navy)]">Operations</h1>
-        <OperationsTabs />
+      <div className="space-y-4">
+        <PageHeader
+          eyebrow={SECTION_NAME["/staff/admin/operations"]}
+          title={ROUTE_NAME["/staff/admin/operations/hmo"]}
+        />
         <Card className="mt-6 px-4 text-sm text-destructive">
           Could not load the HMO receivables report. Please try again.
         </Card>
@@ -104,9 +107,11 @@ export default async function HmoReceivablesPage({
 
   if (agingRes.error) {
     return (
-      <div className="p-4">
-        <h1 className="text-xl font-semibold text-[color:var(--color-brand-navy)]">Operations</h1>
-        <OperationsTabs />
+      <div className="space-y-4">
+        <PageHeader
+          eyebrow={SECTION_NAME["/staff/admin/operations"]}
+          title={ROUTE_NAME["/staff/admin/operations/hmo"]}
+        />
         <Card className="mt-6 px-4 text-sm text-destructive">
           Could not load the HMO receivables report. Please try again.
         </Card>
@@ -132,10 +137,11 @@ export default async function HmoReceivablesPage({
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-2xl font-semibold text-[#0b2a4a]">HMO Receivables</h1>
-          <p className="text-sm text-muted-foreground">
-            Per-provider lab-HMO AR roll-forward — billed in, paid out, running balance.
-          </p>
+          <PageHeader
+            eyebrow={SECTION_NAME["/staff/admin/operations"]}
+            title={ROUTE_NAME["/staff/admin/operations/hmo"]}
+            subtitle={<>Per-provider lab-HMO AR roll-forward — billed in, paid out, running balance.</>}
+          />
         </div>
         {/* A4: this screen answers "what does each HMO owe us"; the claims
             worklist is where you do something about it. Read-only report,
@@ -149,7 +155,6 @@ export default async function HmoReceivablesPage({
           Chase these claims →
         </Link>
       </div>
-      <OperationsTabs />
       <DateControls key={`${from}_${to}`} from={from} to={to} today={today} basePath={BASE} />
       {truncated ? (
         <p className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
