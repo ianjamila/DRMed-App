@@ -74,6 +74,14 @@ export async function GET(request: Request) {
     }
   }
 
+  // Run heartbeat, including quiet days with no appointments due.
+  await audit({
+    actor_id: null,
+    actor_type: "system",
+    action: "appointment.reminders.completed",
+    metadata: { processed: due?.length ?? 0, emailed, skipped_no_email: skippedNoEmail, failures: failures.length },
+  });
+
   return Response.json({
     window: { startIso, endIso },
     processed: due?.length ?? 0,

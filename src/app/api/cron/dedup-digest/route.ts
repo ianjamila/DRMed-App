@@ -23,6 +23,12 @@ export async function GET(request: Request) {
     }
 
     if (pairs.length === 0) {
+      await audit({
+        actor_id: null,
+        actor_type: "system",
+        action: "system.dedup_digest.completed",
+        metadata: { candidates: 0, emailed: 0 },
+      });
       return Response.json({ candidates: 0, emailed: 0 });
     }
 
@@ -67,6 +73,12 @@ export async function GET(request: Request) {
       actor_type: "system",
       action: "system.dedup_digest.sent",
       metadata: { candidates: pairs.length, by_tier: byTier, recipients: recipients.length, emailed },
+    });
+    await audit({
+      actor_id: null,
+      actor_type: "system",
+      action: "system.dedup_digest.completed",
+      metadata: { candidates: pairs.length, recipients: recipients.length, emailed },
     });
     return Response.json({ candidates: pairs.length, recipients: recipients.length, emailed });
   } catch (error) {

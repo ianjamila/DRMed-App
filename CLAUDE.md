@@ -83,8 +83,10 @@ Compliance target: **Philippine Data Privacy Act (RA 10173)**. Locale: en-PH, As
 | `npm run seed:test` / `seed:services` / `seed:physicians` / `seed:hmo` / `seed:templates` / `seed:signatures` / etc. | Idempotent seed scripts — target the **local** stack by default (see below) |
 | `npm run smoke:results` / `smoke:chemistry` / `smoke:dashboards` | Render-pipeline / consolidated-chemistry / dashboard smoke tests |
 
-There is **no PR-triggered CI** — `.github/workflows/` holds only the scheduled
-`db-backup.yml`. The Vercel preview build is the only automated gate, so run
+There is **no PR-triggered CI** — `.github/workflows/` holds only scheduled jobs:
+`db-backup.yml` and `cron-watchdog.yml` (the external uptime check for the Vercel
+crons; its `watched()` table must gain a row, with its own `active_from`, whenever
+`vercel.json` gains a cron). The Vercel preview build is the only automated gate, so run
 `npm test && npm run typecheck && npm run lint` locally before pushing. Vercel deploys
 `main` automatically: **a migration must be on prod before its app PR merges.**
 
