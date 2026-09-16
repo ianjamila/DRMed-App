@@ -130,4 +130,3 @@ windows as (
 )
 select 'Q321_eligible_max_quarter_plus_7_days' metric,coalesce(max(n7),0)::bigint n from windows
 union all select 'Q324_eligible_max_quarter_plus_3_days',coalesce(max(n3),0)::bigint from windows;
-
