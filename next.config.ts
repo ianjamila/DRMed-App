@@ -50,12 +50,12 @@ const withLocalSupabase = (
 // .com. Miss any one of these and the tag fails **silently**: no console
 // error the user will see, no conversion, and Google Ads simply reports zero.
 // Listed host-by-host rather than as https://*.google.com so the allowance
-// stays auditable.
+// stays auditable; ad.doubleclick.net is the conversion-collection (/ccm/s/collect) endpoint.
 const GOOGLE_ADS_SCRIPT_HOSTS =
   "https://www.googletagmanager.com https://www.googleadservices.com";
 const GOOGLE_ADS_BEACON_HOSTS =
   "https://www.googletagmanager.com https://www.googleadservices.com " +
-  "https://googleads.g.doubleclick.net https://www.google.com https://www.google.com.ph";
+  "https://googleads.g.doubleclick.net https://ad.doubleclick.net https://www.google.com https://www.google.com.ph";
 const GOOGLE_ADS_FRAME_HOSTS =
   "https://td.doubleclick.net https://googleads.g.doubleclick.net " +
   "https://www.googleadservices.com";
