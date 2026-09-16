@@ -3,7 +3,7 @@
 **Date:** 2026-09-16
 **Branch:** `perf/rls-initplan-realtime`
 **Migration:** `0150_rls_initplan_and_policy_consolidation.sql`
-**Status:** design approved, pending spec review
+**Status:** design approved 2026-09-16; all four phases in scope; pending spec review
 
 ---
 
@@ -168,8 +168,8 @@ RLS-evaluated against every live subscription.
 
 ## 4. Scope
 
-Four phases in one PR. **Phase 2 is separable and should be dropped if there is any
-hesitation** — see §4.2 and §7.
+Four phases in one PR, all four approved to ship (§8). Phase 2 is the only one that alters
+policy semantics, so it lands as its own commit and carries its own gate — see §4.2 and §7.2.
 
 ### 4.1 Phase 1 — InitPlan hoisting (semantically inert)
 
@@ -229,12 +229,38 @@ OR'd with a staff read policy.
 Consolidation merges each pair into one policy with the staff check **first**, so the
 expensive patient subquery short-circuits for staff sessions.
 
-**Hard constraint:** several of these pairs have *different role lists* — e.g.
-`services: public read active` is `{anon, authenticated}` while `services: staff read` is
-`{authenticated}`. Policies with differing role lists **must not** be naively merged. Either
-keep them separate or merge to the union role list only after proving the added role sees
-no additional rows (for `anon`, `has_role()` is false because `auth.uid()` is null — but
-this must be *proved by the harness*, not reasoned about).
+**Hard constraint — consolidate within a role list, never across one.** Several pairs have
+*different* role lists: `services: public read active` is `{anon, authenticated}` while
+`services: staff read` is `{authenticated}`. Merging those into one policy over the union
+role list would widen `anon`'s reachable expression, and that is precisely how an
+anon-readable exposure gets shipped.
+
+The rule, which removes the risk entirely rather than testing for it:
+
+> Group the policies on a table by `(cmd, role)`. Emit **one** permissive policy per group.
+> A policy currently granted to N roles is split into N single-role policies first, then
+> consolidated within each role.
+
+Worked example — `services` SELECT, from two policies over mismatched role lists to two
+policies over disjoint role lists:
+
+```sql
+-- anon keeps exactly the expression it has today
+create policy "services: anon read active" on public.services
+  for select to anon
+  using (is_active = true);
+
+-- authenticated gets both arms OR'd, staff check first so it short-circuits
+create policy "services: authenticated read" on public.services
+  for select to authenticated
+  using ((select has_role(array['admin','reception','medtech','pathologist','xray_technician']))
+         or is_active = true);
+```
+
+This satisfies the advisor (one permissive policy per role per action), delivers the
+short-circuit, and leaves every role's expression either identical or provably narrower.
+`anon`'s expression must be **byte-identical** to its current one in every one of the nine
+tables; the harness asserts this independently of the row-visibility proof.
 
 ### 4.3 Phase 3 — Realtime churn
 
@@ -351,14 +377,39 @@ reset the view at deploy time and compare a clean window.
    immediately before push — `ls supabase/migrations` in this worktree cannot see a number
    claimed by an unmerged sibling. A duplicate number makes `supabase db push` skip the file
    and exit 0 reporting "up to date", applying nothing.
-2. Local stack: `db reset`, seed fixture, run equivalence proof + control test.
-3. Typecheck, lint, `vitest run`.
-4. Review, merge, `db push`. **Verify objects, not the summary line** — query `pg_policies`
-   and confirm the wrapped form is live.
-5. Re-measure §5.4 and record results in this file.
+2. Local stack: `supabase start` (OrbStack), `npm run db:reset`, seed fixture, run the
+   equivalence proof + control test.
+3. `npm test && npm run typecheck && npm run lint`. There is no PR-triggered CI in this repo
+   — the Vercel preview build is the only automated gate, so these run locally or not at all.
+4. Open the PR.
+5. **Apply to prod BEFORE merging** — a migration must be live before its app PR merges, or
+   the preview build fails. **The owner runs the push, not the agent:**
+   `! cd ~/Claude/DRMed && /opt/homebrew/bin/supabase db push`. Agent-run pushes and MCP DDL
+   are blocked by the auto-mode classifier. **Never** use MCP `apply_migration` — it stamps a
+   timestamp version, and `db push` then re-applies the file.
+6. Verify on prod: ledger head, then **query `pg_policies` and confirm the wrapped form is
+   live**. Verify objects, never the summary line — a duplicate number makes `db push` report
+   success and apply nothing.
+7. Merge, then confirm the Vercel **production** deploy landed. Merge ≠ deploy.
+8. `npm run db:types` — an empty diff is expected for a policy-only migration.
+9. Re-measure §5.4 and record the results in this file.
 
-**Deploy window:** the migration takes `ACCESS EXCLUSIVE` on 91 tables. Each lock is brief
-(a policy swap, no table rewrite), but it should land outside clinic hours.
+**Before implementing, read the two domain skills CLAUDE.md points at:** `drmed-migrations`
+(the RLS-policy + audit-row + function-ACL migration checklist, and the P-code registry) and
+`drmed-rls-and-auth` (the most compliance-sensitive surface in the app, and the owner of the
+`current_patient_id()` claim bridge this migration touches). Do not re-derive either.
+
+No new P-code is required — this migration raises no exceptions. Function ACLs are untouched:
+`has_role()` and `current_patient_id()` are not redefined, and grants survive a policy
+replace.
+
+**Stale note in CLAUDE.md:** it records "prod head = 0148, 0149 in flight on
+`fix/ap-cash-drawer`". As of 2026-09-16, 0149 **is** on prod and merged to main. Worth
+correcting in whichever PR next touches migrations.
+
+**Deploy window:** any time. The migration takes `ACCESS EXCLUSIVE` on 91 tables, but each
+lock is a policy swap with no table rewrite, so total lock time is well under a second on a
+database this size. Owner decision, 2026-09-16.
 
 ---
 
@@ -370,18 +421,25 @@ reset the view at deploy time and compare a clean window.
 equivalence proof covering `anon`, and the control test proving the proof works. The user
 approved this scope explicitly with the blast radius stated.
 
-### 7.2 Phase 2 is the only part that can change behaviour — recommend dropping it
+### 7.2 Phase 2 is the only part that can change behaviour
 
 Phase 1 changes *when* a function is evaluated. Phase 2 changes *what the policy says*. Only
 one of those can leak data.
 
-After Phase 1, a second stacked policy costs one additional InitPlan per query — not per
-row. On a 12 MB database that is unmeasurable. **Phase 2's performance benefit rounds to
-zero, while carrying all of this PR's security risk.**
+Deferring Phase 2 was raised and considered: after Phase 1, a stacked policy costs one extra
+InitPlan per query rather than per row, so its measurable speed benefit on a 12 MB database
+rounds to zero. **The owner decided on 2026-09-16 to ship all four phases.** Recorded so a
+future reader knows the trade-off was weighed, not missed.
 
-Recommendation: ship Phases 1, 3 and 4; move Phase 2 to a follow-up where it can be
-reviewed on its own merits. It is structured as a separable phase precisely so it can be
-dropped without touching anything else.
+Because it is shipping, Phase 2 is gated harder rather than dropped:
+
+- Consolidation happens **within** a role list, never across one (§4.2). No role's expression
+  is ever widened, so the dangerous case is engineered out instead of tested for.
+- `anon`'s policy expression must be byte-identical before and after on all nine tables — a
+  static assertion, independent of the row-visibility proof, so a fixture gap cannot hide it.
+- The nine consolidations land as their own reviewable commit, separate from the generated
+  Phase 1 DDL, so a reviewer reads nine hand-written policies rather than hunting them inside
+  a 148-edit generated diff.
 
 ### 7.3 Speed can unmask row-cap bugs
 
@@ -400,7 +458,10 @@ edits `list-pagination.tsx` — same directory, different files, no conflict.
 
 ---
 
-## 8. Open questions
+## 8. Decisions
 
-1. Ship Phase 2, or defer it per §7.2? **Recommendation: defer.**
-2. Confirm the deploy window for the `ACCESS EXCLUSIVE` migration.
+Both open questions were resolved by the owner on 2026-09-16:
+
+1. **Ship all four phases**, including the Phase 2 consolidation. Deferral was offered and
+   declined; Phase 2 is gated per §7.2 instead.
+2. **Deploy any time** — no after-hours window required. See §6.
