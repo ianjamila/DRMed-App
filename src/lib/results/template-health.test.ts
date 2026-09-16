@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   deriveTemplateHealthFindings,
+  shouldEmailTemplateHealth,
+  type TemplateHealthFinding,
   type TemplateHealthGroup,
 } from "./template-health";
 
@@ -17,6 +19,36 @@ function group(overrides: Partial<TemplateHealthGroup>): TemplateHealthGroup {
     ...overrides,
   };
 }
+
+describe("shouldEmailTemplateHealth", () => {
+  const finding = (severity: TemplateHealthFinding["severity"]): TemplateHealthFinding => ({
+    type: "stray_service_template",
+    severity,
+    group_id: "grp-1",
+    group_code: "CHEMISTRY",
+    group_name: "Chemistry",
+    template_id: "stray-tpl",
+    message: "Template finding",
+  });
+
+  it("keeps info-only findings silent daily but includes them in the weekly digest", () => {
+    const findings = [finding("info")];
+    expect(shouldEmailTemplateHealth(findings, "daily")).toBe(false);
+    expect(shouldEmailTemplateHealth(findings, "weekly")).toBe(true);
+  });
+
+  it("does not email an empty scan in either mode", () => {
+    expect(shouldEmailTemplateHealth([], "daily")).toBe(false);
+    expect(shouldEmailTemplateHealth([], "weekly")).toBe(false);
+  });
+
+  it.each(["error", "warning"] as const)("emails %s findings in both modes, including alongside info", (severity) => {
+    for (const findings of [[finding(severity)], [finding("info"), finding(severity)]]) {
+      expect(shouldEmailTemplateHealth(findings, "daily")).toBe(true);
+      expect(shouldEmailTemplateHealth(findings, "weekly")).toBe(true);
+    }
+  });
+});
 
 describe("deriveTemplateHealthFindings", () => {
   it("a fully healthy group produces no findings", () => {
@@ -170,7 +202,7 @@ describe("deriveTemplateHealthFindings", () => {
     expect(out).toEqual([]);
   });
 
-  it("flags a stray per-service template on a service that belongs to the group (M17)", () => {
+  it("flags an active stray per-service template as a warning on a service that belongs to the group (M17)", () => {
     const g = group({});
     const out = deriveTemplateHealthFindings({
       groups: [g],
@@ -185,6 +217,72 @@ describe("deriveTemplateHealthFindings", () => {
       service_code: "FBS_RBS",
       template_id: "stray-tpl",
     });
+  });
+
+  it("reports an inactive stray per-service template as informational history", () => {
+    const g = group({});
+    const out = deriveTemplateHealthFindings({
+      groups: [g],
+      links: [{ service_id: "svc-1", parameter_id: "param-1" }],
+      serviceTemplates: [{ service_id: "svc-1", template_id: "stray-tpl", is_active: false }],
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      type: "stray_service_template",
+      severity: "info",
+      group_id: "grp-1",
+      group_code: "CHEM",
+      group_name: "Chemistry",
+      template_id: "stray-tpl",
+      service_id: "svc-1",
+      service_code: "FBS_RBS",
+    });
+    expect(out[0].message).toContain("inactive leftover");
+    expect(out[0].message).toContain("retained as history");
+    expect(out[0].message).toContain("superseded by the Chemistry group's consolidated template");
+  });
+
+  it("a mapped chemistry group with inactive stray templates produces no errors or warnings", () => {
+    const codes = [
+      "BUA_URIC_ACID", "BUN", "CHOLESTEROL", "CREATININE", "FBS_RBS",
+      "HBA1C", "HDL_LDL_VLDL", "LIPID_PROFILE", "LIPID_PROFILE_PACKAGE",
+      "SGOT_AST", "SGPT_ALT", "TRIGLYCERIDES",
+    ];
+    const services = codes.map((code) => ({
+      id: `svc-${code}`,
+      code,
+      name: code,
+      is_active: true,
+      kind: code === "LIPID_PROFILE_PACKAGE" ? "lab_package" : "lab_test",
+    }));
+    const orderableServices = services.filter((s) => s.kind !== "lab_package");
+    const g = group({
+      code: "CHEMISTRY",
+      services,
+      params: orderableServices.map((s) => ({
+        id: `param-${s.code}`,
+        parameter_name: s.name,
+        gender: null,
+      })),
+    });
+    const out = deriveTemplateHealthFindings({
+      groups: [g],
+      links: orderableServices.map((s) => ({
+        service_id: s.id,
+        parameter_id: `param-${s.code}`,
+      })),
+      serviceTemplates: services.map((s) => ({
+        service_id: s.id,
+        template_id: `stray-${s.code}`,
+        is_active: false,
+      })),
+    });
+    expect(out).toHaveLength(12);
+    expect(out.filter((f) => f.severity === "error")).toHaveLength(0);
+    expect(out.filter((f) => f.severity === "warning")).toHaveLength(0);
+    expect(out.every((f) => f.type === "stray_service_template" && f.severity === "info")).toBe(
+      true,
+    );
   });
 
   it("stray per-service template still flags even when the group has no template of its own", () => {

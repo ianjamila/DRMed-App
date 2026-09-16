@@ -4,16 +4,14 @@ import { reportError } from "@/lib/observability/report-error";
 import { audit } from "@/lib/audit/log";
 import { sendEmail } from "@/lib/notifications/email";
 import { renderEmailShell, emailParagraph, emailButton } from "@/lib/notifications/branded-email";
-import {
-  deriveTemplateHealthFindings,
-  type TemplateHealthGroup,
-} from "@/lib/results/template-health";
+import { shouldEmailTemplateHealth } from "@/lib/results/template-health";
+import { collectTemplateHealthFindings } from "@/lib/results/collect-template-health";
 import type { Json } from "@/types/database";
 
-// Daily scan for report-group template drift — the class of failure that let
+// Daily alerts and a weekly summary for report-group template drift — the failure that let
 // the CHEMISTRY group template silently lose 13 of 14 params and sit broken
 // for ~2 months (0115/0121/0122 all trace back to that incident). Read-only:
-// this route never mutates state, it only detects and reports. The five
+// this route never mutates templates, it only detects and reports. The six
 // checks themselves live in the pure, unit-tested
 // src/lib/results/template-health.ts (deriveTemplateHealthFindings) — this
 // route is just data-fetch -> derive -> audit/notify.
@@ -45,105 +43,8 @@ export async function GET(request: Request) {
   const admin = createAdminClient();
 
   try {
-    const { data: groups } = await admin
-      .from("report_groups")
-      .select("id, code, name, is_active");
-    const groupList = groups ?? [];
-    if (groupList.length === 0) {
-      return NextResponse.json({ ok: true, findings: 0, counts: {} });
-    }
-    const groupIds = groupList.map((g) => g.id);
-
-    const { data: services } = await admin
-      .from("services")
-      .select("id, code, name, kind, is_active, report_group_id")
-      .in("report_group_id", groupIds);
-    const serviceList = services ?? [];
-
-    const { data: groupTemplates } = await admin
-      .from("result_templates")
-      .select("id, report_group_id, is_active")
-      .in("report_group_id", groupIds);
-    const templateList = groupTemplates ?? [];
-    const templateByGroup = new Map(templateList.map((t) => [t.report_group_id!, t]));
-    const templateIds = templateList.map((t) => t.id);
-
-    const { data: paramRows } = templateIds.length
-      ? await admin
-          .from("result_template_params")
-          .select("id, template_id, parameter_name, gender")
-          .in("template_id", templateIds)
-      : {
-          data: [] as {
-            id: string;
-            template_id: string;
-            parameter_name: string;
-            gender: string | null;
-          }[],
-        };
-    const paramsByTemplate = new Map<
-      string,
-      { id: string; parameter_name: string; gender: string | null }[]
-    >();
-    for (const p of paramRows ?? []) {
-      const arr = paramsByTemplate.get(p.template_id) ?? [];
-      arr.push({ id: p.id, parameter_name: p.parameter_name, gender: p.gender });
-      paramsByTemplate.set(p.template_id, arr);
-    }
-    const paramIds = (paramRows ?? []).map((p) => p.id);
-
-    const { data: mapRows } = paramIds.length
-      ? await admin
-          .from("report_group_service_params")
-          .select("service_id, parameter_id")
-          .in("parameter_id", paramIds)
-      : { data: [] as { service_id: string; parameter_id: string }[] };
-
-    // M17: per-service templates on a grouped service are dead on arrival
-    // (the queue always redirects a grouped service to the consolidated
-    // form). serviceList is already scoped to services in one of the groups
-    // fetched above, so this only needs to look up templates for THOSE
-    // service ids.
-    const serviceIds = serviceList.map((s) => s.id);
-    const { data: serviceTemplateRows } = serviceIds.length
-      ? await admin
-          .from("result_templates")
-          .select("service_id, is_active, id")
-          .in("service_id", serviceIds)
-      : { data: [] as { service_id: string | null; is_active: boolean; id: string }[] };
-
-    const groupsInput: TemplateHealthGroup[] = groupList.map((g) => {
-      const tpl = templateByGroup.get(g.id) ?? null;
-      return {
-        id: g.id,
-        code: g.code,
-        name: g.name,
-        template: tpl ? { id: tpl.id, is_active: tpl.is_active } : null,
-        params: tpl ? (paramsByTemplate.get(tpl.id) ?? []) : [],
-        services: serviceList
-          .filter((s) => s.report_group_id === g.id)
-          .map((s) => ({
-            id: s.id,
-            code: s.code,
-            name: s.name,
-            is_active: s.is_active,
-            kind: s.kind,
-          })),
-      };
-    });
-
-    const serviceTemplates = (serviceTemplateRows ?? [])
-      .filter((t): t is { service_id: string; is_active: boolean; id: string } => !!t.service_id)
-      .map((t) => ({ service_id: t.service_id, template_id: t.id, is_active: t.is_active }));
-
-    const findings = deriveTemplateHealthFindings({
-      groups: groupsInput,
-      links: mapRows ?? [],
-      serviceTemplates,
-    });
-
-    const counts: Record<string, number> = {};
-    for (const f of findings) counts[f.type] = (counts[f.type] ?? 0) + 1;
+    const mode = new URL(request.url).searchParams.get("mode") === "weekly" ? "weekly" : "daily";
+    const { findings, counts } = await collectTemplateHealthFindings(admin);
 
     if (findings.length === 0) {
       return NextResponse.json({ ok: true, findings: 0, counts });
@@ -154,11 +55,22 @@ export async function GET(request: Request) {
     await audit({
       actor_id: null,
       actor_type: "system",
-      action: "result_template.health_alert",
+      action: mode === "weekly" ? "result_template.health_summary" : "result_template.health_alert",
       resource_type: "result_template",
       resource_id: findings[0].template_id,
       metadata: { findings, counts } as unknown as Json,
     });
+
+    // Daily alerts need actionable findings; the weekly summary includes history.
+    if (!shouldEmailTemplateHealth(findings, mode)) {
+      return NextResponse.json({
+        ok: true,
+        findings: findings.length,
+        counts,
+        recipients: 0,
+        emailed: 0,
+      });
+    }
 
     // Same notification mechanism as dedup-digest: active admins, resolved
     // via staff_profiles + auth.users emails, sendEmail with the shared
@@ -178,15 +90,15 @@ export async function GET(request: Request) {
       .filter((e): e is string => !!e);
 
     const base = process.env.NEXT_PUBLIC_SITE_URL ?? "https://drmed.ph";
-    const reviewUrl = `${base}/staff/admin/result-templates`;
+    const reviewUrl = `${base}/staff/admin/result-templates/health`;
     const errorCount = findings.filter((f) => f.severity === "error").length;
     const warnCount = findings.filter((f) => f.severity === "warning").length;
     const infoCount = findings.filter((f) => f.severity === "info").length;
     const html = renderEmailShell({
-      heading: "Result-template drift detected",
+      heading: mode === "weekly" ? "Weekly result-template summary" : "Result-template drift detected",
       contentHtml:
         emailParagraph(
-          `The daily template-health check found <b>${findings.length}</b> issue(s) across report-group templates (${errorCount} broken, ${warnCount} warning, ${infoCount} informational).`,
+          `The ${mode} template-health check found <b>${findings.length}</b> issue(s) across report-group templates (${errorCount} broken, ${warnCount} warning, ${infoCount} informational).`,
         ) + emailButton("Review result templates", reviewUrl, "cyan"),
     });
 
@@ -194,7 +106,9 @@ export async function GET(request: Request) {
     for (const to of recipients) {
       const r = await sendEmail({
         to,
-        subject: `DRMed: ${findings.length} result-template health issue(s)`,
+        subject: mode === "weekly"
+          ? `DRMed: weekly result-template summary (${findings.length} issue(s))`
+          : `DRMed: ${findings.length} result-template health issue(s)`,
         text: `${findings.length} result-template health issue(s) found. Review at ${reviewUrl}`,
         html,
       });
