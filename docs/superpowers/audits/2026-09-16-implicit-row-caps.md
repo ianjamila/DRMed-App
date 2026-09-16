@@ -585,7 +585,7 @@ Tests beside each changed data-loading file exercise the production paging expre
 
 ## Final validation
 
-All three commands ran from the worktree root after the peer-count follow-up changes and exited **0**.
+All three commands ran from the worktree root after rebasing onto main `7457a12` and exited **0**.
 
 `npx tsc --noEmit`: no output (exit 0).
 
@@ -601,13 +601,15 @@ All three commands ran from the worktree root after the peer-count follow-up cha
 `npm test` exact final summary lines:
 
 ```text
- Test Files  145 passed (145)
-      Tests  1734 passed (1734)
-   Start at  11:43:55
-   Duration  6.54s (transform 4.26s, setup 0ms, collect 29.96s, tests 11.24s, environment 17ms, prepare 12.52s)
+ Test Files  147 passed (147)
+      Tests  1830 passed (1830)
+   Start at  11:50:53
+   Duration  4.50s (transform 3.40s, setup 0ms, collect 19.11s, tests 8.43s, environment 12ms, prepare 6.25s)
 ```
 
-`git diff --check` passed. Migration, excluded payroll/PF, and realtime-concurrency path checks returned no modified files. No commit or push was made.
+`git diff --check` passed. The branch diff against current main contains no migration,
+excluded payroll/PF-page, or realtime-concurrency file changes. Changes are committed
+for draft review.
 
 ## Draft review handoff — 2026-09-16
 
