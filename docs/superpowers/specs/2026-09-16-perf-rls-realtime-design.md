@@ -116,6 +116,7 @@ Inventory across the whole database:
 | Bare `has_role(...)` | 130 |
 | Bare `auth.uid()` / `auth.jwt()` / `auth.role()` | 10 |
 | Bare `current_patient_id()` | 8 |
+| Bare `is_staff()` | 4 |
 | **Total policies** | **160 across 91 tables** |
 
 ### 3.2 Realtime channel churn
