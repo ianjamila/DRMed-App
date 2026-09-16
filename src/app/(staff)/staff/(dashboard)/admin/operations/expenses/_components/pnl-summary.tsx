@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import type { NetIncome } from "@/lib/operations/expense-report";
 
@@ -7,9 +8,12 @@ const PESO = (n: number) =>
 export function PnlSummary({
   netIncome,
   booksNet,
+  statementHref,
 }: {
   netIncome: NetIncome;
   booksNet: number;
+  /** The income statement, already carrying this range. */
+  statementHref: string;
 }) {
   const rows: { label: string; value: number; strong?: boolean }[] = [
     { label: "Total gross profit (lab + consult)", value: netIncome.totalGrossProfit },
@@ -30,9 +34,19 @@ export function PnlSummary({
           ))}
         </tbody>
       </table>
+      {/* This line already named the other report and already explained why the
+          two figures differ — the audit's "why these differ" copy was written
+          here first. All it was missing was the way there, so the figure it
+          quotes is now the link, carrying THIS range (Operations reads from/to,
+          the statement reads start/end — hence the remap, not a passthrough). */}
       <p className="mt-2 border-t pt-2 text-xs text-[color:var(--color-brand-text-soft)]">
         Reconciliation to books — GL Income-Statement net income for this range:{" "}
-        <span className="font-mono tabular-nums">{PESO(booksNet)}</span>
+        <Link
+          href={statementHref}
+          className="font-mono font-medium tabular-nums text-[color:var(--color-brand-cyan)] hover:underline"
+        >
+          {PESO(booksNet)} →
+        </Link>
         {Math.abs(diff) >= 1 ? (
           <>
             {" "}

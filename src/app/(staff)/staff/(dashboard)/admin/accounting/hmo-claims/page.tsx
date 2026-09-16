@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { fetchAllRows, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
@@ -75,6 +76,19 @@ export default async function HmoClaimsIndexPage() {
         <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
           Per-provider HMO accounts receivable with unbilled / aging
           detection. Drill into a provider to manage their claim batches.
+        </p>
+        {/* A4: the same receivable is reported, read-only and over a date
+            range, under Operations. This worklist is where it gets chased;
+            that report is where you see how the balance got where it is. */}
+        <p className="mt-2 text-xs text-[color:var(--color-brand-text-soft)]">
+          <Link
+            href="/staff/admin/operations/hmo"
+            className="font-medium text-[color:var(--color-brand-cyan)] hover:underline"
+          >
+            HMO Receivables →
+          </Link>{" "}
+          — the day-by-day roll-forward of these balances: billed in, paid out,
+          running balance per provider.
         </p>
       </header>
       <HmoClaimsClient

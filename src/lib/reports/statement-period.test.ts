@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { carryParams, statementPeriodQueries } from "./statement-period";
+import {
+  carryParams,
+  operationsToStatementQuery,
+  statementPeriodQueries,
+  statementToOperationsQuery,
+} from "./statement-period";
 
 describe("carryParams", () => {
   const q = (s: string) => new URLSearchParams(s);
@@ -101,5 +106,46 @@ describe("statementPeriodQueries", () => {
     const { range, asOf } = statementPeriodQueries(new URLSearchParams("start=2026-06-01"));
     expect(range).toBe("?start=2026-06-01");
     expect(asOf).toBe("");
+  });
+});
+
+describe("operations ⇄ financial-statements period remap", () => {
+  it("remaps Operations' from/to onto the statement pages' start/end", () => {
+    expect(operationsToStatementQuery("2026-01-01", "2026-03-31")).toBe(
+      "?start=2026-01-01&end=2026-03-31",
+    );
+  });
+
+  it("remaps the statement pages' start/end back onto Operations' from/to", () => {
+    expect(statementToOperationsQuery("2026-01-01", "2026-03-31")).toBe(
+      "?from=2026-01-01&to=2026-03-31",
+    );
+  });
+
+  it("round-trips a period through both directions unchanged", () => {
+    const there = operationsToStatementQuery("2026-05-01", "2026-05-31");
+    const params = new URLSearchParams(there);
+    expect(statementToOperationsQuery(params.get("start")!, params.get("end")!)).toBe(
+      "?from=2026-05-01&to=2026-05-31",
+    );
+  });
+
+  it("does NOT pass the keys through unchanged — the whole point of the remap", () => {
+    // A blind passthrough would send from/to to a page that reads start/end,
+    // which renders as that page's own default with no sign anything was lost.
+    expect(operationsToStatementQuery("2026-01-01", "2026-03-31")).not.toContain("from=");
+    expect(statementToOperationsQuery("2026-01-01", "2026-03-31")).not.toContain("start=");
+  });
+
+  it("drops a junk date rather than forwarding it into the next page's query", () => {
+    expect(operationsToStatementQuery("nope", "2026-03-31")).toBe("");
+    expect(operationsToStatementQuery("2026-01-01", "2026-13-45")).toBe("");
+    expect(statementToOperationsQuery("2026-02-30", "2026-03-31")).toBe("");
+    expect(statementToOperationsQuery("", "")).toBe("");
+  });
+
+  it("needs BOTH ends — a half range would silently pin one bound and default the other", () => {
+    expect(operationsToStatementQuery("2026-01-01", "")).toBe("");
+    expect(statementToOperationsQuery("", "2026-03-31")).toBe("");
   });
 });

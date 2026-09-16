@@ -1,5 +1,6 @@
 import { Card } from "@/components/ui/card";
 import { AGING_BUCKETS, type AgingSummary } from "@/lib/operations/hmo-ar-report";
+import { ProviderCell } from "./provider-cell";
 
 const peso = (n: number) =>
   `₱${n.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -8,10 +9,13 @@ export function HmoAgingPanel({
   aging,
   labTotal,
   consultAr,
+  providerIds,
 }: {
   aging: AgingSummary;
   labTotal: number;
   consultAr: number;
+  /** Provider name → `hmo_providers.id`, for the drill-in to their claims. */
+  providerIds: Record<string, string>;
 }) {
   // The roll-forward and the aging table measure AR on different bases, so their
   // grand totals won't match. Surface the gap explicitly rather than leave two
@@ -40,7 +44,9 @@ export function HmoAgingPanel({
           <tbody>
             {aging.providers.map((p) => (
               <tr key={p.provider} className="border-t">
-                <th className="px-3 py-2 text-left whitespace-nowrap">{p.provider}</th>
+                <th className="px-3 py-2 text-left whitespace-nowrap">
+                  <ProviderCell provider={p.provider} providerId={providerIds[p.provider]} />
+                </th>
                 {AGING_BUCKETS.map((b) => (
                   <td key={b} className="px-3 py-2 text-right tabular-nums">{peso(p.buckets[b])}</td>
                 ))}

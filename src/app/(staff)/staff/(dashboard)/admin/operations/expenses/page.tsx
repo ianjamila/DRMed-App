@@ -28,6 +28,7 @@ import { DateControls } from "../_components/date-controls";
 import { ExpenseSummaryCards } from "./_components/expense-summary-cards";
 import { ExpenseMatrixTable } from "./_components/expense-matrix";
 import { PnlSummary } from "./_components/pnl-summary";
+import { operationsToStatementQuery } from "@/lib/reports/statement-period";
 import { CashFlowPanel } from "./_components/cash-flow-panel";
 
 const BASE = "/staff/admin/operations/expenses";
@@ -165,6 +166,7 @@ export default async function ExpensesPnlPage({
   const booksNet = booksNetIncome(pnlResult.rows);
 
   const csvHref = `/api/admin/operations/expenses.csv?from=${from}&to=${to}`;
+  const statementHref = `/staff/admin/accounting/financial-statements${operationsToStatementQuery(from, to)}`;
 
   return (
     <div className="p-4">
@@ -187,7 +189,7 @@ export default async function ExpensesPnlPage({
 
       <ExpenseSummaryCards matrix={expenseMatrix} netIncome={netIncome} cashFlow={cashFlow} />
       <ExpenseMatrixTable matrix={expenseMatrix} />
-      <PnlSummary netIncome={netIncome} booksNet={booksNet} />
+      <PnlSummary netIncome={netIncome} booksNet={booksNet} statementHref={statementHref} />
       <CashFlowPanel cashFlow={cashFlow} />
     </div>
   );

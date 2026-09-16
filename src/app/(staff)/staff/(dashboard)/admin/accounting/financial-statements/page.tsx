@@ -6,6 +6,7 @@ import { todayManilaISODate } from "@/lib/dates/manila";
 import { StatementTabs } from "./_components/statement-tabs";
 import { PeriodPresets } from "./_components/period-presets";
 import { priorYearRange } from "@/lib/reports/period-presets";
+import { statementToOperationsQuery } from "@/lib/reports/statement-period";
 
 export const metadata = { title: "Financial Statements" };
 export const dynamic = "force-dynamic";
@@ -204,6 +205,23 @@ export default async function FinancialStatementsPage({ searchParams }: SearchPr
           Income statement computed from posted journal entries with{" "}
           <code>posting_date</code> in <strong>{start}</strong> →{" "}
           <strong>{end}</strong>.
+        </p>
+        {/* The same period has an operational counterpart one section away, and
+            the two do not tie — Operations measures gross profit from released
+            lab and consult lines, so it carries no rent/APE/procedures revenue
+            and keys on the release date rather than the posting date above.
+            Operations' own P&L panel already spells that difference out and now
+            links back here, so this is the other half of the pair. */}
+        <p className="mt-2 text-xs text-[color:var(--color-brand-text-soft)]">
+          Operational view:{" "}
+          <Link
+            href={`/staff/admin/operations/expenses${statementToOperationsQuery(start, end)}`}
+            className="font-medium text-[color:var(--color-brand-cyan)] hover:underline"
+          >
+            Expenses &amp; P&amp;L →
+          </Link>{" "}
+          — gross profit on released lab and consult work, which excludes the
+          rent, APE and procedures revenue counted here.
         </p>
       </header>
 

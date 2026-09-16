@@ -8,6 +8,7 @@ import {
   type AgingRow,
 } from "@/lib/operations/hmo-ar-report";
 import { fetchAllRows, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
+import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { OperationsTabs } from "../_components/operations-tabs";
 import { DateControls } from "../_components/date-controls";
@@ -48,8 +49,9 @@ export default async function HmoReceivablesPage({
   let arResult: { rows: HmoArRow[]; truncated: boolean };
   let consultResult: { rows: { final_amount_php: number | string | null }[]; truncated: boolean };
   let agingRes: { data: AgingRow[] | null; error: { message: string } | null };
+  let providersRes: { data: { id: string; name: string }[] | null };
   try {
-    [arResult, consultResult, agingRes] = await Promise.all([
+    [arResult, consultResult, agingRes, providersRes] = await Promise.all([
       fetchAllRows<HmoArRow>(
         (rFrom, rTo) =>
           admin
@@ -78,6 +80,15 @@ export default async function HmoReceivablesPage({
         REPORT_EXPORT_MAX_ROWS,
       ),
       admin.from("v_hmo_ar_aging").select("*"),
+      // A4: the names in this report are the only handle it has on a provider
+      // — neither `v_ops_daily_hmo_provider_ar` nor `historic_hmo_claims`
+      // carries an id — so resolving them here is what lets a row open that
+      // provider's claim batches. `hmo_providers.name` is UNIQUE (0011), so
+      // the map is unambiguous; inactive providers are included deliberately,
+      // since a closed account can still be carrying a balance. Plain select:
+      // this is a short reference table (a few dozen rows), nowhere near the
+      // 1000-row cap that the two detail reads above are paged against.
+      admin.from("hmo_providers").select("id, name"),
     ]);
   } catch {
     return (
@@ -105,6 +116,11 @@ export default async function HmoReceivablesPage({
 
   const truncated = arResult.truncated || consultResult.truncated;
 
+  // Name → id. A provider that only appears in imported history has no row here
+  // and simply renders unlinked (see `ProviderCell`).
+  const providerIds: Record<string, string> = {};
+  for (const row of providersRes.data ?? []) providerIds[row.name] = row.id;
+
   const matrix = buildHmoArMatrix(arResult.rows, { from, to });
   const aging = summarizeAging(agingRes.data ?? []);
   const consultAr = consultResult.rows.reduce(
@@ -114,11 +130,24 @@ export default async function HmoReceivablesPage({
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold text-[#0b2a4a]">HMO Receivables</h1>
-        <p className="text-sm text-muted-foreground">
-          Per-provider lab-HMO AR roll-forward — billed in, paid out, running balance.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold text-[#0b2a4a]">HMO Receivables</h1>
+          <p className="text-sm text-muted-foreground">
+            Per-provider lab-HMO AR roll-forward — billed in, paid out, running balance.
+          </p>
+        </div>
+        {/* A4: this screen answers "what does each HMO owe us"; the claims
+            worklist is where you do something about it. Read-only report,
+            actionable worklist — two jobs, so neither moves, but the balance
+            and the chase should be one click apart. Individual providers link
+            straight to their own batches from the tables below. */}
+        <Link
+          href="/staff/admin/accounting/hmo-claims"
+          className="shrink-0 font-medium text-[color:var(--color-brand-cyan)] hover:underline"
+        >
+          Chase these claims →
+        </Link>
       </div>
       <OperationsTabs />
       <DateControls key={`${from}_${to}`} from={from} to={to} today={today} basePath={BASE} />
@@ -130,9 +159,14 @@ export default async function HmoReceivablesPage({
       ) : null}
       <HmoSummaryCards matrix={matrix} />
       <Card className="p-0 overflow-hidden">
-        <HmoArMatrixTable matrix={matrix} from={from} to={to} />
+        <HmoArMatrixTable matrix={matrix} from={from} to={to} providerIds={providerIds} />
       </Card>
-      <HmoAgingPanel aging={aging} labTotal={matrix.total.endingBalance} consultAr={consultAr} />
+      <HmoAgingPanel
+        aging={aging}
+        labTotal={matrix.total.endingBalance}
+        consultAr={consultAr}
+        providerIds={providerIds}
+      />
       <a
         href={`/api/admin/operations/hmo.csv?from=${from}&to=${to}`}
         className="inline-block text-sm text-[#0b6bb3] underline"

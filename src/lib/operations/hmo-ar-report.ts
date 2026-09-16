@@ -36,7 +36,10 @@ export interface HmoArMatrix {
   total: HmoArProviderRow; // provider = "TOTAL"
 }
 
-const UNKNOWN = "(unknown HMO)";
+/** Rows whose provider could not be identified. Exported so the cross-link to
+ *  HMO claims can skip it explicitly rather than relying on a lookup miss. */
+export const UNKNOWN_PROVIDER = "(unknown HMO)";
+const UNKNOWN = UNKNOWN_PROVIDER;
 
 interface Move {
   billedIn: number;

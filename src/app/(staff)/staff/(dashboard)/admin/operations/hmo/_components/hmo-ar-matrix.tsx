@@ -1,5 +1,6 @@
 import { groupDaysByMonth } from "@/lib/operations/daily-report";
 import type { HmoArMatrix, HmoArProviderRow, HmoArCell } from "@/lib/operations/hmo-ar-report";
+import { ProviderCell } from "./provider-cell";
 
 const peso = (n: number) =>
   n === 0 ? "—" : `₱${n.toLocaleString("en-PH", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
@@ -30,10 +31,15 @@ export function HmoArMatrixTable({
   matrix,
   from,
   to,
+  providerIds,
 }: {
   matrix: HmoArMatrix;
   from: string;
   to: string;
+  /** Provider name → `hmo_providers.id`. Only the roll-forward's own rows are
+   *  linkable: the TOTAL row is an aggregate and historic-only providers may
+   *  have no row in `hmo_providers` at all. */
+  providerIds: Record<string, string>;
 }) {
   const months = groupDaysByMonth(matrix.days);
   const sameMonth = from.slice(0, 7) === to.slice(0, 7);
@@ -44,7 +50,10 @@ export function HmoArMatrixTable({
   const renderRow = (row: HmoArProviderRow, isTotal = false) => (
     <tr key={row.provider} className={isTotal ? "border-t-2 border-[#0b2a4a] font-semibold" : "border-t"}>
       <th className="sticky left-0 z-10 bg-white px-3 py-2 text-left whitespace-nowrap">
-        {row.provider}
+        <ProviderCell
+          provider={row.provider}
+          providerId={isTotal ? undefined : providerIds[row.provider]}
+        />
       </th>
       {columns.map((c) => (
         <Cell key={c.key} cell={aggMonth(row, c.dates)} />
