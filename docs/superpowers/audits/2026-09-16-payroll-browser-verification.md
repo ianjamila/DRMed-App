@@ -54,4 +54,3 @@ This is not a >1,000-row browser stress test or an RLS equivalence proof. Large-
 ## Local and preview gates
 
 On main `23d0ed1`: **1,902 tests pass**, TypeScript clean, lint zero errors and only the pre-existing `booking.ts:101` warning. Whitespace check passes. Vercel preview for code commit `8bad83f` succeeded. Both PRs remain drafts; no review-bot review had appeared at the time of verification.
-
