@@ -93,7 +93,7 @@ export default async function PfYtdSummaryPage({ searchParams }: SearchProps) {
   // Pull all non-voided entries created in this year. We aggregate in JS so
   // we can split by recognition_basis × recognized state without 4 separate
   // RPC calls.
-  const [{ data: entries }, { data: disbursements }] = await Promise.all([
+  const [{ data: entries }, { data: disbursements, error: disbursementsError }] = await Promise.all([
     fetchCompleteRows((from, to) =>
       admin
         .from("doctor_pf_entries")
@@ -111,14 +111,18 @@ export default async function PfYtdSummaryPage({ searchParams }: SearchProps) {
         .order("id", { ascending: true })
         .range(from, to)
     ),
-    admin
+    fetchCompleteRows((from, to) => admin
       .from("doctor_pf_disbursements")
       .select("id, physician_id, posted_date, total_php, voided_at")
       .gte("posted_date", yearStart)
       .lte("posted_date", yearEnd)
       .is("voided_at", null)
-      .returns<DisbursementRow[]>(),
+      .returns<DisbursementRow[]>()
+    .order("id", { ascending: true })
+    .range(from, to)),
   ]);
+
+  if (disbursementsError) throw new Error(disbursementsError.message);
 
   const byPhysician = new Map<string, PhysicianSummary>();
 

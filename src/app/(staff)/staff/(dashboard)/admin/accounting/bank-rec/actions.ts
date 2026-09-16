@@ -247,12 +247,15 @@ async function runAutoMatch(
 ): Promise<AutoMatchResult> {
   const admin = createAdminClient();
 
-  const { data: bankLines } = await admin
+  const { data: bankLines, error: bankLinesError } = await fetchCompleteRows((from, to) => admin
     .from("bank_statement_lines")
     .select("id, transaction_date, amount_php")
     .eq("statement_id", statementId)
-    .is("matched_je_line_id", null);
+    .is("matched_je_line_id", null)
+    .order("id", { ascending: true })
+    .range(from, to));
 
+  if (bankLinesError) throw new Error(bankLinesError.message);
   if (!bankLines || bankLines.length === 0) return { matched: 0 };
 
   // Pull JE lines on this account that aren't already matched to ANY bank
@@ -268,10 +271,13 @@ async function runAutoMatch(
   const windowStart = shiftISODate(minDate, -3);
   const windowEnd = shiftISODate(maxDate, 3);
 
-  const { data: alreadyMatched } = await admin
+  const { data: alreadyMatched, error: matchedError } = await fetchCompleteRows((from, to) => admin
     .from("bank_statement_lines")
     .select("matched_je_line_id")
-    .not("matched_je_line_id", "is", null);
+    .not("matched_je_line_id", "is", null)
+    .order("id", { ascending: true })
+    .range(from, to));
+  if (matchedError) throw new Error(matchedError.message);
   const matchedIds = new Set(
     (alreadyMatched ?? [])
       .map((m) => m.matched_je_line_id)

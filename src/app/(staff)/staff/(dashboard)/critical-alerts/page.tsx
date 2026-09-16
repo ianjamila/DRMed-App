@@ -1,3 +1,4 @@
+import { fetchCompleteRows } from "@/lib/reports/paging";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
@@ -148,18 +149,18 @@ export default async function CriticalAlertsPage({ searchParams }: SearchProps) 
   // anything still pending?" view, and a pending critical result must never
   // be able to hide on a page 2 nobody clicks to. It's expected to stay
   // small in practice (each row needs a phone call to close out) — if it
-  // ever isn't, the fix is closing alerts faster, not paging the worklist.
-  const [{ data: unackedRaw }, { data: recentRaw, count }] = await Promise.all([
-    scopeToOwn(
+  // ever isn't, all alerts must still remain visible. Page the transport,
+  // then render one complete worklist.
+  const [{ data: unackedRaw, error: unackedError }, { data: recentRaw, count }] = await Promise.all([
+    fetchCompleteRows((from, to) => scopeToOwn(
       supabase
         .from("critical_alerts")
         .select(alertSelect)
         .is("acknowledged_at", null)
         .order("created_at", { ascending: false })
-        // Tie-break on id — with no `.range()` here this can't drop/repeat
-        // rows, but it keeps the order deterministic across reloads.
-        .order("id", { ascending: true }),
-    ),
+        .order("id", { ascending: true })
+        .range(from, to),
+    )),
     scopeToOwn(
       supabase
         .from("critical_alerts")
@@ -172,6 +173,8 @@ export default async function CriticalAlertsPage({ searchParams }: SearchProps) 
         .range(from, to),
     ),
   ]);
+
+  if (unackedError) throw new Error(unackedError.message);
 
   const unacked = (unackedRaw ?? []) as AlertRow[];
   const recent = (recentRaw ?? []) as AlertRow[];

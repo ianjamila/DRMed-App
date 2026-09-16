@@ -29,7 +29,7 @@ export default async function SendOutsPage() {
   );
 
   // Tab 2: All trueups ordered newest first
-  const { data: trueups } = await admin
+  const { data: trueups, error: completeError } = await fetchCompleteRows((from, to) => admin
     .from("cogs_send_out_trueups")
     .select(
       `
@@ -39,7 +39,10 @@ export default async function SendOutsPage() {
       vendors(id, name)
     `
     )
-    .order("matched_at", { ascending: false });
+    .order("matched_at", { ascending: false })
+    .order("id", { ascending: true })
+    .range(from, to));
+  if (completeError) throw new Error(completeError.message);
 
   // Active vendors for new-trueup dropdown
   const { data: vendors } = await admin

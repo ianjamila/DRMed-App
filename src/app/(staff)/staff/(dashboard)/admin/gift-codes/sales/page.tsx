@@ -1,3 +1,4 @@
+import { fetchCompleteRows } from "@/lib/reports/paging";
 import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
@@ -52,7 +53,7 @@ export default async function SalesPage({ searchParams }: PageProps) {
   ).toISOString();
 
   const admin = createAdminClient();
-  const { data: rows } = await admin
+  const { data: rows, error: completeError } = await fetchCompleteRows((from, to) => admin
     .from("gift_codes")
     .select(
       "id, code, face_value_php, status, purchased_at, purchased_by_name, purchased_by_contact, purchase_method, purchase_reference_number, sold_by, batch_label",
@@ -60,7 +61,10 @@ export default async function SalesPage({ searchParams }: PageProps) {
     .gte("purchased_at", fromIso)
     .lt("purchased_at", toIso)
     .not("purchased_at", "is", null)
-    .order("purchased_at", { ascending: false });
+    .order("purchased_at", { ascending: false })
+    .order("id", { ascending: true })
+    .range(from, to));
+  if (completeError) throw new Error(completeError.message);
 
   const sales = rows ?? [];
 

@@ -1,3 +1,4 @@
+import { loadBankStatementSummaries } from "@/lib/accounting/bank-statement-summaries";
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -10,37 +11,11 @@ const PHP = new Intl.NumberFormat("en-PH", {
   currency: "PHP",
 });
 
-interface StatementRow {
-  id: string;
-  account_id: string;
-  period_start: string;
-  period_end: string;
-  statement_label: string;
-  uploaded_at: string;
-  chart_of_accounts: { code: string; name: string } | null;
-  bank_statement_lines:
-    | { id: string; matched_je_line_id: string | null; amount_php: number }[]
-    | null;
-}
-
 export default async function BankRecPage() {
   await requireAdminStaff();
   const admin = createAdminClient();
 
-  const { data } = await admin
-    .from("bank_statements")
-    .select(
-      `
-      id, account_id, period_start, period_end, statement_label, uploaded_at,
-      chart_of_accounts ( code, name ),
-      bank_statement_lines ( id, matched_je_line_id, amount_php )
-    `,
-    )
-    .order("period_start", { ascending: false })
-    .order("uploaded_at", { ascending: false })
-    .returns<StatementRow[]>();
-
-  const rows = data ?? [];
+  const rows = await loadBankStatementSummaries(admin);
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
@@ -88,11 +63,8 @@ export default async function BankRecPage() {
             </thead>
             <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
               {rows.map((s) => {
-                const lines = s.bank_statement_lines ?? [];
-                const matched = lines.filter((l) => l.matched_je_line_id).length;
-                const total = lines.length;
+                const { total, matched, net } = s.summary;
                 const matchPct = total === 0 ? 0 : Math.round((matched / total) * 100);
-                const net = lines.reduce((sum, l) => sum + Number(l.amount_php ?? 0), 0);
                 const acct = Array.isArray(s.chart_of_accounts)
                   ? s.chart_of_accounts[0]
                   : s.chart_of_accounts;

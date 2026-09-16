@@ -52,13 +52,15 @@ export default async function ProviderDetailPage({
       .select("*")
       .eq("provider_id", providerId)
       .maybeSingle(),
-    admin
+    fetchCompleteRows((from, to) => admin
       .from("hmo_claim_batches")
       .select(
         "id, status, reference_no, submitted_at, voided_at, created_at",
       )
       .eq("provider_id", providerId)
-      .order("created_at", { ascending: false }),
+      .order("created_at", { ascending: false })
+    .order("id", { ascending: true })
+    .range(from, to)),
     fetchCompleteRows((from, to) =>
       admin
         .from("v_hmo_unbilled")
@@ -126,6 +128,8 @@ export default async function ProviderDetailPage({
 
   if (!providerQ.data) notFound();
   const provider = providerQ.data;
+
+  if (batchesQ.error) throw new Error(batchesQ.error.message);
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">

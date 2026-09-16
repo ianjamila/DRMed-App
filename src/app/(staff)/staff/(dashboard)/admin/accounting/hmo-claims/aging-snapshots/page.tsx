@@ -1,3 +1,4 @@
+import { fetchCompleteRows } from "@/lib/reports/paging";
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -30,22 +31,28 @@ export default async function AgingSnapshotsPage({
   const admin = createAdminClient();
 
   // 1) Distinct snapshot dates for the picker.
-  const { data: dateRows } = await admin
+  const { data: dateRows, error: datesError } = await fetchCompleteRows((from, to) => admin
     .from("hmo_aging_snapshots" as never)
     .select("snapshot_date")
     .order("snapshot_date", { ascending: false })
-    .returns<{ snapshot_date: string }[]>();
+    .returns<{ snapshot_date: string }[]>()
+    .order("id", { ascending: true })
+    .range(from, to));
+  if (datesError) throw new Error(datesError.message);
   const distinctDates = Array.from(new Set((dateRows ?? []).map((r) => r.snapshot_date)));
   const selectedDate = sp.date && distinctDates.includes(sp.date) ? sp.date : distinctDates[0] ?? null;
 
   // 2) Rows for the chosen date.
   let rows: SnapshotRow[] = [];
   if (selectedDate) {
-    const { data } = await admin
+    const { data, error: snapshotError } = await fetchCompleteRows((from, to) => admin
       .from("hmo_aging_snapshots" as never)
       .select("snapshot_date, provider_name, bucket, kind, total_php, item_count")
       .eq("snapshot_date", selectedDate)
-      .returns<SnapshotRow[]>();
+      .returns<SnapshotRow[]>()
+    .order("id", { ascending: true })
+    .range(from, to));
+    if (snapshotError) throw new Error(snapshotError.message);
     rows = data ?? [];
   }
 

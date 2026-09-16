@@ -12,6 +12,7 @@ export async function checkCompleteQuery(
   file: string,
   index: number,
   bindings: Record<string, unknown> = {},
+  options: { failAtOffset?: number } = {},
 ) {
   const source = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
   const calls: ts.CallExpression[] = [];
@@ -29,6 +30,11 @@ export async function checkCompleteQuery(
       const url = new URL(String(input));
       requests.push(url);
       const offset = Number(url.searchParams.get("offset") ?? 0);
+      if (options.failAtOffset !== undefined && offset >= options.failAtOffset) {
+        return new Response(JSON.stringify({ message: "late page failed" }), {
+          status: 400, headers: { "Content-Type": "application/json" },
+        });
+      }
       const limit = Math.min(1000, Number(url.searchParams.get("limit") ?? 1000));
       const ids = url.searchParams.get("id");
       const matching = ids?.startsWith("in.(")
@@ -56,6 +62,11 @@ export async function checkCompleteQuery(
   // Only repository-owned query expressions are evaluated; no external input.
   const run = new Function(...Object.keys(scope), `return ${js}`);
   const result = await run(...Object.values(scope));
+  if (options.failAtOffset !== undefined) {
+    expect(result.data).toBeNull();
+    expect(result.error?.message).toBe("late page failed");
+    return requests;
+  }
   expect(result.error).toBeNull();
   expect(result.data).toHaveLength(1505);
   expect(new Set(result.data.map((r: { id: string }) => r.id)).size).toBe(1505);
@@ -64,7 +75,7 @@ export async function checkCompleteQuery(
   for (const url of requests) {
     expect(url.searchParams.get("limit")).not.toBeNull();
     expect(Number(url.searchParams.get("limit"))).toBeLessThanOrEqual(1000);
-    expect(url.searchParams.get("order")).toMatch(/(?:^|,)(?:id|test_request_id)\.asc$/);
+    expect(url.searchParams.get("order")).toMatch(/(?:^|,)(?:id|item_id|test_request_id)\.asc$/);
     const selected = url.searchParams.get("id");
     if (selected?.startsWith("in.(")) expect(selected.split(",").length).toBeLessThanOrEqual(200);
   }

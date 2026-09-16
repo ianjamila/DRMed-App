@@ -96,9 +96,9 @@ export default async function BankStatementDetailPage({ params }: PageProps) {
   const { id } = await params;
   const admin = createAdminClient();
 
-  const [{ data: statement }, { data: lines }] = await Promise.all([
+  const [{ data: statement }, { data: lines, error: linesError }] = await Promise.all([
     loadDetail(id),
-    admin
+    fetchCompleteRows((from, to) => admin
       .from("bank_statement_lines")
       .select(
         `
@@ -112,10 +112,14 @@ export default async function BankStatementDetailPage({ params }: PageProps) {
       )
       .eq("statement_id", id)
       .order("transaction_date", { ascending: true })
-      .returns<LineRow[]>(),
+      .returns<LineRow[]>()
+    .order("id", { ascending: true })
+    .range(from, to)),
   ]);
 
   if (!statement) notFound();
+
+  if (linesError) throw new Error(linesError.message);
 
   const allLines = lines ?? [];
   const matched = allLines.filter((l) => l.matched_je_line_id);
@@ -141,10 +145,13 @@ export default async function BankStatementDetailPage({ params }: PageProps) {
     const start = shiftISODate(minD, -7);
     const end = shiftISODate(maxD, 7);
 
-    const { data: alreadyMatched } = await admin
+    const { data: alreadyMatched, error: matchedError } = await fetchCompleteRows((from, to) => admin
       .from("bank_statement_lines")
       .select("matched_je_line_id")
-      .not("matched_je_line_id", "is", null);
+      .not("matched_je_line_id", "is", null)
+    .order("id", { ascending: true })
+    .range(from, to));
+    if (matchedError) throw new Error(matchedError.message);
     const claimedSet = new Set(
       (alreadyMatched ?? [])
         .map((m) => m.matched_je_line_id)

@@ -4,7 +4,7 @@ import { checkCompleteQuery } from "@/lib/reports/paged-query-test-helpers";
 it("includes manual match candidates beyond 1,000 while retaining the account and date window", async () => {
   const requests = await checkCompleteQuery(
     "src/app/(staff)/staff/(dashboard)/admin/accounting/bank-rec/[id]/page.tsx",
-    0,
+    2,
     { statement: { account_id: "bank-account" }, start: "2026-09-01", end: "2026-09-15" },
   );
   for (const url of requests) {

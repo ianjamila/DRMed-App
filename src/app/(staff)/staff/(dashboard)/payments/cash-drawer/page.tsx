@@ -1,3 +1,4 @@
+import { fetchCompleteRows } from "@/lib/reports/paging";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { redirect } from "next/navigation";
@@ -34,12 +35,15 @@ export default async function CashDrawerPage({
     p_business_date: business_date,
     p_shift_id: shift_id,
   });
-  const { data: rows } = await admin
+  const { data: rows, error: completeError } = await fetchCompleteRows((from, to) => admin
     .from("eod_cash_adjustments")
     .select("*")
     .eq("business_date", business_date)
     .eq("shift_id", shift_id)
-    .order("recorded_at", { ascending: false });
+    .order("recorded_at", { ascending: false })
+    .order("id", { ascending: true })
+    .range(from, to));
+  if (completeError) throw new Error(completeError.message);
 
   const { data: accounts } = await admin
     .from("chart_of_accounts")
