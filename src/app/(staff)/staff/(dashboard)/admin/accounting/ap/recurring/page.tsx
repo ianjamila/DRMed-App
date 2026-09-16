@@ -1,10 +1,11 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { listRecurringTemplatesAction } from "@/lib/actions/accounting/recurring-templates";
 import { listVendorsAction } from "@/lib/actions/accounting/vendors";
 import { RecurringClient } from "./recurring-client";
 
-export const metadata = { title: "Recurring bills" };
+export const metadata = { title: ROUTE_NAME["/staff/admin/accounting/ap/recurring"] };
 export const dynamic = "force-dynamic";
 
 export default async function RecurringPage() {
@@ -28,10 +29,10 @@ export default async function RecurringPage() {
       <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-            Phase 12.4 · Admin · AP
+            Expenses
           </p>
           <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            Recurring bill templates
+            {ROUTE_NAME["/staff/admin/accounting/ap/recurring"]}
           </h1>
           <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
             Templates that auto-post draft bills on a monthly cadence. The cron

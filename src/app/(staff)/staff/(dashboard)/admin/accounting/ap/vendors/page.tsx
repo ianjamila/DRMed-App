@@ -1,9 +1,10 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { listVendorsAction } from "@/lib/actions/accounting/vendors";
 import { VendorsIndexClient } from "./vendors-index-client";
 
-export const metadata = { title: "Vendors" };
+export const metadata = { title: ROUTE_NAME["/staff/admin/accounting/ap/vendors"] };
 export const dynamic = "force-dynamic";
 
 export default async function VendorsIndexPage() {
@@ -15,10 +16,10 @@ export default async function VendorsIndexPage() {
       <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-            Phase 12.4 · Admin · AP
+            Expenses
           </p>
           <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            Vendors
+            {ROUTE_NAME["/staff/admin/accounting/ap/vendors"]}
           </h1>
           <p className="mt-2 max-w-xl text-sm text-[color:var(--color-brand-text-soft)]">
             Suppliers we pay. Vendors are append-only — deactivate via the

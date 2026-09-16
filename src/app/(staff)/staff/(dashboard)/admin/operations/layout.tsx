@@ -1,3 +1,4 @@
+import { SECTION_NAME } from "@/lib/staff/route-names";
 import { Suspense, type ReactNode } from "react";
 import { OperationsTabs } from "./_components/operations-tabs";
 
@@ -8,7 +9,12 @@ export default function Layout({ children }: { children: ReactNode }) {
       <Suspense fallback={null}>
         <OperationsTabs />
       </Suspense>
-      <div className="mt-6">{children}</div>
+      <div className="mt-6">
+        <p className="mb-2 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
+          {SECTION_NAME["/staff/admin/operations"]}
+        </p>
+        {children}
+      </div>
     </div>
   );
 }

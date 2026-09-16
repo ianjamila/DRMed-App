@@ -1,10 +1,11 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 import Link from "next/link";
 import { PageHeader } from "@/components/staff/page-header";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { getAPDashboardAction } from "@/lib/actions/accounting/ap-dashboard";
 import { APDashboardClient } from "./ap-dashboard-client";
 
-export const metadata = { title: "Accounts Payable" };
+export const metadata = { title: ROUTE_NAME["/staff/admin/accounting/ap"] };
 export const dynamic = "force-dynamic";
 
 export default async function APDashboardPage() {
@@ -14,11 +15,11 @@ export default async function APDashboardPage() {
   return (
     <div className="space-y-6">
       <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-        Phase 12.4 · Admin · AP
+        Expenses
       </p>
       <PageHeader
-        title="Bills overview"
-        subtitle="Operating-expense AP at a glance: outstanding by aging bucket, draft-rot detector, upcoming recurring runs, top vendors, and withholding tax so far this month."
+        title={ROUTE_NAME["/staff/admin/accounting/ap"]}
+        subtitle="Operating expenses (accounts payable) at a glance: outstanding by aging bucket, draft-rot detector, upcoming recurring runs, top vendors, and withholding tax so far this month."
         actions={
           <Link
             href="/staff/admin/accounting/ap/quick-expense"

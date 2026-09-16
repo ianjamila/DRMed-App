@@ -1,3 +1,4 @@
+import { SECTION_NAME } from "@/lib/staff/route-names";
 import { Suspense, type ReactNode } from "react";
 import { StatementTabs } from "./_components/statement-tabs";
 
@@ -8,7 +9,12 @@ export default function Layout({ children }: { children: ReactNode }) {
       <Suspense fallback={null}>
         <StatementTabs />
       </Suspense>
-      <div className="mt-6">{children}</div>
+      <div className="mt-6">
+        <p className="mb-2 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
+          {SECTION_NAME["/staff/admin/accounting/financial-statements"]}
+        </p>
+        {children}
+      </div>
     </div>
   );
 }

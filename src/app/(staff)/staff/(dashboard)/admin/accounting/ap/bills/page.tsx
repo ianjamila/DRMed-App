@@ -1,3 +1,4 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { listBillsAction } from "@/lib/actions/accounting/bills";
@@ -6,7 +7,7 @@ import { listVendorsAction } from "@/lib/actions/accounting/vendors";
 import { BillsIndexClient } from "./bills-index-client";
 import Link from "next/link";
 
-export const metadata = { title: "Bills" };
+export const metadata = { title: ROUTE_NAME["/staff/admin/accounting/ap/bills"] };
 export const dynamic = "force-dynamic";
 
 export default async function BillsIndexPage({
@@ -44,10 +45,10 @@ export default async function BillsIndexPage({
       <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-            Phase 12.4 · Admin · AP
+            Expenses
           </p>
           <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            Vendor Bills
+            {ROUTE_NAME["/staff/admin/accounting/ap/bills"]}
           </h1>
           <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
             Invoices with a due date. For expenses already paid (cash, GCash, or

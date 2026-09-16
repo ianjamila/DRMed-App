@@ -1,10 +1,11 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { todayManilaISO } from "@/lib/marketing/closures";
 import { PeriodActionsClient } from "./period-actions-client";
 
-export const metadata = { title: "Accounting periods" };
+export const metadata = { title: ROUTE_NAME["/staff/admin/accounting/periods"] };
 export const dynamic = "force-dynamic";
 
 const MONTH_LABEL = [
@@ -63,10 +64,10 @@ export default async function PeriodsPage({
       <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-            Phase 12.1 · Admin
+            Monthly Periods
           </p>
           <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            Accounting periods
+            {ROUTE_NAME["/staff/admin/accounting/periods"]}
           </h1>
           <p className="mt-2 max-w-xl text-sm text-[color:var(--color-brand-text-soft)]">
             Periods are monthly in the schema; closes operate on a fiscal quarter

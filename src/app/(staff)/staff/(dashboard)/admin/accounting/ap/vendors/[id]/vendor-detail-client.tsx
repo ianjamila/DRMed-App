@@ -122,7 +122,7 @@ export function VendorDetailClient({ vendor, bills, payments }: Props) {
       {/* ------------------------------------------------------------------ */}
       <header className="mb-6">
         <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-          Phase 12.4 · Admin · AP · Vendor
+          Expenses
         </p>
         <div className="mt-1 flex flex-wrap items-center gap-3">
           <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">

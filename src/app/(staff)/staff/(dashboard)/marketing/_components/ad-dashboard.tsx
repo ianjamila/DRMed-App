@@ -1,5 +1,7 @@
 "use client";
 
+import { ROUTE_NAME } from "@/lib/staff/route-names";
+
 // Ad-spend analytics dashboard, ported from the standalone marketing-kit tool
 // (DRMed-marketing-kit/dashboards/drmed-ad-dashboard.jsx). Fully client-side:
 // staff upload Meta/Google CSV exports, rows persist in localStorage, and a
@@ -670,7 +672,7 @@ export function AdPerformanceDashboard() {
                 DRMed
               </div>
               <h1 className="text-xl font-semibold" style={{ color: C.ink }}>
-                Ad performance
+                {ROUTE_NAME["/staff/marketing"]}
               </h1>
             </div>
             <p className="text-sm mt-1" style={{ color: C.sub }}>
@@ -985,7 +987,7 @@ export function AdPerformanceDashboard() {
 
         {/* ad table */}
         <div className="mt-4">
-          <Card title="Ad performance" pad={false}>
+          <Card title={ROUTE_NAME["/staff/marketing"]} pad={false}>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>

@@ -1,3 +1,4 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 import { SectionTabs } from "@/components/staff/section-tabs";
 
 // Create vs browse — the two halves of the visit *record*, which is what this
@@ -6,14 +7,14 @@ import { SectionTabs } from "@/components/staff/section-tabs";
 // only by URL accident. It renders no tab bar and is reached from the sidebar
 // (Front Desk › Reception Queue) with a "+ New visit" action of its own.
 const TABS = [
-  { href: "/staff/visits/new", label: "New Visit" },
+  { href: "/staff/visits/new", label: ROUTE_NAME["/staff/visits/new"] },
   {
     // Visit Records: the bare /staff/visits plus detail drilldowns like
     // /staff/visits/<uuid>, but NOT /staff/visits/new (New visit). /staff/visits/queue
     // stays excluded too: the queue renders no bar today, but the exclusion keeps
     // it from lighting up if one is ever added there or under it.
     href: "/staff/visits",
-    label: "Visit Records",
+    label: ROUTE_NAME["/staff/visits"],
     excludePrefixes: ["/staff/visits/new", "/staff/visits/queue"],
   },
 ];

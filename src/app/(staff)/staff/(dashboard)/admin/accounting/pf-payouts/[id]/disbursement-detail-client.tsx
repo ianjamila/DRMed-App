@@ -122,7 +122,7 @@ export function DisbursementDetailClient({
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-              Phase 12.5 · Admin · Accounting
+              Pay Doctors
             </p>
             <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
               {batchLabel}

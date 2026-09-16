@@ -75,9 +75,7 @@ export default async function NewBatchPage({
       service_description: r.service_description ?? null,
     }));
 
-  const eyebrow = addToBatchId
-    ? "Phase 12.3 · Add items to draft"
-    : "Phase 12.3 · New batch";
+  const eyebrow = "HMO Claims";
   const heading = addToBatchId
     ? "Add items to draft batch"
     : "New HMO claim batch";

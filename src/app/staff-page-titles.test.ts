@@ -1,3 +1,4 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -47,7 +48,8 @@ import { describe, expect, it } from "vitest";
  * WHAT IT DOES NOT DO
  * -------------------
  * It does not police the WORDING of a title against the route's tab label —
- * that is the naming registry's job, and the section names are still in flux.
+ * navigation registry references are checked by staff-nav-config.test.ts.
+ * Client headings and branch-dependent titles cannot be inferred from text.
  * It only enforces the shape: a bare route name, exactly once, on every page.
  */
 
@@ -89,6 +91,9 @@ describe("staff page titles", () => {
       }
     }
 
+    for (const [href, title] of Object.entries(ROUTE_NAME)) {
+      if (SUFFIX_RE.test(title)) offenders.push(`${href} — "${title}"`);
+    }
     expect(offenders, "hand-written title suffixes").toEqual([]);
   });
 
@@ -114,5 +119,32 @@ describe("staff page titles", () => {
       .map(rel);
 
     expect(owners).toEqual([GROUP_LAYOUT.split(sep).join("/")]);
+  });
+});
+
+// These are the agreed route names, not assertions about rendered page source.
+describe("audited route names", () => {
+  it.each([
+    ["/staff/admin/accounting/ap", "Expenses Overview"],
+    ["/staff/admin/accounting/ap/quick-expense", "Quick Expense"],
+    ["/staff/admin/accounting/ap/bills", "Vendor Bills"],
+    ["/staff/admin/accounting/ap/payments", "Bill Payments"],
+    ["/staff/admin/accounting/ap/vendors", "Vendors"],
+    ["/staff/admin/accounting/ap/recurring", "Recurring Bills"],
+    ["/staff/admin/operations", "Daily Sheet"],
+    ["/staff/admin/operations/cash", "Cash & Cards"],
+    ["/staff/admin/operations/expenses", "Expenses & P&L"],
+    ["/staff/admin/operations/hmo", "HMO Receivables"],
+    ["/staff/admin/operations/trends", "Monthly Trends"],
+    ["/staff/admin/accounting/financial-statements", "Income Statement"],
+    ["/staff/admin/accounting/financial-statements/balance-sheet", "Balance Sheet"],
+    ["/staff/admin/accounting/financial-statements/cash-flow", "Cash Flow"],
+    ["/staff/payments/eod", "End of Day"],
+    ["/staff/marketing", "Ad Performance"],
+    ["/staff/marketing/ops", "Ops Tracker"],
+    ["/staff/admin/accounting/periods", "Monthly Periods"],
+    ["/staff/admin/payroll/runs", "Run Payroll"],
+  ])("%s is %s", (href, title) => {
+    expect(ROUTE_NAME[href]).toBe(title);
   });
 });

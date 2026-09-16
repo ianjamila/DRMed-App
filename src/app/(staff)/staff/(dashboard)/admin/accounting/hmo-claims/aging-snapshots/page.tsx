@@ -61,7 +61,7 @@ export default async function AgingSnapshotsPage({
       </div>
       <header className="mb-6">
         <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-          Phase 12.3 · Aging snapshots
+          HMO Claims
         </p>
         <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
           HMO aging snapshots

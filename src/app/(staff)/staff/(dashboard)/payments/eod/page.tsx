@@ -1,10 +1,11 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { redirect } from "next/navigation";
 import { isISODate, todayManilaISODate } from "@/lib/dates/manila";
 import { EodClient } from "./eod-client";
 
-export const metadata = { title: "End of Day" };
+export const metadata = { title: ROUTE_NAME["/staff/payments/eod"] };
 export const dynamic = "force-dynamic";
 
 interface SearchParams { date?: string; shift?: string }

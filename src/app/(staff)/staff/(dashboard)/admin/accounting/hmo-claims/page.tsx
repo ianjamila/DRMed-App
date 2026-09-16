@@ -84,7 +84,7 @@ export default async function HmoClaimsIndexPage({
     <div className="px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6">
         <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-          Phase 12.3 · Admin
+          HMO Claims
         </p>
         <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
           HMO Claims
@@ -94,7 +94,7 @@ export default async function HmoClaimsIndexPage({
           detection. Drill into a provider to manage their claim batches.
         </p>
         {/* A4: the same receivable is reported, read-only and over a date
-            range, under Operations. This worklist is where it gets chased;
+            range, under Daily Monitoring. This worklist is where it gets chased;
             that report is where you see how the balance got where it is. */}
         <p className="mt-2 text-xs text-[color:var(--color-brand-text-soft)]">
           <Link

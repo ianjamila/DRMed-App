@@ -1,3 +1,4 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -7,7 +8,7 @@ import { PeriodPresets } from "./_components/period-presets";
 import { priorYearRange } from "@/lib/reports/period-presets";
 import { statementToOperationsQuery } from "@/lib/reports/statement-period";
 
-export const metadata = { title: "Financial Statements" };
+export const metadata = { title: ROUTE_NAME["/staff/admin/accounting/financial-statements"] };
 export const dynamic = "force-dynamic";
 
 const PHP = new Intl.NumberFormat("en-PH", {
@@ -198,7 +199,7 @@ export default async function FinancialStatementsPage({ searchParams }: SearchPr
           ← Dashboard
         </Link>
         <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Financial Statements
+          {ROUTE_NAME["/staff/admin/accounting/financial-statements"]}
         </h1>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
           Income statement computed from posted journal entries with{" "}
@@ -223,7 +224,6 @@ export default async function FinancialStatementsPage({ searchParams }: SearchPr
           rent, APE and procedures revenue counted here.
         </p>
       </header>
-
 
       <PeriodPresets
         pathname="/staff/admin/accounting/financial-statements"

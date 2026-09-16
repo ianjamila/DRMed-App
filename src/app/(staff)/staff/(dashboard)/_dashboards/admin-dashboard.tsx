@@ -1,3 +1,4 @@
+import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
 import type { StaffSession } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -27,15 +28,18 @@ import { QuickLinks } from "./_components/quick-links";
 import { ActivityStrip, type ActivityItem } from "./_components/activity-strip";
 import { formatPeso, relativeAge } from "./_components/format";
 
-// H4: trimmed to money actions only — Chart of accounts, Dashboard settings,
-// Periods, Audit log and Staff users are all reachable from the sidebar and
-// aren't an owner money action.
+// Owner shortcuts; metric cards above keep their own descriptive labels and IDs.
 const QUICK_LINKS = [
-  { href: "/staff/admin/operations/cash", label: "Cash & Cards" },
-  { href: "/staff/admin/reports/daily-revenue", label: "Daily Revenue" },
-  { href: "/staff/admin/accounting/ap", label: "AP Dashboard" },
-  { href: "/staff/admin/accounting/hmo-claims", label: "HMO Claims" },
-  { href: "/staff/admin/payroll/runs", label: "Pay Runs" },
+  { href: "/staff/admin/accounting/periods", label: ROUTE_NAME["/staff/admin/accounting/periods"] },
+  { href: "/staff/admin/accounting/financial-statements", label: SECTION_NAME["/staff/admin/accounting/financial-statements"] },
+  { href: "/staff/admin/operations", label: SECTION_NAME["/staff/admin/operations"] },
+  { href: "/staff/admin/accounting/pf-payouts", label: ROUTE_NAME["/staff/admin/accounting/pf-payouts"] },
+  { href: "/staff/admin/accounting/journal", label: ROUTE_NAME["/staff/admin/accounting/journal"] },
+  { href: "/staff/admin/operations/cash", label: ROUTE_NAME["/staff/admin/operations/cash"] },
+  { href: "/staff/admin/reports/daily-revenue", label: ROUTE_NAME["/staff/admin/reports/daily-revenue"] },
+  { href: "/staff/admin/accounting/ap", label: ROUTE_NAME["/staff/admin/accounting/ap"] },
+  { href: "/staff/admin/accounting/hmo-claims", label: ROUTE_NAME["/staff/admin/accounting/hmo-claims"] },
+  { href: "/staff/admin/payroll/runs", label: ROUTE_NAME["/staff/admin/payroll/runs"] },
 ];
 
 const SKIP_COUNT = Promise.resolve({ count: 0, data: null, error: null });

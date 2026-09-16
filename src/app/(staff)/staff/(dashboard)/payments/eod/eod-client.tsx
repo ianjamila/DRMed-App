@@ -1,5 +1,7 @@
 "use client";
 
+import { ROUTE_NAME } from "@/lib/staff/route-names";
+
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -242,7 +244,7 @@ export function EodClient(props: {
           and CLAUDE.md's plain-language rule still applies to what it asks the
           user to do. */}
       <h1 className="font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
-        End of day · {formatBusinessDate(props.businessDate)}
+        {ROUTE_NAME["/staff/payments/eod"]} · {formatBusinessDate(props.businessDate)}
       </h1>
       <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
         Close and count the cash drawer.

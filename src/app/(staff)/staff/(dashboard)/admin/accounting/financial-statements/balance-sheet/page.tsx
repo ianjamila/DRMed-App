@@ -1,3 +1,4 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -5,7 +6,7 @@ import { paginatedFetch } from "@/lib/supabase/paginated-fetch";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { buildAsOfPresets } from "@/lib/reports/period-presets";
 
-export const metadata = { title: "Balance Sheet" };
+export const metadata = { title: ROUTE_NAME["/staff/admin/accounting/financial-statements/balance-sheet"] };
 export const dynamic = "force-dynamic";
 
 const PHP = new Intl.NumberFormat("en-PH", {
@@ -158,14 +159,13 @@ export default async function BalanceSheetPage({ searchParams }: SearchProps) {
           ← Dashboard
         </Link>
         <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Financial Statements
+          {ROUTE_NAME["/staff/admin/accounting/financial-statements/balance-sheet"]}
         </h1>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
           Balance sheet as of <strong>{asOf}</strong>. Cumulative posted
           journal entries through this date.
         </p>
       </header>
-
 
       <BalanceSheetAsOfPresets asOf={asOf} todayISO={todayISO} />
 

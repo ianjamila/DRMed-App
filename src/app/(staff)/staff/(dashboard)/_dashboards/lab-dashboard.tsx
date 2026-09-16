@@ -1,3 +1,4 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 import type { StaffSession } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
 import { sectionsForRole, type ServiceSection } from "@/lib/auth/role-sections";
@@ -40,10 +41,10 @@ function buildQuickLinks(role: Role): QuickLink[] {
     { href: "/staff/queue", label: "Queue" },
   ];
   if (role === "medtech" || role === "admin") {
-    links.push({ href: "/staff/quote", label: "Quick Quote" });
+    links.push({ href: "/staff/quote", label: ROUTE_NAME["/staff/quote"] });
   }
   if (role === "admin") {
-    links.push({ href: "/staff/admin/result-templates", label: "Result Templates" });
+    links.push({ href: "/staff/admin/result-templates", label: ROUTE_NAME["/staff/admin/result-templates"] });
   }
   // No /staff/signoff quicklink: that route is still a data-less placeholder
   // (see the pathologist's ready_for_signoff / strip_pending_signoff cards,

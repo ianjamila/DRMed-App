@@ -1,3 +1,4 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
@@ -37,7 +38,7 @@ interface SearchParams {
   to?: string;
 }
 
-export const metadata = { title: "Expenses & P&L" };
+export const metadata = { title: ROUTE_NAME["/staff/admin/operations/expenses"] };
 
 export default async function ExpensesPnlPage({
   searchParams,
@@ -132,7 +133,9 @@ export default async function ExpensesPnlPage({
   } catch {
     return (
       <div className="space-y-4">
-        <h1 className="text-xl font-semibold text-[color:var(--color-brand-navy)]">Operations</h1>
+        <h1 className="text-xl font-semibold text-[color:var(--color-brand-navy)]">
+          {ROUTE_NAME["/staff/admin/operations/expenses"]}
+        </h1>
         <Card className="mt-6 px-4 text-sm text-destructive">
           Could not load the expenses &amp; P&amp;L report. Please try again.
         </Card>
@@ -169,7 +172,9 @@ export default async function ExpensesPnlPage({
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-xl font-semibold text-[color:var(--color-brand-navy)]">Operations</h1>
+        <h1 className="text-xl font-semibold text-[color:var(--color-brand-navy)]">
+          {ROUTE_NAME["/staff/admin/operations/expenses"]}
+        </h1>
         <ExportCsvLink href={csvHref} />
       </div>
 

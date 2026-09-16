@@ -1,3 +1,4 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -5,7 +6,7 @@ import { paginatedFetch } from "@/lib/supabase/paginated-fetch";
 import { shiftISODate, todayManilaISODate } from "@/lib/dates/manila";
 import { PeriodPresets } from "../_components/period-presets";
 
-export const metadata = { title: "Cash Flow" };
+export const metadata = { title: ROUTE_NAME["/staff/admin/accounting/financial-statements/cash-flow"] };
 export const dynamic = "force-dynamic";
 
 const PHP = new Intl.NumberFormat("en-PH", {
@@ -98,7 +99,7 @@ export default async function CashFlowPage({ searchParams }: SearchProps) {
     return (
       <div className="space-y-6">
         <h1 className="font-heading text-2xl font-bold text-[color:var(--color-brand-navy)]">
-          Cash Flow
+          {ROUTE_NAME["/staff/admin/accounting/financial-statements/cash-flow"]}
         </h1>
         <p className="mt-4 text-sm text-[color:var(--color-brand-text-soft)]">
           No cash accounts found in the chart of accounts. Expected codes
@@ -219,14 +220,13 @@ export default async function CashFlowPage({ searchParams }: SearchProps) {
           ← Dashboard
         </Link>
         <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Financial Statements
+          {ROUTE_NAME["/staff/admin/accounting/financial-statements/cash-flow"]}
         </h1>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
           Cash flow from <strong>{start}</strong> → <strong>{end}</strong>{" "}
           (direct method, against cash accounts {cashAccounts.map((a) => a.code).join(", ")}).
         </p>
       </header>
-
 
       <PeriodPresets
         pathname="/staff/admin/accounting/financial-statements/cash-flow"

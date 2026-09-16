@@ -1,3 +1,4 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 import type { StaffSession } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -53,21 +54,21 @@ const QUICK_GROUPS: { label: string; items: { href: string; label: string }[] }[
   {
     label: "Front Desk",
     items: [
-      { href: "/staff/visits/queue", label: "Reception Queue" },
-      { href: "/staff/patients", label: "Patients" },
-      { href: "/staff/patients/new", label: "New Patient" },
-      { href: "/staff/appointments", label: "Appointments" },
-      { href: "/staff/inquiries", label: "Inquiries" },
-      { href: "/staff/gift-codes/sell", label: "Sell Gift Code" },
+      { href: "/staff/visits/queue", label: ROUTE_NAME["/staff/visits/queue"] },
+      { href: "/staff/patients", label: ROUTE_NAME["/staff/patients"] },
+      { href: "/staff/patients/new", label: ROUTE_NAME["/staff/patients/new"] },
+      { href: "/staff/appointments", label: ROUTE_NAME["/staff/appointments"] },
+      { href: "/staff/inquiries", label: ROUTE_NAME["/staff/inquiries"] },
+      { href: "/staff/gift-codes/sell", label: ROUTE_NAME["/staff/gift-codes/sell"] },
     ],
   },
   {
     label: "Billing",
     items: [
-      { href: "/staff/visits", label: "Visit Records" },
-      { href: "/staff/quote", label: "Quick Quote" },
-      { href: "/staff/payments/cash-drawer", label: "Cash Drawer" },
-      { href: "/staff/payments/petty-cash", label: "Petty Cash" },
+      { href: "/staff/visits", label: ROUTE_NAME["/staff/visits"] },
+      { href: "/staff/quote", label: ROUTE_NAME["/staff/quote"] },
+      { href: "/staff/payments/cash-drawer", label: ROUTE_NAME["/staff/payments/cash-drawer"] },
+      { href: "/staff/payments/petty-cash", label: ROUTE_NAME["/staff/payments/petty-cash"] },
     ],
   },
 ];

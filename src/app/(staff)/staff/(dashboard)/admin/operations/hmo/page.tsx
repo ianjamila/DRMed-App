@@ -1,3 +1,4 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
@@ -22,7 +23,7 @@ interface SearchParams {
   to?: string;
 }
 
-export const metadata = { title: "HMO receivables" };
+export const metadata = { title: ROUTE_NAME["/staff/admin/operations/hmo"] };
 
 export default async function HmoReceivablesPage({
   searchParams,
@@ -92,7 +93,9 @@ export default async function HmoReceivablesPage({
   } catch {
     return (
       <div className="space-y-4">
-        <h1 className="text-xl font-semibold text-[color:var(--color-brand-navy)]">Operations</h1>
+        <h1 className="text-xl font-semibold text-[color:var(--color-brand-navy)]">
+          {ROUTE_NAME["/staff/admin/operations/hmo"]}
+        </h1>
         <Card className="mt-6 px-4 text-sm text-destructive">
           Could not load the HMO receivables report. Please try again.
         </Card>
@@ -103,7 +106,9 @@ export default async function HmoReceivablesPage({
   if (agingRes.error) {
     return (
       <div className="space-y-4">
-        <h1 className="text-xl font-semibold text-[color:var(--color-brand-navy)]">Operations</h1>
+        <h1 className="text-xl font-semibold text-[color:var(--color-brand-navy)]">
+          {ROUTE_NAME["/staff/admin/operations/hmo"]}
+        </h1>
         <Card className="mt-6 px-4 text-sm text-destructive">
           Could not load the HMO receivables report. Please try again.
         </Card>
@@ -129,7 +134,9 @@ export default async function HmoReceivablesPage({
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-2xl font-semibold text-[#0b2a4a]">HMO Receivables</h1>
+          <h1 className="text-2xl font-semibold text-[#0b2a4a]">
+            {ROUTE_NAME["/staff/admin/operations/hmo"]}
+          </h1>
           <p className="text-sm text-muted-foreground">
             Per-provider lab-HMO AR roll-forward — billed in, paid out, running balance.
           </p>

@@ -253,7 +253,7 @@ export function DtrUploadClient({
           </Link>
           <span aria-hidden="true">|</span>
           <span>
-            Pay runs :: {formatPeriodRange(run.period_start, run.period_end)}
+            Run Payroll :: {formatPeriodRange(run.period_start, run.period_end)}
           </span>
         </nav>
         <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">

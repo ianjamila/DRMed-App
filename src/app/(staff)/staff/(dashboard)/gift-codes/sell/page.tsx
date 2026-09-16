@@ -50,7 +50,7 @@ export default async function SellGiftCodePage({ searchParams }: PageProps) {
     <div className="mx-auto max-w-xl px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6">
         <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-          Phase 11 · Reception
+          Gift Codes
         </p>
         <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
           Sell Gift Code

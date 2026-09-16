@@ -84,7 +84,7 @@ export function VendorFormClient(props: Props) {
     <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6">
         <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-          Phase 12.4 · Admin · AP · Vendor
+          Expenses
         </p>
         <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
           {mode === "create" ? "New vendor" : "Edit vendor"}
