@@ -3,9 +3,10 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { reportError } from "@/lib/observability/report-error";
 import { audit } from "@/lib/audit/log";
 import { sendEmail } from "@/lib/notifications/email";
-import { renderEmailShell, emailParagraph, emailButton } from "@/lib/notifications/branded-email";
-import { shouldEmailTemplateHealth } from "@/lib/results/template-health";
-import { collectTemplateHealthFindings } from "@/lib/results/collect-template-health";
+import { renderEmailShell, emailParagraph, emailButton, escapeHtml } from "@/lib/notifications/branded-email";
+import { isTemplateHealthStale, shouldEmailTemplateHealth } from "@/lib/results/template-health";
+import { collectTemplateHealthFindings, getLastTemplateHealthDailyRun } from "@/lib/results/collect-template-health";
+import { manilaDateTime } from "@/lib/dates/manila";
 import type { Json } from "@/types/database";
 
 // Daily alerts and a weekly summary for report-group template drift — the failure that let
@@ -21,8 +22,8 @@ import type { Json } from "@/types/database";
 // bearer token) — dedup-digest skips the former and goes straight to the
 // 401 check. The admin-notification mechanism mirrors dedup-digest exactly:
 // active admins resolved via staff_profiles + auth.users emails, sendEmail
-// with the shared branded shell, one audit_log row, only when there is
-// something to report (silent + no writes when everything is healthy).
+// with the shared branded shell. Every completed scan writes an audit_log
+// heartbeat, including clean scans; a gap in daily runs also triggers email.
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -44,25 +45,27 @@ export async function GET(request: Request) {
 
   try {
     const mode = new URL(request.url).searchParams.get("mode") === "weekly" ? "weekly" : "daily";
+    // Read BEFORE audit(): a daily run must not read its own heartbeat and hide a gap.
+    const lastDailyRun = await getLastTemplateHealthDailyRun(admin);
+    const dailyRunStale = isTemplateHealthStale(lastDailyRun, new Date());
     const { findings, counts } = await collectTemplateHealthFindings(admin);
 
-    if (findings.length === 0) {
-      return NextResponse.json({ ok: true, findings: 0, counts });
-    }
-
-    // resource_id is nullable on audit() — anchor the row to the first
-    // finding's template for easy cross-reference.
+    // Anchor to the first finding when present; clean scans still record a heartbeat.
     await audit({
       actor_id: null,
       actor_type: "system",
       action: mode === "weekly" ? "result_template.health_summary" : "result_template.health_alert",
       resource_type: "result_template",
-      resource_id: findings[0].template_id,
+      resource_id: findings[0]?.template_id ?? null,
       metadata: { findings, counts } as unknown as Json,
     });
 
-    // Daily alerts need actionable findings; the weekly summary includes history.
-    if (!shouldEmailTemplateHealth(findings, mode)) {
+    if (findings.length === 0 && !dailyRunStale) {
+      return NextResponse.json({ ok: true, findings: 0, counts });
+    }
+
+    // A recovered daily gap or ongoing weekly-detected outage overrides the findings gate.
+    if (!shouldEmailTemplateHealth(findings, mode, dailyRunStale)) {
       return NextResponse.json({
         ok: true,
         findings: findings.length,
@@ -94,9 +97,17 @@ export async function GET(request: Request) {
     const errorCount = findings.filter((f) => f.severity === "error").length;
     const warnCount = findings.filter((f) => f.severity === "warning").length;
     const infoCount = findings.filter((f) => f.severity === "info").length;
+    const gapMessage = !dailyRunStale ? "" : mode === "daily"
+      ? lastDailyRun
+        ? `The daily template-health check has resumed. It had not run since ${manilaDateTime(lastDailyRun)} (Manila time), leaving a gap in monitoring.`
+        : "The daily template-health check has run, but there is no prior record of it running. Monitoring before this run cannot be confirmed."
+      : lastDailyRun
+        ? `The daily template-health check appears to have stopped running. Its last recorded run was ${manilaDateTime(lastDailyRun)} (Manila time). Please investigate the daily cron.`
+        : "The daily template-health check appears to have stopped running: there is no prior record of it running. Please investigate the daily cron.";
     const html = renderEmailShell({
       heading: mode === "weekly" ? "Weekly result-template summary" : "Result-template drift detected",
       contentHtml:
+        (gapMessage ? emailParagraph(`<b>${escapeHtml(gapMessage)}</b>`) : "") +
         emailParagraph(
           `The ${mode} template-health check found <b>${findings.length}</b> issue(s) across report-group templates (${errorCount} broken, ${warnCount} warning, ${infoCount} informational).`,
         ) + emailButton("Review result templates", reviewUrl, "cyan"),
@@ -109,7 +120,7 @@ export async function GET(request: Request) {
         subject: mode === "weekly"
           ? `DRMed: weekly result-template summary (${findings.length} issue(s))`
           : `DRMed: ${findings.length} result-template health issue(s)`,
-        text: `${findings.length} result-template health issue(s) found. Review at ${reviewUrl}`,
+        text: `${gapMessage ? `${gapMessage}\n\n` : ""}${findings.length} result-template health issue(s) found. Review at ${reviewUrl}`,
         html,
       });
       if (r.ok) emailed += 1;

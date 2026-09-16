@@ -2,7 +2,10 @@ import Link from "next/link";
 import { PageHeader } from "@/components/staff/page-header";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createClient } from "@/lib/supabase/server";
-import { collectTemplateHealthFindings } from "@/lib/results/collect-template-health";
+import { collectTemplateHealthFindings, getLastTemplateHealthDailyRun } from "@/lib/results/collect-template-health";
+import { isTemplateHealthStale, TEMPLATE_HEALTH_STALE_AFTER_HOURS } from "@/lib/results/template-health";
+import { manilaDateTime } from "@/lib/dates/manila";
+import { relativeSignIn } from "@/lib/staff/last-sign-in";
 
 export const metadata = { title: "Template Health" };
 export const dynamic = "force-dynamic";
@@ -16,7 +19,12 @@ const SEVERITIES = [
 export default async function TemplateHealthPage() {
   await requireAdminStaff();
   const supabase = await createClient();
-  const { findings } = await collectTemplateHealthFindings(supabase);
+  const [{ findings }, lastDailyRun] = await Promise.all([
+    collectTemplateHealthFindings(supabase),
+    getLastTemplateHealthDailyRun(supabase),
+  ]);
+  const checkedAt = new Date();
+  const dailyRunStale = isTemplateHealthStale(lastDailyRun, checkedAt);
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
@@ -24,6 +32,22 @@ export default async function TemplateHealthPage() {
         title="Template Health"
         subtitle="Current report-group template findings. Broken templates and warnings need attention; informational findings include retained template history."
       />
+      <p className="mb-4 text-sm text-[color:var(--color-brand-text-soft)]">
+        Last daily check: {lastDailyRun
+          ? `${manilaDateTime(lastDailyRun)} (Manila time) · ${relativeSignIn(lastDailyRun.toISOString(), checkedAt)}`
+          : "No recorded run."}
+      </p>
+      {dailyRunStale ? (
+        <div role="alert" className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <p className="font-semibold">The daily template-health check may have stopped running.</p>
+          <p className="mt-1">
+            {lastDailyRun
+              ? `No daily run has been recorded for more than ${TEMPLATE_HEALTH_STALE_AFTER_HOURS} hours.`
+              : "There is no prior record of a daily run."}
+            {" "}Findings below may be out of date between page visits while automatic monitoring is missing. This page checks templates live when opened.
+          </p>
+        </div>
+      ) : null}
       <Link
         href="/staff/admin/result-templates"
         className="text-sm font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
@@ -33,7 +57,7 @@ export default async function TemplateHealthPage() {
 
       {findings.length === 0 ? (
         <p className="mt-8 rounded-lg border border-dashed border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-3 text-sm text-[color:var(--color-brand-text-soft)]">
-          No template-health findings. All report-group template checks passed.
+          Checked at {manilaDateTime(checkedAt)} (Manila time): no template-health findings.
         </p>
       ) : (
         SEVERITIES.map(({ severity, label }) => {

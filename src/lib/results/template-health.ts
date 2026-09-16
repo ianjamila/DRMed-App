@@ -25,10 +25,19 @@ export interface TemplateHealthFinding {
   message: string;
 }
 
+export const TEMPLATE_HEALTH_STALE_AFTER_HOURS = 26;
+
+export function isTemplateHealthStale(lastRunAt: Date | null, now: Date): boolean {
+  return lastRunAt === null ||
+    now.getTime() - lastRunAt.getTime() > TEMPLATE_HEALTH_STALE_AFTER_HOURS * 60 * 60 * 1000;
+}
+
 export function shouldEmailTemplateHealth(
   findings: readonly TemplateHealthFinding[],
   mode: "daily" | "weekly",
+  dailyRunStale = false,
 ): boolean {
+  if (dailyRunStale) return true;
   return mode === "weekly"
     ? findings.length > 0
     : findings.some((f) => f.severity === "error" || f.severity === "warning");

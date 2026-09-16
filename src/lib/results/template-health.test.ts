@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   deriveTemplateHealthFindings,
+  isTemplateHealthStale,
   shouldEmailTemplateHealth,
+  TEMPLATE_HEALTH_STALE_AFTER_HOURS,
   type TemplateHealthFinding,
   type TemplateHealthGroup,
 } from "./template-health";
@@ -19,6 +21,27 @@ function group(overrides: Partial<TemplateHealthGroup>): TemplateHealthGroup {
     ...overrides,
   };
 }
+
+describe("isTemplateHealthStale", () => {
+  const now = new Date("2026-09-16T22:00:00Z");
+  const thresholdMs = TEMPLATE_HEALTH_STALE_AFTER_HOURS * 60 * 60 * 1000;
+
+  it("a fresh daily run is not stale", () => {
+    expect(isTemplateHealthStale(new Date(now.getTime() - 24 * 60 * 60 * 1000), now)).toBe(false);
+  });
+
+  it("a run exactly at the threshold is not stale", () => {
+    expect(isTemplateHealthStale(new Date(now.getTime() - thresholdMs), now)).toBe(false);
+  });
+
+  it("a run past the threshold is stale", () => {
+    expect(isTemplateHealthStale(new Date(now.getTime() - thresholdMs - 1), now)).toBe(true);
+  });
+
+  it("no prior run is stale", () => {
+    expect(isTemplateHealthStale(null, now)).toBe(true);
+  });
+});
 
 describe("shouldEmailTemplateHealth", () => {
   const finding = (severity: TemplateHealthFinding["severity"]): TemplateHealthFinding => ({
@@ -40,6 +63,17 @@ describe("shouldEmailTemplateHealth", () => {
   it("does not email an empty scan in either mode", () => {
     expect(shouldEmailTemplateHealth([], "daily")).toBe(false);
     expect(shouldEmailTemplateHealth([], "weekly")).toBe(false);
+  });
+
+  it("a recovered daily gap overrides the info-only mute", () => {
+    const findings = [finding("info")];
+    expect(shouldEmailTemplateHealth(findings, "daily", true)).toBe(true);
+    expect(shouldEmailTemplateHealth(findings, "daily", false)).toBe(false);
+  });
+
+  it.each(["daily", "weekly"] as const)("%s emails zero findings only when the daily heartbeat is stale", (mode) => {
+    expect(shouldEmailTemplateHealth([], mode, true)).toBe(true);
+    expect(shouldEmailTemplateHealth([], mode, false)).toBe(false);
   });
 
   it.each(["error", "warning"] as const)("emails %s findings in both modes, including alongside info", (severity) => {

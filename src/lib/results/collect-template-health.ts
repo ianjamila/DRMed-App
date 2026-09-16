@@ -7,6 +7,21 @@ import {
   type TemplateHealthGroup,
 } from "./template-health";
 
+/** Weekly summaries must not mask a missing daily heartbeat. */
+export async function getLastTemplateHealthDailyRun(
+  client: SupabaseClient<Database>,
+): Promise<Date | null> {
+  const { data, error } = await client
+    .from("audit_log")
+    .select("created_at")
+    .eq("action", "result_template.health_alert")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? new Date(data.created_at) : null;
+}
+
 /** Shared live scan for the cron and admin health page. The caller supplies its server client. */
 export async function collectTemplateHealthFindings(
   admin: SupabaseClient<Database>,
