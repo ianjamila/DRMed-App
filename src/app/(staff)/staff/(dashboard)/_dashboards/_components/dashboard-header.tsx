@@ -1,10 +1,21 @@
+import { manilaTime } from "@/lib/dates/manila";
+
 interface DashboardHeaderProps {
   firstName: string;
   roleLabel: string;
   title: string;
+  // When these figures were read, so a dashboard left open on the counter
+  // monitor can't be mistaken for live. Pass the server render time; the
+  // page also refreshes itself (RealtimeRefresher).
+  updatedAt?: Date;
 }
 
-export function DashboardHeader({ firstName, roleLabel, title }: DashboardHeaderProps) {
+export function DashboardHeader({
+  firstName,
+  roleLabel,
+  title,
+  updatedAt,
+}: DashboardHeaderProps) {
   return (
     <header className="mb-8">
       <div className="flex flex-wrap items-center gap-2">
@@ -18,6 +29,11 @@ export function DashboardHeader({ firstName, roleLabel, title }: DashboardHeader
       <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
         {title}
       </h1>
+      {updatedAt ? (
+        <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
+          Updated {manilaTime(updatedAt)}
+        </p>
+      ) : null}
     </header>
   );
 }

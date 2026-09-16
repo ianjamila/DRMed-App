@@ -12,6 +12,7 @@ import {
 import fontkit from "@pdf-lib/fontkit";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { reportError } from "@/lib/observability/report-error";
+import { payslipVisibleToStaff } from "./payslip-visibility";
 import { formatManilaDate, formatPeriodRange } from "./format";
 
 // Read the letterhead logo once at module load. T73 will batch generatePayslipPdf
@@ -193,12 +194,31 @@ function formatPeso(amount: number): string {
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 
+export type LoadPayslipDataOptions = {
+  /**
+   * Skip the finalised-run gate below. The detail page passes `true` for
+   * admin viewers (who may legitimately inspect a draft/computed run's
+   * in-progress numbers); every other caller should leave this false so a
+   * payslip is never read for a run that isn't finalised or paid.
+   *
+   * Both PDF-generation entry points (`generatePayslipsForRunAction`,
+   * `regeneratePayslipAction` in the admin run-review UI) only ever call
+   * this after a run has been flipped to 'finalised' — per the payroll
+   * design spec, payslip PDFs are generated on finalise and regenerated
+   * only post-finalise — so leaving the gate ON by default for them is
+   * both correct today and a useful safety net if that invariant ever
+   * drifts.
+   */
+  allowNonFinalisedRun?: boolean;
+};
+
 // Exported so the T76 detail page (/staff/payslips/[id]) can reuse the same
 // join shape we render in the PDF — keeps the HTML view and the PDF view in
 // lockstep on every schema change.
 export async function loadPayslipData(
   admin: AdminClient,
   employee_run_id: string,
+  options: LoadPayslipDataOptions = {},
 ): Promise<PayslipData> {
   // 1. Load the employee_run + joined run + period + employee + staff_profile.
   const runRes = await admin
@@ -222,6 +242,7 @@ export async function loadPayslipData(
        ),
        payroll_runs:run_id(
          id,
+         status,
          payroll_periods:period_id(period_start, period_end, pay_date)
        )`,
     )
@@ -262,6 +283,20 @@ export async function loadPayslipData(
       `[payslip-pdf] payroll_runs join missing for employee_run ${employee_run_id}`,
     );
   }
+
+  // A payslip is visible to staff only once its run is finalised or paid
+  // (see payslip-visibility.ts). This loader backs both the staff-facing
+  // detail page and PDF generation, so gate it here rather than trusting
+  // every caller to re-derive the same rule.
+  if (
+    !options.allowNonFinalisedRun &&
+    !payslipVisibleToStaff(runJoin.status)
+  ) {
+    throw new Error(
+      `[payslip-pdf] employee_run ${employee_run_id} belongs to a payroll run that is not finalised (status='${runJoin.status}') — payslip data is not available until the run is finalised.`,
+    );
+  }
+
   const periodJoin = Array.isArray(runJoin.payroll_periods)
     ? runJoin.payroll_periods[0]
     : runJoin.payroll_periods;

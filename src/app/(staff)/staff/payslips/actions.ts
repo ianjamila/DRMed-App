@@ -6,6 +6,19 @@ import { translatePgError } from "@/lib/accounting/pg-errors";
 import { audit } from "@/lib/audit/log";
 import { ipAndAgent } from "@/lib/server/action-helpers";
 import { isoDateParts, todayManilaISODate } from "@/lib/dates/manila";
+import {
+  PAYSLIP_VISIBLE_RUN_STATUSES,
+  payslipVisibleToStaff,
+} from "@/lib/payroll/payslip-visibility";
+
+// RLS trap: `payroll_runs` has exactly one policy (admin-only), so a
+// non-admin staff user cannot SELECT it directly OR through an embed. Every
+// query below keeps `createAdminClient()` (service-role, RLS bypassed) for
+// that reason — swapping in the RLS-scoped server client would make the
+// `payroll_runs!inner(...)` embed return zero rows for every non-admin and
+// break this page outright, not merely leak less. `payroll_employee_runs`
+// itself has a self-read policy, so the RLS-scoped client would "work" for
+// that half of the query and silently produce empty results for the other.
 
 type ActionResult<T = void> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -82,9 +95,15 @@ export async function listMyPayslipsAction(
     .from("payroll_employee_runs")
     .select(`
       id, net_pay_php, payment_method_used, paid_at, payslip_file_path,
-      payroll_runs!inner(period_id, payroll_periods!inner(period_start, period_end, pay_date))
+      payroll_runs!inner(period_id, status, payroll_periods!inner(period_start, period_end, pay_date))
     `)
     .eq("employee_id", targetEmployeeId)
+    // A payslip is visible to staff only once its run is finalised or paid
+    // — see payslip-visibility.ts for why that's a single status value.
+    // `payroll_runs!inner` matters here: a filter on a LEFT-joined embed
+    // (a plain `payroll_runs(...)`) is silently ignored by PostgREST and
+    // would look exactly like a working fix while returning every draft.
+    .in("payroll_runs.status", PAYSLIP_VISIBLE_RUN_STATUSES)
     .order("paid_at", { ascending: false, nullsFirst: false })
     // 200 caps an employee's history at ~7.7 years of bi-weekly payslips.
     // Raise if anyone in DRMed actually hits the limit (audit will show).
@@ -181,10 +200,17 @@ export async function getMyYtdTotalsAction(
     .from("payroll_employee_runs")
     .select(`
       gross_pay_php, net_pay_php,
-      payroll_runs!inner(payroll_periods!inner(pay_date))
+      payroll_runs!inner(status, payroll_periods!inner(pay_date))
     `)
     .eq("employee_id", targetEmployeeId)
-    .not("paid_at", "is", null);
+    .not("paid_at", "is", null)
+    // `.not("paid_at", "is", null)` above is NEARLY the same rule but not
+    // identical — it's silent on draft/computed rows that happen to carry a
+    // stray `paid_at`. Gate on run status too so YTD totals can never
+    // include a draft run's zeros. See payslip-visibility.ts. `!inner`
+    // keeps this filter from being silently ignored (a LEFT-joined embed
+    // filter compiles but does nothing).
+    .in("payroll_runs.status", PAYSLIP_VISIBLE_RUN_STATUSES);
   if (error) return { ok: false, error: translatePgError(error) };
 
   let gross = 0;
@@ -261,13 +287,29 @@ export async function getPayslipUrlAction(employee_run_id: string): Promise<Acti
   const admin = createAdminClient();
   const { data: er, error: erErr } = await admin
     .from("payroll_employee_runs")
-    .select("employee_id, payslip_file_path, run_id, employees!inner(staff_profile_id)")
+    .select(
+      "employee_id, payslip_file_path, run_id, employees!inner(staff_profile_id), payroll_runs!inner(status)",
+    )
     .eq("id", employee_run_id)
     .maybeSingle();
   if (erErr || !er) return { ok: false, error: "Payslip not found." };
   const isOwn = (er.employees as { staff_profile_id: string }).staff_profile_id === session.user_id;
   const isAdmin = session.role === "admin";
   if (!isOwn && !isAdmin) return { ok: false, error: "Forbidden." };
+  // Run-status gate applies to EVERYONE, admin included — unlike the detail
+  // page, this serves the stored PDF FILE, not a live re-render. A run that
+  // was finalised, had a payslip generated, then got voided and reopened to
+  // 'draft' (Q16/Q24 of the payroll design spec) still has a stale
+  // `payslip_file_path` pointing at the old, now-withdrawn PDF; nobody
+  // should be able to download that via this signed-URL path. See
+  // payslip-visibility.ts.
+  const runStatus = (er.payroll_runs as { status: string }).status;
+  if (!payslipVisibleToStaff(runStatus)) {
+    return {
+      ok: false,
+      error: "This payslip isn't available yet — it will be ready once payroll for that period is finalised.",
+    };
+  }
   if (!er.payslip_file_path) return { ok: false, error: "Payslip not yet generated." };
 
   const { data: signed, error: signedErr } = await admin.storage

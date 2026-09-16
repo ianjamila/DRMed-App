@@ -247,7 +247,7 @@ export function PayslipsClient({
         ) : yearFiltered.length === 0 ? (
           <EmptyState
             title={`No payslips for ${selectedYear} yet.`}
-            body="When a payroll run is paid out for this year, your payslip will appear here."
+            body="Your payslip will appear here once payroll for that period is finalised."
           />
         ) : (
           <>

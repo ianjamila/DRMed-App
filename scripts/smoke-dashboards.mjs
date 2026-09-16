@@ -64,7 +64,7 @@ const ROLES = [
         "Lab bench",
         "Medtech",
         "Unclaimed in my sections",
-        "Send-out awaiting result",
+        "Open send-out tests",
       ],
       "/staff/queue": ["Lab queue"],
       "/staff/admin/settings/dashboard-cards": null,
@@ -85,9 +85,7 @@ const ROLES = [
     role: "pathologist",
     expect: {
       "/staff": [
-        "Sign-off",
         "Pathologist",
-        "Ready for sign-off",
         "Critical alerts unacked",
       ],
       "/staff/signoff": [],

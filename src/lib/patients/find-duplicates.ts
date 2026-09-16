@@ -2,6 +2,7 @@
 import "server-only";
 import type { createAdminClient } from "@/lib/supabase/admin";
 import { reportError } from "@/lib/observability/report-error";
+import { fetchAllRows, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 import { scorePair, type CandidateFields, type DupScore, type DupTier } from "./duplicates";
 
 type AdminClient = ReturnType<typeof createAdminClient>;
@@ -51,30 +52,78 @@ function side(row: Record<string, unknown>, p: "a" | "b", idKey: "id_a" | "id_b"
   };
 }
 
-// All candidate pairs for the admin report, scored and ranked.
+export interface CandidatePairsResult {
+  pairs: CandidatePair[];
+  // The 20,000-row export ceiling was reached — `pairs` is not the full set.
+  truncated: boolean;
+  // The underlying read failed. Distinguish this from "genuinely zero
+  // candidates" — a caller that only reads `pairs.length` can't tell a
+  // crashed query from a clean dedup pass, and a dashboard used to render
+  // both as a reassuring "0 duplicates".
+  error: boolean;
+}
+
+// Shared implementation: pages past PostgREST's 1000-row cap (the view was a
+// bare `.select("*")` with no `.range()`, so a clinic with enough patients to
+// exceed it would have silently seen a short list with no signal that rows
+// were missing) and reports the outcome instead of only logging it.
+async function loadCandidatePairsResult(
+  admin: AdminClient,
+  opts: { minTier?: DupTier } = {},
+): Promise<CandidatePairsResult> {
+  const min = opts.minTier ?? "probable";
+  try {
+    // (id_a, id_b) is a unique key of the view (a plain `union`, not `union
+    // all`, over three blocking-key joins with id_a < id_b) — ordering by
+    // both gives `fetchAllRows` the total order it needs across pages.
+    const { rows, truncated } = await fetchAllRows<Record<string, unknown>>(
+      (from, to) =>
+        admin
+          .from("v_patient_dedup_candidate_pairs")
+          .select("*")
+          .order("id_a", { ascending: true })
+          .order("id_b", { ascending: true })
+          .range(from, to),
+      REPORT_EXPORT_MAX_ROWS,
+    );
+    const out: CandidatePair[] = [];
+    for (const row of rows) {
+      const a = side(row, "a", "id_a");
+      const b = side(row, "b", "id_b");
+      const score = scorePair(a, b);
+      if (tierAtLeast(score.tier, min)) {
+        out.push({ id_a: a.id, id_b: b.id, a, b, score });
+      }
+    }
+    out.sort((x, y) => y.score.score - x.score.score);
+    return { pairs: out, truncated, error: false };
+  } catch (error) {
+    // Surface to Sentry — otherwise the report/dashboard/digest silently show 0.
+    await reportError({ scope: "loadCandidatePairs", error });
+    return { pairs: [], truncated: false, error: true };
+  }
+}
+
+// All candidate pairs for the admin report, scored and ranked. Kept
+// backward-compatible (plain array, failure folds into "no candidates") for
+// its existing callers (patient-merge/candidates, the dedup-digest cron) —
+// callers that need to tell a failure apart from a clean pass should use
+// loadCandidatePairsWithStatus instead.
 export async function loadCandidatePairs(
   admin: AdminClient,
   opts: { minTier?: DupTier } = {},
 ): Promise<CandidatePair[]> {
-  const min = opts.minTier ?? "probable";
-  const { data, error } = await admin.from("v_patient_dedup_candidate_pairs").select("*");
-  if (error) {
-    // Surface to Sentry — otherwise the report/dashboard/digest silently show 0.
-    await reportError({ scope: "loadCandidatePairs", error });
-    return [];
-  }
-  if (!data) return [];
-  const out: CandidatePair[] = [];
-  for (const row of data as Record<string, unknown>[]) {
-    const a = side(row, "a", "id_a");
-    const b = side(row, "b", "id_b");
-    const score = scorePair(a, b);
-    if (tierAtLeast(score.tier, min)) {
-      out.push({ id_a: a.id, id_b: b.id, a, b, score });
-    }
-  }
-  out.sort((x, y) => y.score.score - x.score.score);
-  return out;
+  const { pairs } = await loadCandidatePairsResult(admin, opts);
+  return pairs;
+}
+
+// Same data, plus enough to tell "0 candidates" apart from "the read failed"
+// and "more matched than the export ceiling allows".
+export async function loadCandidatePairsWithStatus(
+  admin: AdminClient,
+  opts: { minTier?: DupTier } = {},
+): Promise<CandidatePairsResult> {
+  return loadCandidatePairsResult(admin, opts);
 }
 
 // Candidates for one in-progress patient (staff near-match warning).

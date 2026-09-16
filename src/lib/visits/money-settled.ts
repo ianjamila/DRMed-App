@@ -19,10 +19,11 @@
  * Keep this in lockstep with 0133's SQL. The unit test pins both this
  * predicate and the PostgREST filter string.
  *
- * NOT covered by this definition, on purpose: the reception queue's stage
- * helper (./queue-stage.ts). "Waiting" there means the counter still has cash
- * to collect, which is a different question from whether results may leave the
- * building.
+ * A third caller shares this same definition: the reception queue's stage
+ * helper (./queue-stage.ts). Its "waiting" bucket is exactly the visits this
+ * predicate says are NOT settled — the counter still has money to collect,
+ * and an HMO visit never does, so it leaves "waiting" the moment it's
+ * created rather than sitting there until a claim resolves months later.
  */
 
 export interface MoneySettledVisit {

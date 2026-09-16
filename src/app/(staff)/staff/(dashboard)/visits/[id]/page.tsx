@@ -4,8 +4,12 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { formatPhp } from "@/lib/marketing/format";
-import { sectionsForRole } from "@/lib/auth/role-sections";
 import { manilaDate, manilaDateTime } from "@/lib/dates/manila";
+import {
+  canActOnResult,
+  canSeeLine,
+  roleCanActOnResults,
+} from "@/lib/visits/line-visibility";
 import { ReleaseButton } from "./release-button";
 import { ReleaseAllButton } from "./release-all-button";
 import { ReleasePackageHeaderButton } from "./release-package-header-button";
@@ -293,38 +297,55 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
     ),
   }).ok;
 
-  // Section gate: hide tests outside this role's sections (medtech sees
-  // lab bench, xray sees imaging, reception sees none, admin + pathologist
-  // see everything). Package headers are visible if ANY of their
-  // components are accessible — we don't want a half-visible package.
-  const allowedSections = sectionsForRole(session.role); // null = unrestricted
-  const isVisible = (r: { services: { section?: string | null } | { section?: string | null }[] | null }) => {
-    if (allowedSections === null) return true;
-    if (allowedSections.length === 0) return false;
-    const svc = Array.isArray(r.services) ? r.services[0] : r.services;
-    const sect = svc?.section ?? null;
-    return sect != null && allowedSections.includes(sect as never);
+  // See-vs-act gate (owner decision, 2026-09-15 — reverses go-live "A4").
+  // Reception SEES every bill line — name, code, price, discount, status —
+  // because it enters and collects the bill; it never sees the RESULT (that
+  // is the separate canActOnRow gate on the result-side controls below).
+  // medtech sees only its own lab bench, xray_technician only imaging, and
+  // admin + pathologist see everything. Package headers are visible if ANY
+  // of their components are visible — we don't want a half-visible package.
+  type SectionRow = {
+    services: { section?: string | null } | { section?: string | null }[] | null;
   };
-  // A4 (go-live): soft-deleted lines (0125) leave the operational pipeline
-  // entirely and render in their own "Deleted entries" panel below with a
-  // Restore action — but RLS on test_requests is role-only, NOT
-  // section-aware (0023), so without this filter the panel printed every
-  // deleted test's real service name and price to every role, including
-  // reception (sectionsForRole("reception") === [], a DENY) and lab roles
-  // outside the section. Apply isVisible() row by row, exactly like the live
-  // table one block above does for rawRows.
+  const rowSection = (r: SectionRow): string | null | undefined => {
+    const svc = Array.isArray(r.services) ? r.services[0] : r.services;
+    return svc?.section;
+  };
+  const canSeeRow = (r: SectionRow) => canSeeLine(session.role, rowSection(r));
+  const canActOnRow = (r: SectionRow) =>
+    canActOnResult(session.role, rowSection(r));
+  // A4 (go-live), still true under the see/act split: soft-deleted lines
+  // (0125) leave the operational pipeline entirely and render in their own
+  // "Deleted entries" panel below with a Restore action — but RLS on
+  // test_requests is role-only, NOT section-aware (0023), so without this
+  // filter the panel would print every deleted test's real service name and
+  // price to every lab role outside its own section. Reception IS allowed to
+  // see its own deleted bill lines here (it deletes them from the queue), so
+  // this filter is now load-bearing only for medtech/xray_technician, not for
+  // reception. Apply canSeeRow() row by row, exactly like the live table one
+  // block above does for rawRows.
   const deletedTestRows = (tests ?? [])
     .filter((t) => t.deleted_at !== null)
-    .filter((t) => isVisible(t));
+    .filter((t) => canSeeRow(t));
   const rawRows = (tests ?? []).filter((t) => t.deleted_at === null);
   // First pass: mark which parent_ids have at least one visible component.
   const visibleParents = new Set<string>();
+  // …and which have at least one component this role may ACT on. A package
+  // header must never be gated on its OWN section: a header's
+  // services.section is the literal "package", which appears in no role's
+  // allowed-section list, so gating the header directly would strip bulk
+  // package release from medtech and xray_technician even for a package made
+  // entirely of their own bench's work. The header's authority comes from its
+  // components, exactly as its visibility does one line above.
+  const actionableParents = new Set<string>();
   for (const r of rawRows) {
-    if (r.parent_id && isVisible(r)) visibleParents.add(r.parent_id);
+    if (!r.parent_id) continue;
+    if (canSeeRow(r)) visibleParents.add(r.parent_id);
+    if (canActOnRow(r)) actionableParents.add(r.parent_id);
   }
   const allRows = rawRows.filter((r) => {
     if (r.is_package_header) return visibleParents.has(r.id);
-    return isVisible(r);
+    return canSeeRow(r);
   });
 
   // Group test_requests by package: headers first (as cards with their
@@ -434,12 +455,26 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
               />
             ) : null}
             {canSeePayments ? (
-              <Link
-                href={`/staff/payments/new?visit_id=${visit.id}`}
-                className="rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
-              >
-                Record payment
-              </Link>
+              session.role === "reception" && visit.hmo_provider_id != null ? (
+                // An HMO patient never pays at the counter — the claim is
+                // booked as a receivable when the tests release, then settled
+                // through the HMO claims workflow, not by reception taking a
+                // payment here. Offering the link on a pure HMO visit was a
+                // door to nothing it could ever complete. Admin keeps the
+                // link below on purpose: an HMO claim resolved as "Bill
+                // patient" legitimately moves the balance onto the patient,
+                // and admin is who collects it at the counter.
+                <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+                  Billed to {hmo?.name ?? "HMO"} — settled through HMO claims
+                </p>
+              ) : (
+                <Link
+                  href={`/staff/payments/new?visit_id=${visit.id}`}
+                  className="rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
+                >
+                  Record payment
+                </Link>
+              )
             ) : null}
             {canDeleteVisit ? (
               <QueueDeleteDialog
@@ -656,7 +691,9 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                         >
                           {h.status.replace(/_/g, " ")}
                         </span>
-                        {readyCount >= 2 && !visitDeleted ? (
+                        {readyCount >= 2 &&
+                        !visitDeleted &&
+                        actionableParents.has(h.id) ? (
                           <ReleaseAllButton
                             headerId={h.id}
                             visitId={visit.id}
@@ -751,7 +788,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                                   className="hover:bg-[color:var(--color-brand-bg)]"
                                 >
                                   <td className="px-4 py-3">
-                                    {visitDeleted ? null : c.status ===
+                                    {visitDeleted || !canActOnRow(c) ? null : c.status ===
                                       "ready_for_release" ? (
                                       <RowSelectCheckbox
                                         testRequestId={c.id}
@@ -810,6 +847,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                                     <TestAction
                                       size="compact"
                                       visitDeleted={visitDeleted}
+                                      canAct={canActOnRow(c)}
                                       status={c.status}
                                       testRequestId={c.id}
                                       visitId={visit.id}
@@ -894,7 +932,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                     className="hover:bg-[color:var(--color-brand-bg)]"
                   >
                     <td className="px-2 py-3">
-                      {visitDeleted ? null : t.status ===
+                      {visitDeleted || !canActOnRow(t) ? null : t.status ===
                         "ready_for_release" ? (
                         <RowSelectCheckbox
                           testRequestId={t.id}
@@ -941,6 +979,14 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                           </span>
                         ) : null}
                       </p>
+                      {/* Deliberately shown to every role that can see this
+                          row, reception included (Codex counter-review
+                          corrected the earlier plan on this): reception
+                          already TYPES both the clinic fee and the PF amount
+                          in at intake (visits/new/visit-form.tsx, the consult
+                          fee/clinic fee inputs on the line), so hiding the
+                          split here would be theatre — it only ever repeats
+                          numbers reception itself keyed in. */}
                       {(isConsult || isProcedure) &&
                       (t.clinic_fee_php != null || t.doctor_pf_php != null) ? (
                         <p className="mt-1 text-[10px] text-[color:var(--color-brand-text-soft)]">
@@ -948,6 +994,8 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                           PF {formatPhp(Number(t.doctor_pf_php ?? 0))}
                         </p>
                       ) : null}
+                      {/* PF *payout* status stays admin-only — it's doctor-pay
+                          data, not visit/result data (2026-09-10 PF audit). */}
                       {isAdmin && pfEntryByTrId.has(t.id) ? (
                         <PfStatusBadge entry={pfEntryByTrId.get(t.id)!} />
                       ) : null}
@@ -1003,6 +1051,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                     <td className="px-4 py-3 text-right">
                       <TestAction
                         visitDeleted={visitDeleted}
+                        canAct={canActOnRow(t)}
                         status={t.status}
                         testRequestId={t.id}
                         visitId={visit.id}
@@ -1067,7 +1116,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
           </p>
         ) : null}
       </section>
-      {visitDeleted ? null : (
+      {visitDeleted || !roleCanActOnResults(session.role) ? null : (
         <BulkActionBar
           visitId={visit.id}
           moneySettled={canRelease}
@@ -1324,6 +1373,13 @@ interface TestActionProps {
   // A soft-deleted visit keeps live lines (0125's delete does not cascade to
   // test_requests), so the table still renders them — but none may be actioned.
   visitDeleted: boolean;
+  // See-vs-act split (2026-09-15): may this role act on the RESULT behind
+  // this line (canActOnRow in the caller, built on canActOnResult in
+  // line-visibility.ts)? Reception can see every row but this is always
+  // false for it — a lab role viewing a line outside its own section is the
+  // other (defense-in-depth) way to land here, though canSeeRow already
+  // keeps such rows off this role's table.
+  canAct: boolean;
   testRequestId: string;
   visitId: string;
   moneySettled: boolean;
@@ -1346,6 +1402,7 @@ interface TestActionProps {
 function TestAction({
   status,
   visitDeleted,
+  canAct,
   testRequestId,
   visitId,
   moneySettled,
@@ -1368,6 +1425,42 @@ function TestAction({
     return (
       <span className={`${sizeCls} text-[color:var(--color-brand-text-soft)]`}>
         —
+      </span>
+    );
+  }
+
+  // Reception is the role this branch exists for (see-vs-act split,
+  // 2026-09-15): it sees every bill line but may not act on the result
+  // behind it. Render a read-only status hint ONLY — reusing the same words
+  // this column already shows for each status — with none of MarkDoneButton,
+  // ReleaseButton, UndoReleaseDialog, the "View PDF →" anchor, or the "Open
+  // in queue →" bench link. Those are all doors into a result reception must
+  // not have; the status chip in the row plus this hint is all it gets.
+  if (!canAct) {
+    const hint =
+      status === "requested"
+        ? "Awaiting claim"
+        : status === "in_progress"
+          ? "Awaiting result"
+          : status === "result_uploaded"
+            ? "Awaiting sign-off"
+            : status === "released"
+              ? "Released ✓"
+              : status === "cancelled"
+                ? "—"
+                // ready_for_release has no distinct Action-column word today
+                // (only a button) — reuse the same humanized text the status
+                // badge already shows for it.
+                : status.replace(/_/g, " ");
+    return (
+      <span
+        className={`${sizeCls} ${
+          status === "released"
+            ? "font-semibold text-emerald-700"
+            : "text-[color:var(--color-brand-text-soft)]"
+        }`}
+      >
+        {hint}
       </span>
     );
   }

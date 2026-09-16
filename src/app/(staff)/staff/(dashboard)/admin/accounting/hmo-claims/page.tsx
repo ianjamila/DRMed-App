@@ -3,6 +3,10 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { fetchAllRows, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 import { HmoClaimsClient } from "./hmo-claims-client";
+import {
+  isHmoUnbilledAgeBand,
+  type HmoUnbilledAgeBand,
+} from "@/lib/reports/hmo-unbilled-bands";
 import type { Database } from "@/types/database";
 
 type UnbilledRow = Database["public"]["Views"]["v_hmo_unbilled"]["Row"];
@@ -11,8 +15,20 @@ type StuckRow = Database["public"]["Views"]["v_hmo_stuck"]["Row"];
 export const metadata = { title: "HMO Claims" };
 export const dynamic = "force-dynamic";
 
-export default async function HmoClaimsIndexPage() {
+export default async function HmoClaimsIndexPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ age?: string }>;
+}) {
   await requireAdminStaff();
+  // The admin dashboard's HMO unbilled card links here with the age band the
+  // reader was looking at. Without this the link landed on the provider
+  // summary with no age filter at all — a card promising "past the HMO
+  // deadline" opening a screen that showed every claim of every age.
+  const { age } = await searchParams;
+  const ageBand: HmoUnbilledAgeBand | null = isHmoUnbilledAgeBand(age)
+    ? age
+    : null;
   const admin = createAdminClient();
 
   // The two detail views are the only ones here that grow with visit volume,
@@ -92,6 +108,7 @@ export default async function HmoClaimsIndexPage() {
         </p>
       </header>
       <HmoClaimsClient
+      initialAgeBand={ageBand}
         summary={summary.data ?? []}
         unbilled={unbilled.rows}
         unbilledTruncated={unbilled.truncated}

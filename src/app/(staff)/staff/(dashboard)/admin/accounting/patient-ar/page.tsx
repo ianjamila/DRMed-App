@@ -278,10 +278,15 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
     totals.d61_90.count +
     totals.d90_plus.count;
 
-  // Sorting and paging both run over the already-fetched, already-totalled
-  // set, so every row is reachable on some page and the bucket cards above
-  // never depend on which page is showing.
-  const ordered = [...enriched].sort((a, b) => compareArRows(a, b, sort));
+  // Only rows that actually owe something belong in the table. The bucket
+  // cards above have always skipped non-positive balances (`outstanding > 0`
+  // when totalling), but the row list did not — so a visit marked unpaid with
+  // nothing left to collect sat in the table, and in the pager's "of N". On
+  // prod that was 4,147 of 4,153 rows: six visits genuinely owed money and
+  // the rest were zero-balance noise. Filter once, here, so the table, the
+  // pager and the cards all describe the same set.
+  const owing = enriched.filter((r) => r.outstanding > 0);
+  const ordered = [...owing].sort((a, b) => compareArRows(a, b, sort));
   const totalPages = pageCount(ordered.length, size);
   const page = Math.min(currentPage, totalPages);
   const pageStart = (page - 1) * size;
@@ -377,7 +382,7 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
       </div>
 
       <section className="overflow-hidden rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
-        {enriched.length === 0 ? (
+        {owing.length === 0 ? (
           <p className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]">
             No outstanding visits in this scope.
           </p>

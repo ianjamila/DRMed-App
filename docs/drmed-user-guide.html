@@ -347,7 +347,7 @@
   <h3>Two gates you will bump into</h3>
   <p>The system enforces two rules in the database itself. No button, role or password gets around them, so it is worth knowing them by heart.</p>
   <dl class="defs">
-    <dt>Lab gate</dt><dd>A test does not appear on the lab bench until the visit is <span class="status">paid</span>, <span class="status">waived</span>, or billed to an HMO. Until then it sits in the reception queue under <span class="tab">Waiting for payment</span>, and the lab sees an <q>awaiting payment</q> chip on the results archive.</dd>
+    <dt>Lab gate</dt><dd>A test does not appear on the lab bench until the visit is <span class="status">paid</span>, <span class="status">waived</span>, or billed to an HMO. Until then it sits in the reception queue under <span class="tab">Waiting for payment</span>, and the lab sees an <q>awaiting payment</q> chip on the results archive. An HMO-billed visit never waits there — it is settled money as far as both gates are concerned, so it goes straight to <span class="tab">Processing</span>.</dd>
     <dt>Release gate</dt><dd>A finished result cannot be released to the patient until the visit is <span class="status">paid</span>, <span class="status">waived</span>, or billed to an HMO. Since the September 2026 release both gates use the same rule, so an HMO visit that reached the bench also reaches the patient: the clinic books the claim as a receivable the moment the result is released, and collects from the HMO months later. A blocked line reads <q>Visit must be paid, waived, or HMO-covered before release</q>.</dd>
   </dl>
 
@@ -456,7 +456,7 @@
     <h3>2.4 Dashboard and phone</h3>
     <p>Your dashboard shows summary cards for your role: today's visits and queue for reception, your claimed and unclaimed tests for the lab, money and exceptions for admin. Each card is a link. Admin chooses which cards each role sees under <kbd class="ui">Dashboard settings</kbd>.</p>
     <p>Every screen works on a phone. The sidebar folds into the <b>☰</b> menu top-left, tables scroll sideways, and buttons are thumb-sized. Session timeouts are normal; sign in again and continue.</p>
-    <p>Under <b>Personal</b>, <kbd class="ui">My Profile</kbd> holds your name and contact details, and the <b>Two-step sign-in</b> panel where you set up a one-time code (2.2). <kbd class="ui">My Payslips</kbd> shows your own payslips only.</p>
+    <p>Under <b>Personal</b>, <kbd class="ui">My Profile</kbd> holds your name and contact details, and the <b>Two-step sign-in</b> panel where you set up a one-time code (2.2). <kbd class="ui">My Payslips</kbd> shows your own payslips only, and only once Admin has finalised the payroll run for that period — a run still being prepared shows nothing rather than a row of zeros.</p>
   </section>
 </section>
 
@@ -596,7 +596,7 @@
     <p>The HMO is chosen when the visit is created, not here. New Visit has two optional fieldsets, <b>Lab &amp; Services HMO</b> and <b>Doctor / PF HMO</b>, each starting at <q>— Cash / no HMO —</q>, with an <b>Approval date</b> and <b>Authorization no.</b> beside them. There is no HMO option on the payment form. The patient still pays any co-pay or non-covered line at the counter in the normal way.</p>
     <p>An HMO-billed visit clears both gates the moment it is created: the lab can run the tests, and since the September 2026 release it can also release the result. Releasing is what books the claim as a receivable, which is why it no longer waits for the money. Admin records the settlement months later under <kbd class="ui">HMO Claims</kbd>.</p>
     <div class="note stop"><span class="k">Never waive an HMO balance</span><div><p>The visit keeps its <span class="status">unpaid</span> status until the HMO settles, and Admin's <kbd class="ui">Waive balance</kbd> button is still offered on it. That balance is money the HMO owes, not money the clinic decided not to collect: waiving it writes off a real receivable and the claim disappears from the books. Leave it alone.</p></div></div>
-    <p>One thing to expect at the counter: the Reception Queue's <span class="tab">Waiting for payment</span> stage goes by payment status alone, so an HMO visit sits on that tab while the lab is already working on it. Read the row, not the tab.</p>
+    <p>Since the September 2026 fix batch the Reception Queue no longer parks HMO visits under <span class="tab">Waiting for payment</span>. That stage now means <q>the counter still has money to collect</q>, and an HMO visit never does, so it appears under <span class="tab">Processing</span> or <span class="tab">Completed</span> like any settled visit — with an <span class="status">HMO · provider</span> chip in place of the payment badge, so you can see at a glance who owes the balance.</p>
     <h4>Undoing a payment</h4>
     <ol class="steps">
       <li><p class="step-title">Open the visit, find the payment under <b>Payments</b>, click <kbd class="ui">Void</kbd>.</p></li>
@@ -615,11 +615,11 @@
       <dt>Page action</dt><dd><kbd class="ui">+ New visit</kbd>, top right — opens the New Visit form for the patient at the counter. It also appears in the middle of the page when today's <span class="tab">Waiting for payment</span> stage is empty.</dd></dl></div>
     <p>This is today's worklist. It updates on its own as payments land and tests finish.</p>
     <dl class="defs">
-      <dt>Waiting for payment</dt><dd>Visits created but not yet paid, so the lab cannot see them. Collect and <kbd class="ui">Record payment</kbd>. The one exception is an HMO-billed visit: its balance is owed by the HMO, so it stays on this tab while the lab is already running the tests (3.6).</dd>
+      <dt>Waiting for payment</dt><dd>Visits the counter still has money to collect on, so the lab cannot see them. Collect and <kbd class="ui">Record payment</kbd>. HMO-billed visits are <b>not</b> here: their balance is owed by the insurer, not the patient, so they move straight to <span class="tab">Processing</span> and carry an <span class="status">HMO · provider</span> chip instead of a payment badge (3.6).</dd>
       <dt>Processing</dt><dd>Paid or waived, and the lab or imaging still owes at least one result. The row itself lists what is outstanding, which is all you need to answer <q>is it ready?</q></dd>
       <dt>Completed</dt><dd>Paid and every lab and imaging line released. <kbd class="ui">Print billing</kbd> reprints the receipt (without the PIN).</dd>
     </dl>
-    <div class="note why"><span class="k">Why the visit page shows no tests</span><div><p>By clinic policy, reception does not see individual test lines or result PDFs. On a visit page you see the patient, the payments, the receipt and PIN buttons, the attending physician and the HMO details, but not the tests. Use the Reception Queue row for progress, and leave releasing to the lab.</p></div></div>
+    <div class="note why"><span class="k">What reception sees on a visit page, and what it doesn't</span><div><p>Reception sees the <b>bill</b>: every test line with its name, code, price, discount and status chip, plus the doctor's clinic fee and professional fee exactly as they were typed in at intake, the internal notes, and the deleted-entries panel. That is the same information reception enters and collects on, so withholding it only made the counter guess.</p><p>What reception does <b>not</b> get is the <b>result</b>: no result PDFs, no Release, Undo or Mark-done buttons, no bulk actions, and no link through to the lab bench. Releasing and printing results stays the lab's job, and the lab queue and results archive remain closed to reception. (Changed September 2026; before that reception saw no test lines at all.)</p></div></div>
     <p>The related <kbd class="ui">Visit Records</kbd> item in the Billing group has two tabs: <span class="tab">New Visit</span> and <span class="tab">Visit Records</span>. (The Reception Queue is not one of them — reach it from the sidebar, under Front Desk.) The archive filters by <span class="tab">Lab Tests</span> / <span class="tab">Doctor Consults</span> / <span class="tab">Doctor Procedures</span>, shows <span class="tab">Active</span> or <span class="tab">Deleted</span> entries, and searches by visit number. Click <b>Date</b>, <b>Visit #</b>, <b>Patient</b>, <b>Total</b>, <b>Paid</b> or <b>Status</b> to sort by that column — <b>Tests</b>, <b>Classification</b> and <b>Method</b> are worked out on the fly and don't sort. A rows-per-page picker (5/10/25/50/100) sits at the bottom. Admin can <kbd class="ui">Export CSV</kbd> from it.</p>
   </section>
 
@@ -635,7 +635,7 @@
         <ul><li><q>Visit must be paid, waived, or HMO-covered before release</q>: record the payment, or ask Admin to waive the balance. An HMO-billed visit is never blocked for this reason.</li>
         <li><q>Patient consent not on file — capture consent first</q>: print and capture consent on the patient's page (3.3).</li>
         <li><q>An attending physician is required…</q>: click <kbd class="ui">Assign physician</kbd> in the <b>Attending physician</b> section of the visit. The page warns you in amber beforehand.</li></ul></li>
-      <li><p class="step-title">For a consultation or procedure, tell Admin (or the pathologist) once the patient has seen the doctor.</p><p>They click <kbd class="ui">Mark consultation done</kbd> or <kbd class="ui">Mark procedure done</kbd> on the visit. That is what accrues the doctor's professional fee. Reception cannot see doctor lines on the visit page.</p></li>
+      <li><p class="step-title">For a consultation or procedure, tell Admin (or the pathologist) once the patient has seen the doctor.</p><p>They click <kbd class="ui">Mark consultation done</kbd> or <kbd class="ui">Mark procedure done</kbd> on the visit. That is what accrues the doctor's professional fee. Reception can see the doctor line and its fees on the visit page but cannot mark it done.</p></li>
     </ol>
     <div class="note tip"><span class="k">Dashboard card</span><div><p>The <b>Pending release</b> card on your dashboard (<q>Results ready, awaiting release</q>) counts finished test lines the lab has not released yet, and opens the Reception Queue's <span class="tab">Processing</span> tab — the list you actually want. It used to open the lab queue, which is always empty for reception.</p></div></div>
   </section>
@@ -959,7 +959,7 @@
       <dt>External Sync Status</dt><dd>The daily 5 pm push of rows to the accountant's Google Sheet, with a re-run button.</dd>
     </dl>
     <h4>Payroll</h4>
-    <p><b>Employees</b> (salaried staff, government IDs) → <b>Pay Periods</b> (semi-monthly) → <b>Run Payroll</b>: create the run, <kbd class="ui">Import DTR</kbd> from the biometric export, review, finalise, mark paid. <b>Overtime Slips</b>, <b>Leaves</b> and <b>Holidays</b> feed the computation; <b>Government Rates</b> holds the SSS, PhilHealth, Pag-IBIG and tax tables; <b>Staff Cash Advances</b> are deducted from the next run. Every staff member sees only their own payslips under <b>My Payslips</b>.</p>
+    <p><b>Employees</b> (salaried staff, government IDs) → <b>Pay Periods</b> (semi-monthly) → <b>Run Payroll</b>: create the run, <kbd class="ui">Import DTR</kbd> from the biometric export, review, finalise, mark paid. <b>Overtime Slips</b>, <b>Leaves</b> and <b>Holidays</b> feed the computation; <b>Government Rates</b> holds the SSS, PhilHealth, Pag-IBIG and tax tables; <b>Staff Cash Advances</b> are deducted from the next run. Every staff member sees only their own payslips under <b>My Payslips</b>, and only after the run is finalised — while a run is still draft or being computed its amounts are not real yet, so staff see nothing rather than ₱0.</p>
     <h4>Marketing and website</h4>
     <p><b>Newsletter</b> composes and sends a campaign to subscribers (two-step confirm: <kbd class="ui">Send campaign</kbd> → <kbd class="ui">Yes, send to N</kbd>). <b>Marketing</b> has an <span class="tab">Ad Performance</span> tracker and an <span class="tab">Ops Tracker</span>, both stored in your browser only. <b>Search Engines (IndexNow)</b> re-submits the site to Bing and friends after content changes. <b>Inquiries</b> (shared with reception) keeps website and Messenger leads until they are booked.</p>
   </section>
@@ -1044,7 +1044,7 @@
     <dt>A result is wrong and it's already released.</dt><dd>The lab clicks <kbd class="ui">Undo</kbd> on the line, amends with a reason, and releases again. Reception phones the patient if they had already opened it.</dd>
     <dt>The chemistry form is all greyed out.</dt><dd>Template configuration problem. Tell Admin; don't work around it.</dd>
     <dt>End of Day won't close.</dt><dd>A non-zero <b>Difference</b> needs a <b>Reason for the difference</b>. Also check the ₱20 bill and ₱20 coin rows are in the right columns.</dd>
-    <dt>The doctor's fee isn't showing under Pay Doctors.</dt><dd>Admin or the pathologist must click <kbd class="ui">Mark consultation done</kbd> on the visit (reception and medtechs cannot see doctor lines), and the visit must be paid, waived or HMO-billed. Once marked done, an HMO visit's fee waits under <b>Waiting on insurance</b> until the claim settles.</dd>
+    <dt>The doctor's fee isn't showing under Pay Doctors.</dt><dd>Admin or the pathologist must click <kbd class="ui">Mark consultation done</kbd> on the visit (reception can see the doctor line but cannot mark it done; medtechs do not see it at all), and the visit must be paid, waived or HMO-billed. Once marked done, an HMO visit's fee waits under <b>Waiting on insurance</b> until the claim settles.</dd>
     <dt>My phone shows no sidebar.</dt><dd>Tap <b>☰</b> at the top left.</dd>
     <dt>The system says my session expired.</dt><dd>Sign in again. Draft results you saved are still there.</dd>
   </dl>
@@ -1056,10 +1056,10 @@
   <h2>Known limitations (September 2026)</h2>
   <p class="intro">Things the screens hint at but don't do yet, so nobody wastes time looking for them.</p>
   <dl class="defs">
-    <dt>Reception and results</dt><dd>Reception sees no test lines or PDFs on a visit (clinic policy since May 2026). Releasing and printing results is the lab's job.</dd>
+    <dt>Reception and results</dt><dd>Reception sees the test lines and their prices on a visit — it enters and collects that bill — but never the result values or PDFs, and it has no Release, Undo or Mark-done buttons. Releasing and printing results is the lab's job. (Reception saw no test lines at all between May and September 2026.)</dd>
     <dt>Doctor lines</dt><dd>Consultation and procedure lines are visible only to Admin and pathologists, so only they can click <b>Mark consultation done</b>. Reception can still assign the physician and record the fee.</dd>
     <dt>HMO package headers</dt><dd>On an HMO-billed package the component tests release normally, but the package's own summary line stays at <span class="status">ready for release</span>: it is released automatically only when the visit's payment status changes, and there is no button anywhere to release it by hand. It clears when Admin records the settlement. Admin's <b>Stuck Tests</b> report lists these under <q>Package header not auto-released</q>.</dd>
-    <dt>HMO balances look unpaid</dt><dd>An HMO visit keeps its <span class="status">unpaid</span> status and sits on the Reception Queue's <span class="tab">Waiting for payment</span> tab until Admin records the settlement, even though the lab is working on it and releasing. Do not waive the balance to tidy the list — that writes off a real receivable (3.6).</dd>
+    <dt>HMO balances look unpaid</dt><dd>An HMO visit keeps its <span class="status">unpaid</span> payment status until Admin records the settlement — that is correct, the insurer really does still owe it. It does <b>not</b> sit on the Reception Queue's <span class="tab">Waiting for payment</span> tab any more, and the queue shows it as <span class="status">HMO · provider</span> rather than a red Unpaid badge. Do not waive the balance to tidy the list — that writes off a real receivable (3.6).</dd>
     <dt>Pathologist sign-off</dt><dd>The <b>Sign-off</b> page is a placeholder and no service has <q>Requires pathologist sign-off</q> switched on. Results go from the bench straight to ready for release, and the pathologist dashboard's two sign-off counters therefore read zero. Pathologists review via Critical Alerts and amendments instead.</dd>
     <dt>SMS</dt><dd>No text messages are sent to patients. Booking confirmations, reminders and result-ready notices are email only. Patients with no email get no automatic notice.</dd>
     <dt>A lost authenticator cannot be cleared in the app</dt><dd>Nothing in the app can remove an enrolled authenticator, and Google sign-in does not bypass the code once you're enrolled — there is no self-service reset, no Admin reset, and no recovery codes. Clearing a lost factor needs direct access to the Supabase project. Treat enrolment as a decision, not an experiment.</dd>
@@ -1100,7 +1100,11 @@
 </section>
 
 <footer class="end">
-  <p>drmed.ph User Guide · v2.4 · 15 September 2026 · Matches the production release at migration 0145. Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
+<<<<<<< HEAD
+  <p>drmed.ph User Guide · v2.5 · 16 September 2026 · Matches the production release at migration 0149. Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
+=======
+  <p>drmed.ph User Guide · v2.5 · 15 September 2026 · Matches the production release at migration 0149. Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
+>>>>>>> ac11931 (fix(staff): make each dashboard card's destination show the same set the card counted)
 </footer>
 </main>
 </div>

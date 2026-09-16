@@ -6,12 +6,12 @@ import { todayManilaISODate } from "@/lib/dates/manila";
 import { loadHiddenCardIds } from "@/lib/dashboards/card-prefs";
 import { LAB_QUEUE_GATE_VISITS_OR } from "@/lib/visits/lab-gate";
 import { reportError } from "@/lib/observability/report-error";
+import { RealtimeRefresher } from "@/components/staff/realtime-refresher";
 import { DashboardHeader } from "./_components/dashboard-header";
 import { SectionHeading } from "./_components/section-heading";
 import { StatCard } from "./_components/stat-card";
 import { QuickLinks, type QuickLink } from "./_components/quick-links";
 import { ActivityStrip, type ActivityItem } from "./_components/activity-strip";
-import { PlannedCard } from "./_components/planned-card";
 import { relativeAge } from "./_components/format";
 
 type Role = StaffSession["role"];
@@ -39,19 +39,17 @@ function buildQuickLinks(role: Role): QuickLink[] {
   const links: QuickLink[] = [
     { href: "/staff/queue", label: "Queue" },
   ];
-  if (role === "pathologist" || role === "admin") {
-    links.push({ href: "/staff/signoff", label: "Sign-off" });
-  }
   if (role === "medtech" || role === "admin") {
     links.push({ href: "/staff/quote", label: "Quick Quote" });
   }
   if (role === "admin") {
     links.push({ href: "/staff/admin/result-templates", label: "Result Templates" });
   }
-  // Every role draws a payslip, and they're checked on payday — worth a
-  // shortcut off the bench. Lives in the sidebar's Personal section since
-  // partner revision 8 moved it out of the now-admin-only "Hidden Tabs".
-  links.push({ href: "/staff/payslips", label: "My Payslips" });
+  // No /staff/signoff quicklink: that route is still a data-less placeholder
+  // (see the pathologist's ready_for_signoff / strip_pending_signoff cards,
+  // both defaultHidden in cards.ts). No /staff/payslips either — owner
+  // decision 5 (2026-09-15) took both Personal shortcuts off the dashboards;
+  // My Payslips stays reachable from the sidebar's Personal section.
   return links;
 }
 
@@ -84,6 +82,12 @@ type CriticalRow = {
   created_at: string;
   test_request_id: string;
   parameter_name: string;
+  // Only populated on the medtech query (ack status is shown there, not
+  // filtered on) and the pathologist query (patient identification) —
+  // optional so one type serves both `.returns<CriticalRow[]>()` calls.
+  acknowledged_at?: string | null;
+  acknowledged_by?: string | null;
+  patient_drm_id?: string | null;
 };
 
 function pluckName<T extends { first_name: string; last_name: string }>(
@@ -121,7 +125,6 @@ async function loadLabStats(
   const startOfTodayUtc = new Date(`${today}T00:00:00+08:00`).toISOString();
   const startOfTomorrowUtc = new Date(`${today}T24:00:00+08:00`).toISOString();
   const sections = sectionsForRole(role);
-  const dayAgoIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
   const sectionList = (sections ?? []) as ServiceSection[];
 
@@ -136,7 +139,9 @@ async function loadLabStats(
           .select("id, services!inner(section), visits!inner(id)", { count: "exact", head: true })
           .in("status", ["requested", "in_progress"])
           .is("assigned_to", null)
+          .eq("is_package_header", false)
           .in("services.section", sectionList)
+          .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
           .is("deleted_at", null)
           .is("visits.deleted_at", null)
           .or(LAB_QUEUE_GATE_VISITS_OR, { foreignTable: "visits" })
@@ -150,24 +155,32 @@ async function loadLabStats(
   // `ready_for_release`, which the reception tile was counting). An invariant
   // that lives only in a comment is one refactor from being wrong; the filter
   // is one line and makes the tile correct by construction.
+  //
+  // Section filter + money gate added here too — without them a payment void
+  // or a role change can leave a counted assignment that is absent from the
+  // Mine tab it links to.
   const myClaimedPromise =
     show("lab.my_claimed") && (role === "medtech" || role === "xray_technician")
       ? supabase
           .from("test_requests")
-          .select("id, services!inner(id), visits!inner(id)", { count: "exact", head: true })
+          .select("id, services!inner(section), visits!inner(id)", { count: "exact", head: true })
           .eq("assigned_to", userId)
           .in("status", ["requested", "in_progress"])
           .is("deleted_at", null)
           .is("visits.deleted_at", null)
+          .in("services.section", sectionList)
           .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
+          .or(LAB_QUEUE_GATE_VISITS_OR, { foreignTable: "visits" })
       : SKIP_COUNT;
 
   // "Ready for sign-off" surfaces results the pathologist hasn't looked at
   // yet — status = result_uploaded, i.e. a result was linked but hasn't
   // reached ready_for_release. /staff/signoff is a real route but a
-  // data-less placeholder (UI queued for a later phase), so the card links
-  // to the working /staff/results list instead; see the "Coming soon"
-  // PlannedCard below for the not-yet-built screen itself.
+  // data-less placeholder (UI queued for a later phase) — this card and the
+  // "Pending sign-off" strip below both ship `defaultHidden: true` in
+  // cards.ts until it exists, so admin has to opt back in from Dashboard
+  // settings to see either. The card links to the working /staff/results
+  // list instead of the placeholder.
   const readyForSignoffPromise =
     show("lab.ready_for_signoff") && role === "pathologist"
       ? supabase
@@ -188,39 +201,54 @@ async function loadLabStats(
       : SKIP_COUNT;
 
   // Same money-settled gate as myUnclaimedPromise above — a send-out that
-  // hasn't cleared payment isn't in the bench's worklist either.
+  // hasn't cleared payment isn't in the bench's worklist either. Section
+  // filter + package-header exclusion added to match the queue's own
+  // predicate set; the label says "tests" now (not "external labs still
+  // processing"), because `requested` rows haven't even left the building.
   const sendOutAwaitingPromise =
     show("lab.send_out_awaiting") && role === "medtech"
       ? supabase
           .from("test_requests")
-          .select("id, services!inner(is_send_out), visits!inner(id)", { count: "exact", head: true })
+          .select("id, services!inner(is_send_out, section), visits!inner(id)", { count: "exact", head: true })
           .in("status", ["requested", "in_progress"])
           .eq("services.is_send_out", true)
+          .eq("is_package_header", false)
+          .in("services.section", sectionList)
           .is("deleted_at", null)
           .is("visits.deleted_at", null)
           .or(LAB_QUEUE_GATE_VISITS_OR, { foreignTable: "visits" })
           .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
       : SKIP_COUNT;
 
-  const releasedTodayPromise =
-    show("lab.released_today")
-      ? supabase
-          .from("test_requests")
-          .select("id, services!inner(id), visits!inner(id)", {
-            count: "exact",
-            head: true,
-          })
-          .eq("status", "released")
-          .eq("assigned_to", userId)
-          .gte("released_at", startOfTodayUtc)
-          .lt("released_at", startOfTomorrowUtc)
-          // Same pair as every other tile on this dashboard — see the
-          // admin dashboard's released-today tile for why "released implies
-          // never deleted" is not an invariant the database enforces.
-          .is("deleted_at", null)
-          .is("visits.deleted_at", null)
-          .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
-      : SKIP_COUNT;
+  // Shown to medtech, xray_technician AND pathologist (LAB_CAPABLE_ROLES —
+  // pathologists can claim work too), so unlike every other section-gated
+  // card on this dashboard this is the one query that has to handle
+  // sectionsForRole's `null` (unrestricted) case rather than assume an array
+  // — coercing null to `[]` here would wrongly deny pathologist every row.
+  let releasedTodayQuery = supabase
+    .from("test_requests")
+    .select("id, services!inner(id, section), visits!inner(id)", {
+      count: "exact",
+      head: true,
+    })
+    .eq("status", "released")
+    .eq("assigned_to", userId)
+    .gte("released_at", startOfTodayUtc)
+    .lt("released_at", startOfTomorrowUtc)
+    .eq("is_package_header", false)
+    // Same pair as every other tile on this dashboard — see the
+    // admin dashboard's released-today tile for why "released implies
+    // never deleted" is not an invariant the database enforces.
+    .is("deleted_at", null)
+    .is("visits.deleted_at", null)
+    .not("services.kind", "in", DOCTOR_KINDS_PG_LIST);
+  if (sections !== null) {
+    releasedTodayQuery =
+      sections.length === 0
+        ? releasedTodayQuery.eq("id", "00000000-0000-0000-0000-000000000000")
+        : releasedTodayQuery.in("services.section", sections);
+  }
+  const releasedTodayPromise = show("lab.released_today") ? releasedTodayQuery : SKIP_COUNT;
 
   // test_requests has no FK to patients — the name has to come through
   // visits (as the count above already joins for the payment gate), never
@@ -235,7 +263,9 @@ async function loadLabStats(
           )
           .in("status", ["requested", "in_progress"])
           .is("assigned_to", null)
+          .eq("is_package_header", false)
           .in("services.section", sectionList)
+          .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
           .is("deleted_at", null)
           .is("visits.deleted_at", null)
           .or(LAB_QUEUE_GATE_VISITS_OR, { foreignTable: "visits" })
@@ -244,14 +274,37 @@ async function loadLabStats(
           .returns<QueueRow[]>()
       : SKIP_DATA;
 
-  const recentCriticalsPromise =
-    show("lab.strip_recent_criticals") &&
-    (role === "medtech" || role === "pathologist")
+  // Medtech: alerts on tests CURRENTLY assigned to them, any ack status —
+  // read-only (acknowledging stays pathologist/admin per RLS 0027). No
+  // existing query in the repo joins critical_alerts → test_requests, so the
+  // `!inner` embed is load-bearing (a plain `services ( … )`-style LEFT join
+  // would compile and silently return every alert, not just theirs) — see
+  // the verification note in the PR description.
+  const medtechCriticalsPromise =
+    show("lab.strip_recent_criticals") && role === "medtech"
       ? supabase
           .from("critical_alerts")
-          .select("id, direction, created_at, test_request_id, parameter_name")
-          .gte("created_at", dayAgoIso)
+          .select(
+            "id, direction, created_at, test_request_id, parameter_name, acknowledged_at, acknowledged_by, test_requests!inner ( assigned_to )",
+          )
+          .eq("test_requests.assigned_to", userId)
           .order("created_at", { ascending: false })
+          .limit(5)
+          .returns<CriticalRow[]>()
+      : SKIP_DATA;
+
+  // Pathologist: unacknowledged only, oldest first — a handful of newer
+  // acknowledged alerts used to displace urgent unresolved ones under the
+  // old "last 24h, newest first" query, which also hid anything older than a
+  // day while the count card beside it kept counting it. patient_drm_id is
+  // selected so each row identifies the patient without an extra join.
+  const pathologistCriticalsPromise =
+    show("lab.strip_recent_criticals") && role === "pathologist"
+      ? supabase
+          .from("critical_alerts")
+          .select("id, direction, created_at, test_request_id, parameter_name, patient_drm_id")
+          .is("acknowledged_at", null)
+          .order("created_at", { ascending: true })
           .limit(5)
           .returns<CriticalRow[]>()
       : SKIP_DATA;
@@ -292,7 +345,8 @@ async function loadLabStats(
     sendOutAwaiting,
     releasedToday,
     oldestUnclaimed,
-    recentCriticals,
+    medtechCriticals,
+    pathologistCriticals,
     pendingSignoff,
   ] = await Promise.all([
     myUnclaimedPromise,
@@ -302,9 +356,41 @@ async function loadLabStats(
     sendOutAwaitingPromise,
     releasedTodayPromise,
     oldestUnclaimedPromise,
-    recentCriticalsPromise,
+    medtechCriticalsPromise,
+    pathologistCriticalsPromise,
     pendingSignoffPromise,
   ]);
+
+  const recentCriticals = (
+    role === "medtech"
+      ? (medtechCriticals.data ?? [])
+      : role === "pathologist"
+        ? (pathologistCriticals.data ?? [])
+        : []
+  ) as CriticalRow[];
+  const recentCriticalsError =
+    role === "medtech" ? medtechCriticals.error : role === "pathologist" ? pathologistCriticals.error : null;
+
+  // Resolve "acknowledged by" names for the medtech strip — read-only, so it
+  // has to show who acted, not imply the medtech did (they only see this
+  // because they hold the test, not because they handled the alert).
+  const ackerNames = new Map<string, string>();
+  if (role === "medtech") {
+    const ackerIds = Array.from(
+      new Set(
+        recentCriticals
+          .map((c) => c.acknowledged_by)
+          .filter((v): v is string => !!v),
+      ),
+    );
+    if (ackerIds.length > 0) {
+      const { data: profs } = await supabase
+        .from("staff_profiles")
+        .select("id, full_name")
+        .in("id", ackerIds);
+      for (const p of profs ?? []) ackerNames.set(p.id, p.full_name);
+    }
+  }
 
   // These queries used to fail silently — `.data ?? []` swallowed the error
   // and the strip just rendered its empty state, which is exactly how the
@@ -319,7 +405,7 @@ async function loadLabStats(
     { scope: "send_out_awaiting", error: sendOutAwaiting.error },
     { scope: "released_today", error: releasedToday.error },
     { scope: "oldest_unclaimed", error: oldestUnclaimed.error },
-    { scope: "recent_criticals", error: recentCriticals.error },
+    { scope: "recent_criticals", error: recentCriticalsError },
     { scope: "pending_signoff", error: pendingSignoff.error },
   ];
   await Promise.all(
@@ -336,14 +422,24 @@ async function loadLabStats(
 
   return {
     myUnclaimed: myUnclaimed.count ?? 0,
+    myUnclaimedError: Boolean(myUnclaimed.error),
     myClaimed: myClaimed.count ?? 0,
+    myClaimedError: Boolean(myClaimed.error),
     readyForSignoff: readyForSignoff.count ?? 0,
+    readyForSignoffError: Boolean(readyForSignoff.error),
     criticalAlerts: criticalAlerts.count ?? 0,
+    criticalAlertsError: Boolean(criticalAlerts.error),
     sendOutAwaiting: sendOutAwaiting.count ?? 0,
+    sendOutAwaitingError: Boolean(sendOutAwaiting.error),
     releasedToday: releasedToday.count ?? 0,
+    releasedTodayError: Boolean(releasedToday.error),
     oldestUnclaimed: (oldestUnclaimed.data ?? []) as QueueRow[],
-    recentCriticals: (recentCriticals.data ?? []) as CriticalRow[],
+    oldestUnclaimedError: Boolean(oldestUnclaimed.error),
+    recentCriticals,
+    recentCriticalsError: Boolean(recentCriticalsError),
+    ackerNames,
     pendingSignoff: (pendingSignoff.data ?? []) as SignoffRow[],
+    pendingSignoffError: Boolean(pendingSignoff.error),
   };
 }
 
@@ -357,18 +453,32 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
     primary: pluckService(r.services),
     secondary: pluckPatientName(r.visits),
     meta: relativeAge(r.requested_at),
-    href: "/staff/queue",
+    href: `/staff/queue/${r.id}`,
   }));
 
   // Critical alerts have their own worklist with the Acknowledge action —
   // send every entry point there instead of the general queue, which has
   // no critical-alert affordance at all.
-  const criticalItems: ActivityItem[] = stats.recentCriticals.map((c) => ({
-    primary: `${c.parameter_name} (${c.direction.toUpperCase()})`,
-    secondary: `Request ${c.test_request_id.slice(0, 8)}`,
-    meta: relativeAge(c.created_at),
-    href: "/staff/critical-alerts",
-  }));
+  const criticalItems: ActivityItem[] = stats.recentCriticals.map((c) => {
+    if (role === "medtech") {
+      const ackedBy = c.acknowledged_by ? (stats.ackerNames.get(c.acknowledged_by) ?? "someone") : null;
+      const ackLabel = c.acknowledged_at
+        ? `Acknowledged ${relativeAge(c.acknowledged_at)}${ackedBy ? ` by ${ackedBy}` : ""}`
+        : "Not yet acknowledged";
+      return {
+        primary: `${c.parameter_name} (${c.direction.toUpperCase()})`,
+        secondary: ackLabel,
+        meta: relativeAge(c.created_at),
+        href: "/staff/critical-alerts",
+      };
+    }
+    return {
+      primary: `${c.parameter_name} (${c.direction.toUpperCase()})`,
+      secondary: c.patient_drm_id ?? `Request ${c.test_request_id.slice(0, 8)}`,
+      meta: relativeAge(c.created_at),
+      href: "/staff/critical-alerts",
+    };
+  });
 
   // There is no per-test detail page (only a PDF route under
   // /staff/results/[testRequestId]/pdf), so every row lands on the same
@@ -382,119 +492,170 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
 
   const showMyQueue = role === "medtech" || role === "xray_technician";
   const showSignoff = role === "pathologist";
+  const quickLinks = buildQuickLinks(role);
+
+  // Each SectionHeading below wraps its cards in a literal <div>, which is
+  // always truthy — its own `if (!children)` check can never see "every card
+  // in this section is hidden" from here. With sign-off's two cards
+  // defaultHidden and role-gating trimming the rest, a section can now be
+  // fully empty for a given role (e.g. pathologist with no lab.* overrides
+  // sees no send-out/unclaimed/claimed cards at all). Compute per-section
+  // visibility and skip rendering the SectionHeading entirely rather than
+  // leave a bare heading over nothing.
+  const showMyUnclaimedCard = showMyQueue && show("lab.my_unclaimed");
+  const showMyClaimedCard = showMyQueue && show("lab.my_claimed");
+  const showReadyForSignoffCard = showSignoff && show("lab.ready_for_signoff");
+  const showCriticalAlertsCard = showSignoff && show("lab.critical_alerts");
+  const showSendOutCard = role === "medtech" && show("lab.send_out_awaiting");
+  const showReleasedTodayCard = show("lab.released_today");
+  const hasMyQueueCards =
+    showMyUnclaimedCard ||
+    showMyClaimedCard ||
+    showReadyForSignoffCard ||
+    showCriticalAlertsCard ||
+    showSendOutCard ||
+    showReleasedTodayCard;
+
+  const showOldestUnclaimedStrip = showMyQueue && show("lab.strip_oldest_unclaimed");
+  const showPendingSignoffStrip = showSignoff && show("lab.strip_pending_signoff");
+  const showMedtechCriticalsStrip = role === "medtech" && show("lab.strip_recent_criticals");
+  const showPathologistCriticalsStrip = role === "pathologist" && show("lab.strip_recent_criticals");
+  const hasAttentionCards =
+    showOldestUnclaimedStrip ||
+    showPendingSignoffStrip ||
+    showMedtechCriticalsStrip ||
+    showPathologistCriticalsStrip;
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
+      <RealtimeRefresher
+        channelName="lab-dashboard"
+        subscriptions={[
+          { table: "test_requests", event: "INSERT" },
+          { table: "test_requests", event: "UPDATE" },
+          { table: "critical_alerts", event: "INSERT" },
+        ]}
+      />
       <DashboardHeader
         firstName={session.full_name.split(" ")[0]}
         roleLabel={ROLE_LABEL[role]}
         title={ROLE_TITLE[role]}
+        updatedAt={new Date()}
       />
 
-      <SectionHeading title="My queue">
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {showMyQueue && show("lab.my_unclaimed") && (
-          <StatCard
-            label="Unclaimed in my sections"
-            value={stats.myUnclaimed}
-            hint="Requested or in progress, unassigned"
-            href="/staff/queue"
-            accent={stats.myUnclaimed > 0 ? "warn" : "default"}
-          />
-        )}
-        {showMyQueue && show("lab.my_claimed") && (
-          <StatCard
-            label="Claimed by me"
-            value={stats.myClaimed}
-            hint="Assigned to me, in progress"
-            href="/staff/queue?filter=mine"
-          />
-        )}
-        {showSignoff && show("lab.ready_for_signoff") && (
-          <StatCard
-            label="Ready for sign-off"
-            value={stats.readyForSignoff}
-            hint="Sign-off screen not built yet"
-            href="/staff/results?status=ready"
-            accent={stats.readyForSignoff > 0 ? "warn" : "default"}
-          />
-        )}
-        {showSignoff && show("lab.critical_alerts") && (
-          <StatCard
-            label="Critical alerts unacked"
-            value={stats.criticalAlerts}
-            hint="Patient safety priority"
-            href="/staff/critical-alerts"
-            accent={stats.criticalAlerts > 0 ? "warn" : "default"}
-          />
-        )}
-        {role === "medtech" && show("lab.send_out_awaiting") && (
-          <StatCard
-            label="Send-out awaiting result"
-            value={stats.sendOutAwaiting}
-            hint="External labs still processing"
-            href="/staff/queue"
-          />
-        )}
-        {show("lab.released_today") && (
-          <StatCard
-            label="Released today (mine)"
-            value={stats.releasedToday}
-            hint="Tests fully released"
-            href="/staff/queue?filter=released_today"
-            accent="good"
-          />
-        )}
-        </div>
-      </SectionHeading>
+      {hasMyQueueCards && (
+        <SectionHeading title="My queue">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {showMyUnclaimedCard && (
+              <StatCard
+                label="Unclaimed in my sections"
+                value={stats.myUnclaimed}
+                hint="Requested or in progress, unassigned"
+                href="/staff/queue"
+                accent={stats.myUnclaimed > 0 ? "warn" : "default"}
+                error={stats.myUnclaimedError}
+              />
+            )}
+            {showMyClaimedCard && (
+              <StatCard
+                label="Claimed by me"
+                value={stats.myClaimed}
+                hint="Assigned to me, in progress"
+                href="/staff/queue?filter=mine"
+                error={stats.myClaimedError}
+              />
+            )}
+            {showReadyForSignoffCard && (
+              <StatCard
+                label="Ready for sign-off"
+                value={stats.readyForSignoff}
+                hint="Sign-off screen not built yet"
+                href="/staff/results?status=ready"
+                accent={stats.readyForSignoff > 0 ? "warn" : "default"}
+                error={stats.readyForSignoffError}
+              />
+            )}
+            {showCriticalAlertsCard && (
+              <StatCard
+                label="Critical alerts unacked"
+                value={stats.criticalAlerts}
+                hint="Patient safety priority"
+                href="/staff/critical-alerts"
+                accent={stats.criticalAlerts > 0 ? "warn" : "default"}
+                error={stats.criticalAlertsError}
+              />
+            )}
+            {showSendOutCard && (
+              <StatCard
+                label="Open send-out tests"
+                value={stats.sendOutAwaiting}
+                hint="Requested or in progress, sent to an external lab"
+                href="/staff/queue"
+                error={stats.sendOutAwaitingError}
+              />
+            )}
+            {showReleasedTodayCard && (
+              <StatCard
+                label="Released today (mine)"
+                value={stats.releasedToday}
+                hint="Tests fully released"
+                href="/staff/queue?filter=released_today&mine=1"
+                accent="good"
+                error={stats.releasedTodayError}
+              />
+            )}
+          </div>
+        </SectionHeading>
+      )}
 
-      <SectionHeading title="Quicklinks">
-        <QuickLinks items={buildQuickLinks(role)} />
-      </SectionHeading>
+      {quickLinks.length > 0 && (
+        <SectionHeading title="Quicklinks">
+          <QuickLinks items={quickLinks} />
+        </SectionHeading>
+      )}
 
-      <SectionHeading title="What needs attention">
-        <div className="grid gap-4 lg:grid-cols-2">
-        {showMyQueue && show("lab.strip_oldest_unclaimed") && (
-          <ActivityStrip
-            title="Oldest unclaimed"
-            items={oldestItems}
-            emptyMessage="Nothing waiting in your queue."
-            viewAllHref="/staff/queue"
-          />
-        )}
-        {showSignoff && show("lab.strip_pending_signoff") && (
-          <ActivityStrip
-            title="Pending sign-off"
-            items={signoffItems}
-            emptyMessage="Sign-off queue is empty."
-            viewAllHref="/staff/results?status=ready"
-          />
-        )}
-        {(role === "medtech" || role === "pathologist") && show("lab.strip_recent_criticals") && (
-          <ActivityStrip
-            title="Recent critical alerts"
-            items={criticalItems}
-            emptyMessage="No critical alerts in last 24h."
-            viewAllHref="/staff/critical-alerts"
-          />
-        )}
-        </div>
-      </SectionHeading>
-
-      <SectionHeading
-        title="Coming soon"
-        subtitle="Modules on the roadmap for lab operations"
-        defaultOpen={false}
-      >
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {showSignoff && (
-          <PlannedCard
-            label="Sign-off screen"
-            teaser="A dedicated worklist for reviewing and approving results before release, replacing today's placeholder page."
-          />
-        )}
-        </div>
-      </SectionHeading>
+      {hasAttentionCards && (
+        <SectionHeading title="What needs attention">
+          <div className="grid gap-4 lg:grid-cols-2">
+            {showOldestUnclaimedStrip && (
+              <ActivityStrip
+                title="Oldest unclaimed"
+                items={oldestItems}
+                emptyMessage="No unclaimed tests."
+                viewAllHref="/staff/queue"
+                error={stats.oldestUnclaimedError}
+              />
+            )}
+            {showPendingSignoffStrip && (
+              <ActivityStrip
+                title="Pending sign-off"
+                items={signoffItems}
+                emptyMessage="Sign-off queue is empty."
+                viewAllHref="/staff/results?status=ready"
+                error={stats.pendingSignoffError}
+              />
+            )}
+            {showMedtechCriticalsStrip && (
+              <ActivityStrip
+                title="Critical values on tests assigned to you"
+                items={criticalItems}
+                emptyMessage="No critical values on your tests right now."
+                viewAllHref="/staff/critical-alerts"
+                error={stats.recentCriticalsError}
+              />
+            )}
+            {showPathologistCriticalsStrip && (
+              <ActivityStrip
+                title="Recent critical alerts"
+                items={criticalItems}
+                emptyMessage="No critical alerts awaiting acknowledgement."
+                viewAllHref="/staff/critical-alerts"
+                error={stats.recentCriticalsError}
+              />
+            )}
+          </div>
+        </SectionHeading>
+      )}
     </div>
   );
 }
