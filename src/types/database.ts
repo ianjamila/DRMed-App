@@ -6253,6 +6253,22 @@ export type Database = {
           },
         ]
       }
+      v_patients_without_consent: {
+        Row: {
+          contact_score: number | null
+          drm_id: string | null
+          email: string | null
+          first_name: string | null
+          id: string | null
+          last_name: string | null
+          last_visit_at: string | null
+          patient_name: string | null
+          phone: string | null
+          pre_registered: boolean | null
+          visit_count: number | null
+        }
+        Relationships: []
+      }
       v_staff_advances_outstanding: {
         Row: {
           advance_count: number | null

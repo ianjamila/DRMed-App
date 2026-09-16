@@ -95,3 +95,8 @@ revoke all on public.v_ops_daily_hmo_provider_ar  from anon, authenticated;
 revoke all on public.v_ops_daily_hmo_received     from anon, authenticated;
 revoke all on public.v_ops_daily_pnl              from anon, authenticated;
 revoke all on public.v_ops_daily_totals           from anon, authenticated;
+
+-- 0150: preserve the consent report's authenticated-SELECT-only ACL after the
+-- blanket local grants above, matching the migration and production.
+revoke all on public.v_patients_without_consent from public, anon, authenticated;
+grant select on public.v_patients_without_consent to authenticated;

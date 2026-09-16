@@ -25,8 +25,9 @@ Key reference artifacts:
   every post-1.0 programme (partner revisions, release lifecycle, group templates, EOD
   denomination count…). Read the spec before re-deriving a design decision.
 
-Migration ledger: **prod head = 0148**, repo↔prod in sync (2026-09-15). **0149** is in
-flight on `fix/ap-cash-drawer` and must be pushed before its PR merges.
+Migration ledger: **prod head = 0150**, repo↔prod in sync (2026-09-16). **0150**
+(`v_patients_without_consent`) is applied to prod and in flight on
+`perf/consent-report-aggregation`; the next free number is **0151**.
 `ls supabase/migrations | tail -3` is NOT enough to pick the next number — it only sees your
 own worktree, and on 2026-09-15 two branches claimed 0147 (and P0050) the same afternoon.
 Check the open branches too:
