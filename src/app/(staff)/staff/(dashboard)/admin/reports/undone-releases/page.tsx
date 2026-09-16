@@ -1,36 +1,48 @@
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { todayManilaISODate } from "@/lib/dates/manila";
+import { manilaDate, manilaDateTime, todayManilaISODate } from "@/lib/dates/manila";
 import { Panel } from "@/components/ui/panel";
 import { ExportCsvLink } from "@/components/staff/export-csv-link";
 import {
+  ariaSortFor,
+  buildListHref,
+  DEFAULT_PAGE_SIZE,
+  nextSort,
+  pageCount,
+  parsePage,
+  parsePageSize,
+  parseSort,
+  rangeFor,
+} from "@/lib/ui/table-params";
+import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
+import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
+import { REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
+import {
+  compareUndoneReleases,
   loadUndoneReleases,
   parseUndoneReleasesParams,
+  UNDONE_RELEASES_DEFAULT_SORT,
+  UNDONE_RELEASES_SORTABLE_COLUMNS,
   undoneReleasesCsvHref,
+  type UndoneReleasesSortColumn,
 } from "@/lib/reports/undone-releases";
 
 export const metadata = { title: "Undone Releases" };
 export const dynamic = "force-dynamic";
 
+const BASE_PATH = "/staff/admin/reports/undone-releases";
+
 interface SearchProps {
-  searchParams: Promise<{ start?: string; end?: string }>;
+  searchParams: Promise<{
+    start?: string;
+    end?: string;
+    sort?: string;
+    dir?: string;
+    page?: string;
+    size?: string;
+  }>;
 }
-
-// Hard cap so a wide-open range can't pull the whole audit log into one
-// render (same policy as the staff-advances report).
-const MAX_ROWS = 500;
-
-const manilaDateTime = new Intl.DateTimeFormat("en-PH", {
-  timeZone: "Asia/Manila",
-  dateStyle: "medium",
-  timeStyle: "short",
-});
-
-const manilaDate = new Intl.DateTimeFormat("en-PH", {
-  timeZone: "Asia/Manila",
-  dateStyle: "medium",
-});
 
 export default async function UndoneReleasesPage({ searchParams }: SearchProps) {
   await requireAdminStaff();
@@ -39,11 +51,58 @@ export default async function UndoneReleasesPage({ searchParams }: SearchProps) 
   const todayISO = todayManilaISODate();
   const params = parseUndoneReleasesParams(sp, todayISO);
   const { start, end } = params;
+  const sort = parseSort(sp.sort, sp.dir, UNDONE_RELEASES_SORTABLE_COLUMNS, UNDONE_RELEASES_DEFAULT_SORT);
+  const size = parsePageSize(sp.size);
+  const page = parsePage(sp.page);
 
   const admin = createAdminClient();
-  const { entries, summary, truncated: capped } = await loadUndoneReleases(admin, params, MAX_ROWS);
-  const rows = entries;
+  // Ceiling raised from the old flat 500 to match the CSV export's own walk
+  // (REPORT_EXPORT_MAX_ROWS) — a pager built on a 500-capped fetch would
+  // assert "showing 1-25 of 500" while more rows actually match, the same
+  // bug closed on the AP bills index. This also makes the four summary tiles
+  // below exact for any range under the new ceiling, instead of silently
+  // capping at 500 the way they used to when the range was wide.
+  const { entries, summary, truncated: capped } = await loadUndoneReleases(
+    admin,
+    params,
+    REPORT_EXPORT_MAX_ROWS,
+  );
   const { staffUndos, stillUnreleased, reReleased, viewedBeforeUndo } = summary;
+
+  const total = entries.length;
+  const totalPages = pageCount(total, size);
+  const [from, to] = rangeFor(page, size);
+  // Sort, then slice — the whole date-range window is already in memory (see
+  // the SORTABLE_COLUMNS comment in undone-releases.ts), so paging here is a
+  // plain array slice rather than a second round-trip.
+  const rows = [...entries].sort((a, b) => compareUndoneReleases(a, b, sort)).slice(from, to + 1);
+
+  // Params at their default are omitted so the plain filter/sort state stays
+  // the bare BASE_PATH URL. `page` is deliberately never carried in
+  // baseParams — every filter/sort change resets to page 1 (see `href`).
+  const isDefaultSort =
+    sort.key === UNDONE_RELEASES_DEFAULT_SORT.key && sort.dir === UNDONE_RELEASES_DEFAULT_SORT.dir;
+  const baseParams: Record<string, string | null> = {
+    start,
+    end,
+    sort: isDefaultSort ? null : sort.key,
+    dir: isDefaultSort ? null : sort.dir,
+    size: size === DEFAULT_PAGE_SIZE ? null : String(size),
+  };
+
+  const href = (overrides: Record<string, string | null> = {}) =>
+    buildListHref(BASE_PATH, baseParams, { page: null, ...overrides });
+
+  const sortHref = (key: UndoneReleasesSortColumn) => {
+    const next = nextSort(sort, key);
+    const nextIsDefault =
+      next.key === UNDONE_RELEASES_DEFAULT_SORT.key && next.dir === UNDONE_RELEASES_DEFAULT_SORT.dir;
+    return href({ sort: nextIsDefault ? null : next.key, dir: nextIsDefault ? null : next.dir });
+  };
+
+  const th = (key: UndoneReleasesSortColumn, label: string, align?: "left" | "right") => (
+    <SortableTh key={key} label={label} href={sortHref(key)} state={ariaSortFor(sort, key)} align={align} />
+  );
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
@@ -101,6 +160,20 @@ export default async function UndoneReleasesPage({ searchParams }: SearchProps) 
             className="mt-1 rounded-md border border-[color:var(--color-brand-bg-mid)] px-2 py-1.5 text-sm"
           />
         </div>
+        {/* A plain-GET filter form submits only the fields it carries — without
+            these three, applying the date range would silently reset the
+            reader's sort and page size (rule 5 of the tier-c sort contract).
+            `page` is deliberately NOT carried: a changed range is a new result
+            set, and page 1 is the only page guaranteed to exist in it. */}
+        {isDefaultSort ? null : (
+          <>
+            <input type="hidden" name="sort" value={sort.key} />
+            <input type="hidden" name="dir" value={sort.dir} />
+          </>
+        )}
+        {size === DEFAULT_PAGE_SIZE ? null : (
+          <input type="hidden" name="size" value={size} />
+        )}
         <button
           type="submit"
           className="min-h-11 rounded-md border border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-cyan)] px-4 py-1.5 text-sm font-medium text-white hover:bg-[color:var(--color-brand-cyan-mid)]"
@@ -113,8 +186,8 @@ export default async function UndoneReleasesPage({ searchParams }: SearchProps) 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryTile
           label="Undo events"
-          value={String(rows.length)}
-          hint={`${staffUndos} by staff · ${rows.length - staffUndos} cascade — ${start} → ${end}`}
+          value={String(total)}
+          hint={`${staffUndos} by staff · ${total - staffUndos} cascade — ${start} → ${end}`}
         />
         <SummaryTile
           label="Still unreleased"
@@ -137,8 +210,8 @@ export default async function UndoneReleasesPage({ searchParams }: SearchProps) 
 
       {capped ? (
         <p className="mb-3 text-xs text-amber-700">
-          Showing the most recent {MAX_ROWS} — narrow the range to see the
-          rest.
+          Showing the most recent {REPORT_EXPORT_MAX_ROWS.toLocaleString("en-PH")} — narrow the
+          range to see the rest.
         </p>
       ) : null}
 
@@ -152,13 +225,13 @@ export default async function UndoneReleasesPage({ searchParams }: SearchProps) 
             <table className="w-full min-w-[900px] text-sm">
               <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                 <tr>
-                  <th className="px-4 py-3">When</th>
-                  <th className="px-4 py-3">Patient · Visit</th>
-                  <th className="px-4 py-3">Test</th>
-                  <th className="px-4 py-3">Undone by</th>
-                  <th className="px-4 py-3">Reason</th>
-                  <th className="px-4 py-3 text-right">Viewed</th>
-                  <th className="px-4 py-3">Current outcome</th>
+                  {th("when", "When")}
+                  {th("patient", "Patient · Visit")}
+                  {th("test", "Test")}
+                  {th("by", "Undone by")}
+                  <PlainTh label="Reason" />
+                  {th("viewed", "Viewed", "right")}
+                  {th("outcome", "Current outcome")}
                 </tr>
               </thead>
               <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
@@ -166,7 +239,7 @@ export default async function UndoneReleasesPage({ searchParams }: SearchProps) 
                   return (
                     <tr key={e.id}>
                       <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-[color:var(--color-brand-text-soft)]">
-                        {manilaDateTime.format(new Date(e.createdAt))}
+                        {manilaDateTime(e.createdAt)}
                       </td>
                       <td className="px-4 py-3">
                         {e.patient ? (
@@ -246,9 +319,7 @@ export default async function UndoneReleasesPage({ searchParams }: SearchProps) 
                         ) : e.currentStatus === "released" ? (
                           <span className="font-semibold text-emerald-700">
                             Re-released{" "}
-                            {e.releasedAt
-                              ? manilaDate.format(new Date(e.releasedAt))
-                              : ""}
+                            {e.releasedAt ? manilaDate(e.releasedAt) : ""}
                           </span>
                         ) : e.currentStatus === "ready_for_release" ? (
                           <span className="font-semibold text-amber-700">
@@ -272,6 +343,31 @@ export default async function UndoneReleasesPage({ searchParams }: SearchProps) 
           </div>
         )}
       </Panel>
+
+      <ListPagination
+        page={page}
+        pageCount={totalPages}
+        total={total}
+        size={size}
+        prevHref={
+          page > 1
+            ? buildListHref(BASE_PATH, baseParams, {
+                page: page - 1 > 1 ? String(page - 1) : null,
+              })
+            : null
+        }
+        nextHref={
+          page < totalPages
+            ? buildListHref(BASE_PATH, baseParams, { page: String(page + 1) })
+            : null
+        }
+        sizeOptions={PAGE_SIZES.map((s) => ({
+          size: s,
+          href: href({ size: s === DEFAULT_PAGE_SIZE ? null : String(s) }),
+        }))}
+        noun="undo"
+        plural="undos"
+      />
     </div>
   );
 }

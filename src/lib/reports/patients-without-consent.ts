@@ -2,6 +2,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import { formatPatientName } from "@/lib/patients/format-name";
+import type { SortSpec } from "@/lib/ui/table-params";
 import { chunk, fetchAllRows, IN_CHUNK } from "./paging";
 
 type AnyClient = SupabaseClient<Database>;
@@ -24,7 +25,12 @@ export interface PatientWithoutConsentRow {
 }
 
 export interface PatientsWithoutConsentReport {
-  /** Ordered: most recently active first, never-visited last. */
+  /**
+   * Ordered by `orderByLastVisit` (most recently active first, never-visited
+   * last) over the FULL candidate set — nothing here is trimmed. The page
+   * re-sorts this set again by whichever column its `sort` param picks
+   * (default matches this order) and pages it; the CSV export takes it as-is.
+   */
   rows: PatientWithoutConsentRow[];
   visitCount: ReadonlyMap<string, number>;
   lastVisit: ReadonlyMap<string, string>;
@@ -34,17 +40,15 @@ export interface PatientsWithoutConsentReport {
    * above may be missing patients no amount of re-sorting can recover.
    */
   truncated: boolean;
-  /**
-   * True when `displayLimit` cut the (already fully sorted) list down for
-   * on-screen rendering. Unlike `truncated`, this cut is meaningful — the
-   * candidate set was complete and sorted most-recently-active-first before
-   * this trim, so nothing more urgent was dropped in favor of something less
-   * urgent.
-   */
-  displayTruncated: boolean;
 }
 
-/** Most recently active first; patients with no visits sink to the bottom. Stable. */
+/**
+ * Most recently active first; patients with no visits sink to the bottom in
+ * EITHER direction. Stable. This is also the report's default column sort —
+ * `comparePatientsWithoutConsent`'s `last_visit` case applies the identical
+ * null-last rule when a reader clicks that header, so a never-visited patient
+ * stays pinned to the bottom no matter which direction they pick.
+ */
 export function orderByLastVisit(
   rows: readonly PatientWithoutConsentRow[],
   lastVisit: ReadonlyMap<string, string>,
@@ -57,24 +61,27 @@ export function orderByLastVisit(
 /**
  * M15: `maxRows` bounds the CANDIDATE set (every patient lacking consent,
  * fetched `created_at desc` — an arbitrary but stable order, since nothing
- * meaningful can be known before visits are joined in below). `displayLimit`,
- * when given, trims the list a caller actually RENDERS — applied only AFTER
- * `orderByLastVisit` below, so the trim keeps the most-recently-active
- * patients rather than the most-recently-REGISTERED ones.
+ * meaningful can be known before visits are joined in below). `orderByLastVisit`
+ * then re-orders the FULL candidate set most-recently-active-first before this
+ * function returns anything — there used to be a `displayLimit` here that
+ * trimmed the ordered list for on-screen rendering, but that trim is now the
+ * report page's pager (a plain array slice over the same full, sorted set;
+ * see the page's `rows` computation), so this loader itself never trims.
  *
- * Getting this order backwards was the bug: a page that fetched only the
- * first `displayLimit` patients by `created_at desc` and sorted THAT short
- * list by last-visit could drop a patient who registered years ago but
- * walked in yesterday, while keeping a patient who registered last week and
- * never returned. `maxRows` must stay generous enough to cover the true
- * candidate population (the report library's `REPORT_EXPORT_MAX_ROWS`, same
- * ceiling the CSV export already proves comfortably covers this table) so
- * the sort-then-trim below is never working from an already-wrong set.
+ * Getting sort-then-trim backwards was the original bug: a page that fetched
+ * only the first N patients by `created_at desc` and sorted THAT short list
+ * by last-visit could drop a patient who registered years ago but walked in
+ * yesterday, while keeping a patient who registered last week and never
+ * returned. `maxRows` must stay generous enough to cover the true candidate
+ * population (the report library's `REPORT_EXPORT_MAX_ROWS`, same ceiling the
+ * CSV export already proves comfortably covers this table) so the ordering
+ * below is never working from an already-wrong set — and since nothing here
+ * trims anymore, there is no later step that could quietly re-introduce the
+ * bug by trimming before sorting.
  */
 export async function loadPatientsWithoutConsent(
   client: AnyClient,
   maxRows: number,
-  displayLimit?: number,
 ): Promise<PatientsWithoutConsentReport> {
   // Active patients (not merged tombstones) with no current data-privacy
   // consent on file — exactly the rows whose releases will block once the
@@ -123,16 +130,99 @@ export async function loadPatientsWithoutConsent(
   }
 
   const ordered = orderByLastVisit(patients, lastVisit);
-  const displayTruncated = displayLimit != null && displayLimit < ordered.length;
-  const rows = displayLimit != null ? ordered.slice(0, displayLimit) : ordered;
 
   return {
-    rows,
+    rows: ordered,
     visitCount,
     lastVisit,
     truncated: truncated || visitsTruncated,
-    displayTruncated,
   };
+}
+
+/**
+ * Sortable columns for the on-screen table. `contact` is this report's own
+ * invention (see `comparePatientsWithoutConsent` below) — a triage ordering
+ * that has no equivalent on the CSV export, where a reader can just look at
+ * the Phone/Email cells directly.
+ */
+export const PATIENTS_WITHOUT_CONSENT_SORTABLE_COLUMNS = [
+  "patient",
+  "drm_id",
+  "visits",
+  "last_visit",
+  "contact",
+] as const;
+export type PatientsWithoutConsentSortColumn =
+  (typeof PATIENTS_WITHOUT_CONSENT_SORTABLE_COLUMNS)[number];
+
+// Most-recently-active first is the useful default for a "who do we still
+// need consent from" worklist: it surfaces the patients most likely to walk
+// back in soon (and so hit the consent gate soonest) ahead of patients who
+// registered but may never return. Matches `orderByLastVisit`'s order.
+export const PATIENTS_WITHOUT_CONSENT_DEFAULT_SORT: SortSpec<PatientsWithoutConsentSortColumn> =
+  { key: "last_visit", dir: "desc" };
+
+/** How much contact info is on file: both > one > none. Never negative. */
+function contactScore(p: PatientWithoutConsentRow): number {
+  return (p.phone ? 1 : 0) + (p.email ? 1 : 0);
+}
+
+export function comparePatientsWithoutConsent(
+  a: PatientWithoutConsentRow,
+  b: PatientWithoutConsentRow,
+  sort: SortSpec<PatientsWithoutConsentSortColumn>,
+  visitCount: ReadonlyMap<string, number>,
+  lastVisit: ReadonlyMap<string, string>,
+): number {
+  const dirMul = sort.dir === "asc" ? 1 : -1;
+  let cmp: number;
+
+  switch (sort.key) {
+    case "patient": {
+      // A patient with neither name on file sinks to the bottom regardless of
+      // direction — same convention "patient" columns follow everywhere else
+      // in these reports (see users/page.tsx's NULLS_LAST_COLUMNS). The row
+      // is still reachable by DRM-ID; it just shouldn't crowd the top of an
+      // ascending sort because "" collates before every real name.
+      const an = formatPatientName(a);
+      const bn = formatPatientName(b);
+      if (an === "" && bn === "") cmp = 0;
+      else if (an === "") return 1;
+      else if (bn === "") return -1;
+      else cmp = dirMul * an.localeCompare(bn);
+      break;
+    }
+    case "drm_id":
+      cmp = dirMul * a.drm_id.localeCompare(b.drm_id);
+      break;
+    case "visits":
+      cmp = dirMul * ((visitCount.get(a.id) ?? 0) - (visitCount.get(b.id) ?? 0));
+      break;
+    case "last_visit": {
+      // Null last in BOTH directions — see `orderByLastVisit`'s doc comment.
+      const av = lastVisit.get(a.id) ?? null;
+      const bv = lastVisit.get(b.id) ?? null;
+      if (av === null && bv === null) cmp = 0;
+      else if (av === null) return 1;
+      else if (bv === null) return -1;
+      else cmp = dirMul * av.localeCompare(bv);
+      break;
+    }
+    case "contact":
+      // "Who can we even reach" ordering: both phone and email on file
+      // outranks one, which outranks neither. Deliberately not alphabetical
+      // (there's nothing to alphabetise) — this column is a triage signal,
+      // not a lookup key, so the useful order is by how contactable the row is.
+      cmp = dirMul * (contactScore(a) - contactScore(b));
+      break;
+    default:
+      cmp = 0;
+  }
+
+  // Tie-break on id, ascending, same convention every comparator here follows
+  // (see users/page.tsx) — keeps paging deterministic rather than depending
+  // on Array#sort's stability as an implementation detail.
+  return cmp !== 0 ? cmp : a.id.localeCompare(b.id);
 }
 
 export const PATIENTS_WITHOUT_CONSENT_CSV_HEADER = [

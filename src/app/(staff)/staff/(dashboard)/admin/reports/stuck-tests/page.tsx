@@ -6,19 +6,50 @@ import { Panel } from "@/components/ui/panel";
 import { PageHeader } from "@/components/staff/page-header";
 import { ExportCsvLink } from "@/components/staff/export-csv-link";
 import { pluckOne } from "@/lib/reports/format";
+import { REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 import {
   ageDays,
+  compareStuckRows,
   loadStuckTests,
   parseStuckTestsParams,
+  STUCK_DEFAULT_SORT,
+  STUCK_SORTABLE_COLUMNS,
   stuckTestsCsvHref,
+  type StuckSortColumn,
 } from "@/lib/reports/stuck-tests";
 import { manilaDateTime } from "@/lib/dates/manila";
+import {
+  ariaSortFor,
+  buildListHref,
+  DEFAULT_PAGE_SIZE,
+  nextSort,
+  pageCount,
+  parsePage,
+  parsePageSize,
+  parseSort,
+  rangeFor,
+} from "@/lib/ui/table-params";
+import { SortableTh } from "@/components/staff/sortable-th";
+import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 
 export const metadata = { title: "Stuck Tests" };
 export const dynamic = "force-dynamic";
 
+const BASE_PATH = "/staff/admin/reports/stuck-tests";
+
+// Mirrors parseStuckTestsParams' own fallback — kept in sync there, not
+// re-derived here, so the "days" param can be omitted from a link exactly
+// when it wouldn't change what the loader fetches.
+const DEFAULT_DAYS = 3;
+
 interface SearchProps {
-  searchParams: Promise<{ days?: string }>;
+  searchParams: Promise<{
+    days?: string;
+    sort?: string;
+    dir?: string;
+    page?: string;
+    size?: string;
+  }>;
 }
 
 const TEST_STATUS_STYLE: Record<string, string> = {
@@ -37,13 +68,56 @@ const PAYMENT_STYLE: Record<string, string> = {
 
 export default async function StuckTestsPage({ searchParams }: SearchProps) {
   await requireAdminStaff();
-  const params = parseStuckTestsParams(await searchParams);
+  const sp = await searchParams;
+  const params = parseStuckTestsParams(sp);
   const { days } = params;
+  const sort = parseSort(sp.sort, sp.dir, STUCK_SORTABLE_COLUMNS, STUCK_DEFAULT_SORT);
+  const size = parsePageSize(sp.size);
+  const page = parsePage(sp.page);
 
   const admin = createAdminClient();
-  const PAGE_MAX_ROWS = 500;
+  // Raised from a flat 500 to match the CSV export's own ceiling — a pager
+  // whose total comes from a 500-capped fetch can assert "of 500" while more
+  // rows actually match (the AP bills bug, #170). Only the main `stuck` table
+  // below is sorted and paged; the three integrity lists keep their own flat
+  // 100-row cap and fixed order (see the comment in stuck-tests.ts).
   const { stuck, stuckHeaders, orphanHeaders, emptyVisits, claimerNames, truncated } =
-    await loadStuckTests(admin, params, PAGE_MAX_ROWS);
+    await loadStuckTests(admin, params, REPORT_EXPORT_MAX_ROWS);
+
+  const total = stuck.length;
+  const totalPages = pageCount(total, size);
+  const [from, to] = rangeFor(page, size);
+  // Sort, then slice — the whole set fetched above is already in memory, so
+  // paging here is a plain array slice rather than a second round-trip.
+  const rows = [...stuck]
+    .sort((a, b) => compareStuckRows(a, b, sort, claimerNames))
+    .slice(from, to + 1);
+
+  const isDefaultDays = days === DEFAULT_DAYS;
+  const isDefaultSort = sort.key === STUCK_DEFAULT_SORT.key && sort.dir === STUCK_DEFAULT_SORT.dir;
+  const baseParams: Record<string, string | null> = {
+    days: isDefaultDays ? null : String(days),
+    sort: isDefaultSort ? null : sort.key,
+    dir: isDefaultSort ? null : sort.dir,
+    size: size === DEFAULT_PAGE_SIZE ? null : String(size),
+  };
+
+  // Sort/page links reset to page 1 — sitting on page 7 of a result set that
+  // just changed shape (a new sort column, a new day threshold) is a blank
+  // screen with no explanation.
+  const href = (overrides: Record<string, string | null> = {}) =>
+    buildListHref(BASE_PATH, baseParams, { page: null, ...overrides });
+
+  const sortHref = (key: StuckSortColumn) => {
+    const next = nextSort(sort, key);
+    const nextIsDefault =
+      next.key === STUCK_DEFAULT_SORT.key && next.dir === STUCK_DEFAULT_SORT.dir;
+    return href({ sort: nextIsDefault ? null : next.key, dir: nextIsDefault ? null : next.dir });
+  };
+
+  const th = (key: StuckSortColumn, label: string) => (
+    <SortableTh key={key} label={label} href={sortHref(key)} state={ariaSortFor(sort, key)} />
+  );
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
@@ -70,6 +144,18 @@ export default async function StuckTestsPage({ searchParams }: SearchProps) {
             <span className="text-xs text-[color:var(--color-brand-text-soft)]">
               days
             </span>
+            {/* A plain GET form only submits the fields it carries — without
+                these, changing the day threshold would silently drop the
+                reader's current sort and page size. */}
+            {isDefaultSort ? null : (
+              <>
+                <input type="hidden" name="sort" value={sort.key} />
+                <input type="hidden" name="dir" value={sort.dir} />
+              </>
+            )}
+            {size === DEFAULT_PAGE_SIZE ? null : (
+              <input type="hidden" name="size" value={size} />
+            )}
             <button
               type="submit"
               className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-3 text-xs font-bold uppercase tracking-wider text-white hover:opacity-90"
@@ -83,8 +169,8 @@ export default async function StuckTestsPage({ searchParams }: SearchProps) {
 
       {truncated ? (
         <p className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-          Showing the oldest {PAGE_MAX_ROWS} rows — there may be more. Raise
-          the day threshold to narrow the list, or export for everything.
+          Showing the oldest {REPORT_EXPORT_MAX_ROWS.toLocaleString("en-PH")} rows — there may be
+          more. Raise the day threshold to narrow the list, or export for everything.
         </p>
       ) : null}
 
@@ -92,17 +178,17 @@ export default async function StuckTestsPage({ searchParams }: SearchProps) {
         <table className="w-full text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
-              <th className="px-4 py-3">Age</th>
-              <th className="px-4 py-3">Visit</th>
-              <th className="px-4 py-3">Patient</th>
-              <th className="px-4 py-3">Test</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3">Claimed by</th>
-              <th className="px-4 py-3">Visit payment</th>
+              {th("age", "Age")}
+              {th("visit", "Visit")}
+              {th("patient", "Patient")}
+              {th("test", "Test")}
+              {th("status", "Status")}
+              {th("claimed", "Claimed by")}
+              {th("payment", "Visit payment")}
             </tr>
           </thead>
           <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
-            {stuck.length === 0 ? (
+            {rows.length === 0 ? (
               <tr>
                 <td
                   colSpan={7}
@@ -112,7 +198,7 @@ export default async function StuckTestsPage({ searchParams }: SearchProps) {
                 </td>
               </tr>
             ) : (
-              stuck.map((r) => {
+              rows.map((r) => {
                 const svc = pluckOne(r.services);
                 const visit = pluckOne(r.visits);
                 const patient = visit ? pluckOne(visit.patients) : null;
@@ -185,6 +271,30 @@ export default async function StuckTestsPage({ searchParams }: SearchProps) {
           </tbody>
         </table>
       </Panel>
+
+      <ListPagination
+        page={page}
+        pageCount={totalPages}
+        total={total}
+        size={size}
+        prevHref={
+          page > 1
+            ? buildListHref(BASE_PATH, baseParams, {
+                page: page - 1 > 1 ? String(page - 1) : null,
+              })
+            : null
+        }
+        nextHref={
+          page < totalPages
+            ? buildListHref(BASE_PATH, baseParams, { page: String(page + 1) })
+            : null
+        }
+        sizeOptions={PAGE_SIZES.map((s) => ({
+          size: s,
+          href: href({ size: s === DEFAULT_PAGE_SIZE ? null : String(s) }),
+        }))}
+        noun="stuck test"
+      />
 
       <section className="mt-8">
         <h2 className="mb-2 font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">

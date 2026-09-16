@@ -2,6 +2,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Json } from "@/types/database";
 import { isISODate, manilaRangeUtc, shiftISODate, todayManilaISODate } from "@/lib/dates/manila";
+import type { SortSpec } from "@/lib/ui/table-params";
 import { chunk, fetchAllRows, IN_CHUNK, unique } from "./paging";
 import { asRecord, csvManilaStamp, pluckOne } from "./format";
 
@@ -156,6 +157,134 @@ export function summariseDeletedEntries(entries: readonly DeletedEntry[]): Delet
     stillDeleted: deletes.filter((e) => e.currentlyDeleted).length,
     deletedValue: deletes.reduce((sum, e) => sum + (e.amount ?? 0), 0),
   };
+}
+
+/**
+ * Sortable columns for the deleted-entries table.
+ *
+ * Same in-memory situation as `users/page.tsx`: `loadDeletedEntries` already
+ * pulls the whole date-windowed set into memory (there's a resolved-name/
+ * visit-lookup pass over it before a row can even be rendered), so this never
+ * reaches a PostgREST `.order()`. It still goes through `parseSort`'s
+ * allow-list rather than trusting the raw param, so a hand-edited `?sort=`
+ * falls back to the default instead of hitting `compareDeletedEntries`'s
+ * `switch` with a key it doesn't handle.
+ */
+export const DELETED_ENTRIES_SORTABLE_COLUMNS = [
+  "when",
+  "event",
+  "patient",
+  "visit",
+  "what",
+  "by",
+  "amount",
+  "outcome",
+] as const;
+export type DeletedEntriesSortColumn = (typeof DELETED_ENTRIES_SORTABLE_COLUMNS)[number];
+
+// Most-recent-deletion-first is the useful default for a corrective/audit
+// report — "what just happened" — the same reasoning behind the 90-day
+// default window in `parseDeletedEntriesParams` above.
+export const DELETED_ENTRIES_DEFAULT_SORT: SortSpec<DeletedEntriesSortColumn> = {
+  key: "when",
+  dir: "desc",
+};
+
+// A row missing the value being sorted on sinks to the bottom regardless of
+// direction (the NULLS_LAST rule every report in this batch follows) —
+// flipping to ascending shouldn't surface every entry with no resolvable
+// patient/visit/service/actor/amount ahead of the ones that have one.
+const NULLS_LAST_COLUMNS = new Set<DeletedEntriesSortColumn>([
+  "patient",
+  "visit",
+  "what",
+  "by",
+  "amount",
+]);
+
+function patientSortKey(e: DeletedEntry): string | null {
+  return e.patient ? `${e.patient.last_name}, ${e.patient.first_name}` : null;
+}
+
+// Mirrors what the "What" cell actually prints: a visit-delete always reads
+// "Entire visit" (never the deleted tests' names — those aren't on the
+// audit row), a test-delete reads its service name, which can itself be
+// null when even the audit metadata didn't carry one.
+function whatSortKey(e: DeletedEntry): string | null {
+  return e.isVisit ? "Entire visit" : e.serviceName;
+}
+
+export function compareDeletedEntries(
+  a: DeletedEntry,
+  b: DeletedEntry,
+  sort: SortSpec<DeletedEntriesSortColumn>,
+): number {
+  const dirMul = sort.dir === "asc" ? 1 : -1;
+  let cmp: number;
+
+  if (NULLS_LAST_COLUMNS.has(sort.key)) {
+    // One null-handling branch covers all five of these columns; "amount"
+    // is the only genuinely numeric one, the rest compare as text once the
+    // null case is out of the way.
+    let av: string | number | null;
+    let bv: string | number | null;
+    switch (sort.key) {
+      case "patient":
+        av = patientSortKey(a);
+        bv = patientSortKey(b);
+        break;
+      case "visit":
+        // Rule: never Number() a visit_number — prod holds "H-1001" and
+        // "H-LAB_SERVICE-0-3" beside "0042", and Number() on those is NaN.
+        av = a.visitNumber;
+        bv = b.visitNumber;
+        break;
+      case "what":
+        av = whatSortKey(a);
+        bv = whatSortKey(b);
+        break;
+      case "by":
+        av = a.actorName;
+        bv = b.actorName;
+        break;
+      case "amount":
+        av = a.amount;
+        bv = b.amount;
+        break;
+      default:
+        av = null;
+        bv = null;
+    }
+    if (av === null && bv === null) cmp = 0;
+    else if (av === null) return 1; // always last, independent of direction
+    else if (bv === null) return -1; // always last, independent of direction
+    else if (typeof av === "number" && typeof bv === "number") cmp = dirMul * (av - bv);
+    else cmp = dirMul * String(av).localeCompare(String(bv));
+  } else {
+    switch (sort.key) {
+      case "when":
+        cmp = dirMul * a.createdAt.localeCompare(b.createdAt);
+        break;
+      case "event":
+        // Deletes sort ahead of restores when descending — the report's
+        // whole point is surfacing what got deleted, so that's the useful
+        // "top of the list" for the default direction; ascending flips to
+        // restores-first. Same numeric-boolean idiom as `users/page.tsx`'s
+        // `is_active` column.
+        cmp = dirMul * (Number(a.isDelete) - Number(b.isDelete));
+        break;
+      case "outcome":
+        cmp = dirMul * (Number(a.currentlyDeleted) - Number(b.currentlyDeleted));
+        break;
+      default:
+        cmp = 0;
+    }
+  }
+
+  // audit_log.id is a NUMBER — unlike every other id in this report batch,
+  // which is a uuid compared with localeCompare — so the tie-break here is
+  // arithmetic.
+  return cmp !== 0 ? cmp : a.id - b.id;
 }
 
 export async function loadDeletedEntries(

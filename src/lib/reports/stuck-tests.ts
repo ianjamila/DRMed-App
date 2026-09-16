@@ -5,6 +5,7 @@ import { chunk, fetchAllRows, IN_CHUNK, unique } from "./paging";
 import { csvManilaStamp, pluckOne } from "./format";
 import { moneySettled } from "@/lib/visits/money-settled";
 import { DOCTOR_KINDS_PG_LIST } from "@/lib/visits/classification";
+import type { SortSpec } from "@/lib/ui/table-params";
 
 type AnyClient = SupabaseClient<Database>;
 
@@ -60,6 +61,115 @@ export interface StuckTestsLists {
 export interface StuckTestsReport extends StuckTestsLists {
   claimerNames: ReadonlyMap<string, string>;
   truncated: boolean;
+}
+
+/**
+ * Sortable columns for the main `stuck` table. The three integrity lists
+ * (`stuckHeaders`, `orphanHeaders`, `emptyVisits`) deliberately keep their
+ * flat 100-row cap and fixed `requested_at`/`created_at` order — they exist
+ * to describe anomalies that should be ~0, not a ledger to page through — so
+ * they are NOT part of this allow-list and never reach `parseSort`.
+ */
+export const STUCK_SORTABLE_COLUMNS = [
+  "age",
+  "visit",
+  "patient",
+  "test",
+  "status",
+  "claimed",
+  "payment",
+] as const;
+export type StuckSortColumn = (typeof STUCK_SORTABLE_COLUMNS)[number];
+
+// Oldest-first is the useful default for a report whose whole point is "what
+// has been ignored longest" — the worst offender should be the first row a
+// reader sees, with no click required. Age counts UP the longer a row sits
+// untouched, so "age desc" (biggest number, i.e. oldest) is the default.
+export const STUCK_DEFAULT_SORT: SortSpec<StuckSortColumn> = { key: "age", dir: "desc" };
+
+function patientNameOf(r: StuckRow): string {
+  const visit = pluckOne(r.visits);
+  const patient = visit ? pluckOne(visit.patients) : null;
+  return patient ? `${patient.last_name}, ${patient.first_name}` : "";
+}
+
+/**
+ * Comparator for the main `stuck` table. Takes `claimerNames` as an explicit
+ * argument (rather than closing over it) because the "Claimed by" column
+ * sorts on the resolved staff name, not the raw `assigned_to` uuid, and this
+ * function is pure/exported for its own unit tests.
+ */
+export function compareStuckRows(
+  a: StuckRow,
+  b: StuckRow,
+  sort: SortSpec<StuckSortColumn>,
+  claimerNames: ReadonlyMap<string, string>,
+): number {
+  const dirMul = sort.dir === "asc" ? 1 : -1;
+  let cmp: number;
+
+  switch (sort.key) {
+    case "age": {
+      // Age is the INVERSE of requested_at: the oldest row has the SMALLEST
+      // requested_at but the LARGEST age. So this column's default ("age
+      // desc" = oldest first) needs requested_at sorted ASCENDING — the
+      // opposite sign from `dirMul` above, which every other column here
+      // uses unmodified. Flip it here instead of trying to bend `dirMul`
+      // itself, or "oldest first" quietly becomes "newest first".
+      const raw = a.requested_at.localeCompare(b.requested_at);
+      cmp = sort.dir === "desc" ? raw : -raw;
+      break;
+    }
+    case "visit": {
+      // visit_number is TEXT. Prod holds "#0H-1", "#H-1001" and
+      // "#H-LAB_SERVICE-0-3" alongside zero-padded "0042" — Number() turns
+      // almost all of those into NaN, and NaN comparisons are never 0, which
+      // would silently disable the id tie-break below. Compare as text.
+      const av = pluckOne(a.visits)?.visit_number ?? "";
+      const bv = pluckOne(b.visits)?.visit_number ?? "";
+      cmp = dirMul * av.localeCompare(bv);
+      break;
+    }
+    case "patient":
+      cmp = dirMul * patientNameOf(a).localeCompare(patientNameOf(b));
+      break;
+    case "test": {
+      const at = pluckOne(a.services)?.name ?? "";
+      const bt = pluckOne(b.services)?.name ?? "";
+      cmp = dirMul * at.localeCompare(bt);
+      break;
+    }
+    case "status":
+      cmp = dirMul * a.status.localeCompare(b.status);
+      break;
+    case "claimed": {
+      const an = a.assigned_to ? (claimerNames.get(a.assigned_to) ?? null) : null;
+      const bn = b.assigned_to ? (claimerNames.get(b.assigned_to) ?? null) : null;
+      // Unclaimed sinks to the bottom regardless of direction, same rule as
+      // NULLS_LAST_COLUMNS in users/page.tsx — otherwise "ascending" would
+      // surface every unclaimed row first, the least useful reading of
+      // "who's holding this test".
+      if (an === null && bn === null) cmp = 0;
+      else if (an === null) return 1;
+      else if (bn === null) return -1;
+      else cmp = dirMul * an.localeCompare(bn);
+      break;
+    }
+    case "payment": {
+      const av = pluckOne(a.visits)?.payment_status ?? "";
+      const bv = pluckOne(b.visits)?.payment_status ?? "";
+      cmp = dirMul * av.localeCompare(bv);
+      break;
+    }
+    default:
+      cmp = 0;
+  }
+
+  // Tie-break on id, ascending. test_requests.id is a uuid string here —
+  // contrast the audit_log-backed reports (deleted-entries, undone-releases)
+  // in this same suite, whose tie-break is `a.id - b.id` because that id is
+  // a number.
+  return cmp !== 0 ? cmp : a.id.localeCompare(b.id);
 }
 
 /**

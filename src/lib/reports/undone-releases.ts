@@ -2,6 +2,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Json } from "@/types/database";
 import { isISODate, manilaRangeUtc, shiftISODate, todayManilaISODate } from "@/lib/dates/manila";
+import { formatPatientName } from "@/lib/patients/format-name";
+import type { SortSpec } from "@/lib/ui/table-params";
 import { chunk, fetchAllRows, IN_CHUNK, unique } from "./paging";
 import { asRecord, csvManilaStamp, pluckOne } from "./format";
 
@@ -178,6 +180,105 @@ export function currentStatusLabel(e: UndoneRelease): string {
   if (e.currentStatus === "ready_for_release") return "Still unreleased";
   if (e.currentStatus === "cancelled") return "Cancelled";
   return e.currentStatus.replace(/_/g, " ");
+}
+
+/**
+ * Sortable columns for the "Undone releases" table.
+ *
+ * `loadUndoneReleases` already pulls the whole date-range window into memory
+ * (it has to — the audit row, the test_requests join and the staff-name
+ * lookup all live in separate tables), so this never reaches a PostgREST
+ * `.order()`. It still goes through the shared `parseSort` allow-list rather
+ * than trusting the raw param, so a hand-edited/junk `?sort=` falls back to
+ * the default instead of hitting `compareUndoneReleases`'s switch with a key
+ * it doesn't handle.
+ */
+export const UNDONE_RELEASES_SORTABLE_COLUMNS = [
+  "when",
+  "patient",
+  "test",
+  "by",
+  "viewed",
+  "outcome",
+] as const;
+export type UndoneReleasesSortColumn = (typeof UNDONE_RELEASES_SORTABLE_COLUMNS)[number];
+
+// This is an oversight log, not a worklist — the undo someone just asked
+// "wait, what happened to that?" about is the newest one, so newest-first is
+// the useful default rather than an alphabetical or ID order.
+export const UNDONE_RELEASES_DEFAULT_SORT: SortSpec<UndoneReleasesSortColumn> = {
+  key: "when",
+  dir: "desc",
+};
+
+// Nulls sink to the bottom regardless of direction, same rule every other
+// report comparator in this codebase applies: a patient/test/actor the join
+// couldn't resolve, or a viewed-count recorded before that tracking existed,
+// is MISSING data, not "the smallest value" — it must not surface first just
+// because the column was flipped to ascending.
+const NULLS_LAST_COLUMNS = new Set<UndoneReleasesSortColumn>(["patient", "test", "by", "viewed"]);
+
+type NullableSortKey = "patient" | "test" | "by" | "viewed";
+
+/** The comparable value behind one of the nulls-last columns. */
+function undoneReleaseSortValue(e: UndoneRelease, key: NullableSortKey): string | number | null {
+  switch (key) {
+    case "patient":
+      // Same "Last, First" convention every other patient column sorts by —
+      // not a bespoke key for this one report.
+      return e.patient ? formatPatientName(e.patient) : null;
+    case "test":
+      return e.serviceName;
+    case "by":
+      // A cascade row's "actor" is the 0110 trigger, not a missing value —
+      // sort it as the literal "System" label the table already shows for
+      // it, rather than letting it sink to the bottom next to a staff undo
+      // whose actor genuinely couldn't be resolved.
+      return e.isCascade ? "System" : e.actorName;
+    case "viewed":
+      // null here means "recorded before viewed_count tracking existed", a
+      // fact distinct from 0 that deriveUndoneRelease already preserves —
+      // this just carries it through to the comparator unchanged.
+      return e.viewedCount;
+  }
+}
+
+export function compareUndoneReleases(
+  a: UndoneRelease,
+  b: UndoneRelease,
+  sort: SortSpec<UndoneReleasesSortColumn>,
+): number {
+  const dirMul = sort.dir === "asc" ? 1 : -1;
+  let cmp: number;
+
+  if (NULLS_LAST_COLUMNS.has(sort.key)) {
+    const key = sort.key as NullableSortKey;
+    const av = undoneReleaseSortValue(a, key);
+    const bv = undoneReleaseSortValue(b, key);
+    if (av === null && bv === null) cmp = 0;
+    else if (av === null) return 1; // always last, independent of direction
+    else if (bv === null) return -1; // always last, independent of direction
+    else cmp = dirMul * (typeof av === "number" ? av - (bv as number) : av.localeCompare(bv as string));
+  } else {
+    switch (sort.key) {
+      case "when":
+        cmp = dirMul * a.createdAt.localeCompare(b.createdAt);
+        break;
+      case "outcome":
+        // currentStatusLabel always returns a string (possibly "" when the
+        // test_requests row is gone) — never null — so this column needs no
+        // nulls-last handling.
+        cmp = dirMul * currentStatusLabel(a).localeCompare(currentStatusLabel(b));
+        break;
+      default:
+        cmp = 0;
+    }
+  }
+
+  // audit_log.id is a NUMBER, unlike the uuid ids most other reports
+  // tie-break on — ascending regardless of `dir`, matching the "every
+  // ordering ends in a stable id tie-break" convention.
+  return cmp !== 0 ? cmp : a.id - b.id;
 }
 
 export const UNDONE_RELEASES_CSV_HEADER = [
