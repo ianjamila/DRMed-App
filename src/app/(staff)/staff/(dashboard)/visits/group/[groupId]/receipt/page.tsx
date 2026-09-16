@@ -1,3 +1,6 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { cache } from "react";
+import { detailMetadata } from "@/lib/staff/detail-metadata";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { headers } from "next/headers";
@@ -24,23 +27,9 @@ import { NoReceiptNotice } from "@/components/staff/no-receipt-notice";
 import { PrintButton } from "./print-button";
 import { logGroupReceiptPrintAction } from "./log-print-action";
 
-export const metadata = { title: "Combined receipt" };
-export const dynamic = "force-dynamic";
-
-interface Props {
-  params: Promise<{ groupId: string }>;
-}
-
-const DOCTOR_KINDS = new Set(["doctor_consultation", "doctor_procedure"]);
-
-export default async function GroupReceiptPage({ params }: Props) {
-  const { groupId } = await params;
-  // A8: get the actor for the disclosure audit below (mirrors the
-  // single-visit receipt page).
-  const session = await requireActiveStaff();
+const loadGroupVisits = cache(async (groupId: string) => {
   const supabase = await createClient();
-
-  const { data: visits } = await supabase
+  return supabase
     .from("visits")
     .select(
       `
@@ -58,6 +47,32 @@ export default async function GroupReceiptPage({ params }: Props) {
     .eq("visit_group_id", groupId)
     .is("deleted_at", null)
     .order("visit_number", { ascending: true });
+});
+
+export async function generateMetadata({ params }: { params: Promise<{ groupId: string }> }) {
+  await requireActiveStaff();
+  const { groupId } = await params;
+  return detailMetadata(ROUTE_NAME["/staff/visits/group/[groupId]/receipt"], async () => {
+    const { data, error } = await loadGroupVisits(groupId);
+    return error ? null : data?.map((visit) => visit.visit_number).join(" / ");
+  });
+}
+export const dynamic = "force-dynamic";
+
+interface Props {
+  params: Promise<{ groupId: string }>;
+}
+
+const DOCTOR_KINDS = new Set(["doctor_consultation", "doctor_procedure"]);
+
+export default async function GroupReceiptPage({ params }: Props) {
+  const { groupId } = await params;
+  // A8: get the actor for the disclosure audit below (mirrors the
+  // single-visit receipt page).
+  const session = await requireActiveStaff();
+  const supabase = await createClient();
+
+  const { data: visits } = await loadGroupVisits(groupId);
 
   if (!visits || visits.length === 0) notFound();
   const patient = Array.isArray(visits[0]!.patients)

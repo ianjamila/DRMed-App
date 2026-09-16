@@ -1,3 +1,6 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { cache } from "react";
+import { detailMetadata } from "@/lib/staff/detail-metadata";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
@@ -5,7 +8,26 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { MovementForm } from "./movement-form";
 import { Panel } from "@/components/ui/panel";
 
-export const metadata = { title: "Inventory item" };
+// Share the existing header lookup with metadata within this request.
+const loadDetail = cache(async (id: string) => {
+  const admin = createAdminClient();
+  return admin
+        .from("inventory_items")
+        .select(
+          "id, code, name, section, unit, reorder_threshold, expiry_tracking, notes, is_active, vendors ( name )",
+        )
+        .eq("id", id)
+        .maybeSingle<ItemRow>();
+});
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  await requireActiveStaff();
+  const { id } = await params;
+  return detailMetadata(ROUTE_NAME["/staff/admin/inventory/[id]"], async () => {
+    const { data, error } = await loadDetail(id);
+    return error || !data ? null : data.name;
+  });
+}
 export const dynamic = "force-dynamic";
 
 const PHP = new Intl.NumberFormat("en-PH", {
@@ -69,13 +91,7 @@ export default async function InventoryItemPage({ params }: PageProps) {
 
   const [{ data: item }, { data: balance }, { data: movements }] =
     await Promise.all([
-      admin
-        .from("inventory_items")
-        .select(
-          "id, code, name, section, unit, reorder_threshold, expiry_tracking, notes, is_active, vendors ( name )",
-        )
-        .eq("id", id)
-        .maybeSingle<ItemRow>(),
+      loadDetail(id),
       admin
         .from("v_inventory_balances")
         .select("on_hand, stock_status, next_expiry")

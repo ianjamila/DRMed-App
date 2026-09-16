@@ -1,3 +1,6 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { cache } from "react";
+import { detailMetadata } from "@/lib/staff/detail-metadata";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -12,7 +15,26 @@ import { giftCodeRefundEligibility } from "@/lib/gift-codes/refund";
 import { CancelButton } from "./cancel-button";
 import { RefundButton } from "./refund-button";
 
-export const metadata = { title: "Gift code" };
+// Share the existing header lookup with metadata within this request.
+const loadDetail = cache(async (id: string) => {
+  const admin = createAdminClient();
+  return admin
+    .from("gift_codes")
+    .select(
+      "id, code, face_value_php, status, batch_label, notes, generated_at, generated_by, purchased_at, purchased_by_name, purchased_by_contact, sold_by, redeemed_at, redeemed_by, redeemed_visit_id, cancelled_at, cancelled_by, cancellation_reason, refunded_at, refunded_by, refund_reason",
+    )
+    .eq("id", id)
+    .maybeSingle();
+});
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  await requireAdminStaff();
+  const { id } = await params;
+  return detailMetadata(ROUTE_NAME["/staff/admin/gift-codes/[id]"], async () => {
+    const { data, error } = await loadDetail(id);
+    return error || !data ? null : data.code;
+  });
+}
 
 export const dynamic = "force-dynamic";
 
@@ -25,13 +47,7 @@ export default async function GiftCodeDetailPage({ params }: PageProps) {
   const { id } = await params;
 
   const admin = createAdminClient();
-  const { data: code } = await admin
-    .from("gift_codes")
-    .select(
-      "id, code, face_value_php, status, batch_label, notes, generated_at, generated_by, purchased_at, purchased_by_name, purchased_by_contact, sold_by, redeemed_at, redeemed_by, redeemed_visit_id, cancelled_at, cancelled_by, cancellation_reason, refunded_at, refunded_by, refund_reason",
-    )
-    .eq("id", id)
-    .maybeSingle();
+  const { data: code } = await loadDetail(id);
   if (!code) notFound();
 
   // Resolve staff names (FK is to auth.users; staff_profiles.id mirrors it).

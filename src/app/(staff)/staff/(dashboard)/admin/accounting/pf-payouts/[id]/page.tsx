@@ -1,21 +1,15 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { cache } from "react";
+import { detailMetadata } from "@/lib/staff/detail-metadata";
 import { notFound } from "next/navigation";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { DisbursementDetailClient } from "./disbursement-detail-client";
 
-export const metadata = { title: "PF Disbursement" };
-export const dynamic = "force-dynamic";
-
-export default async function PfDisbursementDetailPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  await requireAdminStaff();
-  const { id } = await params;
+// Share the existing header lookup with metadata within this request.
+const loadDetail = cache(async (id: string) => {
   const admin = createAdminClient();
-
-  const { data: disb } = await admin
+  return admin
     .from("doctor_pf_disbursements")
     .select(
       `
@@ -27,6 +21,28 @@ export default async function PfDisbursementDetailPage({
     )
     .eq("id", id)
     .single();
+});
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  await requireAdminStaff();
+  const { id } = await params;
+  return detailMetadata(ROUTE_NAME["/staff/admin/accounting/pf-payouts/[id]"], async () => {
+    const { data, error } = await loadDetail(id);
+    return error || !data ? null : data.batch_number == null ? null : String(data.batch_number);
+  });
+}
+export const dynamic = "force-dynamic";
+
+export default async function PfDisbursementDetailPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  await requireAdminStaff();
+  const { id } = await params;
+  const admin = createAdminClient();
+
+  const { data: disb } = await loadDetail(id);
 
   if (!disb) notFound();
 
