@@ -1,3 +1,4 @@
+import { fetchCompleteRows } from "@/lib/reports/paging";
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -93,19 +94,23 @@ export default async function PfYtdSummaryPage({ searchParams }: SearchProps) {
   // we can split by recognition_basis × recognized state without 4 separate
   // RPC calls.
   const [{ data: entries }, { data: disbursements }] = await Promise.all([
-    admin
-      .from("doctor_pf_entries")
-      .select(
-        `
-        id, pf_php, recognized_at, recognition_basis, physician_id,
-        disbursement_id, created_at,
-        physicians ( id, full_name, physician_compensation ( compensation_arrangement ) )
-      `,
-      )
-      .gte("created_at", `${yearStart}T00:00:00+08:00`)
-      .lt("created_at", `${year + 1}-01-01T00:00:00+08:00`)
-      .is("voided_at", null)
-      .returns<EntryRow[]>(),
+    fetchCompleteRows((from, to) =>
+      admin
+        .from("doctor_pf_entries")
+        .select(
+          `
+          id, pf_php, recognized_at, recognition_basis, physician_id,
+          disbursement_id, created_at,
+          physicians ( id, full_name, physician_compensation ( compensation_arrangement ) )
+        `,
+        )
+        .gte("created_at", `${yearStart}T00:00:00+08:00`)
+        .lt("created_at", `${year + 1}-01-01T00:00:00+08:00`)
+        .is("voided_at", null)
+        .returns<EntryRow[]>()
+        .order("id", { ascending: true })
+        .range(from, to)
+    ),
     admin
       .from("doctor_pf_disbursements")
       .select("id, physician_id, posted_date, total_php, voided_at")

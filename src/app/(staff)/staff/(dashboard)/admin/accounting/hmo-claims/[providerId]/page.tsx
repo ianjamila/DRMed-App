@@ -1,6 +1,7 @@
 import { ROUTE_NAME } from "@/lib/staff/route-names";
 import { cache } from "react";
 import { detailMetadata } from "@/lib/staff/detail-metadata";
+import { fetchCompleteRows } from "@/lib/reports/paging";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -58,11 +59,16 @@ export default async function ProviderDetailPage({
       )
       .eq("provider_id", providerId)
       .order("created_at", { ascending: false }),
-    admin
-      .from("v_hmo_unbilled")
-      .select("*")
-      .eq("provider_id", providerId)
-      .order("days_since_release", { ascending: false }),
+    fetchCompleteRows((from, to) =>
+      admin
+        .from("v_hmo_unbilled")
+        .select("*")
+        .eq("provider_id", providerId)
+        .order("days_since_release", { ascending: false })
+        .order("is_historic", { ascending: true })
+        .order("test_request_id", { ascending: true })
+        .range(from, to)
+    ),
     admin
       .from("v_hmo_ar_aging")
       .select("*")
@@ -74,30 +80,41 @@ export default async function ProviderDetailPage({
       .is("deleted_at", null)
       .order("full_name"),
     providerName
-      ? admin
-          .from("historic_hmo_claims" as never)
-          .select("id, patient_name, claim_date, service_description, base_amount_php, final_amount_php, status, date_submitted, deadline_date, billed_by_staff_id, source_tab, source_row")
-          .ilike("hmo_provider", providerName)
-          .in("status", ["pending", "overdue"])
-          .not("date_submitted", "is", null)
-          .order("claim_date", { ascending: false })
+      ? fetchCompleteRows((from, to) =>
+          admin
+            .from("historic_hmo_claims" as never)
+            .select("id, patient_name, claim_date, service_description, base_amount_php, final_amount_php, status, date_submitted, deadline_date, billed_by_staff_id, source_tab, source_row")
+            .ilike("hmo_provider", providerName)
+            .in("status", ["pending", "overdue"])
+            .not("date_submitted", "is", null)
+            .order("claim_date", { ascending: false })
+            .order("id", { ascending: true })
+            .range(from, to)
+        )
       : Promise.resolve({ data: [] as unknown[] }),
     providerName
-      ? admin
-          .from("historic_hmo_claims" as never)
-          .select("id, patient_name, claim_date, service_description, base_amount_php, final_amount_php, date_paid, or_number, paid_payment_method, journal_entry_id, source_tab, source_row")
-          .ilike("hmo_provider", providerName)
-          .eq("status", "paid")
-          .order("date_paid", { ascending: false, nullsFirst: false })
-          .limit(2000)
+      ? fetchCompleteRows((from, to) =>
+          admin
+            .from("historic_hmo_claims" as never)
+            .select("id, patient_name, claim_date, service_description, base_amount_php, final_amount_php, date_paid, or_number, paid_payment_method, journal_entry_id, source_tab, source_row")
+            .ilike("hmo_provider", providerName)
+            .eq("status", "paid")
+            .order("date_paid", { ascending: false, nullsFirst: false })
+            .order("id", { ascending: true })
+            .range(from, to)
+        )
       : Promise.resolve({ data: [] as unknown[] }),
     providerName
-      ? admin
-          .from("historic_hmo_claims" as never)
-          .select("id, patient_name, claim_date, service_description, final_amount_php, wrote_off_at, write_off_reason, wrote_off_journal_entry_id, source_tab, source_row")
-          .ilike("hmo_provider", providerName)
-          .eq("status", "written_off")
-          .order("wrote_off_at", { ascending: false })
+      ? fetchCompleteRows((from, to) =>
+          admin
+            .from("historic_hmo_claims" as never)
+            .select("id, patient_name, claim_date, service_description, final_amount_php, wrote_off_at, write_off_reason, wrote_off_journal_entry_id, source_tab, source_row")
+            .ilike("hmo_provider", providerName)
+            .eq("status", "written_off")
+            .order("wrote_off_at", { ascending: false })
+            .order("id", { ascending: true })
+            .range(from, to)
+        )
       : Promise.resolve({ data: [] as unknown[] }),
     admin
       .from("chart_of_accounts")

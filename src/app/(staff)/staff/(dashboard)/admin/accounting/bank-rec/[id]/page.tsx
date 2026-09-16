@@ -2,6 +2,7 @@ import { ROUTE_NAME } from "@/lib/staff/route-names";
 import { cache } from "react";
 import { detailMetadata } from "@/lib/staff/detail-metadata";
 import Link from "next/link";
+import { fetchCompleteRows } from "@/lib/reports/paging";
 import { notFound } from "next/navigation";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -150,18 +151,23 @@ export default async function BankStatementDetailPage({ params }: PageProps) {
         .filter((x): x is string => !!x),
     );
 
-    const { data: candLines } = await admin
-      .from("journal_lines")
-      .select(
-        `
+    const { data: candLines, error: candidateError } = await fetchCompleteRows((from, to) =>
+      admin
+        .from("journal_lines")
+        .select(
+          `
         id, debit_php, credit_php,
         journal_entries!inner ( id, entry_number, posting_date, description, status )
       `,
-      )
-      .eq("account_id", statement.account_id)
-      .eq("journal_entries.status", "posted")
-      .gte("journal_entries.posting_date", start)
-      .lte("journal_entries.posting_date", end);
+        )
+        .eq("account_id", statement.account_id)
+        .eq("journal_entries.status", "posted")
+        .gte("journal_entries.posting_date", start)
+        .lte("journal_entries.posting_date", end)
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
+    if (candidateError) throw new Error(candidateError.message);
 
     const usable = (candLines ?? []).filter(
       (c) => !claimedSet.has((c as { id: string }).id),

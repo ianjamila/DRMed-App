@@ -7,6 +7,7 @@ import { audit } from "@/lib/audit/log";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { SendOutTrueupCreateSchema } from "@/lib/validations/accounting";
 import { isoDateParts, manilaRangeUtc, todayManilaISODate } from "@/lib/dates/manila";
+import { fetchCompleteRows } from "@/lib/reports/paging";
 
 type ActionResult<T = unknown> =
   | { ok: true; data: T }
@@ -36,13 +37,17 @@ export async function createSendOutTrueup(
     data.period_start_date,
     data.period_end_date,
   );
-  let entriesQuery = admin
-    .from("cogs_send_out_entries")
-    .select("id, unit_cost_php, accrued_at, trueup_id, voided_at")
-    .eq("vendor_id", data.vendor_id);
-  if (fromIso) entriesQuery = entriesQuery.gte("accrued_at", fromIso);
-  if (toIso) entriesQuery = entriesQuery.lt("accrued_at", toIso);
-  const { data: entries, error: entErr } = await entriesQuery;
+  const { data: entries, error: entErr } = await fetchCompleteRows((from, to) => {
+    let entriesQuery = admin
+      .from("cogs_send_out_entries")
+      .select("id, unit_cost_php, accrued_at, trueup_id, voided_at")
+      .eq("vendor_id", data.vendor_id)
+      .is("trueup_id", null)
+      .is("voided_at", null);
+    if (fromIso) entriesQuery = entriesQuery.gte("accrued_at", fromIso);
+    if (toIso) entriesQuery = entriesQuery.lt("accrued_at", toIso);
+    return entriesQuery.order("id", { ascending: true }).range(from, to);
+  });
   if (entErr) return { ok: false, error: translatePgError(entErr) };
 
   const openEntries = (entries ?? []).filter((e) => !e.trueup_id && !e.voided_at);

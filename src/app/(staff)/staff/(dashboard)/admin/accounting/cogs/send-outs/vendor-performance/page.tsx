@@ -1,3 +1,4 @@
+import { fetchCompleteRows } from "@/lib/reports/paging";
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -109,20 +110,24 @@ export default async function VendorPerformancePage({ searchParams }: SearchProp
 
   const [{ data: entries }, { data: trueups }, { data: vendorList }] =
     await Promise.all([
-      admin
-        .from("cogs_send_out_entries")
-        .select(
-          `
-          id, vendor_id, service_id, test_request_id, unit_cost_php,
-          accrued_at, trued_up_at,
-          services ( name, turnaround_hours ),
-          test_requests ( requested_at, released_at, status )
-        `,
-        )
-        .gte("accrued_at", yearStartIso)
-        .lt("accrued_at", yearEndIso)
-        .is("voided_at", null)
-        .returns<EntryRow[]>(),
+      fetchCompleteRows((from, to) =>
+        admin
+          .from("cogs_send_out_entries")
+          .select(
+            `
+            id, vendor_id, service_id, test_request_id, unit_cost_php,
+            accrued_at, trued_up_at,
+            services ( name, turnaround_hours ),
+            test_requests ( requested_at, released_at, status )
+          `,
+          )
+          .gte("accrued_at", yearStartIso)
+          .lt("accrued_at", yearEndIso)
+          .is("voided_at", null)
+          .returns<EntryRow[]>()
+          .order("id", { ascending: true })
+          .range(from, to)
+      ),
       admin
         .from("cogs_send_out_trueups")
         .select("id, vendor_id, accrued_total_php, billed_total_php, variance_php, matched_at")

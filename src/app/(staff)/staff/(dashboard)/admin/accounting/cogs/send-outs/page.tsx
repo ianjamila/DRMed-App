@@ -1,3 +1,4 @@
+import { fetchCompleteRows } from "@/lib/reports/paging";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { SendOutsClient } from "./send-outs-client";
@@ -10,18 +11,22 @@ export default async function SendOutsPage() {
   const admin = createAdminClient();
 
   // Tab 1: Accrued entries with no trueup yet
-  const { data: accrued } = await admin
-    .from("cogs_send_out_entries")
-    .select(
+  const { data: accrued } = await fetchCompleteRows((from, to) =>
+    admin
+      .from("cogs_send_out_entries")
+      .select(
+        `
+        id, accrued_at, unit_cost_php, test_request_id, service_id, vendor_id,
+        services(id, code, name),
+        vendors(id, name)
       `
-      id, accrued_at, unit_cost_php, test_request_id, service_id, vendor_id,
-      services(id, code, name),
-      vendors(id, name)
-    `
-    )
-    .is("trueup_id", null)
-    .is("voided_at", null)
-    .order("accrued_at", { ascending: false });
+      )
+      .is("trueup_id", null)
+      .is("voided_at", null)
+      .order("accrued_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range(from, to)
+  );
 
   // Tab 2: All trueups ordered newest first
   const { data: trueups } = await admin

@@ -379,3 +379,8 @@ describe("loadStuckTests query shape", () => {
     ]);
   });
 });
+
+it("checks components beyond the first 1,000 before calling a package complete", async () => {
+  const { checkCompleteQuery } = await import("./paged-query-test-helpers");
+  await checkCompleteQuery("src/lib/reports/stuck-tests.ts", 0);
+});

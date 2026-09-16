@@ -1,3 +1,4 @@
+import { fetchCompleteRows } from "@/lib/reports/paging";
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -87,20 +88,24 @@ export default async function VariancePage({ searchParams }: SearchProps) {
       .from("budgets")
       .select("account_id, annual_amount_php, notes")
       .eq("fiscal_year", year),
-    admin
-      .from("journal_lines")
-      .select(
-        `
-        debit_php, credit_php,
-        journal_entries!inner ( posting_date, status ),
-        chart_of_accounts!inner ( id, normal_balance )
-      `,
-      )
-      .eq("journal_entries.status", "posted")
-      .gte("journal_entries.posting_date", yearStart)
-      .lte("journal_entries.posting_date", yearEnd)
-      .in("chart_of_accounts.type", ["revenue", "contra_revenue", "expense"])
-      .returns<LineRow[]>(),
+    fetchCompleteRows((from, to) =>
+      admin
+        .from("journal_lines")
+        .select(
+          `
+          debit_php, credit_php,
+          journal_entries!inner ( posting_date, status ),
+          chart_of_accounts!inner ( id, normal_balance )
+        `,
+        )
+        .eq("journal_entries.status", "posted")
+        .gte("journal_entries.posting_date", yearStart)
+        .lte("journal_entries.posting_date", yearEnd)
+        .in("chart_of_accounts.type", ["revenue", "contra_revenue", "expense"])
+        .returns<LineRow[]>()
+        .order("id", { ascending: true })
+        .range(from, to)
+    ),
   ]);
 
   const acctRows = (accounts ?? []) as AccountRow[];

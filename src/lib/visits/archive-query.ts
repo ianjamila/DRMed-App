@@ -24,6 +24,7 @@ import {
   type VisitView,
 } from "./classification";
 import { shouldPrintReceipt } from "./receipt-policy";
+import { fetchCompleteRowsByIds } from "@/lib/reports/paging";
 
 type AnyClient = SupabaseClient<Database>;
 
@@ -287,14 +288,17 @@ export async function fetchArchiveWindow(
 
   let siblingRows: ArchiveVisit[] = [];
   if (groupIds.length > 0) {
-    let siblings = supabase
-      .from("visits")
-      .select(VISIT_SELECT)
-      .in("visit_group_id", groupIds);
-    siblings = applyView(siblings, view);
-    if (start) siblings = siblings.gte("visit_date", start);
-    if (end) siblings = siblings.lte("visit_date", end);
-    const { data: sib } = await siblings.returns<ArchiveVisit[]>();
+    const { data: sib, error } = await fetchCompleteRowsByIds(groupIds, (ids, from, to) => {
+      let siblings = supabase
+        .from("visits")
+        .select(VISIT_SELECT)
+        .in("visit_group_id", ids);
+      siblings = applyView(siblings, view);
+      if (start) siblings = siblings.gte("visit_date", start);
+      if (end) siblings = siblings.lte("visit_date", end);
+      return siblings.order("id", { ascending: true }).range(from, to).returns<ArchiveVisit[]>();
+    });
+    if (error) throw new Error(error.message);
     siblingRows = (sib ?? []).filter((v) => !pageIds.has(v.id));
   }
 
@@ -306,13 +310,19 @@ export async function fetchArchiveWindow(
     // `parent_id is null` = the BILLED lines. Package decomposition (0040)
     // writes a priced header plus zero-priced components, so counting every
     // row made a 4-item order with one package read as 12 tests.
-    const { data: lines } = await supabase
-      .from("test_requests")
-      .select("visit_id, services ( kind )")
-      .in("visit_id", allVisits.map((v) => v.id))
-      .is("deleted_at", null)
-      .is("parent_id", null)
-      .returns<LineRow[]>();
+    const { data: lines, error } = await fetchCompleteRowsByIds(
+      allVisits.map((v) => v.id),
+      (ids, from, to) => supabase
+        .from("test_requests")
+        .select("visit_id, services ( kind )")
+        .in("visit_id", ids)
+        .is("deleted_at", null)
+        .is("parent_id", null)
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<LineRow[]>(),
+    );
+    if (error) throw new Error(error.message);
 
     for (const line of lines ?? []) {
       billedLines.set(line.visit_id, (billedLines.get(line.visit_id) ?? 0) + 1);

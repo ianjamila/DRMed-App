@@ -1,3 +1,4 @@
+import { fetchCompleteRows } from "@/lib/reports/paging";
 import { redirect } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
@@ -46,14 +47,18 @@ export default async function NewBatchPage({
     lockedProviderId ?? params.providerId ?? providers?.[0]?.id ?? null;
   if (!initialProviderId) redirect("/staff/admin/accounting/hmo-claims");
 
-  const { data: unbilled } = await admin
-    .from("v_hmo_unbilled")
-    .select(
-      "test_request_id, released_at, billed_amount_php, days_since_release, past_threshold, kind, patient_name, service_description",
-    )
-    .eq("provider_id", initialProviderId)
-    .eq("is_historic", false) // historic claims can't be batched
-    .order("days_since_release", { ascending: false });
+  const { data: unbilled } = await fetchCompleteRows((from, to) =>
+    admin
+      .from("v_hmo_unbilled")
+      .select(
+        "test_request_id, released_at, billed_amount_php, days_since_release, past_threshold, kind, patient_name, service_description",
+      )
+      .eq("provider_id", initialProviderId)
+      .eq("is_historic", false) // historic claims can't be batched
+      .order("days_since_release", { ascending: false })
+      .order("test_request_id", { ascending: true })
+      .range(from, to)
+  );
 
   const preselectedIds = (params.trIds ?? "")
     .split(",")

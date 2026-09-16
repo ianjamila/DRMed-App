@@ -1,5 +1,6 @@
 "use server";
 
+import { fetchCompleteRowsByIds } from "@/lib/reports/paging";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
@@ -36,10 +37,14 @@ export async function createPfDisbursement(
 
   // Fetch and validate selected entries.
   // Server-side total recompute; client-side total is a hint only.
-  const { data: entries, error: entErr } = await admin
-    .from("doctor_pf_entries")
-    .select("id, pf_php, physician_id, disbursement_id, voided_at, recognized_at")
-    .in("id", data.entry_ids);
+  const { data: entries, error: entErr } = await fetchCompleteRowsByIds(data.entry_ids, (ids, from, to) =>
+    admin
+      .from("doctor_pf_entries")
+      .select("id, pf_php, physician_id, disbursement_id, voided_at, recognized_at")
+      .in("id", ids)
+      .order("id", { ascending: true })
+      .range(from, to)
+  );
   if (entErr) return { ok: false, error: translatePgError(entErr) };
   if (!entries || entries.length !== data.entry_ids.length) {
     return { ok: false, error: "One or more PF entries not found" };
