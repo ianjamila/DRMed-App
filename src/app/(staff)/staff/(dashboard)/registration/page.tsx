@@ -4,7 +4,7 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { RegistrationPanel } from "./registration-panel";
 
 export const metadata = {
-  title: "Registration link",
+  title: "Registration Link",
 };
 
 export const dynamic = "force-dynamic";
@@ -23,7 +23,7 @@ export default async function StaffRegistrationPage() {
     <div className="px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6">
         <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Registration link
+          Registration Link
         </h1>
         <p className="mt-1 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
           Share the public pre-registration page so patients can get a DRM-ID on their own phone — show the QR to scan, copy

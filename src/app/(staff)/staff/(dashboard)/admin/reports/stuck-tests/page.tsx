@@ -14,7 +14,7 @@ import {
 } from "@/lib/reports/stuck-tests";
 import { manilaDateTime } from "@/lib/dates/manila";
 
-export const metadata = { title: "Stuck tests" };
+export const metadata = { title: "Stuck Tests" };
 export const dynamic = "force-dynamic";
 
 interface SearchProps {
@@ -48,7 +48,7 @@ export default async function StuckTestsPage({ searchParams }: SearchProps) {
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
       <PageHeader
-        title="Stuck tests"
+        title="Stuck Tests"
         subtitle={`Lab tests sitting longer than ${days} day${days === 1 ? "" : "s"} in any non-final state — unclaimed, in progress, or ready but unreleased — so nothing silently stalls. Consultations and procedures are excluded; they have no bench step, so they are followed up on Visits, not here.`}
         actions={
           <form method="GET" className="flex items-center gap-2 text-sm">

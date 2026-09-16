@@ -4,7 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { VarianceRow } from "./variance-row";
 
-export const metadata = { title: "Budget vs actual" };
+export const metadata = { title: "Budget vs Actual" };
 export const dynamic = "force-dynamic";
 
 const PHP = new Intl.NumberFormat("en-PH", {
@@ -156,7 +156,7 @@ export default async function VariancePage({ searchParams }: SearchProps) {
       <header className="mt-3 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            Budget vs actual
+            Budget vs Actual
           </h1>
           <p className="mt-1 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
             Annual budget per account compared to YTD actual posted JEs.

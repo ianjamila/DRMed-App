@@ -45,7 +45,7 @@ import {
 } from "@/lib/visits/classification";
 
 export const metadata = {
-  title: "Visit archive",
+  title: "Visit Records",
 };
 
 const BASE_PATH = "/staff/visits";
@@ -231,7 +231,7 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
       <PageHeader
-        title="Visit archive"
+        title="Visit Records"
         subtitle={
           <>
             {count} visit{count === 1 ? "" : "s"} · {rangeLabel}

@@ -143,7 +143,7 @@ export default async function GiftCodeDetailPage({ params }: PageProps) {
               Sale mis-keyed and the code hasn&apos;t been redeemed yet?
               Refunding reverses the payment and puts the code back in
               inventory to sell again. Reception can also do this from
-              Front desk → Refund gift code sale.
+              the Refund Gift Code Sale page.
             </p>
             <RefundButton code={code.code} />
           </div>

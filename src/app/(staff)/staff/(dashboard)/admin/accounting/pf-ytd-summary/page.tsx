@@ -4,7 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { pluckOne } from "@/lib/reports/format";
 
-export const metadata = { title: "Doctor pay (this year)" };
+export const metadata = { title: "Doctor Pay (This Year)" };
 export const dynamic = "force-dynamic";
 
 const PHP = new Intl.NumberFormat("en-PH", {
@@ -205,7 +205,7 @@ export default async function PfYtdSummaryPage({ searchParams }: SearchProps) {
         <div className="mt-3 flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-              Doctor pay (this year)
+              Doctor Pay (This Year)
             </h1>
             <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
               How much each doctor earned, was paid, and is still owed in{" "}

@@ -5,7 +5,7 @@ import { ChangePasswordForm } from "./change-password-form";
 import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
-  title: "My profile",
+  title: "My Profile",
 };
 
 const ROLE_LABEL: Record<string, string> = {
@@ -28,7 +28,7 @@ export default async function ProfilePage() {
   return (
     <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6 lg:px-8">
       <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-        My profile
+        My Profile
       </h1>
       <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
         Account settings for your own staff login.

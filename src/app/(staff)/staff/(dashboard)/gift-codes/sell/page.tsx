@@ -6,7 +6,7 @@ import { formatPhp } from "@/lib/marketing/format";
 import { SellGiftCodeForm } from "./sell-form";
 import { Panel } from "@/components/ui/panel";
 
-export const metadata = { title: "Sell gift code" };
+export const metadata = { title: "Sell Gift Code" };
 
 export const dynamic = "force-dynamic";
 
@@ -53,7 +53,7 @@ export default async function SellGiftCodePage({ searchParams }: PageProps) {
           Phase 11 · Reception
         </p>
         <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Sell gift code
+          Sell Gift Code
         </h1>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
           Type or scan the printed code, capture the buyer&apos;s details,

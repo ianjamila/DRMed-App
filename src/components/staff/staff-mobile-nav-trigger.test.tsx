@@ -61,10 +61,10 @@ beforeEach(() => {
   pathname.current = "/staff";
 });
 
-describe("mobile drawer — Hidden tabs (partner revision 8)", () => {
+describe("mobile drawer — Hidden Tabs (partner revision 8)", () => {
   it("is a collapsed <details> for admin", () => {
     const html = render("admin", "/staff");
-    expect(html).toContain("Hidden tabs");
+    expect(html).toContain("Hidden Tabs");
     const tag = detailsTagContaining(html, "/staff/registration");
     expect(tag).not.toBeNull();
     expect(isOpen(tag)).toBe(false);
@@ -79,7 +79,7 @@ describe("mobile drawer — Hidden tabs (partner revision 8)", () => {
 
   it("is absent for reception", () => {
     const html = render("reception", "/staff");
-    expect(html).not.toContain("Hidden tabs");
+    expect(html).not.toContain("Hidden Tabs");
     expect(html).not.toContain('href="/staff/registration"');
   });
 });
@@ -93,4 +93,54 @@ describe("mobile drawer — My payslips", () => {
       expect(detailsTagContaining(html, "/staff/payslips")).toBeNull();
     },
   );
+});
+
+// ---------------------------------------------------------------------------
+// Sidebar cleanup (2026-09-15) — the drawer mirrors the desktop sidebar, so it
+// gets the same assertions.
+// ---------------------------------------------------------------------------
+
+function ariaCurrentHrefs(html: string): string[] {
+  return [...html.matchAll(/<a\b[^>]*>/g)]
+    .filter((m) => /aria-current="page"/.test(m[0]))
+    .map((m) => m[0].match(/href="([^"]*)"/)![1]);
+}
+
+describe("mobile drawer — Inquiries & Bookings subgroup", () => {
+  it("is a collapsed <details> under Front Desk for reception", () => {
+    const html = render("reception", "/staff");
+    expect(html).toContain("Inquiries &amp; Bookings");
+    const tag = detailsTagContaining(html, "/staff/appointments");
+    expect(tag).not.toBeNull();
+    expect(isOpen(tag)).toBe(false);
+    expect(html.indexOf('href="/staff/appointments"')).toBeLessThan(
+      html.indexOf('href="/staff/inquiries"'),
+    );
+  });
+
+  it("auto-expands when reception is on Inquiries", () => {
+    const html = render("reception", "/staff/inquiries");
+    expect(isOpen(detailsTagContaining(html, "/staff/inquiries"))).toBe(true);
+  });
+});
+
+describe("mobile drawer — labels and aria-current", () => {
+  it("shows the Title Case labels and none of the retired items", () => {
+    const html = render("reception", "/staff");
+    for (const label of ["Visit Records", "Quick Quote", "Cash Drawer", "Front Desk"]) {
+      expect(html).toContain(label);
+    }
+    expect(html).not.toContain("Visit archive");
+    expect(html).not.toContain('href="/staff/patients/new"');
+    expect(html).not.toContain('href="/staff/payments/petty-cash"');
+  });
+
+  it("marks the active link with aria-current=page", () => {
+    expect(ariaCurrentHrefs(render("reception", "/staff/payments/eod"))).toEqual([
+      "/staff/payments/cash-drawer",
+    ]);
+    expect(ariaCurrentHrefs(render("reception", "/staff/patients/new"))).toEqual([
+      "/staff/patients",
+    ]);
+  });
 });

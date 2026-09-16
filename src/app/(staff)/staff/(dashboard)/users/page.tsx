@@ -38,7 +38,7 @@ import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 
 export const metadata = {
-  title: "Staff users",
+  title: "Staff Users",
 };
 
 type StaffRow = {
@@ -375,7 +375,7 @@ export default async function StaffUsersPage({ searchParams }: SearchProps) {
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
       <PageHeader
-        title="Staff users"
+        title="Staff Users"
         subtitle="Manage who can sign into the staff portal and what role they have."
         actions={
           <Link

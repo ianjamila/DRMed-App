@@ -24,7 +24,7 @@ import {
 import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 
-export const metadata = { title: "Gift codes" };
+export const metadata = { title: "Gift Codes" };
 
 export const dynamic = "force-dynamic";
 
@@ -191,7 +191,7 @@ export default async function GiftCodesAdminPage({ searchParams }: PageProps) {
             Phase 11 · Admin
           </p>
           <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            Gift codes
+            Gift Codes
           </h1>
           <p className="mt-1 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
             Pre-issued vouchers reception sells at the counter and customers

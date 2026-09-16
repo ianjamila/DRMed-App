@@ -5,7 +5,7 @@ import { pluckOne } from "@/lib/reports/format";
 import { shiftISODate, todayManilaISODate } from "@/lib/dates/manila";
 import { PfPayoutsClient } from "./pf-payouts-client";
 
-export const metadata = { title: "Pay doctors" };
+export const metadata = { title: "Pay Doctors" };
 export const dynamic = "force-dynamic";
 
 export default async function PfPayoutsPage() {
@@ -89,7 +89,7 @@ export default async function PfPayoutsPage() {
           Admin · Pay doctors
         </p>
         <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Pay doctors
+          Pay Doctors
         </h1>
         <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
           Pay each doctor their share of the consults they did. The app already

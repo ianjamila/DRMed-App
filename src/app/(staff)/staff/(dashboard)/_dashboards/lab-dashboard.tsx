@@ -43,15 +43,15 @@ function buildQuickLinks(role: Role): QuickLink[] {
     links.push({ href: "/staff/signoff", label: "Sign-off" });
   }
   if (role === "medtech" || role === "admin") {
-    links.push({ href: "/staff/quote", label: "Quick quote" });
+    links.push({ href: "/staff/quote", label: "Quick Quote" });
   }
   if (role === "admin") {
-    links.push({ href: "/staff/admin/result-templates", label: "Result templates" });
+    links.push({ href: "/staff/admin/result-templates", label: "Result Templates" });
   }
   // Every role draws a payslip, and they're checked on payday — worth a
   // shortcut off the bench. Lives in the sidebar's Personal section since
-  // partner revision 8 moved it out of the now-admin-only "Hidden tabs".
-  links.push({ href: "/staff/payslips", label: "My payslips" });
+  // partner revision 8 moved it out of the now-admin-only "Hidden Tabs".
+  links.push({ href: "/staff/payslips", label: "My Payslips" });
   return links;
 }
 

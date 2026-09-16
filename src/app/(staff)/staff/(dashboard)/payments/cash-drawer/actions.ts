@@ -184,7 +184,7 @@ export async function voidCashAdjustmentAction(
       : null;
 
     let message =
-      "This is a gift code sale. To undo it, use Refund gift code sale instead (Front desk → Refund gift code sale, or Admin → Gift codes) — that reverses this drawer entry AND makes the code available to sell again.";
+      "This is a gift code sale. To undo it, use Refund Gift Code Sale instead (the Refund Gift Code Sale page, or Admin → Gift Codes) — that reverses this drawer entry AND makes the code available to sell again.";
     if (eligibility && !eligibility.ok) {
       message = eligibility.error;
     }

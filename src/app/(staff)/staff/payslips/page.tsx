@@ -10,7 +10,7 @@ import {
 import { PayslipsClient } from "./payslips-client";
 import { isoDateParts, todayManilaISODate } from "@/lib/dates/manila";
 
-export const metadata = { title: "My payslips" };
+export const metadata = { title: "My Payslips" };
 export const dynamic = "force-dynamic";
 
 export default async function PayslipsPage({

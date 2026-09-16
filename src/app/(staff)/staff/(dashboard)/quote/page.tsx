@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { QuoteWorkbench, type QuoteService } from "./quote-workbench";
 
 export const metadata = {
-  title: "Quick quote",
+  title: "Quick Quote",
 };
 
 export default async function QuotePage() {
@@ -39,7 +39,7 @@ export default async function QuotePage() {
     <div className="px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6">
         <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Quick quote
+          Quick Quote
         </h1>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
           Search the catalog and copy a formatted quote into Viber or SMS.

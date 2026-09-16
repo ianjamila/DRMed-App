@@ -11,13 +11,17 @@ import { QuickLinks } from "./_components/quick-links";
 import { ActivityStrip, type ActivityItem } from "./_components/activity-strip";
 import { formatPeso, formatTime, relativeAge } from "./_components/format";
 
-// Quicklinks mirror the sidebar groups (Front desk / Billing / Personal).
+// Quicklinks mirror the sidebar groups (Front Desk / Billing / Personal) and
+// use the sidebar's exact labels (Title Case, sidebar cleanup 2026-09-15).
 // There is no "start a visit" quicklink: the Reception Queue's + New visit
 // button is the one doorway to /staff/visits/new, so the dashboard points at
-// the queue instead of duplicating it. Cash drawer was restored to Front desk (revisions 2/9) and
-// carries End of day as its second tab.
+// the queue instead of duplicating it. "New patient" and "Petty cash" have no
+// sidebar item of their own any more (the form is the Patients page's + New
+// patient button; petty cash is a Cash Drawer tab) — both stay here as
+// shortcuts because reception reaches for them many times a day. Cash Drawer
+// sits under Billing, where the sidebar keeps it.
 //
-// Partner revision 8 made the sidebar's "Hidden tabs" section admin-only, so
+// Partner revision 8 made the sidebar's "Hidden Tabs" section admin-only, so
 // reception no longer sees Sell gift code or Registration link there at all.
 // Sell gift code is therefore surfaced here as reception's ONE deliberate
 // doorway to the rare counter sale — without it they'd have to type the URL.
@@ -25,23 +29,23 @@ import { formatPeso, formatTime, relativeAge } from "./_components/format";
 // link from the website).
 const QUICK_GROUPS: { label: string; items: { href: string; label: string }[] }[] = [
   {
-    label: "Front desk",
+    label: "Front Desk",
     items: [
-      { href: "/staff/patients/new", label: "New patient" },
-      { href: "/staff/patients", label: "Patients" },
-      { href: "/staff/appointments", label: "Appointments" },
       { href: "/staff/visits/queue", label: "Reception Queue" },
+      { href: "/staff/patients", label: "Patients" },
+      { href: "/staff/patients/new", label: "New Patient" },
+      { href: "/staff/appointments", label: "Appointments" },
       { href: "/staff/inquiries", label: "Inquiries" },
-      { href: "/staff/payments/cash-drawer", label: "Cash drawer" },
-      { href: "/staff/gift-codes/sell", label: "Sell gift code" },
+      { href: "/staff/gift-codes/sell", label: "Sell Gift Code" },
     ],
   },
   {
     label: "Billing",
     items: [
-      { href: "/staff/visits", label: "Visit archive" },
-      { href: "/staff/quote", label: "Quick quote" },
-      { href: "/staff/payments/petty-cash", label: "Petty cash" },
+      { href: "/staff/visits", label: "Visit Records" },
+      { href: "/staff/quote", label: "Quick Quote" },
+      { href: "/staff/payments/cash-drawer", label: "Cash Drawer" },
+      { href: "/staff/payments/petty-cash", label: "Petty Cash" },
     ],
   },
   {
@@ -50,8 +54,8 @@ const QUICK_GROUPS: { label: string; items: { href: string; label: string }[] }[
     // so it earns a dashboard shortcut too.
     label: "Personal",
     items: [
-      { href: "/staff/payslips", label: "My payslips" },
-      { href: "/staff/profile", label: "My profile" },
+      { href: "/staff/payslips", label: "My Payslips" },
+      { href: "/staff/profile", label: "My Profile" },
     ],
   },
 ];

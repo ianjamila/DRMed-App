@@ -2,7 +2,7 @@ import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 
-export const metadata = { title: "HMO providers" };
+export const metadata = { title: "HMO Providers" };
 
 export const dynamic = "force-dynamic";
 
@@ -29,7 +29,7 @@ export default async function HmoProvidersIndex() {
             Phase 7B · Admin
           </p>
           <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            HMO providers
+            HMO Providers
           </h1>
           <p className="mt-2 max-w-xl text-sm text-[color:var(--color-brand-text-soft)]">
             Maintained list reception picks from when capturing HMO

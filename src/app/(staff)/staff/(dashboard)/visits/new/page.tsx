@@ -11,7 +11,7 @@ import { VisitsTabs } from "../_components/visits-tabs";
 import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
-  title: "New visit",
+  title: "New Visit",
 };
 
 interface Props {
@@ -24,7 +24,7 @@ interface Props {
 
 const PICKER_LIMIT = 25;
 
-// The picker heading is "New visit", the same words as the Reception Queue's
+// The picker heading is "New Visit", the same words as the Reception Queue's
 // + New visit button that leads here — it used to say "Visits", which the Visit
 // archive is also called, and reception wondered if the click had misfired.
 
@@ -101,7 +101,7 @@ export default async function NewVisitPage({ searchParams }: Props) {
         ← Patient
       </Link>
       <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-        New visit
+        New Visit
       </h1>
       <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
         Visit number is auto-generated. PIN will be shown on the printed
@@ -193,7 +193,7 @@ async function PatientPicker({ query }: { query: string }) {
       <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            New visit
+            New Visit
           </h1>
           <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
             Pick the patient this visit is for, or register a new one.

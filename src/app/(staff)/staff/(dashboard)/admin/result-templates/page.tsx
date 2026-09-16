@@ -8,7 +8,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 
-export const metadata = { title: "Result templates" };
+export const metadata = { title: "Result Templates" };
 
 interface ServiceRow {
   id: string;
@@ -113,7 +113,7 @@ export default async function ResultTemplatesIndex() {
           Phase 13 · Admin
         </p>
         <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Result templates
+          Result Templates
         </h1>
         <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
           Templates power the medtech structured-result form and the

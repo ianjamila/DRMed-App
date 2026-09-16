@@ -42,7 +42,7 @@ export default async function BillsIndexPage({
             Phase 12.4 · Admin · AP
           </p>
           <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            Vendor bills
+            Vendor Bills
           </h1>
           <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
             Invoices with a due date. For expenses already paid (cash, GCash, or

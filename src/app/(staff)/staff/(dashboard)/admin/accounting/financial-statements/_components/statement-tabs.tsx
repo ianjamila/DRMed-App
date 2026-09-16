@@ -16,9 +16,9 @@ export function StatementTabs() {
   const tabs = [
     // Income statement lives at the bare route; match it exactly so the
     // balance-sheet / cash-flow sub-routes don't also light it up.
-    { href: FS, label: "Income statement", exact: true, query: range },
-    { href: `${FS}/balance-sheet`, label: "Balance sheet", query: asOf },
-    { href: `${FS}/cash-flow`, label: "Cash flow", query: range },
+    { href: FS, label: "Income Statement", exact: true, query: range },
+    { href: `${FS}/balance-sheet`, label: "Balance Sheet", query: asOf },
+    { href: `${FS}/cash-flow`, label: "Cash Flow", query: range },
   ];
 
   return <SectionTabs label="Financial statement sections" tabs={tabs} />;

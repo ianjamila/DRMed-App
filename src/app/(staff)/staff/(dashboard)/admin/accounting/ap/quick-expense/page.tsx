@@ -2,7 +2,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { QuickExpenseForm } from "./quick-expense-form";
 
-export const metadata = { title: "Quick expense" };
+export const metadata = { title: "Quick Expense" };
 export const dynamic = "force-dynamic";
 
 export default async function QuickExpensePage() {
@@ -16,7 +16,7 @@ export default async function QuickExpensePage() {
           Admin · Bills
         </p>
         <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Quick expense
+          Quick Expense
         </h1>
         <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
           Record an expense that was already paid (cash, GCash, BPI, or the owner&apos;s own pocket). Posts a

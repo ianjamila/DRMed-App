@@ -81,7 +81,7 @@ export function CashDrawerClient(props: {
       <PaymentsTabs />
       <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Cash drawer
+          Cash Drawer
         </h1>
         <div className="flex flex-col items-start gap-1 text-sm text-[color:var(--color-brand-text-soft)] sm:items-end">
           <span className="font-medium text-[color:var(--color-brand-navy)]">
@@ -239,7 +239,7 @@ export function CashDrawerClient(props: {
                       // payment is the one control that moves both.
                       <span
                         className="text-xs text-[color:var(--color-brand-text-soft)]"
-                        title="Void the payment instead (Admin → Expenses → Bill payments) — that reverses this entry too."
+                        title="Void the payment instead (Admin → Expenses → Bill Payments) — that reverses this entry too."
                       >
                         Void via AP payments
                       </span>
@@ -252,7 +252,7 @@ export function CashDrawerClient(props: {
                       // both at once (admin only).
                       <span
                         className="text-xs text-[color:var(--color-brand-text-soft)]"
-                        title="Cancel the gift code instead (Admin → Gift codes) — that reverses this entry too."
+                        title="Cancel the gift code instead (Admin → Gift Codes) — that reverses this entry too."
                       >
                         Cancel via Gift codes
                       </span>

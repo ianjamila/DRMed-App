@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { isISODate, todayManilaISODate } from "@/lib/dates/manila";
 import { CashDrawerClient } from "./cash-drawer-client";
 
-export const metadata = { title: "Cash drawer" };
+export const metadata = { title: "Cash Drawer" };
 export const dynamic = "force-dynamic";
 
 interface SearchParams { date?: string; shift?: string }

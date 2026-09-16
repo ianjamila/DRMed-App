@@ -17,7 +17,7 @@ import {
 import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 
-export const metadata = { title: "Journal entries" };
+export const metadata = { title: "Journal Entries" };
 export const dynamic = "force-dynamic";
 
 const BASE_PATH = "/staff/admin/accounting/journal";
@@ -299,7 +299,7 @@ export default async function JournalListPage({ searchParams }: SearchProps) {
         <div className="mt-3 flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-              Journal entries
+              Journal Entries
             </h1>
             <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
               {total} entr{total === 1 ? "y" : "ies"} ·{" "}

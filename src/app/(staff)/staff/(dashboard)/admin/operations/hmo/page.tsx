@@ -115,7 +115,7 @@ export default async function HmoReceivablesPage({
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold text-[#0b2a4a]">HMO receivables</h1>
+        <h1 className="text-2xl font-semibold text-[#0b2a4a]">HMO Receivables</h1>
         <p className="text-sm text-muted-foreground">
           Per-provider lab-HMO AR roll-forward — billed in, paid out, running balance.
         </p>

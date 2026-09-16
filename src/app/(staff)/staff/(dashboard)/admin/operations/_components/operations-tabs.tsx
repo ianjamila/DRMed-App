@@ -7,10 +7,10 @@ import { carryParams } from "@/lib/reports/statement-period";
 const BASE = "/staff/admin/operations";
 
 const TABS = [
-  { href: BASE, label: "Daily report", exact: true },
-  { href: `${BASE}/cash`, label: "Cash & cards" },
+  { href: BASE, label: "Daily Report", exact: true },
+  { href: `${BASE}/cash`, label: "Cash & Cards" },
   { href: `${BASE}/expenses`, label: "Expenses & P&L" },
-  { href: `${BASE}/hmo`, label: "HMO receivables" },
+  { href: `${BASE}/hmo`, label: "HMO Receivables" },
   { href: `${BASE}/trends`, label: "Trends" },
 ];
 

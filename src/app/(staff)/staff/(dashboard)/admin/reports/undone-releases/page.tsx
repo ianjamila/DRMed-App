@@ -10,7 +10,7 @@ import {
   undoneReleasesCsvHref,
 } from "@/lib/reports/undone-releases";
 
-export const metadata = { title: "Undone releases" };
+export const metadata = { title: "Undone Releases" };
 export const dynamic = "force-dynamic";
 
 interface SearchProps {
@@ -55,7 +55,7 @@ export default async function UndoneReleasesPage({ searchParams }: SearchProps) 
       </Link>
       <header className="mt-3">
         <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Undone releases
+          Undone Releases
         </h1>
         <p className="mt-1 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
           Every result release that was withdrawn — who undid it, why, whether
