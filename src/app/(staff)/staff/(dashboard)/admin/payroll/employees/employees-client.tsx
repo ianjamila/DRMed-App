@@ -1,5 +1,8 @@
 "use client";
 
+import { useListTable } from "@/components/staff/use-list-table";
+import { numberColumn, textColumn } from "@/lib/ui/compare-list-rows";
+
 import {
   useCallback,
   useDeferredValue,
@@ -8,7 +11,7 @@ import {
   useState,
   useTransition,
 } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { formatPhp } from "@/lib/marketing/format";
 import { useFocusTrap } from "@/lib/a11y/use-focus-trap";
@@ -59,9 +62,11 @@ interface Props {
 
 export function EmployeesClient({ employees, eligibleStaff }: Props) {
   const router = useRouter();
-  const [query, setQuery] = useState("");
+  const searchParams = useSearchParams();
+  const query = searchParams.get("q") ?? "";
   const deferredQuery = useDeferredValue(query);
-  const [status, setStatus] = useState<StatusFilter>("all");
+  const rawStatus = searchParams.get("status");
+  const status: StatusFilter = rawStatus === "active" || rawStatus === "inactive" ? rawStatus : "all";
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   const filtered = useMemo(() => {
@@ -76,6 +81,22 @@ export function EmployeesClient({ employees, eligibleStaff }: Props) {
       return true;
     });
   }, [employees, deferredQuery, status]);
+
+
+  const table = useListTable(
+    filtered,
+    {
+      full_name: textColumn((r) => r.full_name),
+      employee_number: textColumn((r) => r.employee_number),
+      hire_date: textColumn((r) => r.hire_date),
+      regularization_date: textColumn((r) => r.regularization_date),
+      basic_daily_rate_php: numberColumn((r) => r.basic_daily_rate_php),
+      schedule_kind: textColumn((r) => SCHEDULE_LABEL[r.schedule_kind] ?? r.schedule_kind),
+      payment_method: textColumn((r) => PAYMENT_LABEL[r.payment_method] ?? r.payment_method),
+      is_active: textColumn((r) => r.is_active ? "Active" : "Inactive"),
+    },
+    { key: "full_name", dir: "asc" },
+  );
 
   const activeCount = useMemo(
     () => employees.filter((e) => e.is_active).length,
@@ -104,12 +125,12 @@ export function EmployeesClient({ employees, eligibleStaff }: Props) {
           type="search"
           placeholder="Search by name or employee #"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => window.history.replaceState(null, "", table.href({ q: e.target.value || null }))}
           className="min-w-64 flex-1 rounded-lg border border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-2.5 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none focus:ring-2 focus:ring-[color:var(--color-brand-cyan)]/20"
         />
         <select
           value={status}
-          onChange={(e) => setStatus(e.target.value as StatusFilter)}
+          onChange={(e) => window.history.replaceState(null, "", table.href({ status: e.target.value === "all" ? null : e.target.value }))}
           className="rounded-lg border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2.5 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
         >
           <option value="all">All ({employees.length})</option>
@@ -133,14 +154,14 @@ export function EmployeesClient({ employees, eligibleStaff }: Props) {
         <table className="w-full min-w-[900px] text-sm">
           <thead className="bg-[color:var(--color-bg-mid)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
-              <th className="px-4 py-3">Name</th>
-              <th className="px-4 py-3">Employee #</th>
-              <th className="px-4 py-3">Hired</th>
-              <th className="px-4 py-3">Reg</th>
-              <th className="px-4 py-3 text-right">Daily rate</th>
-              <th className="px-4 py-3">Schedule</th>
-              <th className="px-4 py-3">Payment</th>
-              <th className="px-4 py-3">Status</th>
+              {table.th("full_name", "Name")}
+              {table.th("employee_number", "Employee #")}
+              {table.th("hire_date", "Hired")}
+              {table.th("regularization_date", "Reg")}
+              {table.th("basic_daily_rate_php", "Daily rate", "right")}
+              {table.th("schedule_kind", "Schedule")}
+              {table.th("payment_method", "Payment")}
+              {table.th("is_active", "Status")}
             </tr>
           </thead>
           <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
@@ -154,7 +175,7 @@ export function EmployeesClient({ employees, eligibleStaff }: Props) {
                 </td>
               </tr>
             ) : (
-              filtered.map((e) => (
+              table.rows.map((e) => (
                 <tr
                   key={e.id}
                   onClick={() => openEmployee(e.id)}
@@ -217,7 +238,7 @@ export function EmployeesClient({ employees, eligibleStaff }: Props) {
             No employees match your filters.
           </p>
         ) : (
-          filtered.map((e) => (
+          table.rows.map((e) => (
             <Link
               key={e.id}
               href={`/staff/admin/payroll/employees/${e.id}`}
@@ -277,6 +298,7 @@ export function EmployeesClient({ employees, eligibleStaff }: Props) {
         eligibleStaff={eligibleStaff}
         onCreated={handleCreated}
       />
+      {table.pagination}
     </div>
   );
 }

@@ -49,15 +49,20 @@ export function SortableTh({
   href,
   state,
   align = "left",
+  navigate,
 }: {
   label: string;
   href: string;
   state: SortState;
   align?: "left" | "right";
+  /** Client tables may update URL state without reloading their complete dataset. */
+  navigate?: (href: string) => void;
 }) {
   return (
     <th scope="col" aria-sort={state} className={thClass(align)}>
-      <Link href={href} className={sortTriggerClass(state !== "none")}>
+      <Link href={href} prefetch={navigate ? false : undefined}
+        onNavigate={navigate ? (event) => { event.preventDefault(); navigate(href); } : undefined}
+        className={sortTriggerClass(state !== "none")}>
         {label}
         <SortCaret state={state} />
       </Link>

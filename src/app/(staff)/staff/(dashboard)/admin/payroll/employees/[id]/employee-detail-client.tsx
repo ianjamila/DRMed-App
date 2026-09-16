@@ -1,8 +1,11 @@
 "use client";
 
+import { useListTable } from "@/components/staff/use-list-table";
+import { numberColumn, textColumn } from "@/lib/ui/compare-list-rows";
+
 import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { formatPhp } from "@/lib/marketing/format";
 import { useFocusTrap } from "@/lib/a11y/use-focus-trap";
 import { PAYMENT_LABEL, ROLE_LABEL, SCHEDULE_LABEL } from "@/lib/payroll/labels";
@@ -79,6 +82,7 @@ export interface PeriodOption {
 
 export interface EmployeeRunHistoryRow {
   id: string;
+  created_at: string;
   run_id: string;
   run_status: string | null;
   period_start: string | null;
@@ -155,7 +159,14 @@ interface Props {
 }
 
 export function EmployeeDetailClient(props: Props) {
-  const [tab, setTab] = useState<TabKey>("overview");
+  const searchParams = useSearchParams();
+  const rawTab = searchParams.get("tab");
+  const tab: TabKey = rawTab === "allowances" || rawTab === "loans" || rawTab === "leaves" ? rawTab : "overview";
+  const setTab = (next: TabKey) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (next === "overview") params.delete("tab"); else params.set("tab", next);
+    window.history.replaceState(null, "", params.size ? "?" + params.toString() : window.location.pathname);
+  };
   const { employee } = props;
 
   return (
@@ -500,6 +511,19 @@ function AllowancesTab({
   employeeId: string;
   allowances: AllowanceRow[];
 }) {
+  const table = useListTable(
+    allowances,
+    {
+      name: textColumn((r) => r.name),
+      daily_amount_php: numberColumn((r) => r.daily_amount_php),
+      is_taxable: textColumn((r) => r.is_taxable),
+      effective_from: textColumn((r) => r.effective_from),
+      status: textColumn((r) => r.effective_to == null ? "Active" : "Ended " + r.effective_to),
+    },
+    { key: "effective_from", dir: "desc" },
+    "allowances_",
+  );
+
   const router = useRouter();
   const [showAdd, setShowAdd] = useState(false);
   const [name, setName] = useState("");
@@ -638,11 +662,11 @@ function AllowancesTab({
         <table className="w-full min-w-[680px] text-sm">
           <thead className="bg-[color:var(--color-bg-mid)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
-              <th className="px-4 py-3">Label</th>
-              <th className="px-4 py-3 text-right">Daily amount</th>
-              <th className="px-4 py-3">Taxable</th>
-              <th className="px-4 py-3">Effective from</th>
-              <th className="px-4 py-3">Status</th>
+              {table.th("name", "Label")}
+              {table.th("daily_amount_php", "Daily amount", "right")}
+              {table.th("is_taxable", "Taxable")}
+              {table.th("effective_from", "Effective from")}
+              {table.th("status", "Status")}
               <th className="px-4 py-3"></th>
             </tr>
           </thead>
@@ -657,7 +681,7 @@ function AllowancesTab({
                 </td>
               </tr>
             ) : (
-              allowances.map((a) => {
+              table.rows.map((a) => {
                 const active = a.effective_to == null;
                 return (
                   <tr key={a.id}>
@@ -702,6 +726,7 @@ function AllowancesTab({
         </table>
       </Panel>
       {rowError ? <p className="text-sm text-red-600">{rowError}</p> : null}
+      {table.pagination}
     </section>
   );
 }
@@ -719,6 +744,20 @@ function LoansTab({
   loans: LoanRow[];
   periodOptions: PeriodOption[];
 }) {
+  const table = useListTable(
+    loans,
+    {
+      principal_php: numberColumn((r) => r.principal_php),
+      amortization_per_period_php: numberColumn((r) => r.amortization_per_period_php),
+      outstanding_balance_php: numberColumn((r) => r.outstanding_balance_php),
+      status: textColumn((r) => r.status),
+      requested_at: textColumn((r) => r.requested_at),
+      notes: textColumn((r) => r.notes),
+    },
+    { key: "requested_at", dir: "desc" },
+    "loans_",
+  );
+
   const router = useRouter();
   const [showAdd, setShowAdd] = useState(false);
   const [principal, setPrincipal] = useState("");
@@ -854,12 +893,12 @@ function LoansTab({
         <table className="w-full min-w-[860px] text-sm">
           <thead className="bg-[color:var(--color-bg-mid)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
-              <th className="px-4 py-3 text-right">Principal</th>
-              <th className="px-4 py-3 text-right">Per period</th>
-              <th className="px-4 py-3 text-right">Outstanding</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3">Requested</th>
-              <th className="px-4 py-3">Notes</th>
+              {table.th("principal_php", "Principal", "right")}
+              {table.th("amortization_per_period_php", "Per period", "right")}
+              {table.th("outstanding_balance_php", "Outstanding", "right")}
+              {table.th("status", "Status")}
+              {table.th("requested_at", "Requested")}
+              {table.th("notes", "Notes")}
               <th className="px-4 py-3"></th>
             </tr>
           </thead>
@@ -874,7 +913,7 @@ function LoansTab({
                 </td>
               </tr>
             ) : (
-              loans.map((l) => (
+              table.rows.map((l) => (
                 <tr key={l.id}>
                   <td className="px-4 py-3 text-right font-semibold text-[color:var(--color-brand-navy)]">
                     {formatPhp(l.principal_php)}
@@ -994,6 +1033,7 @@ function LoansTab({
           }}
         />
       ) : null}
+      {table.pagination}
     </section>
   );
 }
@@ -1137,6 +1177,35 @@ function LeavesTab({
   runHistory: EmployeeRunHistoryRow[];
   otSlips: OtSlipRow[];
 }) {
+  const otTable = useListTable(
+    otSlips,
+    {
+      work_date: textColumn((r) => r.work_date),
+      hours_requested: numberColumn((r) => r.hours_requested),
+      status: textColumn((r) => r.status),
+      reason: textColumn((r) => r.reason),
+      requested_at: textColumn((r) => r.requested_at),
+    },
+    { key: "requested_at", dir: "desc" },
+    "ot_",
+  );
+
+  const historyTable = useListTable(
+    runHistory,
+    {
+      created_at: textColumn((r) => r.created_at),
+      period_start: textColumn((r) => r.period_start),
+      run_status: textColumn((r) => r.run_status),
+      scheduled_days: numberColumn((r) => r.scheduled_days),
+      days_present: numberColumn((r) => r.days_present),
+      days_vl_used: numberColumn((r) => r.days_vl_used),
+      days_sl_used: numberColumn((r) => r.days_sl_used),
+      net_pay_php: numberColumn((r) => r.net_pay_php),
+    },
+    { key: "created_at", dir: "desc" },
+    "history_",
+  );
+
   const [grantOpen, setGrantOpen] = useState(false);
   const [usageOpen, setUsageOpen] = useState(false);
   const [cashOpen, setCashOpen] = useState(false);
@@ -1174,22 +1243,22 @@ function LeavesTab({
 
       <div>
         <h3 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
-          Period history (last 10)
+          Period history
         </h3>
         <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
-          Days present and leave taken per recent payroll period.
+          Days present and leave taken per payroll period.
         </p>
         <Panel className="mt-3 overflow-x-auto">
           <table className="w-full min-w-[760px] text-sm">
             <thead className="bg-[color:var(--color-bg-mid)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
               <tr>
-                <th className="px-4 py-3">Period</th>
-                <th className="px-4 py-3">Run status</th>
-                <th className="px-4 py-3 text-right">Scheduled</th>
-                <th className="px-4 py-3 text-right">Present</th>
-                <th className="px-4 py-3 text-right">VL used</th>
-                <th className="px-4 py-3 text-right">SL used</th>
-                <th className="px-4 py-3 text-right">Net pay</th>
+                {historyTable.th("period_start", "Period")}
+                {historyTable.th("run_status", "Run status")}
+                {historyTable.th("scheduled_days", "Scheduled", "right")}
+                {historyTable.th("days_present", "Present", "right")}
+                {historyTable.th("days_vl_used", "VL used", "right")}
+                {historyTable.th("days_sl_used", "SL used", "right")}
+                {historyTable.th("net_pay_php", "Net pay", "right")}
               </tr>
             </thead>
             <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
@@ -1203,7 +1272,7 @@ function LeavesTab({
                   </td>
                 </tr>
               ) : (
-                runHistory.map((r) => (
+                historyTable.rows.map((r) => (
                   <tr key={r.id}>
                     <td className="px-4 py-3 text-xs">
                       {formatPeriodRange(r.period_start, r.period_end)}
@@ -1232,6 +1301,7 @@ function LeavesTab({
             </tbody>
           </table>
         </Panel>
+        {historyTable.pagination}
       </div>
 
       <div>
@@ -1239,17 +1309,17 @@ function LeavesTab({
           Recent OT slips
         </h3>
         <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
-          Last 30 overtime requests for this employee.
+          Recent overtime requests for this employee.
         </p>
         <Panel className="mt-3 overflow-x-auto">
           <table className="w-full min-w-[640px] text-sm">
             <thead className="bg-[color:var(--color-bg-mid)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
               <tr>
-                <th className="px-4 py-3">Work date</th>
-                <th className="px-4 py-3 text-right">Hours</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Reason</th>
-                <th className="px-4 py-3">Requested</th>
+                {otTable.th("work_date", "Work date")}
+                {otTable.th("hours_requested", "Hours", "right")}
+                {otTable.th("status", "Status")}
+                {otTable.th("reason", "Reason")}
+                {otTable.th("requested_at", "Requested")}
               </tr>
             </thead>
             <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
@@ -1263,7 +1333,7 @@ function LeavesTab({
                   </td>
                 </tr>
               ) : (
-                otSlips.map((s) => (
+                otTable.rows.map((s) => (
                   <tr key={s.id}>
                     <td className="px-4 py-3 text-xs">
                       {formatDate(s.work_date)}
@@ -1284,6 +1354,7 @@ function LeavesTab({
             </tbody>
           </table>
         </Panel>
+        {otTable.pagination}
       </div>
 
       {grantOpen ? (

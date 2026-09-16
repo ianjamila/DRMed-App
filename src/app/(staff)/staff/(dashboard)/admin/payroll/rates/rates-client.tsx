@@ -1,5 +1,8 @@
 "use client";
 
+import { useListTable } from "@/components/staff/use-list-table";
+import { numberColumn, textColumn } from "@/lib/ui/compare-list-rows";
+
 import {
   useCallback,
   useEffect,
@@ -87,6 +90,7 @@ export function RatesClient({
   const switchKind = useCallback(
     (nextKind: RateKind) => {
       const next = new URLSearchParams(searchParams?.toString() ?? "");
+      next.delete("page");
       next.set("kind", nextKind);
       const qs = next.toString();
       setActionError(null);
@@ -260,19 +264,35 @@ function ContributionTable({
   isPending: boolean;
   onEnd: (row: ContributionBracketRow) => void;
 }) {
+  const table = useListTable(
+    rows,
+    {
+      effective_from: textColumn((r) => r.effective_from),
+      status: textColumn((r) => r.effective_to == null ? "Active" : "Ended " + r.effective_to),
+      monthly_salary_credit_min_php: numberColumn((r) => r.monthly_salary_credit_min_php),
+      monthly_salary_credit_max_php: numberColumn((r) => r.monthly_salary_credit_max_php),
+      employee_share_php: numberColumn((r) => r.employee_share_php),
+      employer_share_php: numberColumn((r) => r.employer_share_php),
+      notes: textColumn((r) => r.notes),
+    },
+    { key: "effective_from", dir: "desc" },
+    "",
+    [{ key: "monthly_salary_credit_min_php", dir: "asc" }],
+  );
+
   return (
     <>
       <Panel className="hidden overflow-x-auto md:block">
         <table className="w-full min-w-[1100px] text-sm">
           <thead className="bg-[color:var(--color-bg-mid)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
-              <th className="px-4 py-3">Effective from</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3 text-right">MSC lower</th>
-              <th className="px-4 py-3 text-right">MSC upper</th>
-              <th className="px-4 py-3 text-right">EE share</th>
-              <th className="px-4 py-3 text-right">ER share</th>
-              <th className="px-4 py-3">Notes</th>
+              {table.th("effective_from", "Effective from")}
+              {table.th("status", "Status")}
+              {table.th("monthly_salary_credit_min_php", "MSC lower", "right")}
+              {table.th("monthly_salary_credit_max_php", "MSC upper", "right")}
+              {table.th("employee_share_php", "EE share", "right")}
+              {table.th("employer_share_php", "ER share", "right")}
+              {table.th("notes", "Notes")}
               <th className="px-4 py-3 text-right">Actions</th>
             </tr>
           </thead>
@@ -287,7 +307,7 @@ function ContributionTable({
                 </td>
               </tr>
             ) : (
-              rows.map((r) => {
+              table.rows.map((r) => {
                 const active = r.effective_to === null;
                 return (
                   <tr key={r.id}>
@@ -348,7 +368,7 @@ function ContributionTable({
             No brackets recorded.
           </p>
         ) : (
-          rows.map((r) => {
+          table.rows.map((r) => {
             const active = r.effective_to === null;
             return (
               <Panel
@@ -422,6 +442,7 @@ function ContributionTable({
           })
         )}
       </div>
+      {table.pagination}
     </>
   );
 }
@@ -445,19 +466,35 @@ function WtTable({
   isPending: boolean;
   onEnd: (row: WtBracketRow) => void;
 }) {
+  const table = useListTable(
+    rows,
+    {
+      effective_from: textColumn((r) => r.effective_from),
+      status: textColumn((r) => r.effective_to == null ? "Active" : "Ended " + r.effective_to),
+      taxable_min_php: numberColumn((r) => r.taxable_min_php),
+      taxable_max_php: numberColumn((r) => r.taxable_max_php),
+      base_tax_php: numberColumn((r) => r.base_tax_php),
+      marginal_rate: numberColumn((r) => r.marginal_rate),
+      notes: textColumn((r) => r.notes),
+    },
+    { key: "effective_from", dir: "desc" },
+    "",
+    [{ key: "taxable_min_php", dir: "asc" }],
+  );
+
   return (
     <>
       <Panel className="hidden overflow-x-auto md:block">
         <table className="w-full min-w-[1080px] text-sm">
           <thead className="bg-[color:var(--color-bg-mid)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
-              <th className="px-4 py-3">Effective from</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3 text-right">Taxable lower</th>
-              <th className="px-4 py-3 text-right">Taxable upper</th>
-              <th className="px-4 py-3 text-right">Base tax</th>
-              <th className="px-4 py-3 text-right">Marginal rate</th>
-              <th className="px-4 py-3">Notes</th>
+              {table.th("effective_from", "Effective from")}
+              {table.th("status", "Status")}
+              {table.th("taxable_min_php", "Taxable lower", "right")}
+              {table.th("taxable_max_php", "Taxable upper", "right")}
+              {table.th("base_tax_php", "Base tax", "right")}
+              {table.th("marginal_rate", "Marginal rate", "right")}
+              {table.th("notes", "Notes")}
               <th className="px-4 py-3 text-right">Actions</th>
             </tr>
           </thead>
@@ -472,7 +509,7 @@ function WtTable({
                 </td>
               </tr>
             ) : (
-              rows.map((r) => {
+              table.rows.map((r) => {
                 const active = r.effective_to === null;
                 return (
                   <tr key={r.id}>
@@ -535,7 +572,7 @@ function WtTable({
             No brackets recorded.
           </p>
         ) : (
-          rows.map((r) => {
+          table.rows.map((r) => {
             const active = r.effective_to === null;
             return (
               <Panel
@@ -611,6 +648,7 @@ function WtTable({
           })
         )}
       </div>
+      {table.pagination}
     </>
   );
 }

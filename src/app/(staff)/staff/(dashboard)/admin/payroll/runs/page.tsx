@@ -1,4 +1,5 @@
 import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { fetchPayrollRows } from "@/lib/payroll/list-data";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
@@ -57,11 +58,11 @@ export default async function PayrollRunsPage({ searchParams }: PageProps) {
   // against an aliased embedded resource via supabase-js — the filter is
   // silently dropped and ALL runs come back regardless of ?year=. So we
   // resolve the period ids first, then filter runs by those ids.
-  const { data: periodRows, error: periodIdsErr } = await admin
+  const { data: periodRows, error: periodIdsErr } = await fetchPayrollRows((from, to) => admin
     .from("payroll_periods")
     .select("id")
     .gte("period_start", yearStart)
-    .lt("period_start", yearEnd);
+    .lt("period_start", yearEnd).order("id", { ascending: true }).range(from, to));
   if (periodIdsErr) {
     console.error(
       "[payroll/runs] periods-for-year query failed:",
@@ -100,13 +101,14 @@ export default async function PayrollRunsPage({ searchParams }: PageProps) {
       .select(
         "id, status, created_at, period:payroll_periods!inner(id, period_start, period_end, pay_date)",
       )
-      .in("period_id", periodIds);
+      .in("period_id", periodIds)
+      .order("id", { ascending: true });
 
     if (status !== "all") {
       runsQuery = runsQuery.eq("status", status);
     }
 
-    const { data, error: runsErr } = await runsQuery;
+    const { data, error: runsErr } = await fetchPayrollRows((from, to) => runsQuery.range(from, to));
     if (runsErr) {
       console.error("[payroll/runs] runs query failed:", runsErr);
       dbErrors.push("Failed to load pay runs.");
@@ -133,10 +135,10 @@ export default async function PayrollRunsPage({ searchParams }: PageProps) {
     }
     const empResults = await Promise.all(
       chunks.map((ids) =>
-        admin
+        fetchPayrollRows((from, to) => admin
           .from("payroll_employee_runs")
           .select("run_id, gross_pay_php, net_pay_php, payout_status")
-          .in("run_id", ids),
+          .in("run_id", ids).order("id", { ascending: true }).range(from, to)),
       ),
     );
     for (const res of empResults) {
@@ -187,9 +189,7 @@ export default async function PayrollRunsPage({ searchParams }: PageProps) {
         count_total: agg.countTotal,
         count_paid: agg.countPaid,
       };
-    })
-    // Most recent period first.
-    .sort((a, b) => (a.period_start < b.period_start ? 1 : -1));
+    });
 
   // Step D: build the year filter list. Payroll history is bounded (started
   // 2026), so use a 5-year synthetic window centred on the current Manila

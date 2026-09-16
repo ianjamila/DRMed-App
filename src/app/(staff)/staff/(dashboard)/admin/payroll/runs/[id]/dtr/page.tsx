@@ -1,3 +1,4 @@
+import { fetchPayrollRows } from "@/lib/payroll/list-data";
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
@@ -63,7 +64,7 @@ export default async function DtrUploadPage({ params }: PageProps) {
       | { full_name: string | null }[]
       | null;
   };
-  const { data: rawImports, error: importsErr } = await admin
+  const { data: rawImports, error: importsErr } = await fetchPayrollRows((from, to) => admin
     .from("payroll_dtr_imports")
     .select(
       `id, filename, parsed_rows_count, uploaded_at, uploaded_by,
@@ -71,7 +72,7 @@ export default async function DtrUploadPage({ params }: PageProps) {
     )
     .eq("period_id", periodId)
     .order("uploaded_at", { ascending: false })
-    .returns<RawImportRow[]>();
+    .returns<RawImportRow[]>().order("id", { ascending: true }).range(from, to));
   if (importsErr) {
     console.error("[payroll/runs/[id]/dtr] imports fetch failed:", importsErr);
   }
@@ -94,12 +95,12 @@ export default async function DtrUploadPage({ params }: PageProps) {
 
   let flaggedNoEmployeeRows: DtrRowFlagged[] = [];
   if (currentImport) {
-    const { data: rows, error: rowsErr } = await admin
+    const { data: rows, error: rowsErr } = await fetchPayrollRows((from, to) => admin
       .from("payroll_dtr_rows")
       .select(
         "id, status, external_id_raw, work_date, time_in, time_out, total_hours",
       )
-      .eq("import_id", currentImport.id);
+      .eq("import_id", currentImport.id).order("id", { ascending: true }).range(from, to));
     if (rowsErr) {
       console.error(
         "[payroll/runs/[id]/dtr] rows fetch failed:",
@@ -136,13 +137,13 @@ export default async function DtrUploadPage({ params }: PageProps) {
       | { full_name: string | null }[]
       | null;
   };
-  const { data: empRows, error: empErr } = await admin
+  const { data: empRows, error: empErr } = await fetchPayrollRows((from, to) => admin
     .from("employees")
     .select(
       "id, employee_number, staff_profile:staff_profiles!inner(full_name)",
     )
     .eq("is_active", true)
-    .returns<RawEmployee[]>();
+    .returns<RawEmployee[]>().order("id", { ascending: true }).range(from, to));
   if (empErr) {
     console.error("[payroll/runs/[id]/dtr] employees fetch failed:", empErr);
   }
