@@ -59,6 +59,39 @@ Read these. Do not re-derive what they already answer:
 
 ---
 
+## Tasks 1–2: SUPERSEDED BY WHAT WAS BUILT — read this before the steps below
+
+Both tasks are **done and committed** (`c501618`), but the design changed while building
+them, because running the harness exposed three ways it could report green while proving
+nothing. The steps below are kept as the original reasoning; the shipped design is:
+
+| Script | Gate |
+|---|---|
+| `scripts/perf/rls-structural-prove.ts` | **Phase 1.** Unwraps the AFTER expression and compares byte-for-byte to BEFORE. Proves meaning is unchanged on **every** table, populated or not. 100% coverage, no fixture needed. |
+| `scripts/perf/rls-equivalence-prove.ts` | **Phase 2.** Row visibility per table per principal, before/after in ONE `repeatable read` transaction. Only this can speak for expressions that genuinely change. |
+| `scripts/perf/rls-equivalence-probe.ts` / `-check.ts` | Standalone snapshot + diff, for ad-hoc use. |
+
+**Why it changed — three failures, each of which showed green:**
+
+1. **The fixture has one active staff row (admin).** A probe that reads the fixture tests
+   only the role that already sees everything. Both provers now provision all five roles by
+   flipping the seeded row's `role` inside a rolled-back transaction, and fail loudly if
+   they build fewer principals than expected.
+2. **The local stack has concurrent writers.** Another session inserted a `staff_profiles`
+   row between two snapshots taken minutes apart. Before/after now run inside one
+   transaction at `repeatable read`, so the only difference is the policies.
+3. **598 of 686 observations were `n=0`.** 67 of 98 RLS'd tables are empty locally, and
+   equivalence over empty sets is vacuously true — the harness would have certified a
+   migration that destroyed `test_requests` visibility. Deeper seeding (`seed:services`,
+   `seed:physicians`, `seed:hmo`, `seed:templates`, `seed:sample-results`) lifts coverage
+   23 → 31 tables but cannot close it. Hence the structural proof.
+
+Both are control-tested: narrowing `visits: staff full` to admin makes the row prover name
+exactly the four roles that lose visibility and the structural prover fail the policy by
+name. **Re-run both control tests if you touch either script.**
+
+---
+
 ## Task 1: Equivalence probe script
 
 This is the safety net for everything else. It is built first and proved working (Task 2) before a single policy changes.
@@ -1142,26 +1175,52 @@ git commit -m "docs(skills): RLS templates wrap helper calls; refresh the ledger
 
 Read `supabase/tests/0149_ap_cash_bill_payment_drawer_smoke.sql` first and match its shape.
 
+**CORRECTED 2026-09-16.** The obvious regex is wrong, and wrong in the direction that
+looks like success. `'(^|[^.[:alnum:]_])(has_role|...)[[:space:]]*\('` matches
+`(select has_role(` too — the character before `has_role` is a space, which satisfies
+`[^.[:alnum:]_]`. So the naive smoke test fails on a *correctly* migrated database, every
+time. Verified empirically against the local stack; Codex flagged it while implementing
+Task 6.
+
+Strip the wrapped form first, then scan for whatever is left:
+
 ```sql
 -- 0150 smoke: every policy evaluates its STABLE helpers once per query.
+--
+-- Two-step on purpose. A single regex cannot tell `has_role(` from
+-- `(select has_role(` without a lookbehind, and matching the wrapped form would
+-- make this fail on exactly the databases it is meant to pass. So: blank out every
+-- correctly-wrapped call, then anything still matching is a genuine per-row call.
 do $$
 declare
   bad_count int;
+  bad_list  text;
 begin
-  select count(*) into bad_count
-  from pg_policies
-  where schemaname = 'public'
-    and (coalesce(qual,'') || ' ' || coalesce(with_check,''))
-        ~ '(^|[^.[:alnum:]_])(has_role|is_staff|staff_role|current_patient_id)[[:space:]]*\(';
+  with scanned as (
+    select tablename, policyname,
+           regexp_replace(
+             coalesce(qual,'') || ' ' || coalesce(with_check,''),
+             '\(\s*select\s+(has_role|is_staff|staff_role|current_patient_id)',
+             '(WRAPPED', 'gi'
+           ) as stripped
+    from pg_policies
+    where schemaname = 'public'
+  )
+  select count(*), string_agg(tablename || '.' || policyname, ', ')
+    into bad_count, bad_list
+  from scanned
+  where stripped ~ '(^|[^.[:alnum:]_])(has_role|is_staff|staff_role|current_patient_id)[[:space:]]*\(';
 
   if bad_count > 0 then
-    raise exception 'P0150-smoke: % policies still call a STABLE helper per row', bad_count;
+    raise exception
+      '0150 smoke: % policies still call a STABLE helper per row: %', bad_count, bad_list;
   end if;
 end $$;
 ```
 
-The regex must not match `(select has_role(` — verify by running it against the migrated
-local DB and confirming it returns 0.
+Confirm the correction with the five cases that matter — bare (must match), each of the
+three wrapped helpers (must not), and a mixed expression containing both (must match).
+A regex that passes the first four and fails the fifth is the subtle failure.
 
 **Note:** this `raise` is a post-condition assert inside a `do $$ … $$` block, which
 CLAUDE.md exempts from the P-code requirement — it aborts a deploy, never a user. Do not

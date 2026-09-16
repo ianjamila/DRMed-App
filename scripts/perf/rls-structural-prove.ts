@@ -249,7 +249,12 @@ async function main() {
   );
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Only run when invoked directly. Without this guard, importing `unwrapInitPlans`
+// from a test opens a database connection as a side effect — which is why the
+// round-trip test in rls-wrap-roundtrip.test.ts could not be written at first.
+if (process.argv[1]?.endsWith("rls-structural-prove.ts")) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
