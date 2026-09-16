@@ -623,3 +623,13 @@ Authenticated payroll browser verification is recorded in [2026-09-16-payroll-br
 All 30 original questions now have independent production count evidence and an explicit disposition: 2 Real, 12 Harmless at measured size, 16 Unexercised. The 16 dormant reads plus Q429 are now hardened; none is relabeled Real merely because it was changed. The final whole-audit inventory is 26 Real, 227 Harmless, 17 Unexercised, 0 Uncertain. Production verification here means predicate cardinalities, not proof of future capacity, application-role RLS equivalence, or authenticated browser behavior. There were no production mutations or migration claims.
 
 Merge sequencing: the cap fixes should precede the separate RLS performance rewrite. Main already includes 0150 from #187; this branch claims no migration number.
+
+## Merge validation — 2026-09-16
+
+Merged main `21e9efb` (#195) into this branch before the authorized PR merge.
+Resolved the archive sibling-query conflict by retaining #195's search-aware
+select and search predicates inside the complete, ID-chunked range walk.
+Both archive-search predicate tests and >1,000-row enrichment tests pass.
+Final gates: **160 test files / 1,983 tests passed**, clean TypeScript,
+zero lint errors (the existing `booking.ts:101` warning), and clean whitespace.
+The separate RLS rewrite is now #192 / migration 0151; cap #190 must merge first.

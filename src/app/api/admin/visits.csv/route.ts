@@ -40,6 +40,7 @@ export async function GET(req: NextRequest) {
   const staff = await requireAdminStaff();
 
   const sp = req.nextUrl.searchParams;
+  const query = (sp.get("q") ?? "").trim();
   const start = isISODate(sp.get("start")) ? sp.get("start")! : "";
   const end = isISODate(sp.get("end")) ? sp.get("end")! : "";
   const classes = parseVisitClasses(sp.get("kind") ?? undefined);
@@ -57,7 +58,7 @@ export async function GET(req: NextRequest) {
   const supabase = await createClient();
   const { rows, count, truncated } = await fetchArchiveAll(
     supabase,
-    { start, end, classes, view },
+    { start, end, classes, view, q: query },
     sort,
     MAX_ROWS,
   );
