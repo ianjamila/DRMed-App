@@ -1,3 +1,4 @@
+import { fetchPayrollRows } from "@/lib/payroll/list-data";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
@@ -73,13 +74,13 @@ export default async function OtSlipsPage({ searchParams }: PageProps) {
       | { full_name: string | null }[]
       | null;
   };
-  const { data: empRows, error: empErr } = await admin
+  const { data: empRows, error: empErr } = await fetchPayrollRows((from, to) => admin
     .from("employees")
     .select(
       "id, employee_number, staff_profile:staff_profiles!inner(full_name)",
     )
     .eq("is_active", true)
-    .returns<RawEmployee[]>();
+    .returns<RawEmployee[]>().order("id", { ascending: true }).range(from, to));
   if (empErr) {
     console.error("[payroll/ot-slips] employees query failed:", empErr);
   }
@@ -146,7 +147,8 @@ export default async function OtSlipsPage({ searchParams }: PageProps) {
     )
     .gte("work_date", dateFrom)
     .lte("work_date", dateTo)
-    .order("work_date", { ascending: false });
+    .order("work_date", { ascending: false })
+    .order("id", { ascending: true });
 
   if (status !== "all") {
     slipsQuery = slipsQuery.eq("status", status);
@@ -155,9 +157,7 @@ export default async function OtSlipsPage({ searchParams }: PageProps) {
     slipsQuery = slipsQuery.eq("employee_id", employeeParam);
   }
 
-  const { data: rawSlips, error: slipsErr } = await slipsQuery.returns<
-    RawSlip[]
-  >();
+  const { data: rawSlips, error: slipsErr } = await fetchPayrollRows((from, to) => slipsQuery.range(from, to).returns<RawSlip[]>());
   if (slipsErr) {
     console.error("[payroll/ot-slips] slips query failed:", slipsErr);
   }

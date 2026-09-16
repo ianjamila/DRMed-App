@@ -1,3 +1,4 @@
+import { fetchPayrollRows } from "@/lib/payroll/list-data";
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
@@ -35,7 +36,7 @@ export default async function RunReviewPage({ params }: PageProps) {
       )
       .eq("id", id)
       .maybeSingle(),
-    admin
+    fetchPayrollRows((from, to) => admin
       .from("payroll_employee_runs")
       .select(
         `id, run_id, employee_id, scheduled_days, days_present, days_vl_used,
@@ -56,7 +57,7 @@ export default async function RunReviewPage({ params }: PageProps) {
          deductions:payroll_deduction_lines(id, kind, label, amount_php, loan_id, created_by, created_at)`,
       )
       .eq("run_id", id)
-      .order("employee_id", { ascending: true }),
+      .order("employee_id", { ascending: true }).order("id", { ascending: true }).range(from, to)),
   ]);
 
   if (runRes.error) {

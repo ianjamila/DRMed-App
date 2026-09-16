@@ -1,3 +1,4 @@
+import { fetchPayrollRows } from "@/lib/payroll/list-data";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import {
@@ -18,17 +19,17 @@ export default async function PayrollEmployeesPage() {
   const admin = createAdminClient();
 
   const [employeesRes, staffRes, employeeStaffIdsRes] = await Promise.all([
-    admin
+    fetchPayrollRows((from, to) => admin
       .from("employees")
       .select(
         "id, employee_number, hire_date, regularization_date, termination_date, basic_daily_rate_php, schedule_kind, payment_method, is_active, staff_profile_id, staff_profiles:staff_profile_id(full_name, role)",
-      ),
-    admin
+      ).order("id", { ascending: true }).range(from, to)),
+    fetchPayrollRows((from, to) => admin
       .from("staff_profiles")
       .select("id, full_name, role")
       .eq("is_active", true)
-      .order("full_name", { ascending: true }),
-    admin.from("employees").select("staff_profile_id"),
+      .order("full_name", { ascending: true }).order("id", { ascending: true }).range(from, to)),
+    fetchPayrollRows((from, to) => admin.from("employees").select("staff_profile_id").order("id", { ascending: true }).range(from, to)),
   ]);
 
   // Narrow into the typed row shape we render.
@@ -52,8 +53,7 @@ export default async function PayrollEmployeesPage() {
         full_name: profile?.full_name ?? "Unknown",
         role: profile?.role ?? null,
       };
-    })
-    .sort((a, b) => a.full_name.localeCompare(b.full_name));
+    });
 
   const takenStaffIds = new Set(
     (employeeStaffIdsRes.data ?? [])

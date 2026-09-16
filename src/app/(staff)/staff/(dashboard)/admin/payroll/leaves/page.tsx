@@ -1,3 +1,4 @@
+import { fetchPayrollRows } from "@/lib/payroll/list-data";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
@@ -36,12 +37,12 @@ export default async function PayrollLeavesPage({ searchParams }: PageProps) {
   //    is_active = true here because this dashboard is for current rosters
   //    only — inactive employees still surface their leave history via
   //    the per-employee detail page.
-  const { data: employeeRows, error: empError } = await admin
+  const { data: employeeRows, error: empError } = await fetchPayrollRows((from, to) => admin
     .from("employees")
     .select(
       "id, employee_number, is_active, staff_profiles:staff_profile_id(full_name)",
     )
-    .eq("is_active", true);
+    .eq("is_active", true).order("id", { ascending: true }).range(from, to));
   if (empError) {
     console.error("[payroll/leaves] employees query failed:", empError);
     dbError = "Failed to load employees.";
@@ -62,8 +63,7 @@ export default async function PayrollLeavesPage({ searchParams }: PageProps) {
         employee_number: row.employee_number,
         full_name: profile?.full_name ?? "Unknown",
       };
-    })
-    .sort((a, b) => a.full_name.localeCompare(b.full_name));
+    });
 
   // 2) Per-employee VL + SL balances at today's Manila date.
   type BalancePair = { vl: number; sl: number };
@@ -115,12 +115,12 @@ export default async function PayrollLeavesPage({ searchParams }: PageProps) {
   const yearEnd = `${year + 1}-01-01`;
   const usedByEmployee = new Map<string, number>();
   if (!dbError) {
-    const { data: usageRows, error: usageErr } = await admin
+    const { data: usageRows, error: usageErr } = await fetchPayrollRows((from, to) => admin
       .from("employee_leave_records")
       .select("employee_id, days_delta")
       .eq("record_kind", "usage")
       .gte("effective_date", yearStart)
-      .lt("effective_date", yearEnd);
+      .lt("effective_date", yearEnd).order("id", { ascending: true }).range(from, to));
     if (usageErr) {
       console.error("[payroll/leaves] usage query failed:", usageErr);
       dbError = "Failed to load leave usage.";
@@ -142,12 +142,12 @@ export default async function PayrollLeavesPage({ searchParams }: PageProps) {
   //    apply_leave_expiry() RPC has already flipped them into 'expiry' rows.
   const nextExpiryByEmployee = new Map<string, string>();
   if (!dbError) {
-    const { data: expiryRows, error: expiryErr } = await admin
+    const { data: expiryRows, error: expiryErr } = await fetchPayrollRows((from, to) => admin
       .from("employee_leave_records")
       .select("employee_id, expiry_date")
       .gt("days_delta", 0)
       .not("expiry_date", "is", null)
-      .gte("expiry_date", todayManila);
+      .gte("expiry_date", todayManila).order("id", { ascending: true }).range(from, to));
     if (expiryErr) {
       console.error("[payroll/leaves] expiry query failed:", expiryErr);
       dbError = "Failed to load leave expiries.";

@@ -1,5 +1,8 @@
 "use client";
 
+import { useListTable } from "@/components/staff/use-list-table";
+import { numberColumn, textColumn } from "@/lib/ui/compare-list-rows";
+
 import {
   useCallback,
   useEffect,
@@ -129,6 +132,19 @@ export function DtrUploadClient({
   flaggedRows,
   employees,
 }: Props) {
+  const table = useListTable(
+    imports,
+    {
+      uploaded_at: textColumn((r) => r.uploaded_at),
+      uploader_name: textColumn((r) => r.uploader_name),
+      filename: textColumn((r) => r.filename),
+      parsed_rows_count: numberColumn((r) => r.parsed_rows_count),
+      is_current: textColumn((r) => r.is_current ? "Current" : "Superseded"),
+    },
+    { key: "uploaded_at", dir: "desc" },
+    "imports_",
+  );
+
   const router = useRouter();
   const [csvText, setCsvText] = useState<string>("");
   const [filename, setFilename] = useState<string>("");
@@ -283,15 +299,15 @@ export function DtrUploadClient({
               <table className="w-full min-w-[720px] text-sm">
                 <thead className="bg-[color:var(--color-bg-mid)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                   <tr>
-                    <th className="px-4 py-3">Uploaded</th>
-                    <th className="px-4 py-3">By</th>
-                    <th className="px-4 py-3">Filename</th>
-                    <th className="px-4 py-3 text-right">Rows parsed</th>
-                    <th className="px-4 py-3">Status</th>
+                    {table.th("uploaded_at", "Uploaded")}
+                    {table.th("uploader_name", "By")}
+                    {table.th("filename", "Filename")}
+                    {table.th("parsed_rows_count", "Rows parsed", "right")}
+                    {table.th("is_current", "Status")}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
-                  {imports.map((imp) => (
+                  {table.rows.map((imp) => (
                     <tr key={imp.id}>
                       <td className="px-4 py-3 align-middle">
                         <div className="font-semibold text-[color:var(--color-brand-navy)]">
@@ -320,7 +336,7 @@ export function DtrUploadClient({
             </Panel>
             {/* Mobile cards */}
             <div className="space-y-3 md:hidden">
-              {imports.map((imp) => (
+              {table.rows.map((imp) => (
                 <Panel
                   key={imp.id}
                   className="p-4 shadow-sm"
@@ -356,6 +372,8 @@ export function DtrUploadClient({
             </div>
           </>
         )}
+
+        {table.pagination}
 
         {/* Current-import row-status counts */}
         {currentImportId ? (
@@ -574,25 +592,38 @@ interface ReconcileTableProps {
 }
 
 function ReconcileTable({ rows, employees }: ReconcileTableProps) {
+  const table = useListTable(
+    rows,
+    {
+      external_id_raw: textColumn((r) => r.external_id_raw),
+      work_date: textColumn((r) => r.work_date),
+      time_in: textColumn((r) => r.time_in),
+      total_hours: numberColumn((r) => r.total_hours),
+    },
+    { key: "work_date", dir: "asc" },
+    "dtr_",
+  );
+
   return (
     <Panel className="overflow-x-auto">
       <table className="w-full min-w-[820px] text-sm">
         <thead className="bg-[color:var(--color-bg-mid)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
           <tr>
-            <th className="px-4 py-3">External ID</th>
-            <th className="px-4 py-3">Date</th>
-            <th className="px-4 py-3">Time in/out</th>
-            <th className="px-4 py-3 text-right">Hours</th>
+            {table.th("external_id_raw", "External ID")}
+            {table.th("work_date", "Date")}
+            {table.th("time_in", "Time in/out")}
+            {table.th("total_hours", "Hours", "right")}
             <th className="px-4 py-3">Match employee</th>
             <th className="px-4 py-3"></th>
           </tr>
         </thead>
         <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
-          {rows.map((row) => (
+          {table.rows.map((row) => (
             <ReconcileRow key={row.id} row={row} employees={employees} />
           ))}
         </tbody>
       </table>
+      {table.pagination}
     </Panel>
   );
 }

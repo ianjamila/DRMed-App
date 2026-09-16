@@ -1,5 +1,8 @@
 "use client";
 
+import { useListTable } from "@/components/staff/use-list-table";
+import { numberColumn, textColumn } from "@/lib/ui/compare-list-rows";
+
 import {
   useCallback,
   useEffect,
@@ -81,6 +84,18 @@ export function LeavesClient({
   todayManila,
   error,
 }: Props) {
+  const table = useListTable(
+    rows.map((r) => ({ ...r, id: r.employee_id })),
+    {
+      full_name: textColumn((r) => r.full_name),
+      vl_balance: numberColumn((r) => r.vl_balance),
+      sl_balance: numberColumn((r) => r.sl_balance),
+      days_used_this_year: numberColumn((r) => r.days_used_this_year),
+      next_expiry_date: textColumn((r) => r.next_expiry_date),
+    },
+    { key: "full_name", dir: "asc" },
+  );
+
   const router = useRouter();
   const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
@@ -91,6 +106,7 @@ export function LeavesClient({
   const updateYear = useCallback(
     (value: string) => {
       const next = new URLSearchParams(searchParams?.toString() ?? "");
+      next.delete("page");
       next.set("year", value);
       const qs = next.toString();
       setActionError(null);
@@ -222,11 +238,11 @@ export function LeavesClient({
         <table className="w-full min-w-[920px] text-sm">
           <thead className="bg-[color:var(--color-bg-mid)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
-              <th className="px-4 py-3">Employee</th>
-              <th className="px-4 py-3 text-right">VL</th>
-              <th className="px-4 py-3 text-right">SL</th>
-              <th className="px-4 py-3 text-right">Used (year)</th>
-              <th className="px-4 py-3">Next expiry</th>
+              {table.th("full_name", "Employee")}
+              {table.th("vl_balance", "VL", "right")}
+              {table.th("sl_balance", "SL", "right")}
+              {table.th("days_used_this_year", "Used (year)", "right")}
+              {table.th("next_expiry_date", "Next expiry")}
               <th className="px-4 py-3 text-right">Actions</th>
             </tr>
           </thead>
@@ -241,7 +257,7 @@ export function LeavesClient({
                 </td>
               </tr>
             ) : (
-              rows.map((r) => (
+              table.rows.map((r) => (
                 <tr key={r.employee_id}>
                   <td className="px-4 py-3 align-middle">
                     <div className="font-semibold text-[color:var(--color-brand-navy)]">
@@ -286,7 +302,7 @@ export function LeavesClient({
             No active employees yet.
           </p>
         ) : (
-          rows.map((r) => (
+          table.rows.map((r) => (
             <Panel
               key={r.employee_id}
               className="p-4 shadow-sm"
@@ -359,6 +375,7 @@ export function LeavesClient({
           }}
         />
       ) : null}
+      {table.pagination}
     </div>
   );
 }

@@ -1,5 +1,8 @@
 "use client";
 
+import { useListTable } from "@/components/staff/use-list-table";
+import { numberColumn, textColumn } from "@/lib/ui/compare-list-rows";
+
 import {
   useCallback,
   useEffect,
@@ -90,6 +93,19 @@ export function OtSlipsClient({
   defaultWorkDate,
   error,
 }: Props) {
+  const table = useListTable(
+    slips,
+    {
+      employee_name: textColumn((r) => r.employee_name),
+      work_date: textColumn((r) => r.work_date),
+      hours_requested: numberColumn((r) => r.hours_requested),
+      reason: textColumn((r) => r.reason),
+      status: textColumn((r) => r.status),
+      decided_at: textColumn((r) => r.decided_at),
+    },
+    { key: "work_date", dir: "desc" },
+  );
+
   const router = useRouter();
   const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
@@ -116,6 +132,7 @@ export function OtSlipsClient({
   const updateParam = useCallback(
     (key: string, value: string) => {
       const next = new URLSearchParams(searchParams?.toString() ?? "");
+      next.delete("page");
       // Sentinels that mean "default": status=all and employee=all both drop.
       if ((key === "status" || key === "employee") && value === "all") {
         next.delete(key);
@@ -276,12 +293,12 @@ export function OtSlipsClient({
         <table className="w-full min-w-[1080px] text-sm">
           <thead className="bg-[color:var(--color-bg-mid)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
-              <th className="px-4 py-3">Employee</th>
-              <th className="px-4 py-3">Work date</th>
-              <th className="px-4 py-3 text-right">Hours</th>
-              <th className="px-4 py-3">Reason</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3">Decided</th>
+              {table.th("employee_name", "Employee")}
+              {table.th("work_date", "Work date")}
+              {table.th("hours_requested", "Hours", "right")}
+              {table.th("reason", "Reason")}
+              {table.th("status", "Status")}
+              {table.th("decided_at", "Decided")}
               <th className="px-4 py-3 text-right">Actions</th>
             </tr>
           </thead>
@@ -296,7 +313,7 @@ export function OtSlipsClient({
                 </td>
               </tr>
             ) : (
-              slips.map((s) => (
+              table.rows.map((s) => (
                 <tr key={s.id}>
                   <td className="px-4 py-3 align-middle">
                     <div className="font-semibold text-[color:var(--color-brand-navy)]">
@@ -367,7 +384,7 @@ export function OtSlipsClient({
             No OT slips match your filters.
           </p>
         ) : (
-          slips.map((s) => (
+          table.rows.map((s) => (
             <Panel
               key={s.id}
               className="p-4 shadow-sm"
@@ -445,6 +462,7 @@ export function OtSlipsClient({
           router.refresh();
         }}
       />
+      {table.pagination}
     </div>
   );
 }

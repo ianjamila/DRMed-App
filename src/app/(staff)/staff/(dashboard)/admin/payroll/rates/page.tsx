@@ -1,3 +1,4 @@
+import { fetchPayrollRows } from "@/lib/payroll/list-data";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
@@ -47,13 +48,13 @@ export default async function PayrollRatesPage({ searchParams }: PageProps) {
   let wtRows: WtBracketRow[] = [];
 
   if (kind === "wt") {
-    const { data, error } = await admin
+    const { data, error } = await fetchPayrollRows((from, to) => admin
       .from("payroll_wt_brackets")
       .select(
         "id, effective_from, effective_to, taxable_min_php, taxable_max_php, base_tax_php, marginal_rate, notes",
       )
       .order("effective_from", { ascending: false })
-      .order("taxable_min_php", { ascending: true });
+      .order("taxable_min_php", { ascending: true }).order("id", { ascending: true }).range(from, to));
     if (error) {
       console.error("[payroll/rates] wt query failed:", error);
       dbError = "Failed to load WT brackets.";
@@ -70,14 +71,14 @@ export default async function PayrollRatesPage({ searchParams }: PageProps) {
       notes: r.notes,
     }));
   } else {
-    const { data, error } = await admin
+    const { data, error } = await fetchPayrollRows((from, to) => admin
       .from("payroll_contribution_brackets")
       .select(
         "id, kind, effective_from, effective_to, monthly_salary_credit_min_php, monthly_salary_credit_max_php, employee_share_php, employer_share_php, notes",
       )
       .eq("kind", kind)
       .order("effective_from", { ascending: false })
-      .order("monthly_salary_credit_min_php", { ascending: true });
+      .order("monthly_salary_credit_min_php", { ascending: true }).order("id", { ascending: true }).range(from, to));
     if (error) {
       console.error("[payroll/rates] contribution query failed:", error);
       dbError = "Failed to load contribution brackets.";

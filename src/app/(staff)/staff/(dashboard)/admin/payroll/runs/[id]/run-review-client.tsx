@@ -1,5 +1,8 @@
 "use client";
 
+import { useListTable } from "@/components/staff/use-list-table";
+import { numberColumn, textColumn } from "@/lib/ui/compare-list-rows";
+
 import Link from "next/link";
 
 import {
@@ -215,6 +218,20 @@ function useDrawerStylePreference(): [DrawerStyle, (next: DrawerStyle) => void] 
 type DialogKind = "reimport" | "finalise" | "void-run" | "reopen";
 
 export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
+  const table = useListTable(
+    employeeRuns,
+    {
+      employee_id: textColumn((r) => r.employee_id),
+      full_name: textColumn((r) => r.full_name),
+      days_present: numberColumn((r) => r.days_present),
+      gross_pay_php: numberColumn((r) => r.gross_pay_php),
+      net_pay_php: numberColumn((r) => r.net_pay_php),
+      payment_method: textColumn((r) => r.payment_method),
+      payout_status: textColumn((r) => r.payout_status),
+    },
+    { key: "employee_id", dir: "asc" },
+  );
+
   const router = useRouter();
 
   const [selectedEmployeeRunId, setSelectedEmployeeRunId] = useState<
@@ -546,13 +563,13 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
             <table className="w-full min-w-[760px] text-sm">
               <thead className="bg-[color:var(--color-bg-mid)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                 <tr>
-                  <th className="px-4 py-3">Employee</th>
-                  <th className="px-4 py-3 text-right">Days</th>
-                  <th className="px-4 py-3 text-right">Gross</th>
-                  <th className="px-4 py-3 text-right">Net</th>
-                  <th className="px-4 py-3">Pay method</th>
+                  {table.th("full_name", "Employee")}
+                  {table.th("days_present", "Days", "right")}
+                  {table.th("gross_pay_php", "Gross", "right")}
+                  {table.th("net_pay_php", "Net", "right")}
+                  {table.th("payment_method", "Pay method")}
                   {showPayoutColumn ? (
-                    <th className="px-4 py-3">Payout</th>
+                    table.th("payout_status", "Payout")
                   ) : null}
                   <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
@@ -568,7 +585,7 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
                     </td>
                   </tr>
                 ) : null}
-                {employeeRuns.map((er) => {
+                {table.rows.map((er) => {
                   const isSelected = selectedEmployeeRunId === er.id;
                   return (
                     <RunRowDesktop
@@ -608,7 +625,7 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
               No employees on this run.
             </p>
           ) : null}
-          {employeeRuns.map((er) => (
+          {table.rows.map((er) => (
             <Panel
               key={er.id}
               className="p-4 shadow-sm"
@@ -670,6 +687,8 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
           ))}
         </div>
       </section>
+
+      {table.pagination}
 
       {/* Slide-out drawer (rendered outside the table when in slide-out mode) */}
       {selected && effectiveDrawerStyle === "slide-out" ? (

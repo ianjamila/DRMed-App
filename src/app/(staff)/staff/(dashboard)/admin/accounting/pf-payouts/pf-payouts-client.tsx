@@ -1,5 +1,6 @@
 "use client";
 
+import { HISTORY_DEFAULT_SORT, type HistorySort, type PfHistoryState } from "@/lib/accounting/pf-history";
 import { useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -19,10 +20,6 @@ import {
   buildListHref,
   nextSort,
   pageCount,
-  parsePage,
-  parsePageSize,
-  parseSort,
-  type SortSpec,
 } from "@/lib/ui/table-params";
 import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
@@ -75,17 +72,6 @@ type Tab = "open" | "pending_hmo" | "history";
 const BASE_PATH = "/staff/admin/accounting/pf-payouts";
 const TAB_KEYS = ["open", "pending_hmo", "history"] as const;
 
-/**
- * Columns the "Already paid" table can be ordered by.
- *
- * Same allow-list discipline as the server-rendered lists: an unrecognised
- * `?sort=` must fall back to the default rather than be used to index into a
- * row object with an arbitrary string.
- */
-const HISTORY_SORTABLE = ["batch_number", "posted_date", "physician", "method", "total_php"] as const;
-type HistorySort = (typeof HISTORY_SORTABLE)[number];
-const HISTORY_DEFAULT_SORT: SortSpec<HistorySort> = { key: "posted_date", dir: "desc" };
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -119,11 +105,13 @@ export function PfPayoutsClient({
   openEntries,
   pendingHmo,
   history,
+  historyState,
   nowIso,
 }: {
   openEntries: OpenEntry[];
   pendingHmo: PendingHmoEntry[];
   history: HistoryDisbursement[];
+  historyState: PfHistoryState;
   nowIso: string;
 }) {
   // The tab lives in the URL rather than in component state so that the
@@ -139,7 +127,7 @@ export function PfPayoutsClient({
   const tabs: { key: Tab; label: string; count: number }[] = [
     { key: "open", label: "Ready to pay", count: openEntries.length },
     { key: "pending_hmo", label: "Waiting on insurance", count: pendingHmo.length },
-    { key: "history", label: "Already paid", count: history.length },
+    { key: "history", label: "Already paid", count: historyState.total },
   ];
 
   return (
@@ -149,7 +137,7 @@ export function PfPayoutsClient({
         {tabs.map((t) => (
           <Link
             key={t.key}
-            href={buildListHref(BASE_PATH, {}, { tab: t.key === "open" ? null : t.key })}
+            href={buildListHref(BASE_PATH, { start: params.get("start"), end: params.get("end") }, { tab: t.key === "open" ? null : t.key })}
             aria-current={tab === t.key ? "page" : undefined}
             className={[
               "px-4 py-2 text-sm font-medium transition-colors",
@@ -168,7 +156,7 @@ export function PfPayoutsClient({
 
       {tab === "open" && <OpenTab entries={openEntries} />}
       {tab === "pending_hmo" && <PendingHmoTab entries={pendingHmo} nowIso={nowIso} />}
-      {tab === "history" && <HistoryTab disbursements={history} />}
+      {tab === "history" && <HistoryTab disbursements={history} historyState={historyState} />}
     </div>
   );
 }
@@ -649,58 +637,18 @@ function physicianNameOf(
   return Array.isArray(p) ? (p[0]?.full_name ?? "(unknown)") : p.full_name;
 }
 
-function HistoryTab({ disbursements }: { disbursements: HistoryDisbursement[] }) {
+function HistoryTab({ disbursements, historyState }: { disbursements: HistoryDisbursement[]; historyState: PfHistoryState }) {
   const params = useSearchParams();
-  const sort = parseSort(
-    params.get("sort") ?? undefined,
-    params.get("dir") ?? undefined,
-    HISTORY_SORTABLE,
-    HISTORY_DEFAULT_SORT,
-  );
-  const size = parsePageSize(params.get("size") ?? undefined);
-  const page = parsePage(params.get("page") ?? undefined);
-
-  // Sorted on the value, never on the rendered string: `total_php` is money
-  // and `posted_date` is an ISO date, both of which sort wrongly as display
-  // text ("₱1,000" < "₱9" alphabetically).
-  const sorted = [...disbursements].sort((a, b) => {
-    const dir = sort.dir === "asc" ? 1 : -1;
-    let cmp = 0;
-    switch (sort.key) {
-      case "batch_number":
-        cmp = a.batch_number - b.batch_number;
-        break;
-      case "posted_date":
-        cmp = a.posted_date.localeCompare(b.posted_date);
-        break;
-      case "physician":
-        cmp = physicianNameOf(a.physicians).localeCompare(physicianNameOf(b.physicians));
-        break;
-      case "method":
-        cmp = a.method.localeCompare(b.method);
-        break;
-      case "total_php":
-        cmp = Number(a.total_php) - Number(b.total_php);
-        break;
-    }
-    // Tie-break on id so the ordering is TOTAL. Rows arrive in whatever order
-    // the query returned, and several payouts share a posted_date, so without
-    // this the page slice can shift between renders — the client-side twin of
-    // the `.range()` drop/repeat bug.
-    return cmp !== 0 ? cmp * dir : a.id.localeCompare(b.id);
-  });
-
-  const total = sorted.length;
+  const { sort, size, page: safePage, total, start, end } = historyState;
   const totalPages = pageCount(total, size);
-  // Clamp rather than trust the URL: a hand-edited ?page=99 should show the
-  // last page, not an empty table.
-  const safePage = Math.min(page, totalPages);
-  const rows = sorted.slice((safePage - 1) * size, safePage * size);
+  const rows = disbursements;
 
   const isDefaultSort =
     sort.key === HISTORY_DEFAULT_SORT.key && sort.dir === HISTORY_DEFAULT_SORT.dir;
   const baseParams: Record<string, string | null> = {
     tab: "history",
+    start: params.get("start") || params.get("end") ? start : null,
+    end,
     sort: isDefaultSort ? null : sort.key,
     dir: isDefaultSort ? null : sort.dir,
     size: size === DEFAULT_PAGE_SIZE ? null : String(size),
@@ -727,16 +675,27 @@ function HistoryTab({ disbursements }: { disbursements: HistoryDisbursement[] })
     />
   );
 
-  if (disbursements.length === 0) {
-    return (
-      <div className="rounded-md border border-[color:var(--color-brand-border)] bg-[color:var(--color-brand-bg)] p-8 text-center text-sm text-[color:var(--color-brand-text-soft)]">
-        No payments in the last 90 days.
-      </div>
-    );
-  }
-
   return (
     <>
+      <form action="" className="my-6 flex flex-wrap items-end gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4">
+        <input type="hidden" name="tab" value="history" />
+        <label className="flex flex-col text-sm">Paid from
+          <input key={start} type="date" name="start" defaultValue={start} className="mt-1 rounded-md border px-2 py-1.5" />
+        </label>
+        <label className="flex flex-col text-sm">…to
+          <input key={end ?? ""} type="date" name="end" defaultValue={end ?? ""} className="mt-1 rounded-md border px-2 py-1.5" />
+        </label>
+        {!isDefaultSort && (
+          <>
+            <input type="hidden" name="sort" value={sort.key} />
+            <input type="hidden" name="dir" value={sort.dir} />
+          </>
+        )}
+        {size !== DEFAULT_PAGE_SIZE && <input type="hidden" name="size" value={size} />}
+        <button type="submit" className="min-h-11 rounded-md bg-[color:var(--color-brand-cyan)] px-4 py-1.5 text-sm font-medium text-white">Apply</button>
+        <Link href={buildListHref(BASE_PATH, baseParams, { start: null, end: null, page: null })} className="text-sm hover:underline">Last 90 days</Link>
+      </form>
+      {total === 0 && <p className="rounded-md border p-8 text-center text-sm text-[color:var(--color-brand-text-soft)]">No payments in this date range.</p>}
     <div className="overflow-x-auto rounded-md border border-[color:var(--color-brand-border)]">
       <table className="w-full text-sm md:min-w-[640px]">
         <thead className="bg-[color:var(--color-brand-bg)] text-[color:var(--color-brand-text-soft)]">
