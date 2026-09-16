@@ -1,3 +1,6 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { cache } from "react";
+import { detailMetadata } from "@/lib/staff/detail-metadata";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
@@ -23,25 +26,7 @@ import { loadTemplateParams } from "@/lib/results/loaders";
 import { labQueueGate } from "@/lib/visits/lab-gate";
 import { manilaDateTime } from "@/lib/dates/manila";
 
-export const metadata = {
-  title: "Test",
-};
-
-interface Props {
-  params: Promise<{ id: string }>;
-}
-
-const TEST_STATUS_STYLE: Record<string, string> = {
-  requested: "bg-slate-200 text-slate-800",
-  in_progress: "bg-sky-100 text-sky-900",
-  result_uploaded: "bg-amber-100 text-amber-900",
-  ready_for_release: "bg-emerald-100 text-emerald-900",
-  released: "bg-[color:var(--color-brand-navy)] text-white",
-  cancelled: "bg-red-100 text-red-900",
-};
-
-export default async function QueueTestDetailPage({ params }: Props) {
-  const { id } = await params;
+const loadTestDetail = cache(async (id: string) => {
   const session = await requireActiveStaff();
   const supabase = await createClient();
   const {
@@ -130,6 +115,35 @@ export default async function QueueTestDetailPage({ params }: Props) {
   } else if (!isSectionAllowed(allowedSections, svc.section)) {
     notFound();
   }
+
+  return { session, supabase, user, test, svc, visit, patient, visiblePackageComponents };
+});
+
+export async function generateMetadata({ params }: Props) {
+  await requireActiveStaff();
+  const { id } = await params;
+  return detailMetadata(ROUTE_NAME["/staff/queue/[id]"], async () => {
+    const { svc, visit } = await loadTestDetail(id);
+    return `${svc.name} · #${visit.visit_number}`;
+  });
+}
+
+interface Props {
+  params: Promise<{ id: string }>;
+}
+
+const TEST_STATUS_STYLE: Record<string, string> = {
+  requested: "bg-slate-200 text-slate-800",
+  in_progress: "bg-sky-100 text-sky-900",
+  result_uploaded: "bg-amber-100 text-amber-900",
+  ready_for_release: "bg-emerald-100 text-emerald-900",
+  released: "bg-[color:var(--color-brand-navy)] text-white",
+  cancelled: "bg-red-100 text-red-900",
+};
+
+export default async function QueueTestDetailPage({ params }: Props) {
+  const { id } = await params;
+  const { session, supabase, user, test, svc, visit, patient, visiblePackageComponents } = await loadTestDetail(id);
 
   // Soft-deleted (0125): no work happens on this entry. Point at the visit
   // page, which owns the deleted-entries panel and the Restore action.

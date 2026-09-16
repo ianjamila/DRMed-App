@@ -1,3 +1,6 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { cache } from "react";
+import { detailMetadata } from "@/lib/staff/detail-metadata";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
@@ -5,7 +8,24 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { SingleClaimActions } from "../../../_components/single-claim-actions";
 import { manilaDate, manilaDateTime } from "@/lib/dates/manila";
 
-export const metadata = { title: "Historic HMO claim" };
+// Share the existing header lookup with metadata within this request.
+const loadDetail = cache(async (claimId: string) => {
+  const admin = createAdminClient();
+  return admin
+      .from("historic_hmo_claims" as never)
+      .select("*")
+      .eq("id", claimId)
+      .maybeSingle<ClaimRow>();
+});
+
+export async function generateMetadata({ params }: { params: Promise<{ providerId: string; claimId: string }> }) {
+  await requireAdminStaff();
+  const { claimId } = await params;
+  return detailMetadata(ROUTE_NAME["/staff/admin/accounting/hmo-claims/[providerId]/historic/[claimId]"], async () => {
+    const { data, error } = await loadDetail(claimId);
+    return error || !data ? null : [data.hmo_provider, data.claim_date].filter(Boolean).join(" · ");
+  });
+}
 export const dynamic = "force-dynamic";
 
 const PHP = new Intl.NumberFormat("en-PH", {
@@ -42,11 +62,7 @@ export default async function HistoricClaimDetail({
 
   // 1. The claim itself + active staff for the action modals + audit history + payment methods
   const [claimQ, staffQ, auditQ, paymentMethodsQ] = await Promise.all([
-    admin
-      .from("historic_hmo_claims" as never)
-      .select("*")
-      .eq("id", claimId)
-      .maybeSingle<ClaimRow>(),
+    loadDetail(claimId),
     admin
       .from("staff_profiles")
       .select("id, full_name")

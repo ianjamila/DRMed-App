@@ -1,3 +1,8 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { cache } from "react";
+import { detailMetadata } from "@/lib/staff/detail-metadata";
+import { pluckOne } from "@/lib/reports/format";
+import { manilaDate } from "@/lib/dates/manila";
 import { notFound } from "next/navigation";
 import { headers } from "next/headers";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
@@ -9,16 +14,8 @@ import { reportError } from "@/lib/observability/report-error";
 import { hasRecentAudit } from "@/lib/server/action-helpers";
 import { PayslipDetailClient } from "./payslip-detail-client";
 
-export const metadata = { title: "Payslip" };
-export const dynamic = "force-dynamic";
-
-export default async function PayslipDetailPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
+const loadPayslipHeader = cache(async (employeeRunId: string) => {
   const session = await requireActiveStaff();
-  const { id: employeeRunId } = await params;
   // RLS trap: `payroll_runs` has exactly one policy (admin-only), so a
   // non-admin staff user cannot SELECT it directly or through an embed.
   // Keep the admin client here — swapping in the RLS-scoped server client
@@ -31,7 +28,7 @@ export default async function PayslipDetailPage({
   const { data: er, error: erErr } = await admin
     .from("payroll_employee_runs")
     .select(
-      "id, employee_id, payslip_file_path, run_id, employees!inner(staff_profile_id), payroll_runs!inner(status)",
+      "id, employee_id, payslip_file_path, run_id, employees!inner(staff_profile_id), payroll_runs!inner(status, payroll_periods!inner(period_start, period_end))",
     )
     .eq("id", employeeRunId)
     .maybeSingle();
@@ -56,6 +53,29 @@ export default async function PayslipDetailPage({
   if (!isAdmin && !payslipVisibleToStaff(runStatus)) {
     notFound();
   }
+
+  return { session, admin, er, isOwn, isAdmin };
+});
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  await requireActiveStaff();
+  const { id } = await params;
+  return detailMetadata(ROUTE_NAME["/staff/payslips/[id]"], async () => {
+    const { er } = await loadPayslipHeader(id);
+    const period = pluckOne(pluckOne(er.payroll_runs)?.payroll_periods ?? null);
+    return period ? `${manilaDate(period.period_start)} – ${manilaDate(period.period_end)}` : null;
+  });
+}
+export const dynamic = "force-dynamic";
+
+export default async function PayslipDetailPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const session = await requireActiveStaff();
+  const { id: employeeRunId } = await params;
+  const { admin, er, isOwn, isAdmin } = await loadPayslipHeader(employeeRunId);
 
   // 2. Load full detail data via the shared loader (same shape as the PDF).
   // Admin may be inspecting a draft/computed run (see gate above), so pass

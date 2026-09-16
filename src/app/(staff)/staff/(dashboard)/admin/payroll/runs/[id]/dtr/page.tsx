@@ -1,3 +1,8 @@
+import { manilaDate } from "@/lib/dates/manila";
+import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { cache } from "react";
+import { detailMetadata } from "@/lib/staff/detail-metadata";
+import { pluckOne } from "@/lib/reports/format";
 import { fetchPayrollRows } from "@/lib/payroll/list-data";
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -11,7 +16,29 @@ import {
   type StatusCounts,
 } from "./dtr-upload-client";
 
-export const metadata = { title: "Import DTR" };
+// Share the existing header lookup with metadata within this request.
+const loadDetail = cache(async (runId: string) => {
+  const admin = createAdminClient();
+  return admin
+    .from("payroll_runs")
+    .select(
+      `id, status, period_id,
+       period:payroll_periods!inner(id, period_start, period_end, pay_date)`,
+    )
+    .eq("id", runId)
+    .maybeSingle();
+});
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  await requireAdminStaff();
+  const { id } = await params;
+  return detailMetadata(ROUTE_NAME["/staff/admin/payroll/runs/[id]/dtr"], async () => {
+    const { data, error } = await loadDetail(id);
+    if (error || !data) return null;
+    const period = pluckOne(data.period);
+    return period ? `${manilaDate(period.period_start)} – ${manilaDate(period.period_end)}` : null;
+  });
+}
 export const dynamic = "force-dynamic";
 
 interface PageProps {
@@ -27,14 +54,7 @@ export default async function DtrUploadPage({ params }: PageProps) {
   // -- 1. The run + its period. Used for the breadcrumb header. If the run
   // doesn't exist, 404 — we never want to render an "Import DTR" UI for a
   // ghost run.
-  const { data: runRow, error: runErr } = await admin
-    .from("payroll_runs")
-    .select(
-      `id, status, period_id,
-       period:payroll_periods!inner(id, period_start, period_end, pay_date)`,
-    )
-    .eq("id", runId)
-    .maybeSingle();
+  const { data: runRow, error: runErr } = await loadDetail(runId);
   if (runErr) {
     console.error("[payroll/runs/[id]/dtr] run fetch failed:", runErr);
     notFound();

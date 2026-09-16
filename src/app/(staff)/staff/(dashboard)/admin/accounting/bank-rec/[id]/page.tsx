@@ -1,3 +1,6 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { cache } from "react";
+import { detailMetadata } from "@/lib/staff/detail-metadata";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
@@ -7,7 +10,26 @@ import { RerunMatchButton } from "./rerun-match-button";
 import { ManualMatchClient } from "./manual-match-client";
 import { Panel } from "@/components/ui/panel";
 
-export const metadata = { title: "Bank statement" };
+// Share the existing header lookup with metadata within this request.
+const loadDetail = cache(async (id: string) => {
+  const admin = createAdminClient();
+  return admin
+      .from("bank_statements")
+      .select(
+        "id, account_id, period_start, period_end, statement_label, notes, uploaded_at, chart_of_accounts ( code, name )",
+      )
+      .eq("id", id)
+      .maybeSingle<StatementRow>();
+});
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  await requireAdminStaff();
+  const { id } = await params;
+  return detailMetadata(ROUTE_NAME["/staff/admin/accounting/bank-rec/[id]"], async () => {
+    const { data, error } = await loadDetail(id);
+    return error || !data ? null : data.statement_label;
+  });
+}
 export const dynamic = "force-dynamic";
 
 const PHP = new Intl.NumberFormat("en-PH", {
@@ -74,13 +96,7 @@ export default async function BankStatementDetailPage({ params }: PageProps) {
   const admin = createAdminClient();
 
   const [{ data: statement }, { data: lines }] = await Promise.all([
-    admin
-      .from("bank_statements")
-      .select(
-        "id, account_id, period_start, period_end, statement_label, notes, uploaded_at, chart_of_accounts ( code, name )",
-      )
-      .eq("id", id)
-      .maybeSingle<StatementRow>(),
+    loadDetail(id),
     admin
       .from("bank_statement_lines")
       .select(

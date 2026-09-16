@@ -1,3 +1,6 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { cache } from "react";
+import { detailMetadata } from "@/lib/staff/detail-metadata";
 import { fetchPayrollRows } from "@/lib/payroll/list-data";
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -12,7 +15,26 @@ import {
   type EmployeeRunHistoryRow,
 } from "./employee-detail-client";
 
-export const metadata = { title: "Employee" };
+// Share the existing header lookup with metadata within this request.
+const loadDetail = cache(async (id: string) => {
+  const admin = createAdminClient();
+  return admin
+      .from("employees")
+      .select(
+        "id, employee_number, hire_date, regularization_date, termination_date, basic_daily_rate_php, schedule_kind, payment_method, is_active, staff_profile_id, staff_profiles:staff_profile_id(full_name, role)",
+      )
+      .eq("id", id)
+      .maybeSingle();
+});
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  await requireAdminStaff();
+  const { id } = await params;
+  return detailMetadata(ROUTE_NAME["/staff/admin/payroll/employees/[id]"], async () => {
+    const { data, error } = await loadDetail(id);
+    return error || !data ? null : data.employee_number;
+  });
+}
 export const dynamic = "force-dynamic";
 
 interface PageProps {
@@ -35,13 +57,7 @@ export default async function EmployeeDetailPage({ params }: PageProps) {
     runsRes,
     periodsRes,
   ] = await Promise.all([
-    admin
-      .from("employees")
-      .select(
-        "id, employee_number, hire_date, regularization_date, termination_date, basic_daily_rate_php, schedule_kind, payment_method, is_active, staff_profile_id, staff_profiles:staff_profile_id(full_name, role)",
-      )
-      .eq("id", id)
-      .maybeSingle(),
+    loadDetail(id),
     fetchPayrollRows((from, to) => admin
       .from("employee_allowances")
       .select(

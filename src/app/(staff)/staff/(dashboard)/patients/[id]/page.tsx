@@ -1,3 +1,6 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { cache } from "react";
+import { detailMetadata } from "@/lib/staff/detail-metadata";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
@@ -17,9 +20,26 @@ import {
 import { Panel } from "@/components/ui/panel";
 import { manilaDate } from "@/lib/dates/manila";
 
-export const metadata = {
-  title: "Patient",
-};
+// Share the existing header lookup with metadata within this request.
+const loadDetail = cache(async (id: string) => {
+  const supabase = await createClient();
+  return supabase
+    .from("patients")
+    .select(
+      "id, drm_id, first_name, last_name, middle_name, birthdate, birthdate_confirmed, sex, phone, email, address, pre_registered, created_at, referral_source, referred_by_doctor, preferred_release_medium, senior_pwd_id_kind, senior_pwd_id_number, consent_signed_at, is_repeat_patient",
+    )
+    .eq("id", id)
+    .maybeSingle();
+});
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  await requireActiveStaff();
+  const { id } = await params;
+  return detailMetadata(ROUTE_NAME["/staff/patients/[id]"], async () => {
+    const { data, error } = await loadDetail(id);
+    return error || !data ? null : data.drm_id;
+  });
+}
 
 interface Props {
   params: Promise<{ id: string }>;
@@ -57,13 +77,7 @@ export default async function PatientDetailPage({ params }: Props) {
   const isAdmin = session.role === "admin";
   const supabase = await createClient();
 
-  const { data: patient } = await supabase
-    .from("patients")
-    .select(
-      "id, drm_id, first_name, last_name, middle_name, birthdate, birthdate_confirmed, sex, phone, email, address, pre_registered, created_at, referral_source, referred_by_doctor, preferred_release_medium, senior_pwd_id_kind, senior_pwd_id_number, consent_signed_at, is_repeat_patient",
-    )
-    .eq("id", id)
-    .maybeSingle();
+  const { data: patient } = await loadDetail(id);
 
   if (!patient) notFound();
 

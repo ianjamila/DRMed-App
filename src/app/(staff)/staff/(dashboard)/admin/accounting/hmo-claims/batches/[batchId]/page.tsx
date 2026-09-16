@@ -1,9 +1,29 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { cache } from "react";
+import { detailMetadata } from "@/lib/staff/detail-metadata";
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { BatchDetailClient } from "./batch-detail-client";
 
-export const metadata = { title: "HMO claim batch" };
+// Share the existing header lookup with metadata within this request.
+const loadDetail = cache(async (batchId: string) => {
+  const admin = createAdminClient();
+  return admin
+    .from("hmo_claim_batches")
+    .select("*, hmo_providers(name)")
+    .eq("id", batchId)
+    .maybeSingle();
+});
+
+export async function generateMetadata({ params }: { params: Promise<{ batchId: string }> }) {
+  await requireAdminStaff();
+  const { batchId } = await params;
+  return detailMetadata(ROUTE_NAME["/staff/admin/accounting/hmo-claims/batches/[batchId]"], async () => {
+    const { data, error } = await loadDetail(batchId);
+    return error || !data ? null : data.reference_no;
+  });
+}
 export const dynamic = "force-dynamic";
 
 export default async function BatchDetailPage({
@@ -15,11 +35,7 @@ export default async function BatchDetailPage({
   await requireAdminStaff();
   const admin = createAdminClient();
 
-  const { data: batch } = await admin
-    .from("hmo_claim_batches")
-    .select("*, hmo_providers(name)")
-    .eq("id", batchId)
-    .maybeSingle();
+  const { data: batch } = await loadDetail(batchId);
   if (!batch) notFound();
 
   const [itemsQ, resolutionsQ, allocationsQ] = await Promise.all([

@@ -121,6 +121,37 @@ describe("staff page titles", () => {
     expect(offenders, "hand-written title suffixes").toEqual([]);
   });
 
+  it("record pages across the ten detail families export dynamic metadata", () => {
+    const routes = [
+      "payslips/[id]/page.tsx",
+      "(dashboard)/patients/[id]/page.tsx",
+      "(dashboard)/patients/[id]/edit/page.tsx",
+      "(dashboard)/patients/[id]/consent/print/page.tsx",
+      "(dashboard)/visits/group/[groupId]/receipt/page.tsx",
+      "(dashboard)/visits/[id]/page.tsx",
+      "(dashboard)/visits/[id]/receipt/page.tsx",
+      "(dashboard)/admin/accounting/hmo-claims/batches/[batchId]/page.tsx",
+      "(dashboard)/admin/accounting/hmo-claims/[providerId]/page.tsx",
+      "(dashboard)/admin/accounting/hmo-claims/[providerId]/historic/[claimId]/page.tsx",
+      "(dashboard)/admin/accounting/pf-payouts/[id]/page.tsx",
+      "(dashboard)/admin/accounting/pf-payouts/[id]/slip/page.tsx",
+      "(dashboard)/admin/accounting/bank-rec/[id]/page.tsx",
+      "(dashboard)/admin/hmo-providers/[id]/edit/page.tsx",
+      "(dashboard)/admin/gift-codes/[id]/page.tsx",
+      "(dashboard)/admin/inventory/[id]/page.tsx",
+      "(dashboard)/admin/inventory/[id]/edit/page.tsx",
+      "(dashboard)/admin/payroll/runs/[id]/page.tsx",
+      "(dashboard)/admin/payroll/runs/[id]/dtr/page.tsx",
+      "(dashboard)/admin/payroll/employees/[id]/page.tsx",
+      "(dashboard)/queue/consolidated/[visitId]/[groupId]/page.tsx",
+      "(dashboard)/queue/[id]/page.tsx"
+];
+    for (const route of routes) {
+      const source = readFileSync(join(STAFF_DIR, "staff", route), "utf8");
+      expect(metadataExports(source), route).toEqual(["generateMetadata"]);
+    }
+  });
+
   it("every staff page exports metadata, so none inherits the marketing title", () => {
     const untitled = files
       .filter((f) => f.endsWith(`${sep}page.tsx`))

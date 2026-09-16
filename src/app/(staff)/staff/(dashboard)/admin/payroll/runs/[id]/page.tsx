@@ -1,3 +1,8 @@
+import { manilaDate } from "@/lib/dates/manila";
+import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { cache } from "react";
+import { detailMetadata } from "@/lib/staff/detail-metadata";
+import { pluckOne } from "@/lib/reports/format";
 import { fetchPayrollRows } from "@/lib/payroll/list-data";
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -10,7 +15,30 @@ import {
   type DeductionLineRow,
 } from "./run-review-client";
 
-export const metadata = { title: "Pay run" };
+// Share the existing header lookup with metadata within this request.
+const loadDetail = cache(async (id: string) => {
+  const admin = createAdminClient();
+  return admin
+      .from("payroll_runs")
+      .select(
+        `id, period_id, status, computed_at, finalised_at, finalised_by,
+         voided_at, voided_by, void_reason, created_at, notes,
+         period:payroll_periods!inner(id, period_start, period_end, pay_date, status)`,
+      )
+      .eq("id", id)
+      .maybeSingle();
+});
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  await requireAdminStaff();
+  const { id } = await params;
+  return detailMetadata(ROUTE_NAME["/staff/admin/payroll/runs/[id]"], async () => {
+    const { data, error } = await loadDetail(id);
+    if (error || !data) return null;
+    const period = pluckOne(data.period);
+    return period ? `${manilaDate(period.period_start)} – ${manilaDate(period.period_end)}` : null;
+  });
+}
 export const dynamic = "force-dynamic";
 
 interface PageProps {
@@ -27,15 +55,7 @@ export default async function RunReviewPage({ params }: PageProps) {
   // their joined employee + staff_profile + line children, and the most-recent
   // DTR import for this period (used to drive the no-DTR banner).
   const [runRes, employeeRunsRes] = await Promise.all([
-    admin
-      .from("payroll_runs")
-      .select(
-        `id, period_id, status, computed_at, finalised_at, finalised_by,
-         voided_at, voided_by, void_reason, created_at, notes,
-         period:payroll_periods!inner(id, period_start, period_end, pay_date, status)`,
-      )
-      .eq("id", id)
-      .maybeSingle(),
+    loadDetail(id),
     fetchPayrollRows((from, to) => admin
       .from("payroll_employee_runs")
       .select(
