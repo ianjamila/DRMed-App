@@ -1,3 +1,4 @@
+import { withCronMonitor } from "@/lib/ops/cron-monitor";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { reportError } from "@/lib/observability/report-error";
 import { todayManilaISODate } from "@/lib/dates/manila";
@@ -23,76 +24,79 @@ function asRpcObject(v: unknown): RpcResult {
 export async function GET(request: Request) {
   // 1. Authenticate via shared CRON_SECRET.
   const auth = request.headers.get("authorization") ?? "";
-  if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!process.env.CRON_SECRET || auth !== `Bearer ${process.env.CRON_SECRET}`) {
     return Response.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  const today = todayManilaISODate();
-  const admin = createAdminClient();
+  return withCronMonitor("recurring-bills", async (markFailed) => {
+    const today = todayManilaISODate();
+    const admin = createAdminClient();
 
-  // 2. Query templates whose next_run_date is on or before today.
-  const { data: templates, error } = await admin
-    .from("recurring_bill_templates")
-    .select("id")
-    .eq("is_active", true)
-    .lte("next_run_date", today);
+    // 2. Query templates whose next_run_date is on or before today.
+    const { data: templates, error } = await admin
+      .from("recurring_bill_templates")
+      .select("id")
+      .eq("is_active", true)
+      .lte("next_run_date", today);
 
-  if (error) {
-    await reportError({ scope: "cron/recurring-bills:query", error });
-    return Response.json({ error: "query failed" }, { status: 500 });
-  }
-
-  let processed = 0;
-  let draftsCreated = 0;
-  const failures: Array<{ template_id: string; error: string }> = [];
-
-  // 3. Loop per template, with isolation: a failing template must not stop the others.
-  for (const t of templates ?? []) {
-    processed += 1;
-    try {
-      let iters = 0;
-      while (iters < MAX_ITERATIONS_PER_TEMPLATE) {
-        const { data, error: rpcErr } = await admin.rpc("ap_post_recurring_template", {
-          p_template_id: t.id,
-        });
-        if (rpcErr) throw new Error(rpcErr.message);
-        const result = asRpcObject(data);
-        if (result.skipped) break;
-        if (!result.bill_id) break;
-        draftsCreated += 1;
-        iters += 1;
-      }
-      if (iters >= MAX_ITERATIONS_PER_TEMPLATE) {
-        throw new Error(
-          `Iteration limit reached (${MAX_ITERATIONS_PER_TEMPLATE}); next_run_date may be stuck`
-        );
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      await reportError({
-        scope: "cron/recurring-bills:template",
-        error: err,
-        metadata: { template_id: t.id },
-      });
-      await audit({
-        actor_id: null,
-        actor_type: "system",
-        action: "recurring_template.fire_failed",
-        resource_type: "recurring_bill_template",
-        resource_id: t.id,
-        metadata: { error: msg, run_date: today },
-      });
-      failures.push({ template_id: t.id, error: msg });
+    if (error) {
+      await reportError({ scope: "cron/recurring-bills:query", error });
+      return Response.json({ error: "query failed" }, { status: 500 });
     }
-  }
 
-  // Run heartbeat, including quiet days with no templates due.
-  await audit({
-    actor_id: null,
-    actor_type: "system",
-    action: "recurring_bills.completed",
-    metadata: { processed, drafts_created: draftsCreated, failures: failures.length },
+    let processed = 0;
+    let draftsCreated = 0;
+    const failures: Array<{ template_id: string; error: string }> = [];
+
+    // 3. Loop per template, with isolation: a failing template must not stop the others.
+    for (const t of templates ?? []) {
+      processed += 1;
+      try {
+        let iters = 0;
+        while (iters < MAX_ITERATIONS_PER_TEMPLATE) {
+          const { data, error: rpcErr } = await admin.rpc("ap_post_recurring_template", {
+            p_template_id: t.id,
+          });
+          if (rpcErr) throw new Error(rpcErr.message);
+          const result = asRpcObject(data);
+          if (result.skipped) break;
+          if (!result.bill_id) break;
+          draftsCreated += 1;
+          iters += 1;
+        }
+        if (iters >= MAX_ITERATIONS_PER_TEMPLATE) {
+          throw new Error(
+            `Iteration limit reached (${MAX_ITERATIONS_PER_TEMPLATE}); next_run_date may be stuck`
+          );
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        await reportError({
+          scope: "cron/recurring-bills:template",
+          error: err,
+          metadata: { template_id: t.id },
+        });
+        await audit({
+          actor_id: null,
+          actor_type: "system",
+          action: "recurring_template.fire_failed",
+          resource_type: "recurring_bill_template",
+          resource_id: t.id,
+          metadata: { error: msg, run_date: today },
+        });
+        failures.push({ template_id: t.id, error: msg });
+      }
+    }
+
+    // Run heartbeat, including quiet days with no templates due.
+    await audit({
+      actor_id: null,
+      actor_type: "system",
+      action: "recurring_bills.completed",
+      metadata: { processed, drafts_created: draftsCreated, failures: failures.length },
+    });
+
+    if (failures.length > 0) markFailed();
+    return Response.json({ processed, drafts_created: draftsCreated, failures });
   });
-
-  return Response.json({ processed, drafts_created: draftsCreated, failures });
 }

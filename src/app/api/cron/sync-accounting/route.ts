@@ -1,3 +1,4 @@
+import { withCronMonitor } from "@/lib/ops/cron-monitor";
 import { NextResponse } from "next/server";
 import { runAccountingSync } from "@/lib/accounting/sync";
 
@@ -22,12 +23,14 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
-  try {
-    const result = await runAccountingSync({ trigger: "cron" });
-    return NextResponse.json({ ok: true, ...result });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error("accounting sync failed", err);
-    return NextResponse.json({ ok: false, error: message }, { status: 500 });
-  }
+  return withCronMonitor("sync-accounting", async () => {
+    try {
+      const result = await runAccountingSync({ trigger: "cron" });
+      return NextResponse.json({ ok: true, ...result });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("accounting sync failed", err);
+      return NextResponse.json({ ok: false, error: message }, { status: 500 });
+    }
+  });
 }
