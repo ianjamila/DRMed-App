@@ -7,6 +7,7 @@ import { ipAndAgent } from "@/lib/server/action-helpers";
 import { ConsentFormSheet } from "@/components/consent/consent-form-sheet";
 import { PrintButton } from "@/components/consent/print-button";
 
+export const metadata = { title: "Consent form" };
 export const dynamic = "force-dynamic";
 
 export default async function ConsentPrintPage({

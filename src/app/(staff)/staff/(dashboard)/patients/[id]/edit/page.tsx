@@ -6,7 +6,7 @@ import { PatientForm } from "../../patient-form";
 import { listActiveReferralSources } from "@/lib/legacy-import/loaders";
 import { Panel } from "@/components/ui/panel";
 
-export const metadata = { title: "Edit patient — staff" };
+export const metadata = { title: "Edit patient" };
 
 interface Props {
   params: Promise<{ id: string }>;

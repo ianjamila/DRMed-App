@@ -9,7 +9,7 @@ import { PettyCashDatePicker } from "./petty-cash-date-picker";
 import { PettyCashForm } from "./petty-cash-form";
 import { PettyCashList, type PettyCashRow } from "./petty-cash-list";
 
-export const metadata = { title: "Petty Cash — staff" };
+export const metadata = { title: "Petty Cash" };
 export const dynamic = "force-dynamic";
 
 interface SearchParams {

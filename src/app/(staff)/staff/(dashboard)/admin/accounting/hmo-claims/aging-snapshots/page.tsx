@@ -3,7 +3,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { Panel } from "@/components/ui/panel";
 
-export const metadata = { title: "HMO aging snapshots — staff" };
+export const metadata = { title: "HMO aging snapshots" };
 export const dynamic = "force-dynamic";
 
 const PHP = new Intl.NumberFormat("en-PH", {

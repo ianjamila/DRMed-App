@@ -3,7 +3,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { AccountForm } from "../account-form";
 import { createAccountAction } from "../actions";
 
-export const metadata = { title: "New account — staff" };
+export const metadata = { title: "New account" };
 export const dynamic = "force-dynamic";
 
 export default async function NewAccountPage() {

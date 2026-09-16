@@ -15,7 +15,7 @@ import {
 import { manilaDateTime } from "@/lib/dates/manila";
 import { PrintButton } from "./print-button";
 
-export const metadata = { title: "Cash count sheet — staff" };
+export const metadata = { title: "Cash count sheet" };
 export const dynamic = "force-dynamic";
 
 const PESO = (n: number) =>

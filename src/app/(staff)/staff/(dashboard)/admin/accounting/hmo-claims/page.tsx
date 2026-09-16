@@ -7,7 +7,7 @@ import type { Database } from "@/types/database";
 type UnbilledRow = Database["public"]["Views"]["v_hmo_unbilled"]["Row"];
 type StuckRow = Database["public"]["Views"]["v_hmo_stuck"]["Row"];
 
-export const metadata = { title: "HMO Claims — staff" };
+export const metadata = { title: "HMO Claims" };
 export const dynamic = "force-dynamic";
 
 export default async function HmoClaimsIndexPage() {

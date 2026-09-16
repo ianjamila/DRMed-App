@@ -8,7 +8,7 @@ import { PhysicianForm } from "../../physician-form";
 import { PhotoUpload } from "./photo-upload";
 import { DeletePhysicianButton } from "./delete-physician-button";
 
-export const metadata = { title: "Edit physician — staff" };
+export const metadata = { title: "Edit physician" };
 
 export const dynamic = "force-dynamic";
 

@@ -4,7 +4,7 @@ import { listActiveReferralSources } from "@/lib/legacy-import/loaders";
 import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
-  title: "New Patient — staff",
+  title: "New Patient",
 };
 
 export default async function NewPatientPage() {

@@ -4,7 +4,7 @@ import { ExportCsvLink } from "@/components/staff/export-csv-link";
 import { REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 import { dailyRevenueCsvHref, loadDailyRevenue, parseDailyRevenueParams } from "@/lib/reports/daily-revenue";
 
-export const metadata = { title: "Daily Revenue — staff" };
+export const metadata = { title: "Daily Revenue" };
 export const dynamic = "force-dynamic";
 
 interface SearchParams { from?: string; to?: string }

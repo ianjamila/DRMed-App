@@ -20,7 +20,7 @@ import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 
 export const metadata = {
-  title: "Critical Alerts — staff",
+  title: "Critical Alerts",
 };
 
 const BASE_PATH = "/staff/critical-alerts";

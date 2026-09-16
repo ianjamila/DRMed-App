@@ -7,7 +7,7 @@ import {
   type RunByPeriod,
 } from "./periods-client";
 
-export const metadata = { title: "Pay Periods — payroll admin" };
+export const metadata = { title: "Pay Periods" };
 export const dynamic = "force-dynamic";
 
 /**

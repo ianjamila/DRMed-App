@@ -21,6 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CircleAlert } from "lucide-react";
 import { StatusBadge } from "@/lib/ui/status-badge";
+import { todayManilaISODate } from "@/lib/dates/manila";
 
 const PHP = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
 
@@ -226,7 +227,7 @@ function TemplateForm({
     default_wt_rate:
       initial?.default_wt_rate == null ? "" : String(initial.default_wt_rate),
     default_wt_exempt: initial?.default_wt_exempt ?? false,
-    next_run_date: initial?.next_run_date ?? new Date().toISOString().slice(0, 10),
+    next_run_date: initial?.next_run_date ?? todayManilaISODate(),
   });
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);

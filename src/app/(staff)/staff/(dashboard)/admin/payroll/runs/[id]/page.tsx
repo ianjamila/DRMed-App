@@ -9,7 +9,7 @@ import {
   type DeductionLineRow,
 } from "./run-review-client";
 
-export const metadata = { title: "Pay run — payroll admin" };
+export const metadata = { title: "Pay run" };
 export const dynamic = "force-dynamic";
 
 interface PageProps {

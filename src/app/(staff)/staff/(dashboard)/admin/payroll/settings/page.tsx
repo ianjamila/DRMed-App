@@ -2,7 +2,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { SettingsClient, type SettingRow } from "./settings-client";
 
-export const metadata = { title: "Payroll Settings — payroll admin" };
+export const metadata = { title: "Payroll Settings" };
 export const dynamic = "force-dynamic";
 
 // Payroll-relevant keys, in seed order. accounting_settings can hold non-

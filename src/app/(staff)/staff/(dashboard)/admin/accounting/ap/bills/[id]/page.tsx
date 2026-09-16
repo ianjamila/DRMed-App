@@ -4,7 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getBillAction } from "@/lib/actions/accounting/bills";
 import { BillDetailClient } from "./bill-detail-client";
 
-export const metadata = { title: "Bill — AP — DRMed" };
+export const metadata = { title: "Bill" };
 export const dynamic = "force-dynamic";
 
 export default async function BillDetailPage({

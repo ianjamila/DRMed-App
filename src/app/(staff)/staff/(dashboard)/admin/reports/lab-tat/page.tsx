@@ -16,7 +16,7 @@ import {
   UNSECTIONED_LABEL,
 } from "@/lib/reports/lab-tat";
 
-export const metadata = { title: "Lab TAT analytics — staff" };
+export const metadata = { title: "Lab TAT analytics" };
 export const dynamic = "force-dynamic";
 
 interface SearchProps {

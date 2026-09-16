@@ -2,7 +2,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { VendorFormClient } from "./vendor-form-client";
 
-export const metadata = { title: "New vendor — AP — DRMed" };
+export const metadata = { title: "New vendor" };
 export const dynamic = "force-dynamic";
 
 export default async function NewVendorPage() {

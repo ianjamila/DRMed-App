@@ -6,7 +6,7 @@ import { shiftISODate, todayManilaISODate } from "@/lib/dates/manila";
 import { StatementTabs } from "../_components/statement-tabs";
 import { PeriodPresets } from "../_components/period-presets";
 
-export const metadata = { title: "Cash Flow — staff" };
+export const metadata = { title: "Cash Flow" };
 export const dynamic = "force-dynamic";
 
 const PHP = new Intl.NumberFormat("en-PH", {

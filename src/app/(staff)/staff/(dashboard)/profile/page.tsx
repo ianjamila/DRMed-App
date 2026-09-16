@@ -5,7 +5,7 @@ import { ChangePasswordForm } from "./change-password-form";
 import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
-  title: "My Profile — staff",
+  title: "My Profile",
 };
 
 const ROLE_LABEL: Record<string, string> = {

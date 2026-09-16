@@ -5,7 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { SingleClaimActions } from "../../../_components/single-claim-actions";
 import { manilaDate, manilaDateTime } from "@/lib/dates/manila";
 
-export const metadata = { title: "Historic HMO claim — staff" };
+export const metadata = { title: "Historic HMO claim" };
 export const dynamic = "force-dynamic";
 
 const PHP = new Intl.NumberFormat("en-PH", {

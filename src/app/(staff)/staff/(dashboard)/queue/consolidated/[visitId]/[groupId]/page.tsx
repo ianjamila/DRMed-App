@@ -8,7 +8,7 @@ import { labQueueGate } from "@/lib/visits/lab-gate";
 import { ConsolidatedForm } from "./consolidated-form";
 
 export const metadata = {
-  title: "Chemistry report — staff",
+  title: "Chemistry report",
 };
 
 export default async function ConsolidatedQueuePage({

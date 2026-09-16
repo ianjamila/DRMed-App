@@ -4,7 +4,7 @@ import { listVendorsAction } from "@/lib/actions/accounting/vendors";
 import { loadClosedDayContext } from "@/lib/accounting/eod-closed-dates";
 import { PaymentFormClient } from "./payment-form-client";
 
-export const metadata = { title: "New payment — AP — DRMed" };
+export const metadata = { title: "New payment" };
 export const dynamic = "force-dynamic";
 
 export default async function NewPaymentPage() {

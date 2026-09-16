@@ -6,7 +6,7 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { InquiryForm } from "../../inquiry-form";
 import type { InquiryChannel } from "@/lib/inquiries/labels";
 
-export const metadata = { title: "Edit inquiry — staff" };
+export const metadata = { title: "Edit inquiry" };
 
 export const dynamic = "force-dynamic";
 

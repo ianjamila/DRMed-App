@@ -10,7 +10,7 @@ import {
   type StatusCounts,
 } from "./dtr-upload-client";
 
-export const metadata = { title: "Import DTR — payroll admin" };
+export const metadata = { title: "Import DTR" };
 export const dynamic = "force-dynamic";
 
 interface PageProps {

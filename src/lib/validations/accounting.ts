@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isOnOrBeforeTodayManila, todayManilaISODate } from "@/lib/dates/manila";
+import { isISODate, isOnOrBeforeTodayManila, shiftISODate, todayManilaISODate } from "@/lib/dates/manila";
 import { DENOMINATION_KEYS, type DenominationKey } from "@/lib/accounting/cash-denominations";
 
 const accountCodeSchema = z
@@ -596,10 +596,10 @@ const billHeaderBase = z.object({
   vendor_invoice_number: z.string().nullable().optional(),
   bill_date: z.string().refine(
     (s) => {
-      const d = new Date(s);
-      const today = new Date(todayManilaISODate());
-      const max = new Date(today); max.setDate(max.getDate() + 365);
-      return d <= max;
+      // Calendar dates compare correctly as strings in ISO form, so the
+      // bound never needs a Date at all — which is what put it a day out in
+      // any runtime that is not UTC.
+      return isISODate(s) && s <= shiftISODate(todayManilaISODate(), 365);
     },
     "bill_date too far in the future (>1 year)"
   ),

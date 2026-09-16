@@ -4,7 +4,7 @@ import { ImportPatientsForm } from "./import-form";
 import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
-  title: "Import Patients — staff",
+  title: "Import Patients",
 };
 
 export default async function ImportPatientsPage() {

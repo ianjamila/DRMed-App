@@ -3,7 +3,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { listVendorsAction } from "@/lib/actions/accounting/vendors";
 import { VendorsIndexClient } from "./vendors-index-client";
 
-export const metadata = { title: "Vendors — AP — DRMed" };
+export const metadata = { title: "Vendors" };
 export const dynamic = "force-dynamic";
 
 export default async function VendorsIndexPage() {

@@ -14,7 +14,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { formatPhp } from "@/lib/marketing/format";
-import { isoDateParts } from "@/lib/dates/manila";
+import { isoDateParts, todayManilaISODate } from "@/lib/dates/manila";
 import {
   getPayslipUrlAction,
   type EmployeePayslipAdminOption,
@@ -355,7 +355,7 @@ function AdminEmployeePicker({
   selectedYear: number;
 }) {
   const router = useRouter();
-  const currentYear = new Date().getFullYear();
+  const currentYear = isoDateParts(todayManilaISODate()).year;
 
   function onChange(value: string) {
     const params = new URLSearchParams();

@@ -19,7 +19,7 @@ import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 
 export const metadata = {
-  title: "Audit Log — staff",
+  title: "Audit Log",
 };
 
 const ACTOR_TYPE_STYLE: Record<string, string> = {

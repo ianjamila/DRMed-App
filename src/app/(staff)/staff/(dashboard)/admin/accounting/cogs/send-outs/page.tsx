@@ -2,7 +2,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { SendOutsClient } from "./send-outs-client";
 
-export const metadata = { title: "Send-out COGS — DRMed" };
+export const metadata = { title: "Send-out COGS" };
 export const dynamic = "force-dynamic";
 
 export default async function SendOutsPage() {

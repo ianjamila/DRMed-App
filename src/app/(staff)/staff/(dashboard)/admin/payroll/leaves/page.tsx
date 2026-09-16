@@ -3,7 +3,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { LeavesClient, type LeaveRow } from "./leaves-client";
 
-export const metadata = { title: "Leaves — payroll admin" };
+export const metadata = { title: "Leaves" };
 export const dynamic = "force-dynamic";
 
 interface PageProps {

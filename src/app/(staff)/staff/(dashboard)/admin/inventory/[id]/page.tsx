@@ -5,7 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { MovementForm } from "./movement-form";
 import { Panel } from "@/components/ui/panel";
 
-export const metadata = { title: "Inventory item — staff" };
+export const metadata = { title: "Inventory item" };
 export const dynamic = "force-dynamic";
 
 const PHP = new Intl.NumberFormat("en-PH", {

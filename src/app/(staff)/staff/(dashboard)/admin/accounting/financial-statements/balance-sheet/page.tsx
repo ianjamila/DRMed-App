@@ -6,7 +6,7 @@ import { todayManilaISODate } from "@/lib/dates/manila";
 import { buildAsOfPresets } from "@/lib/reports/period-presets";
 import { StatementTabs } from "../_components/statement-tabs";
 
-export const metadata = { title: "Balance Sheet — staff" };
+export const metadata = { title: "Balance Sheet" };
 export const dynamic = "force-dynamic";
 
 const PHP = new Intl.NumberFormat("en-PH", {

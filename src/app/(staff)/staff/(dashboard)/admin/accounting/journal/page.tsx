@@ -17,7 +17,7 @@ import {
 import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 
-export const metadata = { title: "Journal Entries — staff" };
+export const metadata = { title: "Journal Entries" };
 export const dynamic = "force-dynamic";
 
 const BASE_PATH = "/staff/admin/accounting/journal";

@@ -4,6 +4,7 @@ import { ipAndAgent } from "@/lib/server/action-helpers";
 import { fetchEmailLogForExport } from "@/lib/emails-log/query";
 import { emailLogToCsv } from "@/lib/emails-log/csv";
 import type { EmailStatus, EmailType } from "@/lib/emails-log/types";
+import { todayManilaISODate } from "@/lib/dates/manila";
 
 export const dynamic = "force-dynamic";
 
@@ -59,7 +60,7 @@ export async function GET(request: Request) {
     user_agent: ua,
   });
 
-  const stamp = new Date().toISOString().slice(0, 10);
+  const stamp = todayManilaISODate();
   return new Response(csv, {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",

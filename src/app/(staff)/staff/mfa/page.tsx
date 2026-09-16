@@ -7,7 +7,7 @@ import { EnrollForm } from "./enroll-form";
 import { ChallengeForm } from "./challenge-form";
 
 export const metadata = {
-  title: "Two-factor authentication — staff",
+  title: "Two-factor authentication",
 };
 
 export const dynamic = "force-dynamic";

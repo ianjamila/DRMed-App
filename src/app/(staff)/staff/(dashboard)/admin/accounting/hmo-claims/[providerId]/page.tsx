@@ -4,7 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { ProviderDetailClient } from "./provider-detail-client";
 
-export const metadata = { title: "HMO provider — staff" };
+export const metadata = { title: "HMO provider" };
 export const dynamic = "force-dynamic";
 
 export default async function ProviderDetailPage({

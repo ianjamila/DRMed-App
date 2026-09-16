@@ -6,7 +6,7 @@ import { loadTemplateParams } from "@/lib/results/loaders";
 import { TemplateEditor } from "./template-editor";
 import type { TemplateEditorPayload, TemplateParamPayload } from "@/lib/validations/result-template";
 
-export const metadata = { title: "Edit result template — staff" };
+export const metadata = { title: "Edit result template" };
 
 interface Props {
   params: Promise<{ service_id: string }>;

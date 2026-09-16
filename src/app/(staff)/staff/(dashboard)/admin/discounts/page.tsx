@@ -3,7 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { formatPhp } from "@/lib/marketing/format";
 
-export const metadata = { title: "Discounts — staff" };
+export const metadata = { title: "Discounts" };
 
 export const dynamic = "force-dynamic";
 

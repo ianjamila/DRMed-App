@@ -5,6 +5,7 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { audit } from "@/lib/audit/log";
 import { ipAndAgent } from "@/lib/server/action-helpers";
+import { isoDateParts, todayManilaISODate } from "@/lib/dates/manila";
 
 type ActionResult<T = void> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -142,7 +143,7 @@ export async function getMyYtdTotalsAction(
   const session = await requireActiveStaff();
   const admin = createAdminClient();
 
-  const year = args.year ?? new Date().getFullYear();
+  const year = args.year ?? isoDateParts(todayManilaISODate()).year;
 
   let targetEmployeeId: string | null = null;
   if (args.employee_id && session.role === "admin") {

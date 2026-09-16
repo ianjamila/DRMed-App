@@ -5,7 +5,7 @@ import { listVendorsAction } from "@/lib/actions/accounting/vendors";
 import { PaymentsIndexClient } from "./payments-index-client";
 import Link from "next/link";
 
-export const metadata = { title: "Payments — AP — DRMed" };
+export const metadata = { title: "Payments" };
 export const dynamic = "force-dynamic";
 
 export default async function PaymentsIndexPage({

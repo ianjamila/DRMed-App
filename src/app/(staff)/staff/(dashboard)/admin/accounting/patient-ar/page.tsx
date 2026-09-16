@@ -22,7 +22,7 @@ import {
 import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 
-export const metadata = { title: "Patient AR aging — staff" };
+export const metadata = { title: "Patient AR aging" };
 export const dynamic = "force-dynamic";
 
 const PHP = new Intl.NumberFormat("en-PH", {

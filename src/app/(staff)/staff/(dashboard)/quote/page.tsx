@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { QuoteWorkbench, type QuoteService } from "./quote-workbench";
 
 export const metadata = {
-  title: "Quick Quote — staff",
+  title: "Quick Quote",
 };
 
 export default async function QuotePage() {

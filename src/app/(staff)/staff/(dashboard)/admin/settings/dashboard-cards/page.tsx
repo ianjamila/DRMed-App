@@ -10,7 +10,7 @@ import {
 } from "@/lib/dashboards/cards";
 import { DashboardCardSettingsClient } from "./client";
 
-export const metadata = { title: "Dashboard card settings — staff" };
+export const metadata = { title: "Dashboard card settings" };
 export const dynamic = "force-dynamic";
 
 interface PrefRow {

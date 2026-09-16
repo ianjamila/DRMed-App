@@ -4,7 +4,7 @@ import { listVendorsAction } from "@/lib/actions/accounting/vendors";
 import { loadClosedDayContext } from "@/lib/accounting/eod-closed-dates";
 import { BillFormClient } from "./bill-form-client";
 
-export const metadata = { title: "New bill — AP — DRMed" };
+export const metadata = { title: "New bill" };
 export const dynamic = "force-dynamic";
 
 export default async function NewBillPage() {

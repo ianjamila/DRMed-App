@@ -3,7 +3,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ItemForm } from "../item-form";
 
-export const metadata = { title: "New inventory item — staff" };
+export const metadata = { title: "New inventory item" };
 export const dynamic = "force-dynamic";
 
 export default async function NewInventoryItemPage() {

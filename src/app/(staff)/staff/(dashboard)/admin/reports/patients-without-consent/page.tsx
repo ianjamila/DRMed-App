@@ -13,7 +13,7 @@ import {
   PRE_REGISTERED_BADGE_CLASS,
 } from "@/lib/patients/labels";
 
-export const metadata = { title: "Patients Without Consent — staff" };
+export const metadata = { title: "Patients Without Consent" };
 export const dynamic = "force-dynamic";
 
 // M15: how many patients this page RENDERS. This used to also be the ceiling

@@ -19,7 +19,7 @@ import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 
 export const metadata = {
-  title: "Services — staff",
+  title: "Services",
 };
 
 interface SearchProps {

@@ -10,6 +10,44 @@ export function todayManilaISODate(): string {
   }).format(new Date());
 }
 
+/**
+ * YYYY-MM-DD for the Manila calendar day an INSTANT falls on.
+ *
+ * `todayManilaISODate()` answers this for *now*; this answers it for a stored
+ * `timestamptz`, which is what a CSV key or a date-input value off a row needs.
+ * The tempting spelling — `new Date(iso).toISOString().slice(0, 10)` — is the
+ * bug: `toISOString()` is UTC, so a result released at 02:00 Manila exports
+ * under the PREVIOUS day. Anything between Manila midnight and 08:00 lands on
+ * the wrong date, every day.
+ *
+ * `en-CA` renders `2026-09-11`, which is why this locale and `sv-SE` are the
+ * two the app uses for machine-readable dates (see
+ * `date-render-surfaces.test.ts`) — they are not display formats and must not
+ * be swapped for `manilaDate`.
+ */
+export function manilaISODate(value: string | Date | null | undefined): string | null {
+  const d = toManilaInstant(value);
+  if (!d) return null;
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: MANILA_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+}
+
+/**
+ * Calendar parts (year, month 1-12, day) of the Manila day an instant falls on.
+ * The `manilaISODate` + `isoDateParts` pair in one call, for age and period
+ * arithmetic that needs integers rather than a string.
+ */
+export function manilaParts(
+  value: string | Date | null | undefined,
+): { year: number; month: number; day: number } | null {
+  const iso = manilaISODate(value);
+  return iso ? isoDateParts(iso) : null;
+}
+
 /** YYYY-MM-DD <= today (Manila). Used by Zod refinements and date-input max attrs. */
 export function isOnOrBeforeTodayManila(dateStr: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false;

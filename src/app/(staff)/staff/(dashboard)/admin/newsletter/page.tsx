@@ -17,7 +17,7 @@ import {
 import { SortableTh } from "@/components/staff/sortable-th";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 
-export const metadata = { title: "Newsletter — staff" };
+export const metadata = { title: "Newsletter" };
 
 export const dynamic = "force-dynamic";
 

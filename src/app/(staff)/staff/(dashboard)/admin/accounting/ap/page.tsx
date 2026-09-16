@@ -2,7 +2,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { getAPDashboardAction } from "@/lib/actions/accounting/ap-dashboard";
 import { APDashboardClient } from "./ap-dashboard-client";
 
-export const metadata = { title: "Accounts Payable — DRMed" };
+export const metadata = { title: "Accounts Payable" };
 export const dynamic = "force-dynamic";
 
 export default async function APDashboardPage() {

@@ -45,7 +45,7 @@ import {
 } from "@/lib/visits/classification";
 
 export const metadata = {
-  title: "Visit Records — staff",
+  title: "Visit Records",
 };
 
 const BASE_PATH = "/staff/visits";

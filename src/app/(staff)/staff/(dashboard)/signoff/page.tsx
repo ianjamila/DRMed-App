@@ -2,7 +2,7 @@ import Link from "next/link";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 
 export const metadata = {
-  title: "Sign-off — staff",
+  title: "Sign-off",
 };
 
 export default async function SignoffPage() {

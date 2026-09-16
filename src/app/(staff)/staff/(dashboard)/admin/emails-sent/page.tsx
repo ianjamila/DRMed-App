@@ -25,7 +25,7 @@ import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 
 const BASE_PATH = "/staff/admin/emails-sent";
 
-export const metadata = { title: "Emails Sent — staff" };
+export const metadata = { title: "Emails Sent" };
 
 const STATUS_STYLE: Record<EmailStatus, string> = {
   sent: "bg-emerald-100 text-emerald-900",

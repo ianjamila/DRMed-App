@@ -2,7 +2,7 @@ import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-export const metadata = { title: "Bank Reconciliation — staff" };
+export const metadata = { title: "Bank Reconciliation" };
 export const dynamic = "force-dynamic";
 
 const PHP = new Intl.NumberFormat("en-PH", {

@@ -5,7 +5,7 @@ import { PricesTable, type PriceRow } from "./prices-table";
 import { PageHeader } from "@/components/staff/page-header";
 
 export const metadata = {
-  title: "Prices — staff",
+  title: "Prices",
 };
 
 export const dynamic = "force-dynamic";

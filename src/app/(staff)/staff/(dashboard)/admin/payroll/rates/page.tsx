@@ -8,7 +8,7 @@ import {
   type WtBracketRow,
 } from "./rates-client";
 
-export const metadata = { title: "Statutory rates — payroll admin" };
+export const metadata = { title: "Statutory rates" };
 export const dynamic = "force-dynamic";
 
 const ALL_KINDS: ReadonlySet<RateKind> = new Set<RateKind>([

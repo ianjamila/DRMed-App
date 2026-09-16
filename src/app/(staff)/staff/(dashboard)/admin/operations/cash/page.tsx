@@ -29,6 +29,8 @@ interface SearchParams {
   to?: string;
 }
 
+export const metadata = { title: "Cash & cards" };
+
 export default async function CashCollectedPage({
   searchParams,
 }: {

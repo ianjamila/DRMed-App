@@ -4,7 +4,7 @@ import { StaffForm } from "../staff-form";
 import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
-  title: "New staff user — staff",
+  title: "New staff user",
 };
 
 export default async function NewStaffUserPage() {

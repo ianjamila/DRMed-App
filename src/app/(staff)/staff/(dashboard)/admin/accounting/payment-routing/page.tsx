@@ -2,7 +2,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { PaymentRoutingClient } from "./payment-routing-client";
 
-export const metadata = { title: "Payment Routing — staff" };
+export const metadata = { title: "Payment Routing" };
 export const dynamic = "force-dynamic";
 
 export default async function PaymentRoutingPage() {

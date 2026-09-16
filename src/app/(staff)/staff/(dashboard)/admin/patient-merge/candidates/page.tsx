@@ -5,6 +5,7 @@ import { loadCandidatePairs } from "@/lib/patients/find-duplicates";
 import { loadRecentMerges } from "../actions";
 import { CandidatesClient } from "./candidates-client";
 
+export const metadata = { title: "Possible duplicate patients" };
 export const dynamic = "force-dynamic";
 
 export default async function CandidatesPage({

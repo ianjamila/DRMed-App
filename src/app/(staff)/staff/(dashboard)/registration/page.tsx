@@ -4,7 +4,7 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { RegistrationPanel } from "./registration-panel";
 
 export const metadata = {
-  title: "Registration Link — staff",
+  title: "Registration Link",
 };
 
 export const dynamic = "force-dynamic";

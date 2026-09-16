@@ -11,7 +11,7 @@ import { VisitsTabs } from "../_components/visits-tabs";
 import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
-  title: "New Visit — staff",
+  title: "New Visit",
 };
 
 interface Props {

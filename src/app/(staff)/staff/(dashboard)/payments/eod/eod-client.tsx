@@ -236,9 +236,17 @@ export function EodClient(props: {
     <main className="px-4 py-6 sm:px-6">
     <div className="mx-auto max-w-2xl">
       <PaymentsTabs />
+      {/* B4 — the route is called "End of day" in the tab and the browser
+          title, so the heading has to say it too. The plain instruction moves
+          to the subtitle rather than being dropped: this is a reception screen,
+          and CLAUDE.md's plain-language rule still applies to what it asks the
+          user to do. */}
       <h1 className="font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
-        Close &amp; count cash · {formatBusinessDate(props.businessDate)}
+        End of day · {formatBusinessDate(props.businessDate)}
       </h1>
+      <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
+        Close and count the cash drawer.
+      </p>
 
       {closed ? (
         <Alert variant="success" className="mt-5">

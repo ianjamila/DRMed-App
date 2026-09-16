@@ -11,7 +11,7 @@ import {
   parseDeletedEntriesParams,
 } from "@/lib/reports/deleted-entries";
 
-export const metadata = { title: "Deleted Queue Entries — staff" };
+export const metadata = { title: "Deleted Queue Entries" };
 export const dynamic = "force-dynamic";
 
 interface SearchProps {

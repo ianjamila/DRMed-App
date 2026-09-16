@@ -2,7 +2,7 @@ import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { PhysicianForm } from "../physician-form";
 
-export const metadata = { title: "New physician — staff" };
+export const metadata = { title: "New physician" };
 
 export const dynamic = "force-dynamic";
 

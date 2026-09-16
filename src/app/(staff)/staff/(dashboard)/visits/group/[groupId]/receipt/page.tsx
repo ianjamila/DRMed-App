@@ -24,7 +24,7 @@ import { NoReceiptNotice } from "@/components/staff/no-receipt-notice";
 import { PrintButton } from "./print-button";
 import { logGroupReceiptPrintAction } from "./log-print-action";
 
-export const metadata = { title: "Combined receipt — staff" };
+export const metadata = { title: "Combined receipt" };
 export const dynamic = "force-dynamic";
 
 interface Props {

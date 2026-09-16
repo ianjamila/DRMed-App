@@ -22,6 +22,8 @@ interface SearchParams {
   to?: string;
 }
 
+export const metadata = { title: "HMO receivables" };
+
 export default async function HmoReceivablesPage({
   searchParams,
 }: {

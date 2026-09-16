@@ -6,7 +6,7 @@ import { formatPhp } from "@/lib/marketing/format";
 import { SellGiftCodeForm } from "./sell-form";
 import { Panel } from "@/components/ui/panel";
 
-export const metadata = { title: "Sell Gift Code — staff" };
+export const metadata = { title: "Sell Gift Code" };
 
 export const dynamic = "force-dynamic";
 

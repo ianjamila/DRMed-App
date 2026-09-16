@@ -14,7 +14,7 @@ import {
 } from "@/lib/reports/stuck-tests";
 import { manilaDateTime } from "@/lib/dates/manila";
 
-export const metadata = { title: "Stuck Tests — staff" };
+export const metadata = { title: "Stuck Tests" };
 export const dynamic = "force-dynamic";
 
 interface SearchProps {

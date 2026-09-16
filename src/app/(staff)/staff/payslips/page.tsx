@@ -8,6 +8,7 @@ import {
   type EmployeePayslipAdminOption,
 } from "./actions";
 import { PayslipsClient } from "./payslips-client";
+import { isoDateParts, todayManilaISODate } from "@/lib/dates/manila";
 
 export const metadata = { title: "My Payslips" };
 export const dynamic = "force-dynamic";
@@ -21,7 +22,7 @@ export default async function PayslipsPage({
   const params = await searchParams;
 
   const isAdmin = session.role === "admin";
-  const currentYear = new Date().getFullYear();
+  const currentYear = isoDateParts(todayManilaISODate()).year;
   const parsedYear = params.year ? Number.parseInt(params.year, 10) : NaN;
   const selectedYear = Number.isFinite(parsedYear) ? parsedYear : currentYear;
   const targetEmployeeId = isAdmin ? params.employee_id : undefined;

@@ -3,7 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { NewBatchClient } from "./new-batch-client";
 
-export const metadata = { title: "New HMO claim batch — staff" };
+export const metadata = { title: "New HMO claim batch" };
 export const dynamic = "force-dynamic";
 
 export default async function NewBatchPage({
