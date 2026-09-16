@@ -1,3 +1,5 @@
+import { cache } from "react";
+import { detailMetadata } from "@/lib/staff/detail-metadata";
 import { notFound } from "next/navigation";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -6,7 +8,17 @@ import { loadClosedDayContext } from "@/lib/accounting/eod-closed-dates";
 import { tillPaymentBlockedByClose } from "@/lib/accounting/till-close-warning";
 import { PaymentDetailClient } from "./payment-detail-client";
 
-export const metadata = { title: "Payment" };
+// React cache shares this lookup between metadata and the page in one request.
+const loadPayment = cache(getBillPaymentAction);
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  await requireAdminStaff();
+  const { id } = await params;
+  return detailMetadata("Payment", async () => {
+    const result = await loadPayment(id);
+    return result.ok ? result.data.reference?.trim() || result.data.payment_number : null;
+  });
+}
 export const dynamic = "force-dynamic";
 
 export default async function PaymentDetailPage({
@@ -17,7 +29,7 @@ export default async function PaymentDetailPage({
   await requireAdminStaff();
   const { id } = await params;
 
-  const r = await getBillPaymentAction(id);
+  const r = await loadPayment(id);
   if (!r.ok || !r.data) notFound();
 
   // Separate JE side-fetch (mirroring T40's pattern).
