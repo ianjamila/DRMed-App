@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-16
 **Branch:** `perf/rls-initplan-realtime`
-**Migration:** `0150_rls_initplan_and_policy_consolidation.sql`
+**Migration:** `0151_rls_initplan_and_policy_consolidation.sql`
 **Status:** design approved 2026-09-16; all four phases in scope; pending spec review
 
 ---
@@ -371,7 +371,7 @@ This is the pattern that caught defects two static reviews missed on the go-live
   `auth.uid(` / `auth.jwt(` / `auth.role(` in `qual` or `with_check`. This is the regression
   guard: it fails the day someone adds policy #161 the old way.
 - Re-running the generator against the migrated database produces an empty diff.
-- `supabase/tests/0150_rls_initplan_smoke.sql`, following the existing smoke convention.
+- `supabase/tests/0151_rls_initplan_smoke.sql`, following the existing smoke convention.
 
 ### 5.4 Scorecard
 
@@ -391,7 +391,7 @@ reset the view at deploy time and compare a clean window.
 
 ## 6. Rollout
 
-1. Generate and review `0150`. Confirm the number is still free across **every** branch
+1. Generate and review `0151`. Confirm the number is still free across **every** branch
    immediately before push — `ls supabase/migrations` in this worktree cannot see a number
    claimed by an unmerged sibling. A duplicate number makes `supabase db push` skip the file
    and exit 0 reporting "up to date", applying nothing.

@@ -1,4 +1,4 @@
-// Reads migration SQL without a database. From 0150 onward, policy helpers must
+// Reads migration SQL without a database. From 0151 onward, policy helpers must
 // be scalar subqueries so Postgres can evaluate them once instead of per row.
 import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
@@ -34,16 +34,16 @@ function barePolicyCalls(sql: string): string[] {
 }
 
 describe("RLS policies evaluate helpers once per query", () => {
-  it("has no bare helper call in any create policy statement from 0150 onward", () => {
+  it("has no bare helper call in any create policy statement from 0151 onward", () => {
     const offenders: string[] = [];
     for (const file of readdirSync(MIGRATIONS).filter((f) => f.endsWith(".sql")).sort()) {
-      // Historical migrations remain unchanged; 0150 supersedes their policies.
+      // Historical migrations remain unchanged; 0151 supersedes their policies.
       const n = Number(file.slice(0, 4));
-      if (!Number.isFinite(n) || n < 150) continue;
+      if (!Number.isFinite(n) || n < 151) continue;
       const sql = readFileSync(join(MIGRATIONS, file), "utf8");
       offenders.push(...barePolicyCalls(sql).map((o) => `${file}: ${o}`));
     }
-    expect(offenders, "Wrap helper calls as (select fn(...)). See 0150.").toEqual([]);
+    expect(offenders, "Wrap helper calls as (select fn(...)). See 0151.").toEqual([]);
   });
 
   // The plan's negative control, without writing a scratch policy to a migration.

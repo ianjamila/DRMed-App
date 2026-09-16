@@ -4,7 +4,7 @@
 
 **Goal:** Make the DRMed staff app fast by evaluating each RLS helper function once per query instead of once per row, and by stopping the realtime component from rebuilding every channel on every render.
 
-**Architecture:** One migration (`0150`) rewrites every RLS policy that calls a `STABLE` helper bare, wrapping the call in a scalar subquery so Postgres hoists it to an InitPlan. The migration's Phase 1 body is *generated* from live policy definitions so the rewrite is mechanical, then committed as static reviewable DDL. Phase 2 hand-consolidates nine stacked permissive policies, strictly within a role list. A React fix stabilises the realtime subscription identity. Everything is gated behind a row-visibility equivalence harness that proves no principal — `anon` included — can see a different set of rows after the change.
+**Architecture:** One migration (`0151`) rewrites every RLS policy that calls a `STABLE` helper bare, wrapping the call in a scalar subquery so Postgres hoists it to an InitPlan. The migration's Phase 1 body is *generated* from live policy definitions so the rewrite is mechanical, then committed as static reviewable DDL. Phase 2 hand-consolidates nine stacked permissive policies, strictly within a role list. A React fix stabilises the realtime subscription identity. Everything is gated behind a row-visibility equivalence harness that proves no principal — `anon` included — can see a different set of rows after the change.
 
 **Tech Stack:** Postgres 17 / Supabase, `pg_policies` catalog, Next.js 16 App Router, React client components, `tsx` scripts, vitest, local Supabase stack on OrbStack.
 
@@ -50,8 +50,8 @@ Read these. Do not re-derive what they already answer:
 | `scripts/perf/rls-equivalence-probe.ts` | Create. Connects to the local stack, snapshots visible-row count + content checksum per (table × principal), writes JSON. |
 | `scripts/perf/rls-equivalence-check.ts` | Create. Diffs two probe JSON files; exits non-zero on any difference. |
 | `scripts/perf/generate-rls-initplan-migration.ts` | Create. Reads `pg_policies`, emits static `DROP`/`CREATE POLICY` DDL for Phase 1. |
-| `supabase/migrations/0150_rls_initplan_and_policy_consolidation.sql` | Create. Phase 1 (generated) + Phase 2 (hand-written). |
-| `supabase/tests/0150_rls_initplan_smoke.sql` | Create. Follows the existing smoke convention. |
+| `supabase/migrations/0151_rls_initplan_and_policy_consolidation.sql` | Create. Phase 1 (generated) + Phase 2 (hand-written). |
+| `supabase/tests/0151_rls_initplan_smoke.sql` | Create. Follows the existing smoke convention. |
 | `src/lib/supabase/rls-initplan.test.ts` | Create. Static guard: zero bare helper calls remain in `pg_policies`. |
 | `src/components/staff/realtime-refresher.tsx` | Modify. Stable dependency identity, stable channel name, visibility gating. |
 | Six staff pages (Task 7) | Modify. Hoist inline subscription arrays to module-level consts. |
@@ -106,7 +106,7 @@ This is the safety net for everything else. It is built first and proved working
 //
 // Snapshots, for every RLS-protected table in `public` and every principal the app
 // can present, how many rows are visible and what they contain. Run once before the
-// 0150 migration and once after; `rls-equivalence-check.ts` diffs the two files.
+// 0151 migration and once after; `rls-equivalence-check.ts` diffs the two files.
 //
 // Content checksum, not just a count: a policy rewrite that swapped WHICH rows are
 // visible while keeping the same number would pass a count-only check.
@@ -391,7 +391,7 @@ git commit -m "test(perf): fail the build on any row-visibility change"
 ```ts
 // scripts/perf/generate-rls-initplan-migration.ts
 //
-// Emits the Phase 1 body of migration 0150: every RLS policy that calls a STABLE
+// Emits the Phase 1 body of migration 0151: every RLS policy that calls a STABLE
 // helper bare, reissued with the call wrapped in a scalar subquery so Postgres
 // hoists it to an InitPlan (evaluated once per query, not once per row).
 //
@@ -594,12 +594,12 @@ git commit -m "feat(perf): generator that hoists RLS helper calls to InitPlans"
 
 ---
 
-## Task 4: Generate migration 0150, Phase 1
+## Task 4: Generate migration 0151, Phase 1
 
 **Files:**
-- Create: `supabase/migrations/0150_rls_initplan_and_policy_consolidation.sql`
+- Create: `supabase/migrations/0151_rls_initplan_and_policy_consolidation.sql`
 
-- [ ] **Step 1: Re-confirm 0150 is still free across every branch**
+- [ ] **Step 1: Re-confirm 0151 is still free across every branch**
 
 `ls supabase/migrations` sees only this worktree. A duplicate number makes `db push` report
 "up to date" and apply **nothing**.
@@ -611,7 +611,7 @@ for b in $(git branch -a --format='%(refname:short)' | grep -v HEAD); do
 done | sort -u | tail -3
 ```
 
-Expected: highest is `0149_ap_cash_bill_payment_drawer_link.sql`. If anything shows `0150`,
+Expected: highest is `0149_ap_cash_bill_payment_drawer_link.sql`. If anything shows `0151`,
 stop and renumber to the next free number throughout this plan.
 
 - [ ] **Step 2: Generate the Phase 1 body**
@@ -628,8 +628,8 @@ catalog says; do not force it to a number from the spec).
 - [ ] **Step 3: Assemble the migration file**
 
 ```bash
-cat > supabase/migrations/0150_rls_initplan_and_policy_consolidation.sql <<'HEADER'
--- 0150: evaluate RLS helper functions once per query, not once per row.
+cat > supabase/migrations/0151_rls_initplan_and_policy_consolidation.sql <<'HEADER'
+-- 0151: evaluate RLS helper functions once per query, not once per row.
 --
 -- has_role(), is_staff(), staff_role() and current_patient_id() are all STABLE, but
 -- STABLE does not tell the planner to call them once — it only promises the answer
@@ -654,7 +654,7 @@ cat > supabase/migrations/0150_rls_initplan_and_policy_consolidation.sql <<'HEAD
 -- ---------------------------------------------------------------------------
 
 HEADER
-cat /tmp/phase1.sql >> supabase/migrations/0150_rls_initplan_and_policy_consolidation.sql
+cat /tmp/phase1.sql >> supabase/migrations/0151_rls_initplan_and_policy_consolidation.sql
 ```
 
 - [ ] **Step 4: Read the generated DDL**
@@ -694,7 +694,7 @@ means some call was missed or double-wrapped.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add supabase/migrations/0150_rls_initplan_and_policy_consolidation.sql
+git add supabase/migrations/0151_rls_initplan_and_policy_consolidation.sql
 git commit -m "perf(rls): hoist STABLE helper calls in every policy to an InitPlan"
 ```
 
@@ -706,7 +706,7 @@ Hand-written, its own commit, so a reviewer reads nine policies rather than hunt
 inside a generated diff.
 
 **Files:**
-- Modify: `supabase/migrations/0150_rls_initplan_and_policy_consolidation.sql`
+- Modify: `supabase/migrations/0151_rls_initplan_and_policy_consolidation.sql`
 
 **The rule — consolidate WITHIN a role list, never across one.** Several pairs have
 different role lists (`services: public read active` is `{anon, authenticated}`;
@@ -802,7 +802,7 @@ psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -t -c \
 diff /tmp/anon-before.txt /tmp/anon-after.txt
 ```
 
-You need `/tmp/anon-before.txt` captured from a pre-0150 database. If you did not capture
+You need `/tmp/anon-before.txt` captured from a pre-0151 database. If you did not capture
 it, `git stash` the migration, `npm run db:reset`, capture, restore.
 
 Expected: differences ONLY where `(select ...)` was added by Phase 1, and only in policy
@@ -821,7 +821,7 @@ Expected: `OK — all N observations identical`
 - [ ] **Step 5: Commit**
 
 ```bash
-git add supabase/migrations/0150_rls_initplan_and_policy_consolidation.sql
+git add supabase/migrations/0151_rls_initplan_and_policy_consolidation.sql
 git commit -m "perf(rls): consolidate nine stacked permissive policy pairs, within role"
 ```
 
@@ -839,7 +839,7 @@ Stops policy #161 being added the old way.
 ```ts
 // Fails if any RLS policy calls a STABLE helper bare. A bare call is evaluated once
 // per row; wrapped as (select fn()) it becomes an InitPlan evaluated once per query.
-// Migration 0150 fixed 14x policies that had this shape; this test stops #161.
+// Migration 0151 fixed 14x policies that had this shape; this test stops #161.
 //
 // Reads the committed migration SQL rather than a live database, so it runs in plain
 // `npm test` with no stack up.
@@ -880,14 +880,14 @@ describe("RLS policies evaluate helpers once per query", () => {
       }
     }
 
-    // Migrations before 0150 are history and are left as written; 0150 supersedes
-    // them. Only 0150 and later are held to the rule.
+    // Migrations before 0151 are history and are left as written; 0151 supersedes
+    // them. Only 0151 and later are held to the rule.
     const current = offenders.filter((o) => {
       const n = Number(o.slice(0, 4));
       return Number.isFinite(n) && n >= 150;
     });
 
-    expect(current, `Wrap the call as (select ${HELPERS[0]}(...)). See 0150.`).toEqual([]);
+    expect(current, `Wrap the call as (select ${HELPERS[0]}(...)). See 0151.`).toEqual([]);
   });
 });
 ```
@@ -899,7 +899,7 @@ Expected: PASS
 
 - [ ] **Step 3: Prove it catches a violation**
 
-Temporarily append to `0150_...sql`:
+Temporarily append to `0151_...sql`:
 
 ```sql
 create policy "scratch: bad" on public.services
@@ -1044,7 +1044,7 @@ git commit -m "perf(realtime): stop rebuilding every channel on every render"
 ## Task 8: Foreign-key indexes, trimmed
 
 **Files:**
-- Modify: `supabase/migrations/0150_rls_initplan_and_policy_consolidation.sql`
+- Modify: `supabase/migrations/0151_rls_initplan_and_policy_consolidation.sql`
 
 **Outcome: add no indexes. This task is a verification, not a change.**
 
@@ -1142,7 +1142,7 @@ Apply the same wrapping to the release-gated template.
 **Always wrap a helper call as `(select fn(...))`.** `has_role`, `is_staff`, `staff_role`
 and `current_patient_id` are all STABLE, but STABLE does not make the planner call them
 once — written bare in a policy they are evaluated PER ROW. Wrapping makes it an InitPlan,
-evaluated once per query. Migration 0150 fixed 14x policies that had this shape and took
+evaluated once per query. Migration 0151 fixed 14x policies that had this shape and took
 the Visits page from 2,733 ms to <150 ms. `src/lib/supabase/rls-initplan.test.ts` fails on
 a new policy that reverts to the bare form.
 
@@ -1154,8 +1154,8 @@ one level down — it reported 10 when the real number was 130.
 - [ ] **Step 3: Update the stale ledger line in the skill and in CLAUDE.md**
 
 The skill says "Prod ledger head = 0135, repo↔prod in sync (2026-09-10)". `CLAUDE.md` says
-"prod head = 0148 … 0149 in flight". Both are stale: prod head is **0149**, and 0150 is this
-branch. Correct both.
+"prod head = 0148 … 0149 in flight". Both are stale. As of 2026-09-16 prod head is **0150**
+(`patients_without_consent_report`, merged to main), and this branch is **0151**. Correct both.
 
 - [ ] **Step 4: Commit**
 
@@ -1169,7 +1169,7 @@ git commit -m "docs(skills): RLS templates wrap helper calls; refresh the ledger
 ## Task 10: Smoke test
 
 **Files:**
-- Create: `supabase/tests/0150_rls_initplan_smoke.sql`
+- Create: `supabase/tests/0151_rls_initplan_smoke.sql`
 
 - [ ] **Step 1: Write it, following the existing convention**
 
@@ -1185,7 +1185,7 @@ Task 6.
 Strip the wrapped form first, then scan for whatever is left:
 
 ```sql
--- 0150 smoke: every policy evaluates its STABLE helpers once per query.
+-- 0151 smoke: every policy evaluates its STABLE helpers once per query.
 --
 -- Two-step on purpose. A single regex cannot tell `has_role(` from
 -- `(select has_role(` without a lookbehind, and matching the wrapped form would
@@ -1213,7 +1213,7 @@ begin
 
   if bad_count > 0 then
     raise exception
-      '0150 smoke: % policies still call a STABLE helper per row: %', bad_count, bad_list;
+      '0151 smoke: % policies still call a STABLE helper per row: %', bad_count, bad_list;
   end if;
 end $$;
 ```
@@ -1230,7 +1230,7 @@ mint a P-code for it.
 
 ```bash
 psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" \
-  -f supabase/tests/0150_rls_initplan_smoke.sql
+  -f supabase/tests/0151_rls_initplan_smoke.sql
 ```
 
 Expected: `DO`, no exception.
@@ -1238,7 +1238,7 @@ Expected: `DO`, no exception.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add supabase/tests/0150_rls_initplan_smoke.sql
+git add supabase/tests/0151_rls_initplan_smoke.sql
 git commit -m "test(db): smoke — no policy calls a STABLE helper per row"
 ```
 
@@ -1254,7 +1254,7 @@ The full history must apply to an empty DB.
 npm run db:reset
 ```
 
-Expected: all migrations 0001→0150 apply cleanly.
+Expected: all migrations 0001→0151 apply cleanly.
 
 - [ ] **Step 2: Full local gate**
 
@@ -1270,7 +1270,7 @@ Expected: all three clean.
 - [ ] **Step 3: Final equivalence proof from a clean baseline**
 
 ```bash
-git stash push -u -m "perf-0150-baseline-capture"
+git stash push -u -m "perf-0151-baseline-capture"
 npm run db:reset && npm run seed:test
 npm run perf:rls-probe -- /tmp/rls-final-before.json
 git stash list --format='%H %gs' | head -3   # capture YOUR sha, do not use `pop`
@@ -1318,8 +1318,8 @@ must be applied to prod before the PR merges**.
 
 Report to the owner:
 
-> Ready. Run `! cd ~/Claude/DRMed && /opt/homebrew/bin/supabase db push` to apply 0150,
-> then confirm prod ledger head is 0150 and that `pg_policies` shows the wrapped form live.
+> Ready. Run `! cd ~/Claude/DRMed && /opt/homebrew/bin/supabase db push` to apply 0151,
+> then confirm prod ledger head is 0151 and that `pg_policies` shows the wrapped form live.
 > Verify the objects, never the summary line — a duplicate migration number makes `db push`
 > report "up to date" and apply nothing.
 

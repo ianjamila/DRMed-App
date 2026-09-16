@@ -26,8 +26,10 @@ Key reference artifacts:
   denomination count…). Read the spec before re-deriving a design decision.
 
 Migration ledger: **prod head = 0150**, repo↔prod in sync (2026-09-16). **0150**
-(`v_patients_without_consent`) is applied to prod and in flight on
-`perf/consent-report-aggregation`; the next free number is **0151**.
+(`v_patients_without_consent`) is applied to prod and merged. **0151**
+(`rls_initplan_and_policy_consolidation`) is in flight on
+`perf/rls-initplan-realtime` and must be pushed before its PR merges; the next free
+number is **0152**.
 `ls supabase/migrations | tail -3` is NOT enough to pick the next number — it only sees your
 own worktree, and on 2026-09-15 two branches claimed 0147 (and P0050) the same afternoon.
 Check the open branches too:

@@ -58,6 +58,25 @@ describe("wrapCalls / unwrapInitPlans round-trip", () => {
     expect(changed.length).toBeGreaterThanOrEqual(7);
   });
 
+  // Postgres does not store `(select f())` as written — it re-renders the scalar
+  // subquery with an inferred column alias. These are the exact strings pg_policies
+  // returns AFTER migration 0151 is applied, and unwrapping them must land back on
+  // the original. Without the alias strip, all 149 rewritten policies read as
+  // meaning changes and the structural proof fails on a correct migration.
+  it.each([
+    [
+      "(SELECT has_role(ARRAY['admin'::text]) AS has_role)",
+      "has_role(ARRAY['admin'::text])",
+    ],
+    [
+      "(patient_id = (SELECT current_patient_id() AS current_patient_id))",
+      "(patient_id = current_patient_id())",
+    ],
+    ["(SELECT is_staff() AS is_staff)", "is_staff()"],
+  ])("strips the column alias Postgres adds: %s", (rendered, original) => {
+    expect(norm(unwrapInitPlans(rendered))).toBe(norm(original));
+  });
+
   it("leaves a correlated subquery's FROM clause intact", () => {
     const expr = REAL_EXPRESSIONS[5];
     const wrapped = wrapCalls(expr);

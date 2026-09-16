@@ -88,7 +88,15 @@ export function unwrapInitPlans(expr: string): string {
     if (m && !/\b(from|where|group\s+by|having|union|join)\b/i.test(m[1])) {
       // A bare `(select <expr>)` — the wrapper this migration adds. Drop it and
       // recurse into the body, since the body may itself contain wrappers.
-      out += unwrapInitPlans(m[1].trim());
+      //
+      // Postgres does not store the wrapper as written. It re-renders a scalar
+      // subquery with an inferred column alias, so `(select has_role(x))` comes
+      // back from pg_policies as `(SELECT has_role(x) AS has_role)`. Strip that
+      // trailing alias or every policy reads as a meaning change.
+      const body = m[1]
+        .trim()
+        .replace(/\s+AS\s+[A-Za-z_][A-Za-z0-9_$]*\s*$/i, "");
+      out += unwrapInitPlans(body);
     } else {
       // Something else in parens. Keep the parens, recurse inside.
       out += "(" + unwrapInitPlans(expr.slice(i + 1, close)) + ")";
