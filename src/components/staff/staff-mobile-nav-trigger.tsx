@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { Tooltip } from "@/components/ui/tooltip";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { signOutStaff } from "@/app/(staff)/staff/login/actions";
 import { Button } from "@/components/ui/button";
 import {
@@ -44,20 +45,23 @@ function MobileNavLink({
   active: boolean;
   onClick: () => void;
 }) {
+  const descriptionId = useId();
   return (
-    <li>
+    <li className={`relative ${active ? "text-white" : "text-[color:var(--color-brand-text-soft)]"}`}>
       <Link
         href={item.href}
         onClick={onClick}
+        aria-describedby={item.description ? descriptionId : undefined}
         aria-current={active ? "page" : undefined}
         className={
           active
-            ? "block rounded-md bg-[color:var(--color-brand-navy)] px-3 py-3 text-sm font-medium text-white"
-            : "block rounded-md px-3 py-3 text-sm font-medium text-[color:var(--color-brand-text-mid)] transition-colors hover:bg-[color:var(--color-brand-bg)] hover:text-[color:var(--color-brand-navy)]"
+            ? "block rounded-md bg-[color:var(--color-brand-navy)] pl-3 pr-11 py-3 text-sm font-medium text-white"
+            : "block rounded-md pl-3 pr-11 py-3 text-sm font-medium text-[color:var(--color-brand-text-mid)] transition-colors hover:bg-[color:var(--color-brand-bg)] hover:text-[color:var(--color-brand-navy)]"
         }
       >
         {item.label}
       </Link>
+      {item.description ? <Tooltip content={item.description} label={`About ${item.label}`} descriptionId={descriptionId} /> : null}
     </li>
   );
 }

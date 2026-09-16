@@ -23,6 +23,7 @@ import {
   type VisitClass,
   type VisitView,
 } from "./classification";
+import { archiveSearchPlan, applyArchiveSearch } from "./archive-search";
 import { shouldPrintReceipt } from "./receipt-policy";
 
 type AnyClient = SupabaseClient<Database>;
@@ -89,6 +90,7 @@ export interface ArchiveRow {
 }
 
 export interface ArchiveFilters {
+  q?: string;
   start: string;
   end: string;
   classes: ReadonlySet<VisitClass>;
@@ -240,6 +242,8 @@ export async function fetchArchiveWindow(
   limit: number,
 ): Promise<{ rows: ArchiveRow[]; count: number }> {
   const { start, end, classes, view } = filters;
+  const search = archiveSearchPlan(filters.q);
+  const select = [VISIT_SELECT, ...search.map((term) => `${term.alias}:patients()`)].join(",");
   const predicate = kindPredicateForSet(classes);
   const filtering = predicate.mode !== "none";
 
@@ -252,12 +256,13 @@ export async function fetchArchiveWindow(
     .from("visits")
     .select(
       filtering
-        ? `${VISIT_SELECT}, test_requests!inner ( id, services!inner ( id ) )`
-        : VISIT_SELECT,
+        ? `${select}, test_requests!inner ( id, services!inner ( id ) )`
+        : select,
       { count: "exact" },
     )
     .range(offset, offset + limit - 1);
 
+  query = applyArchiveSearch(query, search);
   query = applyOrderPlan(query, sort);
   query = applyView(query, view);
   if (start) query = query.gte("visit_date", start);
@@ -289,8 +294,9 @@ export async function fetchArchiveWindow(
   if (groupIds.length > 0) {
     let siblings = supabase
       .from("visits")
-      .select(VISIT_SELECT)
+      .select(select)
       .in("visit_group_id", groupIds);
+    siblings = applyArchiveSearch(siblings, search);
     siblings = applyView(siblings, view);
     if (start) siblings = siblings.gte("visit_date", start);
     if (end) siblings = siblings.lte("visit_date", end);
