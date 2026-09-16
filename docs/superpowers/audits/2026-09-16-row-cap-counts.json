@@ -1,0 +1,275 @@
+{
+  "measured_on": "2026-09-16",
+  "read_only": true,
+  "batches": [
+    {
+      "batch": 1,
+      "metrics": [
+        {
+          "metric": "Q42_max_live_visits_per_selectable_date",
+          "n": 68
+        },
+        {
+          "metric": "Q42_dates_over_1000",
+          "n": 0
+        },
+        {
+          "metric": "Q152_max_live_nonheader_noncancelled_orders_per_date",
+          "n": 126
+        },
+        {
+          "metric": "Q152_today",
+          "n": 0
+        },
+        {
+          "metric": "Q69_global_unacknowledged",
+          "n": 0
+        },
+        {
+          "metric": "Q69_max_assigned_staff_unacknowledged",
+          "n": 0
+        },
+        {
+          "metric": "Q77_loaded_appointment_rows",
+          "n": 89
+        },
+        {
+          "metric": "Q77_loaded_booking_groups",
+          "n": 35
+        },
+        {
+          "metric": "Q77_matching_attachments",
+          "n": 6
+        },
+        {
+          "metric": "Q77_all_attachments",
+          "n": 6
+        },
+        {
+          "metric": "Q81_max_loaded_booking_group_rows",
+          "n": 14
+        },
+        {
+          "metric": "Q81_max_any_booking_group_rows",
+          "n": 15
+        },
+        {
+          "metric": "Q131_Q134_max_business_date_shift",
+          "n": 0
+        },
+        {
+          "metric": "Q135_max_petty_cash_per_date",
+          "n": 0
+        },
+        {
+          "metric": "cash_adjustments_all",
+          "n": 0
+        },
+        {
+          "metric": "Q241_future_closures",
+          "n": 12
+        },
+        {
+          "metric": "Q245_all_trueups",
+          "n": 0
+        },
+        {
+          "metric": "Q270_max_nonvoid_trueups_per_manila_year",
+          "n": 0
+        },
+        {
+          "metric": "Q248_active_inventory_items",
+          "n": 0
+        },
+        {
+          "metric": "Q315_max_nonvoid_disbursements_per_year",
+          "n": 0
+        },
+        {
+          "metric": "Q332_purchased_all_time_upper_bound",
+          "n": 0
+        },
+        {
+          "metric": "Q344_active_subscribers",
+          "n": 22
+        },
+        {
+          "metric": "Q393_max_batches_per_provider",
+          "n": 0
+        }
+      ]
+    },
+    {
+      "batch": 2,
+      "metrics": [
+        {
+          "metric": "Q265_history_rows",
+          "n": 479
+        },
+        {
+          "metric": "Q265_services_with_history",
+          "n": 300
+        },
+        {
+          "metric": "Q265_services_latest_missing_newest_1000",
+          "n": 0
+        },
+        {
+          "metric": "Q201_download_events",
+          "n": 2
+        },
+        {
+          "metric": "Q201_max_meta_matches",
+          "n": 1
+        },
+        {
+          "metric": "Q201_max_linked_matches",
+          "n": 1
+        },
+        {
+          "metric": "Q201_max_merged_matches",
+          "n": 0
+        },
+        {
+          "metric": "Q201_max_normalized_matches",
+          "n": 1
+        },
+        {
+          "metric": "Q201_max_union_matches",
+          "n": 1
+        },
+        {
+          "metric": "Q201_max_result_links_per_test",
+          "n": 1
+        },
+        {
+          "metric": "Q428_snapshot_rows",
+          "n": 0
+        },
+        {
+          "metric": "Q428_distinct_dates",
+          "n": 0
+        },
+        {
+          "metric": "Q428_rows_in_latest_24_dates",
+          "n": 0
+        },
+        {
+          "metric": "Q428_rows_before_oldest_latest_24_date",
+          "n": 0
+        },
+        {
+          "metric": "Q428_max_rows_per_date",
+          "n": 0
+        },
+        {
+          "metric": "Q311_statements",
+          "n": 0
+        },
+        {
+          "metric": "Q319_max_lines_per_statement",
+          "n": 0
+        },
+        {
+          "metric": "Q322_max_unmatched_lines_per_statement",
+          "n": 0
+        },
+        {
+          "metric": "Q320_Q323_global_matched_lines",
+          "n": 0
+        },
+        {
+          "metric": "Q217_all_vendors",
+          "n": 6
+        },
+        {
+          "metric": "Q217_all_bills",
+          "n": 75
+        },
+        {
+          "metric": "Q217_max_embedded_bills_per_vendor",
+          "n": 42
+        },
+        {
+          "metric": "Q218_outstanding_nonvoid",
+          "n": 0
+        },
+        {
+          "metric": "Q219_drafts",
+          "n": 0
+        },
+        {
+          "metric": "Q221_nonvoid_since_month_start",
+          "n": 0
+        }
+      ]
+    },
+    {
+      "batch": 3,
+      "metrics": [
+        {
+          "metric": "journal_lines",
+          "n": 50679
+        },
+        {
+          "metric": "journal_entries",
+          "n": 22432
+        },
+        {
+          "metric": "Q321_actual_statement_windows",
+          "n": 0
+        },
+        {
+          "metric": "Q321_max_actual_candidates",
+          "n": 0
+        },
+        {
+          "metric": "Q324_max_actual_candidates",
+          "n": 0
+        },
+        {
+          "metric": "Q321_max_posted_account_15_day_window",
+          "n": 525
+        },
+        {
+          "metric": "Q324_max_posted_account_month_plus_3_days",
+          "n": 1089
+        }
+      ]
+    },
+    {
+      "batch": 4,
+      "metrics": [
+        {
+          "metric": "eligible_bank_accounts",
+          "n": 4
+        },
+        {
+          "metric": "Q321_eligible_max_15_day_window",
+          "n": 403
+        },
+        {
+          "metric": "Q321_eligible_max_month_plus_7_days",
+          "n": 918
+        },
+        {
+          "metric": "Q324_eligible_max_month_plus_3_days",
+          "n": 779
+        }
+      ]
+    },
+    {
+      "batch": 5,
+      "metrics": [
+        {
+          "metric": "Q321_eligible_max_quarter_plus_7_days",
+          "n": 1911
+        },
+        {
+          "metric": "Q324_eligible_max_quarter_plus_3_days",
+          "n": 1827
+        }
+      ]
+    }
+  ]
+}

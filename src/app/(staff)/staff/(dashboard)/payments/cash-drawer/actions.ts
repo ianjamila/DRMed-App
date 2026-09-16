@@ -1,5 +1,7 @@
 "use server";
 
+import { fetchCompleteRows } from "@/lib/reports/paging";
+
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -44,12 +46,14 @@ export async function getCashDrawerStateAction(
   });
   if (stateErr) return { ok: false, error: translatePgError(stateErr) };
 
-  const { data: rows, error: rowsErr } = await admin
+  const { data: rows, error: rowsErr } = await fetchCompleteRows((from, to) => admin
     .from("eod_cash_adjustments")
     .select("*")
     .eq("business_date", business_date)
     .eq("shift_id", shift_id)
-    .order("recorded_at", { ascending: false });
+    .order("recorded_at", { ascending: false })
+    .order("id", { ascending: true })
+    .range(from, to));
   if (rowsErr) return { ok: false, error: translatePgError(rowsErr) };
 
   return { ok: true, data: { state: state as Record<string, unknown>, rows: rows ?? [] } };

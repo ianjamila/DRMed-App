@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { todayManilaISO } from "@/lib/marketing/closures";
 import { PeriodActionsClient } from "./period-actions-client";
+import { postedCountsByMonth } from "@/lib/accounting/period-counts";
 
 export const metadata = { title: ROUTE_NAME["/staff/admin/accounting/periods"] };
 export const dynamic = "force-dynamic";
@@ -38,20 +39,7 @@ export default async function PeriodsPage({
     .eq("fiscal_year", year)
     .order("fiscal_month", { ascending: true });
 
-  // JE counts per period (posted only) — single query.
-  const { data: jeCounts } = await admin
-    .from("journal_entries")
-    .select("posting_date", { count: "exact", head: false })
-    .gte("posting_date", `${year}-01-01`)
-    .lte("posting_date", `${year}-12-31`)
-    .eq("status", "posted");
-
-  const countsByMonth = new Map<number, number>();
-  for (const e of jeCounts ?? []) {
-    if (!e.posting_date) continue;
-    const m = new Date(e.posting_date).getUTCMonth() + 1;
-    countsByMonth.set(m, (countsByMonth.get(m) ?? 0) + 1);
-  }
+  const countsByMonth = await postedCountsByMonth(admin, year);
 
   type PeriodRow = NonNullable<typeof periods>[number];
   const byQuarter: Record<1 | 2 | 3 | 4, PeriodRow[]> = { 1: [], 2: [], 3: [], 4: [] };

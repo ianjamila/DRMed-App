@@ -2,6 +2,7 @@ import { ROUTE_NAME } from "@/lib/staff/route-names";
 import { cache } from "react";
 import { detailMetadata } from "@/lib/staff/detail-metadata";
 import Link from "next/link";
+import { fetchCompleteRows } from "@/lib/reports/paging";
 import { notFound } from "next/navigation";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -95,9 +96,9 @@ export default async function BankStatementDetailPage({ params }: PageProps) {
   const { id } = await params;
   const admin = createAdminClient();
 
-  const [{ data: statement }, { data: lines }] = await Promise.all([
+  const [{ data: statement }, { data: lines, error: linesError }] = await Promise.all([
     loadDetail(id),
-    admin
+    fetchCompleteRows((from, to) => admin
       .from("bank_statement_lines")
       .select(
         `
@@ -111,10 +112,14 @@ export default async function BankStatementDetailPage({ params }: PageProps) {
       )
       .eq("statement_id", id)
       .order("transaction_date", { ascending: true })
-      .returns<LineRow[]>(),
+      .returns<LineRow[]>()
+    .order("id", { ascending: true })
+    .range(from, to)),
   ]);
 
   if (!statement) notFound();
+
+  if (linesError) throw new Error(linesError.message);
 
   const allLines = lines ?? [];
   const matched = allLines.filter((l) => l.matched_je_line_id);
@@ -140,28 +145,36 @@ export default async function BankStatementDetailPage({ params }: PageProps) {
     const start = shiftISODate(minD, -7);
     const end = shiftISODate(maxD, 7);
 
-    const { data: alreadyMatched } = await admin
+    const { data: alreadyMatched, error: matchedError } = await fetchCompleteRows((from, to) => admin
       .from("bank_statement_lines")
       .select("matched_je_line_id")
-      .not("matched_je_line_id", "is", null);
+      .not("matched_je_line_id", "is", null)
+    .order("id", { ascending: true })
+    .range(from, to));
+    if (matchedError) throw new Error(matchedError.message);
     const claimedSet = new Set(
       (alreadyMatched ?? [])
         .map((m) => m.matched_je_line_id)
         .filter((x): x is string => !!x),
     );
 
-    const { data: candLines } = await admin
-      .from("journal_lines")
-      .select(
-        `
+    const { data: candLines, error: candidateError } = await fetchCompleteRows((from, to) =>
+      admin
+        .from("journal_lines")
+        .select(
+          `
         id, debit_php, credit_php,
         journal_entries!inner ( id, entry_number, posting_date, description, status )
       `,
-      )
-      .eq("account_id", statement.account_id)
-      .eq("journal_entries.status", "posted")
-      .gte("journal_entries.posting_date", start)
-      .lte("journal_entries.posting_date", end);
+        )
+        .eq("account_id", statement.account_id)
+        .eq("journal_entries.status", "posted")
+        .gte("journal_entries.posting_date", start)
+        .lte("journal_entries.posting_date", end)
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
+    if (candidateError) throw new Error(candidateError.message);
 
     const usable = (candLines ?? []).filter(
       (c) => !claimedSet.has((c as { id: string }).id),

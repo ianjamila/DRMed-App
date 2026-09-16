@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   chunk,
   fetchAllRows,
+  fetchCompleteRows,
+  fetchCompleteRowsByIds,
   PAGE_SIZE,
   REPORT_EXPORT_MAX_ROWS,
   unique,
@@ -80,5 +82,41 @@ describe("chunk / unique", () => {
 
   it("dedupes and drops null/undefined", () => {
     expect(unique(["a", null, "b", "a", undefined])).toEqual(["a", "b"]);
+  });
+});
+
+describe("complete sets for totals and selections", () => {
+  it("walks every page without imposing the report export ceiling", async () => {
+    const { fetchPage } = fakeSource(REPORT_EXPORT_MAX_ROWS + 17);
+    const result = await fetchCompleteRows(fetchPage);
+    expect(result.error).toBeNull();
+    expect(result.data).toHaveLength(REPORT_EXPORT_MAX_ROWS + 17);
+  });
+
+  it("discards earlier pages and preserves a later PostgREST error", async () => {
+    const error = { message: "page failed", code: "42501" };
+    const result = await fetchCompleteRows(async (from) => from === 0
+      ? { data: Array.from({ length: 1000 }, (_, id) => ({ id })), error: null }
+      : { data: null, error });
+    expect(result).toEqual({ data: null, error });
+  });
+
+  it("pages child fan-out inside each bounded IN chunk and deduplicates input IDs", async () => {
+    const ids = Array.from({ length: 201 }, (_, i) => String(i));
+    const calls: [number, number][] = [];
+    const result = await fetchCompleteRowsByIds([...ids, ids[0]], async (part, from, to) => {
+      calls.push([part.length, from]);
+      const children = part.flatMap((id) => Array.from({ length: 6 }, (_, i) => ({ id: `${id}-${i}` })));
+      return { data: children.slice(from, to + 1), error: null };
+    });
+    expect(result.data).toHaveLength(1206);
+    expect(calls).toEqual([[200, 0], [200, 1000], [1, 0]]);
+  });
+
+  it("returns an empty selection without querying and propagates chunk errors", async () => {
+    const fetchPage = vi.fn(async () => ({ data: null, error: { message: "denied" } }));
+    expect(await fetchCompleteRowsByIds([], fetchPage)).toEqual({ data: [], error: null });
+    expect(fetchPage).not.toHaveBeenCalled();
+    expect(await fetchCompleteRowsByIds(["id"], fetchPage)).toEqual({ data: null, error: { message: "denied" } });
   });
 });

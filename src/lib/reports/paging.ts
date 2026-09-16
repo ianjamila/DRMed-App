@@ -65,3 +65,37 @@ export async function fetchAllRows<T>(
   }
   return { rows: out.slice(0, maxRows), truncated: out.length > maxRows };
 }
+
+/** Complete sets for totals/selection: preserve Supabase errors, never partial data.
+ * The fetcher must build a fresh query with a unique final ordering column.
+ */
+export async function fetchCompleteRows<T, E extends { message: string }>(
+  fetchPage: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: E | null }>,
+): Promise<{ data: T[] | null; error: E | null }> {
+  let pageError: E | null = null;
+  try {
+    const { rows } = await fetchAllRows(async (from, to) => {
+      const result = await fetchPage(from, to);
+      pageError = result.error;
+      return result;
+    }, Infinity);
+    return { data: rows, error: null };
+  } catch (error) {
+    if (pageError) return { data: null, error: pageError };
+    throw error;
+  }
+}
+
+/** Keep IN URLs small; page each chunk too because child rows can fan out. */
+export async function fetchCompleteRowsByIds<T, E extends { message: string }>(
+  ids: readonly string[],
+  fetchPage: (ids: string[], from: number, to: number) => PromiseLike<{ data: T[] | null; error: E | null }>,
+): Promise<{ data: T[] | null; error: E | null }> {
+  const data: T[] = [];
+  for (const part of chunk(unique(ids), IN_CHUNK)) {
+    const result = await fetchCompleteRows((from, to) => fetchPage(part, from, to));
+    if (result.error) return { data: null, error: result.error };
+    data.push(...(result.data ?? []));
+  }
+  return { data, error: null };
+}

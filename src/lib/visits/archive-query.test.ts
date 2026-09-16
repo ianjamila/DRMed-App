@@ -69,3 +69,47 @@ describe("archiveOrderPlan", () => {
     }
   });
 });
+
+// A CSV window can contain 1,000 visits, then fan out to many more bill lines.
+// Exercise both enrichment queries, including a sibling set over 1,000 rows.
+it("keeps every split sibling and billed line past the PostgREST cap", async () => {
+  const { createClient } = await import("@supabase/supabase-js");
+  const { fetchArchiveWindow } = await import("./archive-query");
+  const visits = ["a", "b"].flatMap((side) => Array.from({ length: 600 }, (_, i) => ({
+    id: `${side}${String(i).padStart(4, "0")}`, visit_group_id: `g${i}`,
+    visit_number: `${side}${i}`, visit_date: "2026-09-01", created_at: "2026-09-01T01:00:00Z",
+    payment_status: "paid", total_php: 6, paid_php: 6, deleted_at: null, delete_reason: null,
+    patients: { id: `p${i}`, drm_id: `DRM-${i}`, first_name: "A", middle_name: null, last_name: "B" },
+    payments: [],
+  })));
+  const lines = visits.flatMap((v) => Array.from({ length: 6 }, (_, i) => ({
+    id: `${v.id}-${i}`, visit_id: v.id, services: { kind: i === 5 ? "doctor_consultation" : "lab_test" },
+  })));
+  const childOffsets: number[] = [];
+  const client = createClient<import("@/types/database").Database>("https://archive.test", "key", {
+    global: { fetch: async (input) => {
+      const url = new URL(String(input));
+      const isLines = url.pathname.endsWith("test_requests");
+      const ids = url.searchParams.get(isLines ? "visit_id" : "visit_group_id");
+      const selected = ids?.slice(4, -1).split(",");
+      if (selected) expect(selected.length).toBeLessThanOrEqual(200);
+      const matching = isLines
+        ? lines.filter((l) => selected?.includes(l.visit_id))
+        : visits.filter((v) => !selected || selected.includes(v.visit_group_id));
+      const offset = Number(url.searchParams.get("offset") ?? 0);
+      if (isLines) childOffsets.push(offset);
+      const limit = Math.min(1000, Number(url.searchParams.get("limit") ?? 1000));
+      expect(url.searchParams.get("order")).toMatch(/id\.asc$/);
+      return new Response(JSON.stringify(matching.slice(offset, offset + limit)), {
+        headers: { "Content-Type": "application/json", "Content-Range": `${offset}-${offset + limit - 1}/${matching.length}` },
+      });
+    } },
+  });
+  const result = await fetchArchiveWindow(client, {
+    start: "", end: "", classes: new Set(["lab", "consult", "procedure"]), view: "active",
+  }, DEFAULT_ARCHIVE_SORT, 0, 600);
+  expect(result.rows).toHaveLength(600);
+  expect(result.rows.every((r) => r.members.length === 2 && r.testCount === 12)).toBe(true);
+  expect(result.rows.reduce((sum, r) => sum + r.total, 0)).toBe(7200);
+  expect(childOffsets).toContain(1000);
+});

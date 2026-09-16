@@ -1,3 +1,4 @@
+import { fetchCompleteRows } from "@/lib/reports/paging";
 import Link from "next/link";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -157,11 +158,14 @@ export default async function InventoryPage({ searchParams }: SearchProps) {
   // Sections for the filter dropdown — deliberately unfiltered by the
   // current section selection (only by is_active) so picking a section
   // doesn't collapse the dropdown down to just that one option.
-  const { data: sectionRows } = await admin
+  const { data: sectionRows, error: completeError } = await fetchCompleteRows((from, to) => admin
     .from("v_inventory_balances")
     .select("section")
     .eq("is_active", true)
-    .returns<{ section: string | null }[]>();
+    .returns<{ section: string | null }[]>()
+    .order("item_id", { ascending: true })
+    .range(from, to));
+  if (completeError) throw new Error(completeError.message);
   const sectionsSet = new Set<string>();
   for (const r of sectionRows ?? []) if (r.section) sectionsSet.add(r.section);
   const sections = Array.from(sectionsSet).sort();

@@ -1,6 +1,7 @@
 import { ROUTE_NAME } from "@/lib/staff/route-names";
 import { cache } from "react";
 import { detailMetadata } from "@/lib/staff/detail-metadata";
+import { fetchCompleteRows } from "@/lib/reports/paging";
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
@@ -39,25 +40,37 @@ export default async function BatchDetailPage({
   if (!batch) notFound();
 
   const [itemsQ, resolutionsQ, allocationsQ] = await Promise.all([
-    admin
-      .from("hmo_claim_items")
-      .select(
-        "*, test_requests(id, service_id, visit_id, services(name, kind), visits(patients(drm_id, first_name, last_name)))",
-      )
-      .eq("batch_id", batchId)
-      .order("created_at"),
-    admin
-      .from("hmo_claim_resolutions")
-      .select("*, hmo_claim_items!inner(batch_id)")
-      .eq("hmo_claim_items.batch_id", batchId)
-      .order("resolved_at", { ascending: false }),
-    admin
-      .from("hmo_payment_allocations")
-      .select(
-        "*, hmo_claim_items!inner(batch_id), payments(reference_number, received_at)",
-      )
-      .eq("hmo_claim_items.batch_id", batchId)
-      .order("created_at", { ascending: false }),
+    fetchCompleteRows((from, to) =>
+      admin
+        .from("hmo_claim_items")
+        .select(
+          "*, test_requests(id, service_id, visit_id, services(name, kind), visits(patients(drm_id, first_name, last_name)))",
+        )
+        .eq("batch_id", batchId)
+        .order("created_at")
+        .order("id", { ascending: true })
+        .range(from, to)
+    ),
+    fetchCompleteRows((from, to) =>
+      admin
+        .from("hmo_claim_resolutions")
+        .select("*, hmo_claim_items!inner(batch_id)")
+        .eq("hmo_claim_items.batch_id", batchId)
+        .order("resolved_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to)
+    ),
+    fetchCompleteRows((from, to) =>
+      admin
+        .from("hmo_payment_allocations")
+        .select(
+          "*, hmo_claim_items!inner(batch_id), payments(reference_number, received_at)",
+        )
+        .eq("hmo_claim_items.batch_id", batchId)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to)
+    ),
   ]);
 
   return (

@@ -1,3 +1,4 @@
+import { fetchCompleteRows } from "@/lib/reports/paging";
 import { redirect } from "next/navigation";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -38,14 +39,17 @@ export default async function PettyCashPage({
   // door recorded it, so this page now shows petty cash logged here, petty cash
   // paid out from the Cash drawer's own modal, AND an admin Quick expense
   // booked to Clinic Cash. One physical till, one history.
-  const { data: entries } = await admin
+  const { data: entries, error: completeError } = await fetchCompleteRows((from, to) => admin
     .from("eod_cash_adjustments")
     .select(
       "id, amount_php, payee, notes, recorded_at, voided_at, contra_account_id, chart_of_accounts:contra_account_id(code, name)",
     )
     .eq("kind", "petty_cash")
     .eq("business_date", business_date)
-    .order("recorded_at", { ascending: false });
+    .order("recorded_at", { ascending: false })
+    .order("id", { ascending: true })
+    .range(from, to));
+  if (completeError) throw new Error(completeError.message);
 
   const rows: PettyCashRow[] = (entries ?? []).map((e) => {
     // The category reception picked is stored as the contra account. Map it

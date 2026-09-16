@@ -1,3 +1,4 @@
+import { fetchCompleteRows } from "@/lib/reports/paging";
 import "server-only";
 
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -214,25 +215,29 @@ async function fetchLabRows(
   admin: SupabaseAdmin,
   watermark: string,
 ): Promise<{ rows: SheetRow[]; maxTimestamp: string | null }> {
-  const { data, error } = await admin
-    .from("test_requests")
-    .select(TEST_REQUEST_SELECT)
-    .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
-    // The two doctor tabs below have carried these filters since 0125; this
-    // one did not, on the reading that a released line can never be deleted
-    // (P0043 refuses to delete a row whose status is already 'released').
-    // That is an ORDERING claim, and the DB does not enforce the other
-    // direction: a line deleted at ready_for_release could still be released
-    // afterwards, and a deleted VISIT never cascaded to its lines at all. The
-    // sync is append-only — a row crosses the watermark once and is never
-    // revisited — so anything that slipped through sat in the Lab Services
-    // sheet permanently, with no correction pass to take it out again.
-    .is("deleted_at", null)
-    .is("visits.deleted_at", null)
-    .gt("released_at", watermark)
-    .not("released_at", "is", null)
-    .order("released_at", { ascending: true })
-    .returns<RawTestRequest[]>();
+  const { data, error } = await fetchCompleteRows((from, to) =>
+    admin
+      .from("test_requests")
+      .select(TEST_REQUEST_SELECT)
+      .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
+      // The two doctor tabs below have carried these filters since 0125; this
+      // one did not, on the reading that a released line can never be deleted
+      // (P0043 refuses to delete a row whose status is already 'released').
+      // That is an ORDERING claim, and the DB does not enforce the other
+      // direction: a line deleted at ready_for_release could still be released
+      // afterwards, and a deleted VISIT never cascaded to its lines at all. The
+      // sync is append-only — a row crosses the watermark once and is never
+      // revisited — so anything that slipped through sat in the Lab Services
+      // sheet permanently, with no correction pass to take it out again.
+      .is("deleted_at", null)
+      .is("visits.deleted_at", null)
+      .gt("released_at", watermark)
+      .not("released_at", "is", null)
+      .order("released_at", { ascending: true })
+      .returns<RawTestRequest[]>()
+      .order("id", { ascending: true })
+      .range(from, to)
+  );
 
   if (error) throw new Error(`fetchLabRows: ${error.message}`);
 
@@ -269,17 +274,21 @@ async function fetchConsultRows(
   admin: SupabaseAdmin,
   watermark: string,
 ): Promise<{ rows: SheetRow[]; maxTimestamp: string | null }> {
-  const { data, error } = await admin
-    .from("test_requests")
-    .select(TEST_REQUEST_SELECT)
-    .in("services.kind", CONSULT_KINDS)
-    // Watermark keys off visit creation, not payment/release — without this
-    // filter a soft-deleted (0125) consult would still export to the sheet.
-    .is("deleted_at", null)
-    .is("visits.deleted_at", null)
-    .gt("visits.created_at", watermark)
-    .order("visits(created_at)", { ascending: true })
-    .returns<RawTestRequest[]>();
+  const { data, error } = await fetchCompleteRows((from, to) =>
+    admin
+      .from("test_requests")
+      .select(TEST_REQUEST_SELECT)
+      .in("services.kind", CONSULT_KINDS)
+      // Watermark keys off visit creation, not payment/release — without this
+      // filter a soft-deleted (0125) consult would still export to the sheet.
+      .is("deleted_at", null)
+      .is("visits.deleted_at", null)
+      .gt("visits.created_at", watermark)
+      .order("visits(created_at)", { ascending: true })
+      .returns<RawTestRequest[]>()
+      .order("id", { ascending: true })
+      .range(from, to)
+  );
 
   if (error) throw new Error(`fetchConsultRows: ${error.message}`);
 
@@ -314,15 +323,19 @@ async function fetchProcedureRows(
   admin: SupabaseAdmin,
   watermark: string,
 ): Promise<{ rows: SheetRow[]; maxTimestamp: string | null }> {
-  const { data, error } = await admin
-    .from("test_requests")
-    .select(TEST_REQUEST_SELECT)
-    .in("services.kind", PROCEDURE_KINDS)
-    .is("deleted_at", null)
-    .is("visits.deleted_at", null)
-    .gt("visits.created_at", watermark)
-    .order("visits(created_at)", { ascending: true })
-    .returns<RawTestRequest[]>();
+  const { data, error } = await fetchCompleteRows((from, to) =>
+    admin
+      .from("test_requests")
+      .select(TEST_REQUEST_SELECT)
+      .in("services.kind", PROCEDURE_KINDS)
+      .is("deleted_at", null)
+      .is("visits.deleted_at", null)
+      .gt("visits.created_at", watermark)
+      .order("visits(created_at)", { ascending: true })
+      .returns<RawTestRequest[]>()
+      .order("id", { ascending: true })
+      .range(from, to)
+  );
 
   if (error) throw new Error(`fetchProcedureRows: ${error.message}`);
 

@@ -1,7 +1,7 @@
 /** Stuck tests + queue-integrity checks — shared by the page and its CSV. Not `server-only`. */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
-import { chunk, fetchAllRows, IN_CHUNK, unique } from "./paging";
+import { chunk, fetchAllRows, fetchCompleteRows, IN_CHUNK, unique } from "./paging";
 import { csvManilaStamp, pluckOne } from "./format";
 import { moneySettled } from "@/lib/visits/money-settled";
 import { DOCTOR_KINDS_PG_LIST } from "@/lib/visits/classification";
@@ -319,10 +319,15 @@ export async function loadStuckTests(
   if (headerCandidates.length > 0) {
     const byParent = new Map<string, string[]>();
     for (const ids of chunk(headerCandidates.map((h) => h.id), IN_CHUNK)) {
-      const { data: components } = await client
-        .from("test_requests")
-        .select("parent_id, status")
-        .in("parent_id", ids);
+      const { data: components, error } = await fetchCompleteRows((from, to) =>
+        client
+          .from("test_requests")
+          .select("parent_id, status")
+          .in("parent_id", ids)
+          .order("id", { ascending: true })
+          .range(from, to)
+      );
+      if (error) throw new Error(error.message);
       for (const c of components ?? []) {
         if (!c.parent_id) continue;
         const list = byParent.get(c.parent_id) ?? [];
