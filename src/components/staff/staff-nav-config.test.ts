@@ -3,6 +3,8 @@ import ts from "typescript";
 import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
 import { describe, expect, it } from "vitest";
 import {
+  quickLinksFor,
+  quickLinkGroupsFor,
   isItemActive,
   isSectionActive,
   isSubgroupActive,
@@ -404,19 +406,12 @@ const NAME_EXCEPTIONS: NameException[] = [
     file: NAV_FILE, href, label,
     why: "An umbrella opens a section containing several views; naming it after its first tab would conceal the other views.",
   })),
-  ...[
-    ["/staff/admin/operations", "Daily Monitoring"],
-    ["/staff/admin/accounting/financial-statements", "Financial Statements"],
-  ].map(([href, label]) => ({
-    file: `${DASHBOARD_DIR}/_dashboards/admin-dashboard.tsx`, href, label,
-    why: "This shortcut opens the whole reporting section, just like the sidebar umbrella; its landing tab retains its specific route name.",
-  })),
   {
     file: `${DASHBOARD_DIR}/admin/accounting/ap/_components/bills-tabs.tsx`,
     href: "/staff/admin/accounting/ap", label: "Overview",
     why: "Inside Expenses the Overview tab can omit the section prefix; the standalone page and dashboard link say Expenses Overview.",
   },
-  ...[NAV_FILE, `${DASHBOARD_DIR}/_dashboards/lab-dashboard.tsx`].map((file) => ({
+  ...[NAV_FILE].map((file) => ({
     file, href: "/staff/queue", label: "Queue",
     why: "Queue is a shared role-neutral entry point: queueTitleForRole correctly renders Imaging queue for x-ray staff and Lab queue for medtechs.",
   })),
@@ -496,9 +491,17 @@ function navigationNames(file: string, text: string, sectionHref?: string) {
   }
   const entries: { href: string; label?: string; routeRead: boolean; sectionRead: boolean }[] = [];
   const metrics: string[] = [];
+  let derivedQuicklinks = false;
   const eyebrows: boolean[] = [];
   const handRolledHeaders: string[] = [];
   visit(sf, (node) => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+      const decl = checker.getSymbolAtLocation(node.expression)?.declarations?.[0];
+      if (decl && ts.isImportSpecifier(decl) && ["quickLinksFor", "quickLinkGroupsFor"].includes((decl.propertyName ?? decl.name).text)) {
+        const imp = decl.parent.parent.parent;
+        derivedQuicklinks ||= ts.isImportDeclaration(imp) && ts.isStringLiteral(imp.moduleSpecifier) && imp.moduleSpecifier.text === "@/components/staff/staff-nav-config";
+      }
+    }
     if (sectionHref && (ts.isJsxSelfClosingElement(node) || ts.isJsxOpeningElement(node))) {
       const tag = node.tagName.getText(sf);
       if (tag === "PageHeader") {
@@ -520,7 +523,7 @@ function navigationNames(file: string, text: string, sectionHref?: string) {
     const href = stringValue(hrefNode) ?? "<unresolved href>";
     entries.push({ href, label: stringValue(label), routeRead: registryRead(label, "ROUTE_NAME", href), sectionRead: registryRead(label, "SECTION_NAME", href) });
   });
-  return { entries, metrics, eyebrows, handRolledHeaders };
+  return { entries, metrics, eyebrows, handRolledHeaders, derivedQuicklinks };
 }
 
 const namingFiles = [NAV_FILE, ...sourceFiles(DASHBOARD_DIR).filter((file) =>
@@ -529,8 +532,13 @@ const namingFiles = [NAV_FILE, ...sourceFiles(DASHBOARD_DIR).filter((file) =>
 
 describe("route name registry ownership", () => {
   it.each(namingFiles)("%s reads registry names at every navigation leaf", (file) => {
-    const { entries, metrics } = navigationNames(file, readFileSync(file, "utf8"));
-    expect(entries.length, "a migrated surface must not silently stop being inspected").toBeGreaterThan(0);
+    const { entries, metrics, derivedQuicklinks } = navigationNames(file, readFileSync(file, "utf8"));
+    if (file.includes("/_dashboards/")) {
+      expect(derivedQuicklinks, "dashboard quicklinks must derive from STAFF_NAV").toBe(true);
+      expect(entries, "dashboard must not keep a separate quicklink list").toEqual([]);
+    } else {
+      expect(entries.length, "a migrated surface must not silently stop being inspected").toBeGreaterThan(0);
+    }
     for (const entry of entries) {
       const exception = NAME_EXCEPTIONS.find((e) => e.file === file && e.href === entry.href);
       if (exception) {
@@ -620,5 +628,42 @@ describe("PageHeader section ownership", () => {
     const text = `import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
       const header = <PageHeader title="Example" eyebrow=${eyebrow} />;`;
     expect(navigationNames("fixture.tsx", text, "/staff/admin/accounting/ap").eyebrows).toEqual([false]);
+  });
+});
+
+describe("derived dashboard shortcuts preserve the visible set", () => {
+  it("preserves reception groups, labels and order, including parked/action links", () => {
+    expect(quickLinkGroupsFor("reception", "reception").map((g) => [g.label, g.items.map((i) => i.label)])).toEqual([
+      ["Front Desk", ["Reception Queue", "Patients", "New Patient", "Appointments", "Inquiries", "Sell Gift Code"]],
+      ["Billing", ["Visit Records", "Quick Quote", "Cash Drawer", "Petty Cash"]],
+    ]);
+    expect(quickLinksFor("reception", "reception").map((i) => i.href)).toEqual([
+      "/staff/visits/queue", "/staff/patients", "/staff/patients/new", "/staff/appointments", "/staff/inquiries", "/staff/gift-codes/sell", "/staff/visits", "/staff/quote", "/staff/payments/cash-drawer", "/staff/payments/petty-cash",
+    ]);
+  });
+  it("preserves all ten admin shortcuts", () => {
+    expect(quickLinksFor("admin", "admin").map((i) => [i.href, i.label])).toEqual([
+      ["/staff/admin/accounting/periods", "Monthly Periods"],
+      ["/staff/admin/accounting/financial-statements", "Financial Statements"],
+      ["/staff/admin/operations", "Daily Monitoring"],
+      ["/staff/admin/accounting/pf-payouts", "Pay Doctors"],
+      ["/staff/admin/accounting/journal", "Journal Entries"],
+      ["/staff/admin/operations/cash", "Cash & Cards"],
+      ["/staff/admin/reports/daily-revenue", "Daily Revenue"],
+      ["/staff/admin/accounting/ap", "Expenses Overview"],
+      ["/staff/admin/accounting/hmo-claims", "HMO Claims"],
+      ["/staff/admin/payroll/runs", "Run Payroll"],
+    ]);
+  });
+  it.each([
+    ["medtech", ["Queue", "Quick Quote"]],
+    ["xray_technician", ["Queue"]],
+    ["pathologist", ["Queue"]],
+    ["admin", ["Queue", "Quick Quote", "Result Templates"]],
+  ] as const)("preserves lab shortcuts for %s", (role, labels) => {
+    expect(quickLinksFor(role, "lab").map((i) => i.label)).toEqual(labels);
+  });
+  it("does not expose admin shortcuts to reception", () => {
+    expect(quickLinksFor("reception", "admin")).toEqual([]);
   });
 });

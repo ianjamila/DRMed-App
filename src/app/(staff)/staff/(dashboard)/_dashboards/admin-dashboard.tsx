@@ -1,4 +1,4 @@
-import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
+import { quickLinksFor } from "@/components/staff/staff-nav-config";
 import type { StaffSession } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -29,18 +29,7 @@ import { ActivityStrip, type ActivityItem } from "./_components/activity-strip";
 import { formatPeso, relativeAge } from "./_components/format";
 
 // Owner shortcuts; metric cards above keep their own descriptive labels and IDs.
-const QUICK_LINKS = [
-  { href: "/staff/admin/accounting/periods", label: ROUTE_NAME["/staff/admin/accounting/periods"] },
-  { href: "/staff/admin/accounting/financial-statements", label: SECTION_NAME["/staff/admin/accounting/financial-statements"] },
-  { href: "/staff/admin/operations", label: SECTION_NAME["/staff/admin/operations"] },
-  { href: "/staff/admin/accounting/pf-payouts", label: ROUTE_NAME["/staff/admin/accounting/pf-payouts"] },
-  { href: "/staff/admin/accounting/journal", label: ROUTE_NAME["/staff/admin/accounting/journal"] },
-  { href: "/staff/admin/operations/cash", label: ROUTE_NAME["/staff/admin/operations/cash"] },
-  { href: "/staff/admin/reports/daily-revenue", label: ROUTE_NAME["/staff/admin/reports/daily-revenue"] },
-  { href: "/staff/admin/accounting/ap", label: ROUTE_NAME["/staff/admin/accounting/ap"] },
-  { href: "/staff/admin/accounting/hmo-claims", label: ROUTE_NAME["/staff/admin/accounting/hmo-claims"] },
-  { href: "/staff/admin/payroll/runs", label: ROUTE_NAME["/staff/admin/payroll/runs"] },
-];
+const QUICK_LINKS = quickLinksFor("admin", "admin");
 
 const SKIP_COUNT = Promise.resolve({ count: 0, data: null, error: null });
 const SKIP_DATA = Promise.resolve({ data: null, error: null });

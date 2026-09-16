@@ -6,9 +6,19 @@ import type { StaffSession } from "@/lib/auth/require-staff";
 
 export type StaffRole = StaffSession["role"];
 
+export type DashboardAudience = "admin" | "reception" | "lab";
+
 export interface StaffNavItem {
   href: string;
   label: string;
+  quicklink?: Partial<Record<DashboardAudience, {
+    order: number;
+    group?: string;
+    roles?: readonly StaffRole[];
+    routeName?: boolean;
+  }>>;
+  // Related destinations used by dashboard shortcuts, not sidebar rows.
+  shortcuts?: StaffNavItem[];
   // Plain-English description shown as a hover tooltip + small info icon. Use
   // it for any item whose name involves jargon (accounting terms, abbreviations,
   // domain shorthand). Skip for items whose label is already self-explanatory
@@ -79,12 +89,16 @@ export const STAFF_NAV: StaffNavSection[] = [
     items: [
       {
         href: "/staff/visits/queue",
+        quicklink: {"reception":{"order":0,"group":"Front Desk"}},
         label: ROUTE_NAME["/staff/visits/queue"],
         description: "Today's live front-desk worklist in three stages: Waiting for payment (record the payment), Processing (lab/imaging still working on results) and Completed (paid, nothing outstanding — print the patient's billing). Updates on its own as payments come in and tests finish.",
         roles: ["reception", "admin"],
       },
       {
         href: "/staff/patients",
+        quicklink: {"reception":{"order":1,"group":"Front Desk"}},
+        // Dashboard action/view owned here without adding a sidebar row.
+        shortcuts: [{ href: "/staff/patients/new", label: ROUTE_NAME["/staff/patients/new"], roles: ["reception","admin"], quicklink: {"reception":{"order":2,"group":"Front Desk"}} }],
         label: ROUTE_NAME["/staff/patients"],
         // The default prefix match also covers /staff/patients/new — the
         // "New patient registration" sidebar item was removed in the 2026-09-15
@@ -99,12 +113,14 @@ export const STAFF_NAV: StaffNavSection[] = [
         items: [
           {
             href: "/staff/appointments",
+            quicklink: {"reception":{"order":3,"group":"Front Desk"}},
             label: ROUTE_NAME["/staff/appointments"],
             description: "Today's scheduled patients and walk-in slots, filterable by Consultations / Home service. Mark patients arrived to start their visit, or reschedule no-shows. View other days using the date picker.",
             roles: ["reception", "admin"],
           },
           {
             href: "/staff/inquiries",
+            quicklink: {"reception":{"order":4,"group":"Front Desk"}},
             label: ROUTE_NAME["/staff/inquiries"],
             description: "Inquiries that came in through the website chat or Messenger but haven't been converted into a real appointment yet. Follow up here to book them or close the thread.",
             roles: ["reception", "admin"],
@@ -118,6 +134,7 @@ export const STAFF_NAV: StaffNavSection[] = [
     items: [
       {
         href: "/staff/visits",
+        quicklink: {"reception":{"order":6,"group":"Billing"}},
         label: ROUTE_NAME["/staff/visits"],
         // /staff/visits is the visit records page (every visit ever); each
         // visit opens to its printable A5 billing. "Visit Records" is the one
@@ -135,12 +152,16 @@ export const STAFF_NAV: StaffNavSection[] = [
         // Stays a flat Billing item (not in a Front Desk subgroup): medtech
         // reaches it from the lab dashboard and Cmd+K, and has no Front Desk.
         href: "/staff/quote",
+        quicklink: {"reception":{"order":7,"group":"Billing"},"lab":{"order":1,"roles":["medtech","admin"]}},
         label: ROUTE_NAME["/staff/quote"],
         description: "Build a price quote without creating a visit. Useful for phone inquiries: 'How much for a CBC + Urinalysis + Lipid panel?' Generates a shareable quote with HMO or cash pricing.",
         roles: ["reception", "medtech", "admin"],
       },
       {
         href: "/staff/payments/cash-drawer",
+        quicklink: {"reception":{"order":8,"group":"Billing"}},
+        // Dashboard action/view owned here without adding a sidebar row.
+        shortcuts: [{ href: "/staff/payments/petty-cash", label: ROUTE_NAME["/staff/payments/petty-cash"], roles: ["reception","admin"], quicklink: {"reception":{"order":9,"group":"Billing"}} }],
         label: ROUTE_NAME["/staff/payments/cash-drawer"],
         // One item for the whole till: lands on the Cash Drawer tab; Petty
         // Cash and End of Day are the other two tabs of the same page
@@ -158,6 +179,7 @@ export const STAFF_NAV: StaffNavSection[] = [
     items: [
       {
         href: "/staff/queue",
+        quicklink: {"lab":{"order":0}},
         label: "Queue",
         description: "The medtech / radtech / sonographer work queue. Shows every test that's been ordered, grouped by status: waiting (sample not yet collected), in-progress (running), sign-off pending, or released. Click a row to enter results.",
         roles: ["medtech", "pathologist", "admin", "xray_technician"],
@@ -181,6 +203,7 @@ export const STAFF_NAV: StaffNavSection[] = [
     items: [
       {
         href: "/staff/admin/accounting/hmo-claims",
+        quicklink: {"admin":{"order":8}},
         label: ROUTE_NAME["/staff/admin/accounting/hmo-claims"],
         description: "Where you manage the entire HMO billing cycle: which patient visits still need to be invoiced, which invoices are awaiting payment, which HMOs are slow payers, and which to write off. Drill into a provider (e.g., Maxicare) to see every claim and its status.",
         roles: ["admin"],
@@ -188,6 +211,7 @@ export const STAFF_NAV: StaffNavSection[] = [
       {
         // Opens the section overview; the base href owns every AP descendant.
         href: "/staff/admin/accounting/ap",
+        quicklink: {"admin":{"order":7,"routeName":true}},
         label: SECTION_NAME["/staff/admin/accounting/ap"],
         description: "Everything expense-related in one place. Use + Quick expense on the overview for already-paid same-day expenses (cash, GCash, owner OOP). Tabs inside: Overview (what's outstanding), Vendor Bills (invoices with due dates), Bill Payments (the outflows), Vendors (master list), Recurring Bills (monthly auto-bills).",
         roles: ["admin"],
@@ -215,6 +239,7 @@ export const STAFF_NAV: StaffNavSection[] = [
         items: [
           {
             href: "/staff/admin/accounting/pf-payouts",
+            quicklink: {"admin":{"order":3}},
             label: ROUTE_NAME["/staff/admin/accounting/pf-payouts"],
             description: "Pay each doctor their share of the consults they did (their professional fee). Ready to pay = ready now; Waiting on insurance = held until the HMO pays the clinic; Already paid = past payouts. Pick a doctor, send them the amount by GCash or cash, then record it here.",
             roles: ["admin"],
@@ -232,6 +257,7 @@ export const STAFF_NAV: StaffNavSection[] = [
         items: [
           {
             href: "/staff/admin/payroll/runs",
+            quicklink: {"admin":{"order":9}},
             label: ROUTE_NAME["/staff/admin/payroll/runs"],
             description: "The actual payroll computation for a given period — gross pay, overtime, deductions (SSS, PhilHealth, Pag-IBIG, withholding tax, loans), and net pay per employee. Reviewing the output and clicking 'Finalize' generates payslips and books the JE.",
             roles: ["admin"],
@@ -291,6 +317,7 @@ export const STAFF_NAV: StaffNavSection[] = [
         items: [
           {
             href: "/staff/admin/accounting/journal",
+            quicklink: {"admin":{"order":4}},
             // The list page's "+ New journal entry" button reaches /journal/new,
             // so the manual-entry route no longer needs its own sidebar item.
             label: ROUTE_NAME["/staff/admin/accounting/journal"],
@@ -299,6 +326,7 @@ export const STAFF_NAV: StaffNavSection[] = [
           },
           {
             href: "/staff/admin/accounting/financial-statements",
+            quicklink: {"admin":{"order":1}},
             label: SECTION_NAME["/staff/admin/accounting/financial-statements"],
             // One tabbed page: Income Statement (P&L) / Balance Sheet / Cash
             // flow. href is the bare route (Income statement); the default
@@ -320,6 +348,7 @@ export const STAFF_NAV: StaffNavSection[] = [
           },
           {
             href: "/staff/admin/accounting/periods",
+            quicklink: {"admin":{"order":0}},
             label: ROUTE_NAME["/staff/admin/accounting/periods"],
             description: "Monthly accounting windows (Jan 2026, Feb 2026, etc.). After you finish closing the books for a month, lock it here so no one accidentally posts new entries into a finished period. The bookkeeper does this monthly, usually 15 days after month-end.",
             roles: ["admin"],
@@ -332,12 +361,16 @@ export const STAFF_NAV: StaffNavSection[] = [
           },
           {
             href: "/staff/admin/reports/daily-revenue",
+            quicklink: {"admin":{"order":6}},
             label: ROUTE_NAME["/staff/admin/reports/daily-revenue"],
             description: "How much the clinic billed each day, broken down by service type (lab vs. consult vs. imaging) and payment method (cash, GCash, HMO, etc.). Use to spot trends or compare days/weeks.",
             roles: ["admin"],
           },
           {
             href: "/staff/admin/operations",
+            quicklink: {"admin":{"order":2}},
+            // Dashboard action/view owned here without adding a sidebar row.
+            shortcuts: [{ href: "/staff/admin/operations/cash", label: ROUTE_NAME["/staff/admin/operations/cash"], roles: ["admin"], quicklink: {"admin":{"order":5}} }],
             label: SECTION_NAME["/staff/admin/operations"],
             description: "The clinic's full operational day-by-day report (reproduces the manual DAILY MONITORING sheet): lab + consult by payment channel and HMO, distinct customers, discounts, gross profit, PF collected, and per-doctor / per-specialty productivity. Pick any month or custom date range; export to CSV.",
             roles: ["admin"],
@@ -441,6 +474,7 @@ export const STAFF_NAV: StaffNavSection[] = [
           },
           {
             href: "/staff/admin/result-templates",
+            quicklink: {"lab":{"order":2,"roles":["admin"]}},
             label: ROUTE_NAME["/staff/admin/result-templates"],
             description: "The blueprints behind every lab result PDF. For each test, you set up the parameters (e.g., for a CBC: WBC, RBC, hemoglobin) and the normal/abnormal reference ranges by age and sex. Edit a template here when a manufacturer changes the reference range or you add a new test.",
             roles: ["admin"],
@@ -568,6 +602,7 @@ export const STAFF_NAV: StaffNavSection[] = [
     items: [
       {
         href: "/staff/gift-codes/sell",
+        quicklink: {"reception":{"order":5,"group":"Front Desk"}},
         label: ROUTE_NAME["/staff/gift-codes/sell"],
         description: "Sell a prepaid gift code to a customer — they pay now, the recipient redeems later for services. Generates a printable code with QR + expiration date. Parked here for now; reception sells these rarely.",
         roles: ["reception", "admin"],
@@ -672,4 +707,35 @@ export function isSectionActive(
     (section.items?.some((item) => isItemActive(item, pathname)) ?? false) ||
     (section.subgroups?.some((g) => isSubgroupActive(g, pathname)) ?? false)
   );
+}
+
+/** Dashboard inclusion is independent of sidebar parking (Sell Gift Code is
+ * intentionally a reception shortcut in an admin-only Hidden Tabs section).
+ * Item roles still gate access; the audience and order preserve each dashboard. */
+export function quickLinksFor(role: StaffRole, audience: DashboardAudience) {
+  const links: { item: StaffNavItem; order: number; group: string; routeName?: boolean }[] = [];
+  function collect(item: StaffNavItem, heading: string) {
+    const config = item.quicklink?.[audience];
+    if (config && item.roles.includes(role) && (!config.roles || config.roles.includes(role))) {
+      links.push({ item, ...config, group: config.group ?? heading });
+    }
+    item.shortcuts?.forEach((child) => collect(child, heading));
+  }
+  for (const section of STAFF_NAV) {
+    section.items?.forEach((item) => collect(item, section.heading));
+    section.subgroups?.forEach((group) => group.items.forEach((item) => collect(item, section.heading)));
+  }
+  return links.sort((a, b) => a.order - b.order).map(({ item, group, routeName }) => ({
+    ...item, label: routeName ? ROUTE_NAME[item.href] : item.label, group,
+  }));
+}
+
+export function quickLinkGroupsFor(role: StaffRole, audience: DashboardAudience) {
+  const groups = new Map<string, ReturnType<typeof quickLinksFor>>();
+  for (const item of quickLinksFor(role, audience)) {
+    const items = groups.get(item.group) ?? [];
+    items.push(item);
+    groups.set(item.group, items);
+  }
+  return [...groups].map(([label, items]) => ({ label, items }));
 }

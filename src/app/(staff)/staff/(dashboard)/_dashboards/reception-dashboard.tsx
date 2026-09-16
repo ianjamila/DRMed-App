@@ -1,4 +1,4 @@
-import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { quickLinkGroupsFor } from "@/components/staff/staff-nav-config";
 import type { StaffSession } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -50,28 +50,7 @@ import { formatPeso, formatTime, relativeAge } from "./_components/format";
 // today" card above, which links into the same route pre-filtered to today —
 // one is "browse all history", the other is "what happened today". Both earn
 // their spot.
-const QUICK_GROUPS: { label: string; items: { href: string; label: string }[] }[] = [
-  {
-    label: "Front Desk",
-    items: [
-      { href: "/staff/visits/queue", label: ROUTE_NAME["/staff/visits/queue"] },
-      { href: "/staff/patients", label: ROUTE_NAME["/staff/patients"] },
-      { href: "/staff/patients/new", label: ROUTE_NAME["/staff/patients/new"] },
-      { href: "/staff/appointments", label: ROUTE_NAME["/staff/appointments"] },
-      { href: "/staff/inquiries", label: ROUTE_NAME["/staff/inquiries"] },
-      { href: "/staff/gift-codes/sell", label: ROUTE_NAME["/staff/gift-codes/sell"] },
-    ],
-  },
-  {
-    label: "Billing",
-    items: [
-      { href: "/staff/visits", label: ROUTE_NAME["/staff/visits"] },
-      { href: "/staff/quote", label: ROUTE_NAME["/staff/quote"] },
-      { href: "/staff/payments/cash-drawer", label: ROUTE_NAME["/staff/payments/cash-drawer"] },
-      { href: "/staff/payments/petty-cash", label: ROUTE_NAME["/staff/payments/petty-cash"] },
-    ],
-  },
-];
+const QUICK_GROUPS = quickLinkGroupsFor("reception", "reception");
 
 const SKIP_COUNT = Promise.resolve({ count: 0, data: null, error: null });
 const SKIP_DATA = Promise.resolve({ data: null, error: null });
