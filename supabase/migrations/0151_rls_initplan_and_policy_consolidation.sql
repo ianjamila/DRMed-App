@@ -1327,3 +1327,207 @@ create policy "visits: staff full" on public."visits"
   using ((select has_role(ARRAY['reception'::text, 'medtech'::text, 'pathologist'::text, 'admin'::text, 'xray_technician'::text])))
   with check ((select has_role(ARRAY['reception'::text, 'medtech'::text, 'pathologist'::text, 'admin'::text, 'xray_technician'::text])));
 
+
+-- ---------------------------------------------------------------------------
+-- Phase 2 — consolidate stacked permissive SELECT policies (hand-written)
+-- ---------------------------------------------------------------------------
+--
+-- Nine tables carry TWO permissive SELECT policies covering the same role, so both
+-- are evaluated for every row. Merging them puts the cheap staff check first and
+-- lets the expensive patient subquery short-circuit for staff sessions.
+--
+-- THE RULE: consolidate WITHIN a role list, never across one.
+--
+-- Several of these pairs have different role lists — e.g. `services: public read
+-- active` is {anon, authenticated} while `services: staff read` is {authenticated}.
+-- Merging those into one policy over the union would widen the expression anon can
+-- reach, and that is precisely how the two live anon-readable exposures found on
+-- 2026-09-10 (292 patients via v_hmo_*, 20 doctors' pay terms via physicians) came
+-- about. So each pair is split by role first: anon keeps a policy whose expression
+-- is byte-identical to what it has today, and only `authenticated` gets the OR'd
+-- form. Two permissive policies OR together, so the OR is exactly equivalent.
+--
+-- The `ALL`-command policies on these tables (admin manage / reception write / …)
+-- also apply to SELECT, but they are a different cmd group and are left untouched —
+-- consolidating across cmd would change what INSERT and UPDATE check.
+--
+-- Row visibility is proved unchanged per table per principal, anon included, by
+-- scripts/perf/rls-equivalence-prove.ts. Unlike Phase 1 this is NOT inert by
+-- construction, which is why it is gated on sampling and lands as its own commit.
+
+-- appointment_attachments ---------------------------------------------------
+drop policy "appointment_attachments: patient self" on public.appointment_attachments;
+drop policy "appointment_attachments: staff read" on public.appointment_attachments;
+
+create policy "appointment_attachments: anon patient self" on public.appointment_attachments
+  as permissive for select to anon
+  using (patient_id = (select current_patient_id()));
+
+create policy "appointment_attachments: authenticated read" on public.appointment_attachments
+  as permissive for select to authenticated
+  using ((select is_staff()) or patient_id = (select current_patient_id()));
+
+-- hmo_providers -------------------------------------------------------------
+drop policy "hmo_providers: public read active" on public.hmo_providers;
+drop policy "hmo_providers: staff read all" on public.hmo_providers;
+
+create policy "hmo_providers: anon read active" on public.hmo_providers
+  as permissive for select to anon
+  using (is_active = true);
+
+create policy "hmo_providers: authenticated read" on public.hmo_providers
+  as permissive for select to authenticated
+  using (
+    (select has_role(array['reception','medtech','pathologist','admin','xray_technician']))
+    or is_active = true
+  );
+
+-- physicians ----------------------------------------------------------------
+drop policy "physicians: public read active" on public.physicians;
+drop policy "physicians: staff read all" on public.physicians;
+
+create policy "physicians: anon read active" on public.physicians
+  as permissive for select to anon
+  using (is_active = true);
+
+create policy "physicians: authenticated read" on public.physicians
+  as permissive for select to authenticated
+  using (
+    (select has_role(array['reception','medtech','pathologist','admin','xray_technician']))
+    or is_active = true
+  );
+
+-- report_groups -------------------------------------------------------------
+-- NOTE: the staff arm here is FOUR roles, not five — xray_technician is absent.
+-- Copied as-is; widening it would be a behaviour change smuggled into a perf PR.
+drop policy "report_groups: public read active" on public.report_groups;
+drop policy "report_groups: staff read" on public.report_groups;
+
+create policy "report_groups: anon read active" on public.report_groups
+  as permissive for select to anon
+  using (is_active = true);
+
+create policy "report_groups: authenticated read" on public.report_groups
+  as permissive for select to authenticated
+  using (
+    (select has_role(array['reception','medtech','pathologist','admin']))
+    or is_active = true
+  );
+
+-- result_test_requests ------------------------------------------------------
+drop policy "result_test_requests: patient released only" on public.result_test_requests;
+drop policy "result_test_requests: staff read" on public.result_test_requests;
+
+create policy "result_test_requests: anon patient released only" on public.result_test_requests
+  as permissive for select to anon
+  using (
+    exists (
+      select 1
+        from public.test_requests tr
+        join public.visits v on v.id = tr.visit_id
+       where tr.id = result_test_requests.test_request_id
+         and tr.status = 'released'
+         and v.patient_id = (select current_patient_id())
+    )
+  );
+
+create policy "result_test_requests: authenticated read" on public.result_test_requests
+  as permissive for select to authenticated
+  using (
+    (select has_role(array['reception','medtech','pathologist','admin','xray_technician']))
+    or exists (
+      select 1
+        from public.test_requests tr
+        join public.visits v on v.id = tr.visit_id
+       where tr.id = result_test_requests.test_request_id
+         and tr.status = 'released'
+         and v.patient_id = (select current_patient_id())
+    )
+  );
+
+-- results -------------------------------------------------------------------
+drop policy "results: patient released only" on public.results;
+drop policy "results: staff select" on public.results;
+
+create policy "results: anon patient released only" on public.results
+  as permissive for select to anon
+  using (
+    exists (
+      select 1
+        from public.result_test_requests rtr
+        join public.test_requests tr on tr.id = rtr.test_request_id
+        join public.visits v on v.id = tr.visit_id
+       where rtr.result_id = results.id
+         and tr.status = 'released'
+         and v.patient_id = (select current_patient_id())
+    )
+  );
+
+create policy "results: authenticated read" on public.results
+  as permissive for select to authenticated
+  using (
+    (select has_role(array['reception','medtech','pathologist','admin','xray_technician']))
+    or exists (
+      select 1
+        from public.result_test_requests rtr
+        join public.test_requests tr on tr.id = rtr.test_request_id
+        join public.visits v on v.id = tr.visit_id
+       where rtr.result_id = results.id
+         and tr.status = 'released'
+         and v.patient_id = (select current_patient_id())
+    )
+  );
+
+-- services ------------------------------------------------------------------
+-- NOTE: the staff arm excludes admin — admin reaches services through the separate
+-- `services: admin all` ALL policy, which is a different cmd group and untouched.
+drop policy "services: public read active" on public.services;
+drop policy "services: staff read" on public.services;
+
+create policy "services: anon read active" on public.services
+  as permissive for select to anon
+  using (is_active = true);
+
+create policy "services: authenticated read" on public.services
+  as permissive for select to authenticated
+  using (
+    (select has_role(array['reception','medtech','pathologist','xray_technician']))
+    or is_active = true
+  );
+
+-- staff_profiles ------------------------------------------------------------
+-- Both arms are already {authenticated}-only, so there is no role split to make.
+drop policy "staff_profiles: self select" on public.staff_profiles;
+drop policy "staff_profiles: staff read" on public.staff_profiles;
+
+create policy "staff_profiles: authenticated read" on public.staff_profiles
+  as permissive for select to authenticated
+  using (
+    (select has_role(array['reception','medtech','pathologist','admin','xray_technician']))
+    or id = (select auth.uid())
+  );
+
+-- test_requests -------------------------------------------------------------
+-- The `reception/admin write` ALL policy and the `medtech/pathologist update`
+-- UPDATE policy are different cmd groups and stay as they are.
+drop policy "test_requests: patient own visits" on public.test_requests;
+drop policy "test_requests: staff select" on public.test_requests;
+
+create policy "test_requests: anon patient own visits" on public.test_requests
+  as permissive for select to anon
+  using (
+    visit_id in (
+      select v.id from public.visits v
+       where v.patient_id = (select current_patient_id())
+    )
+  );
+
+create policy "test_requests: authenticated read" on public.test_requests
+  as permissive for select to authenticated
+  using (
+    (select has_role(array['reception','medtech','pathologist','admin','xray_technician']))
+    or visit_id in (
+      select v.id from public.visits v
+       where v.patient_id = (select current_patient_id())
+    )
+  );

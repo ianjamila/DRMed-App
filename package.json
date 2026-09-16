@@ -45,7 +45,8 @@
     "perf:rls-probe": "tsx scripts/perf/rls-equivalence-probe.ts",
     "perf:rls-check": "tsx scripts/perf/rls-equivalence-check.ts",
     "perf:rls-prove": "tsx scripts/perf/rls-equivalence-prove.ts",
-    "perf:rls-structural": "tsx scripts/perf/rls-structural-prove.ts"
+    "perf:rls-structural": "tsx scripts/perf/rls-structural-prove.ts",
+    "perf:rls-fixture": "tsx scripts/perf/seed-rls-fixture.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
