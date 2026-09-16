@@ -1,17 +1,15 @@
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 import { Panel } from "@/components/ui/panel";
 import { ExportCsvLink } from "@/components/staff/export-csv-link";
 import {
-  comparePatientsWithoutConsent,
-  loadPatientsWithoutConsent,
+  loadPatientsWithoutConsentPage,
   patientsWithoutConsentCsvHref,
   PATIENTS_WITHOUT_CONSENT_DEFAULT_SORT,
   PATIENTS_WITHOUT_CONSENT_SORTABLE_COLUMNS,
   type PatientsWithoutConsentSortColumn,
 } from "@/lib/reports/patients-without-consent";
-import { REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 import {
   PRE_REGISTERED_LABEL,
   PRE_REGISTERED_BADGE_CLASS,
@@ -27,7 +25,6 @@ import {
   parsePage,
   parsePageSize,
   parseSort,
-  rangeFor,
 } from "@/lib/ui/table-params";
 import { SortableTh } from "@/components/staff/sortable-th";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
@@ -50,7 +47,7 @@ export default async function PatientsWithoutConsentPage({
   searchParams,
 }: SearchProps) {
   await requireAdminStaff();
-  const admin = createAdminClient();
+  const supabase = await createClient();
   const sp = await searchParams;
 
   const sort = parseSort(
@@ -62,24 +59,8 @@ export default async function PatientsWithoutConsentPage({
   const size = parsePageSize(sp.size);
   const page = parsePage(sp.page);
 
-  const {
-    rows: all,
-    visitCount,
-    lastVisit,
-    truncated: candidatesIncomplete,
-  } = await loadPatientsWithoutConsent(admin, REPORT_EXPORT_MAX_ROWS);
-
-  const total = all.length;
+  const { rows, total } = await loadPatientsWithoutConsentPage(supabase, { sort, page, size });
   const totalPages = pageCount(total, size);
-  const [from, to] = rangeFor(page, size);
-  // Sort the FULL candidate set, then slice — the pager's trim now stands in
-  // for what used to be `displayLimit` (see the loader's doc comment). This
-  // keeps the M15 invariant alive: the comparator always runs over the whole
-  // sorted-before-anything-is-cut set, so which page a patient lands on is
-  // never an artifact of the raw `created_at desc` fetch order.
-  const rows = [...all]
-    .sort((a, b) => comparePatientsWithoutConsent(a, b, sort, visitCount, lastVisit))
-    .slice(from, to + 1);
 
   // Params at their default are omitted so the plain, unfiltered URL stays
   // bare — this page has no filters, only sort/page/size.
@@ -156,14 +137,6 @@ export default async function PatientsWithoutConsentPage({
         </div>
       </header>
 
-      {candidatesIncomplete ? (
-        <p className="mt-4 text-xs font-semibold text-red-700">
-          TRUNCATED — more than {REPORT_EXPORT_MAX_ROWS.toLocaleString()}{" "}
-          patients matched; the list below (and its ordering) is incomplete.
-          Use the CSV export or narrow the underlying data.
-        </p>
-      ) : null}
-
       <Panel className="mt-6 overflow-hidden">
         {total === 0 ? (
           <p className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]">
@@ -185,7 +158,7 @@ export default async function PatientsWithoutConsentPage({
               <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
                 {rows.map((p) => {
                   const name = formatPatientName(p) || "(no name on file)";
-                  const last = lastVisit.get(p.id);
+                  const last = p.last_visit_at;
                   return (
                     <tr key={p.id}>
                       <td className="px-4 py-3">
@@ -207,7 +180,7 @@ export default async function PatientsWithoutConsentPage({
                         {p.drm_id}
                       </td>
                       <td className="px-4 py-3 text-right font-mono">
-                        {visitCount.get(p.id) ?? 0}
+                        {p.visit_count}
                       </td>
                       <td className="px-4 py-3 text-xs">
                         {last ? (

@@ -39,6 +39,7 @@ const MIGRATIONS_DIR = join(process.cwd(), "supabase/migrations");
 
 /** Views hardened by a migration, and the migration that hardened each. */
 const HARDENED: Record<string, string> = {
+  v_patients_without_consent: "0150",
   v_daily_revenue_by_service: "0134",
   v_staff_advances_outstanding: "0134",
   v_hmo_unbilled: "0135",
@@ -99,6 +100,7 @@ describe("hardened views keep security_invoker", () => {
       "v_ops_daily_doctor",
       "v_ops_daily_hmo_provider_ar",
       "v_ops_daily_totals",
+      "v_patients_without_consent",
       "v_staff_advances_outstanding",
     ]);
   });

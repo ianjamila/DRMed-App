@@ -22,7 +22,7 @@ export async function GET() {
     staff,
     report: "patients_without_consent",
     filename: patientsWithoutConsentCsvFilename(todayManilaISODate()),
-    rows: patientsWithoutConsentCsvRows(report.rows, report.visitCount, report.lastVisit),
+    rows: patientsWithoutConsentCsvRows(report.rows),
     truncated: report.truncated,
     filters: {},
   });

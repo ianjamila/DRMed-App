@@ -582,10 +582,6 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
     lifecycle: "live",
     why: "Work ageing on the bench. A deleted line has stopped ageing — chasing it would waste the lab's time.",
   },
-  "lib/reports/patients-without-consent.ts": {
-    lifecycle: "live",
-    why: "Who still needs a consent form. A deleted visit needs nothing.",
-  },
   "app/(staff)/staff/(dashboard)/admin/patient-merge/actions.ts": {
     lifecycle: "live",
     why: "The pre-merge preview's visit count, which an admin reads to confirm they have the right patient. (The merge itself writes, and deliberately carries deleted visits across to the surviving patient — writes are not scanned.)",
