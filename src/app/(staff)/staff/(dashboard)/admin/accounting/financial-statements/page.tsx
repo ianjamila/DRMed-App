@@ -3,7 +3,7 @@ import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { paginatedFetch } from "@/lib/supabase/paginated-fetch";
+import { balanceFor, incomeStatementTotals, loadIncomeStatementLines } from "@/lib/accounting/income-statement";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { PeriodPresets } from "./_components/period-presets";
 import { priorYearRange } from "@/lib/reports/period-presets";
@@ -22,15 +22,6 @@ interface SearchProps {
 }
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-interface LineRow {
-  debit_php: number;
-  credit_php: number;
-  journal_entries: { posting_date: string; status: string } | null;
-  chart_of_accounts:
-    | { id: string; code: string; name: string; type: string; normal_balance: string }
-    | null;
-}
 
 interface AccountBalance {
   id: string;
@@ -65,15 +56,6 @@ function plnaturalSign(type: string): 1 | -1 {
   }
 }
 
-function balanceFor(
-  row: { debit_php: number; credit_php: number },
-  normal_balance: string,
-): number {
-  const d = Number(row.debit_php ?? 0);
-  const c = Number(row.credit_php ?? 0);
-  return normal_balance === "credit" ? c - d : d - c;
-}
-
 export default async function FinancialStatementsPage({ searchParams }: SearchProps) {
   await requireAdminStaff();
   const sp = await searchParams;
@@ -90,40 +72,8 @@ export default async function FinancialStatementsPage({ searchParams }: SearchPr
   const prior = priorYearRange(start, end);
 
   const [lines, priorLines] = await Promise.all([
-    paginatedFetch<LineRow>((from, to) =>
-      admin
-        .from("journal_lines")
-        .select(
-          `
-          debit_php, credit_php,
-          journal_entries!inner ( posting_date, status ),
-          chart_of_accounts!inner ( id, code, name, type, normal_balance )
-        `,
-        )
-        .eq("journal_entries.status", "posted")
-        .gte("journal_entries.posting_date", start)
-        .lte("journal_entries.posting_date", end)
-        .in("chart_of_accounts.type", ["revenue", "contra_revenue", "expense"])
-        .range(from, to)
-        .returns<LineRow[]>(),
-    ),
-    paginatedFetch<LineRow>((from, to) =>
-      admin
-        .from("journal_lines")
-        .select(
-          `
-          debit_php, credit_php,
-          journal_entries!inner ( posting_date, status ),
-          chart_of_accounts!inner ( id, code, name, type, normal_balance )
-        `,
-        )
-        .eq("journal_entries.status", "posted")
-        .gte("journal_entries.posting_date", prior.start)
-        .lte("journal_entries.posting_date", prior.end)
-        .in("chart_of_accounts.type", ["revenue", "contra_revenue", "expense"])
-        .range(from, to)
-        .returns<LineRow[]>(),
-    ),
+    loadIncomeStatementLines(admin, start, end),
+    loadIncomeStatementLines(admin, prior.start, prior.end),
   ]);
 
   const balances = new Map<string, AccountBalance>();
@@ -161,27 +111,10 @@ export default async function FinancialStatementsPage({ searchParams }: SearchPr
     byType[t].sort((a, b) => a.code.localeCompare(b.code));
   }
 
-  const subtotal = (type: string) =>
-    byType[type].reduce((s, a) => s + a.amount, 0);
+  const subtotal = (type: string) => byType[type].reduce((sum, account) => sum + account.amount, 0);
 
-  const totalRevenue = subtotal("revenue");
-  const totalContraRevenue = subtotal("contra_revenue");
-  const netRevenue = totalRevenue - totalContraRevenue;
-  const totalExpense = subtotal("expense");
-  const netIncome = netRevenue - totalExpense;
-
-  // Prior-year totals (one rollup; we don't need per-account granularity).
-  let priorRevenue = 0, priorContra = 0, priorExpense = 0;
-  for (const row of priorLines) {
-    const a = row.chart_of_accounts;
-    if (!a) continue;
-    const signed = balanceFor(row, a.normal_balance);
-    if (a.type === "revenue") priorRevenue += signed;
-    else if (a.type === "contra_revenue") priorContra += signed;
-    else if (a.type === "expense") priorExpense += signed;
-  }
-  const priorNetRevenue = priorRevenue - priorContra;
-  const priorNetIncome = priorNetRevenue - priorExpense;
+  const { netRevenue, expense: totalExpense, netIncome } = incomeStatementTotals(lines);
+  const { expense: priorExpense, netRevenue: priorNetRevenue, netIncome: priorNetIncome } = incomeStatementTotals(priorLines);
 
   function pctChange(current: number, prior: number): string {
     if (prior === 0) return current === 0 ? "—" : "n/a";

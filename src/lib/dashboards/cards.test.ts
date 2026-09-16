@@ -77,3 +77,17 @@ describe("card registry", () => {
     }
   });
 });
+
+it("registers both income bases and preserves independent saved visibility", () => {
+  const ops = card("admin.net_income_mtd");
+  const books = card("admin.net_income_books_mtd");
+  expect(ops.label).toBe("Gross Profit (Ops)");
+  expect(books.label).toBe("Net Income (Books)");
+  expect(books.roles).toEqual(["admin"]);
+  expect(books.group).toBe("money");
+  expect(matchesCardDefault(books, true)).toBe(true);
+  const hidden = hiddenCardIdsFor("admin", [{ card_id: ops.id, visible: false }]);
+  expect(hidden.has(ops.id)).toBe(true);
+  expect(hidden.has(books.id)).toBe(false);
+  expect(hiddenCardIdsFor("admin", [{ card_id: books.id, visible: false }]).has(books.id)).toBe(true);
+});

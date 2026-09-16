@@ -65,7 +65,9 @@ export const DASHBOARD_CARDS: readonly CardDef[] = [
   { id: "admin.dup_candidates",    label: "Possible duplicates", roles: ["admin"], group: "operations" },
 
   // ---- Admin: Money -------------------------------------------------------
-  { id: "admin.net_income_mtd",        label: "Net income (this month)",  roles: ["admin"], group: "money", sensitive: true },
+  { id: "admin.net_income_books_mtd", label: "Net Income (Books)", roles: ["admin"], group: "money", sensitive: true },
+  // Retain the saved ID for the operational figure, now shown before expenses.
+  { id: "admin.net_income_mtd",        label: "Gross Profit (Ops)",  roles: ["admin"], group: "money", sensitive: true },
   { id: "admin.past_due_periods",     label: "Past-due open periods",    roles: ["admin"], group: "money" },
   // Draft inventory is not a problem in itself, and the stale-drafts strip
   // below already names the actionable subset. Off by default at the owner's
