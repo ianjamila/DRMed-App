@@ -86,5 +86,13 @@ export async function GET(request: Request) {
     }
   }
 
+  // Run heartbeat, including quiet days with no templates due.
+  await audit({
+    actor_id: null,
+    actor_type: "system",
+    action: "recurring_bills.completed",
+    metadata: { processed, drafts_created: draftsCreated, failures: failures.length },
+  });
+
   return Response.json({ processed, drafts_created: draftsCreated, failures });
 }

@@ -1,0 +1,88 @@
+name: Cron watchdog
+
+on:
+  schedule:
+    # 03:00 UTC = 11:00 Asia/Manila: after every daily slot (latest 22:00 UTC
+    # the previous day), inside Manila business hours for actionable failure
+    # emails, and well clear of the 18:00 UTC db-backup.
+    # GitHub disables scheduled workflows after 60 days of repository inactivity.
+    - cron: "0 3 * * *"
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check cron heartbeats via postgres:17 docker
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          # Source: vercel.json (seven schedules across six routes).
+          # Daily 30h / weekly 8d allow Vercel jitter and GitHub scheduling delay.
+          # Add each scheduled leg as one row in this threshold table.
+          # active_from is a one-time bootstrap guard; these initial dates will
+          # be in the past for future readers. A new cron added later gets its
+          # own active_from one day after its first expected run.
+          sql=$(cat <<'SQL'
+          WITH watched(route, actions, max_age, active_from) AS (
+            VALUES
+              ('sync-accounting', ARRAY['accounting.sync.completed', 'accounting.sync.empty', 'accounting.sync.skipped'], interval '30 hours', date '2026-09-15'),
+              ('appointment-reminders', ARRAY['appointment.reminders.completed'], interval '30 hours', date '2026-09-18'),
+              ('data-retention', ARRAY['data_retention.sweep'], interval '30 hours', date '2026-09-15'),
+              ('recurring-bills', ARRAY['recurring_bills.completed'], interval '30 hours', date '2026-09-18'),
+              ('template-health', ARRAY['result_template.health_alert'], interval '30 hours', date '2026-09-15'),
+              ('template-health?mode=weekly', ARRAY['result_template.health_summary'], interval '8 days', date '2026-09-22'),
+              ('dedup-digest', ARRAY['system.dedup_digest.completed'], interval '8 days', date '2026-09-22')
+          ), heartbeats AS (
+            SELECT w.route, w.max_age, w.active_from, latest.created_at AS last_seen,
+                   now() - latest.created_at AS age
+            FROM watched w
+            LEFT JOIN LATERAL (
+              SELECT a.created_at
+              FROM public.audit_log a
+              WHERE a.action = ANY(w.actions)
+                -- Manual accounting syncs must not mask a stopped cron.
+                AND a.actor_type = 'system'
+              ORDER BY a.created_at DESC
+              LIMIT 1
+            ) latest ON true
+          )
+          SELECT CASE
+                   WHEN last_seen IS NULL AND now() < active_from THEN 'PENDING'
+                   WHEN last_seen IS NULL OR age > max_age THEN 'STALE'
+                   ELSE 'HEALTHY'
+                 END,
+                 route,
+                 coalesce(last_seen::text, 'never ran (no heartbeat)'),
+                 coalesce(age::text, 'unknown'),
+                 max_age::text
+          FROM heartbeats
+          ORDER BY route;
+          SQL
+          )
+
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "SUPABASE_DB_URL secret is not set — refusing to skip cron monitoring." >&2
+            exit 1
+          fi
+
+          # One read-only database query; no dependency on Vercel serving HTTP.
+          report=$(docker run --rm -i \
+            -e PGCONNECT_TIMEOUT=20 \
+            -e PGOPTIONS='-c default_transaction_read_only=on -c statement_timeout=60000 -c timezone=UTC' \
+            postgres:17 \
+            psql "$SUPABASE_DB_URL" -X -w -v ON_ERROR_STOP=1 -A -t -F '|' <<< "$sql")
+
+          echo 'status|cron|last seen (UTC)|age|allowed staleness'
+          printf '%s\n' "$report"
+          if [ -z "$report" ]; then
+            echo 'No heartbeat report returned — refusing to pass without evidence.' >&2
+            exit 1
+          fi
+          if printf '%s\n' "$report" | grep -q '^STALE|'; then
+            echo 'Cron watchdog failed: every STALE row above needs investigation.' >&2
+            exit 1
+          fi
