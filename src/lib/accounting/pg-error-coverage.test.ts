@@ -20,6 +20,33 @@
  * `cash-denominations.parity.test.ts`. A raise is any `using errcode = 'P00NN'`
  * in `supabase/migrations/`.
  *
+ * THE SECOND RULE: NO BARE RAISE
+ * ------------------------------
+ * The coverage rule above can only see a raise that HAS a code. A raise with no
+ * `using errcode` at all is untranslatable BY CONSTRUCTION — `translatePgError`
+ * never gets a key to match, so the `default:` branch hands the raw Postgres
+ * string to the UI no matter how many cases `pg-errors.ts` grows. That is the
+ * same failure the first rule exists to prevent, one level further back, and
+ * nothing was checking it.
+ *
+ * Two kinds of raise are deliberately NOT covered:
+ *
+ *   - Anything inside a `do $$ … $$` block. Those run ONCE, at migration time,
+ *     and are the post-condition assertions this repo requires — they abort a
+ *     deploy, they never reach a user, and giving them P-codes would put
+ *     migration-time failures into a registry meant for UI messages. There are
+ *     42 of them.
+ *   - A raise carrying a standard SQLSTATE rather than a P-code
+ *     (`check_violation`, `42501`). The release gates use `check_violation`
+ *     deliberately; they have a code, so they are translatable.
+ *
+ * Of 141 runtime `raise exception`s in the history, 95 carry a code, 42 are
+ * migration-time asserts, and 3 are genuinely bare (`BARE_RAISES`).
+ *
+ * Finding a raise's own code means finding where its STATEMENT ends, and four
+ * of this repo's raises put a semicolon inside the message string — see
+ * `statementEnd` below, which is where the first draft of this test was wrong.
+ *
  * THE ALLOWLIST CAN ONLY SHRINK
  * -----------------------------
  * `DEAD_CODES` is not "codes we decided not to translate" — it is codes whose
@@ -56,6 +83,108 @@ function raisedCodes(): Map<string, string[]> {
     }
   }
   return byCode;
+}
+
+/**
+ * Runtime raises that still carry no errcode. FROZEN — the list may only
+ * SHRINK. Each entry is `file :: owning function`.
+ *
+ * All three are internal-consistency guards: a chart-of-accounts code that
+ * does not resolve, a package component whose parent is not a header, and a
+ * void that finds no posted journal entry to reverse. None is user error — if
+ * one fires, the data is already wrong — so a plain-language message would be
+ * less useful than the raw detail, and none is worth a P-code today. Giving
+ * one a code means a new migration; this freezes the set instead.
+ */
+const BARE_RAISES = new Set([
+  "0033_op_gl_bridge_polish.sql :: public.coa_uuid_for_code",
+  "0040_package_decomposition.sql :: public.fn_test_request_parent_is_header",
+  "0049_ap_subledger_behavior.sql :: public.ap_reverse_je_for_source",
+]);
+
+/** Blank out line and block comments, preserving every character offset. */
+function stripComments(text: string): string {
+  const noBlock = text.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "));
+  return noBlock
+    .split("\n")
+    .map((line) => {
+      const i = line.indexOf("--");
+      return i === -1 ? line : line.slice(0, i) + " ".repeat(line.length - i);
+    })
+    .join("\n");
+}
+
+/** Character ranges of every `do $tag$ … $tag$` block. */
+function doBlockRanges(text: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  const re = /\bdo\s+(\$[A-Za-z_]*\$)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const end = text.indexOf(m[1], m.index + m[0].length);
+    if (end === -1) continue;
+    ranges.push([m.index, end + m[1].length]);
+    re.lastIndex = end + m[1].length;
+  }
+  return ranges;
+}
+
+/**
+ * End of the statement starting at `start`: the first `;` that is NOT inside a
+ * single-quoted literal (`''` is an escaped quote, not a terminator).
+ *
+ * This has to be a scan and not a regex, and the difference is not academic —
+ * it is the bug this test shipped with on its first draft. `[\s\S]*?;` stops at
+ * the first semicolon it sees, and four of this repo's raises put one INSIDE
+ * the message:
+ *
+ *   raise exception 'Bill % has % active payment(s); void payments first.', …
+ *     using errcode = 'P0029';
+ *
+ * The lazy match ended at `payment(s);`, never reached `using errcode`, and
+ * reported a correctly-coded raise as bare. Those four then went into
+ * BARE_RAISES — which is the worse half of the failure: an allowlist entry
+ * would have exempted them for good, so if someone later DELETED a real
+ * errcode the test would still have passed.
+ */
+function statementEnd(text: string, start: number): number {
+  let inQuote = false;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (inQuote) {
+      if (c === "'") {
+        if (text[i + 1] === "'") i++; // escaped quote, stays inside
+        else inQuote = false;
+      }
+    } else if (c === "'") {
+      inQuote = true;
+    } else if (c === ";") {
+      return i + 1;
+    }
+  }
+  return text.length;
+}
+
+/** `file :: function` for every RUNTIME raise that carries no errcode. */
+function bareRuntimeRaises(): string[] {
+  const found: string[] = [];
+  for (const file of readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith(".sql")).sort()) {
+    const text = stripComments(readFileSync(join(MIGRATIONS_DIR, file), "utf8"));
+    const blocks = doBlockRanges(text);
+    const re = /raise\s+exception\b/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+      const end = statementEnd(text, m.index);
+      const statement = text.slice(m.index, end);
+      re.lastIndex = end; // never re-enter the statement we just consumed
+      if (/\busing\b[\s\S]*errcode/i.test(statement)) continue;
+      if (blocks.some(([a, b]) => m!.index >= a && m!.index < b)) continue;
+      const fn = [
+        ...text.slice(0, m.index).matchAll(/create\s+(?:or\s+replace\s+)?function\s+([\w.]+)/gi),
+      ].pop();
+      found.push(`${file} :: ${fn ? fn[1] : "(top level)"}`);
+    }
+  }
+  return found;
 }
 
 function translatedCodes(): Set<string> {
@@ -97,6 +226,69 @@ describe("P-code translation coverage", () => {
         `${code} is translated now — drop it from DEAD_CODES`,
       ).toBe(false);
     }
+  });
+
+  it("no migration adds a runtime raise with no errcode at all", () => {
+    const novel = [...new Set(bareRuntimeRaises())].filter((r) => !BARE_RAISES.has(r)).sort();
+
+    expect(
+      novel,
+      "A `raise exception` with no `using errcode` cannot be translated by " +
+        "translatePgError — there is no key to match, so the UI shows the raw " +
+        "Postgres string however many cases pg-errors.ts grows. Add " +
+        "`using errcode = 'P00NN'` plus a case in pg-errors.ts (CLAUDE.md " +
+        "names the next free code), or a standard SQLSTATE like " +
+        "`check_violation` if that is genuinely what it is. Post-condition " +
+        "asserts inside a `do $$ … $$` block are exempt and need no code.",
+    ).toEqual([]);
+  });
+
+  it("keeps the bare-raise allowlist honest", () => {
+    // Same contract as DEAD_CODES: the list may only shrink, so an entry that
+    // no longer matches anything is an entry to delete.
+    const live = new Set(bareRuntimeRaises());
+    const stale = [...BARE_RAISES].filter((r) => !live.has(r)).sort();
+    expect(
+      stale,
+      "These no longer raise without an errcode — delete them from " +
+        "BARE_RAISES so the list stays a true map of what is left.",
+    ).toEqual([]);
+  });
+
+  it("finds the errcode past a semicolon inside the message string", () => {
+    // The regression. All four of these carry a code AFTER a semicolon that
+    // sits inside their message literal; a lazy `[\s\S]*?;` match stops at that
+    // semicolon and calls them bare. Asserting the four functions by name,
+    // rather than just a count, so this cannot go green by coincidence.
+    const bare = bareRuntimeRaises().join("\n");
+    for (const fn of [
+      "public.employees_require_daily_rate", // 'no positive basic_daily_rate_php; cannot enroll…' P0022
+      "public.ap_bill_void_guard", //           'has % active payment(s); void payments first.'    P0029
+      "public.ap_update_bill_draft", //         'Cannot edit bill in status %; use void+rebill'    P0004
+      "public.ap_void_bill_with_guard", //      'Cannot void a draft bill; delete it instead'      P0002
+    ]) {
+      expect(bare, `${fn} carries an errcode — the scanner must see it`).not.toContain(fn);
+    }
+  });
+
+  it("reads a statement's end, not the first semicolon it sees", () => {
+    // statementEnd is the fix; pin its behaviour directly so a future
+    // "simplification" back to a regex fails here rather than silently
+    // re-freezing correct code into BARE_RAISES.
+    const sql = "raise exception 'a; b''c; d' using errcode = 'P0001'; select 1;";
+    expect(sql.slice(0, statementEnd(sql, 0))).toBe(
+      "raise exception 'a; b''c; d' using errcode = 'P0001';",
+    );
+  });
+
+  it("does not count a migration-time assertion as a bare raise", () => {
+    // 0148 and 0149 both end with `do $$ … $$` post-conditions that raise with
+    // no code, which is correct — they abort a deploy and never reach a user.
+    // If the do-block detection breaks, this goes red BEFORE the rule above
+    // starts demanding P-codes for every migration assertion in the repo.
+    const raises = bareRuntimeRaises().join("\n");
+    expect(raises).not.toContain("0148_ops_daily_view_grants.sql");
+    expect(raises).not.toContain("0149_ap_cash_bill_payment_drawer_link.sql");
   });
 
   it("registers the two codes 0149 introduces", () => {
