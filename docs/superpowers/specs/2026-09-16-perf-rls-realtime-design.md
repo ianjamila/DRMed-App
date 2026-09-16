@@ -379,13 +379,99 @@ Re-run the `pg_stat_statements` query from §2 against production after deploy. 
 `pg_stat_statements` accumulates since last reset, so compare **means**, not totals, or
 reset the view at deploy time and compare a clean window.
 
-| Metric | Before | Target |
-|---|---:|---|
-| `visits_classification_summary` mean | 2,733 ms | < 150 ms |
-| Visits list mean | 1,850 ms | < 200 ms |
-| `v_patients_directory` mean | 833 ms | < 150 ms |
-| Realtime share of DB time | 85.4% | < 20% |
-| Realtime calls per hour | ~1.3M / window | order of magnitude lower |
+**Measured 2026-09-16 06:13–06:16 UTC (14:13–14:16 Asia/Manila). Post-deploy
+acceptance is blocked:** PR #192 is OPEN (`mergedAt` / `mergeCommit` null), production
+has no `0151` ledger entry, and its ledger jumps from `0150` to `0152`
+(`cash_journal_descriptions`). Live `visits: staff full` still uses bare `has_role(...)`;
+`test_requests` and `staff_profiles` still have separate, unwrapped read policies.
+These are **pre-deploy production observations**, not results of the proposed fix.
+
+| Metric | Before | Current observation | Target |
+|---|---:|---:|---|
+| `visits_classification_summary` mean | 2,733 ms | 2,708.89 ms (44 calls; 0.9% lower) | < 150 ms — above target |
+| Visits list mean | 1,850 ms | 1,823.64 ms (40 calls; 1.4% lower) | < 200 ms — above target |
+| `v_patients_directory` mean | 833 ms | 830.99 ms (27 calls; 0.2% lower) | < 150 ms — above target |
+| Realtime share of DB execution time | 85.4% | 85.34% cumulative; 97.47% short interval | < 20% — above target |
+| Realtime calls per hour | ~1.3M / unspecified window | ~7,066/hour (164 calls / 83.56 s) | order of magnitude lower — baseline duration missing; cannot score |
+
+Production project: `qhptbmafrosgibooelpp`. Statistics last reset at
+**2026-04-28 16:39:38.251208 UTC**; no reset was performed. Application figures compare
+means for the matching authenticated query shapes, not totals. Cumulative means still
+contain old traffic. Counts did not change between 06:13:06 and 06:16:03 UTC, so there
+were no fresh calls to derive interval means. Cumulative maxima were
+7,570.91 / 6,103.08 / 1,092.90 ms, respectively.
+
+Realtime uses the same two `realtime.list_changes` shapes as §2.3, not all statements
+containing `realtime`. Samples at 06:13:41.431610 and 06:15:04.991129 UTC:
+
+| Counter | First sample | Second sample |
+|---|---:|---:|
+| Realtime calls | 1,320,992 | 1,321,156 |
+| Realtime execution ms | 10,406,295.073860 | 10,407,312.509997 |
+| All tracked statement execution ms | 12,194,325.174406 | 12,195,368.992843 |
+
+Interval share = Δ realtime execution / Δ all execution; hourly rate = Δ calls ×
+3,600 / elapsed seconds. Reset timestamp was unchanged and `dealloc` remained 2.
+This short interval is not representative acceptance evidence. These are SQL execution
+time shares, not CPU utilization; inspection queries also contribute to the denominator.
+
+§2 retained results but no SQL; this query reconstructs the matching measurement:
+
+```sql
+select now() as sampled_at, queryid::text, calls,
+       mean_exec_time, max_exec_time, total_exec_time
+from extensions.pg_stat_statements
+where userid = (select oid from pg_roles where rolname = 'authenticated')
+  and queryid in (
+    -2851281857814685461, -- visits_classification_summary(p_deleted)
+    -3426564756478622595, -- visits list, patients + payments joins
+     6763456692534200442  -- v_patients_directory page + exact count
+  )
+order by mean_exec_time desc;
+
+-- Take two snapshots for interval share/rate without resetting production.
+select now() as sampled_at,
+       (select stats_reset from extensions.pg_stat_statements_info) as stats_reset,
+       (select dealloc from extensions.pg_stat_statements_info) as dealloc,
+       sum(total_exec_time) as all_exec_ms,
+       sum(total_exec_time) filter (where
+         userid = (select oid from pg_roles where rolname = 'supabase_admin')
+         and queryid in (2067020120365102425, -2016509628999365819)) as realtime_exec_ms,
+       sum(calls) filter (where
+         userid = (select oid from pg_roles where rolname = 'supabase_admin')
+         and queryid in (2067020120365102425, -2016509628999365819)) as realtime_calls
+from extensions.pg_stat_statements;
+```
+
+**Array-derived headline tile spot check: admin Patient AR.** SQL at 06:15:00 UTC
+returned **4,153 matching visits**, **6 positive balances**, totaling **₱28,003.00**.
+The loader in `src/app/(staff)/staff/(dashboard)/_dashboards/admin-dashboard.tsx` uses
+`fetchAllRows` with deterministic `id` ordering, 1,000-row pages and a 20,000-row ceiling,
+then filters positive balances and derives the count/sum from the array. The card exposes
+a truncation flag. The population exceeds one response cap but is below the loader ceiling;
+the source has a pagination guard against silent 1,000-row loss.
+
+```sql
+select count(*) as fetched_rows,
+       count(*) filter (where coalesce(total_php, 0) - coalesce(paid_php, 0) > 0)
+         as positive_balance_count,
+       coalesce(sum(coalesce(total_php, 0) - coalesce(paid_php, 0)) filter
+         (where coalesce(total_php, 0) - coalesce(paid_php, 0) > 0), 0)
+         as positive_balance_php
+from public.visits
+where payment_status in ('unpaid', 'partial')
+  and hmo_provider_id is null and deleted_at is null;
+```
+
+The direct production PostgREST pagination request timed out. The SQL reference and
+source pagination guard are verified; **the rendered production tile/API result is not
+verified**. No patient identities or individual balances are recorded here.
+
+**Next acceptance run:** complete the owner-run migration rollout, verify the `0151`
+ledger entry and live wrapped policies, merge PR #192 and verify production app deployment.
+Bracket representative authenticated traffic with snapshots and compute fresh means as
+Δ execution time / Δ calls, plus realtime interval share/rate. Re-check the tile against
+SQL. Do not infer a rate improvement from the baseline's unspecified window.
 
 ---
 
