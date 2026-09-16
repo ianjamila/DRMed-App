@@ -3,7 +3,6 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { paginatedFetch } from "@/lib/supabase/paginated-fetch";
 import { shiftISODate, todayManilaISODate } from "@/lib/dates/manila";
-import { StatementTabs } from "../_components/statement-tabs";
 import { PeriodPresets } from "../_components/period-presets";
 
 export const metadata = { title: "Cash Flow" };
@@ -97,7 +96,7 @@ export default async function CashFlowPage({ searchParams }: SearchProps) {
 
   if (cashAccountIds.length === 0) {
     return (
-      <div className="px-4 py-8 sm:px-6 lg:px-8">
+      <div className="space-y-6">
         <h1 className="font-heading text-2xl font-bold text-[color:var(--color-brand-navy)]">
           Cash Flow
         </h1>
@@ -211,7 +210,7 @@ export default async function CashFlowPage({ searchParams }: SearchProps) {
   const drift = closingTotal - closingComputed;
 
   return (
-    <div className="px-4 py-8 sm:px-6 lg:px-8">
+    <div className="space-y-6">
       <header className="mb-6">
         <Link
           href="/staff"
@@ -228,7 +227,6 @@ export default async function CashFlowPage({ searchParams }: SearchProps) {
         </p>
       </header>
 
-      <StatementTabs />
 
       <PeriodPresets
         pathname="/staff/admin/accounting/financial-statements/cash-flow"

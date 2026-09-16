@@ -230,7 +230,7 @@ describe("Outside-Lab Costs vs Outside-Lab Performance", () => {
 
 describe("activePrefixes", () => {
   it("keeps Expenses lit across every AP tab and dark on unrelated admin routes", () => {
-    const expenses = itemByHref("/staff/admin/accounting/ap/quick-expense");
+    const expenses = itemByHref("/staff/admin/accounting/ap");
     expect(isItemActive(expenses, "/staff/admin/accounting/ap/bills/123")).toBe(true);
     expect(isItemActive(expenses, "/staff/admin/accounting/ap")).toBe(true);
     expect(isItemActive(expenses, "/staff/admin/accounting/journal")).toBe(false);

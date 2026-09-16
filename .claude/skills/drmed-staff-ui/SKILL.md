@@ -17,7 +17,7 @@ The three "chrome" systems every staff page hangs off of: the **sidebar nav conf
 | Shared section-tab component | `src/components/staff/section-tabs.tsx` (`SectionTabs`) |
 | Tab styling for non-component bars | `src/components/staff/section-tabs-style.ts` |
 | Per-area tab wrappers | `…/payments/_components/payments-tabs.tsx`, `…/admin/accounting/ap/_components/bills-tabs.tsx`, `…/visits/_components/visits-tabs.tsx`, `…/admin/accounting/financial-statements/_components/statement-tabs.tsx` |
-| Fixed-position tab bar via layout | `…/admin/accounting/ap/layout.tsx` |
+| Fixed-position tab bar via layout | `…/admin/accounting/ap/layout.tsx`, `…/admin/operations/layout.tsx`, `…/admin/accounting/financial-statements/layout.tsx` |
 | Page header (title, subtitle, actions slot) | `src/components/staff/page-header.tsx` (`PageHeader`) — the lab queue and Visits archive are the models for header + filter chips |
 | Print buttons (client `window.print()` wrappers) | `…/visits/[id]/receipt/print-button.tsx`, `…/payments/eod/[closeId]/count-sheet/print-button.tsx`, `…/admin/accounting/pf-payouts/[id]/slip/slip-print-button.tsx` |
 | Dashboard card registry | `src/lib/dashboards/cards.ts` |
@@ -49,7 +49,7 @@ An **item** is a `StaffNavItem`:
 **Consolidation pattern (collapse N sidebar items → 1 umbrella that opens to tabs).** Point the umbrella item's `href` at the default/first tab and list the sibling tab routes in `activePrefixes` so it stays highlighted across them. Live examples:
 
 - **Cash Drawer**: `href: /staff/payments/cash-drawer`, `activePrefixes: ["/staff/payments/petty-cash", "/staff/payments/eod"]` (lands on Cash Drawer, stays lit on the Petty Cash and End of Day tabs of `PaymentsTabs`). The routes are listed one by one on purpose: `/staff/payments` would also light it on `/staff/payments/new` (Record payment), which no sidebar item owns.
-- **Expenses**: `href: /staff/admin/accounting/ap/quick-expense`, `activePrefixes: ["/staff/admin/accounting/ap"]` (lands on Quick expense, lit across all AP tabs — here the parent is safe because every AP route is an Expenses tab).
+- **Expenses**: `href: /staff/admin/accounting/ap` (lands on Overview and stays lit across AP descendants; Quick expense is an Overview header action).
 - **Visit Records** (Billing): `href: /staff/visits` with `excludePrefixes: ["/staff/visits/new", "/staff/visits/queue"]` — the queue is owned by Front Desk › Reception Queue and the New visit form by no item (it is the queue's + New visit action), so the umbrella pattern is inverted here: exclusions, not `activePrefixes`.
 - **Patients**: `href: /staff/patients` with NO exclusions — the default prefix match keeps it lit on `/staff/patients/new`, which is reached from the page's own + New patient button (the "New patient registration" item was removed 2026-09-15).
 - **Outside-Lab Costs** excludes `…/send-outs/vendor-performance` because the Outside-Lab Performance item lives under its href.

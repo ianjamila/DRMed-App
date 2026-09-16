@@ -100,3 +100,17 @@ describe("PaymentsTabs", () => {
     }
   });
 });
+
+// Layout-owned navigation remains present even when a page renders an empty/error body.
+describe("report layouts", () => {
+  it.each([
+    ["operations", () => import("@/app/(staff)/staff/(dashboard)/admin/operations/layout"), 5],
+    ["statements", () => import("@/app/(staff)/staff/(dashboard)/admin/accounting/financial-statements/layout"), 3],
+  ] as const)("%s retains its tabs without page content", async (_name, load, count) => {
+    const { default: Layout } = await load();
+    searchParams.current = new URLSearchParams("start=2026-03-01&end=2026-03-31&from=2026-03-01&to=2026-03-31");
+    const links = hrefs(renderToStaticMarkup(<Layout>{null}</Layout>));
+    expect(links).toHaveLength(count);
+    expect(links.every((href) => href.includes("2026-03-31"))).toBe(true);
+  });
+});

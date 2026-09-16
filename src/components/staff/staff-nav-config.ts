@@ -185,12 +185,10 @@ export const STAFF_NAV: StaffNavSection[] = [
         roles: ["admin"],
       },
       {
-        // Lands on the Quick Expense tab (the most-used action); activePrefixes
-        // keeps "Expenses" highlighted across the other AP tabs too.
-        href: "/staff/admin/accounting/ap/quick-expense",
+        // Opens the section overview; the base href owns every AP descendant.
+        href: "/staff/admin/accounting/ap",
         label: "Expenses",
-        activePrefixes: ["/staff/admin/accounting/ap"],
-        description: "Everything expense-related in one place. Tabs inside: Quick Expense (already-paid same-day expenses — cash, GCash, owner OOP), Overview (what's outstanding), Vendor Bills (invoices with due dates), Bill Payments (the outflows), Vendors (master list), Recurring (monthly auto-bills).",
+        description: "Everything expense-related in one place. Use + Quick expense on the overview for already-paid same-day expenses (cash, GCash, owner OOP). Tabs inside: Overview (what's outstanding), Vendor Bills (invoices with due dates), Bill Payments (the outflows), Vendors (master list), Recurring (monthly auto-bills).",
         roles: ["admin"],
       },
       {

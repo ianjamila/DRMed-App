@@ -3,7 +3,6 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { Card } from "@/components/ui/card";
 import { buildMonthlyPnl } from "@/lib/operations/trends";
 import { fetchAllRows, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
-import { OperationsTabs } from "../_components/operations-tabs";
 import { PnlTrendChart } from "./_components/pnl-trend-chart";
 
 interface TotalsRow {
@@ -56,9 +55,8 @@ export default async function OperationsTrendsPage() {
     ]);
   } catch {
     return (
-      <div className="p-4">
+      <div className="space-y-4">
         <h1 className="text-xl font-semibold text-[color:var(--color-brand-navy)]">Operations</h1>
-        <OperationsTabs />
         <Card className="mt-6 px-4 text-sm text-destructive">
           Could not load the trends data. Please try again.
         </Card>
@@ -70,9 +68,8 @@ export default async function OperationsTrendsPage() {
   const data = buildMonthlyPnl(totalsResult.rows, expensesResult.rows);
 
   return (
-    <div className="p-4">
+    <div className="space-y-4">
       <h1 className="text-xl font-semibold text-[color:var(--color-brand-navy)]">Operations</h1>
-      <OperationsTabs />
 
       {truncated ? (
         <p className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">

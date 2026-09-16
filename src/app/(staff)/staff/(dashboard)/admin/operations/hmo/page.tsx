@@ -10,7 +10,6 @@ import {
 import { fetchAllRows, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 import Link from "next/link";
 import { Card } from "@/components/ui/card";
-import { OperationsTabs } from "../_components/operations-tabs";
 import { DateControls } from "../_components/date-controls";
 import { HmoSummaryCards } from "./_components/hmo-summary-cards";
 import { HmoArMatrixTable } from "./_components/hmo-ar-matrix";
@@ -92,9 +91,8 @@ export default async function HmoReceivablesPage({
     ]);
   } catch {
     return (
-      <div className="p-4">
+      <div className="space-y-4">
         <h1 className="text-xl font-semibold text-[color:var(--color-brand-navy)]">Operations</h1>
-        <OperationsTabs />
         <Card className="mt-6 px-4 text-sm text-destructive">
           Could not load the HMO receivables report. Please try again.
         </Card>
@@ -104,9 +102,8 @@ export default async function HmoReceivablesPage({
 
   if (agingRes.error) {
     return (
-      <div className="p-4">
+      <div className="space-y-4">
         <h1 className="text-xl font-semibold text-[color:var(--color-brand-navy)]">Operations</h1>
-        <OperationsTabs />
         <Card className="mt-6 px-4 text-sm text-destructive">
           Could not load the HMO receivables report. Please try again.
         </Card>
@@ -149,7 +146,6 @@ export default async function HmoReceivablesPage({
           Chase these claims →
         </Link>
       </div>
-      <OperationsTabs />
       <DateControls key={`${from}_${to}`} from={from} to={to} today={today} basePath={BASE} />
       {truncated ? (
         <p className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">

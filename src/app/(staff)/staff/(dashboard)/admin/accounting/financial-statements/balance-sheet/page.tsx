@@ -4,7 +4,6 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { paginatedFetch } from "@/lib/supabase/paginated-fetch";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { buildAsOfPresets } from "@/lib/reports/period-presets";
-import { StatementTabs } from "../_components/statement-tabs";
 
 export const metadata = { title: "Balance Sheet" };
 export const dynamic = "force-dynamic";
@@ -150,7 +149,7 @@ export default async function BalanceSheetPage({ searchParams }: SearchProps) {
   const balanced = Math.abs(totalAssets - totalLiabAndEquity) < 0.01;
 
   return (
-    <div className="px-4 py-8 sm:px-6 lg:px-8">
+    <div className="space-y-6">
       <header className="mb-6">
         <Link
           href="/staff"
@@ -167,7 +166,6 @@ export default async function BalanceSheetPage({ searchParams }: SearchProps) {
         </p>
       </header>
 
-      <StatementTabs />
 
       <BalanceSheetAsOfPresets asOf={asOf} todayISO={todayISO} />
 

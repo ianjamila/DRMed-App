@@ -3,7 +3,6 @@ import { SectionTabs } from "@/components/staff/section-tabs";
 const AP = "/staff/admin/accounting/ap";
 
 const TABS = [
-  { href: `${AP}/quick-expense`, label: "Quick Expense" },
   // Overview: only the bare /ap route, not any sub-route.
   { href: AP, label: "Overview", exact: true },
   { href: `${AP}/bills`, label: "Vendor Bills" },

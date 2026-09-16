@@ -3,7 +3,6 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { paginatedFetch } from "@/lib/supabase/paginated-fetch";
 import { todayManilaISODate } from "@/lib/dates/manila";
-import { StatementTabs } from "./_components/statement-tabs";
 import { PeriodPresets } from "./_components/period-presets";
 import { priorYearRange } from "@/lib/reports/period-presets";
 import { statementToOperationsQuery } from "@/lib/reports/statement-period";
@@ -190,7 +189,7 @@ export default async function FinancialStatementsPage({ searchParams }: SearchPr
   }
 
   return (
-    <div className="px-4 py-8 sm:px-6 lg:px-8">
+    <div className="space-y-6">
       <header className="mb-6">
         <Link
           href="/staff"
@@ -225,7 +224,6 @@ export default async function FinancialStatementsPage({ searchParams }: SearchPr
         </p>
       </header>
 
-      <StatementTabs />
 
       <PeriodPresets
         pathname="/staff/admin/accounting/financial-statements"
