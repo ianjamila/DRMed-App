@@ -339,6 +339,7 @@ export const STAFF_NAV: StaffNavSection[] = [
           },
           {
             href: "/staff/admin/operations",
+            excludePrefixes: ["/staff/admin/operations/cron-health"],
             label: "Daily Report",
             description: "The clinic's full operational day-by-day report (reproduces the manual DAILY MONITORING sheet): lab + consult by payment channel and HMO, distinct customers, discounts, gross profit, PF collected, and per-doctor / per-specialty productivity. Pick any month or custom date range; export to CSV.",
             roles: ["admin"],
@@ -385,6 +386,12 @@ export const STAFF_NAV: StaffNavSection[] = [
       {
         heading: "Operations",
         items: [
+          {
+            href: "/staff/admin/operations/cron-health",
+            label: "Cron Health",
+            description: "Check when each scheduled task last ran and whether a run is overdue. Pending means its initial monitoring grace period has not ended.",
+            roles: ["admin"],
+          },
           {
             href: "/staff/admin/closures",
             label: "Closures",

@@ -83,8 +83,15 @@ Compliance target: **Philippine Data Privacy Act (RA 10173)**. Locale: en-PH, As
 | `npm run seed:test` / `seed:services` / `seed:physicians` / `seed:hmo` / `seed:templates` / `seed:signatures` / etc. | Idempotent seed scripts — target the **local** stack by default (see below) |
 | `npm run smoke:results` / `smoke:chemistry` / `smoke:dashboards` | Render-pipeline / consolidated-chemistry / dashboard smoke tests |
 
-There is **no PR-triggered CI** — `.github/workflows/` holds only the scheduled
-`db-backup.yml`. The Vercel preview build is the only automated gate, so run
+There is **no PR-triggered CI** — `.github/workflows/` holds only scheduled jobs:
+`db-backup.yml` and `cron-watchdog.yml` (independent jobs for Vercel cron heartbeats
+and the newest `db-backups/` Vercel Blob upload, which fails beyond 48 hours or if
+missing). `src/lib/ops/cron-heartbeats.ts` defines every scheduled leg; drift tests
+pin it to both `vercel.json` and the workflow's standalone SQL `watched()` table.
+Add a row to each, with its own `active_from`, whenever a cron is scheduled. The
+heartbeat job has no app-build/npm dependency; only backup freshness installs
+dependencies to run the read-only `scripts/backup-freshness.mjs`. The Vercel preview
+build is the only automated gate, so run
 `npm test && npm run typecheck && npm run lint` locally before pushing. Vercel deploys
 `main` automatically: **a migration must be on prod before its app PR merges.**
 
