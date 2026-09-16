@@ -7,13 +7,19 @@ import { todayManilaISODate } from "@/lib/dates/manila";
 import { loadHiddenCardIds } from "@/lib/dashboards/card-prefs";
 import { LAB_QUEUE_GATE_VISITS_OR } from "@/lib/visits/lab-gate";
 import { reportError } from "@/lib/observability/report-error";
-import { RealtimeRefresher } from "@/components/staff/realtime-refresher";
+import { RealtimeRefresher, type Subscription } from "@/components/staff/realtime-refresher";
 import { DashboardHeader } from "./_components/dashboard-header";
 import { SectionHeading } from "./_components/section-heading";
 import { StatCard } from "./_components/stat-card";
 import { QuickLinks } from "./_components/quick-links";
 import { ActivityStrip, type ActivityItem } from "./_components/activity-strip";
 import { relativeAge } from "./_components/format";
+
+const LAB_SUBSCRIPTIONS = [
+  { table: "test_requests", event: "INSERT" },
+  { table: "test_requests", event: "UPDATE" },
+  { table: "critical_alerts", event: "INSERT" },
+] as const satisfies readonly Subscription[];
 
 type Role = StaffSession["role"];
 
@@ -514,11 +520,7 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
     <div className="px-4 py-8 sm:px-6 lg:px-8">
       <RealtimeRefresher
         channelName="lab-dashboard"
-        subscriptions={[
-          { table: "test_requests", event: "INSERT" },
-          { table: "test_requests", event: "UPDATE" },
-          { table: "critical_alerts", event: "INSERT" },
-        ]}
+        subscriptions={LAB_SUBSCRIPTIONS}
       />
       <DashboardHeader
         firstName={session.full_name.split(" ")[0]}

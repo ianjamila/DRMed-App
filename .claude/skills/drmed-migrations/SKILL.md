@@ -1,13 +1,13 @@
 ---
 name: drmed-migrations
-description: Use when working on DRMed database schema changes, Supabase migrations, RLS policies, audit-log obligations, payment-gating trigger considerations, function grants/ACLs, applying a migration to prod, or the migration workflow. Trigger whenever the user mentions migration, new migration, schema change, new table, alter table, alter schema, drop table, drop column, regenerate types, regen types, db:diff, db:types, db:types:remote, db:reset, supabase db push, supabase db reset, supabase migrations, schema_migrations, apply_migration, execute_sql, RLS policy, row-level security policy, has_role, current_patient_id, payment gating trigger, enforce_payment_before_release, audit_log table, audit-log obligation, SECURITY DEFINER, grant execute, revoke execute, anon-executable, function ACL, default privileges, rls_auto_enable, ensure_rls, P00xx error code, translatePgError, pg-errors, seed script, seed:test, seed:services, seed:templates, seed.sql, smoke:results, or the 132 files under supabase/migrations/ (0001 → 0135, with gaps). Also trigger when adding any new table, trigger, or function — the skill carries the RLS-template + audit-row + payment-gating + ACL checklist. Don't make Claude reconstruct the per-table checklist from scratch.
+description: Use when working on DRMed database schema changes, Supabase migrations, RLS policies, audit-log obligations, payment-gating trigger considerations, function grants/ACLs, applying a migration to prod, or the migration workflow. Trigger whenever the user mentions migration, new migration, schema change, new table, alter table, alter schema, drop table, drop column, regenerate types, regen types, db:diff, db:types, db:types:remote, db:reset, supabase db push, supabase db reset, supabase migrations, schema_migrations, apply_migration, execute_sql, RLS policy, row-level security policy, has_role, current_patient_id, payment gating trigger, enforce_payment_before_release, audit_log table, audit-log obligation, SECURITY DEFINER, grant execute, revoke execute, anon-executable, function ACL, default privileges, rls_auto_enable, ensure_rls, P00xx error code, translatePgError, pg-errors, seed script, seed:test, seed:services, seed:templates, seed.sql, smoke:results, or the files under supabase/migrations/ (0001 → 0149, with gaps). Also trigger when adding any new table, trigger, or function — the skill carries the RLS-template + audit-row + payment-gating + ACL checklist. Don't make Claude reconstruct the per-table checklist from scratch.
 ---
 
 # DRMed migrations & schema workflow
 
 ## What this is
 
-132 sequential migrations under `supabase/migrations/`, zero-padded numeric naming (`0001_init.sql` → `0135_harden_hmo_and_inventory_views.sql`). The numbering has gaps (0056–0058 never existed) — that's fine, repo and remote skip them identically; gaps are NOT drift. **Prod ledger head = 0135, repo↔prod in sync (2026-09-10).** Every schema change has a fixed workflow + a per-table checklist (RLS + audit + payment-gating + function ACL). Get the checklist wrong and you create either a compliance gap, an anon-callable RPC, or a query that returns empty silently.
+Sequential migrations under `supabase/migrations/`, zero-padded numeric naming (`0001_init.sql` → `0149_ap_cash_bill_payment_drawer_link.sql`). The numbering has gaps (0056–0058 never existed) — that's fine, repo and remote skip them identically; gaps are NOT drift. **Prod ledger head = 0149 (2026-09-16). 0150 is in flight on `perf/rls-initplan-realtime`.** Every schema change has a fixed workflow + a per-table checklist (RLS + audit + payment-gating + function ACL). Get the checklist wrong and you create either a compliance gap, an anon-callable RPC, or a query that returns empty silently.
 
 ## Landmark migrations (where the load-bearing objects live)
 
@@ -104,18 +104,29 @@ DRMed prod project ref: `qhptbmafrosgibooelpp` (the org's other project `zzcbzei
 
 ## RLS policy templates the skill carries
 
+**Always wrap a helper call as `(select fn(...))`.** `has_role`, `is_staff`, `staff_role`
+and `current_patient_id` are all STABLE, but STABLE does not make the planner call them
+once — written bare in a policy they are evaluated PER ROW. Wrapping makes it an InitPlan,
+evaluated once per query. Migration 0150 targets this pattern; the Visits page baseline
+is 2,733 ms and the target is <150 ms (post-migration timing is still to be measured).
+`src/lib/supabase/rls-initplan.test.ts` fails on a new policy that reverts to the bare form.
+
+Note the Supabase performance advisor does NOT catch this. Its `auth_rls_initplan` lint
+only sees direct `auth.*()` calls, not a helper like `has_role()` that wraps `auth.uid()`
+one level down — it reported 10 when the real number was 130.
+
 **Staff full access:**
 ```sql
 create policy "<table>: staff full"
   on public.<table>
-  using (public.has_role(array['reception','medtech','pathologist','admin']));
+  using ((select public.has_role(array['reception','medtech','pathologist','admin'])));
 ```
 
 **Patient self-select (via current_patient_id):**
 ```sql
 create policy "<table>: patient self"
   on public.<table> for select to anon, authenticated
-  using (patient_id = public.current_patient_id());
+  using (patient_id = (select public.current_patient_id()));
 ```
 
 **Release-gated patient access (results pattern):**
@@ -127,7 +138,7 @@ create policy "<table>: patient released only"
       select tr.id from public.test_requests tr
       join public.visits v on v.id = tr.visit_id
       where tr.status = 'released'
-        and v.patient_id = public.current_patient_id()
+        and v.patient_id = (select public.current_patient_id())
     )
   );
 ```
@@ -136,7 +147,7 @@ create policy "<table>: patient released only"
 ```sql
 create policy "<table>: admin select"
   on public.<table> for select
-  using (public.has_role(array['admin']));
+  using ((select public.has_role(array['admin'])));
 ```
 
 **Write-only-via-service-role tables** (`audit_log`, `patient_consents`): RLS enabled, a read policy if needed, NO insert policy — writes come from the admin client only.

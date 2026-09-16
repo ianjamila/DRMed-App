@@ -7,13 +7,21 @@ import { manilaDate, manilaRangeUtc, todayManilaISODate } from "@/lib/dates/mani
 import { loadHiddenCardIds } from "@/lib/dashboards/card-prefs";
 import { fetchAllRows, REPORT_EXPORT_MAX_ROWS, type PageFetcher } from "@/lib/reports/paging";
 import { reportError } from "@/lib/observability/report-error";
-import { RealtimeRefresher } from "@/components/staff/realtime-refresher";
+import { RealtimeRefresher, type Subscription } from "@/components/staff/realtime-refresher";
 import { DashboardHeader } from "./_components/dashboard-header";
 import { SectionHeading } from "./_components/section-heading";
 import { StatCard } from "./_components/stat-card";
 import { QuickLinks } from "./_components/quick-links";
 import { ActivityStrip, type ActivityItem } from "./_components/activity-strip";
 import { formatPeso, formatTime, relativeAge } from "./_components/format";
+
+const RECEPTION_SUBSCRIPTIONS = [
+  { table: "appointments", event: "INSERT" },
+  { table: "appointments", event: "UPDATE" },
+  { table: "visits", event: "INSERT" },
+  { table: "visits", event: "UPDATE" },
+  { table: "payments", event: "INSERT" },
+] as const satisfies readonly Subscription[];
 
 // Quicklinks mirror the sidebar groups (Front Desk / Billing) and use the
 // sidebar's exact labels (Title Case, sidebar cleanup 2026-09-15). There is no
@@ -588,13 +596,7 @@ export async function ReceptionDashboard({
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
       <RealtimeRefresher
-        subscriptions={[
-          { table: "appointments", event: "INSERT" },
-          { table: "appointments", event: "UPDATE" },
-          { table: "visits", event: "INSERT" },
-          { table: "visits", event: "UPDATE" },
-          { table: "payments", event: "INSERT" },
-        ]}
+        subscriptions={RECEPTION_SUBSCRIPTIONS}
         channelName="reception-dashboard"
       />
       <DashboardHeader
