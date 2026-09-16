@@ -1,3 +1,4 @@
+import { VisitsSearchInput } from "./_components/visits-search-input";
 import Link from "next/link";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
@@ -94,6 +95,7 @@ const CLASS_ACCENT: Record<VisitClass, string> = {
 
 interface SearchProps {
   searchParams: Promise<{
+    q?: string;
     start?: string;
     end?: string;
     page?: string;
@@ -112,6 +114,7 @@ function visitNo(n: string): string {
 export default async function VisitsIndexPage({ searchParams }: SearchProps) {
   const session = await requireActiveStaff();
   const params = await searchParams;
+  const query = (params.q ?? "").trim();
 
   const start = isISODate(params.start) ? params.start : "";
   const end = isISODate(params.end) ? params.end : "";
@@ -123,7 +126,7 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
   const [offset] = rangeFor(page, size);
 
   const supabase = await createClient();
-  const filters = { start, end, classes, view };
+  const filters = { start, end, classes, view, q: query };
 
   // The strip breaks down BY class, so it deliberately ignores the class chips
   // (applying them would zero every column the reader is trying to compare)
@@ -158,6 +161,7 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
   // (`null` to reset to 1, or an explicit number), same convention as
   // `/staff/patients`.
   const baseParams: Record<string, string | null> = {
+    q: query || null,
     start: start || null,
     end: end || null,
     kind: serialiseVisitClasses(classes) || null,
@@ -198,6 +202,7 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
   // fetchArchiveAll (the CSV's query) threads it into the identical
   // archiveOrderPlan `fetchArchiveWindow` uses here.
   const exportQs = new URLSearchParams();
+  if (query) exportQs.set("q", query);
   if (start) exportQs.set("start", start);
   if (end) exportQs.set("end", end);
   if (serialiseVisitClasses(classes)) {
@@ -226,7 +231,7 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
           .map((c) => VISIT_CLASS_LABEL[c])
           .join(" + ");
 
-  const hasFilters = Boolean(start || end || chipLabel || view !== "active");
+  const hasFilters = Boolean(query || start || end || chipLabel || view !== "active");
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
@@ -243,6 +248,10 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
           </>
         }
       />
+
+      <div className="mb-6">
+        <VisitsSearchInput initialQuery={query} />
+      </div>
 
       {/* The classification chips + export button used to live in PageHeader's
           `actions` slot, sharing its `flex flex-wrap items-start
@@ -282,6 +291,7 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
 
       <div className="mb-6"><VisitsTabs /></div>
 
+      {query ? <p className="mb-2 text-xs text-[color:var(--color-brand-text-soft)]">Revenue overview includes all patients and visit numbers in this date range.</p> : null}
       <RevenueStrip
         rows={summary}
         totals={totals}
@@ -300,6 +310,7 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
         className="mb-6 flex flex-wrap items-end gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4"
         action="/staff/visits"
       >
+        {query ? <input type="hidden" name="q" value={query} /> : null}
         {/* Keep the open chips + view when dates are applied. */}
         {serialiseVisitClasses(classes) ? (
           <input type="hidden" name="kind" value={serialiseVisitClasses(classes)} />
