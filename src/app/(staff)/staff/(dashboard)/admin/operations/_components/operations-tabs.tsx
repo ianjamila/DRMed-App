@@ -10,6 +10,7 @@ const BASE = "/staff/admin/operations";
 
 const TABS = [
   { href: BASE, label: ROUTE_NAME["/staff/admin/operations"], exact: true },
+  { href: `${BASE}/daily-revenue`, label: ROUTE_NAME["/staff/admin/operations/daily-revenue"] },
   { href: `${BASE}/cash`, label: ROUTE_NAME["/staff/admin/operations/cash"] },
   { href: `${BASE}/expenses`, label: ROUTE_NAME["/staff/admin/operations/expenses"] },
   { href: `${BASE}/hmo`, label: ROUTE_NAME["/staff/admin/operations/hmo"] },

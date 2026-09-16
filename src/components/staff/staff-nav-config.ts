@@ -360,17 +360,13 @@ export const STAFF_NAV: StaffNavSection[] = [
             roles: ["admin"],
           },
           {
-            href: "/staff/admin/reports/daily-revenue",
-            quicklink: {"admin":{"order":6}},
-            label: ROUTE_NAME["/staff/admin/reports/daily-revenue"],
-            description: "How much the clinic billed each day, broken down by service type (lab vs. consult vs. imaging) and payment method (cash, GCash, HMO, etc.). Use to spot trends or compare days/weeks.",
-            roles: ["admin"],
-          },
-          {
             href: "/staff/admin/operations",
             quicklink: {"admin":{"order":2}},
             // Dashboard action/view owned here without adding a sidebar row.
-            shortcuts: [{ href: "/staff/admin/operations/cash", label: ROUTE_NAME["/staff/admin/operations/cash"], roles: ["admin"], quicklink: {"admin":{"order":5}} }],
+            shortcuts: [
+              { href: "/staff/admin/operations/cash", label: ROUTE_NAME["/staff/admin/operations/cash"], roles: ["admin"], quicklink: { admin: { order: 5 } } },
+              { href: "/staff/admin/operations/daily-revenue", label: ROUTE_NAME["/staff/admin/operations/daily-revenue"], roles: ["admin"], quicklink: { admin: { order: 6 } } },
+            ],
             label: SECTION_NAME["/staff/admin/operations"],
             description: "The clinic's full operational day-by-day report (reproduces the manual DAILY MONITORING sheet): lab + consult by payment channel and HMO, distinct customers, discounts, gross profit, PF collected, and per-doctor / per-specialty productivity. Pick any month or custom date range; export to CSV.",
             roles: ["admin"],

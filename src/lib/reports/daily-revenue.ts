@@ -104,3 +104,15 @@ export function dailyRevenueCsvHref(p: DailyRevenueParams): string {
 export function dailyRevenueCsvFilename(p: DailyRevenueParams): string {
   return `daily-revenue-${p.from}_${p.to}.csv`;
 }
+
+/** Keep bookmarked periods and any repeated query keys when relocating the page. */
+export function dailyRevenueRedirectHref(params: Record<string, string | string[] | undefined>): string {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    for (const item of Array.isArray(value) ? value : value === undefined ? [] : [value]) {
+      query.append(key, item);
+    }
+  }
+  const suffix = query.toString();
+  return "/staff/admin/operations/daily-revenue" + (suffix ? `?${suffix}` : "");
+}

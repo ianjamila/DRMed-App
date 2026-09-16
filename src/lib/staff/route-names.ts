@@ -32,7 +32,7 @@ export const ROUTE_NAME: Record<string, string> = {
   "/staff/admin/accounting/bank-rec": "Bank Reconciliation",
   "/staff/admin/accounting/periods": "Monthly Periods",
   "/staff/admin/accounting/accrual-templates": "Recurring Monthly Entries",
-  "/staff/admin/reports/daily-revenue": "Daily Revenue",
+  "/staff/admin/operations/daily-revenue": "Daily Revenue",
   "/staff/admin/operations": "Daily Sheet",
   "/staff/admin/reports/lab-tat": "Lab Turnaround Time",
   "/staff/admin/reports/stuck-tests": "Stuck Tests",

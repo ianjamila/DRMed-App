@@ -649,7 +649,7 @@ describe("derived dashboard shortcuts preserve the visible set", () => {
       ["/staff/admin/accounting/pf-payouts", "Pay Doctors"],
       ["/staff/admin/accounting/journal", "Journal Entries"],
       ["/staff/admin/operations/cash", "Cash & Cards"],
-      ["/staff/admin/reports/daily-revenue", "Daily Revenue"],
+      ["/staff/admin/operations/daily-revenue", "Daily Revenue"],
       ["/staff/admin/accounting/ap", "Expenses Overview"],
       ["/staff/admin/accounting/hmo-claims", "HMO Claims"],
       ["/staff/admin/payroll/runs", "Run Payroll"],
@@ -665,5 +665,13 @@ describe("derived dashboard shortcuts preserve the visible set", () => {
   });
   it("does not expose admin shortcuts to reception", () => {
     expect(quickLinksFor("reception", "admin")).toEqual([]);
+  });
+});
+
+describe("Daily Revenue belongs to Daily Monitoring", () => {
+  it("has no duplicate sidebar row and lights only its section", () => {
+    expect(allHrefs(STAFF_NAV)).not.toContain("/staff/admin/operations/daily-revenue");
+    expect(allHrefs(STAFF_NAV)).not.toContain("/staff/admin/reports/daily-revenue");
+    expect(activeHrefs("/staff/admin/operations/daily-revenue")).toEqual(["/staff/admin/operations"]);
   });
 });

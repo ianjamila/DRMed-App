@@ -34,14 +34,15 @@ function render(node: React.ReactElement, params: string): string[] {
 describe("OperationsTabs", () => {
   it("carries the selected range onto every tab", () => {
     const got = render(<OperationsTabs />, "from=2026-03-01&to=2026-03-31");
-    expect(got).toHaveLength(5);
+    expect(got).toHaveLength(6);
     for (const href of got) expect(href).toContain("?from=2026-03-01&to=2026-03-31");
-    expect(got[1]).toBe("/staff/admin/operations/cash?from=2026-03-01&to=2026-03-31");
+    expect(got[2]).toBe("/staff/admin/operations/cash?from=2026-03-01&to=2026-03-31");
   });
 
   it("leaves the hrefs bare when no range is selected", () => {
     expect(render(<OperationsTabs />, "")).toEqual([
       "/staff/admin/operations",
+      "/staff/admin/operations/daily-revenue",
       "/staff/admin/operations/cash",
       "/staff/admin/operations/expenses",
       "/staff/admin/operations/hmo",
@@ -104,7 +105,7 @@ describe("PaymentsTabs", () => {
 // Layout-owned navigation remains present even when a page renders an empty/error body.
 describe("report layouts", () => {
   it.each([
-    ["operations", () => import("@/app/(staff)/staff/(dashboard)/admin/operations/layout"), 5],
+    ["operations", () => import("@/app/(staff)/staff/(dashboard)/admin/operations/layout"), 6],
     ["statements", () => import("@/app/(staff)/staff/(dashboard)/admin/accounting/financial-statements/layout"), 3],
   ] as const)("%s retains its tabs without page content", async (_name, load, count) => {
     const { default: Layout } = await load();
