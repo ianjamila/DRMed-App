@@ -40,6 +40,13 @@
  *     (`check_violation`, `42501`). The release gates use `check_violation`
  *     deliberately; they have a code, so they are translatable.
  *
+ * Of 141 runtime `raise exception`s in the history, 95 carry a code, 42 are
+ * migration-time asserts, and 3 are genuinely bare (`BARE_RAISES`).
+ *
+ * Finding a raise's own code means finding where its STATEMENT ends, and four
+ * of this repo's raises put a semicolon inside the message string — see
+ * `statementEnd` below, which is where the first draft of this test was wrong.
+ *
  * THE ALLOWLIST CAN ONLY SHRINK
  * -----------------------------
  * `DEAD_CODES` is not "codes we decided not to translate" — it is codes whose
@@ -79,23 +86,20 @@ function raisedCodes(): Map<string, string[]> {
 }
 
 /**
- * Runtime raises that predate this rule and still carry no errcode. FROZEN —
- * the list may only SHRINK. Each entry is `file :: owning function`.
+ * Runtime raises that still carry no errcode. FROZEN — the list may only
+ * SHRINK. Each entry is `file :: owning function`.
  *
- * The four `ap_*` ones and `employees_require_daily_rate` ARE reachable from
- * the UI (voiding a bill, editing a draft, running payroll), so they are the
- * ones worth a P-code next. The other two are internal-consistency guards a
- * user should not be able to trip. Giving any of them a code needs a new
- * migration, which is why this freezes the set rather than changing behaviour.
+ * All three are internal-consistency guards: a chart-of-accounts code that
+ * does not resolve, a package component whose parent is not a header, and a
+ * void that finds no posted journal entry to reverse. None is user error — if
+ * one fires, the data is already wrong — so a plain-language message would be
+ * less useful than the raw detail, and none is worth a P-code today. Giving
+ * one a code means a new migration; this freezes the set instead.
  */
 const BARE_RAISES = new Set([
   "0033_op_gl_bridge_polish.sql :: public.coa_uuid_for_code",
   "0040_package_decomposition.sql :: public.fn_test_request_parent_is_header",
-  "0044_payroll.sql :: public.employees_require_daily_rate",
-  "0049_ap_subledger_behavior.sql :: public.ap_bill_void_guard",
   "0049_ap_subledger_behavior.sql :: public.ap_reverse_je_for_source",
-  "0049_ap_subledger_behavior.sql :: public.ap_update_bill_draft",
-  "0049_ap_subledger_behavior.sql :: public.ap_void_bill_with_guard",
 ]);
 
 /** Blank out line and block comments, preserving every character offset. */
@@ -124,15 +128,56 @@ function doBlockRanges(text: string): Array<[number, number]> {
   return ranges;
 }
 
+/**
+ * End of the statement starting at `start`: the first `;` that is NOT inside a
+ * single-quoted literal (`''` is an escaped quote, not a terminator).
+ *
+ * This has to be a scan and not a regex, and the difference is not academic —
+ * it is the bug this test shipped with on its first draft. `[\s\S]*?;` stops at
+ * the first semicolon it sees, and four of this repo's raises put one INSIDE
+ * the message:
+ *
+ *   raise exception 'Bill % has % active payment(s); void payments first.', …
+ *     using errcode = 'P0029';
+ *
+ * The lazy match ended at `payment(s);`, never reached `using errcode`, and
+ * reported a correctly-coded raise as bare. Those four then went into
+ * BARE_RAISES — which is the worse half of the failure: an allowlist entry
+ * would have exempted them for good, so if someone later DELETED a real
+ * errcode the test would still have passed.
+ */
+function statementEnd(text: string, start: number): number {
+  let inQuote = false;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (inQuote) {
+      if (c === "'") {
+        if (text[i + 1] === "'") i++; // escaped quote, stays inside
+        else inQuote = false;
+      }
+    } else if (c === "'") {
+      inQuote = true;
+    } else if (c === ";") {
+      return i + 1;
+    }
+  }
+  return text.length;
+}
+
 /** `file :: function` for every RUNTIME raise that carries no errcode. */
 function bareRuntimeRaises(): string[] {
   const found: string[] = [];
   for (const file of readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith(".sql")).sort()) {
     const text = stripComments(readFileSync(join(MIGRATIONS_DIR, file), "utf8"));
     const blocks = doBlockRanges(text);
-    for (const m of text.matchAll(/raise\s+exception\b[\s\S]*?;/gi)) {
-      if (/\busing\b[\s\S]*errcode/i.test(m[0])) continue;
-      if (blocks.some(([a, b]) => m.index >= a && m.index < b)) continue;
+    const re = /raise\s+exception\b/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+      const end = statementEnd(text, m.index);
+      const statement = text.slice(m.index, end);
+      re.lastIndex = end; // never re-enter the statement we just consumed
+      if (/\busing\b[\s\S]*errcode/i.test(statement)) continue;
+      if (blocks.some(([a, b]) => m!.index >= a && m!.index < b)) continue;
       const fn = [
         ...text.slice(0, m.index).matchAll(/create\s+(?:or\s+replace\s+)?function\s+([\w.]+)/gi),
       ].pop();
@@ -208,6 +253,32 @@ describe("P-code translation coverage", () => {
       "These no longer raise without an errcode — delete them from " +
         "BARE_RAISES so the list stays a true map of what is left.",
     ).toEqual([]);
+  });
+
+  it("finds the errcode past a semicolon inside the message string", () => {
+    // The regression. All four of these carry a code AFTER a semicolon that
+    // sits inside their message literal; a lazy `[\s\S]*?;` match stops at that
+    // semicolon and calls them bare. Asserting the four functions by name,
+    // rather than just a count, so this cannot go green by coincidence.
+    const bare = bareRuntimeRaises().join("\n");
+    for (const fn of [
+      "public.employees_require_daily_rate", // 'no positive basic_daily_rate_php; cannot enroll…' P0022
+      "public.ap_bill_void_guard", //           'has % active payment(s); void payments first.'    P0029
+      "public.ap_update_bill_draft", //         'Cannot edit bill in status %; use void+rebill'    P0004
+      "public.ap_void_bill_with_guard", //      'Cannot void a draft bill; delete it instead'      P0002
+    ]) {
+      expect(bare, `${fn} carries an errcode — the scanner must see it`).not.toContain(fn);
+    }
+  });
+
+  it("reads a statement's end, not the first semicolon it sees", () => {
+    // statementEnd is the fix; pin its behaviour directly so a future
+    // "simplification" back to a regex fails here rather than silently
+    // re-freezing correct code into BARE_RAISES.
+    const sql = "raise exception 'a; b''c; d' using errcode = 'P0001'; select 1;";
+    expect(sql.slice(0, statementEnd(sql, 0))).toBe(
+      "raise exception 'a; b''c; d' using errcode = 'P0001';",
+    );
   });
 
   it("does not count a migration-time assertion as a bare raise", () => {
