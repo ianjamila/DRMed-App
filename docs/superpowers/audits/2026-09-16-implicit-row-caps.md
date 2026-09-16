@@ -1,6 +1,6 @@
 # Staff implicit 1,000-row cap audit — 2026-09-16
 
-Branch: `fix/implicit-row-caps`, audit baseline `3ddae51`. Prepared for draft review against main `b664bda` (#191). Read-only production count verification completed on 2026-09-16 using the DRMed-scoped Supabase MCP; no production mutations, migrations, or UI/control changes. The owner subsequently authorized hardening the dormant row-cap queries.
+Branch: `fix/implicit-row-caps`, audit baseline `3ddae51`. Prepared for draft review against main `e4fa461` (#193). Read-only production count verification completed on 2026-09-16 using the DRMed-scoped Supabase MCP; no production mutations, migrations, or UI/control changes. The owner subsequently authorized hardening the dormant row-cap queries.
 
 ## Priority 1 — SELECTION-SET fixes that drive batch writes
 
@@ -612,7 +612,7 @@ Dormant hardening adds 39 regressions: 34 query checks cover 1,505 matching rows
 
 ## Final validation
 
-After rebasing onto main `b664bda` (#191), `npm test`, `npm run typecheck`, and `npm run lint` all exited 0. **159 test files / 1,971 tests passed**. TypeScript is clean; lint has zero errors and the one pre-existing `booking.ts:101` unused `serviceIds` warning. `git diff --check` passed.
+After rebasing onto main `e4fa461` (#193), `npm test`, `npm run typecheck`, and `npm run lint` all exited 0. **159 test files / 1,979 tests passed**. TypeScript is clean; lint has zero errors and the one pre-existing `booking.ts:101` unused `serviceIds` warning. `git diff --check` passed.
 
 The branch diff against main contains no migrations, excluded payroll/PF-page changes, or protected realtime/subscription changes. Count verification established no additional Real cases; the later dormant-query hardening was explicitly authorized separately. The user-guide footer also removes four pre-existing conflict-marker/obsolete-date lines already present on main, retaining its 16 September date.
 
