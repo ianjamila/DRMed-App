@@ -289,6 +289,23 @@ Drop unused indexes only where `idx_scan = 0` **and** the index predates 2026-06
 days). A recently added index with zero scans is more likely feature work that has not
 shipped than dead weight.
 
+**RESOLVED 2026-09-16 — Phase 4 adds no indexes.** Measured, not assumed.
+
+Every unindexed FK on a table above 3,000 rows is an audit-provenance column —
+`test_requests.{deleted_by, released_by, requested_by, signed_off_by}`,
+`journal_entries.{created_by, posted_by, reversed_by}`, `visits.{created_by, deleted_by}`,
+`payments.{received_by, voided_by}`, `patients.{created_by, referral_source}`, and five on
+`historic_hmo_claims`. None is joined on by any query in §2.2; they are read one row at a
+time to render "released by X". Indexing them would cost write throughput on the busiest
+tables in the system to speed up nothing.
+
+The FKs the hot queries *do* join on are already indexed — verified directly against the
+catalog: `test_requests.visit_id`, `test_requests.service_id` and `visits.patient_id` all
+return `indexed = true`. The join path was never the problem; per-row RLS evaluation was.
+
+Dropping the 46 unused indexes is also deferred — unrelated to the two findings this PR
+exists to fix.
+
 ### 4.5 Non-goals
 
 - `pg_timezone_names` (682 calls × 339 ms = 231 s). Not application code — Supabase Auth
