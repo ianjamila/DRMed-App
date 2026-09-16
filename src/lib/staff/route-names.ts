@@ -84,7 +84,8 @@ export const ROUTE_NAME: Record<string, string> = {
   "/staff/admin/accounting/financial-statements/balance-sheet": "Balance Sheet",
   "/staff/admin/accounting/financial-statements/cash-flow": "Cash Flow",
   "/staff/patients/new": "New Patient",
-  "/staff/admin/accounting/ap/quick-expense": "Quick Expense"
+  "/staff/admin/accounting/ap/quick-expense": "Quick Expense",
+  "/staff/admin/operations/cron-health": "Cron Health"
 };
 
 /** Umbrella links name the section, even when its landing page is a specific view. */

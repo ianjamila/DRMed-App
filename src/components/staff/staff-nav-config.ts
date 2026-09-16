@@ -361,6 +361,7 @@ export const STAFF_NAV: StaffNavSection[] = [
           },
           {
             href: "/staff/admin/operations",
+            excludePrefixes: ["/staff/admin/operations/cron-health"],
             quicklink: {"admin":{"order":2}},
             // Dashboard action/view owned here without adding a sidebar row.
             shortcuts: [
@@ -413,6 +414,12 @@ export const STAFF_NAV: StaffNavSection[] = [
       {
         heading: "Operations",
         items: [
+          {
+            href: "/staff/admin/operations/cron-health",
+            label: ROUTE_NAME["/staff/admin/operations/cron-health"],
+            description: "Check when each scheduled task last ran and whether a run is overdue. Pending means its initial monitoring grace period has not ended.",
+            roles: ["admin"],
+          },
           {
             href: "/staff/admin/closures",
             label: ROUTE_NAME["/staff/admin/closures"],

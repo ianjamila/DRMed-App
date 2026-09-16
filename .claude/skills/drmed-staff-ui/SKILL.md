@@ -26,6 +26,7 @@ The three "chrome" systems every staff page hangs off of: the **sidebar nav conf
 | Role dashboards | `src/app/(staff)/staff/(dashboard)/page.tsx` → `_dashboards/{reception,lab,admin}-dashboard.tsx` |
 | Card component | `…/(dashboard)/_dashboards/_components/stat-card.tsx` (`StatCard`) |
 | Brand theme tokens | `src/app/globals.css` (`--color-brand-*`) |
+| Cron Health (admin-only, Operations nav subgroup) | `src/app/(staff)/staff/(dashboard)/admin/operations/cron-health/page.tsx`; canonical legs + status rule in `src/lib/ops/cron-heartbeats.ts`, drift guards in `cron-heartbeats.test.ts` |
 
 Roles everywhere: `reception`, `medtech`, `xray_technician`, `pathologist`, `admin`.
 
@@ -56,6 +57,7 @@ An **item** is a `StaffNavItem`:
 - **Patients**: `href: /staff/patients` with NO exclusions — the default prefix match keeps it lit on `/staff/patients/new`, which is reached from the page's own + New patient button (the "New patient registration" item was removed 2026-09-15).
 - **Outside-Lab Costs** excludes `…/send-outs/vendor-performance` because the Outside-Lab Performance item lives under its href.
 - **Financial Statements**: a single bare-base `href` — the default prefix match already covers `/balance-sheet` and `/cash-flow`, so no `activePrefixes` needed.
+- **Cron Health** is its own admin item under Operations. **Daily Report** excludes `…/operations/cron-health` to avoid double highlighting. It is not a financial-period view, so it does not join `OperationsTabs`. The page reads only system heartbeat timestamps with the staff RLS client; missing rows stay visible as Pending/Stale, and query errors are Unavailable. Pending means the initial monitoring grace period has not ended.
 
 Before adding an `activePrefixes` entry, list every route under it and check none belongs to another item (or to nobody).
 
