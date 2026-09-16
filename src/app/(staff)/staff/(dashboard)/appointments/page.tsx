@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
-import { RealtimeRefresher } from "@/components/staff/realtime-refresher";
+import { RealtimeRefresher, type Subscription } from "@/components/staff/realtime-refresher";
 import { TransitionButtons } from "./transition-buttons";
 import { NewAppointmentSheet, type ServiceOption, type PhysicianOption } from "./new-appointment-sheet";
 import { RegistrationLinkButton } from "@/components/staff/registration-link-button";
@@ -44,6 +44,11 @@ import {
 } from "@/lib/ui/table-params";
 import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
+
+const APPOINTMENTS_SUBSCRIPTIONS = [
+  { table: "appointments", event: "INSERT" },
+  { table: "appointments", event: "UPDATE" },
+] as const satisfies readonly Subscription[];
 
 export const metadata = {
   title: "Appointments",
@@ -497,10 +502,7 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
     <div className="px-4 py-8 sm:px-6 lg:px-8">
       <RealtimeRefresher
         channelName="appointments-page"
-        subscriptions={[
-          { table: "appointments", event: "INSERT" },
-          { table: "appointments", event: "UPDATE" },
-        ]}
+        subscriptions={APPOINTMENTS_SUBSCRIPTIONS}
       />
       <PageHeader
         title="Appointments"

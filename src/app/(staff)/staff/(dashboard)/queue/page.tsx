@@ -2,7 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { queueTitleForRole, sectionsForRole } from "@/lib/auth/role-sections";
-import { RealtimeRefresher } from "@/components/staff/realtime-refresher";
+import { RealtimeRefresher, type Subscription } from "@/components/staff/realtime-refresher";
 import { ClaimButton } from "./claim-button";
 import { sectionTabClass, sectionTabsNavClass } from "@/components/staff/section-tabs-style";
 import { PageHeader } from "@/components/staff/page-header";
@@ -33,6 +33,11 @@ import { testDeletability, hasOpenHmoClaim } from "@/lib/visits/deletion";
 import { LAB_QUEUE_GATE_VISITS_OR } from "@/lib/visits/lab-gate";
 import { DOCTOR_KINDS_PG_LIST } from "@/lib/visits/classification";
 import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
+
+const LAB_QUEUE_SUBSCRIPTIONS = [
+  { table: "test_requests", event: "INSERT" },
+  { table: "test_requests", event: "UPDATE" },
+] as const satisfies readonly Subscription[];
 
 // ---------------------------------------------------------------------------
 // Queue card types — after the grouping fold
@@ -497,10 +502,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
       {viewingHistory ? null : (
         <RealtimeRefresher
           channelName="queue-page"
-          subscriptions={[
-            { table: "test_requests", event: "INSERT" },
-            { table: "test_requests", event: "UPDATE" },
-          ]}
+          subscriptions={LAB_QUEUE_SUBSCRIPTIONS}
         />
       )}
       <PageHeader

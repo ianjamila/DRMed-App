@@ -15,7 +15,7 @@ import {
   type PageFetcher,
 } from "@/lib/reports/paging";
 import { reportError } from "@/lib/observability/report-error";
-import { RealtimeRefresher } from "@/components/staff/realtime-refresher";
+import { RealtimeRefresher, type Subscription } from "@/components/staff/realtime-refresher";
 import {
   HMO_UNBILLED_AGE_BANDS,
   matchesHmoUnbilledAgeBand,
@@ -28,6 +28,8 @@ import { StatCard } from "./_components/stat-card";
 import { QuickLinks } from "./_components/quick-links";
 import { ActivityStrip, type ActivityItem } from "./_components/activity-strip";
 import { formatPeso, relativeAge } from "./_components/format";
+
+const NO_SUBSCRIPTIONS: readonly Subscription[] = [];
 
 // Owner shortcuts; metric cards above keep their own descriptive labels and IDs.
 const QUICK_LINKS = quickLinksFor("admin", "admin");
@@ -721,7 +723,11 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
-      <RealtimeRefresher subscriptions={[]} intervalMs={60000} />
+      <RealtimeRefresher
+        channelName="admin-dashboard"
+        subscriptions={NO_SUBSCRIPTIONS}
+        intervalMs={60000}
+      />
       <DashboardHeader
         firstName={session.full_name.split(" ")[0]}
         roleLabel="Admin"

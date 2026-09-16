@@ -26,9 +26,9 @@ Key reference artifacts:
   denomination count…). Read the spec before re-deriving a design decision.
 
 Migration ledger: **prod head = 0152** (2026-09-16), applied through the linked CLI.
-**0151** is reserved by `perf/rls-initplan-realtime` (#192) and has not been applied;
-0152 is independent of that RLS work. Rebase that branch onto main before applying
-0151, then dry-run with `--include-all` to insert its lower version. **Next unused
+**0151** (`rls_initplan_and_policy_consolidation`, #192) is also applied and verified:
+159 public policies, zero unwrapped helper calls, and no unexpected policyless tables.
+The linked CLI confirms no pending migrations. **Next unused
 number: 0153**, subject to checking open branches again.
 `ls supabase/migrations | tail -3` is NOT enough to pick the next number — it only sees your
 own worktree, and on 2026-09-15 two branches claimed 0147 (and P0050) the same afternoon.

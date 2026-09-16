@@ -11,7 +11,7 @@ import {
 import { formatPatientName } from "@/lib/patients/format-name";
 import { paymentStatusLabel } from "@/lib/ui/payment-status";
 import { PageHeader } from "@/components/staff/page-header";
-import { RealtimeRefresher } from "@/components/staff/realtime-refresher";
+import { RealtimeRefresher, type Subscription } from "@/components/staff/realtime-refresher";
 import {
   sectionTabsNavClass,
   sectionTabClass,
@@ -27,6 +27,14 @@ import {
 import { visitDeletability, hasOpenHmoClaim } from "@/lib/visits/deletion";
 import { shouldPrintReceipt } from "@/lib/visits/receipt-policy";
 import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
+
+const QUEUE_SUBSCRIPTIONS = [
+  { table: "visits", event: "UPDATE" },
+  { table: "visits", event: "INSERT" },
+  { table: "payments", event: "INSERT" },
+  { table: "test_requests", event: "UPDATE" },
+  { table: "test_requests", event: "INSERT" },
+] as const satisfies readonly Subscription[];
 
 export const metadata = {
   title: "Reception Queue",
@@ -235,13 +243,7 @@ export default async function VisitsQueuePage({ searchParams }: SearchProps) {
       {isToday ? (
         <RealtimeRefresher
           channelName="visits-queue"
-          subscriptions={[
-            { table: "visits", event: "UPDATE" },
-            { table: "visits", event: "INSERT" },
-            { table: "payments", event: "INSERT" },
-            { table: "test_requests", event: "UPDATE" },
-            { table: "test_requests", event: "INSERT" },
-          ]}
+          subscriptions={QUEUE_SUBSCRIPTIONS}
         />
       ) : null}
 
