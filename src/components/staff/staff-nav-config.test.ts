@@ -381,3 +381,18 @@ describe("isSectionActive", () => {
     expect(isSectionActive(admin, "/staff/patients")).toBe(false);
   });
 });
+
+describe("Cron Health navigation", () => {
+  const href = "/staff/admin/operations/cron-health";
+  it("lives in the admin Operations subgroup", () => {
+    const admin = section(visibleNavFor("admin"), "Admin");
+    expect(admin?.subgroups?.find((g) => g.heading === "Operations")?.items.map((i) => i.href)).toContain(href);
+  });
+  it.each(ALL_ROLES.filter((role) => role !== "admin"))("is hidden from %s", (role) => {
+    expect(allHrefs(visibleNavFor(role))).not.toContain(href);
+  });
+  it("lights only Cron Health, leaving Daily Report active on its own views", () => {
+    expect(activeHrefs(href)).toEqual([href]);
+    expect(activeHrefs("/staff/admin/operations/cash")).toEqual(["/staff/admin/operations"]);
+  });
+});

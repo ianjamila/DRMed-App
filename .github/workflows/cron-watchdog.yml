@@ -86,3 +86,25 @@ jobs:
             echo 'Cron watchdog failed: every STALE row above needs investigation.' >&2
             exit 1
           fi
+
+  backup-freshness:
+    # Independent job: a failed heartbeat check must not hide backup health.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install npm deps
+        run: npm ci --no-audit --no-fund
+
+      - name: Check newest database backup in Vercel Blob
+        env:
+          BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
+        run: node scripts/backup-freshness.mjs
