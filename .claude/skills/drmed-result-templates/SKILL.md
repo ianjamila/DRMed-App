@@ -29,7 +29,8 @@ src/lib/results/
 ├── render-pdf.ts           ← renderResultPdf() — wraps @react-pdf/renderer renderToBuffer
 ├── pdf-document.tsx        ← Server Component, ~37KB. The full layout engine.
 ├── status-filter.ts        ← results-archive tab config as pure data (RESULT_STATUS_SPEC, parseResultStatusFilter)
-├── template-health.ts      ← 5 drift checks run daily by /api/cron/template-health (6am Manila)
+├── template-health.ts      ← 6 pure drift checks + daily/weekly email gate + shared 26-hour heartbeat threshold
+├── collect-template-health.ts ← shared server scan + last daily audit timestamp for the cron and admin health page
 └── types.ts                ← ResultLayout, ParamValue, TemplateParam, EffectiveRange, ResultDocumentInput
 
 src/app/(staff)/staff/(dashboard)/
@@ -54,7 +55,7 @@ scripts/
 Chemistry does **not** use per-service templates. 0053 deactivated the 12 per-service chemistry templates and replaced them with ONE template where `service_id is null` and `report_group_id = CHEMISTRY`; the 12 services carry `services.report_group_id`. `queue/[id]/page.tsx` redirects unconditionally to `/staff/queue/consolidated/{visitId}/{groupId}` for any such service, so **reactivating a per-service chemistry template is a no-op** — it is unreachable either way.
 
 - Which group params a given service enables lives in `report_group_service_params` (0120; 19 mapping rows — gendered Creatinine/Uric Acid make 17 entries into 19 pairs). `LIPID_PROFILE_PACKAGE` has NO mappings by design (billing header; its ₱0 components carry the encoding).
-- Admin surface (PR #120): `/staff/admin/result-templates/group/[group_id]/edit` + preview. Deleting a param that has values is blocked (P0041) and audited in SQL; activation flips are audited (0122). The daily template-health cron alerts admins on drift.
+- Admin surface (PR #120): `/staff/admin/result-templates/group/[group_id]/edit` + preview. Deleting a param that has values is blocked (P0041) and audited in SQL; activation flips are audited (0122). `/staff/admin/result-templates/health` lists live findings by severity and links to group editing. The daily template-health cron (6am Manila) emails only errors/warnings; `?mode=weekly` (Tuesday 7am Manila) includes informational findings. Every completed scan is audited in both modes, including clean runs. Read the prior daily audit timestamp BEFORE writing the current run; weekly summaries never refresh the daily heartbeat. Missing or older-than-26-hour daily heartbeats override the email gate (daily recovery / weekly ongoing outage), and the page shows the last daily run plus a stale warning. Inactive stray templates are informational history.
 - The encoding fields render only after a medtech clicks **"Claim this report"** — that gate is not a bug. Don't claim a real patient's report to look; query `result_template_params` joined through `report_groups.code='CHEMISTRY'` instead.
 - Finalise re-validates enabled params server-side (rejects stale submissions).
 

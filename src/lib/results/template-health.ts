@@ -25,6 +25,24 @@ export interface TemplateHealthFinding {
   message: string;
 }
 
+export const TEMPLATE_HEALTH_STALE_AFTER_HOURS = 26;
+
+export function isTemplateHealthStale(lastRunAt: Date | null, now: Date): boolean {
+  return lastRunAt === null ||
+    now.getTime() - lastRunAt.getTime() > TEMPLATE_HEALTH_STALE_AFTER_HOURS * 60 * 60 * 1000;
+}
+
+export function shouldEmailTemplateHealth(
+  findings: readonly TemplateHealthFinding[],
+  mode: "daily" | "weekly",
+  dailyRunStale = false,
+): boolean {
+  if (dailyRunStale) return true;
+  return mode === "weekly"
+    ? findings.length > 0
+    : findings.some((f) => f.severity === "error" || f.severity === "warning");
+}
+
 export interface TemplateHealthParam {
   id: string;
   parameter_name: string;
@@ -216,14 +234,16 @@ export function deriveTemplateHealthFindings(
       if (stray) {
         findings.push({
           type: "stray_service_template",
-          severity: "warning",
+          severity: stray.is_active ? "warning" : "info",
           group_id: g.id,
           group_code: g.code,
           group_name: g.name,
           template_id: stray.template_id,
           service_id: svc.id,
           service_code: svc.code,
-          message: `${svc.code} has its own per-service result template, but it belongs to the ${g.name} group — every result for it renders from the group's consolidated template instead, so this per-service template is never used.`,
+          message: stray.is_active
+            ? `${svc.code} has its own per-service result template, but it belongs to the ${g.name} group — every result for it renders from the group's consolidated template instead, so this per-service template is never used.`
+            : `${svc.code} has an inactive leftover per-service result template retained as history, superseded by the ${g.name} group's consolidated template.`,
         });
       }
     }

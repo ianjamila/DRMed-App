@@ -4,6 +4,7 @@
 // preview route. Full template editing UI lands in Slice 3.
 
 import Link from "next/link";
+import { PageHeader } from "@/components/staff/page-header";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
@@ -108,19 +109,16 @@ export default async function ResultTemplatesIndex() {
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
-      <header>
-        <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-          Phase 13 · Admin
-        </p>
-        <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Result Templates
-        </h1>
-        <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
-          Templates power the medtech structured-result form and the
-          auto-generated result PDF. Open a preview to see how a finalised PDF
-          will look — values are synthesised placeholders for layout review.
-        </p>
-      </header>
+      <PageHeader
+        title="Result Templates"
+        subtitle="Templates power the medtech structured-result form and the auto-generated result PDF. Open a preview to see how a finalised PDF will look — values are synthesised placeholders for layout review."
+      />
+      <Link
+        href="/staff/admin/result-templates/health"
+        className="text-sm font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
+      >
+        Template Health
+      </Link>
 
       <Section
         title="Report groups (consolidated templates)"
