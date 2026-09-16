@@ -1,3 +1,4 @@
+import { withCronMonitor } from "@/lib/ops/cron-monitor";
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
@@ -34,47 +35,50 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
-  const admin = createAdminClient();
-  const now = Date.now();
+  return withCronMonitor("data-retention", async (markFailed) => {
+    const admin = createAdminClient();
+    const now = Date.now();
 
-  // 24h-old rate-limit rows.
-  const rateCutoff = new Date(now - 24 * 60 * 60 * 1000).toISOString();
-  const { data: rateDeleted, error: rateErr } = await admin
-    .from("rate_limit_attempts")
-    .delete()
-    .lt("attempted_at", rateCutoff)
-    .select("id");
+    // 24h-old rate-limit rows.
+    const rateCutoff = new Date(now - 24 * 60 * 60 * 1000).toISOString();
+    const { data: rateDeleted, error: rateErr } = await admin
+      .from("rate_limit_attempts")
+      .delete()
+      .lt("attempted_at", rateCutoff)
+      .select("id");
 
-  // visit_pins where expires_at < now - 90d.
-  const pinCutoff = new Date(now - 90 * 24 * 60 * 60 * 1000).toISOString();
-  const { data: pinsDeleted, error: pinErr } = await admin
-    .from("visit_pins")
-    .delete()
-    .lt("expires_at", pinCutoff)
-    .select("visit_id");
+    // visit_pins where expires_at < now - 90d.
+    const pinCutoff = new Date(now - 90 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: pinsDeleted, error: pinErr } = await admin
+      .from("visit_pins")
+      .delete()
+      .lt("expires_at", pinCutoff)
+      .select("visit_id");
 
-  const summary = {
-    rate_limit_attempts_deleted: rateDeleted?.length ?? 0,
-    visit_pins_deleted: pinsDeleted?.length ?? 0,
-    rate_cutoff: rateCutoff,
-    pin_cutoff: pinCutoff,
-    errors: [
-      rateErr ? `rate_limit: ${rateErr.message}` : null,
-      pinErr ? `visit_pins: ${pinErr.message}` : null,
-    ].filter(Boolean),
-  };
+    const summary = {
+      rate_limit_attempts_deleted: rateDeleted?.length ?? 0,
+      visit_pins_deleted: pinsDeleted?.length ?? 0,
+      rate_cutoff: rateCutoff,
+      pin_cutoff: pinCutoff,
+      errors: [
+        rateErr ? `rate_limit: ${rateErr.message}` : null,
+        pinErr ? `visit_pins: ${pinErr.message}` : null,
+      ].filter(Boolean),
+    };
 
-  await audit({
-    actor_id: null,
-    actor_type: "system",
-    action: "data_retention.sweep",
-    resource_type: null,
-    resource_id: null,
-    metadata: summary,
-  });
+    await audit({
+      actor_id: null,
+      actor_type: "system",
+      action: "data_retention.sweep",
+      resource_type: null,
+      resource_id: null,
+      metadata: summary,
+    });
 
-  return NextResponse.json({
-    ok: rateErr === null && pinErr === null,
-    ...summary,
+    if (rateErr || pinErr) markFailed();
+    return NextResponse.json({
+      ok: rateErr === null && pinErr === null,
+      ...summary,
+    });
   });
 }

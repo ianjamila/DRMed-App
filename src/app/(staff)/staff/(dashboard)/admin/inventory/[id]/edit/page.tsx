@@ -1,10 +1,32 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { cache } from "react";
+import { detailMetadata } from "@/lib/staff/detail-metadata";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ItemForm } from "../../item-form";
 
-export const metadata = { title: "Edit inventory item" };
+// Share the existing header lookup with metadata within this request.
+const loadDetail = cache(async (id: string) => {
+  const admin = createAdminClient();
+  return admin
+      .from("inventory_items")
+      .select(
+        "id, code, name, section, unit, reorder_threshold, expiry_tracking, vendor_id, notes, is_active",
+      )
+      .eq("id", id)
+      .maybeSingle();
+});
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  await requireAdminStaff();
+  const { id } = await params;
+  return detailMetadata(ROUTE_NAME["/staff/admin/inventory/[id]/edit"], async () => {
+    const { data, error } = await loadDetail(id);
+    return error || !data ? null : data.name;
+  });
+}
 export const dynamic = "force-dynamic";
 
 interface PageProps {
@@ -17,13 +39,7 @@ export default async function EditInventoryItemPage({ params }: PageProps) {
 
   const admin = createAdminClient();
   const [{ data: item }, { data: vendors }] = await Promise.all([
-    admin
-      .from("inventory_items")
-      .select(
-        "id, code, name, section, unit, reorder_threshold, expiry_tracking, vendor_id, notes, is_active",
-      )
-      .eq("id", id)
-      .maybeSingle(),
+    loadDetail(id),
     admin.from("vendors").select("id, name").eq("is_active", true).order("name"),
   ]);
 

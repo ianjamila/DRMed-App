@@ -1,5 +1,8 @@
 "use client";
 
+import { useListTable } from "@/components/staff/use-list-table";
+import { numberColumn, textColumn } from "@/lib/ui/compare-list-rows";
+
 import { useCallback, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
@@ -62,6 +65,19 @@ export function RunsClient({
   currentStatus,
   error,
 }: Props) {
+  const table = useListTable(
+    runs,
+    {
+      period_start: textColumn((r) => r.period_start),
+      pay_date: textColumn((r) => r.pay_date),
+      status: textColumn((r) => r.status),
+      sum_gross_php: numberColumn((r) => r.sum_gross_php),
+      sum_net_php: numberColumn((r) => r.sum_net_php),
+      count_paid: numberColumn((r) => r.count_paid),
+    },
+    { key: "period_start", dir: "desc" },
+  );
+
   const router = useRouter();
   const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
@@ -69,6 +85,7 @@ export function RunsClient({
   const updateParam = useCallback(
     (key: string, value: string) => {
       const next = new URLSearchParams(searchParams?.toString() ?? "");
+      next.delete("page");
       if (value === "all" && key === "status") {
         next.delete(key);
       } else {
@@ -142,12 +159,12 @@ export function RunsClient({
         <table className="w-full min-w-[960px] text-sm">
           <thead className="bg-[color:var(--color-bg-mid)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
-              <th className="px-4 py-3">Period</th>
-              <th className="px-4 py-3">Pay date</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3 text-right">Σ Gross</th>
-              <th className="px-4 py-3 text-right">Σ Net</th>
-              <th className="px-4 py-3 text-right">Paid / Total</th>
+              {table.th("period_start", "Period")}
+              {table.th("pay_date", "Pay date")}
+              {table.th("status", "Status")}
+              {table.th("sum_gross_php", "Σ Gross", "right")}
+              {table.th("sum_net_php", "Σ Net", "right")}
+              {table.th("count_paid", "Paid / Total", "right")}
             </tr>
           </thead>
           <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
@@ -167,7 +184,7 @@ export function RunsClient({
                 </td>
               </tr>
             ) : (
-              runs.map((r) => (
+              table.rows.map((r) => (
                 <tr
                   key={r.id}
                   onClick={() => openRun(r.id)}
@@ -223,7 +240,7 @@ export function RunsClient({
             </Link>
           </p>
         ) : (
-          runs.map((r) => (
+          table.rows.map((r) => (
             <Link
               key={r.id}
               href={`/staff/admin/payroll/runs/${r.id}`}
@@ -267,6 +284,7 @@ export function RunsClient({
           ))
         )}
       </div>
+      {table.pagination}
     </div>
   );
 }

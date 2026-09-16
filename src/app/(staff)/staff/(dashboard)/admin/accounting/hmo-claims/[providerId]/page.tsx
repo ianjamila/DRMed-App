@@ -1,10 +1,30 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { cache } from "react";
+import { detailMetadata } from "@/lib/staff/detail-metadata";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { ProviderDetailClient } from "./provider-detail-client";
 
-export const metadata = { title: "HMO provider" };
+// Share the existing header lookup with metadata within this request.
+const loadDetail = cache(async (providerId: string) => {
+  const admin = createAdminClient();
+  return admin
+    .from("hmo_providers")
+    .select("name")
+    .eq("id", providerId)
+    .maybeSingle();
+});
+
+export async function generateMetadata({ params }: { params: Promise<{ providerId: string }> }) {
+  await requireAdminStaff();
+  const { providerId } = await params;
+  return detailMetadata(ROUTE_NAME["/staff/admin/accounting/hmo-claims/[providerId]"], async () => {
+    const { data, error } = await loadDetail(providerId);
+    return error || !data ? null : data.name;
+  });
+}
 export const dynamic = "force-dynamic";
 
 export default async function ProviderDetailPage({
@@ -17,11 +37,7 @@ export default async function ProviderDetailPage({
   const admin = createAdminClient();
 
   // Pre-fetch provider name for case-insensitive joins to historic_hmo_claims.
-  const { data: providerForName } = await admin
-    .from("hmo_providers")
-    .select("name")
-    .eq("id", providerId)
-    .maybeSingle();
+  const { data: providerForName } = await loadDetail(providerId);
   const providerName = providerForName?.name ?? null;
 
   const [providerQ, summaryQ, batchesQ, unbilledQ, agingQ, staffQ, billedQ, paidQ, writtenOffQ, paymentMethodsQ] = await Promise.all([

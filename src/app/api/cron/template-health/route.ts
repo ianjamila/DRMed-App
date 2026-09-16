@@ -1,3 +1,4 @@
+import { withCronMonitor } from "@/lib/ops/cron-monitor";
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { reportError } from "@/lib/observability/report-error";
@@ -41,100 +42,104 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
-  const admin = createAdminClient();
+  const mode = new URL(request.url).searchParams.get("mode") === "weekly" ? "weekly" : "daily";
 
-  try {
-    const mode = new URL(request.url).searchParams.get("mode") === "weekly" ? "weekly" : "daily";
-    // Read BEFORE audit(): a daily run must not read its own heartbeat and hide a gap.
-    const lastDailyRun = await getLastTemplateHealthDailyRun(admin);
-    const dailyRunStale = isTemplateHealthStale(lastDailyRun, new Date());
-    const { findings, counts } = await collectTemplateHealthFindings(admin);
+  return withCronMonitor(mode === "weekly" ? "template-health-weekly" : "template-health", async (markFailed) => {
+    const admin = createAdminClient();
 
-    // Anchor to the first finding when present; clean scans still record a heartbeat.
-    await audit({
-      actor_id: null,
-      actor_type: "system",
-      action: mode === "weekly" ? "result_template.health_summary" : "result_template.health_alert",
-      resource_type: "result_template",
-      resource_id: findings[0]?.template_id ?? null,
-      metadata: { findings, counts } as unknown as Json,
-    });
+    try {
+      // Read BEFORE audit(): a daily run must not read its own heartbeat and hide a gap.
+      const lastDailyRun = await getLastTemplateHealthDailyRun(admin);
+      const dailyRunStale = isTemplateHealthStale(lastDailyRun, new Date());
+      const { findings, counts } = await collectTemplateHealthFindings(admin);
 
-    if (findings.length === 0 && !dailyRunStale) {
-      return NextResponse.json({ ok: true, findings: 0, counts });
-    }
+      // Anchor to the first finding when present; clean scans still record a heartbeat.
+      await audit({
+        actor_id: null,
+        actor_type: "system",
+        action: mode === "weekly" ? "result_template.health_summary" : "result_template.health_alert",
+        resource_type: "result_template",
+        resource_id: findings[0]?.template_id ?? null,
+        metadata: { findings, counts } as unknown as Json,
+      });
 
-    // A recovered daily gap or ongoing weekly-detected outage overrides the findings gate.
-    if (!shouldEmailTemplateHealth(findings, mode, dailyRunStale)) {
+      if (findings.length === 0 && !dailyRunStale) {
+        return NextResponse.json({ ok: true, findings: 0, counts });
+      }
+
+      // A recovered daily gap or ongoing weekly-detected outage overrides the findings gate.
+      if (!shouldEmailTemplateHealth(findings, mode, dailyRunStale)) {
+        return NextResponse.json({
+          ok: true,
+          findings: findings.length,
+          counts,
+          recipients: 0,
+          emailed: 0,
+        });
+      }
+
+      // Same notification mechanism as dedup-digest: active admins, resolved
+      // via staff_profiles + auth.users emails, sendEmail with the shared
+      // branded shell. No new notification channel.
+      const { data: adminProfiles } = await admin
+        .from("staff_profiles")
+        .select("id")
+        .eq("role", "admin")
+        .eq("is_active", true);
+      const { data: usersResp } = await admin.auth.admin.listUsers({ page: 1, perPage: 200 });
+      const emailById = new Map<string, string>();
+      for (const u of usersResp?.users ?? []) {
+        if (u.id && u.email) emailById.set(u.id, u.email);
+      }
+      const recipients = (adminProfiles ?? [])
+        .map((p) => emailById.get(p.id))
+        .filter((e): e is string => !!e);
+
+      const base = process.env.NEXT_PUBLIC_SITE_URL ?? "https://drmed.ph";
+      const reviewUrl = `${base}/staff/admin/result-templates/health`;
+      const errorCount = findings.filter((f) => f.severity === "error").length;
+      const warnCount = findings.filter((f) => f.severity === "warning").length;
+      const infoCount = findings.filter((f) => f.severity === "info").length;
+      const gapMessage = !dailyRunStale ? "" : mode === "daily"
+        ? lastDailyRun
+          ? `The daily template-health check has resumed. It had not run since ${manilaDateTime(lastDailyRun)} (Manila time), leaving a gap in monitoring.`
+          : "The daily template-health check has run, but there is no prior record of it running. Monitoring before this run cannot be confirmed."
+        : lastDailyRun
+          ? `The daily template-health check appears to have stopped running. Its last recorded run was ${manilaDateTime(lastDailyRun)} (Manila time). Please investigate the daily cron.`
+          : "The daily template-health check appears to have stopped running: there is no prior record of it running. Please investigate the daily cron.";
+      const html = renderEmailShell({
+        heading: mode === "weekly" ? "Weekly result-template summary" : "Result-template drift detected",
+        contentHtml:
+          (gapMessage ? emailParagraph(`<b>${escapeHtml(gapMessage)}</b>`) : "") +
+          emailParagraph(
+            `The ${mode} template-health check found <b>${findings.length}</b> issue(s) across report-group templates (${errorCount} broken, ${warnCount} warning, ${infoCount} informational).`,
+          ) + emailButton("Review result templates", reviewUrl, "cyan"),
+      });
+
+      let emailed = 0;
+      for (const to of recipients) {
+        const r = await sendEmail({
+          to,
+          subject: mode === "weekly"
+            ? `DRMed: weekly result-template summary (${findings.length} issue(s))`
+            : `DRMed: ${findings.length} result-template health issue(s)`,
+          text: `${gapMessage ? `${gapMessage}\n\n` : ""}${findings.length} result-template health issue(s) found. Review at ${reviewUrl}`,
+          html,
+        });
+        if (r.ok) emailed += 1;
+        else markFailed();
+      }
+
       return NextResponse.json({
         ok: true,
         findings: findings.length,
         counts,
-        recipients: 0,
-        emailed: 0,
+        recipients: recipients.length,
+        emailed,
       });
+    } catch (error) {
+      await reportError({ scope: "cron/template-health", error });
+      return NextResponse.json({ ok: false, error: "failed" }, { status: 500 });
     }
-
-    // Same notification mechanism as dedup-digest: active admins, resolved
-    // via staff_profiles + auth.users emails, sendEmail with the shared
-    // branded shell. No new notification channel.
-    const { data: adminProfiles } = await admin
-      .from("staff_profiles")
-      .select("id")
-      .eq("role", "admin")
-      .eq("is_active", true);
-    const { data: usersResp } = await admin.auth.admin.listUsers({ page: 1, perPage: 200 });
-    const emailById = new Map<string, string>();
-    for (const u of usersResp?.users ?? []) {
-      if (u.id && u.email) emailById.set(u.id, u.email);
-    }
-    const recipients = (adminProfiles ?? [])
-      .map((p) => emailById.get(p.id))
-      .filter((e): e is string => !!e);
-
-    const base = process.env.NEXT_PUBLIC_SITE_URL ?? "https://drmed.ph";
-    const reviewUrl = `${base}/staff/admin/result-templates/health`;
-    const errorCount = findings.filter((f) => f.severity === "error").length;
-    const warnCount = findings.filter((f) => f.severity === "warning").length;
-    const infoCount = findings.filter((f) => f.severity === "info").length;
-    const gapMessage = !dailyRunStale ? "" : mode === "daily"
-      ? lastDailyRun
-        ? `The daily template-health check has resumed. It had not run since ${manilaDateTime(lastDailyRun)} (Manila time), leaving a gap in monitoring.`
-        : "The daily template-health check has run, but there is no prior record of it running. Monitoring before this run cannot be confirmed."
-      : lastDailyRun
-        ? `The daily template-health check appears to have stopped running. Its last recorded run was ${manilaDateTime(lastDailyRun)} (Manila time). Please investigate the daily cron.`
-        : "The daily template-health check appears to have stopped running: there is no prior record of it running. Please investigate the daily cron.";
-    const html = renderEmailShell({
-      heading: mode === "weekly" ? "Weekly result-template summary" : "Result-template drift detected",
-      contentHtml:
-        (gapMessage ? emailParagraph(`<b>${escapeHtml(gapMessage)}</b>`) : "") +
-        emailParagraph(
-          `The ${mode} template-health check found <b>${findings.length}</b> issue(s) across report-group templates (${errorCount} broken, ${warnCount} warning, ${infoCount} informational).`,
-        ) + emailButton("Review result templates", reviewUrl, "cyan"),
-    });
-
-    let emailed = 0;
-    for (const to of recipients) {
-      const r = await sendEmail({
-        to,
-        subject: mode === "weekly"
-          ? `DRMed: weekly result-template summary (${findings.length} issue(s))`
-          : `DRMed: ${findings.length} result-template health issue(s)`,
-        text: `${gapMessage ? `${gapMessage}\n\n` : ""}${findings.length} result-template health issue(s) found. Review at ${reviewUrl}`,
-        html,
-      });
-      if (r.ok) emailed += 1;
-    }
-
-    return NextResponse.json({
-      ok: true,
-      findings: findings.length,
-      counts,
-      recipients: recipients.length,
-      emailed,
-    });
-  } catch (error) {
-    await reportError({ scope: "cron/template-health", error });
-    return NextResponse.json({ ok: false, error: "failed" }, { status: 500 });
-  }
+  });
 }

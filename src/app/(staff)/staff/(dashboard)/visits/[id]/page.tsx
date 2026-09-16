@@ -1,3 +1,6 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { cache } from "react";
+import { detailMetadata } from "@/lib/staff/detail-metadata";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
@@ -41,9 +44,36 @@ import { canManuallyReleasePackageHeader } from "@/lib/visits/package-header-rel
 import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
 import { ReissuePinButton } from "@/components/staff/reissue-pin-button";
 
-export const metadata = {
-  title: "Visit",
-};
+// Share the existing header lookup with metadata within this request.
+const loadDetail = cache(async (id: string) => {
+  const supabase = await createClient();
+  return supabase
+    .from("visits")
+    .select(
+      `
+        id, visit_number, visit_date, payment_status,
+        total_php, paid_php, notes, created_at,
+        deleted_at, deleted_by, delete_reason,
+        visit_group_id,
+        hmo_provider_id, hmo_approval_date, hmo_authorization_no,
+        attending_physician_id,
+        patients!inner ( id, drm_id, first_name, last_name, preferred_release_medium ),
+        hmo_providers ( id, name ),
+        physicians ( id, full_name )
+      `,
+    )
+    .eq("id", id)
+    .maybeSingle();
+});
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  await requireActiveStaff();
+  const { id } = await params;
+  return detailMetadata(ROUTE_NAME["/staff/visits/[id]"], async () => {
+    const { data, error } = await loadDetail(id);
+    return error || !data ? null : data.visit_number;
+  });
+}
 
 interface Props {
   params: Promise<{ id: string }>;
@@ -91,23 +121,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
   const isAdmin = session.role === "admin";
   const supabase = await createClient();
 
-  const { data: visit } = await supabase
-    .from("visits")
-    .select(
-      `
-        id, visit_number, visit_date, payment_status,
-        total_php, paid_php, notes, created_at,
-        deleted_at, deleted_by, delete_reason,
-        visit_group_id,
-        hmo_provider_id, hmo_approval_date, hmo_authorization_no,
-        attending_physician_id,
-        patients!inner ( id, drm_id, first_name, last_name, preferred_release_medium ),
-        hmo_providers ( id, name ),
-        physicians ( id, full_name )
-      `,
-    )
-    .eq("id", id)
-    .maybeSingle();
+  const { data: visit } = await loadDetail(id);
 
   if (!visit) notFound();
 

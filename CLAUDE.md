@@ -25,11 +25,11 @@ Key reference artifacts:
   every post-1.0 programme (partner revisions, release lifecycle, group templates, EOD
   denomination count…). Read the spec before re-deriving a design decision.
 
-Migration ledger: **prod head = 0150**, repo↔prod in sync (2026-09-16). **0150**
-(`v_patients_without_consent`) is applied to prod and merged. **0151**
-(`rls_initplan_and_policy_consolidation`) is in flight on
-`perf/rls-initplan-realtime` and must be pushed before its PR merges; the next free
-number is **0152**.
+Migration ledger: **prod head = 0152** (2026-09-16), applied through the linked CLI.
+**0151** is reserved by `perf/rls-initplan-realtime` (#192) and has not been applied;
+0152 is independent of that RLS work. This branch includes main's 0152 migration.
+Dry-run with `--include-all` before applying the missing 0151 version. **Next unused
+number: 0153**, subject to checking open branches again.
 `ls supabase/migrations | tail -3` is NOT enough to pick the next number — it only sees your
 own worktree, and on 2026-09-15 two branches claimed 0147 (and P0050) the same afternoon.
 Check the open branches too:
@@ -85,8 +85,15 @@ Compliance target: **Philippine Data Privacy Act (RA 10173)**. Locale: en-PH, As
 | `npm run seed:test` / `seed:services` / `seed:physicians` / `seed:hmo` / `seed:templates` / `seed:signatures` / etc. | Idempotent seed scripts — target the **local** stack by default (see below) |
 | `npm run smoke:results` / `smoke:chemistry` / `smoke:dashboards` | Render-pipeline / consolidated-chemistry / dashboard smoke tests |
 
-There is **no PR-triggered CI** — `.github/workflows/` holds only the scheduled
-`db-backup.yml`. The Vercel preview build is the only automated gate, so run
+There is **no PR-triggered CI** — `.github/workflows/` holds only scheduled jobs:
+`db-backup.yml` and `cron-watchdog.yml` (independent jobs for Vercel cron heartbeats
+and the newest `db-backups/` Vercel Blob upload, which fails beyond 48 hours or if
+missing). `src/lib/ops/cron-heartbeats.ts` defines every scheduled leg; drift tests
+pin it to both `vercel.json` and the workflow's standalone SQL `watched()` table.
+Add a row to each, with its own `active_from`, whenever a cron is scheduled. The
+heartbeat job has no app-build/npm dependency; only backup freshness installs
+dependencies to run the read-only `scripts/backup-freshness.mjs`. The Vercel preview
+build is the only automated gate, so run
 `npm test && npm run typecheck && npm run lint` locally before pushing. Vercel deploys
 `main` automatically: **a migration must be on prod before its app PR merges.**
 

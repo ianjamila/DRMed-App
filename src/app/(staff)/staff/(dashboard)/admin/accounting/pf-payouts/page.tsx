@@ -1,31 +1,20 @@
+import { loadPfWorklists } from "@/lib/accounting/pf-worklists";
+import { loadPfHistory, parsePfHistoryParams } from "@/lib/accounting/pf-history";
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { pluckOne } from "@/lib/reports/format";
-import { shiftISODate, todayManilaISODate } from "@/lib/dates/manila";
+import { todayManilaISODate } from "@/lib/dates/manila";
 import { PfPayoutsClient } from "./pf-payouts-client";
 
 export const metadata = { title: "Pay Doctors" };
 export const dynamic = "force-dynamic";
 
-export default async function PfPayoutsPage() {
+export default async function PfPayoutsPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   await requireAdminStaff();
   const admin = createAdminClient();
 
-  // Tab 1 data: Open — recognized, undisbursed entries
-  const { data: openEntries } = await admin
-    .from("doctor_pf_entries")
-    .select(
-      `
-      id, pf_php, recognized_at, recognition_basis, physician_id,
-      test_request_id, hmo_allocation_id, created_at,
-      physicians(id, full_name, is_active, physician_compensation(compensation_arrangement))
-    `
-    )
-    .is("disbursement_id", null)
-    .is("voided_at", null)
-    .not("recognized_at", "is", null)
-    .order("recognized_at", { ascending: false });
+  const { openEntries, pendingHmo } = await loadPfWorklists(admin);
 
   // 0136 moved compensation_arrangement into physician_compensation, so it now
   // arrives one level deeper in the embed. Flatten it HERE rather than teaching
@@ -34,7 +23,7 @@ export default async function PfPayoutsPage() {
   // silently yields undefined — every doctor would render as "pf split",
   // including the rent_paying and shareholder ones. Same trap that hid in
   // pf-ytd-summary. Keeping the client's contract flat means it cannot recur.
-  const openEntriesFlat = (openEntries ?? []).map((e) => {
+  const openEntriesFlat = openEntries.map((e) => {
     const ph = pluckOne(e.physicians);
     return {
       ...e,
@@ -50,37 +39,9 @@ export default async function PfPayoutsPage() {
     };
   });
 
-  // Tab 2 data: Pending HMO settlement
-  const { data: pendingHmo } = await admin
-    .from("doctor_pf_entries")
-    .select(
-      `
-      id, pf_php, recognition_basis, physician_id, test_request_id, created_at,
-      physicians(id, full_name)
-    `
-    )
-    .eq("recognition_basis", "hmo_at_settlement")
-    .is("recognized_at", null)
-    .is("voided_at", null)
-    .order("created_at", { ascending: false });
-
-  // Tab 3 data: History (last 90 days).
-  // `posted_date` is a DATE column holding Manila calendar dates, so the
-  // cutoff has to be a Manila calendar date too. Counting back from `new
-  // Date()` through `getDate()` counts in the RUNTIME's zone — UTC on the
-  // server — which is still on yesterday between Manila midnight and 08:00,
-  // so the window silently reached back 91 days for most of a working morning.
-  const ninetyDaysAgo = shiftISODate(todayManilaISODate(), -90);
-  const { data: history } = await admin
-    .from("doctor_pf_disbursements")
-    .select(
-      `
-      id, batch_number, posted_date, method, total_php, voided_at,
-      physicians(id, full_name)
-    `
-    )
-    .gte("posted_date", ninetyDaysAgo)
-    .order("posted_date", { ascending: false });
+  // History uses the same start/end date form as the admin reports.
+  const historyParams = parsePfHistoryParams(await searchParams, todayManilaISODate());
+  const { rows: history, state: historyState } = await loadPfHistory(admin, historyParams);
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
@@ -131,8 +92,9 @@ export default async function PfPayoutsPage() {
 
       <PfPayoutsClient
         openEntries={openEntriesFlat}
-        pendingHmo={pendingHmo ?? []}
-        history={history ?? []}
+        pendingHmo={pendingHmo}
+        history={history}
+        historyState={historyState}
         nowIso={new Date().toISOString()}
       />
     </div>

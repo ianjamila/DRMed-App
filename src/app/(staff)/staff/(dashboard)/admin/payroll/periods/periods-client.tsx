@@ -1,5 +1,8 @@
 "use client";
 
+import { useListTable } from "@/components/staff/use-list-table";
+import { textColumn } from "@/lib/ui/compare-list-rows";
+
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -56,6 +59,16 @@ export function PeriodsClient({
   defaultEnd,
   error,
 }: Props) {
+  const table = useListTable(
+    periods,
+    {
+      period_start: textColumn((r) => r.period_start),
+      status: textColumn((r) => r.status),
+      created_at: textColumn((r) => r.created_at),
+    },
+    { key: "period_start", dir: "desc" },
+  );
+
   const router = useRouter();
   const [dialogOpen, setDialogOpen] = useState(false);
 
@@ -129,10 +142,10 @@ export function PeriodsClient({
         <table className="w-full min-w-[760px] text-sm">
           <thead className="bg-[color:var(--color-bg-mid)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
-              <th className="px-4 py-3">Period</th>
-              <th className="px-4 py-3">Status</th>
+              {table.th("period_start", "Period")}
+              {table.th("status", "Status")}
               <th className="px-4 py-3">Run</th>
-              <th className="px-4 py-3">Created</th>
+              {table.th("created_at", "Created")}
               <th className="px-4 py-3 text-right">Actions</th>
             </tr>
           </thead>
@@ -148,7 +161,7 @@ export function PeriodsClient({
                 </td>
               </tr>
             ) : (
-              periods.map((p) => {
+              table.rows.map((p) => {
                 const run = runByPeriod[p.id];
                 const canClose =
                   p.status === "open" && run?.status === "finalised";
@@ -217,7 +230,7 @@ export function PeriodsClient({
             No pay periods yet.
           </p>
         ) : (
-          periods.map((p) => {
+          table.rows.map((p) => {
             const run = runByPeriod[p.id];
             const canClose =
               p.status === "open" && run?.status === "finalised";
@@ -298,6 +311,7 @@ export function PeriodsClient({
           router.refresh();
         }}
       />
+      {table.pagination}
     </div>
   );
 }

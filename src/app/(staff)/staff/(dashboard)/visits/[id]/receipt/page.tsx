@@ -1,3 +1,6 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { cache } from "react";
+import { detailMetadata } from "@/lib/staff/detail-metadata";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { headers } from "next/headers";
@@ -23,9 +26,39 @@ import { NoReceiptNotice } from "@/components/staff/no-receipt-notice";
 import { PrintButton } from "./print-button";
 import { logReceiptPrintAction } from "./log-print-action";
 
-export const metadata = {
-  title: "Receipt",
-};
+// Share the existing header lookup with metadata within this request.
+const loadDetail = cache(async (id: string) => {
+  const supabase = await createClient();
+  return supabase
+    .from("visits")
+    .select(
+      `
+        id, visit_number, visit_date, total_php, visit_group_id,
+        patients!inner (
+          id, drm_id, first_name, middle_name, last_name,
+          senior_pwd_id_kind, senior_pwd_id_number
+        ),
+        test_requests (
+          id, deleted_at,
+          base_price_php, discount_kind, discount_amount_php, final_price_php,
+          services ( code, name, price_php, kind )
+        )
+      `,
+    )
+    .eq("id", id)
+    // A deleted visit has no bill — nothing to print (0125).
+    .is("deleted_at", null)
+    .maybeSingle();
+});
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  await requireActiveStaff();
+  const { id } = await params;
+  return detailMetadata(ROUTE_NAME["/staff/visits/[id]/receipt"], async () => {
+    const { data, error } = await loadDetail(id);
+    return error || !data ? null : data.visit_number;
+  });
+}
 export const dynamic = "force-dynamic";
 
 interface Props {
@@ -130,26 +163,7 @@ export default async function ReceiptPage({ params }: Props) {
   const session = await requireActiveStaff();
   const supabase = await createClient();
 
-  const { data: visit } = await supabase
-    .from("visits")
-    .select(
-      `
-        id, visit_number, visit_date, total_php, visit_group_id,
-        patients!inner (
-          id, drm_id, first_name, middle_name, last_name,
-          senior_pwd_id_kind, senior_pwd_id_number
-        ),
-        test_requests (
-          id, deleted_at,
-          base_price_php, discount_kind, discount_amount_php, final_price_php,
-          services ( code, name, price_php, kind )
-        )
-      `,
-    )
-    .eq("id", id)
-    // A deleted visit has no bill — nothing to print (0125).
-    .is("deleted_at", null)
-    .maybeSingle();
+  const { data: visit } = await loadDetail(id);
 
   if (!visit) notFound();
   const patient = Array.isArray(visit.patients) ? visit.patients[0] : visit.patients;

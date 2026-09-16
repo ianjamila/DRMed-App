@@ -1,3 +1,6 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { cache } from "react";
+import { detailMetadata } from "@/lib/staff/detail-metadata";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -6,7 +9,26 @@ import { PatientForm } from "../../patient-form";
 import { listActiveReferralSources } from "@/lib/legacy-import/loaders";
 import { Panel } from "@/components/ui/panel";
 
-export const metadata = { title: "Edit patient" };
+// Share the existing header lookup with metadata within this request.
+const loadDetail = cache(async (id: string) => {
+  const admin = createAdminClient();
+  return admin
+      .from("patients")
+      .select(
+        "id, drm_id, first_name, last_name, middle_name, birthdate, sex, phone, email, address, referral_source, referred_by_doctor, preferred_release_medium, senior_pwd_id_kind, senior_pwd_id_number, consent_signed_at",
+      )
+      .eq("id", id)
+      .maybeSingle();
+});
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  await requireActiveStaff();
+  const { id } = await params;
+  return detailMetadata(ROUTE_NAME["/staff/patients/[id]/edit"], async () => {
+    const { data, error } = await loadDetail(id);
+    return error || !data ? null : data.drm_id;
+  });
+}
 
 interface Props {
   params: Promise<{ id: string }>;
@@ -15,16 +37,9 @@ interface Props {
 export default async function EditPatientPage({ params }: Props) {
   await requireActiveStaff();
   const { id } = await params;
-  const admin = createAdminClient();
 
   const [{ data: patient }, sources] = await Promise.all([
-    admin
-      .from("patients")
-      .select(
-        "id, drm_id, first_name, last_name, middle_name, birthdate, sex, phone, email, address, referral_source, referred_by_doctor, preferred_release_medium, senior_pwd_id_kind, senior_pwd_id_number, consent_signed_at",
-      )
-      .eq("id", id)
-      .maybeSingle(),
+    loadDetail(id),
     listActiveReferralSources(),
   ]);
   if (!patient) notFound();

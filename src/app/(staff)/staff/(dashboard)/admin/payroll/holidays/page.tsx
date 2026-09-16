@@ -1,3 +1,4 @@
+import { fetchPayrollRows } from "@/lib/payroll/list-data";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
@@ -37,12 +38,12 @@ export default async function PayrollHolidaysPage({ searchParams }: PageProps) {
   const admin = createAdminClient();
 
   let dbError: string | null = null;
-  const { data: rows, error } = await admin
+  const { data: rows, error } = await fetchPayrollRows((from, to) => admin
     .from("payroll_holidays")
     .select("id, date, kind, name, notes, is_active, created_at, updated_at")
     .gte("date", yearStart)
     .lt("date", yearEnd)
-    .order("date", { ascending: true });
+    .order("date", { ascending: true }).order("id", { ascending: true }).range(from, to));
   if (error) {
     console.error("[payroll/holidays] holidays query failed:", error);
     dbError = "Failed to load holidays.";

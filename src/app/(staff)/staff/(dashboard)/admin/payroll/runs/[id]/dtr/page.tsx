@@ -1,3 +1,9 @@
+import { manilaDate } from "@/lib/dates/manila";
+import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { cache } from "react";
+import { detailMetadata } from "@/lib/staff/detail-metadata";
+import { pluckOne } from "@/lib/reports/format";
+import { fetchPayrollRows } from "@/lib/payroll/list-data";
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
@@ -10,7 +16,29 @@ import {
   type StatusCounts,
 } from "./dtr-upload-client";
 
-export const metadata = { title: "Import DTR" };
+// Share the existing header lookup with metadata within this request.
+const loadDetail = cache(async (runId: string) => {
+  const admin = createAdminClient();
+  return admin
+    .from("payroll_runs")
+    .select(
+      `id, status, period_id,
+       period:payroll_periods!inner(id, period_start, period_end, pay_date)`,
+    )
+    .eq("id", runId)
+    .maybeSingle();
+});
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  await requireAdminStaff();
+  const { id } = await params;
+  return detailMetadata(ROUTE_NAME["/staff/admin/payroll/runs/[id]/dtr"], async () => {
+    const { data, error } = await loadDetail(id);
+    if (error || !data) return null;
+    const period = pluckOne(data.period);
+    return period ? `${manilaDate(period.period_start)} – ${manilaDate(period.period_end)}` : null;
+  });
+}
 export const dynamic = "force-dynamic";
 
 interface PageProps {
@@ -26,14 +54,7 @@ export default async function DtrUploadPage({ params }: PageProps) {
   // -- 1. The run + its period. Used for the breadcrumb header. If the run
   // doesn't exist, 404 — we never want to render an "Import DTR" UI for a
   // ghost run.
-  const { data: runRow, error: runErr } = await admin
-    .from("payroll_runs")
-    .select(
-      `id, status, period_id,
-       period:payroll_periods!inner(id, period_start, period_end, pay_date)`,
-    )
-    .eq("id", runId)
-    .maybeSingle();
+  const { data: runRow, error: runErr } = await loadDetail(runId);
   if (runErr) {
     console.error("[payroll/runs/[id]/dtr] run fetch failed:", runErr);
     notFound();
@@ -63,7 +84,7 @@ export default async function DtrUploadPage({ params }: PageProps) {
       | { full_name: string | null }[]
       | null;
   };
-  const { data: rawImports, error: importsErr } = await admin
+  const { data: rawImports, error: importsErr } = await fetchPayrollRows((from, to) => admin
     .from("payroll_dtr_imports")
     .select(
       `id, filename, parsed_rows_count, uploaded_at, uploaded_by,
@@ -71,7 +92,7 @@ export default async function DtrUploadPage({ params }: PageProps) {
     )
     .eq("period_id", periodId)
     .order("uploaded_at", { ascending: false })
-    .returns<RawImportRow[]>();
+    .returns<RawImportRow[]>().order("id", { ascending: true }).range(from, to));
   if (importsErr) {
     console.error("[payroll/runs/[id]/dtr] imports fetch failed:", importsErr);
   }
@@ -94,12 +115,12 @@ export default async function DtrUploadPage({ params }: PageProps) {
 
   let flaggedNoEmployeeRows: DtrRowFlagged[] = [];
   if (currentImport) {
-    const { data: rows, error: rowsErr } = await admin
+    const { data: rows, error: rowsErr } = await fetchPayrollRows((from, to) => admin
       .from("payroll_dtr_rows")
       .select(
         "id, status, external_id_raw, work_date, time_in, time_out, total_hours",
       )
-      .eq("import_id", currentImport.id);
+      .eq("import_id", currentImport.id).order("id", { ascending: true }).range(from, to));
     if (rowsErr) {
       console.error(
         "[payroll/runs/[id]/dtr] rows fetch failed:",
@@ -136,13 +157,13 @@ export default async function DtrUploadPage({ params }: PageProps) {
       | { full_name: string | null }[]
       | null;
   };
-  const { data: empRows, error: empErr } = await admin
+  const { data: empRows, error: empErr } = await fetchPayrollRows((from, to) => admin
     .from("employees")
     .select(
       "id, employee_number, staff_profile:staff_profiles!inner(full_name)",
     )
     .eq("is_active", true)
-    .returns<RawEmployee[]>();
+    .returns<RawEmployee[]>().order("id", { ascending: true }).range(from, to));
   if (empErr) {
     console.error("[payroll/runs/[id]/dtr] employees fetch failed:", empErr);
   }

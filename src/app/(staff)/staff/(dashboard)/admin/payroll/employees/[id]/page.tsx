@@ -1,3 +1,7 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { cache } from "react";
+import { detailMetadata } from "@/lib/staff/detail-metadata";
+import { fetchPayrollRows } from "@/lib/payroll/list-data";
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
@@ -11,7 +15,26 @@ import {
   type EmployeeRunHistoryRow,
 } from "./employee-detail-client";
 
-export const metadata = { title: "Employee" };
+// Share the existing header lookup with metadata within this request.
+const loadDetail = cache(async (id: string) => {
+  const admin = createAdminClient();
+  return admin
+      .from("employees")
+      .select(
+        "id, employee_number, hire_date, regularization_date, termination_date, basic_daily_rate_php, schedule_kind, payment_method, is_active, staff_profile_id, staff_profiles:staff_profile_id(full_name, role)",
+      )
+      .eq("id", id)
+      .maybeSingle();
+});
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  await requireAdminStaff();
+  const { id } = await params;
+  return detailMetadata(ROUTE_NAME["/staff/admin/payroll/employees/[id]"], async () => {
+    const { data, error } = await loadDetail(id);
+    return error || !data ? null : data.employee_number;
+  });
+}
 export const dynamic = "force-dynamic";
 
 interface PageProps {
@@ -34,51 +57,43 @@ export default async function EmployeeDetailPage({ params }: PageProps) {
     runsRes,
     periodsRes,
   ] = await Promise.all([
-    admin
-      .from("employees")
-      .select(
-        "id, employee_number, hire_date, regularization_date, termination_date, basic_daily_rate_php, schedule_kind, payment_method, is_active, staff_profile_id, staff_profiles:staff_profile_id(full_name, role)",
-      )
-      .eq("id", id)
-      .maybeSingle(),
-    admin
+    loadDetail(id),
+    fetchPayrollRows((from, to) => admin
       .from("employee_allowances")
       .select(
         "id, employee_id, name, daily_amount_php, is_taxable, effective_from, effective_to",
       )
       .eq("employee_id", id)
-      .order("effective_from", { ascending: false }),
-    admin
+      .order("effective_from", { ascending: false }).order("id", { ascending: true }).range(from, to)),
+    fetchPayrollRows((from, to) => admin
       .from("employee_loans")
       .select(
         "id, principal_php, amortization_per_period_php, outstanding_balance_php, status, notes, requested_at, approved_at, disbursed_at, start_period_id",
       )
       .eq("employee_id", id)
-      .order("requested_at", { ascending: false }),
-    admin
+      .order("requested_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
+    fetchPayrollRows((from, to) => admin
       .from("payroll_ot_slips")
       .select(
         "id, work_date, hours_requested, status, reason, requested_at, decided_at, decision_notes",
       )
       .eq("employee_id", id)
-      .order("requested_at", { ascending: false })
-      .limit(30),
+      .order("requested_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
     admin.rpc("employee_leave_balance", { p_employee_id: id, p_kind: "VL" }),
     admin.rpc("employee_leave_balance", { p_employee_id: id, p_kind: "SL" }),
-    admin
+    fetchPayrollRows((from, to) => admin
       .from("payroll_employee_runs")
       .select(
-        "id, run_id, days_present, days_vl_used, days_sl_used, scheduled_days, basic_pay_php, gross_pay_php, net_pay_php, payroll_runs!inner(period_id, status, payroll_periods!inner(period_start, period_end))",
+        "id, created_at, run_id, days_present, days_vl_used, days_sl_used, scheduled_days, basic_pay_php, gross_pay_php, net_pay_php, payroll_runs!inner(period_id, status, payroll_periods!inner(period_start, period_end))",
       )
       .eq("employee_id", id)
-      .order("created_at", { ascending: false })
-      .limit(10),
+      .order("created_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
     // Periods eligible to be the start period for a loan disbursement: open ones.
-    admin
+    fetchPayrollRows((from, to) => admin
       .from("payroll_periods")
       .select("id, period_start, period_end, status")
       .eq("status", "open")
-      .order("period_start", { ascending: true }),
+      .order("period_start", { ascending: true }).order("id", { ascending: true }).range(from, to)),
   ]);
 
   if (!employeeRes.data) notFound();
@@ -148,6 +163,7 @@ export default async function EmployeeDetailPage({ params }: PageProps) {
       return {
         id: r.id,
         run_id: r.run_id,
+        created_at: r.created_at,
         run_status: runJoin?.status ?? null,
         period_start: periodJoin?.period_start ?? null,
         period_end: periodJoin?.period_end ?? null,

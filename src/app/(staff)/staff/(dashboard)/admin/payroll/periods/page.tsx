@@ -1,3 +1,4 @@
+import { fetchPayrollRows } from "@/lib/payroll/list-data";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
@@ -57,11 +58,11 @@ export default async function PayrollPeriodsPage() {
   const admin = createAdminClient();
 
   const [periodsRes, runsRes] = await Promise.all([
-    admin
+    fetchPayrollRows((from, to) => admin
       .from("payroll_periods")
       .select("id, period_start, period_end, status, created_at")
-      .order("period_start", { ascending: false }),
-    admin.from("payroll_runs").select("id, period_id, status"),
+      .order("period_start", { ascending: false }).order("id", { ascending: true }).range(from, to)),
+    fetchPayrollRows((from, to) => admin.from("payroll_runs").select("id, period_id, status").order("id", { ascending: true }).range(from, to)),
   ]);
 
   // Surface DB errors to the client banner instead of silently rendering empty

@@ -84,7 +84,31 @@ export const ROUTE_NAME: Record<string, string> = {
   "/staff/admin/accounting/financial-statements/balance-sheet": "Balance Sheet",
   "/staff/admin/accounting/financial-statements/cash-flow": "Cash Flow",
   "/staff/patients/new": "New Patient",
-  "/staff/admin/accounting/ap/quick-expense": "Quick Expense"
+  "/staff/admin/accounting/ap/quick-expense": "Quick Expense",
+  "/staff/admin/operations/cron-health": "Cron Health",
+  // Record pages retain their static name when the authorized lookup is absent.
+  "/staff/admin/accounting/bank-rec/[id]": "Bank statement",
+  "/staff/admin/accounting/hmo-claims/[providerId]": "HMO provider",
+  "/staff/admin/accounting/hmo-claims/[providerId]/historic/[claimId]": "Historic HMO claim",
+  "/staff/admin/accounting/hmo-claims/batches/[batchId]": "HMO claim batch",
+  "/staff/admin/accounting/pf-payouts/[id]": "PF Disbursement",
+  "/staff/admin/accounting/pf-payouts/[id]/slip": "PF payout slip",
+  "/staff/admin/gift-codes/[id]": "Gift code",
+  "/staff/admin/hmo-providers/[id]/edit": "Edit HMO provider",
+  "/staff/admin/inventory/[id]": "Inventory item",
+  "/staff/admin/inventory/[id]/edit": "Edit inventory item",
+  "/staff/admin/payroll/employees/[id]": "Employee",
+  "/staff/admin/payroll/runs/[id]": "Pay run",
+  "/staff/admin/payroll/runs/[id]/dtr": "Import DTR",
+  "/staff/patients/[id]": "Patient",
+  "/staff/patients/[id]/consent/print": "Consent form",
+  "/staff/patients/[id]/edit": "Edit patient",
+  "/staff/payslips/[id]": "Payslip",
+  "/staff/queue/[id]": "Test",
+  "/staff/queue/consolidated/[visitId]/[groupId]": "Chemistry report",
+  "/staff/visits/[id]": "Visit",
+  "/staff/visits/[id]/receipt": "Receipt",
+  "/staff/visits/group/[groupId]/receipt": "Combined receipt"
 };
 
 /** Umbrella links name the section, even when its landing page is a specific view. */

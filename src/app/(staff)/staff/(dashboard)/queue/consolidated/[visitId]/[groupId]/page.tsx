@@ -1,3 +1,6 @@
+import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { cache } from "react";
+import { detailMetadata } from "@/lib/staff/detail-metadata";
 import { notFound, redirect } from "next/navigation";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
@@ -7,16 +10,7 @@ import { deriveEnabledParamIds } from "@/lib/results/enabled-params";
 import { labQueueGate } from "@/lib/visits/lab-gate";
 import { ConsolidatedForm } from "./consolidated-form";
 
-export const metadata = {
-  title: "Chemistry report",
-};
-
-export default async function ConsolidatedQueuePage({
-  params,
-}: {
-  params: Promise<{ visitId: string; groupId: string }>;
-}) {
-  const { visitId, groupId } = await params;
+const loadConsolidatedDetail = cache(async (visitId: string, groupId: string) => {
   const session = await requireActiveStaff();
 
   const supabase = await createClient();
@@ -85,6 +79,27 @@ export default async function ConsolidatedQueuePage({
     return isSectionAllowed(allowedSections, rsvc?.section ?? null);
   });
   if (!sectionOk) notFound();
+
+  return { session, supabase, group, template, requests };
+});
+
+export async function generateMetadata({ params }: { params: Promise<{ visitId: string; groupId: string }> }) {
+  await requireActiveStaff();
+  const { visitId, groupId } = await params;
+  return detailMetadata(ROUTE_NAME["/staff/queue/consolidated/[visitId]/[groupId]"], async () => {
+    const { group, requests } = await loadConsolidatedDetail(visitId, groupId);
+    const visit = Array.isArray(requests[0].visits) ? requests[0].visits[0] : requests[0].visits;
+    return visit ? `${group.name} · #${visit.visit_number}` : null;
+  });
+}
+
+export default async function ConsolidatedQueuePage({
+  params,
+}: {
+  params: Promise<{ visitId: string; groupId: string }>;
+}) {
+  const { visitId, groupId } = await params;
+  const { session, supabase, group, template, requests } = await loadConsolidatedDetail(visitId, groupId);
 
   // Which params this visit's ordered services enable — from
   // report_group_service_params (0120), not the old hardcoded map. Package

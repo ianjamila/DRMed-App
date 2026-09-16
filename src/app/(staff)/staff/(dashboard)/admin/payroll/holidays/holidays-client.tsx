@@ -1,5 +1,8 @@
 "use client";
 
+import { useListTable } from "@/components/staff/use-list-table";
+import { textColumn } from "@/lib/ui/compare-list-rows";
+
 import {
   useCallback,
   useEffect,
@@ -81,6 +84,17 @@ export function HolidaysClient({
   defaultAddDate,
   error,
 }: Props) {
+  const table = useListTable(
+    holidays,
+    {
+      date: textColumn((r) => r.date),
+      kind: textColumn((r) => KIND_LABEL[r.kind] ?? r.kind),
+      name: textColumn((r) => r.name),
+      is_active: textColumn((r) => r.is_active ? "Active" : "Inactive"),
+    },
+    { key: "date", dir: "asc" },
+  );
+
   const router = useRouter();
   const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
@@ -90,6 +104,7 @@ export function HolidaysClient({
   const updateYear = useCallback(
     (value: string) => {
       const next = new URLSearchParams(searchParams?.toString() ?? "");
+      next.delete("page");
       next.set("year", value);
       const qs = next.toString();
       setActionError(null);
@@ -173,10 +188,10 @@ export function HolidaysClient({
         <table className="w-full min-w-[820px] text-sm">
           <thead className="bg-[color:var(--color-bg-mid)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
-              <th className="px-4 py-3">Date</th>
-              <th className="px-4 py-3">Kind</th>
-              <th className="px-4 py-3">Name</th>
-              <th className="px-4 py-3">Status</th>
+              {table.th("date", "Date")}
+              {table.th("kind", "Kind")}
+              {table.th("name", "Name")}
+              {table.th("is_active", "Status")}
               <th className="px-4 py-3 text-right">Actions</th>
             </tr>
           </thead>
@@ -191,7 +206,7 @@ export function HolidaysClient({
                 </td>
               </tr>
             ) : (
-              holidays.map((h) => (
+              table.rows.map((h) => (
                 <tr key={h.id}>
                   <td className="px-4 py-3 align-middle">
                     <div className="font-semibold text-[color:var(--color-brand-navy)]">
@@ -247,7 +262,7 @@ export function HolidaysClient({
             No holidays recorded for {currentYear}.
           </p>
         ) : (
-          holidays.map((h) => (
+          table.rows.map((h) => (
             <Panel
               key={h.id}
               className="p-4 shadow-sm"
@@ -310,6 +325,7 @@ export function HolidaysClient({
           router.refresh();
         }}
       />
+      {table.pagination}
     </div>
   );
 }

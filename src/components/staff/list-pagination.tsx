@@ -89,6 +89,8 @@ export function ListPagination({
   approximate = false,
   noun = "row",
   plural,
+  pageSizeLabelId = "page-size-label",
+  navigate,
 }: {
   page: number;
   pageCount: number;
@@ -100,6 +102,9 @@ export function ListPagination({
   approximate?: boolean;
   noun?: string;
   plural?: string;
+  pageSizeLabelId?: string;
+  /** Only for client tables that already hold the complete filtered set. */
+  navigate?: (href: string) => void;
 }) {
   return (
     <nav
@@ -118,16 +123,18 @@ export function ListPagination({
       <div className="flex flex-wrap items-center gap-4">
         <div className="flex items-center gap-1.5">
           <span
-            id="page-size-label"
+            id={pageSizeLabelId}
             className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]"
           >
             Rows
           </span>
-          <span className="flex gap-1" role="group" aria-labelledby="page-size-label">
+          <span className="flex gap-1" role="group" aria-labelledby={pageSizeLabelId}>
             {sizeOptions.map((o) => (
               <Link
                 key={o.size}
                 href={o.href}
+                prefetch={navigate ? false : undefined}
+                onNavigate={navigate ? (event) => { event.preventDefault(); navigate(o.href); } : undefined}
                 aria-current={o.size === size ? "true" : undefined}
                 className={pageSizeButtonClass(o.size === size)}
               >
@@ -141,8 +148,8 @@ export function ListPagination({
           <span className="text-sm text-[color:var(--color-brand-text-soft)]">
             Page {page} of {pageCount}
           </span>
-          <PagerLink href={prevHref} label="← Previous" />
-          <PagerLink href={nextHref} label="Next →" />
+          <PagerLink href={prevHref} label="← Previous" navigate={navigate} />
+          <PagerLink href={nextHref} label="Next →" navigate={navigate} />
         </div>
       </div>
     </nav>
@@ -150,7 +157,7 @@ export function ListPagination({
 }
 
 /** A disabled edge renders as inert text, not a dead link. */
-function PagerLink({ href, label }: { href: string | null; label: string }) {
+function PagerLink({ href, label, navigate }: { href: string | null; label: string; navigate?: (href: string) => void }) {
   if (!href) {
     return (
       <span
@@ -164,6 +171,8 @@ function PagerLink({ href, label }: { href: string | null; label: string }) {
   return (
     <Link
       href={href}
+      prefetch={navigate ? false : undefined}
+      onNavigate={navigate ? (event) => { event.preventDefault(); navigate(href); } : undefined}
       className={`${pagerControlClass} transition-colors hover:border-[color:var(--color-brand-cyan)]`}
     >
       {label}
