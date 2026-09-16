@@ -41,7 +41,11 @@
     "backfill:clinical:consult": "tsx scripts/clinical-backfill/consult.ts",
     "enrich:clinical": "tsx scripts/clinical-enrich/enrich.ts",
     "dedup:patients": "tsx scripts/patient-dedup/index.ts",
-    "smoke:dashboards": "tsx scripts/smoke-dashboards.mjs"
+    "smoke:dashboards": "tsx scripts/smoke-dashboards.mjs",
+    "perf:rls-probe": "tsx scripts/perf/rls-equivalence-probe.ts",
+    "perf:rls-check": "tsx scripts/perf/rls-equivalence-check.ts",
+    "perf:rls-prove": "tsx scripts/perf/rls-equivalence-prove.ts",
+    "perf:rls-structural": "tsx scripts/perf/rls-structural-prove.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
