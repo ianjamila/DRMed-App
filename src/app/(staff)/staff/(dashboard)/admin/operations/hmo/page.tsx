@@ -1,4 +1,5 @@
-import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { PageHeader } from "@/components/staff/page-header";
+import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
@@ -93,9 +94,10 @@ export default async function HmoReceivablesPage({
   } catch {
     return (
       <div className="space-y-4">
-        <h1 className="text-xl font-semibold text-[color:var(--color-brand-navy)]">
-          {ROUTE_NAME["/staff/admin/operations/hmo"]}
-        </h1>
+        <PageHeader
+          eyebrow={SECTION_NAME["/staff/admin/operations"]}
+          title={ROUTE_NAME["/staff/admin/operations/hmo"]}
+        />
         <Card className="mt-6 px-4 text-sm text-destructive">
           Could not load the HMO receivables report. Please try again.
         </Card>
@@ -106,9 +108,10 @@ export default async function HmoReceivablesPage({
   if (agingRes.error) {
     return (
       <div className="space-y-4">
-        <h1 className="text-xl font-semibold text-[color:var(--color-brand-navy)]">
-          {ROUTE_NAME["/staff/admin/operations/hmo"]}
-        </h1>
+        <PageHeader
+          eyebrow={SECTION_NAME["/staff/admin/operations"]}
+          title={ROUTE_NAME["/staff/admin/operations/hmo"]}
+        />
         <Card className="mt-6 px-4 text-sm text-destructive">
           Could not load the HMO receivables report. Please try again.
         </Card>
@@ -134,12 +137,11 @@ export default async function HmoReceivablesPage({
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-2xl font-semibold text-[#0b2a4a]">
-            {ROUTE_NAME["/staff/admin/operations/hmo"]}
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Per-provider lab-HMO AR roll-forward — billed in, paid out, running balance.
-          </p>
+          <PageHeader
+            eyebrow={SECTION_NAME["/staff/admin/operations"]}
+            title={ROUTE_NAME["/staff/admin/operations/hmo"]}
+            subtitle={<>Per-provider lab-HMO AR roll-forward — billed in, paid out, running balance.</>}
+          />
         </div>
         {/* A4: this screen answers "what does each HMO owe us"; the claims
             worklist is where you do something about it. Read-only report,

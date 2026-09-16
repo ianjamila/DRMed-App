@@ -1,4 +1,5 @@
-import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { PageHeader } from "@/components/staff/page-header";
+import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { listRecurringTemplatesAction } from "@/lib/actions/accounting/recurring-templates";
@@ -26,22 +27,18 @@ export default async function RecurringPage() {
 
   return (
     <div>
-      <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-            Expenses
-          </p>
-          <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            {ROUTE_NAME["/staff/admin/accounting/ap/recurring"]}
-          </h1>
-          <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
-            Templates that auto-post draft bills on a monthly cadence. The cron
+          <PageHeader
+            eyebrow={SECTION_NAME["/staff/admin/accounting/ap"]}
+            title={ROUTE_NAME["/staff/admin/accounting/ap/recurring"]}
+            subtitle={<>Templates that auto-post draft bills on a monthly cadence. The cron
             handler picks up templates where{" "}
             <code className="rounded bg-gray-100 px-1 text-xs">next_run_date</code> is
-            on or before today.
-          </p>
+            on or before today.</>}
+          />
         </div>
-      </header>
+      </div>
 
       {templates.ok ? (
         <RecurringClient

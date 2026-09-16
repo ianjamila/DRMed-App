@@ -1,5 +1,8 @@
 "use client";
 
+import { SECTION_NAME } from "@/lib/staff/route-names";
+import { PageHeader } from "@/components/staff/page-header";
+
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -344,14 +347,12 @@ export function BillFormClient(props: Props) {
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8 space-y-6">
-      <header>
-        <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-          Expenses
-        </p>
-        <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          {mode === "create" ? "New bill" : "Edit bill"}
-        </h1>
-      </header>
+      <div>
+        <PageHeader
+          eyebrow={SECTION_NAME["/staff/admin/accounting/ap"]}
+          title={mode === "create" ? "New Bill" : "Edit Bill"}
+        />
+      </div>
 
       {tillDayClosed && (
         <Alert>

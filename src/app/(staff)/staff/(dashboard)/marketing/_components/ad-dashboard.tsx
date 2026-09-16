@@ -1,6 +1,8 @@
 "use client";
 
-import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { PageHeader } from "@/components/staff/page-header";
+
+import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
 
 // Ad-spend analytics dashboard, ported from the standalone marketing-kit tool
 // (DRMed-marketing-kit/dashboards/drmed-ad-dashboard.jsx). Fully client-side:
@@ -671,9 +673,10 @@ export function AdPerformanceDashboard() {
               >
                 DRMed
               </div>
-              <h1 className="text-xl font-semibold" style={{ color: C.ink }}>
-                {ROUTE_NAME["/staff/marketing"]}
-              </h1>
+              <PageHeader
+                eyebrow={SECTION_NAME["/staff/marketing"]}
+                title={ROUTE_NAME["/staff/marketing"]}
+              />
             </div>
             <p className="text-sm mt-1" style={{ color: C.sub }}>
               Spend, platform &amp; campaign performance, and patients captured ·{" "}

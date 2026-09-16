@@ -1,4 +1,5 @@
-import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { PageHeader } from "@/components/staff/page-header";
+import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { Card } from "@/components/ui/card";
@@ -57,9 +58,10 @@ export default async function OperationsTrendsPage() {
   } catch {
     return (
       <div className="space-y-4">
-        <h1 className="text-xl font-semibold text-[color:var(--color-brand-navy)]">
-          {ROUTE_NAME["/staff/admin/operations/trends"]}
-        </h1>
+        <PageHeader
+          eyebrow={SECTION_NAME["/staff/admin/operations"]}
+          title={ROUTE_NAME["/staff/admin/operations/trends"]}
+        />
         <Card className="mt-6 px-4 text-sm text-destructive">
           Could not load the trends data. Please try again.
         </Card>
@@ -72,9 +74,10 @@ export default async function OperationsTrendsPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold text-[color:var(--color-brand-navy)]">
-        {ROUTE_NAME["/staff/admin/operations/trends"]}
-      </h1>
+      <PageHeader
+        eyebrow={SECTION_NAME["/staff/admin/operations"]}
+        title={ROUTE_NAME["/staff/admin/operations/trends"]}
+      />
 
       {truncated ? (
         <p className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">

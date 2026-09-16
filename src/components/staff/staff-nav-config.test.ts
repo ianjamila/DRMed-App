@@ -441,7 +441,7 @@ function sourceFiles(dir: string): string[] {
  * ROUTE_NAME or an unused import cannot satisfy the guard. Follow local aliases
  * and verify the import's module AND exported name, including renamed imports.
  */
-function navigationNames(file: string, text: string) {
+function navigationNames(file: string, text: string, sectionHref?: string) {
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const host = ts.createCompilerHost({ noLib: true, noResolve: true });
   host.getSourceFile = (name) => name === file ? sf : undefined;
@@ -496,7 +496,22 @@ function navigationNames(file: string, text: string) {
   }
   const entries: { href: string; label?: string; routeRead: boolean; sectionRead: boolean }[] = [];
   const metrics: string[] = [];
+  const eyebrows: boolean[] = [];
+  const handRolledHeaders: string[] = [];
   visit(sf, (node) => {
+    if (sectionHref && (ts.isJsxSelfClosingElement(node) || ts.isJsxOpeningElement(node))) {
+      const tag = node.tagName.getText(sf);
+      if (tag === "PageHeader") {
+        const prop = node.attributes.properties.find((p) => ts.isJsxAttribute(p) && p.name.getText(sf) === "eyebrow");
+        const value = prop && ts.isJsxAttribute(prop) ? prop.initializer : undefined;
+        eyebrows.push(!!value && ts.isJsxExpression(value) && !!value.expression && registryRead(value.expression, "SECTION_NAME", sectionHref));
+      }
+      if (tag === "h1" || (tag === "p" && /uppercase.*tracking-wider/.test(node.getText(sf)))) {
+        let owner: ts.Node | undefined = node.parent;
+        while (owner && !ts.isFunctionDeclaration(owner)) owner = owner.parent;
+        handRolledHeaders.push(`${tag}:${owner && ts.isFunctionDeclaration(owner) ? owner.name?.text : ""}`);
+      }
+    }
     if (ts.isJsxSelfClosingElement(node) && node.tagName.getText(sf) === "StatCard") metrics.push("StatCard");
     if (!ts.isObjectLiteralExpression(node)) return;
     const props = new Map(node.properties.filter(ts.isPropertyAssignment).map((p) => [p.name.getText(sf), p.initializer]));
@@ -505,7 +520,7 @@ function navigationNames(file: string, text: string) {
     const href = stringValue(hrefNode) ?? "<unresolved href>";
     entries.push({ href, label: stringValue(label), routeRead: registryRead(label, "ROUTE_NAME", href), sectionRead: registryRead(label, "SECTION_NAME", href) });
   });
-  return { entries, metrics };
+  return { entries, metrics, eyebrows, handRolledHeaders };
 }
 
 const namingFiles = [NAV_FILE, ...sourceFiles(DASHBOARD_DIR).filter((file) =>
@@ -572,5 +587,38 @@ describe("route name registry ownership", () => {
       const label = names[BASE + "/cash-drawer"];
       const tabs = [{href: \`\${BASE}/cash-drawer\`, label: label}];`;
     expect(navigationNames("fixture.tsx", source).entries[0].routeRead).toBe(true);
+  });
+});
+
+// The four adopted families use one header API, with no duplicated layout kicker.
+// An exception must identify a file and argue why separate section wording is
+// correct (not merely that it predates this guard). Metric captions are separate.
+const EYEBROW_EXCEPTIONS: Record<string, { nodes: string[]; why: string }> = {
+  [`${DASHBOARD_DIR}/admin/accounting/financial-statements/cash-flow/page.tsx`]: {
+    nodes: ["p:SummaryTile"],
+    why: "SummaryTile labels a cash metric inside an article; it is not the page section eyebrow and must describe its own value.",
+  },
+};
+const HEADER_FAMILIES = ["admin/accounting/ap", "admin/operations", "admin/accounting/financial-statements", "marketing"];
+
+describe("PageHeader section ownership", () => {
+  it.each(HEADER_FAMILIES)("%s reads its eyebrow from SECTION_NAME", (family) => {
+    let headers = 0;
+    for (const file of sourceFiles(`${DASHBOARD_DIR}/${family}`)) {
+      if (file.includes(".test.")) continue;
+      const exception = EYEBROW_EXCEPTIONS[file];
+      if (exception) expect(exception.why.length).toBeGreaterThan(50);
+      const result = navigationNames(file, readFileSync(file, "utf8"), `/staff/${family}`);
+      expect(result.handRolledHeaders, file).toEqual(exception?.nodes ?? []);
+      expect(result.eyebrows.every(Boolean), file).toBe(true);
+      headers += result.eyebrows.length;
+    }
+    expect(headers).toBeGreaterThan(0);
+  });
+
+  it.each(['"Expenses"', '{"Expenses"}', '{ROUTE_NAME["/staff/admin/accounting/ap"]}'])("rejects an eyebrow bypass: %s", (eyebrow) => {
+    const text = `import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
+      const header = <PageHeader title="Example" eyebrow=${eyebrow} />;`;
+    expect(navigationNames("fixture.tsx", text, "/staff/admin/accounting/ap").eyebrows).toEqual([false]);
   });
 });

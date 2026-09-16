@@ -1,4 +1,5 @@
-import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { PageHeader } from "@/components/staff/page-header";
+import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -191,21 +192,20 @@ export default async function FinancialStatementsPage({ searchParams }: SearchPr
 
   return (
     <div className="space-y-6">
-      <header className="mb-6">
+      <div className="mb-6">
         <Link
           href="/staff"
           className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
         >
           ← Dashboard
         </Link>
-        <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          {ROUTE_NAME["/staff/admin/accounting/financial-statements"]}
-        </h1>
-        <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
-          Income statement computed from posted journal entries with{" "}
+        <PageHeader
+          eyebrow={SECTION_NAME["/staff/admin/accounting/financial-statements"]}
+          title={ROUTE_NAME["/staff/admin/accounting/financial-statements"]}
+          subtitle={<>Income statement computed from posted journal entries with{" "}
           <code>posting_date</code> in <strong>{start}</strong> →{" "}
-          <strong>{end}</strong>.
-        </p>
+          <strong>{end}</strong>.</>}
+        />
         {/* The same period has an operational counterpart one section away, and
             the two do not tie — Operations measures gross profit from released
             lab and consult lines, so it carries no rent/APE/procedures revenue
@@ -223,7 +223,7 @@ export default async function FinancialStatementsPage({ searchParams }: SearchPr
           — gross profit on released lab and consult work, which excludes the
           rent, APE and procedures revenue counted here.
         </p>
-      </header>
+      </div>
 
       <PeriodPresets
         pathname="/staff/admin/accounting/financial-statements"

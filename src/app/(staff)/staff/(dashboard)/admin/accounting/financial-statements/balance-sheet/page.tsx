@@ -1,4 +1,5 @@
-import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { PageHeader } from "@/components/staff/page-header";
+import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -151,21 +152,20 @@ export default async function BalanceSheetPage({ searchParams }: SearchProps) {
 
   return (
     <div className="space-y-6">
-      <header className="mb-6">
+      <div className="mb-6">
         <Link
           href="/staff"
           className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
         >
           ← Dashboard
         </Link>
-        <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          {ROUTE_NAME["/staff/admin/accounting/financial-statements/balance-sheet"]}
-        </h1>
-        <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
-          Balance sheet as of <strong>{asOf}</strong>. Cumulative posted
-          journal entries through this date.
-        </p>
-      </header>
+        <PageHeader
+          eyebrow={SECTION_NAME["/staff/admin/accounting/financial-statements"]}
+          title={ROUTE_NAME["/staff/admin/accounting/financial-statements/balance-sheet"]}
+          subtitle={<>Balance sheet as of <strong>{asOf}</strong>. Cumulative posted
+          journal entries through this date.</>}
+        />
+      </div>
 
       <BalanceSheetAsOfPresets asOf={asOf} todayISO={todayISO} />
 

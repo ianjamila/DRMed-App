@@ -5,7 +5,7 @@ import { listVendorsAction } from "@/lib/actions/accounting/vendors";
 import { getBillAction } from "@/lib/actions/accounting/bills";
 import { BillFormClient } from "../../new/bill-form-client";
 
-export const metadata = { title: "Edit bill" };
+export const metadata = { title: "Edit Bill" };
 export const dynamic = "force-dynamic";
 
 export default async function EditBillPage({

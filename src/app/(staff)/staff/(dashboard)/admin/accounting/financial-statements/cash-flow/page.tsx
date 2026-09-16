@@ -1,4 +1,5 @@
-import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { PageHeader } from "@/components/staff/page-header";
+import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -98,13 +99,12 @@ export default async function CashFlowPage({ searchParams }: SearchProps) {
   if (cashAccountIds.length === 0) {
     return (
       <div className="space-y-6">
-        <h1 className="font-heading text-2xl font-bold text-[color:var(--color-brand-navy)]">
-          {ROUTE_NAME["/staff/admin/accounting/financial-statements/cash-flow"]}
-        </h1>
-        <p className="mt-4 text-sm text-[color:var(--color-brand-text-soft)]">
-          No cash accounts found in the chart of accounts. Expected codes
-          1010, 1020, 1021, 1030 — seed them via /staff/admin/accounting/chart-of-accounts.
-        </p>
+        <PageHeader
+          eyebrow={SECTION_NAME["/staff/admin/accounting/financial-statements"]}
+          title={ROUTE_NAME["/staff/admin/accounting/financial-statements/cash-flow"]}
+          subtitle={<>No cash accounts found in the chart of accounts. Expected codes
+          1010, 1020, 1021, 1030 — seed them via /staff/admin/accounting/chart-of-accounts.</>}
+        />
       </div>
     );
   }
@@ -212,21 +212,20 @@ export default async function CashFlowPage({ searchParams }: SearchProps) {
 
   return (
     <div className="space-y-6">
-      <header className="mb-6">
+      <div className="mb-6">
         <Link
           href="/staff"
           className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
         >
           ← Dashboard
         </Link>
-        <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          {ROUTE_NAME["/staff/admin/accounting/financial-statements/cash-flow"]}
-        </h1>
-        <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
-          Cash flow from <strong>{start}</strong> → <strong>{end}</strong>{" "}
-          (direct method, against cash accounts {cashAccounts.map((a) => a.code).join(", ")}).
-        </p>
-      </header>
+        <PageHeader
+          eyebrow={SECTION_NAME["/staff/admin/accounting/financial-statements"]}
+          title={ROUTE_NAME["/staff/admin/accounting/financial-statements/cash-flow"]}
+          subtitle={<>Cash flow from <strong>{start}</strong> → <strong>{end}</strong>{" "}
+          (direct method, against cash accounts {cashAccounts.map((a) => a.code).join(", ")}).</>}
+        />
+      </div>
 
       <PeriodPresets
         pathname="/staff/admin/accounting/financial-statements/cash-flow"

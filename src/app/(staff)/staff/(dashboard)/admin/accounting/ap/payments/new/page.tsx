@@ -1,10 +1,12 @@
+import { SECTION_NAME } from "@/lib/staff/route-names";
+import { PageHeader } from "@/components/staff/page-header";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { listVendorsAction } from "@/lib/actions/accounting/vendors";
 import { loadClosedDayContext } from "@/lib/accounting/eod-closed-dates";
 import { PaymentFormClient } from "./payment-form-client";
 
-export const metadata = { title: "New payment" };
+export const metadata = { title: "New Payment" };
 export const dynamic = "force-dynamic";
 
 export default async function NewPaymentPage() {
@@ -25,18 +27,14 @@ export default async function NewPaymentPage() {
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8 space-y-6">
-      <header>
-        <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-          Expenses
-        </p>
-        <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          New payment
-        </h1>
-        <p className="mt-2 text-sm text-[color:var(--color-brand-text-soft)]">
-          Pick a vendor, choose which posted/partially-paid bills to settle,
-          and confirm the payment method.
-        </p>
-      </header>
+      <div>
+        <PageHeader
+          eyebrow={SECTION_NAME["/staff/admin/accounting/ap"]}
+          title="New Payment"
+          subtitle={<>Pick a vendor, choose which posted/partially-paid bills to settle,
+          and confirm the payment method.</>}
+        />
+      </div>
 
       <PaymentFormClient
         vendors={vendorsR.ok ? vendorsR.data.map((v) => ({ id: v.id, name: v.name })) : []}

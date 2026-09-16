@@ -1,5 +1,8 @@
 "use client";
 
+import { SECTION_NAME } from "@/lib/staff/route-names";
+import { PageHeader } from "@/components/staff/page-header";
+
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -120,14 +123,12 @@ export function VendorDetailClient({ vendor, bills, payments }: Props) {
       {/* ------------------------------------------------------------------ */}
       {/* Header                                                              */}
       {/* ------------------------------------------------------------------ */}
-      <header className="mb-6">
-        <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-          Expenses
-        </p>
+      <div className="mb-6">
         <div className="mt-1 flex flex-wrap items-center gap-3">
-          <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            {vendor.name}
-          </h1>
+          <PageHeader
+            eyebrow={SECTION_NAME["/staff/admin/accounting/ap"]}
+            title={vendor.name}
+          />
           {!vendor.is_active && (
             <span className="inline-block rounded bg-gray-200 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-gray-600">
               Inactive
@@ -139,7 +140,7 @@ export function VendorDetailClient({ vendor, bills, payments }: Props) {
             .filter(Boolean)
             .join(" · ") || "No contact details on file"}
         </p>
-      </header>
+      </div>
 
       {/* ------------------------------------------------------------------ */}
       {/* Error banner                                                        */}

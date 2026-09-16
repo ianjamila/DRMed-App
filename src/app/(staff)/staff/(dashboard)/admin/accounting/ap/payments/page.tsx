@@ -1,4 +1,5 @@
-import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { PageHeader } from "@/components/staff/page-header";
+import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { listBillPaymentsAction } from "@/lib/actions/accounting/bill-payments";
 import { AP_INDEX_MAX_ROWS } from "@/lib/ui/table-params";
@@ -34,18 +35,14 @@ export default async function PaymentsIndexPage({
 
   return (
     <div>
-      <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-            Expenses
-          </p>
-          <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            {ROUTE_NAME["/staff/admin/accounting/ap/payments"]}
-          </h1>
-          <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
-            Outflows to vendors. Each payment may settle multiple bills via
-            allocations.
-          </p>
+          <PageHeader
+            eyebrow={SECTION_NAME["/staff/admin/accounting/ap"]}
+            title={ROUTE_NAME["/staff/admin/accounting/ap/payments"]}
+            subtitle={<>Outflows to vendors. Each payment may settle multiple bills via
+            allocations.</>}
+          />
         </div>
         <Link
           href="/staff/admin/accounting/ap/payments/new"
@@ -53,7 +50,7 @@ export default async function PaymentsIndexPage({
         >
           + New payment
         </Link>
-      </header>
+      </div>
 
       {payments.ok ? (
         <PaymentsIndexClient

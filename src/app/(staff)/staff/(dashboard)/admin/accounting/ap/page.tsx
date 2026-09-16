@@ -1,4 +1,4 @@
-import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
 import Link from "next/link";
 import { PageHeader } from "@/components/staff/page-header";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
@@ -14,10 +14,8 @@ export default async function APDashboardPage() {
 
   return (
     <div className="space-y-6">
-      <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-        Expenses
-      </p>
       <PageHeader
+        eyebrow={SECTION_NAME["/staff/admin/accounting/ap"]}
         title={ROUTE_NAME["/staff/admin/accounting/ap"]}
         subtitle="Operating expenses (accounts payable) at a glance: outstanding by aging bucket, draft-rot detector, upcoming recurring runs, top vendors, and withholding tax so far this month."
         actions={

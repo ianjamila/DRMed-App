@@ -159,8 +159,7 @@ form, not of the route, so the page frame stays put while the content inside it
 is as wide as it should be.
 
 **2 · One header component.** Every page opens with `PageHeader`
-(`title`, optional `subtitle`, optional `actions`). Don't hand-roll an `<h1>`
-block, and don't add an eyebrow line above the title — no sibling has one.
+(`title`, optional `eyebrow`, `subtitle`, and `actions`). In Expenses, Daily Monitoring, Financial Statements and Marketing, use `eyebrow={SECTION_NAME[sectionHref]}`; never repeat the kicker in the layout or hand-roll it above the header. The existing nav guard enforces this component contract.
 
 **Never put controls in `actions` beside a subtitle whose length varies.** They
 share one `flex flex-wrap items-start justify-between` row, so a longer

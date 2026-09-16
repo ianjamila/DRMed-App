@@ -1,4 +1,5 @@
-import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { PageHeader } from "@/components/staff/page-header";
+import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
@@ -96,9 +97,10 @@ export default async function CashCollectedPage({
   } catch {
     return (
       <div className="space-y-4">
-        <h1 className="text-xl font-semibold text-[color:var(--color-brand-navy)]">
-          {ROUTE_NAME["/staff/admin/operations/cash"]}
-        </h1>
+        <PageHeader
+          eyebrow={SECTION_NAME["/staff/admin/operations"]}
+          title={ROUTE_NAME["/staff/admin/operations/cash"]}
+        />
         <Card className="mt-6 px-4 text-sm text-destructive">
           Could not load the cash &amp; cards report. Please try again.
         </Card>
@@ -125,9 +127,10 @@ export default async function CashCollectedPage({
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-xl font-semibold text-[color:var(--color-brand-navy)]">
-          {ROUTE_NAME["/staff/admin/operations/cash"]}
-        </h1>
+        <PageHeader
+          eyebrow={SECTION_NAME["/staff/admin/operations"]}
+          title={ROUTE_NAME["/staff/admin/operations/cash"]}
+        />
         <ExportCsvLink href={csvHref} />
       </div>
 
