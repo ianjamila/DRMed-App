@@ -43,7 +43,7 @@ An **item** is a `StaffNavItem`:
 ```
 
 - `quicklink` — dashboard audiences, order, optional group and role restriction; `quickLinksFor` / `quickLinkGroupsFor` derive every dashboard list from `STAFF_NAV`. Related form/tab links live in `shortcuts`, which never adds a sidebar row. Dashboard inclusion is independent of sidebar parking, but item roles still gate access.
-- `description` — plain-English hover tooltip + small info icon. Add it for any item whose label involves jargon; skip for self-explanatory ones.
+- `description` — plain-English help through `src/components/ui/tooltip.tsx` in desktop and mobile navigation: hover/focus the info button, tap to toggle, Escape/outside press to dismiss. Links use `aria-describedby` and remain directly navigable. Add it for any item whose label involves jargon; skip for self-explanatory ones.
 - `exact` — active only when `pathname === href` (use when `href` is too broad, e.g. `/staff`).
 - `activePrefixes` — extra prefixes that ALSO light the item. This is the key to consolidation (below). List sibling routes individually; never a shared parent that also covers a route no item owns.
 - `excludePrefixes` — sub-trees under `href` (or an active prefix) that must NOT light the item, because a sibling item owns them.
