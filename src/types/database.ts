@@ -872,6 +872,27 @@ export type Database = {
           },
         ]
       }
+      booking_settings: {
+        Row: {
+          id: boolean
+          online_booking_paused: boolean
+          paused_message: string | null
+          updated_at: string
+        }
+        Insert: {
+          id?: boolean
+          online_booking_paused?: boolean
+          paused_message?: string | null
+          updated_at?: string
+        }
+        Update: {
+          id?: boolean
+          online_booking_paused?: boolean
+          paused_message?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       budgets: {
         Row: {
           account_id: string

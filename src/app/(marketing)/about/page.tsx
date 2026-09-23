@@ -5,6 +5,7 @@ import { Reveal } from "@/components/marketing/motion";
 import { pageMetadata } from "@/lib/marketing/metadata";
 import { JsonLd } from "@/components/marketing/json-ld";
 import { breadcrumbLd } from "@/lib/marketing/structured-data";
+import { BookingCtaLabel } from "@/components/marketing/online-booking-context";
 
 export const metadata = pageMetadata({
   title: "About DRMed Clinic and Laboratory",
@@ -157,7 +158,7 @@ export default function AboutPage() {
           <Reveal delay={0.15}>
             <div className="mt-12 flex flex-wrap gap-3">
               <PillLink href="/schedule" variant="lineOnDark">
-                Book an Appointment
+                <BookingCtaLabel>Book an Appointment</BookingCtaLabel>
               </PillLink>
               <PillLink href="/physicians" variant="lineOnDark">
                 Meet Our Physicians

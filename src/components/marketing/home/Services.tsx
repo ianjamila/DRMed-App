@@ -11,12 +11,11 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import Link from "next/link";
-
 import { SectionHeading, PillLink } from "@/components/marketing/ui";
 import { Reveal } from "@/components/marketing/motion";
 import { SERVICE_HIGHLIGHTS, SOCIAL } from "@/lib/marketing/site";
 import { TrackedMessengerLink } from "@/components/marketing/tracked-messenger-link";
+import { BookingAwareLink } from "@/components/marketing/online-booking-context";
 
 // Map service names → Lucide icons. Exhaustive over SERVICE_HIGHLIGHTS.
 const ICON_MAP: Record<string, LucideIcon> = {
@@ -88,13 +87,14 @@ export function Services() {
                     {card}
                   </TrackedMessengerLink>
                 ) : (
-                  <Link
+                  <BookingAwareLink
                     href={href}
-                    aria-label={`Book ${svc.name}`}
+                    label={`Book ${svc.name}`}
+                    pausedLabel={`Contact us to book ${svc.name}`}
                     className="block h-full rounded-[20px] outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-brand-cyan)] focus-visible:ring-offset-2"
                   >
                     {card}
-                  </Link>
+                  </BookingAwareLink>
                 )}
               </Reveal>
             );

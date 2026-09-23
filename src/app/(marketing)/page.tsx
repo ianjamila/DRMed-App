@@ -17,6 +17,7 @@ import { Faq } from "@/components/marketing/home/Faq";
 import { Contact } from "@/components/marketing/home/Contact";
 import { JsonLd } from "@/components/marketing/json-ld";
 import { medicalClinicLd, websiteLd, faqPageLd } from "@/lib/marketing/structured-data";
+import { getOnlineBookingStatus } from "@/lib/booking/online-booking";
 import { FAQ_ITEMS } from "@/lib/marketing/faq";
 import { pageMetadata } from "@/lib/marketing/metadata";
 
@@ -28,6 +29,7 @@ export const metadata = pageMetadata({
 });
 
 export default async function HomePage() {
+  const { paused: onlineBookingPaused } = await getOnlineBookingStatus();
   const supabase = await createClient();
 
   // Total active physicians (for the specialists copy) + the first 6 by display
@@ -55,7 +57,7 @@ export default async function HomePage() {
 
   return (
     <>
-      <JsonLd data={[medicalClinicLd(), websiteLd(), faqPageLd(FAQ_ITEMS)]} />
+      <JsonLd data={[medicalClinicLd({ onlineBookingPaused }), websiteLd(), faqPageLd(FAQ_ITEMS)]} />
 
       <Hero />
       <TrustStrip />

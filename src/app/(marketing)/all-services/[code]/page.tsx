@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { getOnlineBookingStatus } from "@/lib/booking/online-booking";
 import type { Metadata } from "next";
 import { ArrowLeft, ArrowRight, Check, Clock, Tag } from "lucide-react";
 import { getServiceByCode } from "@/lib/marketing/services";
@@ -15,6 +16,7 @@ import {
   productLd,
 } from "@/lib/marketing/structured-data";
 import { JsonLd } from "@/components/marketing/json-ld";
+import { BookingCtaLabel } from "@/components/marketing/online-booking-context";
 
 interface ServicePageProps {
   params: Promise<{ code: string }>;
@@ -48,15 +50,19 @@ export default async function ServiceDetailPage({ params }: ServicePageProps) {
   const { code } = await params;
   const service = await getServiceByCode(code);
   if (!service) notFound();
+  const { paused: onlineBookingPaused } = await getOnlineBookingStatus();
 
   const ld: Record<string, unknown>[] = [
-    serviceOfferLd({
-      code: service.code,
-      name: service.name,
-      description: service.description,
-      kind: service.kind,
-      pricePhp: service.price_php,
-    }),
+    serviceOfferLd(
+      {
+        code: service.code,
+        name: service.name,
+        description: service.description,
+        kind: service.kind,
+        pricePhp: service.price_php,
+      },
+      { onlineBookingPaused },
+    ),
     breadcrumbLd([
       { name: "Home", path: "/" },
       { name: "All Services", path: "/all-services" },
@@ -216,7 +222,7 @@ export default async function ServiceDetailPage({ params }: ServicePageProps) {
               </p>
               <div className="mt-6 flex flex-wrap gap-3">
                 <PillLink href="/schedule" variant="cyan" size="md">
-                  View Schedule
+                  <BookingCtaLabel>View Schedule</BookingCtaLabel>
                   <ArrowRight aria-hidden className="h-4 w-4" />
                 </PillLink>
                 <PillLink href="/contact" variant="lineOnDark" size="md">

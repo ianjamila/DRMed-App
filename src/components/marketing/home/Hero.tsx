@@ -13,6 +13,7 @@ import {
   AmbientGlow,
 } from "@/components/marketing/motion";
 import { SITE } from "@/lib/marketing/site";
+import { BookingCtaLabel } from "@/components/marketing/online-booking-context";
 
 // Hero stat counters — numeric `to` + `suffix` drive the CountUp animation.
 const STATS = [
@@ -109,7 +110,7 @@ export function Hero() {
             <HeroStaggerItem>
               <div className="mt-8 flex flex-wrap gap-3">
                 <PillLink href="/schedule" variant="cyan">
-                  Book Appointment <ArrowRight className="h-[18px] w-[18px]" />
+                  <BookingCtaLabel>Book Appointment</BookingCtaLabel> <ArrowRight className="h-[18px] w-[18px]" />
                 </PillLink>
                 <PillLink href="/#packages" variant="navy">
                   View Packages

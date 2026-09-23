@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
@@ -11,6 +12,8 @@ import {
 import { createClient } from "@/lib/supabase/server";
 import { physicianPhotoUrl } from "@/lib/physicians/photo";
 import { BookingForm } from "./booking-form";
+import { BookingPausedNotice } from "@/components/marketing/booking-paused-notice";
+import { getOnlineBookingStatus } from "@/lib/booking/online-booking";
 import { pageMetadata } from "@/lib/marketing/metadata";
 
 export const metadata = pageMetadata({
@@ -27,6 +30,33 @@ export default async function SchedulePage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  // An admin can pause online booking (/staff/admin/settings/online-booking).
+  // Every "Book" CTA on the site still lands here, so the page swaps the form
+  // for a contact-reception notice instead of 404ing ad and QR traffic.
+  const bookingStatus = await getOnlineBookingStatus();
+  if (bookingStatus.paused) {
+    const { doctor } = await searchParams;
+    const slug = Array.isArray(doctor) ? doctor[0] : doctor;
+    let doctorName: string | null = null;
+    if (slug) {
+      const supabase = await createClient();
+      const { data } = await supabase
+        .from("physicians")
+        .select("full_name")
+        .eq("slug", slug)
+        .eq("is_active", true)
+        .maybeSingle();
+      doctorName = data?.full_name ?? null;
+    }
+    return (
+      <SchedulePageShell>
+        <div className="mt-6">
+          <BookingPausedNotice context="public" message={bookingStatus.message} doctorName={doctorName} />
+        </div>
+      </SchedulePageShell>
+    );
+  }
+
   const services = await listActiveServices();
   const startDate = tomorrowManilaISO();
   const endDate = addDaysISO(startDate, 60);
@@ -183,6 +213,24 @@ export default async function SchedulePage({
     }));
 
   return (
+    <SchedulePageShell>
+      <BookingForm
+        services={bookingServices}
+        closures={closures}
+        startDate={startDate}
+        specialties={specialties}
+        physicians={bookablePhysicians}
+        byAppointmentPhysicians={byAppointmentPhysicians}
+        initialBranch={initialBranch}
+        initialPhysicianId={initialPhysicianId}
+        initialSpecialtyCode={initialSpecialtyCode}
+      />
+    </SchedulePageShell>
+  );
+}
+
+function SchedulePageShell({ children }: { children: ReactNode }) {
+  return (
     <div className="min-h-screen">
       {/* Focused funnel header — replaces the marketing nav on /schedule (C12). */}
       <header className="border-b border-[color:var(--color-warm-line-soft)] bg-[rgba(251,249,245,0.92)] backdrop-blur-[10px]">
@@ -208,17 +256,7 @@ export default async function SchedulePage({
       </header>
 
       <main className="mx-auto max-w-[760px] px-5 pb-20 pt-2">
-        <BookingForm
-          services={bookingServices}
-          closures={closures}
-          startDate={startDate}
-          specialties={specialties}
-          physicians={bookablePhysicians}
-          byAppointmentPhysicians={byAppointmentPhysicians}
-          initialBranch={initialBranch}
-          initialPhysicianId={initialPhysicianId}
-          initialSpecialtyCode={initialSpecialtyCode}
-        />
+        {children}
 
         {/* Minimal focused footer — privacy + a couple of escape hatches. */}
         <footer className="mt-10 border-t border-[color:var(--color-warm-line-soft)] pt-6 text-[12px] text-[color:var(--color-ink-soft)]">

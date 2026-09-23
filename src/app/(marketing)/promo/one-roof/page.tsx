@@ -27,6 +27,7 @@ import { getServiceByCode, type PublicService } from "@/lib/marketing/services";
 import { formatPhp } from "@/lib/marketing/format";
 import { pageMetadata } from "@/lib/marketing/metadata";
 import type { FaqItem } from "@/lib/marketing/faq";
+import { BookingCtaLabel } from "@/components/marketing/online-booking-context";
 
 export const metadata = pageMetadata({
   title: "One Roof: Full Lab + 20 Specialist Physicians",
@@ -313,7 +314,7 @@ export default async function OneRoofPage() {
           <Reveal delay={0.12}>
             <div className="mt-6 flex flex-wrap items-center gap-3">
               <PillLink href="/schedule" variant="cyan" size="sm">
-                Book Your Checkup{" "}
+                <BookingCtaLabel>Book Your Checkup</BookingCtaLabel>{" "}
                 <ArrowRight className="h-[18px] w-[18px]" aria-hidden="true" />
               </PillLink>
               <PillLink href="/packages" variant="line" size="sm">

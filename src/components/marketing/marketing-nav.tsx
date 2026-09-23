@@ -11,6 +11,8 @@ import {
   HamburgerIcon,
   MobileDrawer,
 } from "@/components/ui/mobile-drawer";
+import { BookingCtaLabel } from "@/components/marketing/online-booking-context";
+import { PAUSED_CTA_LABEL_SHORT } from "@/lib/booking/online-booking-copy";
 
 // Routes that use the focused-funnel layout (no marketing nav). See HideOnPaths.
 const FOCUSED_ROUTES = ["/schedule"];
@@ -108,9 +110,9 @@ export function MarketingNav() {
           <PatientPortalLauncher />
           <Link
             href="/schedule"
-            className="rounded-full bg-[color:var(--color-brand-cyan)] px-5 py-2.5 text-sm font-bold text-[color:var(--color-ink)] shadow-[var(--shadow-warm-sm)] transition-all hover:bg-[color:var(--color-brand-navy)] hover:text-white hover:-translate-y-px hover:shadow-[var(--shadow-warm-lg)]"
+            className="whitespace-nowrap rounded-full bg-[color:var(--color-brand-cyan)] px-5 py-2.5 text-sm font-bold text-[color:var(--color-ink)] shadow-[var(--shadow-warm-sm)] transition-all hover:bg-[color:var(--color-brand-navy)] hover:text-white hover:-translate-y-px hover:shadow-[var(--shadow-warm-lg)]"
           >
-            Book Now
+            <BookingCtaLabel pausedLabel={PAUSED_CTA_LABEL_SHORT}>Book Now</BookingCtaLabel>
           </Link>
         </div>
       </div>
@@ -176,7 +178,7 @@ export function MarketingNav() {
             onClick={close}
             className="block rounded-full bg-[color:var(--color-brand-cyan)] px-4 py-3 text-center text-sm font-bold text-[color:var(--color-ink)] shadow-[var(--shadow-warm-sm)] transition-all hover:bg-[color:var(--color-brand-navy)] hover:text-white"
           >
-            Book Now
+            <BookingCtaLabel>Book Now</BookingCtaLabel>
           </Link>
         </div>
       </MobileDrawer>

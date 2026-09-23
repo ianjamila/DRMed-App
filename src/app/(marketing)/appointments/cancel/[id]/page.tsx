@@ -6,6 +6,7 @@ import { appointmentStatusLabel } from "@/lib/appointments/labels";
 import { formatManilaDateTime } from "@/lib/notifications/format-manila-datetime";
 import { CancelButton } from "./cancel-button";
 import { TrackedTelLink } from "@/components/marketing/tracked-tel-link";
+import { getOnlineBookingStatus } from "@/lib/booking/online-booking";
 
 export const metadata = {
   title: "Cancel appointment",
@@ -31,6 +32,9 @@ const CANCELLABLE = new Set(["confirmed", "pending_callback"]);
 export default async function CancelAppointmentPage({ params }: Props) {
   const { id } = await params;
   const admin = createAdminClient();
+  // While an admin has paused online booking, "cancel and re-book online" would
+  // leave the patient with no booking at all — point them at reception instead.
+  const { paused: bookingPaused } = await getOnlineBookingStatus();
 
   const { data: appt } = await admin
     .from("appointments")
@@ -85,6 +89,20 @@ export default async function CancelAppointmentPage({ params }: Props) {
         {cancellable ? (
           <CancelButton appointmentId={appt.id} />
         ) : alreadyCancelled ? (
+          bookingPaused ? (
+            <p className="text-sm text-[color:var(--color-brand-text-mid)]">
+              This appointment is already cancelled. Online booking is paused
+              for now — to book again, call or text reception at{" "}
+              <TrackedTelLink
+                href={`tel:${CONTACT.phone.mobileE164}`}
+                label="cancel_appointment"
+                className="font-bold text-[color:var(--color-brand-cyan)] hover:underline"
+              >
+                {CONTACT.phone.mobile}
+              </TrackedTelLink>
+              .
+            </p>
+          ) : (
           <p className="text-sm text-[color:var(--color-brand-text-mid)]">
             This appointment is already cancelled. If you want to book again,
             head to{" "}
@@ -96,6 +114,7 @@ export default async function CancelAppointmentPage({ params }: Props) {
             </Link>
             .
           </p>
+          )
         ) : (
           <p className="text-sm text-[color:var(--color-brand-text-mid)]">
             This appointment can no longer be cancelled from the link.
@@ -113,6 +132,20 @@ export default async function CancelAppointmentPage({ params }: Props) {
       </div>
 
       {cancellable ? (
+        bookingPaused ? (
+          <p className="mt-4 text-xs text-[color:var(--color-brand-text-soft)]">
+            Cancellation is final. Online booking is paused for now, so to
+            reschedule, please call or text reception at{" "}
+            <TrackedTelLink
+              href={`tel:${CONTACT.phone.mobileE164}`}
+              label="cancel_appointment"
+              className="text-[color:var(--color-brand-cyan)] hover:underline"
+            >
+              {CONTACT.phone.mobile}
+            </TrackedTelLink>{" "}
+            instead of cancelling here — we&apos;ll move your booking for you.
+          </p>
+        ) : (
         <p className="mt-4 text-xs text-[color:var(--color-brand-text-soft)]">
           Cancellation is final. To reschedule, cancel here and re-book at{" "}
           <Link
@@ -123,6 +156,7 @@ export default async function CancelAppointmentPage({ params }: Props) {
           </Link>
           .
         </p>
+        )
       ) : null}
     </main>
   );

@@ -20,7 +20,12 @@ function postalAddress(): SchemaObject {
 // AND rendered standalone via medicalClinicLd(). One definition keeps the
 // clinic's name/address/phone/price/geo identical everywhere it appears (same
 // @id) and avoids the "thin reference" the validator flags on nested pages.
-function clinicNode(): SchemaObject {
+export interface ClinicLdOptions {
+  // Admin has paused online booking — omit the ReserveAction (0153).
+  onlineBookingPaused?: boolean;
+}
+
+function clinicNode(opts: ClinicLdOptions = {}): SchemaObject {
   const node: SchemaObject = {
     "@type": "MedicalClinic",
     "@id": CLINIC_ID,
@@ -73,7 +78,10 @@ function clinicNode(): SchemaObject {
     ],
     medicalSpecialty: ["Diagnostic", "ClinicalLaboratory", "Radiology"],
     sameAs: [SOCIAL.facebook, SOCIAL.instagram, SOCIAL.messenger, GEO.mapUrl].filter(Boolean),
-    potentialAction: {
+    // While an admin has paused online booking there is nothing to reserve
+    // online, so the ReserveAction is dropped rather than advertising a
+    // booking flow search engines would send people to (booking_settings, 0153).
+    ...(opts.onlineBookingPaused ? {} : { potentialAction: {
       "@type": "ReserveAction",
       target: {
         "@type": "EntryPoint",
@@ -84,7 +92,7 @@ function clinicNode(): SchemaObject {
         ],
       },
       result: { "@type": "Reservation", name: "Clinic or laboratory appointment" },
-    },
+    } }),
   };
   if (GEO.lat != null && GEO.lng != null) {
     node.geo = { "@type": "GeoCoordinates", latitude: GEO.lat, longitude: GEO.lng };
@@ -93,8 +101,8 @@ function clinicNode(): SchemaObject {
   return node;
 }
 
-export function medicalClinicLd(): SchemaObject {
-  return { "@context": "https://schema.org", ...clinicNode() };
+export function medicalClinicLd(opts: ClinicLdOptions = {}): SchemaObject {
+  return { "@context": "https://schema.org", ...clinicNode(opts) };
 }
 
 export function websiteLd(): SchemaObject {
@@ -135,7 +143,7 @@ export interface PhysicianLdInput {
   photoUrl: string;
 }
 
-export function physicianLd(p: PhysicianLdInput): SchemaObject {
+export function physicianLd(p: PhysicianLdInput, opts: ClinicLdOptions = {}): SchemaObject {
   const specialties = [p.specialty, ...(p.specialtyLabels ?? [])].filter(
     (v, i, a) => Boolean(v) && a.indexOf(v) === i,
   );
@@ -152,7 +160,7 @@ export function physicianLd(p: PhysicianLdInput): SchemaObject {
     telephone: CONTACT.phone.mobileE164,
     address: postalAddress(),
     priceRange: SITE.priceRange,
-    worksFor: clinicNode(),
+    worksFor: clinicNode(opts),
   };
 }
 
@@ -222,7 +230,7 @@ export interface ServiceLdInput {
   pricePhp: number;
 }
 
-export function serviceOfferLd(s: ServiceLdInput): SchemaObject {
+export function serviceOfferLd(s: ServiceLdInput, opts: ClinicLdOptions = {}): SchemaObject {
   const url = `${SITE.url}/all-services/${s.code.toLowerCase()}`;
   const ld: SchemaObject = {
     "@context": "https://schema.org",
@@ -230,7 +238,7 @@ export function serviceOfferLd(s: ServiceLdInput): SchemaObject {
     name: s.name,
     description: s.description ?? `${s.name} at ${SITE.name}.`,
     url,
-    provider: clinicNode(),
+    provider: clinicNode(opts),
   };
   if (s.kind === "lab_package") {
     ld.offers = {

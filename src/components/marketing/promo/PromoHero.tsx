@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { ArrowRight, MessageCircle } from "lucide-react";
 import { SectionHeading, PillLink } from "@/components/marketing/ui";
 import { SOCIAL } from "@/lib/marketing/site";
+import { BookingCtaLabel } from "@/components/marketing/online-booking-context";
 
 interface PromoCta {
   label: string;
@@ -45,7 +46,11 @@ export function PromoHero({
         />
         <div className="mt-8 flex flex-wrap gap-3">
           <PillLink href={primary.href} variant="cyan">
-            {primary.label}
+            {primary.href.startsWith("/schedule") ? (
+              <BookingCtaLabel>{primary.label}</BookingCtaLabel>
+            ) : (
+              primary.label
+            )}
             <ArrowRight className="h-4 w-4" aria-hidden="true" />
           </PillLink>
           {extraLinks.map((link) => (

@@ -66,10 +66,15 @@ export function NewAppointmentSheet({
   services,
   physicians,
   selfBookUrl,
+  onlineBookingPaused = false,
 }: {
   services: ServiceOption[];
   physicians: PhysicianOption[];
   selfBookUrl: string;
+  // While an admin has paused online booking the self-book QR would only lead
+  // to the "contact reception" notice, so the sheet says so instead of
+  // offering it (booking_settings, 0153).
+  onlineBookingPaused?: boolean;
 }) {
   const router = useRouter();
   const [open, setOpen] = React.useState(false);
@@ -513,7 +518,12 @@ export function NewAppointmentSheet({
 
           {error && <p className="text-sm text-red-600">{error}</p>}
 
-          {/* Self-book QR */}
+          {/* Self-book QR — hidden while online booking is paused */}
+          {onlineBookingPaused ? (
+            <p className="text-xs text-muted-foreground">
+              Online self-booking is paused, so there is no self-book QR right now — book the patient here.
+            </p>
+          ) : (
           <div>
             <button type="button" onClick={() => setShowQr((v) => !v)} className="text-xs font-semibold text-[color:var(--color-brand-cyan)] underline">
               {showQr ? "Hide self-book QR" : "Patient prefers to book themselves? Show QR"}
@@ -525,6 +535,7 @@ export function NewAppointmentSheet({
               </div>
             )}
           </div>
+          )}
         </div>
 
         <SheetFooter>
