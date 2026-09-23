@@ -64,6 +64,31 @@ describe("medicalClinicLd", () => {
   });
 });
 
+describe("online booking paused (booking_settings, 0153)", () => {
+  it("medicalClinicLd drops the ReserveAction but keeps everything else", () => {
+    const live = medicalClinicLd();
+    const paused = medicalClinicLd({ onlineBookingPaused: true });
+    expect(live.potentialAction).toBeDefined();
+    expect(paused.potentialAction).toBeUndefined();
+    const { potentialAction: _dropped, ...rest } = live;
+    void _dropped;
+    expect(paused).toEqual(rest);
+  });
+
+  it("physicianLd and serviceOfferLd carry the flag into their embedded clinic", () => {
+    const doc = { slug: "x", fullName: "Dr X", specialty: "General", photoUrl: "https://drmed.ph/x.jpg" };
+    expect((physicianLd(doc).worksFor as Record<string, unknown>).potentialAction).toBeDefined();
+    expect(
+      (physicianLd(doc, { onlineBookingPaused: true }).worksFor as Record<string, unknown>).potentialAction,
+    ).toBeUndefined();
+    const svc = { code: "CBC", name: "CBC", description: null, kind: "lab_test", pricePhp: 100 };
+    expect((serviceOfferLd(svc).provider as Record<string, unknown>).potentialAction).toBeDefined();
+    expect(
+      (serviceOfferLd(svc, { onlineBookingPaused: true }).provider as Record<string, unknown>).potentialAction,
+    ).toBeUndefined();
+  });
+});
+
 describe("websiteLd", () => {
   it("declares a SearchAction targeting all-services", () => {
     const ld = websiteLd();

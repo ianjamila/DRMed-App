@@ -81,9 +81,10 @@ export async function updateOnlineBookingSettingsAction(input: {
     user_agent: ua,
   });
 
-  revalidatePath("/staff/admin/settings/online-booking");
-  revalidatePath("/staff/appointments");
-  revalidatePath("/schedule");
-  revalidatePath("/portal/book");
+  // Every page under the root layout: the marketing site is mostly statically
+  // prerendered (or ISR), so the site-wide strip, the relabelled "Book" CTAs
+  // and the JSON-LD ReserveAction were baked in with the old value. This also
+  // covers /schedule, /portal/book and the staff Appointments banner.
+  revalidatePath("/", "layout");
   return { ok: true };
 }

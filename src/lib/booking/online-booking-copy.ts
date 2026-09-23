@@ -18,6 +18,12 @@ export const BOOKING_PAUSED_ERROR =
   `Online booking is paused right now. Please contact our reception to book — ` +
   `call or text ${CONTACT.phone.mobile}, or call ${CONTACT.phone.landline}.`;
 
+// What every "Book" CTA on the marketing site says while booking is paused. The
+// link target does not change — /schedule shows the contact-reception notice.
+export const PAUSED_CTA_LABEL = "Contact us to book";
+// The compact nav pill, where the long label would crowd the logo on phones.
+export const PAUSED_CTA_LABEL_SHORT = "Contact to book";
+
 // Trim, and treat a blank note as "no note". Returns an error for an over-long
 // note rather than silently truncating what the admin wrote.
 export function normalizePausedMessage(

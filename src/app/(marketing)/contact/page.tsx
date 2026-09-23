@@ -9,9 +9,11 @@ import { MapEmbed } from "@/components/marketing/map-embed";
 import { OpenNowPill } from "@/components/marketing/home/OpenNowPill";
 import { JsonLd } from "@/components/marketing/json-ld";
 import { medicalClinicLd, breadcrumbLd, faqPageLd } from "@/lib/marketing/structured-data";
+import { getOnlineBookingStatus } from "@/lib/booking/online-booking";
 import { pageMetadata } from "@/lib/marketing/metadata";
 import type { FaqItem } from "@/lib/marketing/faq";
 import { TrackedTelLink } from "@/components/marketing/tracked-tel-link";
+import { BookingCtaLabel } from "@/components/marketing/online-booking-context";
 
 export const metadata = pageMetadata({
   title: "Contact & Location",
@@ -75,14 +77,15 @@ function DetailRow({
   );
 }
 
-export default function ContactPage() {
+export default async function ContactPage() {
   const [addrTop, addrBottom] = addressLines();
+  const { paused: onlineBookingPaused } = await getOnlineBookingStatus();
 
   return (
     <>
       <JsonLd
         data={[
-          medicalClinicLd(),
+          medicalClinicLd({ onlineBookingPaused }),
           breadcrumbLd([
             { name: "Home", path: "/" },
             { name: "Contact & Location", path: "/contact" },
@@ -258,7 +261,7 @@ export default function ContactPage() {
             <p className="mt-1 text-sm text-white/75">Book ahead online or just walk in during clinic hours.</p>
           </div>
           <div className="flex flex-wrap gap-3">
-            <PillLink href="/schedule" variant="cyan" size="md">Book a test or consultation</PillLink>
+            <PillLink href="/schedule" variant="cyan" size="md"><BookingCtaLabel>Book a test or consultation</BookingCtaLabel></PillLink>
             <PillLink href={telHref("mobile")} variant="lineOnDark" size="md">Call now</PillLink>
           </div>
         </div>

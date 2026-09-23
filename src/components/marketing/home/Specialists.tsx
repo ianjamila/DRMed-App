@@ -4,6 +4,7 @@ import Link from "next/link";
 import { SectionHeading, PillLink } from "@/components/marketing/ui";
 import { Reveal } from "@/components/marketing/motion";
 import { DoctorPhoto } from "./DoctorPhoto";
+import { BookingCtaLabel } from "@/components/marketing/online-booking-context";
 
 interface Physician {
   name: string;
@@ -75,7 +76,7 @@ export function Specialists({ physicians, totalCount }: SpecialistsProps) {
               us to book your appointment and confirm availability.
             </p>
             <PillLink href="/schedule" variant="line" size="sm">
-              Book an Appointment
+              <BookingCtaLabel>Book an Appointment</BookingCtaLabel>
             </PillLink>
           </div>
         </Reveal>

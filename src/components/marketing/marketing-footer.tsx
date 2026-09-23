@@ -4,6 +4,7 @@ import { NewsletterForm } from "./newsletter-form";
 import { CookiePreferencesLink } from "./cookie-consent";
 import { TrackedTelLink } from "@/components/marketing/tracked-tel-link";
 import { isoDateParts, todayManilaISODate } from "@/lib/dates/manila";
+import { BookingCtaLabel } from "@/components/marketing/online-booking-context";
 
 export function MarketingFooter() {
   return (
@@ -100,7 +101,7 @@ export function MarketingFooter() {
             </li>
             <li>
               <Link href="/schedule" className="text-white/70 hover:text-white">
-                Schedule
+                <BookingCtaLabel pausedLabel="How to book">Schedule</BookingCtaLabel>
               </Link>
             </li>
             <li>

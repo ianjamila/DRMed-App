@@ -118,7 +118,13 @@ While paused:
 - **`/portal/book`** shows the same notice with `context="portal"` — plain links, because the portal emits no marketing analytics (RA 10173). Only `"public"` uses `TrackedTelLink` / `TrackedMessengerLink`.
 - **`submitBookingAction`** refuses with `BOOKING_PAUSED_ERROR` right after the honeypot and BEFORE the rate limit — it is the real gate, since a form opened before the switch was flipped can still submit.
 - **Staff are unaffected**: `createStaffAppointmentAction` has no pause check on purpose. `/staff/appointments` shows an amber "Online booking is paused." banner (admins get a "Change this setting" link) and the slide-over hides the self-book QR (`onlineBookingPaused` prop).
-- `/register` (pre-registration) is NOT paused — it creates no appointment.
+- `/register` (pre-registration) is NOT paused — it creates no appointment; only its "use the Schedule page" copy changes.
+- **Site-wide, via the marketing layout** (`src/app/(marketing)/layout.tsx` reads the flag once and wraps everything in `OnlineBookingProvider`, `src/components/marketing/online-booking-context.tsx`):
+  - `BookingPausedStrip` — a navy strip above the nav (hidden on `/schedule`), tracked tel + Messenger links.
+  - Every "Book" CTA wraps its text in `<BookingCtaLabel>` → "Contact us to book" (`PAUSED_CTA_LABEL`; the nav pill uses `PAUSED_CTA_LABEL_SHORT` "Contact to book", which fits at 360px). The home services grid uses `BookingAwareLink` so its aria-label changes too. **A new booking CTA must use `BookingCtaLabel`** or it keeps saying "Book" while paused.
+  - The JSON-LD `ReserveAction` is dropped: `medicalClinicLd` / `physicianLd` / `serviceOfferLd` take `{ onlineBookingPaused }` and pass it to the shared `clinicNode`.
+  - `/appointments/cancel/[id]` swaps "cancel and re-book at /schedule" for "call reception to reschedule".
+- **Caching:** most marketing pages are statically prerendered or ISR, so the flag is baked in at build/revalidation. `updateOnlineBookingSettingsAction` therefore calls `revalidatePath("/", "layout")` — the whole site re-renders on its next visit. `getOnlineBookingStatus` is wrapped in React `cache()` so layout + page + JSON-LD share one query per render.
 
 ## UI primitives this subsystem added
 

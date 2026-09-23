@@ -9,6 +9,9 @@ import { CookieConsentProvider } from "@/components/marketing/cookie-consent";
 import { MetaPixel } from "@/components/marketing/meta-pixel";
 import { GoogleTag } from "@/components/marketing/google-tag";
 import { GOOGLE_ADS_ID } from "@/lib/analytics/google-ads";
+import { OnlineBookingProvider } from "@/components/marketing/online-booking-context";
+import { BookingPausedStrip } from "@/components/marketing/booking-paused-strip";
+import { getOnlineBookingStatus } from "@/lib/booking/online-booking";
 
 // /schedule uses the bundle's focused-funnel layout — its own header/footer,
 // no marketing nav/footer/FAB (C12). MarketingNav opts out internally.
@@ -26,18 +29,27 @@ const META_PIXEL_ID = process.env.NEXT_PUBLIC_META_PIXEL_ID;
 // Unlike the Meta Pixel this one IS set in production — Google, unlike Meta,
 // does not block conversion events for a health provider (ADR-0004).
 
-export default function MarketingLayout({
+export default async function MarketingLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
+  // The admin's online-booking pause switch (booking_settings, 0153). Read once
+  // here and handed to every "Book" CTA through context. Static pages bake it in
+  // at build/revalidation time; the admin action revalidates "/" as a layout on
+  // every change so the whole site flips on the next visit.
+  const { paused: onlineBookingPaused } = await getOnlineBookingStatus();
   return (
     // reducedMotion="user" makes every motion primitive honor the OS preference
     // (skip transforms, keep opacity) WITHOUT branching the rendered DOM on it —
     // so reduced-motion clients hydrate cleanly.
     <MotionConfig reducedMotion="user">
       <CookieConsentProvider>
+      <OnlineBookingProvider paused={onlineBookingPaused}>
         {META_PIXEL_ID ? <MetaPixel pixelId={META_PIXEL_ID} /> : null}
         {GOOGLE_ADS_ID ? <GoogleTag conversionId={GOOGLE_ADS_ID} /> : null}
         <ScrollPulse />
+        <HideOnPaths paths={FOCUSED_ROUTES}>
+          <BookingPausedStrip />
+        </HideOnPaths>
         <MarketingNav />
         <main className="flex-1 overflow-x-clip bg-[color:var(--color-warm-bg)] text-[color:var(--color-ink)]">
           {children}
@@ -47,6 +59,7 @@ export default function MarketingLayout({
           <MessengerFab />
         </HideOnPaths>
         <Analytics />
+      </OnlineBookingProvider>
       </CookieConsentProvider>
     </MotionConfig>
   );

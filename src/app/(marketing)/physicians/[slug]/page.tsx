@@ -8,12 +8,14 @@ import type { Database } from "@/types/database";
 import { SITE, CONTACT, GEO } from "@/lib/marketing/site";
 import { pageMetadata } from "@/lib/marketing/metadata";
 import { physicianLd, breadcrumbLd } from "@/lib/marketing/structured-data";
+import { getOnlineBookingStatus } from "@/lib/booking/online-booking";
 import { JsonLd } from "@/components/marketing/json-ld";
 import { physicianPhotoUrl } from "@/lib/physicians/photo";
 import { formatSchedule } from "@/lib/physicians/format-schedule";
 import { Reveal } from "@/components/marketing/motion";
 import { PillLink } from "@/components/marketing/ui";
 import { TrackedTelLink } from "@/components/marketing/tracked-tel-link";
+import { BookingCtaLabel } from "@/components/marketing/online-booking-context";
 
 export const revalidate = 300;
 
@@ -107,13 +109,17 @@ export default async function PhysicianPage({ params }: PageProps) {
 
   const photoUrl = physicianPhotoUrl({ slug: doc.slug, photo_path: doc.photo_path });
 
+  const { paused: onlineBookingPaused } = await getOnlineBookingStatus();
   const ld = [
-    physicianLd({
-      slug: doc.slug,
-      fullName: doc.full_name,
-      specialty: doc.specialty,
-      photoUrl,
-    }),
+    physicianLd(
+      {
+        slug: doc.slug,
+        fullName: doc.full_name,
+        specialty: doc.specialty,
+        photoUrl,
+      },
+      { onlineBookingPaused },
+    ),
     breadcrumbLd([
       { name: "Home", path: "/" },
       { name: "Physicians", path: "/physicians" },
@@ -209,7 +215,7 @@ export default async function PhysicianPage({ params }: PageProps) {
                       variant="navy"
                       size="md"
                     >
-                      Book an appointment →
+                      <BookingCtaLabel>Book an appointment</BookingCtaLabel> →
                     </PillLink>
                   </div>
                 </div>
@@ -361,7 +367,7 @@ export default async function PhysicianPage({ params }: PageProps) {
               </Link>
               <span className="text-[color:var(--color-warm-line-soft)]" aria-hidden="true">·</span>
               <PillLink href={`/schedule?doctor=${doc.slug}`} variant="line" size="sm">
-                Book appointment
+                <BookingCtaLabel>Book appointment</BookingCtaLabel>
               </PillLink>
             </div>
           </Reveal>

@@ -13,6 +13,7 @@ import { physiciansItemListLd } from "@/lib/marketing/structured-data";
 import { pageMetadata } from "@/lib/marketing/metadata";
 import { CONTACT } from "@/lib/marketing/site";
 import { TrackedTelLink } from "@/components/marketing/tracked-tel-link";
+import { BookingCtaLabel } from "@/components/marketing/online-booking-context";
 
 export const metadata = pageMetadata({
   title: "Our Physicians & Schedules",
@@ -159,7 +160,7 @@ export default async function PhysiciansPage() {
         <Reveal>
           <div className="mt-8 flex flex-wrap gap-3">
             <PillLink href="/schedule" variant="navy" size="md">
-              Book an Appointment
+              <BookingCtaLabel>Book an Appointment</BookingCtaLabel>
             </PillLink>
             <PillLink href="/" variant="line" size="md">
               Back to Homepage

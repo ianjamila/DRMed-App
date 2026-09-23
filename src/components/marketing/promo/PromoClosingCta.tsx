@@ -2,6 +2,7 @@ import { ArrowRight, MessageCircle } from "lucide-react";
 import { PillLink } from "@/components/marketing/ui";
 import { Reveal } from "@/components/marketing/motion";
 import { SOCIAL } from "@/lib/marketing/site";
+import { BookingCtaLabel } from "@/components/marketing/online-booking-context";
 
 /**
  * Closing CTA band for campaign landing pages — navy field with a booking pill
@@ -28,7 +29,7 @@ export function PromoClosingCta({
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
             <PillLink href="/schedule" variant="cyan">
-              {primaryLabel}
+              <BookingCtaLabel>{primaryLabel}</BookingCtaLabel>
               <ArrowRight className="h-4 w-4" aria-hidden="true" />
             </PillLink>
             <PillLink
