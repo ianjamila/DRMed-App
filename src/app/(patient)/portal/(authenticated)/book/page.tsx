@@ -9,6 +9,8 @@ import { createClient } from "@/lib/supabase/server";
 import { physicianPhotoUrl } from "@/lib/physicians/photo";
 import { requirePatientProfile } from "@/lib/auth/require-patient";
 import { BookingForm } from "@/app/(marketing)/schedule/booking-form";
+import { BookingPausedNotice } from "@/components/marketing/booking-paused-notice";
+import { getOnlineBookingStatus } from "@/lib/booking/online-booking";
 
 export const metadata = {
   // "Appointment" undersells this page: BookingForm opens on the lab_request
@@ -22,6 +24,38 @@ export const dynamic = "force-dynamic";
 
 export default async function PortalBookPage() {
   const patient = await requirePatientProfile();
+
+  // Same admin pause switch as public /schedule (booking_settings, 0153). The
+  // flag is a global clinic setting, not patient data, so reading it through
+  // the service-role helper does not bypass any patient RLS.
+  const bookingStatus = await getOnlineBookingStatus();
+  if (bookingStatus.paused) {
+    return (
+      <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
+        <div className="flex items-baseline justify-between gap-3">
+          <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+            Book a test or consultation
+          </h1>
+          <Link
+            href="/portal"
+            className="link-brand text-xs font-bold uppercase tracking-wider"
+          >
+            ← Back to results
+          </Link>
+        </div>
+        <p className="mt-2 text-sm text-[color:var(--color-brand-text-soft)]">
+          Have your DRM-ID{" "}
+          <span className="font-mono font-semibold text-[color:var(--color-brand-navy)]">
+            {patient.drm_id}
+          </span>{" "}
+          ready when you contact us — it lets reception find your record quickly.
+        </p>
+        <div className="mt-6">
+          <BookingPausedNotice context="portal" message={bookingStatus.message} />
+        </div>
+      </div>
+    );
+  }
 
   const services = await listActiveServices();
   const startDate = tomorrowManilaISO();

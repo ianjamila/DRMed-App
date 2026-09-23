@@ -247,7 +247,7 @@
 <div class="layout">
 <nav class="toc" aria-label="Contents">
   <p class="toc-brand">drmed<span>.</span>ph</p>
-  <p class="toc-tag">User guide · v2.5</p>
+  <p class="toc-tag">User guide · v2.6</p>
   <div class="filter" role="group" aria-label="Show chapters for">
     <button type="button" data-filter="all" aria-pressed="true">All roles</button>
     <button type="button" data-filter="reception">Reception</button>
@@ -481,6 +481,7 @@
     <p>A search box sits beside <kbd class="ui">+ New appointment</kbd>. Typing a name, DRM-ID or phone number — or clicking <kbd class="ui">Sort this list →</kbd> to sort a column without searching — switches the page from the four grouped sections above to one flat list, each row tagged with a small badge (<span class="tab">Pending callback</span>, <span class="tab">Walk-in waiting</span>, <span class="tab">Today</span> or <span class="tab">Next 30 days</span>) showing which section it came from. Click any column heading to sort, and a page-size picker (5/10/25/50/100) appears once you're in this view. <kbd class="ui">← Back to grouped view</kbd> returns to the normal four sections.</p>
     <div class="note warn"><span class="k">Search doesn't reach everywhere</span><div><p>The search box only looks inside the same four sections this page always shows — pending callbacks, walk-ins waiting, today, and the next 30 days. It will not find an appointment that is older, cancelled, or already completed. Use Visit Records (3.7) for those.</p></div></div>
     <p>Every booking made on the public <code class="route">/schedule</code> page lands here, one row per service. Bookings for a doctor who has no published schedule, and all home-service requests, arrive as <span class="status">pending callback</span>: the patient has been told you will call within one working day to agree a time.</p>
+    <div class="note warn"><span class="k">When online booking is paused</span><div><p>An admin can pause online booking (Admin Tools › <b>Online Booking</b>). An amber banner then reads <q>Online booking is paused.</q> at the top of this page, and patients who try to book on the website or in the portal are asked to call, text, or message reception instead — so expect more calls and Messenger chats. Book them yourself with <kbd class="ui">+ New appointment</kbd>, which keeps working as normal. The slide-over hides the self-book QR while booking is paused, because it would only lead to the same notice.</p></div></div>
     <ol class="steps">
       <li><p class="step-title">Work the <span class="tab">Pending callback</span> section first thing.</p><p>Call the patient, agree the time, and confirm the booking.</p></li>
       <li><p class="step-title">When a booked patient walks in, click <kbd class="ui">Mark arrived</kbd> on their row.</p><p>Only a confirmed booking can be marked arrived. Grouped multi-service bookings show one button for all of them.</p></li>
@@ -875,8 +876,9 @@
       <li><p class="step-title">HMO Providers</p><p><kbd class="ui">+ New provider</kbd>: Provider name, Active, <b>Days to pay invoice</b>, contract dates, primary contact. This list feeds the two HMO drop-downs on New Visit and the claims aging.</p></li>
       <li><p class="step-title">Result Templates</p><p>The index groups services into <b>Report groups (consolidated templates)</b>, <b>With template</b>, <b>Eligible without template</b> and <b>Send-out (templates not applicable)</b>, and warns about templates with zero parameters or no mapped services. Edit a template's <b>Layout</b> (Simple · Dual unit · Multi-section · Imaging report), header and footer notes, and its parameters (name, input type, units, reference ranges by sex and age band, allowed and abnormal values, critical thresholds). Use <kbd class="ui">Preview PDF</kbd> to see the printed result before it goes live. The chemistry panel is one <b>group</b> template; the per-service chemistry templates are switched off on purpose and changing them does nothing. Open <kbd class="ui">Template Health</kbd> from the index to see current findings grouped as <b>Broken</b>, <b>Warning</b> and <b>Informational</b>, with counts and links to edit the affected group. Inactive per-service leftovers are informational history. Daily emails alert admins to broken templates or warnings; the weekly summary includes informational findings too. Every completed scan is recorded, even with no findings. The health page shows the last daily run in Manila time and how long ago it ran, and warns if there is no record or the last daily run is more than 26 hours old. A daily run that recovers from such a gap emails admins; the weekly summary also alerts if the daily check still appears to be down, even with no findings. The empty state shows when the page checked templates live.</p></li>
       <li><p class="step-title">Cron Health (Operations)</p><p>Admins can open <b>Cron Health</b> to see the last recorded run, age and status of every scheduled task, with timestamps in Manila time. <b>Healthy</b> means a recent run was recorded; <b>Pending</b> means no run is recorded yet but the initial monitoring grace period has not ended; <b>Stale</b> means a run is overdue or none was recorded by that deadline. <b>Unavailable</b> means the records could not be loaded — try again. A recorded run confirms the task ran, not that every item succeeded. Reload the page for an updated check.</p></li>
-      <li><p class="step-title">Closures, consent gate, dashboard cards</p>
+      <li><p class="step-title">Closures, online booking, consent gate, dashboard cards</p>
         <ul><li><b>Closures</b> (Operations): add a date and reason; the public booking page hides that day. If bookings already exist, <kbd class="ui">Move to callback</kbd> first.</li>
+        <li><b>Online Booking</b> (Admin Tools): <q>Pause online booking</q>. Switching it on asks you to confirm, then replaces the booking form on <code class="route">drmed.ph/schedule</code> and in the patient portal with a notice asking patients to call, text, message or email reception, with the clinic hours and address. Every <q>Book</q> button on the website still works and lands on that notice. Bookings already made are untouched, and reception keeps booking from Appointments. Add an optional <b>Note for patients</b> (up to 400 characters, e.g. when booking will be back) and <kbd class="ui">Save note</kbd>; the preview under it shows exactly what patients see. Switching it off takes effect straight away. Every change is recorded in the audit log.</li>
         <li><b>Consent Gate</b> (Admin Tools): <q>Require consent before result release</q>. Turn it on only after reception is capturing consent at every visit; today only a handful of patients have consent on file, so switching it on cold would block most releases.</li>
         <li><b>Dashboard Settings</b>: per role, tick which cards show. Cards marked <b>Sensitive</b> reveal money.</li></ul></li>
       <li><p class="step-title">Gift Codes and Inventory (Operations)</p><p><b>Gift Codes</b> › <kbd class="ui">+ Generate batch</kbd> (how many, face value, label) creates codes for reception to sell; the <kbd class="ui">Sales report</kbd> shows who bought what. <b>Inventory</b> › <kbd class="ui">+ New item</kbd> then record movements (Receive · Issue · Adjust · Expire · Count); the list flags <b>Low / out</b> and <b>Expiring ≤ 60d</b>. Medtechs and x-ray techs can see and post inventory too.</p></li>
@@ -1004,6 +1006,7 @@
     <h3>6.2 Booking and registering online</h3>
     <p>Both are optional. Walking in always works.</p>
     <h4>Book at drmed.ph/schedule</h4>
+    <p>If the page says <q>Online booking is paused for now</q>, the clinic is taking bookings by phone and message for the moment: call or text 0916 604 3208, call (02) 8 355 3517, message DRMed on Facebook Messenger, or email info@drmed.ph, and reception will book for you. Walk-ins are still welcome during clinic hours. The portal's <kbd class="ui">Book</kbd> page shows the same notice.</p>
     <ol class="steps">
       <li><p class="step-title">Answer <q>Have you visited DRMed before?</q></p><p><kbd class="ui">No, I'm new</kbd> registers you as part of the booking. <kbd class="ui">Yes, I have a DRM-ID</kbd> asks for the DRM-ID and last name so you skip retyping details.</p></li>
       <li><p class="step-title">Choose what you are booking.</p>
@@ -1100,12 +1103,13 @@
     <dt>Amendment</dt><dd>A correction to a finalised result, with a reason. The original is kept.</dd>
     <dt>EOD</dt><dd>End of Day: counting the drawer by denomination and closing the shift.</dd>
     <dt>Audit Log</dt><dd>The tamper-evident record of every action, view, print and download. Required by RA 10173.</dd>
+    <dt>Online Booking pause</dt><dd>An admin switch that replaces the online booking form with a <q>contact reception</q> notice. Staff booking is unaffected.</dd>
     <dt>Consent Gate</dt><dd>An admin switch that blocks release for patients without consent on file. Off today.</dd>
   </dl>
 </section>
 
 <footer class="end">
-  <p>drmed.ph User Guide · v2.5 · 16 September 2026 · Matches the production release at migration 0149. Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
+  <p>drmed.ph User Guide · v2.6 · 23 September 2026 · Matches the production release at migration 0153. Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
 </footer>
 </main>
 </div>

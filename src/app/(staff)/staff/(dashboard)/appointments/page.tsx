@@ -30,6 +30,7 @@ import { appointmentStatusLabel } from "@/lib/appointments/labels";
 import { fetchAllRows, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 import { matchesAllTokens } from "@/lib/patients/search";
 import { manilaDateTime, todayManilaISODate } from "@/lib/dates/manila";
+import { getOnlineBookingStatus } from "@/lib/booking/online-booking";
 import {
   ariaSortFor,
   buildListHref,
@@ -381,6 +382,7 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
     supabase.from("physicians").select("id, full_name").eq("is_active", true).order("full_name", { ascending: true }),
   ]);
   const services: ServiceOption[] = serviceRows ?? [];
+  const onlineBookingPaused = (await getOnlineBookingStatus()).paused;
   const physicians: PhysicianOption[] = physicianRows ?? [];
 
   const host = (await headers()).get("host") ?? "drmed.ph";
@@ -510,7 +512,12 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
         actions={
           <>
             <RegistrationLinkButton url={registerUrl} />
-            <NewAppointmentSheet services={services} physicians={physicians} selfBookUrl={selfBookUrl} />
+            <NewAppointmentSheet
+              services={services}
+              physicians={physicians}
+              selfBookUrl={selfBookUrl}
+              onlineBookingPaused={onlineBookingPaused}
+            />
           </>
         }
       />
@@ -521,6 +528,29 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
           whenever the subtitle's rendered length changes (drmed-staff-ui
           skill, §4a rule 2). Neither of these varies the subtitle, so both
           are safe here regardless. */}
+      {onlineBookingPaused ? (
+        <div
+          role="status"
+          className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+        >
+          <span className="font-semibold">Online booking is paused.</span>{" "}
+          Patients who try to book on the website or in the portal are asked to
+          call, text, or message reception — book them here with
+          &ldquo;+ New appointment&rdquo;.
+          {session.role === "admin" ? (
+            <>
+              {" "}
+              <Link
+                href="/staff/admin/settings/online-booking"
+                className="font-semibold underline hover:no-underline"
+              >
+                Change this setting
+              </Link>
+            </>
+          ) : null}
+        </div>
+      ) : null}
+
       <div className="mb-3 flex flex-wrap items-center gap-3">
         <AppointmentsSearchInput initialQuery={query} />
         {isFlatView ? (

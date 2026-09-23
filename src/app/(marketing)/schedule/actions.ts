@@ -22,6 +22,8 @@ import { validateLabRequestGate, parseIntakePreference } from "@/lib/appointment
 import { sendMetaCapiEvent } from "@/lib/analytics/meta-capi";
 import { readAttributionCookie } from "@/lib/analytics/attribution-server";
 import { SITE } from "@/lib/marketing/site";
+import { getOnlineBookingStatus } from "@/lib/booking/online-booking";
+import { BOOKING_PAUSED_ERROR } from "@/lib/booking/online-booking-copy";
 
 export type BookingResult =
   | {
@@ -203,6 +205,15 @@ async function maybeSubscribe(admin: AdminClient, email: string, ipAddress: stri
 export async function submitBookingAction(_prev: BookingResult | null, formData: FormData): Promise<BookingResult> {
   if ((formData.get("website") ?? "") !== "") {
     return HONEYPOT_OK;
+  }
+
+  // Online booking paused by an admin (booking_settings, 0153). The pages stop
+  // rendering the form, but a tab opened before the switch was flipped can
+  // still submit — so the action is the real gate, for /schedule and
+  // /portal/book alike. Checked before the rate limit so a refused attempt
+  // does not spend the visitor's budget.
+  if ((await getOnlineBookingStatus()).paused) {
+    return { ok: false, error: BOOKING_PAUSED_ERROR };
   }
 
   const { ip: requestIp, ua: userAgent } = await ipAndAgent();

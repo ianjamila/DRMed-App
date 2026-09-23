@@ -18,7 +18,7 @@ Key reference artifacts:
 - `IMPLEMENTATION_PLAN.md` — original phase plan (historical; cross-check before relying on it)
 - `README.md` — operational setup
 - `.env.example` — env-var inventory
-- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.5, 16 Sep 2026): every
+- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.6, 23 Sep 2026): every
   screen, label and blocked-message the app shows, checked against the code. Update it in the
   PR that changes a flow it describes.
 - `docs/superpowers/specs/` and `docs/superpowers/audits/` — design specs and audits for
@@ -28,8 +28,9 @@ Key reference artifacts:
 Migration ledger: **prod head = 0152** (2026-09-16), applied through the linked CLI.
 **0151** (`rls_initplan_and_policy_consolidation`, #192) is also applied and verified:
 159 public policies, zero unwrapped helper calls, and no unexpected policyless tables.
-The linked CLI confirms no pending migrations. **Next unused
-number: 0153**, subject to checking open branches again.
+The linked CLI confirms no pending migrations. **0153** (`booking_settings`, the online-booking
+pause switch) is in flight on `feat/pause-online-bookings` and must be pushed before its PR
+merges. **Next unused number: 0154**, subject to checking open branches again.
 `ls supabase/migrations | tail -3` is NOT enough to pick the next number — it only sees your
 own worktree, and on 2026-09-15 two branches claimed 0147 (and P0050) the same afternoon.
 Check the open branches too:

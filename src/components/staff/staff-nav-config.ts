@@ -554,6 +554,12 @@ export const STAFF_NAV: StaffNavSection[] = [
             roles: ["admin"],
           },
           {
+            href: "/staff/admin/settings/online-booking",
+            label: ROUTE_NAME["/staff/admin/settings/online-booking"],
+            description: "Pause or resume patient self-booking on the website and in the patient portal. While paused, patients see a notice to call, text, or message reception instead; reception can still book them from Appointments. Add an optional note, such as when booking will be back.",
+            roles: ["admin"],
+          },
+          {
             href: "/staff/admin/import-patients",
             label: ROUTE_NAME["/staff/admin/import-patients"],
             description: "Bulk-import patients from a CSV file — used during initial setup or when migrating from another system. Reads name, DOB, phone, email columns and creates one patient record per row.",
