@@ -24,6 +24,7 @@ import { ROUTE_NAME } from "@/lib/staff/route-names";
 import { CONTACT_MESSAGE_STATUS_LABEL, contactMessageStatusLabel } from "@/lib/contact-messages/labels";
 import { attributionCampaignLabel } from "@/lib/appointments/source";
 import type { Attribution } from "@/lib/analytics/attribution";
+import { messagePreview } from "@/lib/contact-messages/preview";
 
 export const metadata = {
   title: ROUTE_NAME["/staff/messages"],
@@ -74,13 +75,6 @@ interface MessageRow {
   kind: string;
   created_at: string;
   attribution: unknown;
-}
-
-/** First ~100 characters of the message, whitespace collapsed to single
- * spaces so a multi-line message doesn't blow out the row height. */
-function snippet(text: string, max = 100): string {
-  const collapsed = text.replace(/\s+/g, " ").trim();
-  return collapsed.length > max ? `${collapsed.slice(0, max).trimEnd()}…` : collapsed;
 }
 
 interface SearchProps {
@@ -196,7 +190,7 @@ export default async function MessagesPage({ searchParams }: SearchProps) {
     <div className="px-4 py-8 sm:px-6 lg:px-8">
       <PageHeader
         title={ROUTE_NAME["/staff/messages"]}
-        subtitle="Messages sent through the website's Contact form — reply by phone, text or email, then keep the status up to date."
+        subtitle="Messages visitors send from the contact form on drmed.ph — the Contact page and the “Send us a message” section at the bottom of the home page. Reply by phone, text or email, then keep the status up to date."
       />
 
       <nav className={sectionTabsNavClass} aria-label="Message status filter">
@@ -310,8 +304,8 @@ export default async function MessagesPage({ searchParams }: SearchProps) {
                   <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
                     {r.subject ?? "—"}
                   </td>
-                  <td className="px-4 py-3 max-w-xs text-[color:var(--color-brand-text-mid)]">
-                    {snippet(r.message)}
+                  <td className="px-4 py-3 min-w-72 max-w-md text-[color:var(--color-brand-text-mid)]">
+                    <MessageCell id={r.id} message={r.message} />
                   </td>
                   <td className="px-4 py-3">
                     <span
@@ -353,5 +347,31 @@ export default async function MessagesPage({ searchParams }: SearchProps) {
         noun="message"
       />
     </div>
+  );
+}
+
+/** The Message column: the whole message when it is short; otherwise a
+ * one-line preview that expands in place to the full text, so reception can
+ * read every message without leaving the list. */
+function MessageCell({ id, message }: { id: string; message: string }) {
+  const preview = messagePreview(message);
+  if (!preview.truncated) return <>{preview.text}</>;
+  return (
+    <details className="group">
+      <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+        <span className="group-open:hidden">{preview.text}</span>
+        <span className="mt-1 block text-xs font-semibold text-[color:var(--color-brand-cyan)] hover:underline">
+          <span className="group-open:hidden">Show full message</span>
+          <span className="hidden group-open:inline">Hide full message</span>
+        </span>
+      </summary>
+      <p className="mt-2 whitespace-pre-wrap [overflow-wrap:anywhere] leading-relaxed">{message}</p>
+      <Link
+        href={`${BASE_PATH}/${id}`}
+        className="mt-2 inline-block text-xs font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
+      >
+        Open to reply or book →
+      </Link>
+    </details>
   );
 }

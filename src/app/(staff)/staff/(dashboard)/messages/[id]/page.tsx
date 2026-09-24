@@ -173,7 +173,7 @@ export default async function MessageDetailPage({ params }: Props) {
                 {message.subject}
               </p>
             ) : null}
-            <p className="whitespace-pre-wrap text-sm leading-relaxed text-[color:var(--color-brand-text-mid)]">
+            <p className="whitespace-pre-wrap [overflow-wrap:anywhere] text-sm leading-relaxed text-[color:var(--color-brand-text-mid)]">
               {message.message}
             </p>
           </Panel>
@@ -259,7 +259,7 @@ export default async function MessageDetailPage({ params }: Props) {
                         <span className="font-semibold">{REPLY_OUTCOME_LABEL[replyOutcome]}</span>
                         {r.outcome_detail ? ` (${r.outcome_detail})` : ""}
                       </p>
-                      <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-[color:var(--color-brand-text-mid)]">
+                      <p className="mt-1 whitespace-pre-wrap [overflow-wrap:anywhere] text-sm leading-relaxed text-[color:var(--color-brand-text-mid)]">
                         {r.body}
                       </p>
                     </li>
