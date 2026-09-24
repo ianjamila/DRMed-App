@@ -1,0 +1,242 @@
+/**
+ * Pure aggregation for the Booking Sources report (admin Marketing →
+ * Booking Sources, `/staff/marketing/sources`). Given the appointment ROWS
+ * and website-message ROWS for a chosen period — already windowed with
+ * `manilaRangeUtc` and fetched with `fetchAllRows` by the page — this folds
+ * appointment rows into booking GROUPS, classifies each group active vs.
+ * cancelled/no-show, and tallies both bookings and website messages by
+ * source / ad campaign. No `server-only`, no DB — vitest-tested in
+ * `booking-sources.test.ts`.
+ */
+import { parseAttributionCookie, type Attribution } from "@/lib/analytics/attribution";
+import {
+  APPOINTMENT_SOURCES,
+  APPOINTMENT_SOURCE_LABEL,
+  SOURCE_NOT_RECORDED_LABEL,
+  attributionCampaignLabel,
+  isAppointmentSource,
+  type AppointmentSource,
+} from "@/lib/appointments/source";
+import {
+  CONTACT_MESSAGE_KINDS,
+  CONTACT_MESSAGE_KIND_LABEL,
+  CONTACT_MESSAGE_STATUSES,
+  CONTACT_MESSAGE_STATUS_LABEL,
+  isContactMessageKind,
+  isContactMessageStatus,
+  type ContactMessageKind,
+  type ContactMessageStatus,
+} from "@/lib/contact-messages/labels";
+
+// The label used whenever an attribution has no usable UTM campaign/source/
+// medium (organic traffic, or a booking with no attribution at all — every
+// staff-made booking not linked to a message).
+export const NO_CAMPAIGN_LABEL = "No ad tag (direct / organic)";
+
+// Appointment statuses that mean the booking did not happen. A booking
+// GROUP (one or more appointment rows sharing a booking_group_id) counts as
+// cancelled/no-show only when EVERY row in it does — a partially-cancelled
+// multi-service group still counts as an active booking, same as the
+// appointments list's own grouping never splits a group across sections.
+const CANCELLED_OR_NO_SHOW = new Set(["cancelled", "no_show"]);
+
+export interface AppointmentSourceRow {
+  id: string;
+  booking_group_id: string | null;
+  source: string | null;
+  attribution: unknown;
+  status: string;
+  created_at: string;
+}
+
+export interface ContactMessageSourceRow {
+  id: string;
+  kind: string;
+  status: string;
+  attribution: unknown;
+  created_at: string;
+}
+
+// Round-trips the stored jsonb through the cookie parser (same as
+// contact-messages/booking-link.ts's `toAttribution`) so a malformed value
+// degrades to null rather than throwing.
+function toAttribution(value: unknown): Attribution | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return parseAttributionCookie(JSON.stringify(value));
+}
+
+export interface BookingGroup {
+  id: string;
+  source: AppointmentSource | null;
+  attribution: Attribution | null;
+  active: boolean;
+}
+
+/**
+ * Fold appointment ROWS into booking GROUPS. Keyed by `booking_group_id`,
+ * falling back to the row's own id for the rare row with none — mirrors
+ * `appointments/page.tsx`'s `groupRows`. A group's source/attribution is its
+ * FIRST row's: `createAppointmentGroup` / the slot-guarded RPC stamp every
+ * row of a group identically, so any row would do.
+ */
+export function groupBookings(rows: readonly AppointmentSourceRow[]): BookingGroup[] {
+  const order: string[] = [];
+  const byKey = new Map<
+    string,
+    { source: AppointmentSource | null; attribution: Attribution | null; statuses: string[] }
+  >();
+  for (const r of rows) {
+    const key = r.booking_group_id ?? r.id;
+    let g = byKey.get(key);
+    if (!g) {
+      g = {
+        source: isAppointmentSource(r.source) ? r.source : null,
+        attribution: toAttribution(r.attribution),
+        statuses: [],
+      };
+      byKey.set(key, g);
+      order.push(key);
+    }
+    g.statuses.push(r.status);
+  }
+  return order.map((key) => {
+    const g = byKey.get(key)!;
+    return {
+      id: key,
+      source: g.source,
+      attribution: g.attribution,
+      active: !g.statuses.every((s) => CANCELLED_OR_NO_SHOW.has(s)),
+    };
+  });
+}
+
+export interface SourceCount {
+  source: AppointmentSource | null;
+  label: string;
+  count: number;
+}
+
+export interface CampaignCount {
+  label: string;
+  count: number;
+}
+
+export interface BookingSourceStats {
+  totalBookingGroups: number;
+  activeBookingGroups: number;
+  // Counted separately from the tables below, not split by source — the
+  // report's own "cancelled/no-show" figure rather than an unexplained gap
+  // between the by-source counts and the group total.
+  cancelledOrNoShowBookingGroups: number;
+  // All APPOINTMENT_SOURCES + "Not recorded", zero rows kept so the table
+  // is stable across periods. Active groups only.
+  bySource: SourceCount[];
+  // Active groups only, sorted by count desc then label for a readable
+  // ranking; ties broken alphabetically so the order is deterministic.
+  byCampaign: CampaignCount[];
+}
+
+function sortByCountDesc(a: CampaignCount, b: CampaignCount): number {
+  return b.count - a.count || a.label.localeCompare(b.label);
+}
+
+export function summarizeBookings(rows: readonly AppointmentSourceRow[]): BookingSourceStats {
+  const groups = groupBookings(rows);
+  const active = groups.filter((g) => g.active);
+  const cancelledOrNoShow = groups.length - active.length;
+
+  const sourceCounts = new Map<AppointmentSource | null, number>();
+  for (const s of APPOINTMENT_SOURCES) sourceCounts.set(s, 0);
+  sourceCounts.set(null, 0);
+  for (const g of active) sourceCounts.set(g.source, (sourceCounts.get(g.source) ?? 0) + 1);
+
+  const bySource: SourceCount[] = [
+    ...APPOINTMENT_SOURCES.map((s) => ({
+      source: s,
+      label: APPOINTMENT_SOURCE_LABEL[s],
+      count: sourceCounts.get(s) ?? 0,
+    })),
+    { source: null, label: SOURCE_NOT_RECORDED_LABEL, count: sourceCounts.get(null) ?? 0 },
+  ];
+
+  const campaignCounts = new Map<string, number>();
+  for (const g of active) {
+    const label = attributionCampaignLabel(g.attribution) ?? NO_CAMPAIGN_LABEL;
+    campaignCounts.set(label, (campaignCounts.get(label) ?? 0) + 1);
+  }
+  const byCampaign: CampaignCount[] = Array.from(campaignCounts.entries())
+    .map(([label, count]) => ({ label, count }))
+    .sort(sortByCountDesc);
+
+  return {
+    totalBookingGroups: groups.length,
+    activeBookingGroups: active.length,
+    cancelledOrNoShowBookingGroups: cancelledOrNoShow,
+    bySource,
+    byCampaign,
+  };
+}
+
+export interface MessageKindCount {
+  kind: ContactMessageKind;
+  label: string;
+  count: number;
+}
+
+export interface MessageStatusCount {
+  status: ContactMessageStatus;
+  label: string;
+  count: number;
+}
+
+export interface WebsiteMessageStats {
+  total: number;
+  byKind: MessageKindCount[];
+  byStatus: MessageStatusCount[];
+  bookedCount: number;
+  // booked / total. Never a division by zero — null (not 0 or NaN) when
+  // there were no messages in the period at all, so the page can say "no
+  // messages this period" instead of a misleading 0%.
+  bookedRate: number | null;
+  byCampaign: CampaignCount[];
+}
+
+export function summarizeMessages(rows: readonly ContactMessageSourceRow[]): WebsiteMessageStats {
+  const total = rows.length;
+
+  const kindCounts = new Map<ContactMessageKind, number>();
+  for (const k of CONTACT_MESSAGE_KINDS) kindCounts.set(k, 0);
+  const statusCounts = new Map<ContactMessageStatus, number>();
+  for (const s of CONTACT_MESSAGE_STATUSES) statusCounts.set(s, 0);
+  const campaignCounts = new Map<string, number>();
+
+  for (const r of rows) {
+    const kind = isContactMessageKind(r.kind) ? r.kind : "general";
+    kindCounts.set(kind, (kindCounts.get(kind) ?? 0) + 1);
+    const status = isContactMessageStatus(r.status) ? r.status : "new";
+    statusCounts.set(status, (statusCounts.get(status) ?? 0) + 1);
+    const label = attributionCampaignLabel(toAttribution(r.attribution)) ?? NO_CAMPAIGN_LABEL;
+    campaignCounts.set(label, (campaignCounts.get(label) ?? 0) + 1);
+  }
+
+  const bookedCount = statusCounts.get("booked") ?? 0;
+
+  return {
+    total,
+    byKind: CONTACT_MESSAGE_KINDS.map((k) => ({
+      kind: k,
+      label: CONTACT_MESSAGE_KIND_LABEL[k],
+      count: kindCounts.get(k) ?? 0,
+    })),
+    byStatus: CONTACT_MESSAGE_STATUSES.map((s) => ({
+      status: s,
+      label: CONTACT_MESSAGE_STATUS_LABEL[s],
+      count: statusCounts.get(s) ?? 0,
+    })),
+    bookedCount,
+    bookedRate: total > 0 ? bookedCount / total : null,
+    byCampaign: Array.from(campaignCounts.entries())
+      .map(([label, count]) => ({ label, count }))
+      .sort(sortByCountDesc),
+  };
+}

@@ -16,6 +16,8 @@ const QUOTE_ROLES: ReadonlyArray<StaffSession["role"]> = [
 interface Props {
   session: StaffSession;
   children: React.ReactNode;
+  // Sidebar nav count badges keyed by item href (see StaffNav/StaffMobileNavTrigger).
+  badges?: Record<string, number>;
 }
 
 const ROLE_LABEL: Record<StaffSession["role"], string> = {
@@ -26,7 +28,7 @@ const ROLE_LABEL: Record<StaffSession["role"], string> = {
   admin: "Admin",
 };
 
-export function StaffShell({ session, children }: Props) {
+export function StaffShell({ session, children, badges }: Props) {
   return (
     <div className="flex min-h-screen bg-[color:var(--color-brand-bg)] print:bg-white">
       <StaffQuoteShortcut
@@ -45,7 +47,7 @@ export function StaffShell({ session, children }: Props) {
         </div>
 
         <div className="flex-1 overflow-y-auto px-3 pb-6">
-          <StaffNav role={session.role} />
+          <StaffNav role={session.role} badges={badges} />
         </div>
 
         <div className="border-t border-[color:var(--color-brand-bg-mid)] p-4">
@@ -76,6 +78,7 @@ export function StaffShell({ session, children }: Props) {
               role={session.role}
               email={session.email}
               fullName={session.full_name}
+              badges={badges}
             />
             <Link
               href="/staff"

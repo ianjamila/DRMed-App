@@ -26,10 +26,11 @@ const { StaffMobileNavTrigger } = await import("./staff-mobile-nav-trigger");
 function render(
   role: Parameters<typeof StaffMobileNavTrigger>[0]["role"],
   path: string,
+  badges?: Record<string, number>,
 ) {
   pathname.current = path;
   return renderToStaticMarkup(
-    <StaffMobileNavTrigger role={role} email="a@b.ph" fullName="Test Staff" />,
+    <StaffMobileNavTrigger role={role} email="a@b.ph" fullName="Test Staff" badges={badges} />,
   );
 }
 
@@ -106,21 +107,39 @@ function ariaCurrentHrefs(html: string): string[] {
     .map((m) => m[0].match(/href="([^"]*)"/)![1]);
 }
 
-describe("mobile drawer — Inquiries & Bookings subgroup", () => {
+describe("mobile drawer — Messages & Bookings subgroup", () => {
   it("is a collapsed <details> under Front Desk for reception", () => {
     const html = render("reception", "/staff");
-    expect(html).toContain("Inquiries &amp; Bookings");
+    expect(html).toContain("Messages &amp; Bookings");
     const tag = detailsTagContaining(html, "/staff/appointments");
     expect(tag).not.toBeNull();
     expect(isOpen(tag)).toBe(false);
     expect(html.indexOf('href="/staff/appointments"')).toBeLessThan(
-      html.indexOf('href="/staff/inquiries"'),
+      html.indexOf('href="/staff/messages"'),
     );
   });
 
-  it("auto-expands when reception is on Inquiries", () => {
-    const html = render("reception", "/staff/inquiries");
-    expect(isOpen(detailsTagContaining(html, "/staff/inquiries"))).toBe(true);
+  it("auto-expands when reception is on Messages", () => {
+    const html = render("reception", "/staff/messages");
+    expect(isOpen(detailsTagContaining(html, "/staff/messages"))).toBe(true);
+  });
+});
+
+describe("mobile drawer — nav count badges", () => {
+  it("renders the pill with the count for an item with a badge", () => {
+    const html = render("reception", "/staff", { "/staff/messages": 3 });
+    expect(html).toMatch(/<span aria-hidden="true">3<\/span>/);
+    expect(html).toContain("3 new");
+  });
+
+  it("renders no pill when there is no badges map", () => {
+    const html = render("reception", "/staff");
+    expect(html).not.toMatch(/aria-hidden="true">\d/);
+  });
+
+  it("caps the display at 99+ for a large count", () => {
+    const html = render("reception", "/staff", { "/staff/messages": 250 });
+    expect(html).toMatch(/<span aria-hidden="true">99\+<\/span>/);
   });
 });
 

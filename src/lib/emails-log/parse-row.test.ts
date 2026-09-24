@@ -126,6 +126,47 @@ describe("parseEmailLogRow", () => {
     expect(e.recipientEmail).toBeNull();
   });
 
+  it("contact_message.alert_sent — bulk, detail from source, counts carried, no patient/addresses", () => {
+    const e = parseEmailLogRow(
+      row({
+        action: "contact_message.alert_sent",
+        patient_id: null,
+        resource_type: "contact_message",
+        resource_id: "m1",
+        metadata: { recipients: 2, sent: 2, failed: 0, source: "staff" },
+      }),
+      null,
+    );
+    expect(e.type).toBe("contact_alert");
+    expect(e.typeLabel).toBe("Website message alert");
+    expect(e.status).toBe("bulk");
+    expect(e.detail).toBe("staff recipients");
+    expect(e.bulk).toEqual({ attempted: 2, delivered: 2, failed: 0 });
+    expect(e.recipientName).toBeNull();
+    expect(e.recipientEmail).toBeNull();
+  });
+
+  it("contact_message.alert_sent — skipped reason surfaces as detail", () => {
+    const e = parseEmailLogRow(
+      row({
+        action: "contact_message.alert_sent",
+        patient_id: null,
+        resource_type: "contact_message",
+        resource_id: "m2",
+        metadata: {
+          recipients: 0,
+          sent: 0,
+          failed: 0,
+          source: "staff",
+          skipped: "no active reception/admin staff with an email",
+        },
+      }),
+      null,
+    );
+    expect(e.detail).toBe("no active reception/admin staff with an email");
+    expect(e.bulk).toEqual({ attempted: 0, delivered: 0, failed: 0 });
+  });
+
   it("patient.self_registered — registration_new, sent when email captured", () => {
     const e = parseEmailLogRow(
       row({

@@ -1,19 +1,40 @@
 import { redirect } from "next/navigation";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
-import { QuoteWorkbench, type QuoteService } from "./quote-workbench";
+import { loadMessageForBooking } from "@/lib/contact-messages/booking-link";
+import { firstNameOf } from "@/lib/contact-messages/first-name";
+import { QuoteWorkbench, type QuoteService, type QuoteMessageContext } from "./quote-workbench";
 
 export const metadata = {
   title: "Quick Quote",
 };
 
-export default async function QuotePage() {
+interface Props {
+  searchParams: Promise<{ message?: string }>;
+}
+
+export default async function QuotePage({ searchParams }: Props) {
   const session = await requireActiveStaff();
   if (!["reception", "medtech", "admin"].includes(session.role)) {
     redirect("/staff");
   }
 
   const supabase = await createClient();
+
+  // `?message=<id>` prefills the quote for a website-message sender. Only
+  // reception/admin can read contact_messages (0154 RLS) — a medtech opening
+  // this link (e.g. forwarded by reception) gets the plain quote page
+  // instead of an auth error, since the param is just a convenience, not a
+  // requirement to use this page.
+  const sp = await searchParams;
+  let messageContext: QuoteMessageContext | null = null;
+  if (sp.message && (session.role === "reception" || session.role === "admin")) {
+    const message = await loadMessageForBooking(supabase, sp.message);
+    if (message) {
+      messageContext = { messageId: message.id, firstName: firstNameOf(message.name) };
+    }
+  }
+
   const { data } = await supabase
     .from("services")
     .select(
@@ -47,7 +68,7 @@ export default async function QuotePage() {
         </p>
       </header>
 
-      <QuoteWorkbench services={services} />
+      <QuoteWorkbench services={services} messageContext={messageContext} />
     </div>
   );
 }

@@ -5,7 +5,13 @@ import { createClient } from "@/lib/supabase/server";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { RealtimeRefresher, type Subscription } from "@/components/staff/realtime-refresher";
 import { TransitionButtons } from "./transition-buttons";
-import { NewAppointmentSheet, type ServiceOption, type PhysicianOption } from "./new-appointment-sheet";
+import {
+  NewAppointmentSheet,
+  type ServiceOption,
+  type PhysicianOption,
+  type NewAppointmentPrefill,
+} from "./new-appointment-sheet";
+import { SourceFilterSelect } from "./source-filter-select";
 import { RegistrationLinkButton } from "@/components/staff/registration-link-button";
 import { PageHeader } from "@/components/staff/page-header";
 import { Panel } from "@/components/ui/panel";
@@ -27,6 +33,8 @@ import {
   type FlatSortColumn,
 } from "./flat-view";
 import { appointmentStatusLabel } from "@/lib/appointments/labels";
+import { isAppointmentSource, appointmentSourceLabel } from "@/lib/appointments/source";
+import { loadMessageForBooking } from "@/lib/contact-messages/booking-link";
 import { fetchAllRows, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 import { matchesAllTokens } from "@/lib/patients/search";
 import { manilaDateTime, todayManilaISODate } from "@/lib/dates/manila";
@@ -84,6 +92,7 @@ interface ApptRow {
   physician_name: string | null;
   booking_group_id: string | null;
   home_service_requested: boolean;
+  source: string | null;
 }
 
 interface ApptGroup {
@@ -97,7 +106,7 @@ interface ApptGroup {
 
 const APPT_SELECT = `
   id, scheduled_at, created_at, status, notes,
-  walk_in_name, walk_in_phone, booking_group_id, home_service_requested,
+  walk_in_name, walk_in_phone, booking_group_id, home_service_requested, source,
   patients ( id, drm_id, first_name, last_name, phone ),
   services ( name, code, kind ),
   physicians ( full_name )
@@ -115,6 +124,7 @@ interface ApptSourceRow {
   walk_in_phone: string | null;
   booking_group_id: string | null;
   home_service_requested: boolean;
+  source: string | null;
   patients?:
     | {
         id: string;
@@ -163,6 +173,7 @@ function rowFrom(a: ApptSourceRow): ApptRow {
     physician_name: ph?.full_name ?? null,
     booking_group_id: a.booking_group_id,
     home_service_requested: a.home_service_requested,
+    source: a.source,
   };
 }
 
@@ -189,6 +200,14 @@ interface LoadedAppts {
   truncated: boolean;
 }
 
+// `?source=` filter, resolved once in the page (`validSource`) and threaded
+// into every loader below so it reduces the DB query itself — not just the
+// in-memory row set — which keeps `truncated` and the flat view's pager
+// honest. `"not_recorded"` matches the NULL rows booked before 0154 asked;
+// any other AppointmentSource value matches exactly; `null` (no filter, or
+// an unrecognised param) applies no filter at all.
+type SourceFilter = "not_recorded" | string | null;
+
 // N14: this was a bare `.select()` with `.order()` and no `.range()` — a
 // plain PostgREST select silently caps at 1000 rows, the exact defect the
 // comments on loadOpenWalkIns/loadPendingCallback below say was already
@@ -201,25 +220,30 @@ interface LoadedAppts {
 async function loadScheduledRange(
   fromIso: string,
   toIso: string,
+  sourceFilter: SourceFilter,
 ): Promise<LoadedAppts> {
   const supabase = await createClient();
   const { rows, truncated } = await fetchAllRows<ApptSourceRow>(
-    (rFrom, rTo) =>
-      supabase
+    (rFrom, rTo) => {
+      let query = supabase
         .from("appointments")
         .select(APPT_SELECT)
         .gte("scheduled_at", fromIso)
-        .lt("scheduled_at", toIso)
+        .lt("scheduled_at", toIso);
+      if (sourceFilter === "not_recorded") query = query.is("source", null);
+      else if (sourceFilter) query = query.eq("source", sourceFilter);
+      return query
         .order("scheduled_at", { ascending: true })
         .order("id", { ascending: true })
         .range(rFrom, rTo)
-        .returns<ApptSourceRow[]>(),
+        .returns<ApptSourceRow[]>();
+    },
     REPORT_EXPORT_MAX_ROWS,
   );
   return { rows: rows.map(rowFrom), truncated };
 }
 
-async function loadOpenWalkIns(): Promise<LoadedAppts> {
+async function loadOpenWalkIns(sourceFilter: SourceFilter): Promise<LoadedAppts> {
   // Confirmed OR arrived appointments with no specific scheduled_at — the
   // diagnostic-package / untimed-lab-request walk-in path (every public
   // lab-request booking has scheduled_at = null). Loaded by OPEN STATUS,
@@ -243,35 +267,43 @@ async function loadOpenWalkIns(): Promise<LoadedAppts> {
   // unreachable, for a live "still open" set) case where that ceiling bites.
   const supabase = await createClient();
   const { rows, truncated } = await fetchAllRows<ApptSourceRow>(
-    (rFrom, rTo) =>
-      supabase
+    (rFrom, rTo) => {
+      let query = supabase
         .from("appointments")
         .select(APPT_SELECT)
         .is("scheduled_at", null)
-        .in("status", ["confirmed", "arrived"])
+        .in("status", ["confirmed", "arrived"]);
+      if (sourceFilter === "not_recorded") query = query.is("source", null);
+      else if (sourceFilter) query = query.eq("source", sourceFilter);
+      return query
         .order("created_at", { ascending: true })
         .order("id", { ascending: true })
         .range(rFrom, rTo)
-        .returns<ApptSourceRow[]>(),
+        .returns<ApptSourceRow[]>();
+    },
     REPORT_EXPORT_MAX_ROWS,
   );
   return { rows: rows.map(rowFrom), truncated };
 }
 
-async function loadPendingCallback(): Promise<LoadedAppts> {
+async function loadPendingCallback(sourceFilter: SourceFilter): Promise<LoadedAppts> {
   // N13: same paging rationale as loadOpenWalkIns above — oldest first, the
   // shared report pager instead of a row-count cap.
   const supabase = await createClient();
   const { rows, truncated } = await fetchAllRows<ApptSourceRow>(
-    (rFrom, rTo) =>
-      supabase
+    (rFrom, rTo) => {
+      let query = supabase
         .from("appointments")
         .select(APPT_SELECT)
-        .eq("status", "pending_callback")
+        .eq("status", "pending_callback");
+      if (sourceFilter === "not_recorded") query = query.is("source", null);
+      else if (sourceFilter) query = query.eq("source", sourceFilter);
+      return query
         .order("created_at", { ascending: true })
         .order("id", { ascending: true })
         .range(rFrom, rTo)
-        .returns<ApptSourceRow[]>(),
+        .returns<ApptSourceRow[]>();
+    },
     REPORT_EXPORT_MAX_ROWS,
   );
   return { rows: rows.map(rowFrom), truncated };
@@ -321,6 +353,10 @@ interface SearchProps {
     dir?: string;
     page?: string;
     size?: string;
+    source?: string;
+    // Set by the Website Messages inbox's "Book appointment" button — opens
+    // the slide-over pre-filled for that message (see `prefill` below).
+    from_message?: string;
   }>;
 }
 
@@ -346,7 +382,14 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
   // column/direction.
   const query = (sp.q ?? "").trim();
   const hasExplicitSort = typeof sp.sort === "string" && sp.sort.length > 0;
-  const isFlatView = query.length > 0 || hasExplicitSort;
+  // A recognised `?source=` value ALSO forces flat mode — same rule as `q`/
+  // `sort`: filtering across all four sections only reads sensibly once
+  // they're merged into one table.
+  const rawSource = typeof sp.source === "string" ? sp.source : "";
+  const validSource: SourceFilter =
+    rawSource === "not_recorded" || isAppointmentSource(rawSource) ? rawSource : null;
+  const hasSourceFilter = Boolean(validSource);
+  const isFlatView = query.length > 0 || hasExplicitSort || hasSourceFilter;
   const sort = parseSort(sp.sort, sp.dir, FLAT_SORTABLE_COLUMNS, FLAT_DEFAULT_SORT);
   const size = parsePageSize(sp.size);
   const page = parsePage(sp.page);
@@ -361,10 +404,10 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
   ).toISOString();
 
   const [todayResult, walkInsResult, upcomingResult, pendingResult] = await Promise.all([
-    loadScheduledRange(startOfTodayUtc, startOfTomorrowUtc),
-    loadOpenWalkIns(),
-    loadScheduledRange(startOfTomorrowUtc, endOfRangeUtc),
-    loadPendingCallback(),
+    loadScheduledRange(startOfTodayUtc, startOfTomorrowUtc, validSource),
+    loadOpenWalkIns(validSource),
+    loadScheduledRange(startOfTomorrowUtc, endOfRangeUtc, validSource),
+    loadPendingCallback(validSource),
   ]);
   const todayScheduled = todayResult.rows;
   const openWalkIns = walkInsResult.rows;
@@ -384,6 +427,30 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
   const services: ServiceOption[] = serviceRows ?? [];
   const onlineBookingPaused = (await getOnlineBookingStatus()).paused;
   const physicians: PhysicianOption[] = physicianRows ?? [];
+
+  // Website Messages inbox → "Book appointment" (role already gated
+  // reception/admin above, matching contact_messages' RLS policy).
+  const fromMessageId =
+    typeof sp.from_message === "string" && sp.from_message.length > 0 ? sp.from_message : null;
+  let prefill: NewAppointmentPrefill | undefined;
+  let alreadyBookedMessageId: string | null = null;
+  if (fromMessageId) {
+    const msg = await loadMessageForBooking(supabase, fromMessageId);
+    if (msg) {
+      if (msg.status === "booked") {
+        alreadyBookedMessageId = msg.id;
+      } else {
+        prefill = {
+          contactMessageId: msg.id,
+          senderName: msg.name,
+          walkInName: msg.name,
+          walkInPhone: msg.phone ?? "",
+          source: "website_message",
+          notes: `From website message: ${msg.subject ?? "General enquiry"}`,
+        };
+      }
+    }
+  }
 
   const host = (await headers()).get("host") ?? "drmed.ph";
   const proto = host.startsWith("localhost") ? "http" : "https";
@@ -477,6 +544,7 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
     sort: isFlatView ? sort.key : null,
     dir: isFlatView ? sort.dir : null,
     size: isFlatView && size !== DEFAULT_PAGE_SIZE ? String(size) : null,
+    source: validSource,
   };
 
   const tabHref = (t: FilterType) =>
@@ -517,6 +585,7 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
               physicians={physicians}
               selfBookUrl={selfBookUrl}
               onlineBookingPaused={onlineBookingPaused}
+              prefill={prefill}
             />
           </>
         }
@@ -551,8 +620,25 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
         </div>
       ) : null}
 
+      {alreadyBookedMessageId ? (
+        <div
+          role="status"
+          className="mb-4 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900"
+        >
+          That website message was already booked.{" "}
+          <Link
+            href={`/staff/messages/${alreadyBookedMessageId}`}
+            className="font-semibold underline hover:no-underline"
+          >
+            See the message and its appointment
+          </Link>
+          .
+        </div>
+      ) : null}
+
       <div className="mb-3 flex flex-wrap items-center gap-3">
         <AppointmentsSearchInput initialQuery={query} />
+        <SourceFilterSelect initialValue={validSource ?? ""} />
         {isFlatView ? (
           <Link
             href={exitFlatHref}
@@ -812,6 +898,7 @@ function FlatTable({
             />
             <PlainTh label="Services" />
             <SortableTh label="Status" href={sortHref("status")} state={ariaSortFor(sort, "status")} />
+            <SortableTh label="Source" href={sortHref("source")} state={ariaSortFor(sort, "source")} />
             <PlainTh label="From" />
             <PlainTh label="Action" align="right" />
           </tr>
@@ -820,7 +907,7 @@ function FlatTable({
           {groups.length === 0 ? (
             <tr>
               <td
-                colSpan={7}
+                colSpan={8}
                 className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]"
               >
                 No appointments match.
@@ -947,15 +1034,29 @@ function GroupRow({
         >
           {appointmentStatusLabel(r.status)}
         </span>
+        {/* Grouped-view cards only — the flat view gets its own Source
+            column below, so this would just duplicate it there. NULL
+            (never asked) is left blank here to avoid noise; the flat
+            table's dedicated column still spells out "Not recorded". */}
+        {!bucket && r.source ? (
+          <p className="mt-1 text-[10px] text-[color:var(--color-brand-text-soft)]">
+            via {appointmentSourceLabel(r.source)}
+          </p>
+        ) : null}
       </td>
       {bucket ? (
-        <td className="px-4 py-3">
-          <span
-            className={`rounded-md px-2 py-0.5 text-xs font-semibold ${BUCKET_STYLE[bucket]}`}
-          >
-            {BUCKET_LABEL[bucket]}
-          </span>
-        </td>
+        <>
+          <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
+            {appointmentSourceLabel(r.source)}
+          </td>
+          <td className="px-4 py-3">
+            <span
+              className={`rounded-md px-2 py-0.5 text-xs font-semibold ${BUCKET_STYLE[bucket]}`}
+            >
+              {BUCKET_LABEL[bucket]}
+            </span>
+          </td>
+        </>
       ) : null}
       <td className="px-4 py-3 text-right">
         <TransitionButtons

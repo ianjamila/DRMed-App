@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { manilaSlotFor, isValidSlot } from "@/lib/validations/booking";
+import { STAFF_SELECTABLE_SOURCES } from "@/lib/appointments/source";
 
 // Tolerates "", null, undefined, or a real string (the staff action may omit
 // optional fields entirely, unlike the FormData public flow which sends "").
@@ -29,6 +30,25 @@ const relaxedScheduledAt = z
     }
     return d.toISOString();
   });
+
+// A plain string.refine (not z.enum) so the type predicate narrows to
+// AppointmentSource on parse while the client's raw select value (typed
+// `string`, may be "" before a choice is made) assigns straight into the
+// input shape with no cast — the server is what actually enforces this.
+function isStaffSelectableSource(v: unknown): v is (typeof STAFF_SELECTABLE_SOURCES)[number] {
+  return typeof v === "string" && (STAFF_SELECTABLE_SOURCES as readonly string[]).includes(v);
+}
+const staffSourceSchema = z
+  .union([z.string(), z.null(), z.undefined()])
+  .transform((v) => v ?? "")
+  .refine(isStaffSelectableSource, "Choose how they reached us.");
+
+// "" (never chosen) or a genuinely malformed value both collapse to
+// undefined — createStaffAppointmentAction only links a message when this is
+// a real uuid.
+const optionalMessageId = z
+  .union([z.string().uuid("Invalid message id."), z.literal(""), z.null(), z.undefined()])
+  .transform((v) => (v == null || v === "" ? undefined : v));
 
 const StaffPatientUnion = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("existing"), patient_id: z.string().uuid("Pick a patient.") }),
@@ -62,6 +82,13 @@ export const StaffBookingSchema = z
     notes: optionalText(2000),
     send_confirmation: z.boolean().default(true),
     override: z.boolean().default(false),
+    // How the patient reached us (0154) — required so every staff-made
+    // booking is countable in the Booking Sources report.
+    source: staffSourceSchema,
+    // Set when this booking was made from the Website Messages inbox's
+    // "Book appointment" button — createStaffAppointmentAction links the
+    // message to the resulting booking.
+    contact_message_id: optionalMessageId,
   })
   .superRefine((val, ctx) => {
     if (val.branch === "doctor_appointment") {

@@ -5,10 +5,14 @@ import { useId } from "react";
 import { Tooltip } from "@/components/ui/tooltip";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { NavBadge } from "./nav-badge";
 import {
   isItemActive,
   isSectionActive,
   isSubgroupActive,
+  itemBadgeCount,
+  sectionBadgeTotal,
+  subgroupBadgeTotal,
   visibleNavFor,
   type StaffNavItem,
   type StaffNavSection,
@@ -18,14 +22,19 @@ import {
 
 interface Props {
   role: StaffRole;
+  // Count badges keyed by item href (e.g. `{ "/staff/messages": 3 }`).
+  // Optional and additive — an item with no entry renders no badge.
+  badges?: Record<string, number>;
 }
 
 function NavLink({
   item,
   active,
+  badgeCount,
 }: {
   item: StaffNavItem;
   active: boolean;
+  badgeCount: number;
 }) {
   const descriptionId = useId();
   const hasDescription = Boolean(item.description);
@@ -45,7 +54,10 @@ function NavLink({
             : "text-[color:var(--color-brand-text-mid)] hover:bg-[color:var(--color-brand-bg)] hover:text-[color:var(--color-brand-navy)]",
         )}
       >
-        <span className="truncate">{item.label}</span>
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="truncate">{item.label}</span>
+          <NavBadge count={badgeCount} />
+        </span>
       </Link>
       {item.description ? <Tooltip content={item.description} label={`About ${item.label}`} descriptionId={descriptionId} /> : null}
     </div>
@@ -55,9 +67,11 @@ function NavLink({
 function Subgroup({
   group,
   pathname,
+  badges,
 }: {
   group: StaffNavSubgroup;
   pathname: string;
+  badges?: Record<string, number>;
 }) {
   // Auto-expand when the user is on a page inside this group. Keyed on
   // pathname so navigation between sub-pages keeps it open without
@@ -73,7 +87,10 @@ function Subgroup({
         className="flex cursor-pointer list-none items-center justify-between rounded-md px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)] hover:bg-[color:var(--color-brand-bg)] hover:text-[color:var(--color-brand-navy)]"
         aria-label={`Toggle ${group.heading}`}
       >
-        <span>{group.heading}</span>
+        <span className="flex items-center gap-2">
+          <span>{group.heading}</span>
+          <NavBadge count={subgroupBadgeTotal(group, badges)} />
+        </span>
         <svg
           aria-hidden="true"
           viewBox="0 0 12 12"
@@ -92,7 +109,11 @@ function Subgroup({
       <ul className="mt-1 flex flex-col gap-0.5 pl-2">
         {group.items.map((item) => (
           <li key={item.href}>
-            <NavLink item={item} active={isItemActive(item, pathname)} />
+            <NavLink
+              item={item}
+              active={isItemActive(item, pathname)}
+              badgeCount={itemBadgeCount(item, badges)}
+            />
           </li>
         ))}
       </ul>
@@ -106,9 +127,11 @@ function Subgroup({
 function SectionBody({
   section,
   pathname,
+  badges,
 }: {
   section: StaffNavSection;
   pathname: string;
+  badges?: Record<string, number>;
 }) {
   const hasItems = Boolean(section.items && section.items.length > 0);
   return (
@@ -117,7 +140,11 @@ function SectionBody({
         <ul className="flex flex-col gap-0.5">
           {section.items.map((item) => (
             <li key={item.href}>
-              <NavLink item={item} active={isItemActive(item, pathname)} />
+              <NavLink
+                item={item}
+                active={isItemActive(item, pathname)}
+                badgeCount={itemBadgeCount(item, badges)}
+              />
             </li>
           ))}
         </ul>
@@ -125,7 +152,7 @@ function SectionBody({
       {section.subgroups && section.subgroups.length > 0 ? (
         <div className={`flex flex-col gap-1 ${hasItems ? "mt-2" : ""}`}>
           {section.subgroups.map((group) => (
-            <Subgroup key={group.heading} group={group} pathname={pathname} />
+            <Subgroup key={group.heading} group={group} pathname={pathname} badges={badges} />
           ))}
         </div>
       ) : null}
@@ -140,9 +167,11 @@ function SectionBody({
 function CollapsibleSection({
   section,
   pathname,
+  badges,
 }: {
   section: StaffNavSection;
   pathname: string;
+  badges?: Record<string, number>;
 }) {
   const containsActive = isSectionActive(section, pathname);
   return (
@@ -155,7 +184,10 @@ function CollapsibleSection({
         className="flex cursor-pointer list-none items-center justify-between rounded-md px-3 pb-2 pt-0.5 text-[10px] font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)] hover:text-[color:var(--color-brand-navy)]"
         aria-label={`Toggle ${section.heading}`}
       >
-        <span>{section.heading}</span>
+        <span className="flex items-center gap-2">
+          <span>{section.heading}</span>
+          <NavBadge count={sectionBadgeTotal(section, badges)} />
+        </span>
         <svg
           aria-hidden="true"
           viewBox="0 0 12 12"
@@ -171,12 +203,12 @@ function CollapsibleSection({
           />
         </svg>
       </summary>
-      <SectionBody section={section} pathname={pathname} />
+      <SectionBody section={section} pathname={pathname} badges={badges} />
     </details>
   );
 }
 
-export function StaffNav({ role }: Props) {
+export function StaffNav({ role, badges }: Props) {
   const pathname = usePathname();
   const sections = visibleNavFor(role);
 
@@ -188,13 +220,14 @@ export function StaffNav({ role }: Props) {
             key={section.heading}
             section={section}
             pathname={pathname}
+            badges={badges}
           />
         ) : (
           <div key={section.heading}>
             <p className="px-3 pb-2 text-[10px] font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
               {section.heading}
             </p>
-            <SectionBody section={section} pathname={pathname} />
+            <SectionBody section={section} pathname={pathname} badges={badges} />
           </div>
         ),
       )}

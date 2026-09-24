@@ -93,7 +93,6 @@ const WIPE_TABLES: string[] = [
   "visits",
   "patients",
   // Marketing / inbound (operational, not config)
-  "inquiries",
   "contact_messages",
 ];
 

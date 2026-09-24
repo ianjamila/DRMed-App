@@ -10,6 +10,7 @@
  */
 
 import { appointmentStatusLabel } from "@/lib/appointments/labels";
+import { appointmentSourceLabel } from "@/lib/appointments/source";
 
 export interface FlatSortableRow {
   id: string;
@@ -21,6 +22,7 @@ export interface FlatSortableRow {
   patient_phone: string | null;
   walk_in_name: string | null;
   walk_in_phone: string | null;
+  source: string | null;
 }
 
 export interface FlatSortableGroup {
@@ -81,7 +83,7 @@ export function groupHaystack(g: FlatSortableGroup): string {
 // flat view runs, so there is nothing left to push down to the database —
 // but it still goes through `parseSort`'s allow-list in page.tsx for a
 // consistent, validated URL contract with every other staff list page.
-export const FLAT_SORTABLE_COLUMNS = ["created_at", "scheduled_at", "patient", "status"] as const;
+export const FLAT_SORTABLE_COLUMNS = ["created_at", "scheduled_at", "patient", "status", "source"] as const;
 export type FlatSortColumn = (typeof FLAT_SORTABLE_COLUMNS)[number];
 
 export interface FlatSortSpec {
@@ -126,6 +128,15 @@ export function compareFlat<G extends FlatSortableGroup>(a: G, b: G, sort: FlatS
     case "status": {
       const al = appointmentStatusLabel(a.lead.status);
       const bl = appointmentStatusLabel(b.lead.status);
+      cmp = al.localeCompare(bl) * dirMul;
+      break;
+    }
+    case "source": {
+      // Sorts on the LABEL, matching what the Source column actually
+      // prints (incl. "Not recorded" for a null source), same rule as the
+      // Status column above.
+      const al = appointmentSourceLabel(a.lead.source);
+      const bl = appointmentSourceLabel(b.lead.source);
       cmp = al.localeCompare(bl) * dirMul;
       break;
     }

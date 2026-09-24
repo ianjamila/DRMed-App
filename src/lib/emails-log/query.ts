@@ -60,6 +60,7 @@ const ACTIONS_FOR_TYPE: Record<EmailType, string[]> = {
   newsletter: ["newsletter.campaign.sent"],
   registration_new: ["patient.self_registered"],
   registration_existing: ["patient.self_register.matched"],
+  contact_alert: ["contact_message.alert_sent"],
 };
 
 // Manila is UTC+8, no DST. Accept a YYYY-MM-DD date input as a Manila local date.

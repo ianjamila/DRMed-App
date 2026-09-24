@@ -26,7 +26,7 @@ export const DASHBOARD_CARDS: readonly CardDef[] = [
   { id: "reception.unpaid_balance",    label: "Unpaid balance",    roles: ["reception"], group: "snapshot", sensitive: true },
   { id: "reception.pending_release",   label: "Pending release",   roles: ["reception"], group: "snapshot" },
   { id: "reception.walk_ins_waiting",  label: "Walk-ins waiting",  roles: ["reception"], group: "snapshot" },
-  { id: "reception.open_inquiries",    label: "Open inquiries",    roles: ["reception"], group: "snapshot" },
+  { id: "reception.new_messages",      label: "Website messages",  roles: ["reception"], group: "snapshot" },
   // Off by default since partner revision 8 sent "Sell gift code" to the
   // admin-only Hidden Tabs section: counter sales are rare enough that a
   // standing tile (usually reading 0) isn't worth the space. Reception reaches
@@ -35,7 +35,7 @@ export const DASHBOARD_CARDS: readonly CardDef[] = [
   { id: "reception.cash_drawer",       label: "Cash drawer",       roles: ["reception"], group: "snapshot", sensitive: true },
   { id: "reception.strip_appointments", label: "Strip: next appointments", roles: ["reception"], group: "attention" },
   { id: "reception.strip_unpaid",       label: "Strip: today's unpaid",    roles: ["reception"], group: "attention", sensitive: true },
-  { id: "reception.strip_inquiries",    label: "Strip: recent inquiries",  roles: ["reception"], group: "attention" },
+  { id: "reception.strip_messages",     label: "Strip: website messages",  roles: ["reception"], group: "attention" },
 
   // ---- Lab ----------------------------------------------------------------
   { id: "lab.my_unclaimed",         label: "Unclaimed in my sections", roles: ["medtech", "xray_technician"], group: "snapshot" },
@@ -63,6 +63,7 @@ export const DASHBOARD_CARDS: readonly CardDef[] = [
   // the owner deferred those two to a later re-review.
   { id: "admin.released_today",    label: "Released today (plain count)",  roles: ["admin"], group: "operations", defaultHidden: true },
   { id: "admin.dup_candidates",    label: "Possible duplicates", roles: ["admin"], group: "operations" },
+  { id: "admin.new_messages",      label: "Website messages",    roles: ["admin"], group: "operations" },
 
   // ---- Admin: Money -------------------------------------------------------
   { id: "admin.net_income_books_mtd", label: "Net Income (Books)", roles: ["admin"], group: "money", sensitive: true },

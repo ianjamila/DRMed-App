@@ -18,6 +18,7 @@ function row(overrides: Partial<FlatSortableGroup["lead"]> = {}): FlatSortableGr
     patient_phone: null,
     walk_in_name: null,
     walk_in_phone: null,
+    source: null,
     ...overrides,
   };
 }
@@ -85,6 +86,14 @@ describe("compareFlat", () => {
     const asc = compareFlat(arrived, pending, { key: "status", dir: "asc" });
     const desc = compareFlat(arrived, pending, { key: "status", dir: "desc" });
     expect(Math.sign(asc)).toBe(-Math.sign(desc));
+  });
+
+  it("sorts source by its human label, treating a null source as 'Not recorded'", () => {
+    const phone = group({ id: "a", source: "phone" });
+    const notRecorded = group({ id: "b", source: null });
+    // "Not recorded" < "Phone call" alphabetically.
+    expect(compareFlat(notRecorded, phone, { key: "source", dir: "asc" })).toBeLessThan(0);
+    expect(compareFlat(notRecorded, phone, { key: "source", dir: "desc" })).toBeGreaterThan(0);
   });
 
   it("falls back to an id tie-break so paging can't drop or repeat rows", () => {

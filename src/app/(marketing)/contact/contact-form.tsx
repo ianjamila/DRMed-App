@@ -8,23 +8,7 @@ import {
 import { metaTrack } from "@/lib/analytics/meta-pixel";
 import { newEventId } from "@/lib/analytics/event-id";
 import { submitContactMessage, type ContactResult } from "./actions";
-
-// Corporate/HMO inquiries are a higher-intent B2B lead than a general
-// question — fired as a distinct Meta event so Ads can optimize for them
-// separately (see Channel roles: "Meta Lead-gen → corporate only").
-const CORPORATE_SUBJECT = "Corporate / HMO";
-
-// Subject options for the select (C15 enhancement).
-const SUBJECT_OPTIONS = [
-  "Doctor's Consultation",
-  "Laboratory Tests",
-  "X-Ray Imaging",
-  "ECG",
-  "Ultrasound",
-  "Home Service",
-  "Corporate / HMO",
-  "Other",
-] as const;
+import { CORPORATE_SUBJECT, CONTACT_SUBJECT_OPTIONS } from "@/lib/contact-messages/labels";
 
 // Shared field input class applied to inputs and textarea.
 const fieldInput =
@@ -33,7 +17,7 @@ const fieldInput =
 // Shared label class.
 const fieldLabel = "text-[13.5px] font-semibold text-[color:var(--color-ink)]";
 
-export function ContactForm() {
+export function ContactForm({ defaultSubject }: { defaultSubject?: string } = {}) {
   const [state, formAction, pending] = useActionState<
     ContactResult | null,
     FormData
@@ -158,13 +142,13 @@ export function ContactForm() {
           <select
             id="subject"
             name="subject"
-            defaultValue=""
+            defaultValue={defaultSubject ?? ""}
             className={`${fieldInput} h-[46px] cursor-pointer appearance-none`}
           >
             <option value="" disabled>
               Select a service
             </option>
-            {SUBJECT_OPTIONS.map((opt) => (
+            {CONTACT_SUBJECT_OPTIONS.map((opt) => (
               <option key={opt} value={opt}>
                 {opt}
               </option>

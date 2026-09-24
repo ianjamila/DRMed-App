@@ -24,7 +24,7 @@ export function Packages() {
             <PillLink href="/packages" variant="cyan" size="sm">
               View Detailed Packages <ArrowRight className="h-[18px] w-[18px]" />
             </PillLink>
-            <PillLink href="/#contact" variant="lineOnDark" size="sm">
+            <PillLink href="/contact?subject=Corporate%20%2F%20HMO" variant="lineOnDark" size="sm">
               Custom Corporate Package
             </PillLink>
           </div>

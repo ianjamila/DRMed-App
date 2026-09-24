@@ -109,7 +109,7 @@ export const STAFF_NAV: StaffNavSection[] = [
     ],
     subgroups: [
       {
-        heading: "Inquiries & Bookings",
+        heading: "Messages & Bookings",
         items: [
           {
             href: "/staff/appointments",
@@ -119,10 +119,10 @@ export const STAFF_NAV: StaffNavSection[] = [
             roles: ["reception", "admin"],
           },
           {
-            href: "/staff/inquiries",
+            href: "/staff/messages",
             quicklink: {"reception":{"order":4,"group":"Front Desk"}},
-            label: ROUTE_NAME["/staff/inquiries"],
-            description: "Inquiries that came in through the website chat or Messenger but haven't been converted into a real appointment yet. Follow up here to book them or close the thread.",
+            label: ROUTE_NAME["/staff/messages"],
+            description: "Messages people send through the Contact page on drmed.ph. Reply to them, book them an appointment, or close them. The number next to it counts the messages nobody has replied to yet.",
             roles: ["reception", "admin"],
           },
         ],
@@ -737,6 +737,36 @@ export function quickLinksFor(role: StaffRole, audience: DashboardAudience) {
   return links.sort((a, b) => a.order - b.order).map(({ item, group, routeName }) => ({
     ...item, label: routeName ? ROUTE_NAME[item.href] : item.label, group,
   }));
+}
+
+/** Badge count for one item, keyed by href. Defaults to 0 when no map or no entry. */
+export function itemBadgeCount(
+  item: StaffNavItem,
+  badges?: Record<string, number>,
+): number {
+  return badges?.[item.href] ?? 0;
+}
+
+/** Sum of every item's badge in a subgroup — shown on its `<summary>` so the
+ * total is visible even while the subgroup is collapsed. */
+export function subgroupBadgeTotal(
+  group: StaffNavSubgroup,
+  badges?: Record<string, number>,
+): number {
+  return group.items.reduce((sum, item) => sum + itemBadgeCount(item, badges), 0);
+}
+
+/** Sum of every item's badge across a whole section (flat items + subgroups) —
+ * shown on a `collapsible` section's `<summary>` for the same reason. */
+export function sectionBadgeTotal(
+  section: StaffNavSection,
+  badges?: Record<string, number>,
+): number {
+  const itemsTotal =
+    section.items?.reduce((sum, item) => sum + itemBadgeCount(item, badges), 0) ?? 0;
+  const subgroupsTotal =
+    section.subgroups?.reduce((sum, g) => sum + subgroupBadgeTotal(g, badges), 0) ?? 0;
+  return itemsTotal + subgroupsTotal;
 }
 
 export function quickLinkGroupsFor(role: StaffRole, audience: DashboardAudience) {

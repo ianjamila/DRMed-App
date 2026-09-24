@@ -10,7 +10,8 @@ export type EmailType =
   | "reminder"
   | "newsletter"
   | "registration_new"
-  | "registration_existing";
+  | "registration_existing"
+  | "contact_alert";
 
 export interface EmailLogEntry {
   id: number;
@@ -61,4 +62,5 @@ export const EMAIL_ACTIONS = [
   "newsletter.campaign.sent",
   "patient.self_registered",
   "patient.self_register.matched",
+  "contact_message.alert_sent",
 ] as const;

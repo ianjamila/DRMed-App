@@ -13,6 +13,8 @@ import { resolvePatient } from "@/lib/patients/resolve";
 import { findCandidatesForInput } from "@/lib/patients/find-duplicates";
 import { patientSearchOrClauses } from "@/lib/patients/search";
 import { notifyAppointmentBooked } from "@/lib/notifications/notify-appointment-booked";
+import { loadMessageForBooking, linkMessageToBooking } from "@/lib/contact-messages/booking-link";
+import { reportError } from "@/lib/observability/report-error";
 
 export type StaffAppointmentResult =
   | { ok: true; data: { booking_group_id: string } }
@@ -56,6 +58,24 @@ export async function createStaffAppointmentAction(input: StaffBookingInput): Pr
   if (!parsed.success) return { ok: false, error: firstIssue(parsed.error) };
   const data = parsed.data;
 
+  // Booking from the Website Messages inbox's "Book appointment" button:
+  // load and validate the message BEFORE anything is created, so a stale or
+  // already-booked link fails fast with no orphan patient/appointment.
+  let linkedMessage: Awaited<ReturnType<typeof loadMessageForBooking>> = null;
+  if (data.contact_message_id) {
+    const rlsClient = await createClient();
+    linkedMessage = await loadMessageForBooking(rlsClient, data.contact_message_id);
+    if (!linkedMessage) {
+      return { ok: false, error: "That website message could not be found." };
+    }
+    if (linkedMessage.status === "booked") {
+      return {
+        ok: false,
+        error: "This website message has already been booked. Check the Website Messages inbox for the existing appointment.",
+      };
+    }
+  }
+
   const admin = createAdminClient();
 
   const resolveThunk = async (): Promise<{ ok: true; patient: PatientResolution } | { ok: false; error: string }> => {
@@ -94,6 +114,8 @@ export async function createStaffAppointmentAction(input: StaffBookingInput): Pr
     createdBy: session.user_id,
     mode: "relaxed",
     override: data.override,
+    source: data.source,
+    attribution: linkedMessage?.attribution ?? null,
     resolvePatient: resolveThunk,
   });
 
@@ -124,10 +146,47 @@ export async function createStaffAppointmentAction(input: StaffBookingInput): Pr
       conflicts: result.conflicts.map((c) => c.kind),
       group_appointment_ids: result.appointmentIds,
       drm_id: result.patient.drmId,
+      source: data.source,
+      contact_message_id: data.contact_message_id ?? null,
     },
     ip_address: ip,
     user_agent: ua,
   });
+
+  // Close the loop with the Website Messages inbox — never lets a link
+  // failure fail the booking that already succeeded.
+  if (linkedMessage) {
+    const rlsClient = await createClient();
+    const linkResult = await linkMessageToBooking(rlsClient, {
+      messageId: linkedMessage.id,
+      appointmentId: result.appointmentIds[0]!,
+      staffUserId: session.user_id,
+    });
+    if (!linkResult.ok) {
+      await reportError({
+        scope: "createStaffAppointmentAction.linkMessageToBooking",
+        error: new Error(linkResult.error),
+        metadata: { messageId: linkedMessage.id, bookingGroupId: result.bookingGroupId },
+      });
+    } else {
+      await audit({
+        actor_id: session.user_id,
+        actor_type: "staff",
+        action: "contact_message.booked",
+        resource_type: "contact_message",
+        resource_id: linkedMessage.id,
+        metadata: {
+          booking_group_id: result.bookingGroupId,
+          appointment_id: result.appointmentIds[0],
+        },
+        ip_address: ip,
+        user_agent: ua,
+      });
+      revalidatePath("/staff/messages");
+      revalidatePath(`/staff/messages/${linkedMessage.id}`);
+      revalidatePath("/staff", "layout");
+    }
+  }
 
   // If staff created a brand-new patient despite a strong/exact existing match,
   // record the override server-side (independent of any client acknowledgement).

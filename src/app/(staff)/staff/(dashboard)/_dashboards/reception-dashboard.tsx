@@ -3,7 +3,7 @@ import type { StaffSession } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { DOCTOR_KINDS_PG_LIST } from "@/lib/visits/classification";
-import { manilaDate, manilaRangeUtc, todayManilaISODate } from "@/lib/dates/manila";
+import { manilaDate, manilaDateTime, manilaRangeUtc, todayManilaISODate } from "@/lib/dates/manila";
 import { loadHiddenCardIds } from "@/lib/dashboards/card-prefs";
 import { fetchAllRows, REPORT_EXPORT_MAX_ROWS, type PageFetcher } from "@/lib/reports/paging";
 import { reportError } from "@/lib/observability/report-error";
@@ -112,11 +112,13 @@ type UnpaidMoneyRow = {
   paid_php: number | null;
 };
 
-type InquiryRow = {
+// The rows behind the "Website messages waiting" strip: the newest 'new'
+// contact_messages rows. Only the columns rendered are selected.
+type ContactMessageRow = {
   id: string;
-  caller_name: string;
-  channel: string;
-  called_at: string;
+  name: string;
+  subject: string | null;
+  created_at: string;
 };
 
 function pluckPatientName(p: PatientEmbed): string | null {
@@ -236,11 +238,12 @@ async function loadReceptionStats(userId: string, show: (id: string) => boolean)
     unpaidRows,
     pendingRelease,
     walkInsRows,
-    openInquiriesCount,
+    newMessagesCount,
+    newCorporateMessagesCount,
     giftCodesToday,
     arrivalsRows,
     unpaidVisitsStrip,
-    recentInquiries,
+    recentMessages,
     cashDrawerState,
     todayOrders,
   ] = await Promise.all([
@@ -309,11 +312,18 @@ async function loadReceptionStats(userId: string, show: (id: string) => boolean)
           .limit(500)
           .returns<WalkInRow[]>()
       : SKIP_DATA,
-    show("reception.open_inquiries")
+    show("reception.new_messages")
       ? supabase
-          .from("inquiries")
+          .from("contact_messages")
           .select("id", { count: "exact", head: true })
-          .eq("status", "pending")
+          .eq("status", "new")
+      : SKIP_COUNT,
+    show("reception.new_messages")
+      ? supabase
+          .from("contact_messages")
+          .select("id", { count: "exact", head: true })
+          .eq("status", "new")
+          .eq("kind", "corporate")
       : SKIP_COUNT,
     show("reception.gift_codes_sold")
       ? supabase
@@ -360,14 +370,14 @@ async function loadReceptionStats(userId: string, show: (id: string) => boolean)
           .limit(5)
           .returns<VisitRow[]>()
       : SKIP_DATA,
-    show("reception.strip_inquiries")
+    show("reception.strip_messages")
       ? supabase
-          .from("inquiries")
-          .select("id, caller_name, channel, called_at")
-          .eq("status", "pending")
-          .order("called_at", { ascending: true }) // oldest pending follow-up first
+          .from("contact_messages")
+          .select("id, name, subject, created_at")
+          .eq("status", "new")
+          .order("created_at", { ascending: true }) // oldest waiting first
           .limit(5)
-          .returns<InquiryRow[]>()
+          .returns<ContactMessageRow[]>()
       : SKIP_DATA,
     cashDrawerStatePromise,
     // Today's leaf orders, joined to their service for kind/section bucketing.
@@ -429,11 +439,12 @@ async function loadReceptionStats(userId: string, show: (id: string) => boolean)
     { scope: "unpaid_balance", error: unpaidRows.error },
     { scope: "pending_release", error: pendingRelease.error },
     { scope: "walk_ins_waiting", error: walkInsRows.error },
-    { scope: "open_inquiries", error: openInquiriesCount.error },
+    { scope: "new_messages", error: newMessagesCount.error },
+    { scope: "new_messages_corporate", error: newCorporateMessagesCount.error },
     { scope: "gift_codes_sold", error: giftCodesToday.error },
     { scope: "strip_appointments", error: arrivalsRows.error },
     { scope: "strip_unpaid", error: unpaidVisitsStrip.error },
-    { scope: "strip_inquiries", error: recentInquiries.error },
+    { scope: "strip_messages", error: recentMessages.error },
     { scope: "cash_drawer", error: activeShiftError ?? cashDrawerState.error },
     { scope: "orders_by_type", error: todayOrders.error },
   ];
@@ -468,8 +479,11 @@ async function loadReceptionStats(userId: string, show: (id: string) => boolean)
     walkInsWaiting,
     walkInsError: !!walkInsRows.error,
 
-    openInquiries: openInquiriesCount.count ?? 0,
-    openInquiriesError: !!openInquiriesCount.error,
+    newMessages: newMessagesCount.count ?? 0,
+    newMessagesError: !!newMessagesCount.error,
+
+    newCorporateMessages: newCorporateMessagesCount.count ?? 0,
+    newCorporateMessagesError: !!newCorporateMessagesCount.error,
 
     giftCodesToday: giftCodesToday.count ?? 0,
     giftCodesError: !!giftCodesToday.error,
@@ -480,8 +494,8 @@ async function loadReceptionStats(userId: string, show: (id: string) => boolean)
     unpaidVisits: (unpaidVisitsStrip.data ?? []) as VisitRow[],
     unpaidVisitsError: !!unpaidVisitsStrip.error,
 
-    recentInquiries: (recentInquiries.data ?? []) as InquiryRow[],
-    recentInquiriesError: !!recentInquiries.error,
+    recentMessages: (recentMessages.data ?? []) as ContactMessageRow[],
+    recentMessagesError: !!recentMessages.error,
 
     cashDrawer: {
       expectedCash,
@@ -546,11 +560,11 @@ export async function ReceptionDashboard({
     };
   });
 
-  const inquiryItems: ActivityItem[] = stats.recentInquiries.map((i) => ({
-    primary: i.caller_name,
-    secondary: i.channel,
-    meta: relativeAge(i.called_at),
-    href: `/staff/inquiries/${i.id}/edit`,
+  const messageItems: ActivityItem[] = stats.recentMessages.map((m) => ({
+    primary: m.name,
+    secondary: m.subject ?? "No subject",
+    meta: manilaDateTime(m.created_at),
+    href: `/staff/messages/${m.id}`,
   }));
 
   const shiftLabel = stats.cashDrawer.shiftLabel;
@@ -569,10 +583,17 @@ export async function ReceptionDashboard({
     ? `${formatPeso(stats.unpaidTotalPhp)}+ — capped at ${REPORT_EXPORT_MAX_ROWS.toLocaleString()} rows, true total is higher`
     : `${stats.unpaidCount} visit${stats.unpaidCount === 1 ? "" : "s"} unpaid / partial`;
 
-  const inquiryStripTitle =
-    show("reception.open_inquiries") && !stats.openInquiriesError
-      ? `Pending follow-ups (${stats.openInquiries})`
-      : "Pending follow-ups";
+  const messagesStripTitle =
+    show("reception.new_messages") && !stats.newMessagesError
+      ? `Website messages waiting (${stats.newMessages})`
+      : "Website messages waiting";
+
+  const newMessagesHint =
+    stats.newCorporateMessagesError
+      ? "Waiting for a reply"
+      : stats.newCorporateMessages > 0
+        ? `Waiting for a reply · ${stats.newCorporateMessages} corporate`
+        : "Waiting for a reply";
 
   // SectionHeading's own `if (!children)` check can't detect "every card in
   // this section is hidden" — its caller always passes a (truthy) <div>, even
@@ -583,13 +604,14 @@ export async function ReceptionDashboard({
     "reception.unpaid_balance",
     "reception.pending_release",
     "reception.walk_ins_waiting",
+    "reception.new_messages",
     "reception.gift_codes_sold",
     "reception.cash_drawer",
   ].some(show);
   const hasAttention = [
     "reception.strip_appointments",
     "reception.strip_unpaid",
-    "reception.strip_inquiries",
+    "reception.strip_messages",
   ].some(show);
   const hasQuicklinks = QUICK_GROUPS.length > 0;
 
@@ -644,6 +666,16 @@ export async function ReceptionDashboard({
                 hint="Checked in, not yet registered — one per booking"
                 href="/staff/appointments"
                 error={stats.walkInsError}
+              />
+            )}
+            {show("reception.new_messages") && (
+              <StatCard
+                label="Website messages"
+                value={stats.newMessages}
+                hint={newMessagesHint}
+                href="/staff/messages"
+                accent={stats.newMessages > 0 ? "warn" : "default"}
+                error={stats.newMessagesError}
               />
             )}
             {show("reception.gift_codes_sold") && (
@@ -735,13 +767,13 @@ export async function ReceptionDashboard({
                 error={stats.unpaidVisitsError}
               />
             )}
-            {show("reception.strip_inquiries") && (
+            {show("reception.strip_messages") && (
               <ActivityStrip
-                title={inquiryStripTitle}
-                items={inquiryItems}
-                emptyMessage="No pending inquiries."
-                viewAllHref="/staff/inquiries"
-                error={stats.recentInquiriesError}
+                title={messagesStripTitle}
+                items={messageItems}
+                emptyMessage="No website messages waiting."
+                viewAllHref="/staff/messages"
+                error={stats.recentMessagesError}
               />
             )}
           </div>
