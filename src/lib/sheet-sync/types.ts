@@ -98,3 +98,84 @@ export interface TabParse<T> {
   undated: number;
   issues: ReviewItemInput[];
 }
+
+// ---------------------------------------------------------------------------
+// Task 5 — patient identity plan (spec §5.3, plan Task 5 Step 1)
+// ---------------------------------------------------------------------------
+
+export interface PatientRecord {
+  id: string;
+  drm_id: string;
+  first_name: string | null;
+  middle_name: string | null;
+  last_name: string | null;
+  birthdate: string | null;
+  phone: string | null;
+  phone_normalized: string | null;
+  email: string | null;
+  sex: string | null;
+  address: string | null;
+  referred_by_doctor: string | null;
+  preferred_release_medium: string | null;
+  senior_pwd_id_kind: string | null;
+  senior_pwd_id_number: string | null;
+  referral_source: string | null;
+  referral_source_origin: "staff" | "patient" | "sheet" | null;
+  merged_into_id: string | null;
+}
+
+export interface LinkRecord {
+  link_key: string;
+  patient_id: string | null;
+  decision: "link" | "create";
+  method: "auto_exact" | "auto_loose" | "admin";
+}
+
+export interface FactsRecord {
+  patient_id: string;
+  registered_on: string | null;
+  sheet_new_repeat: "new" | "repeat" | null;
+  source_ref: string | null;
+}
+
+export interface PrevCustomerRow {
+  source_key: string;
+  patient_id: string | null;
+  phone_norm: string | null;
+  dob: string | null;
+  link_state: string;
+}
+
+export type FillFields = Partial<Record<
+  | "phone" | "email" | "birthdate" | "sex" | "address" | "referred_by_doctor"
+  | "preferred_release_medium" | "senior_pwd_id_kind" | "senior_pwd_id_number" | "referral_source",
+  string | null>>;
+
+export type CustomerOp =
+  | { op: "create"; create_key: string; method: "auto_exact" | "admin"; link_keys: string[];
+      fields: FillFields & { first_name: string; last_name: string; middle_name: string | null };
+      legacy_intake: Record<string, unknown>;
+      facts: { registered_on: string | null; new_repeat: "new" | "repeat" | null; source_ref: string } }
+  | { op: "link"; link_key: string; patient_id: string; method: "auto_exact" | "auto_loose" }
+  | { op: "fill"; patient_id: string; fields: FillFields }
+  | { op: "facts"; patient_id: string; registered_on: string | null; new_repeat: "new" | "repeat" | null; source_ref: string };
+
+export type LinkState = "linked" | "ambiguous" | "conflict" | "possible_existing" | "unlinked";
+
+export interface CustomerMirrorRow {
+  sheet_row: number; source_key: string; dup_count: number; full_name_raw: string; name_norm: string;
+  loose_key: string; link_key: string; phone_norm: string | null; dob: string | null; registered_on: string | null;
+  source_raw: string; source_norm: string; referral_source_id: string | null; referred_by_raw: string | null;
+  new_repeat: "new" | "repeat" | null; release_medium_raw: string | null;
+  patient_id: string | null;          // filled after ops for "create:<key>" rows
+  pending_create_key: string | null;  // runner swaps it for the created id; never sent to the DB
+  link_state: LinkState; row_hash: string;
+}
+
+export interface CustomerPlan {
+  ops: CustomerOp[];
+  mirror: CustomerMirrorRow[];
+  review: ReviewItemInput[];
+  counts: { rows: number; linked_existing: number; link_new: number; create: number; fill: number;
+            facts: number; review: Record<string, number> };
+}
