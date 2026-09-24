@@ -345,7 +345,7 @@ export interface NewPatientReferralStats {
 // New patients by how they heard about us. The page passes every patient
 // CREATED in the period (merged duplicates excluded), whichever form made it:
 // the staff New Patient form asks since 2026-09-11, the website booking and
-// registration forms since 0157, and the staff "+ New appointment" slide-over
+// registration forms since 0158, and the staff "+ New appointment" slide-over
 // does not ask at all — its patients count as Not recorded.
 export function summarizeNewPatientReferrals(
   rows: readonly NewPatientSourceRow[],

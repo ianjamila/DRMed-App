@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 // resolve_patient_guarded is the only way the public website forms create a
-// patient. 0157 taught it to save "How did you hear about us?". These pins
+// patient. 0158 taught it to save "How did you hear about us?". These pins
 // keep a later re-creation from silently dropping that — or from widening
 // what an anonymous form may write.
 
@@ -26,9 +26,9 @@ const latest = all[all.length - 1]!;
 const latestFile = readFileSync(join(MIGRATIONS, latest.file), "utf8");
 
 describe("resolve_patient_guarded (latest definition)", () => {
-  it("is found, and 0157 is not older than the latest", () => {
-    expect(all.map((d) => d.file)).toContain("0157_resolve_patient_referral_source.sql");
-    expect(latest.file >= "0157").toBe(true);
+  it("is found, and 0158 is not older than the latest", () => {
+    expect(all.map((d) => d.file)).toContain("0158_resolve_patient_referral_source.sql");
+    expect(latest.file >= "0158").toBe(true);
   });
 
   it("inserts referral_source on a NEW patient", () => {
