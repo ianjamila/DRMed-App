@@ -81,7 +81,7 @@ Compliance target: **Philippine Data Privacy Act (RA 10173)**. Locale: en-PH, As
 | `npm run db:types:remote` | Same, against the live DB via `SUPABASE_DB_URL` — **currently unusable** (`SUPABASE_DB_URL` is commented out in `.env.local`; no password on file) |
 | `npm run db:diff -- <name>` | Generate a new migration from local schema changes |
 | `npm run db:reset` | Reset local Supabase to migrations + `supabase/seed.sql` (destroys local data) |
-| `supabase db push` | Apply migrations to the linked remote project — **the user runs this** (`! cd ~/Claude/DRMed && /opt/homebrew/bin/supabase db push`); Claude-run pushes and MCP DDL are blocked by the auto-mode classifier |
+| `supabase db push` | Apply migrations to the linked remote project. **Claude runs this itself** (owner authorisation, 2026-09-24 — don't hand the command to the user): from a worktree on current main with `supabase/.temp/{project-ref,linked-project.json,pooler-url}` copied in, `--dry-run` first, right before the merge. Never from a stale main checkout. MCP `apply_migration` stays off-limits (timestamp version) |
 | `supabase start` | Run a local Supabase stack (needs Docker) — the only "staging" |
 | `npm run seed:test` / `seed:services` / `seed:physicians` / `seed:hmo` / `seed:templates` / `seed:signatures` / etc. | Idempotent seed scripts — target the **local** stack by default (see below) |
 | `npm run smoke:results` / `smoke:chemistry` / `smoke:dashboards` | Render-pipeline / consolidated-chemistry / dashboard smoke tests |
@@ -270,6 +270,6 @@ All Server Actions return `{ ok: true, data } | { ok: false, error }`. User-faci
 2. Replay on a fresh local stack: `supabase start && npm run db:reset` — the full history must apply to an empty DB (data migrations guard, never `raise`, on missing rows).
 3. `npm test && npm run typecheck && npm run lint`; add a `pg-errors.ts` translation for every new P-code; restate function ACLs explicitly (see `drmed-migrations`).
 4. Open the PR. The Vercel preview build fails if the migration hasn't been applied to the linked project.
-5. Apply to prod **before merging**: ask the user to run `! cd ~/Claude/DRMed && /opt/homebrew/bin/supabase db push` (it stamps the ledger with the real `00NN` version). If MCP `execute_sql` is used instead, wrap in `begin; … commit;` and insert the `schema_migrations` row by hand; never MCP `apply_migration` (timestamp version → `db push` re-applies it).
+5. Apply to prod **before merging**: run `supabase db push` yourself from the PR's worktree (`--dry-run` first; it stamps the ledger with the real `00NN` version). Time it right before the merge when the live app would break against the new schema (e.g. a dropped table it still reads). If MCP `execute_sql` is used instead, wrap in `begin; … commit;` and insert the `schema_migrations` row by hand; never MCP `apply_migration` (timestamp version → `db push` re-applies it).
 6. Verify on prod (ledger head, objects, grants), merge, confirm the Vercel production deploy landed — merge ≠ deploy.
 7. Regenerate types: `npm run db:types` (empty diff for CHECK/trigger/function-only changes is expected).

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { StaffBookingSchema } from "./staff-booking";
+import { StaffBookingSchema, STAFF_BOOKING_NOTES_MAX } from "./staff-booking";
 
 // Freeze time so the 60-day cap + slot validity are deterministic.
 // 2026-06-01 is a Monday in Manila.
@@ -134,6 +134,28 @@ describe("StaffBookingSchema", () => {
         const r = StaffBookingSchema.safeParse({ ...baseExisting, source });
         expect(r.success, `expected "${source}" to be accepted`).toBe(true);
       }
+    });
+  });
+
+  describe("notes", () => {
+    it("accepts notes at the max length", () => {
+      const r = StaffBookingSchema.safeParse({ ...baseExisting, notes: "a".repeat(STAFF_BOOKING_NOTES_MAX) });
+      expect(r.success).toBe(true);
+    });
+
+    it("rejects notes over the max length", () => {
+      const r = StaffBookingSchema.safeParse({ ...baseExisting, notes: "a".repeat(STAFF_BOOKING_NOTES_MAX + 1) });
+      expect(r.success).toBe(false);
+    });
+
+    it("treats omitted/empty notes as null", () => {
+      const omitted = StaffBookingSchema.safeParse(baseExisting);
+      expect(omitted.success).toBe(true);
+      if (omitted.success) expect(omitted.data.notes).toBeNull();
+
+      const empty = StaffBookingSchema.safeParse({ ...baseExisting, notes: "" });
+      expect(empty.success).toBe(true);
+      if (empty.success) expect(empty.data.notes).toBeNull();
     });
   });
 

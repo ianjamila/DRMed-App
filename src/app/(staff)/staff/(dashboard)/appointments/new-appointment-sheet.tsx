@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/sheet";
 import { QrCode } from "@/components/ui/qr-code";
 import { KINDS_PER_BRANCH, BOOKING_BRANCHES, type BookingBranch } from "@/lib/validations/booking";
-import type { StaffBookingInput } from "@/lib/validations/staff-booking";
+import { STAFF_BOOKING_NOTES_MAX, type StaffBookingInput } from "@/lib/validations/staff-booking";
 import type { BookingConflict } from "@/lib/appointments/timing";
 import { STAFF_SELECTABLE_SOURCES, APPOINTMENT_SOURCE_LABEL } from "@/lib/appointments/source";
 import {
@@ -355,15 +355,6 @@ export function NewAppointmentSheet({
                   This message had no phone number on file — add one below before saving.
                 </p>
               ) : null}
-              <label className="mt-2 flex flex-col gap-1 text-xs font-semibold text-sky-900">
-                Notes
-                <textarea
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  rows={2}
-                  className="rounded-md border border-sky-200 bg-white px-2 py-1.5 text-sm font-normal text-foreground"
-                />
-              </label>
             </div>
           ) : null}
 
@@ -597,6 +588,19 @@ export function NewAppointmentSheet({
               <p className="text-xs text-muted-foreground">30-minute slots, Mon–Sat 8:00 AM–4:30 PM. Same-day is allowed.</p>
             </section>
           )}
+
+          {/* 5. Notes — optional, always available (not just for message bookings). */}
+          <section className="flex flex-col gap-2">
+            <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Notes (optional)</p>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={2}
+              maxLength={STAFF_BOOKING_NOTES_MAX}
+              placeholder="Anything reception or the doctor should know"
+              className={`${INPUT_CLS} resize-none`}
+            />
+          </section>
 
           {/* Conflicts (overridable) */}
           {conflicts.length > 0 && (

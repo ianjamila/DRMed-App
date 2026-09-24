@@ -101,11 +101,34 @@ describe("summarizeBookings", () => {
     expect(stats.totalBookingGroups).toBe(2);
     expect(stats.activeBookingGroups).toBe(1);
     expect(stats.cancelledOrNoShowBookingGroups).toBe(1);
-    // The cancelled group's source does not appear in bySource's counts.
+    // The cancelled group's source does not add to bySource's active count,
+    // but its own cancelled count picks it up instead of being dropped.
     const walkIn = stats.bySource.find((s) => s.source === "walk_in");
     expect(walkIn?.count).toBe(0);
+    expect(walkIn?.cancelled).toBe(1);
     const phone = stats.bySource.find((s) => s.source === "phone");
     expect(phone?.count).toBe(1);
+    expect(phone?.cancelled).toBe(0);
+  });
+
+  it("a source with only cancelled/no-show groups still appears with 0 active and N cancelled", () => {
+    const stats = summarizeBookings([
+      apptRow({ id: "a1", booking_group_id: "g1", source: "referral", status: "cancelled" }),
+      apptRow({ id: "a2", booking_group_id: "g2", source: "referral", status: "no_show" }),
+    ]);
+    const referral = stats.bySource.find((s) => s.source === "referral");
+    expect(referral?.count).toBe(0);
+    expect(referral?.cancelled).toBe(2);
+  });
+
+  it("a partially-cancelled (mixed-status) group still counts as active for both count and cancelled", () => {
+    const stats = summarizeBookings([
+      apptRow({ id: "a1", booking_group_id: "g1", source: "phone", status: "cancelled" }),
+      apptRow({ id: "a2", booking_group_id: "g1", source: "phone", status: "confirmed" }),
+    ]);
+    const phone = stats.bySource.find((s) => s.source === "phone");
+    expect(phone?.count).toBe(1);
+    expect(phone?.cancelled).toBe(0);
   });
 
   it("keeps every APPOINTMENT_SOURCE plus 'Not recorded' as a zero row when absent", () => {
@@ -114,9 +137,11 @@ describe("summarizeBookings", () => {
     const referral = stats.bySource.find((s) => s.source === "referral");
     expect(referral).toBeDefined();
     expect(referral?.count).toBe(0);
+    expect(referral?.cancelled).toBe(0);
     const notRecorded = stats.bySource.find((s) => s.source === null);
     expect(notRecorded?.label).toBe("Not recorded");
     expect(notRecorded?.count).toBe(0);
+    expect(notRecorded?.cancelled).toBe(0);
   });
 
   it("groups by campaign label, falling back to the no-ad-tag label", () => {
@@ -126,8 +151,20 @@ describe("summarizeBookings", () => {
     ]);
     const named = stats.byCampaign.find((c) => c.label === "sept-promo");
     expect(named?.count).toBe(1);
+    expect(named?.cancelled).toBe(0);
     const direct = stats.byCampaign.find((c) => c.label === NO_CAMPAIGN_LABEL);
     expect(direct?.count).toBe(1);
+  });
+
+  it("a campaign with only cancelled/no-show groups still appears with 0 active and N cancelled", () => {
+    const stats = summarizeBookings([
+      apptRow({ id: "a1", booking_group_id: "g1", attribution: { utm_campaign: "sept-promo" }, status: "cancelled" }),
+      apptRow({ id: "a2", booking_group_id: "g2", attribution: { utm_campaign: "sept-promo" }, status: "no_show" }),
+    ]);
+    const named = stats.byCampaign.find((c) => c.label === "sept-promo");
+    expect(named).toBeDefined();
+    expect(named?.count).toBe(0);
+    expect(named?.cancelled).toBe(2);
   });
 
   it("sorts byCampaign by count desc, then label for ties", () => {
@@ -145,7 +182,7 @@ describe("summarizeBookings", () => {
     expect(stats.activeBookingGroups).toBe(0);
     expect(stats.cancelledOrNoShowBookingGroups).toBe(0);
     expect(stats.byCampaign).toEqual([]);
-    expect(stats.bySource.every((s) => s.count === 0)).toBe(true);
+    expect(stats.bySource.every((s) => s.count === 0 && s.cancelled === 0)).toBe(true);
   });
 });
 

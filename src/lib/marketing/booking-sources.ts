@@ -113,12 +113,25 @@ export function groupBookings(rows: readonly AppointmentSourceRow[]): BookingGro
 export interface SourceCount {
   source: AppointmentSource | null;
   label: string;
+  // Active booking groups only — matches the report's headline "Bookings"
+  // stat and the proportion bar, which are both active-only.
   count: number;
+  // Booking groups from this source that ended cancelled/no-show (every row
+  // in the group did) — tallied separately, never folded into `count`.
+  cancelled: number;
 }
 
 export interface CampaignCount {
   label: string;
   count: number;
+}
+
+// Bookings-by-campaign carries the same active/cancelled split as
+// SourceCount above; website-messages-by-campaign (summarizeMessages) does
+// not — messages don't have a cancelled/no-show state — so it stays on the
+// plain CampaignCount shape.
+export interface BookingCampaignCount extends CampaignCount {
+  cancelled: number;
 }
 
 export interface BookingSourceStats {
@@ -131,13 +144,20 @@ export interface BookingSourceStats {
   // All APPOINTMENT_SOURCES + "Not recorded", zero rows kept so the table
   // is stable across periods. Active groups only.
   bySource: SourceCount[];
-  // Active groups only, sorted by count desc then label for a readable
-  // ranking; ties broken alphabetically so the order is deterministic.
-  byCampaign: CampaignCount[];
+  // Sorted by active count desc then label for a readable ranking; ties
+  // broken alphabetically so the order is deterministic. Includes a campaign
+  // whose groups are ALL cancelled/no-show (0 active, N cancelled) so it
+  // isn't silently dropped from the table.
+  byCampaign: BookingCampaignCount[];
 }
 
 function sortByCountDesc(a: CampaignCount, b: CampaignCount): number {
   return b.count - a.count || a.label.localeCompare(b.label);
+}
+
+interface ActiveCancelledTally {
+  active: number;
+  cancelled: number;
 }
 
 export function summarizeBookings(rows: readonly AppointmentSourceRow[]): BookingSourceStats {
@@ -145,27 +165,44 @@ export function summarizeBookings(rows: readonly AppointmentSourceRow[]): Bookin
   const active = groups.filter((g) => g.active);
   const cancelledOrNoShow = groups.length - active.length;
 
-  const sourceCounts = new Map<AppointmentSource | null, number>();
-  for (const s of APPOINTMENT_SOURCES) sourceCounts.set(s, 0);
-  sourceCounts.set(null, 0);
-  for (const g of active) sourceCounts.set(g.source, (sourceCounts.get(g.source) ?? 0) + 1);
+  // Tallied over EVERY group (not just active) so a source/campaign whose
+  // groups are all cancelled/no-show still gets a row — 0 active, N
+  // cancelled — instead of silently vanishing from the table.
+  const sourceTally = new Map<AppointmentSource | null, ActiveCancelledTally>();
+  for (const s of APPOINTMENT_SOURCES) sourceTally.set(s, { active: 0, cancelled: 0 });
+  sourceTally.set(null, { active: 0, cancelled: 0 });
+  for (const g of groups) {
+    const t = sourceTally.get(g.source) ?? { active: 0, cancelled: 0 };
+    if (g.active) t.active += 1;
+    else t.cancelled += 1;
+    sourceTally.set(g.source, t);
+  }
 
   const bySource: SourceCount[] = [
     ...APPOINTMENT_SOURCES.map((s) => ({
       source: s,
       label: APPOINTMENT_SOURCE_LABEL[s],
-      count: sourceCounts.get(s) ?? 0,
+      count: sourceTally.get(s)?.active ?? 0,
+      cancelled: sourceTally.get(s)?.cancelled ?? 0,
     })),
-    { source: null, label: SOURCE_NOT_RECORDED_LABEL, count: sourceCounts.get(null) ?? 0 },
+    {
+      source: null,
+      label: SOURCE_NOT_RECORDED_LABEL,
+      count: sourceTally.get(null)?.active ?? 0,
+      cancelled: sourceTally.get(null)?.cancelled ?? 0,
+    },
   ];
 
-  const campaignCounts = new Map<string, number>();
-  for (const g of active) {
+  const campaignTally = new Map<string, ActiveCancelledTally>();
+  for (const g of groups) {
     const label = attributionCampaignLabel(g.attribution) ?? NO_CAMPAIGN_LABEL;
-    campaignCounts.set(label, (campaignCounts.get(label) ?? 0) + 1);
+    const t = campaignTally.get(label) ?? { active: 0, cancelled: 0 };
+    if (g.active) t.active += 1;
+    else t.cancelled += 1;
+    campaignTally.set(label, t);
   }
-  const byCampaign: CampaignCount[] = Array.from(campaignCounts.entries())
-    .map(([label, count]) => ({ label, count }))
+  const byCampaign: BookingCampaignCount[] = Array.from(campaignTally.entries())
+    .map(([label, t]) => ({ label, count: t.active, cancelled: t.cancelled }))
     .sort(sortByCountDesc);
 
   return {

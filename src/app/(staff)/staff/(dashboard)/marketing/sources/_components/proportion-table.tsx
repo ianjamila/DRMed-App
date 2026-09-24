@@ -10,13 +10,20 @@ export function ProportionTable({
   columnLabel,
   rows,
   note,
+  showCancelled = false,
 }: {
   title: string;
   columnLabel: string;
-  rows: readonly { label: string; count: number }[];
+  rows: readonly { label: string; count: number; cancelled?: number }[];
   note: string;
+  // Adds a "Cancelled / no-show" column — an explicit prop rather than
+  // inferred from `rows` so the header stays stable even for a period with
+  // zero rows (bookings-by-source is always zero-filled, but
+  // bookings-by-campaign can genuinely have no rows for an empty period).
+  showCancelled?: boolean;
 }) {
   const max = Math.max(1, ...rows.map((r) => r.count));
+  const colCount = showCancelled ? 4 : 3;
   return (
     <section className="mt-6">
       <h2 className="mb-2 font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
@@ -28,13 +35,14 @@ export function ProportionTable({
             <tr>
               <th className="px-4 py-3">{columnLabel}</th>
               <th className="px-4 py-3 text-right">Count</th>
+              {showCancelled ? <th className="px-4 py-3 text-right">Cancelled / no-show</th> : null}
               <th className="px-4 py-3">Share</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={3} className="px-4 py-6 text-center text-sm text-[color:var(--color-brand-text-soft)]">
+                <td colSpan={colCount} className="px-4 py-6 text-center text-sm text-[color:var(--color-brand-text-soft)]">
                   Nothing in this period.
                 </td>
               </tr>
@@ -45,6 +53,11 @@ export function ProportionTable({
                   <td className="px-4 py-3 text-right font-mono text-[color:var(--color-brand-navy)]">
                     {r.count.toLocaleString("en-PH")}
                   </td>
+                  {showCancelled ? (
+                    <td className="px-4 py-3 text-right font-mono text-[color:var(--color-brand-text-mid)]">
+                      {(r.cancelled ?? 0).toLocaleString("en-PH")}
+                    </td>
+                  ) : null}
                   <td className="px-4 py-3">
                     <div className="h-2 w-full max-w-[200px] overflow-hidden rounded-full bg-[color:var(--color-brand-bg-mid)]">
                       <div

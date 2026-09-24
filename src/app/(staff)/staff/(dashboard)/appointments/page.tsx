@@ -986,6 +986,14 @@ function GroupRow({
             Home service
           </p>
         ) : null}
+        {r.notes ? (
+          <p
+            className="mt-1 max-w-[220px] truncate text-xs text-[color:var(--color-brand-text-soft)]"
+            title={r.notes}
+          >
+            {r.notes}
+          </p>
+        ) : null}
         <LabRequestLinks attachments={attachments} />
       </td>
       <td className="px-4 py-3">

@@ -52,6 +52,20 @@ Appointments" → then "include all the also-worth-considering and fix it".
 7. **Booking Sources report** — a third tab in admin Marketing (`/staff/marketing/sources`):
    bookings by source and by ad campaign, website messages by type/status/campaign, and the
    message → booking rate, for a chosen period.
+8. **Reply from inside the app** (owner: "do these first also before merging") — email (Resend) or
+   text (Semaphore) from the message page, always to the sender's own address/number (never one
+   typed by staff), no quote of the original message. One append-only `contact_message_replies` row
+   per attempt (`sent` / `failed` / `skipped`), `sent_by` must be the caller (RLS). A sent reply
+   moves a New message to Replied. Audited as `contact_message.reply_sent` (channel, outcome,
+   length — never the body or address).
+9. **Notes on every staff booking** — the slide-over's optional Notes field is no longer limited to
+   bookings made from a message.
+10. **Cancellations per source** — Booking Sources shows cancelled / no-show bookings per source
+    and per campaign beside the active count.
+11. **Real bookings in Ad Performance** — the CSV-driven Ad Performance tab also shows what the
+    clinic's own records say each campaign produced (bookings, website messages, cost per real
+    booking), matched to the uploaded campaigns by normalised name; only daily counts reach the
+    browser.
 
 ## Shared building blocks (already on the branch)
 
@@ -68,7 +82,4 @@ Appointments" → then "include all the also-worth-considering and fix it".
 
 ## Out of scope / follow-ups
 
-- Feeding in-system bookings per campaign into the Ad Performance tab's cost-per-booking.
-- Replying to a message from inside the app (email/SMS send) — reception replies by phone,
-  SMS or their own email client via the tel:/sms:/mailto: links.
 - Anon/authenticated TRUNCATE grants on other public tables (repo-wide grant drift, not this PR).

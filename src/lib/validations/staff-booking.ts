@@ -7,6 +7,11 @@ import { STAFF_SELECTABLE_SOURCES } from "@/lib/appointments/source";
 const optionalText = (max: number) =>
   z.string().trim().max(max).or(z.literal("")).nullish().transform((v) => (v == null || v === "" ? null : v));
 
+// The staff "+ New appointment" slide-over's Notes field is optional on every
+// booking (not just message bookings) — this is the single source for both
+// the schema's max() below and the textarea's `maxLength` so they can't drift.
+export const STAFF_BOOKING_NOTES_MAX = 2000;
+
 // Staff timing is RELAXED vs the public form: the "≥1 hour ahead" lead-time rule
 // is dropped (same-day / short-notice / re-entered bookings are allowed). It must
 // still be a real 30-min Mon–Sat 08:00–16:30 slot, and no more than 60 days out.
@@ -79,7 +84,7 @@ export const StaffBookingSchema = z
     service_ids: z.array(z.string().uuid()).optional(),
     physician_id: z.string().uuid().optional(),
     scheduled_at: relaxedScheduledAt,
-    notes: optionalText(2000),
+    notes: optionalText(STAFF_BOOKING_NOTES_MAX),
     send_confirmation: z.boolean().default(true),
     override: z.boolean().default(false),
     // How the patient reached us (0154) — required so every staff-made

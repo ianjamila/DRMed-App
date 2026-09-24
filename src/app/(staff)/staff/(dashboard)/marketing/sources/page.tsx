@@ -120,19 +120,25 @@ export default async function BookingSourcesReportPage({ searchParams }: SearchP
       <ProportionTable
         title="Bookings by source"
         columnLabel="Source"
-        rows={bookings.bySource.map((s) => ({ label: s.label, count: s.count }))}
+        rows={bookings.bySource.map((s) => ({ label: s.label, count: s.count, cancelled: s.cancelled }))}
+        showCancelled
         note="Online bookings and patient-portal bookings tag themselves. A booking made by
           reception only has a source once they started answering “How did they reach us?” in
-          the New appointment form — earlier staff bookings show as Not recorded."
+          the New appointment form — earlier staff bookings show as Not recorded. “Cancelled /
+          no-show” counts bookings from that source that were later cancelled or marked no-show
+          — they're counted separately and are not part of Count or Share."
       />
 
       <ProportionTable
         title="Bookings by ad campaign"
         columnLabel="Campaign"
-        rows={bookings.byCampaign.map((c) => ({ label: c.label, count: c.count }))}
+        rows={bookings.byCampaign.map((c) => ({ label: c.label, count: c.count, cancelled: c.cancelled }))}
+        showCancelled
         note="Online bookings carry the ad tag from the link the patient clicked. A booking made
           by staff only has one when it came from a website message that itself carried a tag —
-          every other staff booking shows as no ad tag."
+          every other staff booking shows as no ad tag. “Cancelled / no-show” counts bookings
+          under that campaign that were later cancelled or marked no-show — they're counted
+          separately and are not part of Count or Share."
       />
 
       <ProportionTable

@@ -92,7 +92,10 @@ const WIPE_TABLES: string[] = [
   // Top-level operational roots
   "visits",
   "patients",
-  // Marketing / inbound (operational, not config)
+  // Marketing / inbound (operational, not config). Replies reference
+  // contact_messages by FK (on delete cascade) so must precede it here for
+  // observable per-table counts, even though CASCADE would handle it anyway.
+  "contact_message_replies",
   "contact_messages",
 ];
 

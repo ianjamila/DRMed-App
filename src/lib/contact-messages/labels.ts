@@ -90,3 +90,11 @@ export const REPLY_OUTCOME_LABEL: Record<ReplyOutcome, string> = {
 // characters is another billed SMS segment.
 export const REPLY_BODY_MAX = 5000;
 export const REPLY_SMS_MAX = 480;
+
+export function isReplyChannel(value: unknown): value is ReplyChannel {
+  return typeof value === "string" && (REPLY_CHANNELS as ReadonlyArray<string>).includes(value);
+}
+
+export function isReplyOutcome(value: unknown): value is ReplyOutcome {
+  return typeof value === "string" && (REPLY_OUTCOMES as ReadonlyArray<string>).includes(value);
+}

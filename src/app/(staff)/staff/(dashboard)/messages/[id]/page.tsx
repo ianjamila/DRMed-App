@@ -15,9 +15,15 @@ import {
   contactMessageStatusLabel,
   isContactMessageKind,
   isContactMessageStatus,
+  isReplyChannel,
+  isReplyOutcome,
+  REPLY_CHANNEL_LABEL,
+  REPLY_OUTCOME_LABEL,
 } from "@/lib/contact-messages/labels";
 import { firstNameOf } from "@/lib/contact-messages/first-name";
+import { normalizePhPhone } from "@/lib/notifications/sms";
 import { MessageActionsPanel } from "./message-actions";
+import { ReplyPanel } from "./reply-panel";
 
 const DETAIL_NAME = "Website Message";
 
@@ -90,7 +96,7 @@ export default async function MessageDetailPage({ params }: Props) {
 
   const supabase = await createClient();
 
-  const [handledByProfile, linkedAppointment] = await Promise.all([
+  const [handledByProfile, linkedAppointment, repliesResp] = await Promise.all([
     message.handled_by
       ? supabase.from("staff_profiles").select("full_name").eq("id", message.handled_by).maybeSingle()
       : Promise.resolve({ data: null }),
@@ -101,6 +107,12 @@ export default async function MessageDetailPage({ params }: Props) {
           .eq("id", message.linked_appointment_id)
           .maybeSingle()
       : Promise.resolve({ data: null }),
+    supabase
+      .from("contact_message_replies")
+      .select("id, channel, sent_to, body, outcome, outcome_detail, sent_by, created_at")
+      .eq("message_id", id)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false }),
   ]);
 
   const handledByName = handledByProfile?.data?.full_name ?? null;
@@ -114,6 +126,16 @@ export default async function MessageDetailPage({ params }: Props) {
   const apptSearchName = apptPatient
     ? `${apptPatient.first_name} ${apptPatient.last_name}`
     : (apptRow?.walk_in_name ?? message.name);
+
+  const replies = repliesResp.data ?? [];
+  const replySenderIds = [...new Set(replies.map((r) => r.sent_by))];
+  const { data: replySenders } =
+    replySenderIds.length > 0
+      ? await supabase.from("staff_profiles").select("id, full_name").in("id", replySenderIds)
+      : { data: [] as Array<{ id: string; full_name: string }> };
+  const replySenderName = new Map((replySenders ?? []).map((p) => [p.id, p.full_name]));
+
+  const smsTo = normalizePhPhone(message.phone);
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
@@ -205,6 +227,45 @@ export default async function MessageDetailPage({ params }: Props) {
                   The linked appointment could not be loaded.
                 </p>
               )}
+            </Panel>
+          ) : null}
+
+          <Panel className="p-5">
+            <ReplyPanel
+              messageId={message.id}
+              firstName={firstNameOf(message.name)}
+              emailTo={message.email}
+              smsTo={smsTo}
+            />
+          </Panel>
+
+          {replies.length > 0 ? (
+            <Panel className="p-5">
+              <h2 className="mb-3 font-heading text-base font-extrabold text-[color:var(--color-brand-navy)]">
+                Reply history
+              </h2>
+              <ul className="space-y-4">
+                {replies.map((r) => {
+                  const replyChannel = isReplyChannel(r.channel) ? r.channel : "email";
+                  const replyOutcome = isReplyOutcome(r.outcome) ? r.outcome : "failed";
+                  return (
+                    <li key={r.id} className="border-t border-[color:var(--color-brand-bg-mid)] pt-3 first:border-t-0 first:pt-0">
+                      <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+                        {manilaDateTime(r.created_at)} · {REPLY_CHANNEL_LABEL[replyChannel]} to{" "}
+                        <span className="font-semibold text-[color:var(--color-brand-text-mid)]">{r.sent_to}</span>
+                        {" · "}
+                        {replySenderName.get(r.sent_by) ?? "a staff member"}
+                        {" · "}
+                        <span className="font-semibold">{REPLY_OUTCOME_LABEL[replyOutcome]}</span>
+                        {r.outcome_detail ? ` (${r.outcome_detail})` : ""}
+                      </p>
+                      <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-[color:var(--color-brand-text-mid)]">
+                        {r.body}
+                      </p>
+                    </li>
+                  );
+                })}
+              </ul>
             </Panel>
           ) : null}
         </div>
