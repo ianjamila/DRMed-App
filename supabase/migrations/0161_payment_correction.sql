@@ -109,7 +109,13 @@ begin
     raise exception 'Payments from the imported history cannot be edited. Delete it and record it again.'
       using errcode = 'P0054';
   end if;
-  if p_method is null or p_method not in ('cash', 'gcash', 'maya', 'card', 'bank_transfer') then
+  -- The method is only checked when it CHANGES: a Move (or a reference fix)
+  -- re-sends the payment's own method, and a legacy bpi / maybank receipt
+  -- must stay what it was rather than be refused for a method the counter no
+  -- longer offers. A new method must be one the counter records today.
+  if p_method is null
+     or (p_method is distinct from v_old.method
+         and p_method not in ('cash', 'gcash', 'maya', 'card', 'bank_transfer')) then
     raise exception 'Choose Cash, GCash, Maya, Card or Bank transfer.'
       using errcode = 'P0054';
   end if;
