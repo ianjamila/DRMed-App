@@ -92,3 +92,23 @@ export function eventsByTest(
   }
   return map;
 }
+
+export interface HandedBack {
+  /** How many times the test was unclaimed. */
+  count: number;
+  /** The most recent unclaim, already worded ("Unclaimed by … — “reason”"). */
+  latest: ClaimRemark;
+}
+
+/**
+ * Has this test ever been handed back to the queue? Drives the Visit page's
+ * "handed back" chip. Only UNCLAIMS count — a reassignment moves the work to a
+ * named person, it never puts it back up for grabs.
+ */
+export function handedBack(events: readonly ClaimEvent[]): HandedBack | null {
+  const unclaims = claimRemarks(
+    events.filter((e) => e.action === "test_request.unclaimed"),
+  );
+  if (unclaims.length === 0) return null;
+  return { count: unclaims.length, latest: unclaims[unclaims.length - 1] };
+}
