@@ -880,7 +880,7 @@ export function VisitForm({
                       <p className="col-span-12 sm:col-span-6 self-end text-[10px] text-[color:var(--color-brand-text-soft)]">
                         {selectedPhysician && cfAuto === 0
                           ? `Clinic fee starts at ₱0 — ${zeroClinicFeeReason(selectedPhysician.compensation_arrangement, selectedPhysician.clinic_cut_php)}. Both boxes can still be changed.`
-                          : `Defaults: clinic fee ${formatPhp(cfAuto)}, doctor's fee (PF) = final − clinic fee. Both editable.`}
+                          : `Clinic fee starts at ${formatPhp(cfAuto)}; the doctor's fee (PF) is whatever is left of the final price. Both boxes can still be changed.`}
                       </p>
                     </div>
                   ) : null}
