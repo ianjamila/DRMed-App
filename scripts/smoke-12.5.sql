@@ -14,7 +14,8 @@
 --   1. Inserts a self-contained fixture (auth user, staff profile, physicians,
 --      services, vendor, HMO provider, patient, visits, test_requests, etc.)
 --      — all tagged SMOKE-12.5 for targeted cleanup.
---   2. Runs 16 assertions in do $$ ... $$ blocks. Each raises a NOTICE on PASS
+--   2. Runs 14 assertions in do $$ ... $$ blocks (A4/A5 rewritten and A11/A12
+--      retired by 0159 — send-out cost is no longer booked at release). Each raises a NOTICE on PASS
 --      and an EXCEPTION on FAIL (which aborts the run cleanly inside the outer
 --      BEGIN/ROLLBACK so no smoke residue leaks into the DB).
 --   3. Cleans up explicitly using the draft-flip pattern from
@@ -454,24 +455,22 @@ end $$;
 
 
 -- ============================================================================
--- ASSERTION 4
--- Send-out test with unit_cost=500 → release JE has DR 6420 500 / CR 2150 500;
--- cogs_send_out_entries row exists with unit_cost_php=500, journal_entry_id set.
+-- ASSERTION 4 (rewritten for 0159)
+-- Send-out test with unit_cost=500 → release JE books revenue only: NO 6420 /
+-- 2150 lines and NO cogs_send_out_entries row. Partner labs are paid on the
+-- spot and recorded as a "Send Out" expense, so booking cost here would count
+-- it twice.
 -- ============================================================================
 do $$
 declare
   v_tr_id      uuid;
   v_je_id      uuid;
-  v_acct_6420  uuid;
-  v_acct_2150  uuid;
-  v_dr_6420    numeric(12,2);
-  v_cr_2150    numeric(12,2);
-  v_cogs_id    uuid;
-  v_cogs_cost  numeric(10,2);
-  v_cogs_je    uuid;
   v_visit_id   uuid;
   v_svc_id     uuid;
   v_auth_id    uuid;
+  v_cost_lines int;
+  v_rev_lines  int;
+  v_cogs_cnt   int;
 begin
   select val into v_visit_id from smoke_125_ids where key='visit_cash_id';
   select val into v_svc_id   from smoke_125_ids where key='svc_sendout_cost';
@@ -495,57 +494,43 @@ begin
 
   assert v_je_id is not null, 'A4: no posted JE for send-out release';
 
-  -- Check DR 6420 = 500, CR 2150 = 500
-  select id into v_acct_6420 from public.chart_of_accounts where code='6420';
-  select id into v_acct_2150 from public.chart_of_accounts where code='2150';
+  select count(*) into v_cost_lines from public.journal_lines
+    where entry_id = v_je_id
+      and account_id in (select id from public.chart_of_accounts where code in ('6420','2150'));
+  assert v_cost_lines = 0,
+    format('A4: expected no 6420/2150 lines since 0159, got %s', v_cost_lines);
 
-  select debit_php into v_dr_6420 from public.journal_lines
-    where entry_id = v_je_id and account_id = v_acct_6420;
-  select credit_php into v_cr_2150 from public.journal_lines
-    where entry_id = v_je_id and account_id = v_acct_2150;
+  select count(*) into v_rev_lines from public.journal_lines where entry_id = v_je_id;
+  assert v_rev_lines = 2,
+    format('A4: expected 2 revenue-side lines (receivable + revenue), got %s', v_rev_lines);
 
-  assert coalesce(v_dr_6420, 0) = 500.00,
-    format('A4: expected DR 6420=500, got %s', coalesce(v_dr_6420, 0));
-  assert coalesce(v_cr_2150, 0) = 500.00,
-    format('A4: expected CR 2150=500, got %s', coalesce(v_cr_2150, 0));
+  select count(*) into v_cogs_cnt from public.cogs_send_out_entries
+    where test_request_id = v_tr_id;
+  assert v_cogs_cnt = 0,
+    format('A4: expected no cogs_send_out_entries row since 0159, got %s', v_cogs_cnt);
 
-  -- Check cogs_send_out_entries
-  select id, unit_cost_php, journal_entry_id
-    into v_cogs_id, v_cogs_cost, v_cogs_je
-    from public.cogs_send_out_entries
-    where test_request_id = v_tr_id and voided_at is null;
-
-  assert v_cogs_id is not null, 'A4: cogs_send_out_entries row not found';
-  assert v_cogs_cost = 500.00,
-    format('A4: expected unit_cost_php=500, got %s', v_cogs_cost);
-  assert v_cogs_je is not null,
-    'A4: journal_entry_id is null on cogs_send_out_entries (should be set for cost>0)';
-
-  -- Store for assertions 11+12
   insert into smoke_125_ids values ('tr_sendout_cost', v_tr_id);
 
-  raise notice 'ASSERTION 4 PASS: Send-out (cost=500) → DR 6420/CR 2150=500, cogs_entries row set';
+  raise notice 'ASSERTION 4 PASS: Send-out (cost=500) → revenue only, no 6420/2150, no cogs row';
 end $$;
 
 
 -- ============================================================================
--- ASSERTION 5
--- Send-out with NULL unit_cost → release JE has NO COGS lines;
--- cogs_send_out_entries row with unit_cost_php=0, journal_entry_id=null;
--- audit_log has send_out.unit_cost_missing row.
+-- ASSERTION 5 (rewritten for 0159)
+-- Send-out test with NULL unit cost → revenue JE, no 6420 lines, no
+-- cogs_send_out_entries row and no send_out.unit_cost_missing audit row
+-- (a missing unit cost is no longer a problem to flag).
 -- ============================================================================
 do $$
 declare
   v_tr_id      uuid;
   v_je_id      uuid;
-  v_acct_6420  uuid;
-  v_line_count int;
-  v_cogs_cost  numeric(10,2);
-  v_cogs_je    uuid;
-  v_audit_cnt  int;
   v_visit_id   uuid;
   v_svc_id     uuid;
   v_auth_id    uuid;
+  v_line_count int;
+  v_cogs_cnt   int;
+  v_audit_cnt  int;
 begin
   select val into v_visit_id from smoke_125_ids where key='visit_cash_id';
   select val into v_svc_id   from smoke_125_ids where key='svc_sendout_null';
@@ -566,38 +551,28 @@ begin
   select id into v_je_id from public.journal_entries
     where source_kind = 'test_request' and source_id = v_tr_id and status = 'posted';
 
-  -- JE should still exist (revenue lines still fire)
   assert v_je_id is not null, 'A5: no posted JE for send-out (null cost) release';
 
-  -- No 6420 lines on the JE
-  select id into v_acct_6420 from public.chart_of_accounts where code='6420';
   select count(*) into v_line_count from public.journal_lines
-    where entry_id = v_je_id and account_id = v_acct_6420;
+    where entry_id = v_je_id
+      and account_id in (select id from public.chart_of_accounts where code in ('6420','2150'));
   assert v_line_count = 0,
-    format('A5: expected 0 lines for 6420 (no cost), got %s', v_line_count);
+    format('A5: expected 0 lines for 6420/2150, got %s', v_line_count);
 
-  -- cogs_send_out_entries: unit_cost_php=0, journal_entry_id null
-  select unit_cost_php, journal_entry_id
-    into v_cogs_cost, v_cogs_je
-    from public.cogs_send_out_entries
-    where test_request_id = v_tr_id and voided_at is null;
+  select count(*) into v_cogs_cnt from public.cogs_send_out_entries
+    where test_request_id = v_tr_id;
+  assert v_cogs_cnt = 0,
+    format('A5: expected no cogs_send_out_entries row since 0159, got %s', v_cogs_cnt);
 
-  assert v_cogs_cost = 0,
-    format('A5: expected unit_cost_php=0 for null-cost send-out, got %s', v_cogs_cost);
-  assert v_cogs_je is null,
-    'A5: journal_entry_id should be null for unit_cost=0 (D10 path)';
-
-  -- audit_log row
   select count(*) into v_audit_cnt
     from public.audit_log
     where action = 'send_out.unit_cost_missing' and resource_id = v_tr_id;
-  assert v_audit_cnt >= 1,
-    format('A5: expected audit_log send_out.unit_cost_missing, got %s rows', v_audit_cnt);
+  assert v_audit_cnt = 0,
+    format('A5: expected no send_out.unit_cost_missing audit since 0159, got %s rows', v_audit_cnt);
 
-  -- Store tr for trueup assertions 11+12
   insert into smoke_125_ids values ('tr_sendout_null', v_tr_id);
 
-  raise notice 'ASSERTION 5 PASS: Send-out (null cost) → no COGS JE lines, cogs_entries unit_cost=0, audit written';
+  raise notice 'ASSERTION 5 PASS: Send-out (null cost) → revenue only, no cogs row, no audit';
 end $$;
 
 
@@ -1069,128 +1044,13 @@ end $$;
 
 
 -- ============================================================================
--- ASSERTION 11
--- INSERT cogs_send_out_trueups with billed=600, accrued=500 → variance JE fires
--- DR 6420 100 / CR 2150 100; entries' trueup_id populated.
+-- ASSERTIONS 11 + 12 — RETIRED by 0159.
+-- They matched a vendor bill against release-time send-out accruals
+-- (cogs_send_out_trueups → variance JE on 6420/2150). Release no longer
+-- accrues send-out cost and nothing in the app writes a true-up any more, so
+-- there is nothing to reconcile. The table and its trigger are kept only for
+-- history; the cleanup block below still tolerates their absence of rows.
 -- ============================================================================
-do $$
-declare
-  v_trueup_id  uuid;
-  v_je_id      uuid;
-  v_acct_6420  uuid;
-  v_acct_2150  uuid;
-  v_dr_6420    numeric(12,2);
-  v_cr_2150    numeric(12,2);
-  v_trued_cnt  int;
-  v_vendor_id  uuid;
-  v_staff_id   uuid;
-  v_tr_id      uuid;
-begin
-  select val into v_vendor_id from smoke_125_ids where key='vendor_id';
-  select val into v_staff_id  from smoke_125_ids where key='staff_id';
-  select val into v_tr_id     from smoke_125_ids where key='tr_sendout_cost';
-
-  -- Insert trueup: billed=600, accrued=500 → variance = +100 (under-accrued)
-  insert into public.cogs_send_out_trueups (
-    vendor_id, period_start_date, period_end_date,
-    accrued_total_php, billed_total_php, variance_php,
-    matched_by
-  ) values (
-    v_vendor_id, current_date - 30, current_date,
-    500.00, 600.00, 100.00,
-    v_staff_id
-  ) returning id into v_trueup_id;
-
-  -- journal_entry_id should be set
-  select journal_entry_id into v_je_id
-    from public.cogs_send_out_trueups where id = v_trueup_id;
-
-  assert v_je_id is not null,
-    'A11: journal_entry_id not set on cogs_send_out_trueups after INSERT';
-
-  -- Verify variance JE: DR 6420 100 / CR 2150 100
-  select id into v_acct_6420 from public.chart_of_accounts where code='6420';
-  select id into v_acct_2150 from public.chart_of_accounts where code='2150';
-
-  select debit_php into v_dr_6420 from public.journal_lines
-    where entry_id = v_je_id and account_id = v_acct_6420;
-  select credit_php into v_cr_2150 from public.journal_lines
-    where entry_id = v_je_id and account_id = v_acct_2150;
-
-  assert coalesce(v_dr_6420, 0) = 100.00,
-    format('A11: expected DR 6420=100, got %s', coalesce(v_dr_6420, 0));
-  assert coalesce(v_cr_2150, 0) = 100.00,
-    format('A11: expected CR 2150=100, got %s', coalesce(v_cr_2150, 0));
-
-  -- cogs_send_out_entries trueup_id populated for matching entries
-  select count(*) into v_trued_cnt
-    from public.cogs_send_out_entries
-    where trueup_id = v_trueup_id and voided_at is null;
-  assert v_trued_cnt >= 1,
-    format('A11: expected >=1 cogs_send_out_entries with trueup_id set, got %s', v_trued_cnt);
-
-  insert into smoke_125_ids values ('trueup_a11_id', v_trueup_id);
-
-  raise notice 'ASSERTION 11 PASS: Trueup (billed=600,accrued=500) → DR6420/CR2150=100, entries.trueup_id set';
-end $$;
-
-
--- ============================================================================
--- ASSERTION 12
--- INSERT cogs_send_out_trueups with billed=500, accrued=0 → variance JE fires
--- DR 6420 500 / CR 2150 500.
--- ============================================================================
-do $$
-declare
-  v_trueup_id  uuid;
-  v_je_id      uuid;
-  v_acct_6420  uuid;
-  v_acct_2150  uuid;
-  v_dr_6420    numeric(12,2);
-  v_cr_2150    numeric(12,2);
-  v_vendor_id  uuid;
-  v_staff_id   uuid;
-  v_tr_id      uuid;
-begin
-  select val into v_vendor_id from smoke_125_ids where key='vendor_id';
-  select val into v_staff_id  from smoke_125_ids where key='staff_id';
-  select val into v_tr_id     from smoke_125_ids where key='tr_sendout_null';
-
-  -- Insert trueup: billed=500, accrued=0 → variance=+500 (all billed, none accrued)
-  -- We extend the date range slightly so no collision with A11's trueup entries
-  insert into public.cogs_send_out_trueups (
-    vendor_id, period_start_date, period_end_date,
-    accrued_total_php, billed_total_php, variance_php,
-    matched_by
-  ) values (
-    v_vendor_id, current_date - 60, current_date - 31,
-    0.00, 500.00, 500.00,
-    v_staff_id
-  ) returning id into v_trueup_id;
-
-  select journal_entry_id into v_je_id
-    from public.cogs_send_out_trueups where id = v_trueup_id;
-
-  assert v_je_id is not null,
-    'A12: journal_entry_id not set for billed=500/accrued=0 trueup';
-
-  select id into v_acct_6420 from public.chart_of_accounts where code='6420';
-  select id into v_acct_2150 from public.chart_of_accounts where code='2150';
-
-  select debit_php into v_dr_6420 from public.journal_lines
-    where entry_id = v_je_id and account_id = v_acct_6420;
-  select credit_php into v_cr_2150 from public.journal_lines
-    where entry_id = v_je_id and account_id = v_acct_2150;
-
-  assert coalesce(v_dr_6420, 0) = 500.00,
-    format('A12: expected DR 6420=500, got %s', coalesce(v_dr_6420, 0));
-  assert coalesce(v_cr_2150, 0) = 500.00,
-    format('A12: expected CR 2150=500, got %s', coalesce(v_cr_2150, 0));
-
-  insert into smoke_125_ids values ('trueup_a12_id', v_trueup_id);
-
-  raise notice 'ASSERTION 12 PASS: Trueup (billed=500,accrued=0) → DR6420/CR2150=500';
-end $$;
 
 
 -- ============================================================================

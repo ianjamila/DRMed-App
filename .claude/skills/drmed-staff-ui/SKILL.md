@@ -47,7 +47,7 @@ An **item** is a `StaffNavItem`:
 - `exact` — active only when `pathname === href` (use when `href` is too broad, e.g. `/staff`).
 - `activePrefixes` — extra prefixes that ALSO light the item. This is the key to consolidation (below). List sibling routes individually; never a shared parent that also covers a route no item owns.
 - `excludePrefixes` — sub-trees under `href` (or an active prefix) that must NOT light the item, because a sibling item owns them.
-- `roles` — who sees it. `visibleNavFor(role)` filters items + subgroups and drops empties; `isItemActive(item, pathname)` / `isSubgroupActive` decide highlighting. Both renderers (`staff-nav.tsx`, `staff-mobile-nav-trigger.tsx`) put `aria-current="page"` on the active link, the same signal `SectionTabs` gives. **Every path must light at most ONE item** — `staff-nav-config.test.ts` asserts this for the routes that share a prefix (Patients ⊃ /new, Cash Drawer's three tabs, Visit Records vs queue/new, Outside-Lab Costs vs …/vendor-performance).
+- `roles` — who sees it. `visibleNavFor(role)` filters items + subgroups and drops empties; `isItemActive(item, pathname)` / `isSubgroupActive` decide highlighting. Both renderers (`staff-nav.tsx`, `staff-mobile-nav-trigger.tsx`) put `aria-current="page"` on the active link, the same signal `SectionTabs` gives. **Every path must light at most ONE item** — `staff-nav-config.test.ts` asserts this for the routes that share a prefix (Patients ⊃ /new, Cash Drawer's three tabs, Visit Records vs queue/new).
 
 **Consolidation pattern (collapse N sidebar items → 1 umbrella that opens to tabs).** Point the umbrella item's `href` at the default/first tab and list the sibling tab routes in `activePrefixes` so it stays highlighted across them. Live examples:
 
