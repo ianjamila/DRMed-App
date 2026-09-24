@@ -201,9 +201,7 @@ export function MovePaymentDialog({
                   <p className="mt-1 font-semibold">This visit belongs to a different patient.</p>
                 ) : null}
                 <p className="mt-1">
-                  The {formatPhp(amount)} {methodLabel} payment leaves visit #{currentVisitNumber}{" "}
-                  and is recorded on #{target.visitNumber} with the same date and cashier.
-                  Both visits&apos; balances update, and the books follow.
+                  {`The ${formatPhp(amount)} ${methodLabel} payment leaves visit #${currentVisitNumber} and is recorded on #${target.visitNumber} with the same date and cashier. Both visits’ balances update, and the books follow.`}
                 </p>
                 {targetBalanceAfter !== null && targetBalanceAfter < 0 ? (
                   <p className="mt-1 font-semibold text-amber-800">
