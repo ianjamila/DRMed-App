@@ -17,6 +17,7 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendEmail } from "@/lib/notifications/email";
 import { audit } from "@/lib/audit/log";
+import { reportError } from "@/lib/observability/report-error";
 import { SITE } from "@/lib/marketing/site";
 import type { Json } from "@/types/database";
 import type { ContactMessageKind } from "./labels";
@@ -107,9 +108,14 @@ export async function sendNewMessageAlert(input: NewMessageAlertInput): Promise<
         ...(skipped ? { skipped } : {}),
       } as unknown as Json,
     });
-  } catch {
-    // Belt-and-braces: the caller already wraps this in a try/catch, but this
-    // function is documented as "never throws" so it stays true even if a
-    // future edit removes that wrapper.
+  } catch (error) {
+    // Documented as "never throws": it runs inside after(), where a rejection
+    // would only surface as an unhandled error. Report it instead, so a broken
+    // alert is visible rather than silently leaving messages unannounced.
+    try {
+      await reportError({ scope: "contact-message/alert", error, metadata: { messageId: input.id } });
+    } catch {
+      // Reporting itself failed — nothing further to do.
+    }
   }
 }

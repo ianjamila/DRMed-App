@@ -295,8 +295,8 @@ export async function completeArrivedAppointmentsForPatientAction(
 }
 
 // H2: attach a real patient to a walk-in-mode appointment (patient_id =
-// null, created via new-appointment-sheet's "Walk-in" mode or Book-from-
-// inquiry) so it stops being a dead end. Once patient_id is set, the
+// null, created via new-appointment-sheet's "Walk-in" mode, including a
+// booking made from a website message) so it stops being a dead end. Once patient_id is set, the
 // existing "+ Start visit" link (transition-buttons.tsx, gated on status ===
 // "arrived" && patientId) becomes reachable and the normal
 // completeAppointmentFromVisitAction path finishes the job — this action

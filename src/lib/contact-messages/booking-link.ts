@@ -64,6 +64,12 @@ export async function loadMessageForBooking(
 // Marks the message Booked and points it at the booking's lead appointment
 // row. Never rolls back the appointment on failure — the caller logs the
 // error and the message can still be closed by hand.
+//
+// The update is conditional on the message not being Booked already: the
+// caller's "already booked?" check runs before the appointment is created, so
+// two people booking the same message at once would both pass it, and an
+// unconditional update would silently re-point the first booking's link at
+// the second. Losing that race leaves the first link intact and reports it.
 export async function linkMessageToBooking(
   client: SupabaseClient<Database>,
   input: { messageId: string; appointmentId: string; staffUserId: string },
@@ -77,8 +83,14 @@ export async function linkMessageToBooking(
       handled_at: new Date().toISOString(),
     })
     .eq("id", input.messageId)
+    .neq("status", "booked")
     .select("id");
   if (error) return { ok: false, error: translatePgError(error) };
-  if (!data || data.length === 0) return { ok: false, error: "That website message could not be found." };
+  if (!data || data.length === 0) {
+    return {
+      ok: false,
+      error: "That website message could not be found, or someone else booked it at the same time.",
+    };
+  }
   return { ok: true };
 }

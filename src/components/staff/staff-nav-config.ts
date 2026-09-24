@@ -449,7 +449,7 @@ export const STAFF_NAV: StaffNavSection[] = [
             // prefix match keeps this item lit on the /ops tab too.
             href: "/staff/marketing",
             label: SECTION_NAME["/staff/marketing"],
-            description: "The marketing workspace, in two tabs: Ad Performance (upload your Meta + Google ad CSV exports to see spend, cost per booking, and the lead funnel) and Ops Tracker (daily/weekly/monthly checklists, the 12-week launch roadmap, and the campaign status board). Data is saved in this browser only.",
+            description: "The marketing workspace, in three tabs: Ad Performance (upload your Meta + Google ad CSV exports to see spend, cost per booking, and the lead funnel), Ops Tracker (daily/weekly/monthly checklists, the 12-week launch roadmap, and the campaign status board) — both saved in this browser only — and Booking Sources (live from the clinic's records: where appointments and website messages came from, by source and by ad campaign).",
             roles: ["admin"],
           },
         ],
