@@ -18,7 +18,7 @@ These were settled while planning (2026-09-24) from code and live data the spec 
 
 | # | Decision | Why |
 |---|---|---|
-| D1 | Migration **0170** (`0170_sheet_sync_foundation.sql`; renumbered from 0159 on 2026-09-24 — open PRs took 0159–0165), P-codes **P0054** (another sync is running), **P0055** (lease lost), **P0056** (review item no longer open). | #205 took 0157 and #206 took 0158 on 2026-09-24. Re-check open branches before pushing (CLAUDE.md recipe). |
+| D1 | Migration **0170** (`0170_sheet_sync_foundation.sql`; renumbered from 0159 on 2026-09-24 — open PRs took 0159–0165), P-codes **P0060** (another sync is running), **P0061** (lease lost), **P0062** (review item no longer open). | #205 took 0157 and #206 took 0158 on 2026-09-24. Re-check open branches before pushing (CLAUDE.md recipe). |
 | D2 | **Channel ownership is decided by a transaction-local setting `app.referral_origin`, set only inside our security-definer RPCs** (`resolve_patient_guarded` → `patient`, sync / re-sort / alias / revert → `sheet` or the restored value). The trigger ignores any value written to `referral_source_origin` directly; any `referral_source` change without the setting becomes `staff`. | The spec's "decide by caller role" rule cannot work. 0158's `resolve_patient_guarded` writes `referral_source` from the public forms as the function owner, and a same-value origin write is invisible to a BEFORE trigger, so the sync re-writing a value it already owns would flip it to `staff`. PostgREST cannot call `set_config` (it lives in `pg_catalog`, which is not an exposed schema), so only our functions can set it. The repo already uses this pattern: `app.skip_bridge_historical` (0036), `app.allow_template_param_delete` (0121). |
 | D3 | Every patient-changing admin action (re-sort approval, map-answer-to-channel, revert) runs as its own `sheet_sync_runs` row (`trigger` = `resort` / `alias` / `revert`) under the same lease. So each is fenced, listed in run history, and itself revertable. | One mechanism for before-images and reverts instead of three. |
 | D4 | Review kind `possible_existing_patient` is added to the kind list. | The spec uses it in §5.3 but left it out of §4.2's list. |
@@ -82,7 +82,7 @@ A header check (Task 4) refuses a tab whose key headers moved, so an inserted co
 - `src/lib/accounting/google-sheets.ts` (use shared token helper)
 - `scripts/clinical-backfill/lib/names.ts` (re-export `normalizeName`)
 - `src/lib/patients/referral-sources.ts` + `.test.ts` (18 ids, D9)
-- `src/lib/accounting/pg-errors.ts` (P0054–P0056)
+- `src/lib/accounting/pg-errors.ts` (P0060–P0062)
 - `supabase/seed.sql` (tail: re-revokes for the new tables)
 - `src/app/api/cron/data-retention/route.ts` (purge old resolved review items + orphan staging)
 - `vercel.json`, `src/lib/ops/cron-heartbeats.ts`, `.github/workflows/cron-watchdog.yml` (three-place cron rule)
@@ -1882,7 +1882,7 @@ export function computeResortGroups(patients: readonly ResortInput[], aliases: R
 - Create: `supabase/migrations/0170_sheet_sync_foundation.sql`
 - Modify: `supabase/seed.sql` (tail), `src/lib/accounting/pg-errors.ts`, `src/lib/patients/referral-sources.ts`, `src/lib/patients/referral-sources.test.ts`, `src/lib/sheet-sync/referral-mapper.ts` (type the id as `ReferralSourceId`), `src/types/database.ts` (regenerated)
 
-- [ ] **Step 0: Re-check the number.** `git fetch -q origin` then run the CLAUDE.md loop over `git branch -r` **and** local branches. If anything claims 0170 or P0054–P0056, take the next free ones and rename them everywhere in this plan's code.
+- [ ] **Step 0: Re-check the number.** `git fetch -q origin` then run the CLAUDE.md loop over `git branch -r` **and** local branches. If anything claims 0170 or P0060–P0062, take the next free ones and rename them everywhere in this plan's code.
 
 - [ ] **Step 1: Write the migration** exactly as below. It is one file, in the order shown.
 
@@ -1909,8 +1909,8 @@ export function computeResortGroups(patients: readonly ResortInput[], aliases: R
 --     items, before-images, identity decisions, acquisition facts, aliases)
 --     and reporting-only mirror tables + a staging table.
 --  5. Lease-fenced RPCs, all SECURITY DEFINER, search_path '', service_role
---     only. P0054 = another sync holds the lease; P0055 = this worker's lease
---     was taken over; P0056 = review item no longer open.
+--     only. P0060 = another sync holds the lease; P0061 = this worker's lease
+--     was taken over; P0062 = review item no longer open.
 -- Nothing here creates visits, payments or journal entries.
 -- =============================================================================
 
@@ -2239,7 +2239,7 @@ begin
    where r.lease_token = p_lease_token and r.status = 'running'
    for update;
   if v_id is null then
-    raise exception 'This sheet sync lost its turn to another run.' using errcode = 'P0055';
+    raise exception 'This sheet sync lost its turn to another run.' using errcode = 'P0061';
   end if;
   update public.sheet_sync_runs set heartbeat_at = now() where id = v_id;
   return v_id;
@@ -2281,7 +2281,7 @@ begin
   select * into v_run from public.sheet_sync_runs r where r.status = 'running' for update;
   if found then
     if v_run.heartbeat_at > now() - interval '10 minutes' then
-      raise exception 'Another sheet sync is running.' using errcode = 'P0054';
+      raise exception 'Another sheet sync is running.' using errcode = 'P0060';
     end if;
     update public.sheet_sync_runs set status = 'failed', ended_at = now(), error = 'lease expired (no heartbeat for 10 minutes)'
      where id = v_run.id;
@@ -2684,7 +2684,7 @@ declare v_item public.sheet_sync_review_items%rowtype;
 begin
   select * into v_item from public.sheet_sync_review_items i where i.id = p_item_id and i.status = 'open' for update;
   if not found then
-    raise exception 'This review item was already handled.' using errcode = 'P0056';
+    raise exception 'This review item was already handled.' using errcode = 'P0062';
   end if;
   if p_action = 'dismiss' then
     update public.sheet_sync_review_items
@@ -2799,11 +2799,11 @@ revoke all on public.sheet_mirror_staging from authenticated;
 - [ ] **Step 3: P-codes.** In `src/lib/accounting/pg-errors.ts`, before `default:` add:
 
 ```ts
-    case "P0054":
+    case "P0060":
       return "Another sheet sync is running. Try again in a few minutes.";
-    case "P0055":
+    case "P0061":
       return "This sheet sync stopped because a newer run took over. Check the run history.";
-    case "P0056":
+    case "P0062":
       return "Someone already handled this review item. Refresh the page.";
 ```
 
@@ -2851,13 +2851,13 @@ Checks (each a function returning `[name, ok, detail]`):
 2. **RPC ACL.** As `authenticated` (admin): `select public.sheet_sync_acquire('manual', null, true)` → 42501. Repeat for each RPC name in the migration's list. As `service_role` (`set local role service_role`): acquire works.
 3. **Ownership trigger.** As `authenticated` admin (the staff client path), `update patients set referral_source = 'online_google', referral_source_origin = 'sheet' where id = P` → origin is `staff` and `row_version` went up by 1. As `postgres` with no setting, change the source → `staff`. Call `resolve_patient_guarded` with a new email and `referral_source = 'online_facebook'` → the new row's origin is `patient`. Set it to NULL → origin NULL.
 4. **Pause.** With `paused = true`: `sheet_sync_acquire('cron', null, false)` returns `skipped_paused` and inserts a `skipped_paused` run; `('cron', null, true)` (dry run) returns `running`.
-5. **Lease + fencing.** With `paused = false`: acquire A → `running`. Acquire B → P0054. `update sheet_sync_runs set heartbeat_at = now() - interval '11 minutes'` on A. Acquire B → `running` and A is now `failed`. `sheet_mirror_stage(A.token, 'lab', '[]')` → P0055. `sheet_sync_finish(A.token, …)` → P0055.
-6. **Snapshot atomicity.** With lease B, stage 3 chunks of 2 lab rows (valid `sheet_encounter_lines` JSON, `identity_key` `name:x|y`). Before commit, `sheet_encounter_lines where tab='lab'` still holds the 1 pre-existing row. After `sheet_mirror_commit(B,'lab')` it holds exactly 6 rows and the staging rows for B are gone. Also: a commit with a stale token raises P0055 and leaves the live rows untouched.
+5. **Lease + fencing.** With `paused = false`: acquire A → `running`. Acquire B → P0060. `update sheet_sync_runs set heartbeat_at = now() - interval '11 minutes'` on A. Acquire B → `running` and A is now `failed`. `sheet_mirror_stage(A.token, 'lab', '[]')` → P0061. `sheet_sync_finish(A.token, …)` → P0061.
+6. **Snapshot atomicity.** With lease B, stage 3 chunks of 2 lab rows (valid `sheet_encounter_lines` JSON, `identity_key` `name:x|y`). Before commit, `sheet_encounter_lines where tab='lab'` still holds the 1 pre-existing row. After `sheet_mirror_commit(B,'lab')` it holds exactly 6 rows and the staging rows for B are gone. Also: a commit with a stale token raises P0061 and leaves the live rows untouched.
 7. **Conditional fill never overwrites.** Patient Q: `phone = '+639170000000'`, `email = null`, `referral_source = 'walk_in'` (staff). Op `fill` with phone `+639171111111`, email `q@example.com`, `referral_source = 'online_facebook'` → phone unchanged, email filled, source unchanged (staff-owned). Exactly one `sheet_sync_changes` row (`email`). A second identical op → no change, `row_version` unchanged (no-op update suppressed).
 8. **Sheet-owned channel follows the sheet.** Patient R with origin `sheet` via `sheet_resort_apply` from `other` → `online_google`: origin `sheet`. Then a fill op with `referral_source: null` → source NULL, origin NULL.
 9. **Create.** A `create` op with no birthdate → the row exists with `legacy_import_run_id` set, origin `sheet`, one `create` change row, links for each `link_keys` entry, and a facts row. The run now carries `legacy_import_run_id`.
 10. **Revert.** Run S fills patient T's email. `sheet_sync_revert_run` (new lease) restores it: email back to NULL and `restored = 1`. Run U fills patient V's email, then a staff update touches V → revert reports `blocked = 1` and V is unchanged. Revert of the run that created patient W (untouched) → W deleted, `deleted = 1`. A second revert of the same run → `22023`.
-11. **Review upsert.** Two upserts of the same `(kind,item_key)` → one open row, `last_seen_at` moved. Dismiss it → the next upsert does not reopen it. `p_clear_absent = true` with an empty list → the other open items of that tab become `resolved` with `resolution.auto`. `sheet_review_resolve` on a resolved item → P0056.
+11. **Review upsert.** Two upserts of the same `(kind,item_key)` → one open row, `last_seen_at` moved. Dismiss it → the next upsert does not reopen it. `p_clear_absent = true` with an empty list → the other open items of that tab become `resolved` with `resolution.auto`. `sheet_review_resolve` on a resolved item → P0062.
 
 - [ ] **Step 1: Write the script** (checks above; ~350 lines).
 - [ ] **Step 2: Run** `npm run sheet-sync:db-proof` → every line PASS, exit 0. If a check fails, fix the **migration** (then `supabase db reset`, `npm run db:types`) and amend the Task 8 commit only if nothing else was committed after it; otherwise commit the fix as `fix(db): …`.
@@ -3079,10 +3079,10 @@ export interface SheetSyncStore {
 
 type Client = SupabaseClient<Database>;
 
-/** Maps P0054/P0055 to typed errors; everything else becomes an Error with the PG message. */
+/** Maps P0060/P0061 to typed errors; everything else becomes an Error with the PG message. */
 function raise(error: { code?: string; message: string }): never {
-  if (error.code === "P0054") throw new SyncBusyError();
-  if (error.code === "P0055") throw new LeaseLostError();
+  if (error.code === "P0060") throw new SyncBusyError();
+  if (error.code === "P0061") throw new LeaseLostError();
   const e = new Error(error.message) as Error & { code?: string };
   e.code = error.code;
   throw e;
@@ -3892,8 +3892,8 @@ describe("sheet mirror tables stay out of money surfaces (spec §11)", () => {
   - the D9 note that the website forms' "How did you hear about us?" list gained the new channels;
   - a glossary `dt` for "Sheet Sync".
   Bump the TOC tag and footer to the next version (v2.15), date 24 September 2026 or the merge date, "at migration 0170". **Every label must match the code**; the guide claims it was checked, so check it.
-- [ ] **CLAUDE.md.** Update the migration-ledger paragraph (0170 in flight → applied at merge), and change the P-code line to "in use: P0001–P0034, P0040–P0056; next free P0057". Add a "Where things live" row: `Sheet Sync (reception Google Sheet → patients + reporting mirror): parsers, identity rules, lease-fenced runner, CLI — src/lib/sheet-sync/, scripts/sheet-sync.ts; admin page /staff/admin/sheet-sync; mirror tables readable only there (mirror-readers.test.ts)`.
-- [ ] **drmed-migrations skill.** Add a 0170 line to the migration list in the file's style and the P0054–P0056 meanings; next free P0057. Add a note on the `app.referral_origin` pattern: patients' channel ownership is set only inside security-definer functions.
+- [ ] **CLAUDE.md.** Update the migration-ledger paragraph (0170 in flight → applied at merge), and change the P-code line to "in use: P0001–P0034, P0040–P0062; next free P0063". Add a "Where things live" row: `Sheet Sync (reception Google Sheet → patients + reporting mirror): parsers, identity rules, lease-fenced runner, CLI — src/lib/sheet-sync/, scripts/sheet-sync.ts; admin page /staff/admin/sheet-sync; mirror tables readable only there (mirror-readers.test.ts)`.
+- [ ] **drmed-migrations skill.** Add a 0170 line to the migration list in the file's style and the P0060–P0062 meanings; next free P0063. Add a note on the `app.referral_origin` pattern: patients' channel ownership is set only inside security-definer functions.
 - [ ] **drmed-staff-ui skill.** Add the Admin Tools nav item.
 - [ ] **Spec.** Append a "§14 Planning refinements (2026-09-24)" table listing D1–D11 with one line each.
 - [ ] Commit — `git commit -m "docs(sheet-sync): user guide section, CLAUDE.md, skills, spec refinements"`
