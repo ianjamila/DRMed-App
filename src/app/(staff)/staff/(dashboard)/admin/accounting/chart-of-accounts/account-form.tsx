@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { CoaResult } from "./actions";
 import { accountTypeGroupLabel, groupAccountsByType } from "@/lib/accounting/account-groups";
+import { StableInput, StableTextarea } from "@/components/forms/stable-fields";
 
 interface AccountDefaults {
   id?: string;
@@ -50,6 +51,11 @@ export function AccountForm({
   const router = useRouter();
   const [type, setType] = useState(defaults.type);
   const [parentId, setParentId] = useState(defaults.parent_id ?? "");
+  // React 19 resets uncontrolled fields when the action returns, so a failed
+  // save used to put every typed value back. Every field is held in state:
+  // the text ones through the shared Stable* wrappers, the tick-boxes here.
+  const [isActive, setIsActive] = useState(defaults.is_active);
+  const [isSettlement, setIsSettlement] = useState(defaults.is_settlement_destination ?? false);
   const parentGroups = useMemo(() => groupAccountsByType(parents), [parents]);
 
   // A parent must be the same type (the server enforces it too), so changing
@@ -70,7 +76,7 @@ export function AccountForm({
       ) : null}
 
       <Field label="Code" hint={mode === "edit" ? "Read-only — codes are stable identifiers." : "e.g. 4100"}>
-        <input
+        <StableInput
           type="text"
           name="code"
           required
@@ -81,7 +87,7 @@ export function AccountForm({
       </Field>
 
       <Field label="Name">
-        <input
+        <StableInput
           type="text"
           name="name"
           required
@@ -130,7 +136,7 @@ export function AccountForm({
       </Field>
 
       <Field label="Description (optional)">
-        <textarea
+        <StableTextarea
           name="description"
           rows={3}
           defaultValue={defaults.description ?? ""}
@@ -141,7 +147,13 @@ export function AccountForm({
       {mode === "edit" ? (
         <Field label="Active">
           <div className="inline-flex min-h-[44px] items-center gap-2">
-            <input type="checkbox" name="is_active" defaultChecked={defaults.is_active} value="true" />
+            <input
+              type="checkbox"
+              name="is_active"
+              checked={isActive}
+              onChange={(e) => setIsActive(e.target.checked)}
+              value="true"
+            />
             <span className="text-sm">Account is active and accepts new postings</span>
           </div>
         </Field>
@@ -155,7 +167,8 @@ export function AccountForm({
           <input
             type="checkbox"
             name="is_settlement_destination"
-            defaultChecked={defaults.is_settlement_destination ?? false}
+            checked={isSettlement}
+            onChange={(e) => setIsSettlement(e.target.checked)}
             value="true"
           />
           <span className="text-sm">Show this account as a payment method when recording HMO settlements</span>

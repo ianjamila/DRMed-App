@@ -4,6 +4,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { ExportCsvLink } from "@/components/staff/export-csv-link";
 import { REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
+import { manilaDate } from "@/lib/dates/manila";
+import { serviceKindLabel } from "@/lib/services/kind-labels";
 import { dailyRevenueCsvHref, loadDailyRevenue, parseDailyRevenueParams } from "@/lib/reports/daily-revenue";
 
 export const metadata = { title: ROUTE_NAME["/staff/admin/operations/daily-revenue"] };
@@ -52,13 +54,13 @@ export default async function DailyRevenuePage({
         return (
           <section key={date} className="mb-6 rounded-lg border bg-white p-4 shadow-sm">
             <header className="mb-2 flex justify-between">
-              <strong className="text-[color:var(--color-brand-navy)]">{date}</strong>
+              <strong className="text-[color:var(--color-brand-navy)]">{manilaDate(date)}</strong>
               <span className="font-mono font-semibold">{PESO(total)}</span>
             </header>
             <ul className="text-sm">
               {list.map((r) => (
                 <li key={r.service_code} className="flex justify-between border-t py-1">
-                  <span><code className="mr-2">{r.service_code}</code>{r.service_name} <span className="text-[color:var(--color-brand-text-soft)]">({r.service_kind} · {r.released_count} releases)</span></span>
+                  <span><code className="mr-2">{r.service_code}</code>{r.service_name} <span className="text-[color:var(--color-brand-text-soft)]">({serviceKindLabel(r.service_kind)} · {r.released_count ?? 0} {r.released_count === 1 ? "release" : "releases"})</span></span>
                   <span className="font-mono">{PESO(Number(r.revenue_php ?? 0))}</span>
                 </li>
               ))}

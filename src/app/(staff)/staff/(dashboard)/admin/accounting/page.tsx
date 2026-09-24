@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
+import { manilaDateTime } from "@/lib/dates/manila";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   readAccountingEnv,
@@ -114,7 +115,7 @@ export default async function AccountingAdminPage() {
                 </p>
                 <p className="text-xs text-[color:var(--color-brand-text-soft)]">
                   {w.lastSyncedAt
-                    ? `Last synced ${formatManila(w.lastSyncedAt)}`
+                    ? `Last synced ${manilaDateTime(w.lastSyncedAt)}`
                     : "Never synced — first cron run will pick up the last 24h"}
                 </p>
                 {w.notes ? (
@@ -134,18 +135,4 @@ export default async function AccountingAdminPage() {
       <AccountingActions />
     </div>
   );
-}
-
-// Render an ISO timestamp as Manila local time, e.g. "2026-05-04 17:00".
-function formatManila(iso: string): string {
-  const fmt = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Manila",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-  return fmt.format(new Date(iso)).replace(",", "");
 }

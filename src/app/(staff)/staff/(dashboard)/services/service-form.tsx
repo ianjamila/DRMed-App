@@ -11,6 +11,7 @@ import {
   StableTextarea,
 } from "@/components/forms/stable-fields";
 import { formatPhp } from "@/lib/marketing/format";
+import { SERVICE_KIND_LABEL } from "@/lib/services/kind-labels";
 import {
   createServiceAction,
   updateServiceAction,
@@ -22,14 +23,9 @@ export interface VendorLite {
   name: string;
 }
 
-const KIND_OPTIONS: { value: string; label: string }[] = [
-  { value: "lab_test", label: "Lab test" },
-  { value: "lab_package", label: "Lab package" },
-  { value: "doctor_consultation", label: "Doctor consultation" },
-  { value: "doctor_procedure", label: "Doctor procedure" },
-  { value: "home_service", label: "Home service" },
-  { value: "vaccine", label: "Vaccine" },
-];
+const KIND_OPTIONS: { value: string; label: string }[] = Object.entries(
+  SERVICE_KIND_LABEL,
+).map(([value, label]) => ({ value, label }));
 
 const SECTION_OPTIONS: { value: string; label: string }[] = [
   { value: "", label: "— None —" },

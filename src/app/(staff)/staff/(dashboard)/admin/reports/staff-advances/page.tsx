@@ -2,11 +2,13 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { ExportCsvLink } from "@/components/staff/export-csv-link";
 import { manilaDate } from "@/lib/dates/manila";
+import { roleLabel } from "@/lib/staff/user-filters";
 import { REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 import {
   compareStaffAdvanceRows,
   compareStaffAdvanceSummaryRows,
   loadStaffAdvances,
+  staffAdvanceStatusLabel,
   staffAdvancesCsvHref,
   STAFF_ADVANCES_DEFAULT_SORT,
   STAFF_ADVANCES_SORTABLE_COLUMNS,
@@ -170,7 +172,7 @@ export default async function StaffAdvancesPage({
             {summaryRows.map((r) => (
               <tr key={r.staff_id} className="border-t">
                 <td className="px-3 py-2">{r.full_name}</td>
-                <td className="px-3 py-2">{r.role}</td>
+                <td className="px-3 py-2">{roleLabel(r.role)}</td>
                 <td className="px-3 py-2">{r.advance_count}</td>
                 <td className="px-3 py-2 font-mono">{PESO(Number(r.outstanding_php ?? 0))}</td>
                 <td className="px-3 py-2">{manilaDate(r.oldest_advance_date)}</td>
@@ -215,7 +217,7 @@ export default async function StaffAdvancesPage({
                 </td>
                 <td className="px-3 py-2 font-mono">{PESO(Number(r.original_amount_php))}</td>
                 <td className="px-3 py-2 font-mono">{PESO(Number(r.outstanding_balance_php))}</td>
-                <td className="px-3 py-2">{r.status}</td>
+                <td className="px-3 py-2">{staffAdvanceStatusLabel(r.status)}</td>
               </tr>
             ))}
           </tbody>
