@@ -16,6 +16,7 @@ import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { audit } from "@/lib/audit/log";
+import { reportError } from "@/lib/observability/report-error";
 import { ipAndAgent } from "@/lib/server/action-helpers";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { sendEmail } from "@/lib/notifications/email";
@@ -291,8 +292,23 @@ export async function sendMessageReplyAction(
     outcome_detail: detail,
     sent_by: session.user_id,
   });
+  // The provider call has already happened. If nothing went out (skipped or
+  // failed), a failed insert is safe to surface as an error — retrying sends
+  // nothing twice. But if the reply WENT OUT, returning an error would invite
+  // staff to press Send again and text/email the patient a second time, so
+  // report the lost history row, carry on (status + audit), and say plainly
+  // that it was sent.
+  let historyNotSaved = false;
   if (insertError) {
-    return { ok: false, error: translatePgError(insertError) };
+    if (outcome !== "sent") {
+      return { ok: false, error: translatePgError(insertError) };
+    }
+    historyNotSaved = true;
+    await reportError({
+      scope: "messages/reply-history-insert",
+      error: new Error(insertError.message),
+      metadata: { messageId: parsed.data.messageId, channel: parsed.data.channel, code: insertError.code },
+    });
   }
 
   // Only a message still sitting at "new" moves to "replied" — never
@@ -314,11 +330,24 @@ export async function sendMessageReplyAction(
     action: "contact_message.reply_sent",
     resource_type: "contact_message",
     resource_id: parsed.data.messageId,
-    metadata: { channel: parsed.data.channel, outcome, length: parsed.data.body.length },
+    metadata: {
+      channel: parsed.data.channel,
+      outcome,
+      length: parsed.data.body.length,
+      ...(historyNotSaved ? { history_saved: false } : {}),
+    },
     ip_address: ip,
     user_agent: ua,
   });
 
   revalidateMessageSurfaces(parsed.data.messageId);
-  return { ok: true, data: { outcome, detail } };
+  return {
+    ok: true,
+    data: {
+      outcome,
+      detail: historyNotSaved
+        ? "It was sent, but it could not be saved to the reply history. Don't send it again."
+        : detail,
+    },
+  };
 }

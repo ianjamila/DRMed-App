@@ -98,3 +98,22 @@ export function isReplyChannel(value: unknown): value is ReplyChannel {
 export function isReplyOutcome(value: unknown): value is ReplyOutcome {
   return typeof value === "string" && (REPLY_OUTCOMES as ReadonlyArray<string>).includes(value);
 }
+
+// Anything a website visitor typed that ends up on ONE line of a staff-facing
+// email — the subject line above all, where a line break could forge extra
+// headers and a long run of text reads like a message from the clinic. The
+// public form's own validation already restricts `subject` to
+// CONTACT_SUBJECT_OPTIONS; this is the second line of defence for rows written
+// before that rule and for any future caller. Strips control characters,
+// collapses whitespace, caps the length with an ellipsis.
+export function oneLine(value: string | null | undefined, max: number): string {
+  const cleaned = (value ?? "").replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
+  if (cleaned.length <= max) return cleaned;
+  return `${cleaned.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
+}
+
+// The subject a stored message may carry, as the form offers it — or null.
+export function knownContactSubject(value: string | null | undefined): string | null {
+  const v = (value ?? "").trim();
+  return (CONTACT_SUBJECT_OPTIONS as ReadonlyArray<string>).includes(v) ? v : null;
+}

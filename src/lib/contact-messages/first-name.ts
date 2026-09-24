@@ -7,9 +7,12 @@
 // Client-safe (no server-only, no DB).
 
 /** The first whitespace-separated token of a message sender's name, or a
- * safe fallback when the name is blank/whitespace-only. */
+ * safe fallback when the name is blank/whitespace-only. The name is typed by a
+ * website visitor and lands in staff emails, so control characters are
+ * stripped and the result is capped at 40 characters. */
 export function firstNameOf(name: string | null | undefined): string {
-  const trimmed = (name ?? "").trim();
+  const trimmed = (name ?? "").replace(/[\u0000-\u001f\u007f]+/g, " ").trim();
   if (!trimmed) return "there";
-  return trimmed.split(/\s+/)[0]!;
+  const first = trimmed.split(/\s+/)[0]!;
+  return first.length > 40 ? `${first.slice(0, 39)}…` : first;
 }

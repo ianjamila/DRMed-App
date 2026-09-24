@@ -3,7 +3,7 @@
 import { PageHeader } from "@/components/staff/page-header";
 
 import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
-import { shiftISODate, todayManilaISODate } from "@/lib/dates/manila";
+import { manilaDate, shiftISODate, todayManilaISODate } from "@/lib/dates/manila";
 import {
   filterDailyCampaignCountsByRange,
   joinCampaignResults,
@@ -1040,7 +1040,7 @@ export function AdPerformanceDashboard({
               <p className="text-xs" style={{ color: C.sub }}>
                 Counted from the clinic&apos;s own appointment and website-message records for{" "}
                 <span style={num}>
-                  {rangeFrom} – {rangeTo}
+                  {manilaDate(rangeFrom)} – {manilaDate(rangeTo)}
                 </span>
                 {usingFallbackRange
                   ? " (couldn't find dates in your ad data, so showing the last 28 days instead)"

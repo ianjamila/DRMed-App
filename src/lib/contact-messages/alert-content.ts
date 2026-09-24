@@ -17,6 +17,7 @@ import {
   escapeHtml,
 } from "@/lib/notifications/branded-email";
 import { firstNameOf } from "./first-name";
+import { oneLine } from "./labels";
 import type { ContactMessageKind } from "./labels";
 
 /** Parse `CONTACT_ALERT_EMAILS` — comma-separated, each trimmed and validated
@@ -56,7 +57,7 @@ export interface AlertEmailContent {
  * message text, phone number or email address — see the file header. */
 export function buildAlertEmail(input: AlertEmailInput): AlertEmailContent {
   const first = firstNameOf(input.name);
-  const subjectLabel = input.subject?.trim() || "General";
+  const subjectLabel = oneLine(input.subject, 80) || "General";
   const isCorporate = input.kind === "corporate";
   const received = manilaDateTime(input.createdAt);
 

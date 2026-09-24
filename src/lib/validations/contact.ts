@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { knownContactSubject } from "@/lib/contact-messages/labels";
 
 export const ContactSchema = z.object({
   name: z.string().trim().min(1, "Please enter your name.").max(120),
@@ -11,7 +12,17 @@ export const ContactSchema = z.object({
     .transform((v) => (v === "" ? null : v))
     .nullable(),
   phone: z.string().trim().max(40).nullable().or(z.literal("")),
-  subject: z.string().trim().max(160).nullable().or(z.literal("")),
+  // Only the subjects the form offers. The <select> cannot send anything
+  // else, so a different value means a scripted post (or a stale cached form)
+  // and is stored as "no subject" rather than rejected. It feeds the staff
+  // alert's email subject line and the corporate-lead flag.
+  subject: z
+    .string()
+    .trim()
+    .max(160)
+    .nullable()
+    .or(z.literal(""))
+    .transform((v) => knownContactSubject(v)),
   message: z
     .string()
     .trim()

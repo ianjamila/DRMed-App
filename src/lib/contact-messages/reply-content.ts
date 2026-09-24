@@ -14,7 +14,7 @@
 import { z } from "zod";
 import { CONTACT, SITE } from "@/lib/marketing/site";
 import { emailParagraph, escapeHtml, renderEmailShell } from "@/lib/notifications/branded-email";
-import { REPLY_BODY_MAX, REPLY_CHANNELS, REPLY_SMS_MAX } from "./labels";
+import { REPLY_BODY_MAX, REPLY_CHANNELS, REPLY_SMS_MAX, oneLine } from "./labels";
 
 // ---------------------------------------------------------------------------
 // Validation
@@ -96,7 +96,7 @@ function paragraphsOf(text: string): string[] {
 /** Builds the subject/text/html for a staff reply email. Never includes the
  * sender's original message — see the file header. */
 export function buildEmailReply(input: BuildEmailReplyInput): EmailReplyContent {
-  const subjectLabel = input.subject?.trim();
+  const subjectLabel = oneLine(input.subject, 80);
   const subject = subjectLabel ? `Re: ${subjectLabel}` : "Re: your message to DR Med";
   const greeting = `Hi ${input.firstName},`;
   const paragraphs = paragraphsOf(input.staffText);
