@@ -21,7 +21,7 @@ import { audit } from "@/lib/audit/log";
 import { reportError } from "@/lib/observability/report-error";
 import { SITE } from "@/lib/marketing/site";
 import type { Json } from "@/types/database";
-import type { ContactMessageKind } from "./labels";
+import type { ContactFormLocation, ContactMessageKind } from "./labels";
 import { buildAlertEmail } from "./alert-content";
 
 export interface NewMessageAlertInput {
@@ -29,6 +29,7 @@ export interface NewMessageAlertInput {
   name: string;
   subject: string | null;
   kind: ContactMessageKind;
+  formLocation: ContactFormLocation | null;
   createdAt: string; // ISO timestamptz
 }
 
@@ -43,6 +44,7 @@ export async function sendNewMessageAlert(input: NewMessageAlertInput): Promise<
       name: input.name,
       subject: input.subject,
       kind: input.kind,
+      formLocation: input.formLocation,
       createdAt: input.createdAt,
       messageUrl,
     });

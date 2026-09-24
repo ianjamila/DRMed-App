@@ -16,5 +16,5 @@ export function ContactFormWithPreset() {
   const raw = searchParams.get("subject");
   const defaultSubject =
     raw && (CONTACT_SUBJECT_OPTIONS as readonly string[]).includes(raw) ? raw : undefined;
-  return <ContactForm defaultSubject={defaultSubject} />;
+  return <ContactForm location="contact" defaultSubject={defaultSubject} />;
 }

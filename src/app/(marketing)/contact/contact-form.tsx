@@ -8,7 +8,11 @@ import {
 import { metaTrack } from "@/lib/analytics/meta-pixel";
 import { newEventId } from "@/lib/analytics/event-id";
 import { submitContactMessage, type ContactResult } from "./actions";
-import { CORPORATE_SUBJECT, CONTACT_SUBJECT_OPTIONS } from "@/lib/contact-messages/labels";
+import {
+  CORPORATE_SUBJECT,
+  CONTACT_SUBJECT_OPTIONS,
+  type ContactFormLocation,
+} from "@/lib/contact-messages/labels";
 
 // Shared field input class applied to inputs and textarea.
 const fieldInput =
@@ -17,7 +21,15 @@ const fieldInput =
 // Shared label class.
 const fieldLabel = "text-[13.5px] font-semibold text-[color:var(--color-ink)]";
 
-export function ContactForm({ defaultSubject }: { defaultSubject?: string } = {}) {
+// `location` is required so every page that embeds the form says which one it
+// is — staff see it on each message as "Sent from" (0156).
+export function ContactForm({
+  location,
+  defaultSubject,
+}: {
+  location: ContactFormLocation;
+  defaultSubject?: string;
+}) {
   const [state, formAction, pending] = useActionState<
     ContactResult | null,
     FormData
@@ -64,6 +76,7 @@ export function ContactForm({ defaultSubject }: { defaultSubject?: string } = {}
 
   return (
     <form action={submitWithTracking} className="grid gap-4">
+      <input type="hidden" name="form_location" value={location} />
       {/* Honeypot — hidden from real users via aria-hidden + tabindex. */}
       <div
         aria-hidden="true"

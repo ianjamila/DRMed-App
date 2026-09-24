@@ -6,8 +6,7 @@ import { PageHeader } from "@/components/staff/page-header";
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { closeEodAction } from "../cash-drawer/actions";
-import { reopenEodCloseAction } from "@/app/(staff)/staff/(dashboard)/admin/accounting/cash-routing/actions";
+import { closeEodAction, reopenEodCloseAction } from "../cash-drawer/actions";
 import { PaymentsTabs } from "../_components/payments-tabs";
 import {
   BILL_DENOMINATIONS,

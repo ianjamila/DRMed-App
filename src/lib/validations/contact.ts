@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { knownContactSubject } from "@/lib/contact-messages/labels";
+import { isContactFormLocation, knownContactSubject } from "@/lib/contact-messages/labels";
 
 export const ContactSchema = z.object({
   name: z.string().trim().min(1, "Please enter your name.").max(120),
@@ -23,6 +23,14 @@ export const ContactSchema = z.object({
     .nullable()
     .or(z.literal(""))
     .transform((v) => knownContactSubject(v)),
+  // Which page's copy of the form sent it (hidden field, 0156). Anything
+  // outside the allow-list — a scripted post, a stale cached page — is stored
+  // as "not recorded" rather than rejected, same as an unknown subject.
+  formLocation: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((v) => (isContactFormLocation(v) ? v : null)),
   message: z
     .string()
     .trim()

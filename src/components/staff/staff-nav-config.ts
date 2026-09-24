@@ -504,15 +504,9 @@ export const STAFF_NAV: StaffNavSection[] = [
             roles: ["admin"],
           },
           {
-            href: "/staff/admin/accounting/payment-routing",
-            label: ROUTE_NAME["/staff/admin/accounting/payment-routing"],
-            description: "The rules that tell the system 'when reception accepts payment via X, book it to account Y.' For example: GCash payments → 1030 GCash Wallet, Cheques → 1020 BPI, Cash → 1010 Cash on Hand. Edit if you switch banks or add a new payment method.",
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/accounting/cash-routing",
-            label: ROUTE_NAME["/staff/admin/accounting/cash-routing"],
-            description: "Tracks the journey of physical cash from the moment a patient pays at reception, through the end-of-day count, to the bank deposit. Helps make sure no cash 'disappears' between collection and deposit.",
+            href: "/staff/admin/accounting/money-routing",
+            label: ROUTE_NAME["/staff/admin/accounting/money-routing"],
+            description: "The rules that decide which account each payment and cash-drawer entry is recorded in — for example GCash payments go to 1030 GCash Wallet and cash payments to 1010 Cash on Hand. Also sets the drawer's daily starting cash. Change only when you switch banks or add a payment method.",
             roles: ["admin"],
           },
         ],

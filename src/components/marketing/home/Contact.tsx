@@ -187,7 +187,7 @@ export function Contact() {
               <p className="mt-1.5 mb-5 text-[13px] text-[color:var(--color-ink-soft)]">
                 For appointments, corporate packages, or general inquiries.
               </p>
-              <ContactForm />
+              <ContactForm location="home" />
             </div>
           </div>
         </div>

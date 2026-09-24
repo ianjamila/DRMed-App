@@ -18,6 +18,11 @@ import {
   type AppointmentSource,
 } from "@/lib/appointments/source";
 import {
+  CONTACT_FORM_LOCATIONS,
+  CONTACT_FORM_LOCATION_LABEL,
+  FORM_LOCATION_NOT_RECORDED_LABEL,
+  isContactFormLocation,
+  type ContactFormLocation,
   CONTACT_MESSAGE_KINDS,
   CONTACT_MESSAGE_KIND_LABEL,
   CONTACT_MESSAGE_STATUSES,
@@ -52,6 +57,7 @@ export interface AppointmentSourceRow {
 export interface ContactMessageSourceRow {
   id: string;
   kind: string;
+  form_location: string | null;
   status: string;
   attribution: unknown;
   created_at: string;
@@ -226,9 +232,19 @@ export interface MessageStatusCount {
   count: number;
 }
 
+export interface MessageFormLocationCount {
+  // null = "Not recorded" (every message received before 0156).
+  location: ContactFormLocation | null;
+  label: string;
+  count: number;
+}
+
 export interface WebsiteMessageStats {
   total: number;
   byKind: MessageKindCount[];
+  // Every CONTACT_FORM_LOCATIONS value + "Not recorded", zero rows kept so
+  // the table is stable across periods (same as bySource).
+  byFormLocation: MessageFormLocationCount[];
   byStatus: MessageStatusCount[];
   bookedCount: number;
   // booked / total. Never a division by zero — null (not 0 or NaN) when
@@ -246,8 +262,13 @@ export function summarizeMessages(rows: readonly ContactMessageSourceRow[]): Web
   const statusCounts = new Map<ContactMessageStatus, number>();
   for (const s of CONTACT_MESSAGE_STATUSES) statusCounts.set(s, 0);
   const campaignCounts = new Map<string, number>();
+  const locationCounts = new Map<ContactFormLocation | null, number>();
+  for (const l of CONTACT_FORM_LOCATIONS) locationCounts.set(l, 0);
+  locationCounts.set(null, 0);
 
   for (const r of rows) {
+    const location = isContactFormLocation(r.form_location) ? r.form_location : null;
+    locationCounts.set(location, (locationCounts.get(location) ?? 0) + 1);
     const kind = isContactMessageKind(r.kind) ? r.kind : "general";
     kindCounts.set(kind, (kindCounts.get(kind) ?? 0) + 1);
     const status = isContactMessageStatus(r.status) ? r.status : "new";
@@ -265,6 +286,18 @@ export function summarizeMessages(rows: readonly ContactMessageSourceRow[]): Web
       label: CONTACT_MESSAGE_KIND_LABEL[k],
       count: kindCounts.get(k) ?? 0,
     })),
+    byFormLocation: [
+      ...CONTACT_FORM_LOCATIONS.map((l) => ({
+        location: l,
+        label: CONTACT_FORM_LOCATION_LABEL[l],
+        count: locationCounts.get(l) ?? 0,
+      })),
+      {
+        location: null,
+        label: FORM_LOCATION_NOT_RECORDED_LABEL,
+        count: locationCounts.get(null) ?? 0,
+      },
+    ],
     byStatus: CONTACT_MESSAGE_STATUSES.map((s) => ({
       status: s,
       label: CONTACT_MESSAGE_STATUS_LABEL[s],

@@ -83,7 +83,7 @@ eod_close_records       counted_cash_php + counted_denominations jsonb (0132: bi
 | Cash drawer / EOD | `/staff/payments/cash-drawer`, `/staff/payments/eod` (close by denomination; `CloseEodSchema` in `src/lib/validations/accounting.ts` — `counted_cash_php` is derived server-side, not posted), `/staff/payments/eod/[closeId]/count-sheet` (A5 print, reception/admin, audited `eod_close.count_sheet_viewed`), `/staff/payments/petty-cash` |
 | Admin cash report | `/staff/admin/operations/cash` — denomination sub-row, CSV in pieces, "Cash count trends" panel (`denomination-trends.ts`) |
 | PF payouts | `/staff/admin/accounting/pf-payouts` (`src/lib/actions/accounting/pf-disbursements.ts`), acknowledgment slip at `pf-payouts/[id]/slip` (A4, two copies, audited `pf_disbursement.slip_printed`) |
-| GL routing | `/staff/admin/accounting/payment-routing` (method → CoA map), `cash-routing`, `hmo-claims`, `patient-ar` |
+| GL routing | `/staff/admin/accounting/money-routing` — one page for both maps (payment method → CoA, cash-drawer kind → CoA) plus the default change fund; plain names, fixed rows and account filtering live in `src/lib/accounting/money-routing.ts` (the old `payment-routing` / `cash-routing` URLs redirect via `next.config.ts`). Also `hmo-claims`, `patient-ar` |
 | Visits archive export | `/api/admin/visits.csv` — admin, RLS-scoped client (not service-role), chunked past the 1000-row cap, audited `visits.exported` |
 
 ## Doctor lines (consult + procedure)

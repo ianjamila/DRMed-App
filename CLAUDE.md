@@ -18,19 +18,20 @@ Key reference artifacts:
 - `IMPLEMENTATION_PLAN.md` — original phase plan (historical; cross-check before relying on it)
 - `README.md` — operational setup
 - `.env.example` — env-var inventory
-- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.9, 24 Sep 2026): every
+- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.11, 24 Sep 2026): every
   screen, label and blocked-message the app shows, checked against the code. Update it in the
   PR that changes a flow it describes.
 - `docs/superpowers/specs/` and `docs/superpowers/audits/` — design specs and audits for
   every post-1.0 programme (partner revisions, release lifecycle, group templates, EOD
   denomination count…). Read the spec before re-deriving a design decision.
 
-Migration ledger: **prod head = 0154** (`website_messages_inbox`, #198, pushed by Claude and
-verified by object 2026-09-24). **0155** (`staff_alert_recipients`) is in flight on
-`feat/email-alert-recipients`. **0153** (`booking_settings`, #196) is applied and verified. **0151** (`rls_initplan_and_policy_consolidation`,
+Migration ledger: **prod head = 0156** (`contact_message_form_location`, #200). **0155**
+(`staff_alert_recipients`, #203) was pushed AFTER 0156 with `db push --include-all` (0156 landed
+first from a parallel branch) and verified by object 2026-09-24; **0154** (#198) and **0153**
+(#196) are applied and verified. **0151** (`rls_initplan_and_policy_consolidation`,
 #192) is also applied and verified: 159 public policies, zero unwrapped helper calls, and no
-unexpected policyless tables. **Next unused number: 0156**, subject to checking open branches
-again.
+unexpected policyless tables.
+**Next unused number: 0157**, subject to checking open branches again.
 `ls supabase/migrations | tail -3` is NOT enough to pick the next number — it only sees your
 own worktree, and on 2026-09-15 two branches claimed 0147 (and P0050) the same afternoon.
 Check the open branches too:

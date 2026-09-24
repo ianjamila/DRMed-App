@@ -57,7 +57,7 @@ export default async function BookingSourcesReportPage({ searchParams }: SearchP
     ),
     fetchAllRows<ContactMessageSourceRow>(
       (rFrom, rTo) => {
-        let q = supabase.from("contact_messages").select("id, kind, status, attribution, created_at");
+        let q = supabase.from("contact_messages").select("id, kind, form_location, status, attribution, created_at");
         if (fromIso) q = q.gte("created_at", fromIso);
         if (toIso) q = q.lt("created_at", toIso);
         return q
@@ -146,6 +146,13 @@ export default async function BookingSourcesReportPage({ searchParams }: SearchP
         columnLabel="Type"
         rows={messages.byKind.map((k) => ({ label: k.label, count: k.count }))}
         note="Corporate / HMO lead messages come from the contact form's Corporate / HMO subject; every other subject is General."
+      />
+
+      <ProportionTable
+        title="Website messages by page"
+        columnLabel="Sent from"
+        rows={messages.byFormLocation.map((l) => ({ label: l.label, count: l.count }))}
+        note="Which copy of the contact form the visitor used: the Contact page (where the corporate-quote buttons also land) or the “Send us a message” section at the bottom of the home page. Messages received before 24 September 2026 show as Not recorded."
       />
 
       <ProportionTable
