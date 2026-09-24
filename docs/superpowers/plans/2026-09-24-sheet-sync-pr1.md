@@ -4,7 +4,7 @@
 
 **Goal:** Keep DRMed's patients current from the reception Google Sheet "LAB SERVICES (RECEPTION)" every night (paused until an admin turns it on), and keep a reporting-only copy of the sheet's lab and consultation rows, with a reviewed admin page at `/staff/admin/sheet-sync`.
 
-**Architecture:** A pure parsing/identity library under `src/lib/sheet-sync/` turns ONE `values.batchGet` of the sheet into typed rows and a write plan. A thin store wraps service-role-only, lease-fenced SQL RPCs (migration 0159) that apply the plan atomically in chunks. Three callers share `runSheetSync()`: the nightly cron, the admin page's *Sync now*, and a guarded CLI. Clinical rows never become visits in this PR. They are snapshot-replaced into mirror tables that nothing outside the sync and (later) Patient Sources may read.
+**Architecture:** A pure parsing/identity library under `src/lib/sheet-sync/` turns ONE `values.batchGet` of the sheet into typed rows and a write plan. A thin store wraps service-role-only, lease-fenced SQL RPCs (migration 0165) that apply the plan atomically in chunks. Three callers share `runSheetSync()`: the nightly cron, the admin page's *Sync now*, and a guarded CLI. Clinical rows never become visits in this PR. They are snapshot-replaced into mirror tables that nothing outside the sync and (later) Patient Sources may read.
 
 **Tech Stack:** Next.js 16 App Router (server components + server actions), Supabase Postgres (plpgsql RPCs, RLS), supabase-js, vitest, `jose` (JWT for the Google service account), Google Sheets API v4 over `fetch`.
 
@@ -18,7 +18,7 @@ These were settled while planning (2026-09-24) from code and live data the spec 
 
 | # | Decision | Why |
 |---|---|---|
-| D1 | Migration **0159** (`0159_sheet_sync_foundation.sql`), P-codes **P0054** (another sync is running), **P0055** (lease lost), **P0056** (review item no longer open). | #205 took 0157 and #206 took 0158 on 2026-09-24. Re-check open branches before pushing (CLAUDE.md recipe). |
+| D1 | Migration **0165** (`0165_sheet_sync_foundation.sql`; renumbered from 0159 on 2026-09-24 — open PRs took 0159–0164), P-codes **P0054** (another sync is running), **P0055** (lease lost), **P0056** (review item no longer open). | #205 took 0157 and #206 took 0158 on 2026-09-24. Re-check open branches before pushing (CLAUDE.md recipe). |
 | D2 | **Channel ownership is decided by a transaction-local setting `app.referral_origin`, set only inside our security-definer RPCs** (`resolve_patient_guarded` → `patient`, sync / re-sort / alias / revert → `sheet` or the restored value). The trigger ignores any value written to `referral_source_origin` directly; any `referral_source` change without the setting becomes `staff`. | The spec's "decide by caller role" rule cannot work. 0158's `resolve_patient_guarded` writes `referral_source` from the public forms as the function owner, and a same-value origin write is invisible to a BEFORE trigger, so the sync re-writing a value it already owns would flip it to `staff`. PostgREST cannot call `set_config` (it lives in `pg_catalog`, which is not an exposed schema), so only our functions can set it. The repo already uses this pattern: `app.skip_bridge_historical` (0036), `app.allow_template_param_delete` (0121). |
 | D3 | Every patient-changing admin action (re-sort approval, map-answer-to-channel, revert) runs as its own `sheet_sync_runs` row (`trigger` = `resort` / `alias` / `revert`) under the same lease. So each is fenced, listed in run history, and itself revertable. | One mechanism for before-images and reverts instead of three. |
 | D4 | Review kind `possible_existing_patient` is added to the kind list. | The spec uses it in §5.3 but left it out of §4.2's list. |
@@ -73,7 +73,7 @@ A header check (Task 4) refuses a tab whose key headers moved, so an inserted co
 **Create — other:**
 - `src/lib/google/service-account-token.ts` (+ test) — JWT → access token, per-scope cache (moved out of `google-sheets.ts`)
 - `src/lib/legacy-import/normalize-name.ts` — `normalizeName` moved from `scripts/clinical-backfill/lib/names.ts`
-- `supabase/migrations/0159_sheet_sync_foundation.sql`
+- `supabase/migrations/0165_sheet_sync_foundation.sql`
 - `src/app/api/cron/sheet-sync/route.ts`
 - `src/app/(staff)/staff/(dashboard)/admin/sheet-sync/{page.tsx,actions.ts,sync-controls.tsx,review-queue.tsx,resort-panel.tsx,run-history.tsx,format.ts}`
 - `scripts/sheet-sync.ts` (CLI), `scripts/sheet-sync-db-proof.ts` (local DB proofs)
@@ -1436,7 +1436,7 @@ function aggregate(rows: CustomerRow[]): Required<FillFields> {
   return out;
 }
 
-/** What the conditional fill would change — mirrors sheet_sync_apply_customer_ops (0159). */
+/** What the conditional fill would change — mirrors sheet_sync_apply_customer_ops (0165). */
 function fillDiff(p: PatientRecord, want: Required<FillFields>): FillFields {
   const diff: FillFields = {};
   for (const c of FILL_COLUMNS) {
@@ -1876,19 +1876,19 @@ export function computeResortGroups(patients: readonly ResortInput[], aliases: R
 
 # Phase B — database
 
-### Task 8: Migration 0159 — channels, ownership, control + mirror tables, RPCs
+### Task 8: Migration 0165 — channels, ownership, control + mirror tables, RPCs
 
 **Files:**
-- Create: `supabase/migrations/0159_sheet_sync_foundation.sql`
+- Create: `supabase/migrations/0165_sheet_sync_foundation.sql`
 - Modify: `supabase/seed.sql` (tail), `src/lib/accounting/pg-errors.ts`, `src/lib/patients/referral-sources.ts`, `src/lib/patients/referral-sources.test.ts`, `src/lib/sheet-sync/referral-mapper.ts` (type the id as `ReferralSourceId`), `src/types/database.ts` (regenerated)
 
-- [ ] **Step 0: Re-check the number.** `git fetch -q origin` then run the CLAUDE.md loop over `git branch -r` **and** local branches. If anything claims 0159 or P0054–P0056, take the next free ones and rename them everywhere in this plan's code.
+- [ ] **Step 0: Re-check the number.** `git fetch -q origin` then run the CLAUDE.md loop over `git branch -r` **and** local branches. If anything claims 0165 or P0054–P0056, take the next free ones and rename them everywhere in this plan's code.
 
 - [ ] **Step 1: Write the migration** exactly as below. It is one file, in the order shown.
 
 ```sql
 -- =============================================================================
--- 0159_sheet_sync_foundation.sql
+-- 0165_sheet_sync_foundation.sql
 -- =============================================================================
 -- Sheet Sync PR 1 — spec docs/superpowers/specs/2026-09-24-sheet-sync-and-
 -- patient-sources-design.md §4–§5, plan docs/superpowers/plans/2026-09-24-
@@ -2754,24 +2754,24 @@ grant execute on function public.sheet_resort_candidates() to service_role;
 do $$
 begin
   if (select count(*) from public.referral_sources) <> 18 then
-    raise exception '0159: expected 18 referral sources';
+    raise exception '0165: expected 18 referral sources';
   end if;
   if exists (select 1 from public.patients where referral_source is not null and referral_source_origin is distinct from 'staff') then
-    raise exception '0159: an existing referral_source was not marked staff-owned';
+    raise exception '0165: an existing referral_source was not marked staff-owned';
   end if;
   if not (select paused from public.sheet_sync_settings where id) then
-    raise exception '0159: sheet sync must ship paused';
+    raise exception '0165: sheet sync must ship paused';
   end if;
   if exists (select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace
               where n.nspname = 'public' and c.relkind = 'r' and not c.relrowsecurity
                 and c.relname in ('sheet_sync_settings','sheet_sync_runs','sheet_sync_review_items','sheet_sync_changes',
                   'sheet_patient_links','patient_acquisition_facts','referral_source_aliases','sheet_customer_rows',
                   'sheet_encounter_lines','sheet_mirror_staging')) then
-    raise exception '0159: RLS missing on a sheet sync table';
+    raise exception '0165: RLS missing on a sheet sync table';
   end if;
   if has_function_privilege('authenticated', 'public.sheet_sync_apply_customer_ops(uuid, jsonb)', 'execute')
      or has_function_privilege('anon', 'public.sheet_sync_acquire(text, uuid, boolean)', 'execute') then
-    raise exception '0159: sheet sync RPCs must be service_role only';
+    raise exception '0165: sheet sync RPCs must be service_role only';
   end if;
 end $$;
 ```
@@ -2784,7 +2784,7 @@ Notes the implementer must verify while writing:
 - [ ] **Step 2: Seed tail.** Append to `supabase/seed.sql`:
 
 ```sql
--- 0159: Sheet Sync tables are admin-read (RLS) and never reachable by anon;
+-- 0165: Sheet Sync tables are admin-read (RLS) and never reachable by anon;
 -- writes only through service-role RPCs. Staging is service-role only.
 revoke all on public.sheet_sync_settings from anon;
 revoke all on public.sheet_sync_settings from authenticated;
@@ -2818,13 +2818,13 @@ In `referral-sources.test.ts`, change the expected row count from 12 to 18. Then
 ```bash
 /opt/homebrew/bin/supabase db reset 2>&1 | tail -5
 ```
-Expected: the reset finishes with no error; the 0159 post-condition block passes.
+Expected: the reset finishes with no error; the 0165 post-condition block passes.
 
 - [ ] **Step 6: Regenerate types** — `npm run db:types` → `src/types/database.ts` gains the ten tables, the two patients columns and the RPCs.
 
 - [ ] **Step 7: Run the gate** — `npm test && npm run typecheck && npm run lint`. Expected PASS, including `referral-sources.test.ts`, `seed-grant-parity.test.ts`, `pg-error-coverage.test.ts` and the booking/registration validation tests.
 
-- [ ] **Step 8: Commit** — `git add supabase/migrations/0159_sheet_sync_foundation.sql supabase/seed.sql src/lib/accounting/pg-errors.ts src/lib/patients src/lib/sheet-sync/referral-mapper.ts src/types/database.ts` (+ any test updated in Step 4) — `git commit -m "feat(db): 0159 sheet sync foundation — channels, ownership trigger, lease-fenced RPCs"`
+- [ ] **Step 8: Commit** — `git add supabase/migrations/0165_sheet_sync_foundation.sql supabase/seed.sql src/lib/accounting/pg-errors.ts src/lib/patients src/lib/sheet-sync/referral-mapper.ts src/types/database.ts` (+ any test updated in Step 4) — `git commit -m "feat(db): 0165 sheet sync foundation — channels, ownership trigger, lease-fenced RPCs"`
 
 ---
 
@@ -3612,7 +3612,7 @@ export function durationLabel(ms: number | null | undefined): string {
 }
 ```
 
-Test: every `ReviewKind` and every run status/trigger in the 0159 CHECK lists has a label. Read the lists from the migration text with a regex, the way `website-messages-schema.test.ts` pins its CHECK lists. Also test `durationLabel(65000) === "1 min 5 s"`.
+Test: every `ReviewKind` and every run status/trigger in the 0165 CHECK lists has a label. Read the lists from the migration text with a regex, the way `website-messages-schema.test.ts` pins its CHECK lists. Also test `durationLabel(65000) === "1 min 5 s"`.
 
 - [ ] **Step 3: `actions.ts`** — all six actions. Shared shape: `requireAdminStaff()` → zod → store → `audit()` → `revalidatePath(PATH)`. Errors go through `translatePgError`, except `SyncBusyError` / `LeaseLostError`, which have their own messages.
 
@@ -3873,7 +3873,7 @@ describe("sheet mirror tables stay out of money surfaces (spec §11)", () => {
 });
 ```
 
-(PR 2 adds the Patient Sources report path to `ALLOWED`.) Also scan `supabase/migrations/*.sql` other than 0159 for the two table names. Views and functions are a read path too, and today none may exist.
+(PR 2 adds the Patient Sources report path to `ALLOWED`.) Also scan `supabase/migrations/*.sql` other than 0165 for the two table names. Views and functions are a read path too, and today none may exist.
 
 - [ ] **Step 2: Duplicate digest.** Read `src/lib/patients/find-duplicates.ts` (`loadCandidatePairs`, used by the `dedup-digest` cron). Answer: will ~540 sheet-created patients flood the admin email? They match existing patients only if they look like duplicates. The §5.3 rules create a patient only when there is no full-name, loose-name, phone or DOB+name candidate, so the digest should grow little. Measure after the local run from Task 19: run `loadCandidatePairs` against local before and after the commit run and record the difference in the PR body. If it jumps by more than 20 pairs, stop and ask the owner. Do not silently exclude sheet-created patients from duplicate detection; finding real duplicates is its job.
 - [ ] **Step 3: Commit** — `git commit -m "test(sheet-sync): repo guard keeping mirror tables out of money surfaces"`
@@ -3891,9 +3891,9 @@ describe("sheet mirror tables stay out of money surfaces (spec §11)", () => {
   - `ol.steps` for turning it on (preview first, check the numbers, switch on), handling each review kind, mapping an answer, approving a re-sort group, and undoing a run;
   - the D9 note that the website forms' "How did you hear about us?" list gained the new channels;
   - a glossary `dt` for "Sheet Sync".
-  Bump the TOC tag and footer to the next version (v2.15), date 24 September 2026 or the merge date, "at migration 0159". **Every label must match the code**; the guide claims it was checked, so check it.
-- [ ] **CLAUDE.md.** Update the migration-ledger paragraph (0159 in flight → applied at merge), and change the P-code line to "in use: P0001–P0034, P0040–P0056; next free P0057". Add a "Where things live" row: `Sheet Sync (reception Google Sheet → patients + reporting mirror): parsers, identity rules, lease-fenced runner, CLI — src/lib/sheet-sync/, scripts/sheet-sync.ts; admin page /staff/admin/sheet-sync; mirror tables readable only there (mirror-readers.test.ts)`.
-- [ ] **drmed-migrations skill.** Add a 0159 line to the migration list in the file's style and the P0054–P0056 meanings; next free P0057. Add a note on the `app.referral_origin` pattern: patients' channel ownership is set only inside security-definer functions.
+  Bump the TOC tag and footer to the next version (v2.15), date 24 September 2026 or the merge date, "at migration 0165". **Every label must match the code**; the guide claims it was checked, so check it.
+- [ ] **CLAUDE.md.** Update the migration-ledger paragraph (0165 in flight → applied at merge), and change the P-code line to "in use: P0001–P0034, P0040–P0056; next free P0057". Add a "Where things live" row: `Sheet Sync (reception Google Sheet → patients + reporting mirror): parsers, identity rules, lease-fenced runner, CLI — src/lib/sheet-sync/, scripts/sheet-sync.ts; admin page /staff/admin/sheet-sync; mirror tables readable only there (mirror-readers.test.ts)`.
+- [ ] **drmed-migrations skill.** Add a 0165 line to the migration list in the file's style and the P0054–P0056 meanings; next free P0057. Add a note on the `app.referral_origin` pattern: patients' channel ownership is set only inside security-definer functions.
 - [ ] **drmed-staff-ui skill.** Add the Admin Tools nav item.
 - [ ] **Spec.** Append a "§14 Planning refinements (2026-09-24)" table listing D1–D11 with one line each.
 - [ ] Commit — `git commit -m "docs(sheet-sync): user guide section, CLAUDE.md, skills, spec refinements"`
@@ -3923,13 +3923,13 @@ describe("sheet mirror tables stay out of money surfaces (spec §11)", () => {
 Order matters: the migration must be on prod **before** the app merges (CLAUDE.md), and the sync ships paused.
 
 - [ ] **Step 1: Number re-check** (Task 8 Step 0 again, on the day). Rebase on `origin/main`; re-run the full gate.
-- [ ] **Step 2: Confirm with the user before any outward step.** Summarise in plain words: push the branch (public repo; the diff holds no personal data — verify with `git diff origin/main...HEAD | grep -iE "<the invented names only>"` and a scan of the fixtures), open the PR, apply 0159 to prod, set `LEGACY_SHEET_ID` on Vercel production, merge. Ask once, then proceed.
+- [ ] **Step 2: Confirm with the user before any outward step.** Summarise in plain words: push the branch (public repo; the diff holds no personal data — verify with `git diff origin/main...HEAD | grep -iE "<the invented names only>"` and a scan of the fixtures), open the PR, apply 0165 to prod, set `LEGACY_SHEET_ID` on Vercel production, merge. Ask once, then proceed.
 - [ ] **Step 3: Push + PR.** `git push -u origin feat/sheet-sync`; `gh pr create`. The body covers: what it does, "ships PAUSED", the D1–D11 table, the D9 public-form wording change (owner-visible), the duplicate-digest measurement from Task 17, verification evidence (test counts, local timings, db-proof PASS, review outcomes), and the post-merge checklist. End with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`. Mark it ready at once (memory: ready-for-review cancel trap; no CI here, but keep the habit).
-- [ ] **Step 4: Apply 0159 to prod** (owner authorised Claude-run pushes, memory `feedback-drmed-apply-migrations-yourself`). From this worktree, on current main, with `supabase/.temp/{project-ref,linked-project.json,pooler-url}` copied in: `supabase db push --dry-run` must list **only** 0159. Then `supabase db push`. **Verify by object, not the summary line** (memory `supabase-db-push-remote-only-migration`): ledger has 0159; the ten tables exist with RLS; `sheet_sync_settings.paused = true`; 18 referral sources; `select count(*) from patients where referral_source is not null and referral_source_origin is distinct from 'staff'` = 0; `has_function_privilege('authenticated','public.sheet_sync_acquire(text,uuid,boolean)','execute')` = false.
+- [ ] **Step 4: Apply 0165 to prod** (owner authorised Claude-run pushes, memory `feedback-drmed-apply-migrations-yourself`). From this worktree, on current main, with `supabase/.temp/{project-ref,linked-project.json,pooler-url}` copied in: `supabase db push --dry-run` must list **only** 0165. Then `supabase db push`. **Verify by object, not the summary line** (memory `supabase-db-push-remote-only-migration`): ledger has 0165; the ten tables exist with RLS; `sheet_sync_settings.paused = true`; 18 referral sources; `select count(*) from patients where referral_source is not null and referral_source_origin is distinct from 'staff'` = 0; `has_function_privilege('authenticated','public.sheet_sync_acquire(text,uuid,boolean)','execute')` = false.
 - [ ] **Step 5: Vercel env.** Set `LEGACY_SHEET_ID` for Production (`vercel env add LEGACY_SHEET_ID production`) and confirm `GOOGLE_SERVICE_ACCOUNT_JSON` is already set there (the accounting export uses it).
-- [ ] **Step 6: Merge** with the repo's merge path, then confirm the Vercel production deploy is READY (merge ≠ deploy). Run `npm run db:types:remote` if possible; otherwise note that local types match 0159.
+- [ ] **Step 6: Merge** with the repo's merge path, then confirm the Vercel production deploy is READY (merge ≠ deploy). Run `npm run db:types:remote` if possible; otherwise note that local types match 0165.
 - [ ] **Step 7: Prod dry run — owner evidence (spec §11).** `npm run sheet:sync -- --prod` (a dry run; it reads prod patient data, which the guard announces). Compare `per_tab.customers.planned` against the spec's replay: ~4,187 link (86%), ~540 create, ~44 ambiguous, ~93 loose-only review, 2 conflicts. **Outside ±5% ⇒ stop and investigate before anyone unpauses.** Put the numbers, in plain words, in the handoff to the owner. The owner, not Claude, decides when to unpause. After they do, the catch-up runs via `npm run sheet:sync -- --prod --commit --confirm=qhptbmafrosgibooelpp`; record its duration on the admin page (run history).
-- [ ] **Step 8: Wrap-up** per CLAUDE.md: plain-English summary, next step (PR 2 Patient Sources), context-hygiene check. Update memory `drmed-sheet-sync` (state: PR 1 merged, 0159 on prod, paused; the D-decisions worth keeping) and the index line in `MEMORY.md`.
+- [ ] **Step 8: Wrap-up** per CLAUDE.md: plain-English summary, next step (PR 2 Patient Sources), context-hygiene check. Update memory `drmed-sheet-sync` (state: PR 1 merged, 0165 on prod, paused; the D-decisions worth keeping) and the index line in `MEMORY.md`.
 
 ---
 
@@ -3937,4 +3937,4 @@ Order matters: the migration must be on prod **before** the app merges (CLAUDE.m
 
 - **Spec coverage** (§4–§5, §11): channels + mapper + aliases (T3, T8) · origin/row_version trigger (T8, D2) · re-sort panel (T7, T16) · settings/runs/lease/fencing (T8, T11) · review items incl. auto-clear + dismiss (T8, T15) · before-images + revert (T8, T14) · links, facts (T5, T8) · customer + encounter mirrors with staged swap (T8, T11) · per-cell dates (T2) · clinical mirror identities (T6) · §5.3 identity rules + corroboration + expected-volume gate (T5, T21) · pause/skipped heartbeat, partial ⇒ monitor error, cron three-place, CLI catch-up timing (T11–T13, T19) · admin page with every listed control (T14–T16) · user guide (T18) · security matrix (T9) · repo guard (T17) · retention (T13). PRs 2–5 are excluded by design.
 - **Placeholders:** Task 5's test header array is to be shared via `__fixtures__/tab-headers.ts` (explicit instruction, not a TBD). Task 13's `activeFrom` is a concrete date with a re-check step.
-- **Type consistency:** `CustomerOp`/`FillFields`/`LinkRecord` (T5) are used unchanged by the store (T11) and match the SQL op keys (T8). `withAdminLease` (T11) is used by the actions (T14). `ReviewKind` matches the 0159 CHECK and `KIND_LABEL`.
+- **Type consistency:** `CustomerOp`/`FillFields`/`LinkRecord` (T5) are used unchanged by the store (T11) and match the SQL op keys (T8). `withAdminLease` (T11) is used by the actions (T14). `ReviewKind` matches the 0165 CHECK and `KIND_LABEL`.
