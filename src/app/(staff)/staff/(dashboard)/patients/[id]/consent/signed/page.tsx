@@ -13,7 +13,10 @@ import {
 } from "@/components/consent/consent-form-sheet";
 import { PrintButton } from "@/components/consent/print-button";
 import { manilaDateTime } from "@/lib/dates/manila";
-import { CURRENT_CONSENT_NOTICE_VERSION } from "@/lib/consent/notice";
+import {
+  CURRENT_CONSENT_NOTICE_VERSION,
+  consentNoticeText,
+} from "@/lib/consent/notice";
 import type { ConsentSignatory } from "@/lib/consent/types";
 
 // Share the existing header lookup with metadata within this request.
@@ -66,13 +69,14 @@ function recordLine(
     default:
       how = `Recorded on ${at}${by}.`;
   }
+  // The sheet renders the archived wording of the agreed version; say so
+  // plainly when that wording was never archived and today's is shown instead.
   const version = consent.notice_version;
-  const versionNote =
-    version && version !== CURRENT_CONSENT_NOTICE_VERSION
-      ? ` Agreed to notice version ${version}; the wording above is the current version (${CURRENT_CONSENT_NOTICE_VERSION}).`
-      : version
-        ? ` Notice version ${version}.`
-        : "";
+  const versionNote = !version
+    ? ` The notice version was not recorded; the current wording (${CURRENT_CONSENT_NOTICE_VERSION}) is shown.`
+    : consentNoticeText(version)
+      ? ` Agreed to notice version ${version}${version === CURRENT_CONSENT_NOTICE_VERSION ? "" : ` (the current version is ${CURRENT_CONSENT_NOTICE_VERSION})`}.`
+      : ` Agreed to notice version ${version}, whose exact wording is not on file; the current wording (${CURRENT_CONSENT_NOTICE_VERSION}) is shown.`;
   return how + versionNote;
 }
 
@@ -186,6 +190,7 @@ export default async function SignedConsentPage({
     signatoryRelationship: consent.signatory_relationship,
     signatureUrl,
     mark: markFor(consent.method),
+    noticeVersion: consent.notice_version,
     record: recordLine(consent, recordedBy),
   };
 

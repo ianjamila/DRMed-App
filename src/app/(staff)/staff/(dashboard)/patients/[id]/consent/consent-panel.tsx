@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { SignaturePad } from "@/components/consent/signature-pad";
+import { ConsentNotice } from "@/components/consent/consent-notice";
 import { recordConsentGrantAction } from "@/lib/actions/consent/grant";
 import { withdrawConsentAction } from "@/lib/actions/consent/withdraw";
 import { uploadConsentArtifactAction } from "@/lib/actions/consent/artifact";
@@ -193,6 +194,19 @@ export function ConsentPanel({
 
       {(mode === "pad" || mode === "paper") && (
         <div className="mt-3 space-y-2">
+          {/* On screen there is no paper form in front of the patient, so the
+              notice they are agreeing to sits right above the pad — the same
+              wording the signed form will later show around the signature. */}
+          {mode === "pad" && (
+            <div className="rounded-lg border border-[color:var(--color-brand-bg-mid)] bg-white p-3">
+              <p className="mb-2 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)]">
+                Have the patient read this before signing
+              </p>
+              <div className="max-h-72 overflow-y-auto pr-1">
+                <ConsentNotice compact />
+              </div>
+            </div>
+          )}
           <div className="grid gap-2 sm:grid-cols-3">
             <select
               value={signatory}

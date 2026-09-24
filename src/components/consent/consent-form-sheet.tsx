@@ -31,6 +31,9 @@ export interface ConsentFormSigned {
   // scan was never attached) — `mark` then says so in the signature slot.
   signatureUrl: string | null;
   mark: string;
+  // The notice version this consent was agreed to — the sheet renders that
+  // version's archived wording rather than today's.
+  noticeVersion: string | null;
   // The provenance line under the form: how, when and by whom it was recorded.
   record: string;
 }
@@ -105,7 +108,7 @@ export function ConsentFormSheet({
       </p>
 
       <div className="mt-4">
-        <ConsentNotice />
+        <ConsentNotice version={signed?.noticeVersion} />
       </div>
 
       <div className="mt-10 flex items-end gap-8">
