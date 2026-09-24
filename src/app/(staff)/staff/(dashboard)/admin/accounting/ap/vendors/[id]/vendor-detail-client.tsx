@@ -19,6 +19,8 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { CircleAlert } from "lucide-react";
+import { StatusBadge } from "@/lib/ui/status-badge";
+import { billPaymentMethodLabel } from "@/lib/accounting/ap-labels";
 
 const PHP = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
 
@@ -66,28 +68,6 @@ type PaymentRow = {
 };
 
 type Props = { vendor: VendorRow; bills: BillRow[]; payments: PaymentRow[] };
-
-// ---------------------------------------------------------------------------
-// Status badge helper
-// ---------------------------------------------------------------------------
-
-function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, string> = {
-    draft: "bg-gray-100 text-gray-700",
-    posted: "bg-blue-100 text-blue-800",
-    partial: "bg-yellow-100 text-yellow-800",
-    paid: "bg-green-100 text-green-800",
-    voided: "bg-red-100 text-red-800",
-  };
-  const cls = map[status] ?? "bg-gray-100 text-gray-700";
-  return (
-    <span
-      className={`inline-block rounded px-2 py-0.5 text-xs font-semibold uppercase tracking-wide ${cls}`}
-    >
-      {status}
-    </span>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Main component
@@ -303,7 +283,7 @@ export function VendorDetailClient({ vendor, bills, payments }: Props) {
                       </Link>
                     </td>
                     <td className="px-3 py-2 text-xs">{p.payment_date}</td>
-                    <td className="px-3 py-2 text-xs uppercase">{p.method}</td>
+                    <td className="px-3 py-2 text-xs">{billPaymentMethodLabel(p.method)}</td>
                     <td className="px-3 py-2 text-xs">
                       {p.cheque_number
                         ? `Chq ${p.cheque_number}`

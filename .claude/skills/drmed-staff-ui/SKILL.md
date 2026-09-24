@@ -18,7 +18,7 @@ The three "chrome" systems every staff page hangs off of: the **sidebar nav conf
 | Shared section-tab component | `src/components/staff/section-tabs.tsx` (`SectionTabs`) |
 | Tab styling for non-component bars | `src/components/staff/section-tabs-style.ts` |
 | Per-area tab wrappers | `…/payments/_components/payments-tabs.tsx`, `…/admin/accounting/ap/_components/bills-tabs.tsx`, `…/visits/_components/visits-tabs.tsx`, `…/admin/accounting/financial-statements/_components/statement-tabs.tsx` |
-| Fixed-position tab bar via layout | `…/admin/accounting/ap/layout.tsx`, `…/admin/operations/layout.tsx`, `…/admin/accounting/financial-statements/layout.tsx` |
+| Fixed-position tab bar via layout | `…/admin/accounting/ap/layout.tsx`, `…/admin/operations/(daily-monitoring)/layout.tsx`, `…/admin/accounting/financial-statements/layout.tsx` |
 | Page header (title, subtitle, actions slot) | `src/components/staff/page-header.tsx` (`PageHeader`) — the lab queue and Visits archive are the models for header + filter chips |
 | Print buttons (client `window.print()` wrappers) | `…/visits/[id]/receipt/print-button.tsx`, `…/payments/eod/[closeId]/count-sheet/print-button.tsx`, `…/admin/accounting/pf-payouts/[id]/slip/slip-print-button.tsx` |
 | Dashboard card registry | `src/lib/dashboards/cards.ts` |
@@ -26,7 +26,7 @@ The three "chrome" systems every staff page hangs off of: the **sidebar nav conf
 | Role dashboards | `src/app/(staff)/staff/(dashboard)/page.tsx` → `_dashboards/{reception,lab,admin}-dashboard.tsx` |
 | Card component | `…/(dashboard)/_dashboards/_components/stat-card.tsx` (`StatCard`) |
 | Brand theme tokens | `src/app/globals.css` (`--color-brand-*`) |
-| Cron Health (admin-only, Operations nav subgroup) | `src/app/(staff)/staff/(dashboard)/admin/operations/cron-health/page.tsx`; canonical legs + status rule in `src/lib/ops/cron-heartbeats.ts`, drift guards in `cron-heartbeats.test.ts` |
+| Cron Health (admin-only, Operations nav subgroup) | `src/app/(staff)/staff/(dashboard)/admin/operations/cron-health/page.tsx` — beside the `(daily-monitoring)` route group, so no tab bar; canonical legs (with the plain `label` + `description` the page shows) + status rule in `src/lib/ops/cron-heartbeats.ts`, drift guards in `cron-heartbeats.test.ts` |
 
 Roles everywhere: `reception`, `medtech`, `xray_technician`, `pathologist`, `admin`.
 
@@ -57,7 +57,7 @@ An **item** is a `StaffNavItem`:
 - **Patients**: `href: /staff/patients` with NO exclusions — the default prefix match keeps it lit on `/staff/patients/new`, which is reached from the page's own + New patient button (the "New patient registration" item was removed 2026-09-15).
 - **Outside-Lab Costs** excludes `…/send-outs/vendor-performance` because the Outside-Lab Performance item lives under its href.
 - **Financial Statements**: a single bare-base `href` — the default prefix match already covers `/balance-sheet` and `/cash-flow`, so no `activePrefixes` needed.
-- **Cron Health** is its own admin item under Operations. **Daily Report** excludes `…/operations/cron-health` to avoid double highlighting. It is not a financial-period view, so it does not join `OperationsTabs`. The page reads only system heartbeat timestamps with the staff RLS client; missing rows stay visible as Pending/Stale, and query errors are Unavailable. Pending means the initial monitoring grace period has not ended.
+- **Cron Health** is its own admin item under Operations. **Daily Report** excludes `…/operations/cron-health` to avoid double highlighting. It is not a financial-period view, so it does not join `OperationsTabs` — and it cannot inherit them either: the six Daily Monitoring views live in the `admin/operations/(daily-monitoring)/` route group (URLs unchanged), whose `layout.tsx` owns the bar, while `cron-health/` sits beside the group with no eyebrow and its own padding. There is deliberately no `operations/layout.tsx`; `staff-nav-config.test.ts` fails if one reappears. A child layout can never opt out of a parent layout, so a route group is the only way to give one sibling a different frame. The page reads only system heartbeat timestamps with the staff RLS client; missing rows stay visible as Pending/Stale, and query errors are Unavailable. Pending means the initial monitoring grace period has not ended.
 
 Before adding an `activePrefixes` entry, list every route under it and check none belongs to another item (or to nobody).
 

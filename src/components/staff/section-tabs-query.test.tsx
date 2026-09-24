@@ -12,7 +12,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 const { OperationsTabs } = await import(
-  "@/app/(staff)/staff/(dashboard)/admin/operations/_components/operations-tabs"
+  "@/app/(staff)/staff/(dashboard)/admin/operations/(daily-monitoring)/_components/operations-tabs"
 );
 const { StatementTabs } = await import(
   "@/app/(staff)/staff/(dashboard)/admin/accounting/financial-statements/_components/statement-tabs"
@@ -106,7 +106,7 @@ describe("PaymentsTabs", () => {
 // Layout-owned navigation remains present even when a page renders an empty/error body.
 describe("report layouts", () => {
   it.each([
-    ["operations", () => import("@/app/(staff)/staff/(dashboard)/admin/operations/layout"), 6],
+    ["operations", () => import("@/app/(staff)/staff/(dashboard)/admin/operations/(daily-monitoring)/layout"), 6],
     ["statements", () => import("@/app/(staff)/staff/(dashboard)/admin/accounting/financial-statements/layout"), 3],
   ] as const)("%s retains its tabs without page content", async (_name, load, count) => {
     const { default: Layout } = await load();

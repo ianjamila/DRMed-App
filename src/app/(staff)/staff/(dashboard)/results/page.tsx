@@ -17,6 +17,7 @@ import {
   RESULT_STATUS_LABEL,
   parseResultStatusFilter,
   resultStatusSpec,
+  testStatusLabel,
   type ResultStatusFilter,
 } from "@/lib/results/status-filter";
 import {
@@ -494,7 +495,7 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
                           <span
                             className={`inline-block rounded-md px-2 py-0.5 text-xs font-semibold ${STATUS_BADGE[statusSummary.status] ?? "bg-slate-50 text-slate-700 border-slate-200"}`}
                           >
-                            {statusSummary.status}
+                            {testStatusLabel(statusSummary.status)}
                           </span>
                         ) : (
                           <div className="flex flex-col gap-0.5">
@@ -503,7 +504,7 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
                                 key={e.status}
                                 className={`inline-block rounded-md px-2 py-0.5 text-[10px] font-semibold ${STATUS_BADGE[e.status] ?? "bg-slate-50 text-slate-700 border-slate-200"}`}
                               >
-                                {e.status} × {e.count}
+                                {testStatusLabel(e.status)} × {e.count}
                               </span>
                             ))}
                           </div>

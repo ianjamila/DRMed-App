@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import ts from "typescript";
 import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
 import { describe, expect, it } from "vitest";
@@ -672,8 +672,11 @@ const EYEBROW_EXCEPTIONS: Record<string, { nodes: string[]; why: string }> = {
   },
 };
 const HEADER_FAMILIES: [dir: string, sectionHref: string][] = [
-  ...["admin/accounting/ap", "admin/operations", "admin/accounting/financial-statements", "marketing"]
+  ...["admin/accounting/ap", "admin/accounting/financial-statements", "marketing"]
     .map((family): [string, string] => [family, `/staff/${family}`]),
+  // Daily Monitoring's six views sit in a route group so its tab-bar layout
+  // wraps only them; Cron Health, beside the group, is not part of the section.
+  ["admin/operations/(daily-monitoring)", "/staff/admin/operations"],
   // Cash Drawer's three tabs are sibling folders under payments/, beside
   // Record payment (payments/new), which is not part of the section.
   ...["cash-drawer", "petty-cash", "eod"]
@@ -759,6 +762,13 @@ describe("Cron Health navigation", () => {
   it("lights only Cron Health, leaving Daily Monitoring active on its own views", () => {
     expect(activeHrefs(href)).toEqual([href]);
     expect(activeHrefs("/staff/admin/operations/cash")).toEqual(["/staff/admin/operations"]);
+  });
+  it("renders outside the Daily Monitoring tab bar", () => {
+    // A layout directly under operations/ would wrap Cron Health in the six
+    // financial-period tabs again, with none of them highlighted.
+    expect(existsSync(`${DASHBOARD_DIR}/admin/operations/layout.tsx`)).toBe(false);
+    expect(existsSync(`${DASHBOARD_DIR}/admin/operations/(daily-monitoring)/layout.tsx`)).toBe(true);
+    expect(existsSync(`${DASHBOARD_DIR}/admin/operations/cron-health/page.tsx`)).toBe(true);
   });
 });
 

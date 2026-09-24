@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/card";
 import { CircleAlert } from "lucide-react";
 import { StatusBadge } from "@/lib/ui/status-badge";
+import { billPaymentMethodLabel } from "@/lib/accounting/ap-labels";
 import { pluckOne } from "@/lib/reports/format";
 import { manilaDate } from "@/lib/dates/manila";
 
@@ -162,7 +163,7 @@ export function PaymentDetailClient({
           <PageHeader
             eyebrow={SECTION_NAME["/staff/admin/accounting/ap"]}
             title={payment.payment_number}
-            subtitle={<>{vendor?.name ?? "—"} · {payment.method} · {manilaDate(payment.payment_date)}
+            subtitle={<>{vendor?.name ?? "—"} · {billPaymentMethodLabel(payment.method)} · {manilaDate(payment.payment_date)}
             {payment.cheque_number && (
             <> · Cheque #{payment.cheque_number} dated {payment.cheque_date}</>
             )}

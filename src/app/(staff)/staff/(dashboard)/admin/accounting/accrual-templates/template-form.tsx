@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { groupAccountsByType } from "@/lib/accounting/account-groups";
 import {
   createAccrualTemplate,
   updateAccrualTemplate,
@@ -28,27 +29,6 @@ const PHP = new Intl.NumberFormat("en-PH", {
 
 function blankLine(): LineDraft {
   return { account_id: "", debit_php: "", credit_php: "", description: "" };
-}
-
-function typeLabel(t: string): string {
-  switch (t) {
-    case "asset":
-      return "Assets (1xxx)";
-    case "liability":
-      return "Liabilities (2xxx)";
-    case "equity":
-      return "Equity (3xxx)";
-    case "revenue":
-      return "Revenue (4xxx)";
-    case "contra_revenue":
-      return "Contra revenue (49xx)";
-    case "expense":
-      return "Expenses (5xxx-7xxx)";
-    case "memo":
-      return "Memo / suspense";
-    default:
-      return t;
-  }
 }
 
 const FREQUENCIES = [
@@ -99,16 +79,7 @@ export function AccrualTemplateForm({
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  const accountsByType = useMemo(() => {
-    const groups: Record<string, AccountOption[]> = {};
-    for (const a of accounts) {
-      (groups[a.type] = groups[a.type] ?? []).push(a);
-    }
-    for (const t of Object.keys(groups)) {
-      groups[t].sort((a, b) => a.code.localeCompare(b.code));
-    }
-    return groups;
-  }, [accounts]);
+  const accountGroups = useMemo(() => groupAccountsByType(accounts), [accounts]);
 
   const totals = useMemo(() => {
     let debit = 0;
@@ -277,17 +248,15 @@ export function AccrualTemplateForm({
                       className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] px-2 py-1.5 text-sm"
                     >
                       <option value="">— pick account —</option>
-                      {Object.keys(accountsByType)
-                        .sort()
-                        .map((type) => (
-                          <optgroup key={type} label={typeLabel(type)}>
-                            {accountsByType[type].map((a) => (
-                              <option key={a.id} value={a.id}>
-                                {a.code} — {a.name}
-                              </option>
-                            ))}
-                          </optgroup>
-                        ))}
+                      {accountGroups.map((g) => (
+                        <optgroup key={g.type} label={g.label}>
+                          {g.accounts.map((a) => (
+                            <option key={a.id} value={a.id}>
+                              {a.code} — {a.name}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
                     </select>
                   </td>
                   <td className="px-3 py-2 text-right">

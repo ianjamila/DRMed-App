@@ -19,6 +19,8 @@
  * neither is DB-constrained).
  */
 
+import { humaniseCode } from "@/lib/format/humanise-code";
+
 export const RESULT_STATUSES = [
   "all",
   "released",
@@ -38,6 +40,26 @@ export const RESULT_STATUS_LABEL: Record<ResultStatusFilter, string> = {
   unclaimed: "Unclaimed",
   cancelled: "Cancelled",
 };
+
+/**
+ * Words for a single `test_requests.status` value — the row-level badge, not
+ * the tab. `result_uploaded` reads "Awaiting sign-off" because that is what it
+ * means to the lab and what the visit page already calls it; the patient
+ * portal shows the same words.
+ */
+export const TEST_STATUS_LABEL: Record<string, string> = {
+  requested: "Requested",
+  in_progress: "In progress",
+  result_uploaded: "Awaiting sign-off",
+  ready_for_release: "Ready for release",
+  released: "Released",
+  cancelled: "Cancelled",
+};
+
+/** A status in words; an unknown code is humanised rather than shown raw. */
+export function testStatusLabel(status: string): string {
+  return TEST_STATUS_LABEL[status] ?? humaniseCode(status);
+}
 
 /** The assignee predicate a tab layers on top of its status set. */
 export type AssigneeScope = "any" | "unclaimed" | "claimed";

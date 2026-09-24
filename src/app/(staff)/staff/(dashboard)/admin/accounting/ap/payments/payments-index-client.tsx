@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/lib/ui/status-badge";
+import { BILL_PAYMENT_METHODS, billPaymentMethodLabel } from "@/lib/accounting/ap-labels";
 import {
   ariaSortFor,
   buildListHref,
@@ -51,15 +52,9 @@ type Filter = {
   q: string;
 };
 
-const METHODS = ["cash", "bank_transfer", "gcash", "cheque"] as const;
+const METHODS = BILL_PAYMENT_METHODS;
 
-const METHOD_LABEL: Record<string, string> = {
-  cash: "Cash",
-  bank_transfer: "Bank transfer",
-  gcash: "GCash",
-  cheque: "Cheque",
-};
-const methodLabel = (m: string) => METHOD_LABEL[m] ?? m;
+const methodLabel = billPaymentMethodLabel;
 
 // Sortable columns for the payments list. `parseSort` requires this exact
 // allow-list — even though this table sorts a client-held array rather than

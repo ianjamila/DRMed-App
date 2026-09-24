@@ -12,6 +12,7 @@ import {
 } from "@/lib/validations/accounting";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { deriveNormalBalance } from "@/lib/accounting/derive-normal-balance";
+import { accountTypeGroupLabel, parentAccountError } from "@/lib/accounting/account-groups";
 
 export type CoaResult = { ok: true } | { ok: false; error: string };
 
@@ -25,6 +26,26 @@ function readForm(formData: FormData) {
     is_active: formData.get("is_active"),
     is_settlement_destination: formData.get("is_settlement_destination") === "true",
   };
+}
+
+type AdminClient = ReturnType<typeof createAdminClient>;
+
+// The form only offers same-type parents, but a crafted post can name any id,
+// so the rule is checked again here before anything is written.
+async function checkParent(
+  admin: AdminClient,
+  account: { id?: string; type: string },
+  parentId: string | null | undefined,
+): Promise<string | null> {
+  if (!parentId) return null;
+  const { data: parent, error } = await admin
+    .from("chart_of_accounts")
+    .select("id, type")
+    .eq("id", parentId)
+    .maybeSingle();
+  if (error) return translatePgError(error);
+  if (!parent) return "The parent account no longer exists.";
+  return parentAccountError(account, parent);
 }
 
 export async function createAccountAction(
@@ -50,6 +71,9 @@ export async function createAccountAction(
   }
 
   const admin = createAdminClient();
+  const parentError = await checkParent(admin, { type: parsed.data.type }, parsed.data.parent_id);
+  if (parentError) return { ok: false, error: parentError };
+
   const { data: created, error } = await admin
     .from("chart_of_accounts")
     .insert(parsed.data)
@@ -111,6 +135,29 @@ export async function updateAccountAction(
     .maybeSingle();
   if (fetchError || !before) {
     return { ok: false, error: "Account not found." };
+  }
+
+  const parentError = await checkParent(
+    admin,
+    { id: accountId, type: parsed.data.type },
+    parsed.data.parent_id,
+  );
+  if (parentError) return { ok: false, error: parentError };
+
+  // Changing the type would leave this account's sub-accounts under a parent
+  // of another type — the same mismatch the parent rule forbids.
+  if (parsed.data.type !== before.type) {
+    const { count, error: childError } = await admin
+      .from("chart_of_accounts")
+      .select("id", { count: "exact", head: true })
+      .eq("parent_id", accountId);
+    if (childError) return { ok: false, error: translatePgError(childError) };
+    if ((count ?? 0) > 0) {
+      return {
+        ok: false,
+        error: `This account is the parent of ${count} other account${count === 1 ? "" : "s"} (${accountTypeGroupLabel(before.type)}). Move them to another parent before changing its type.`,
+      };
+    }
   }
 
   const { error } = await admin

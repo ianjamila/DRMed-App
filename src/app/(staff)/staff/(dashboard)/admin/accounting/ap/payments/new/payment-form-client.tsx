@@ -14,6 +14,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CircleAlert } from "lucide-react";
+import {
+  BILL_PAYMENT_METHODS,
+  billPaymentMethodLabel,
+  type BillPaymentMethod,
+} from "@/lib/accounting/ap-labels";
 
 const PHP = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
 
@@ -31,8 +36,8 @@ type OutstandingBill = {
   status: string;
 };
 
-type PaymentMethod = "cash" | "bank_transfer" | "gcash" | "cheque";
-const METHODS: readonly PaymentMethod[] = ["cash", "bank_transfer", "gcash", "cheque"];
+type PaymentMethod = BillPaymentMethod;
+const METHODS = BILL_PAYMENT_METHODS;
 
 function isPaymentMethod(v: string): v is PaymentMethod {
   return (METHODS as readonly string[]).includes(v);
@@ -355,7 +360,7 @@ export function PaymentFormClient({
             className={selectClassName}
           >
             {METHODS.map((m) => (
-              <option key={m} value={m}>{m}</option>
+              <option key={m} value={m}>{billPaymentMethodLabel(m)}</option>
             ))}
           </select>
         </Field>

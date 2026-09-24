@@ -5,6 +5,7 @@ import { requirePatientProfile } from "@/lib/auth/require-patient";
 import { DownloadButton } from "../../download-button";
 import { Panel } from "@/components/ui/panel";
 import { manilaDate, manilaLongDate } from "@/lib/dates/manila";
+import { testStatusLabel } from "@/lib/results/status-filter";
 
 export const metadata = {
   title: "Visit",
@@ -13,15 +14,6 @@ export const metadata = {
 interface Props {
   params: Promise<{ id: string }>;
 }
-
-const STATUS_LABEL: Record<string, string> = {
-  requested: "Requested",
-  in_progress: "In progress",
-  result_uploaded: "Awaiting sign-off",
-  ready_for_release: "Ready for release",
-  released: "Released",
-  cancelled: "Cancelled",
-};
 
 const RELEASED_STATUS_STYLE = "bg-emerald-100 text-emerald-900";
 const PENDING_STATUS_STYLE = "bg-[color:var(--color-brand-bg-mid)] text-[color:var(--color-brand-text-soft)]";
@@ -144,7 +136,7 @@ export default async function PatientVisitDetailPage({ params }: Props) {
                       <span
                         className={`rounded-md px-2 py-0.5 text-xs font-semibold ${RELEASED_STATUS_STYLE}`}
                       >
-                        {STATUS_LABEL[t.status] ?? t.status}
+                        {testStatusLabel(t.status)}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right">

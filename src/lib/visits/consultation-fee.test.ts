@@ -3,6 +3,7 @@ import {
   defaultClinicFee,
   doctorLineBase,
   splitDoctorFee,
+  zeroClinicFeeReason,
 } from "./consultation-fee";
 
 describe("defaultClinicFee", () => {
@@ -146,5 +147,47 @@ describe("splitDoctorFee", () => {
         clinicCutPhp: 250,
       }),
     ).toEqual({ clinic_fee_php: 150, doctor_pf_php: 650 });
+  });
+});
+
+describe("zeroClinicFeeReason", () => {
+  it("blames the doctor profile when the per-doctor clinic cut is ₱0, whatever the arrangement", () => {
+    // The only way a standard (pf_split) doctor reaches ₱0 — the old text
+    // wrongly blamed the arrangement and printed "this doctor is PF split".
+    for (const arrangement of ["pf_split", "rent_paying", "shareholder"]) {
+      expect(zeroClinicFeeReason(arrangement, 0)).toBe(
+        "this doctor's profile sets the clinic's share to ₱0",
+      );
+    }
+  });
+
+  it("explains rent-paying and shareholder doctors in plain words", () => {
+    expect(zeroClinicFeeReason("rent_paying", null)).toBe(
+      "this doctor rents space at the clinic and keeps the whole consult fee",
+    );
+    expect(zeroClinicFeeReason("shareholder", undefined)).toBe(
+      "this doctor is a clinic shareholder and keeps the whole consult fee",
+    );
+  });
+
+  it("never prints bookkeeping jargon or a raw code", () => {
+    const reasons = [
+      zeroClinicFeeReason("pf_split", 0),
+      zeroClinicFeeReason("pf_split", null),
+      zeroClinicFeeReason("rent_paying", null),
+      zeroClinicFeeReason("shareholder", null),
+      zeroClinicFeeReason("some_new_arrangement", null),
+    ];
+    for (const reason of reasons) {
+      expect(reason).not.toMatch(/PF split|pf_split|_/i);
+    }
+  });
+
+  it("agrees with defaultClinicFee about when the fee is ₱0", () => {
+    // A negative/NaN cut is ignored by defaultClinicFee, so it must not be
+    // named as the reason either.
+    expect(defaultClinicFee("rent_paying", -5)).toBe(0);
+    expect(zeroClinicFeeReason("rent_paying", -5)).toContain("rents space");
+    expect(zeroClinicFeeReason("rent_paying", Number.NaN)).toContain("rents space");
   });
 });

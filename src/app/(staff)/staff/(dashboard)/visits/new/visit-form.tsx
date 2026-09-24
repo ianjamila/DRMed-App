@@ -17,7 +17,11 @@ import {
   StableTextarea,
 } from "@/components/forms/stable-fields";
 import { formatPhp } from "@/lib/marketing/format";
-import { defaultClinicFee, doctorLineBase } from "@/lib/visits/consultation-fee";
+import {
+  defaultClinicFee,
+  doctorLineBase,
+  zeroClinicFeeReason,
+} from "@/lib/visits/consultation-fee";
 import { isConsultOnlyOrder } from "@/lib/visits/receipt-policy";
 import { isSeniorPwdEligible } from "@/lib/pricing/senior";
 import {
@@ -30,24 +34,6 @@ import {
   getPackageComponentsAction,
   type CreateVisitResult,
 } from "./actions";
-
-/**
- * Reception-facing wording for physicians.compensation_arrangement — mirrors
- * the admin physician-form option labels, not the raw enum code. Used only
- * to explain why the clinic-fee default came out to ₱0 for this doctor.
- */
-function compensationArrangementLabel(arrangement: string): string {
-  switch (arrangement) {
-    case "pf_split":
-      return "PF split";
-    case "rent_paying":
-      return "rent-paying — keeps the full consult fee";
-    case "shareholder":
-      return "shareholder — keeps the full consult fee";
-    default:
-      return arrangement.replace(/_/g, " ");
-  }
-}
 
 export interface ServiceLite {
   id: string;
@@ -892,7 +878,7 @@ export function VisitForm({
                       </div>
                       <p className="col-span-12 sm:col-span-6 self-end text-[10px] text-[color:var(--color-brand-text-soft)]">
                         {selectedPhysician && cfAuto === 0
-                          ? `Defaulted to ₱0 clinic fee — this doctor is ${compensationArrangementLabel(selectedPhysician.compensation_arrangement)}.`
+                          ? `Clinic fee starts at ₱0 — ${zeroClinicFeeReason(selectedPhysician.compensation_arrangement, selectedPhysician.clinic_cut_php)}. Both boxes can still be changed.`
                           : `Defaults: clinic fee ${formatPhp(cfAuto)}, doctor's fee (PF) = final − clinic fee. Both editable.`}
                       </p>
                     </div>

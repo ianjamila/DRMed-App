@@ -1,9 +1,10 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { CoaResult } from "./actions";
+import { accountTypeGroupLabel, groupAccountsByType } from "@/lib/accounting/account-groups";
 
 interface AccountDefaults {
   id?: string;
@@ -47,6 +48,18 @@ export function AccountForm({
 }) {
   const [state, formAction, pending] = useActionState(action, null);
   const router = useRouter();
+  const [type, setType] = useState(defaults.type);
+  const [parentId, setParentId] = useState(defaults.parent_id ?? "");
+  const parentGroups = useMemo(() => groupAccountsByType(parents), [parents]);
+
+  // A parent must be the same type (the server enforces it too), so changing
+  // Type drops a parent that no longer fits rather than leaving a choice the
+  // save would reject.
+  function changeType(next: string) {
+    setType(next);
+    const parent = parents.find((p) => p.id === parentId);
+    if (parent && parent.type !== next) setParentId("");
+  }
 
   return (
     <form action={formAction} className="space-y-4 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
@@ -81,7 +94,8 @@ export function AccountForm({
         <select
           name="type"
           required
-          defaultValue={defaults.type}
+          value={type}
+          onChange={(e) => changeType(e.target.value)}
           className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm"
         >
           {TYPE_OPTIONS.map((t) => (
@@ -92,17 +106,25 @@ export function AccountForm({
         </select>
       </Field>
 
-      <Field label="Parent account (optional)" hint="Must be the same type. Used for roll-up hierarchy.">
+      <Field
+        label="Parent account (optional)"
+        hint={`Used for roll-up hierarchy. Only ${accountTypeGroupLabel(type)} accounts can be picked — a parent must be the same type as this account.`}
+      >
         <select
           name="parent_id"
-          defaultValue={defaults.parent_id ?? ""}
+          value={parentId}
+          onChange={(e) => setParentId(e.target.value)}
           className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm"
         >
           <option value="">— None —</option>
-          {parents.map((p) => (
-            <option key={p.id} value={p.id} data-type={p.type}>
-              {p.code} · {p.name} ({p.type})
-            </option>
+          {parentGroups.map((g) => (
+            <optgroup key={g.type} label={g.label} disabled={g.type !== type}>
+              {g.accounts.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.code} · {p.name}
+                </option>
+              ))}
+            </optgroup>
           ))}
         </select>
       </Field>
