@@ -840,7 +840,7 @@ describe("parseLabTab / parseConsultTab", () => {
   const WIN = "2026-05-26";
   it("keeps only rows inside [window start, today] and uses FINAL PRICE as revenue", () => {
     const rows = [LAB_H0, LAB_H1,
-      [46167, 1, 10, "Dela Cruz, Juan", "N/A", "", "", "CBC", 350, "", "", "", "", 300, "CASH", "", "Viber", 46168],
+      [46168, 1, 10, "Dela Cruz, Juan", "N/A", "", "", "CBC", 350, "", "", "", "", 300, "CASH", "", "Viber", 46169],
       [45261, 2, 11, "Reyes, Ana", "N/A", "", "", "CBC", 350, "", "", "", "", 350, "CASH", "", "", ""]];
     const p = parseLabTab(rows, { today: TODAY, windowStart: WIN });
     expect(p.rowsRead).toBe(2);
@@ -851,7 +851,7 @@ describe("parseLabTab / parseConsultTab", () => {
   });
   it("uses the CLINIC FEE as the consult revenue basis", () => {
     const rows = [CONS_H0, CONS_H1, [],
-      [46167, "", "", "Dela Cruz, Juan", "N/A", "", "", "DR. A", 1000, "", "", 1000, 300, "CASH", "", ""]];
+      [46168, "", "", "Dela Cruz, Juan", "N/A", "", "", "DR. A", 1000, "", "", 1000, 300, "CASH", "", ""]];
     const p = parseConsultTab(rows, { today: TODAY, windowStart: WIN });
     expect(p.rows[0]).toMatchObject({ finalPhp: 1000, clinicFeePhp: 300, revenuePhp: 300, doctorRaw: "DR. A",
       paymentMethodRaw: "CASH" });
