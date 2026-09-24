@@ -1,4 +1,5 @@
 import type { createAdminClient } from "@/lib/supabase/admin";
+import type { ReferralSourceId } from "@/lib/patients/referral-sources";
 
 // NOTE: no `import "server-only"` — the DB wrapper receives the admin client as
 // a param (never imports the service-role key), so this module stays unit-testable.
@@ -13,6 +14,10 @@ export interface ResolvePatientFields {
   phone: string | null;
   email: string; // dedup key — required
   address: string | null;
+  // "How did you hear about us?" from the public forms (0157). Written only
+  // when this call CREATES the patient; a matched row keeps whatever it had.
+  // The staff slide-over does not ask, so it passes nothing (NULL).
+  referral_source?: ReferralSourceId | null;
 }
 
 export type ResolvePatientResult =
@@ -50,7 +55,7 @@ type AdminClient = ReturnType<typeof createAdminClient>;
 // dedup triple makes concurrent resolves of the same identity yield one row.
 // Same contract as resolvePatientCore — reuse on (lower(email), last_name,
 // birthdate), else insert with pre_registered = true, never overwrite an
-// existing row's contact fields.
+// existing row's contact fields (or its referral_source, 0157).
 export async function resolvePatient(admin: AdminClient, fields: ResolvePatientFields): Promise<ResolvePatientResult> {
   const email = fields.email.trim().toLowerCase();
   const { data, error } = await admin.rpc("resolve_patient_guarded", {

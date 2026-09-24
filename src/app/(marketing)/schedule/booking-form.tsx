@@ -45,6 +45,11 @@ import { ReviewRows } from "@/components/marketing/booking-wizard/ReviewRows";
 import { SuccessPanel } from "@/components/marketing/booking-wizard/SuccessPanel";
 import { LabRequestUpload } from "@/components/marketing/booking-wizard/LabRequestUpload";
 import type { IntakePreference } from "@/lib/appointments/lab-request";
+import {
+  PUBLIC_REFERRAL_OPTIONS,
+  PUBLIC_REFERRAL_QUESTION,
+  PUBLIC_REFERRAL_REQUIRED_ERROR,
+} from "@/lib/patients/referral-sources";
 
 export type ServiceKind = "lab_test" | "lab_package" | "doctor_consultation";
 
@@ -189,6 +194,8 @@ export function BookingForm({
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [address, setAddress] = useState("");
+  // "How did you hear about us?" — asked of new patients only (About you).
+  const [referralSource, setReferralSource] = useState("");
   const [notes, setNotes] = useState("");
   const [labRequestFiles, setLabRequestFiles] = useState<File[]>([]);
   const [intakePreference, setIntakePreference] = useState<IntakePreference | null>(null);
@@ -401,6 +408,7 @@ export function BookingForm({
         e.phone = "We need your phone number in case reception needs to reach you about this booking.";
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim()))
         e.email = "Valid email required for confirmation.";
+      if (!referralSource) e.referral_source = PUBLIC_REFERRAL_REQUIRED_ERROR;
     } else if (key === "review") {
       if (!isPortalContext && !serviceAgreement)
         e.agreement = "Please accept the service agreement to continue.";
@@ -598,6 +606,7 @@ export function BookingForm({
               phone={phone}
               email={email}
               address={address}
+              referralSource={referralSource}
               notes={notes}
               serviceAgreement={serviceAgreement}
               marketingConsent={marketingConsent}
@@ -797,6 +806,37 @@ export function BookingForm({
                         maxLength={200}
                         placeholder="Optional — helpful for home service"
                       />
+                      <div className="flex flex-col gap-1.5">
+                        <label
+                          htmlFor="wiz-referral"
+                          className="text-[13.5px] font-semibold text-[color:var(--color-ink)]"
+                        >
+                          {PUBLIC_REFERRAL_QUESTION}{" "}
+                          <span className="text-[color:var(--color-danger)]">*</span>
+                        </label>
+                        <select
+                          id="wiz-referral"
+                          value={referralSource}
+                          onChange={(e) => setReferralSource(e.target.value)}
+                          className={`h-[46px] rounded-[12px] border-[1.5px] bg-white px-[13px] text-[15px] text-[color:var(--color-ink)] outline-none transition focus:border-[color:var(--color-brand-cyan)] ${
+                            currentErrors.referral_source
+                              ? "border-[color:var(--color-danger)]"
+                              : "border-[color:var(--color-warm-line)]"
+                          }`}
+                        >
+                          <option value="">— Choose one —</option>
+                          {PUBLIC_REFERRAL_OPTIONS.map((o) => (
+                            <option key={o.value} value={o.value}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </select>
+                        {currentErrors.referral_source ? (
+                          <p className="text-[12.5px] text-[color:var(--color-danger)]">
+                            {currentErrors.referral_source}
+                          </p>
+                        ) : null}
+                      </div>
                     </div>
                   </StepShell>
                 ) : null}
@@ -916,6 +956,7 @@ function HiddenFields({
   phone,
   email,
   address,
+  referralSource,
   notes,
   serviceAgreement,
   marketingConsent,
@@ -936,6 +977,7 @@ function HiddenFields({
   phone: string;
   email: string;
   address: string;
+  referralSource: string;
   notes: string;
   serviceAgreement: boolean;
   marketingConsent: boolean;
@@ -968,6 +1010,7 @@ function HiddenFields({
           <input type="hidden" name="phone" value={phone} />
           <input type="hidden" name="email" value={email} />
           <input type="hidden" name="address" value={address} />
+          <input type="hidden" name="referral_source" value={referralSource} />
         </>
       ) : null}
 

@@ -32,8 +32,9 @@ Alert, pushed by Claude right before its PR merged, 2026-09-24). **0156** (`cont
 first from a parallel branch) and verified by object 2026-09-24; **0154** (#198) and **0153**
 (#196) are applied and verified. **0151** (`rls_initplan_and_policy_consolidation`,
 #192) is also applied and verified: 159 public policies, zero unwrapped helper calls, and no
-unexpected policyless tables.
-**Next unused number: 0158**, subject to checking open branches again.
+unexpected policyless tables. **0158** (`resolve_patient_referral_source`) is in flight on
+`feat/booking-referral-source` and must be pushed before its PR merges.
+**Next unused number: 0159**, subject to checking open branches again.
 `ls supabase/migrations | tail -3` is NOT enough to pick the next number — it only sees your
 own worktree, and on 2026-09-15 two branches claimed 0147 (and P0050) the same afternoon.
 Check the open branches too:
@@ -215,6 +216,7 @@ All Server Actions return `{ ok: true, data } | { ok: false, error }`. User-faci
 | Report period presets (`buildPeriodPresets`, `buildAsOfPresets`, `priorYearRange`) and carrying a period across a tab bar (`carryParams`, `statementPeriodQueries`) | `src/lib/reports/{period-presets,statement-period}.ts` |
 | Website Messages inbox vocabulary (statuses, kinds, `CORPORATE_SUBJECT`), the message → booking seam, and how a patient reached us (`appointments.source`) | `src/lib/contact-messages/{labels,booking-link}.ts`, `src/lib/appointments/source.ts` — pinned to 0154 by `website-messages-schema.test.ts` |
 | Who receives each STAFF alert email (website message, template health, duplicate-patient digest): the registry + defaults, and the resolver every sender calls — managed in Admin Tools › Email Alerts (0155) | `src/lib/notifications/{staff-alerts,staff-alert-recipients}.ts` |
+| Where a patient heard about the clinic (`patients.referral_source`): the 12 lookup ids, staff labels, the public forms' wording and options — pinned to 0055's seed by `referral-sources.test.ts` | `src/lib/patients/referral-sources.ts` |
 | Staff list-page URL contract (sort/dir/page/size parsing, sort-column allow-list) | `src/lib/ui/table-params.ts`; components `src/components/staff/{sortable-th,list-pagination}.tsx` |
 | Rate-limit checker (per-bucket) | `src/lib/rate-limit/check.ts` |
 | Pure visit-domain rules (classification, deletability, lab payment gate, receipt policy, doctor-fee split, visit # search) | `src/lib/visits/{classification,deletion,lab-gate,receipt-policy,consultation-fee,visit-number-filter}.ts` |

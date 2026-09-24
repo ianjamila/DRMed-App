@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { REFERRAL_SOURCE_IDS } from "@/lib/patients/referral-sources";
 
 const optionalText = (max = 160) =>
   z
@@ -18,16 +19,11 @@ const optionalEnum = <T extends readonly [string, ...string[]]>(
     .transform((v) => (v === "" ? null : v))
     .nullable();
 
-export const ReferralSourceEnum = [
-  "doctor_referral",
-  "customer_referral",
-  "online_facebook",
-  "online_website",
-  "online_google",
-  "walk_in",
-  "tenant_employee_northridge",
-  "other",
-] as const;
+// Every id in the `referral_sources` lookup. This list used to be the 8 ids
+// from 0011's old CHECK constraint, while the staff form offers all 12 active
+// rows from 0055 — so Instagram, TikTok, Returning patient and Gift code were
+// offered and then refused with "Choose a referral source".
+export const ReferralSourceEnum = REFERRAL_SOURCE_IDS;
 
 export const ReleaseMediumEnum = [
   "physical",

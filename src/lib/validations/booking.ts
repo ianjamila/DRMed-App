@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { PUBLIC_REFERRAL_REQUIRED_ERROR, REFERRAL_SOURCE_IDS } from "@/lib/patients/referral-sources";
 
 const optionalText = (max: number) =>
   z
@@ -88,6 +89,10 @@ const PatientFields = {
     .email("Valid email required for confirmation.")
     .max(160),
   address: optionalText(200),
+  // "How did you hear about us?" — new patients only (existing and portal
+  // bookings skip the About-you step). Stored on the patient row this booking
+  // creates; never written onto a patient the booking matched.
+  referral_source: z.enum(REFERRAL_SOURCE_IDS, { error: PUBLIC_REFERRAL_REQUIRED_ERROR }),
   notes: optionalText(2000),
   marketing_consent: z
     .union([z.literal("on"), z.literal("off"), z.literal(""), z.null(), z.undefined()])

@@ -293,6 +293,7 @@ export async function submitBookingAction(_prev: BookingResult | null, formData:
       phone: formData.get("phone"),
       email: formData.get("email"),
       address: formData.get("address") ?? "",
+      referral_source: formData.get("referral_source") ?? "",
       notes: formData.get("notes") ?? "",
       marketing_consent: formData.get("marketing_consent") ?? "off",
       service_agreement: formData.get("service_agreement") ?? "off",
@@ -342,6 +343,8 @@ export async function submitBookingAction(_prev: BookingResult | null, formData:
         phone: data.phone,
         email: data.email,
         address: data.address,
+        // Saved only if this booking creates the patient (0157).
+        referral_source: data.referral_source,
       });
       if (!res.ok) return { ok: false, error: res.error };
       return { ok: true, patient: { patientId: res.id, drmId: res.drm_id, email: data.email, resolution: res.reused ? "reused" : "created" } };
@@ -449,6 +452,10 @@ export async function submitBookingAction(_prev: BookingResult | null, formData:
       home_service_requested: data.branch === "home_service",
       physician_id: physicianId,
       patient_resolution: result.patient.resolution,
+      // The "How did you hear about us?" answer, kept per booking even when
+      // it matched an existing patient (whose row it does not touch). Existing
+      // and portal bookings are not asked, so they record null.
+      referral_source: data.mode === "new" ? data.referral_source : null,
       consent_recorded: consentRecorded,
       via: isPortalSource ? "portal" : "schedule",
       lab_request_attached: labRequestFiles.length > 0,

@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { metaTrack } from "@/lib/analytics/meta-pixel";
 import { newEventId } from "@/lib/analytics/event-id";
 import { submitRegistrationAction, type RegistrationResult } from "./actions";
+import { PUBLIC_REFERRAL_OPTIONS, PUBLIC_REFERRAL_QUESTION } from "@/lib/patients/referral-sources";
 
 // The text/email/tel/date fields use the shared <Input> (h-11 + focus ring,
 // matching /schedule). Only the <select> keeps this hand-rolled class — with a
@@ -28,6 +29,7 @@ export function RegisterForm() {
     phone: "",
     email: "",
     address: "",
+    referral_source: "",
     data_privacy_consent: false,
     marketing_consent: false,
   });
@@ -147,6 +149,24 @@ export function RegisterForm() {
       <label className="flex flex-col gap-1 text-sm">
         Address (optional)
         <Input name="address" value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} />
+      </label>
+
+      <label className="flex flex-col gap-1 text-sm">
+        {PUBLIC_REFERRAL_QUESTION}
+        <select
+          name="referral_source"
+          required
+          value={f.referral_source}
+          onChange={(e) => setF({ ...f, referral_source: e.target.value })}
+          className={INPUT}
+        >
+          <option value="">— Choose one —</option>
+          {PUBLIC_REFERRAL_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
       </label>
 
       <label className="flex items-start gap-2 text-sm">

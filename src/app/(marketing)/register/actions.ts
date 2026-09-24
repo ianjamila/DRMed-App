@@ -56,6 +56,7 @@ export async function submitRegistrationAction(
     phone: formData.get("phone"),
     email: formData.get("email"),
     address: formData.get("address") ?? "",
+    referral_source: formData.get("referral_source") ?? "",
     data_privacy_consent: formData.get("data_privacy_consent") ?? "",
     marketing_consent: formData.get("marketing_consent") ?? "off",
   });
@@ -110,6 +111,7 @@ export async function submitRegistrationAction(
         drm_id: match.patient.drm_id,
         via: "register",
         dedup_tier: match.score.tier,
+        referral_source: d.referral_source,
         email: !sendResult
           ? { ok: false, skipped: true, reason: "no on-file email" }
           : sendResult.ok
@@ -133,6 +135,8 @@ export async function submitRegistrationAction(
     phone: d.phone,
     email: d.email,
     address: d.address,
+    // Saved only if this registration creates the patient (0157).
+    referral_source: d.referral_source,
   });
   if (!res.ok) return { ok: false, error: res.error };
 
@@ -167,6 +171,7 @@ export async function submitRegistrationAction(
       metadata: {
         drm_id: res.drm_id,
         via: "register",
+        referral_source: d.referral_source,
         email: sendResult.ok
           ? { ok: true, id: sendResult.id, to: d.email }
           : sendResult.kind === "skipped"
@@ -244,6 +249,7 @@ export async function submitRegistrationAction(
     metadata: {
       drm_id: res.drm_id,
       via: "register",
+      referral_source: d.referral_source,
       consent_recorded: consentRecorded,
       marketing_consent: d.marketing_consent,
       email: welcomeResult.ok

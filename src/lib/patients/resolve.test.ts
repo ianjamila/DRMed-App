@@ -35,6 +35,17 @@ describe("resolvePatientCore", () => {
     expect(r).toEqual({ ok: true, id: "p3", drm_id: "DRM-0003", reused: false });
   });
 
+  it("hands referral_source to the insert for a new patient", async () => {
+    const insertPatient = vi.fn(async () => ({ ok: true as const, id: "p4", drm_id: "DRM-0004" }));
+    await resolvePatientCore(
+      { findExisting: async () => null, insertPatient },
+      { ...fields, referral_source: "online_facebook" },
+    );
+    expect(insertPatient).toHaveBeenCalledWith(
+      expect.objectContaining({ referral_source: "online_facebook", email: "juan@example.com" }),
+    );
+  });
+
   it("propagates an insert error", async () => {
     const r = await resolvePatientCore(
       { findExisting: async () => null, insertPatient: async () => ({ ok: false, error: "boom" }) },
