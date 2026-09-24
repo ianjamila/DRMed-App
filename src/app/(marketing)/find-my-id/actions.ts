@@ -6,6 +6,7 @@ import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit/check";
 import { sendEmail } from "@/lib/notifications/email";
 import { renderEmailShell, emailParagraph, emailHighlight, escapeHtml } from "@/lib/notifications/branded-email";
 import { RecoverIdSchema } from "./schema";
+import { isFormData, MALFORMED_FORM_ERROR } from "@/lib/validations/form-data";
 
 // Always returns the same neutral response — never reveals whether a record
 // matched (enumeration safety).
@@ -14,6 +15,7 @@ export type RecoverResult = { ok: true } | { ok: false; error: string };
 const NEUTRAL: RecoverResult = { ok: true };
 
 export async function recoverDrmIdAction(_prev: RecoverResult | null, formData: FormData): Promise<RecoverResult> {
+  if (!isFormData(formData)) return { ok: false, error: MALFORMED_FORM_ERROR };
   const h = await headers();
   const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "";
   const ua = h.get("user-agent");

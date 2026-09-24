@@ -11,6 +11,7 @@ import { readAttributionCookie } from "@/lib/analytics/attribution-server";
 import { sendNewMessageAlert } from "@/lib/contact-messages/alert";
 import { after } from "next/server";
 import type { Json } from "@/types/database";
+import { isFormData, MALFORMED_FORM_ERROR } from "@/lib/validations/form-data";
 
 export type ContactResult = { ok: true } | { ok: false; error: string };
 
@@ -18,6 +19,7 @@ export async function submitContactMessage(
   _prev: ContactResult | null,
   formData: FormData,
 ): Promise<ContactResult> {
+  if (!isFormData(formData)) return { ok: false, error: MALFORMED_FORM_ERROR };
   // Honeypot — silent drop if filled.
   if ((formData.get("website") ?? "") !== "") {
     return { ok: true };

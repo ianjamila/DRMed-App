@@ -5,6 +5,8 @@ import * as Sentry from "@sentry/nextjs";
 import { scrubEvent } from "@/lib/observability/sentry-scrub";
 
 Sentry.init({
+  // Local `next dev` errors belong in the terminal, not the production project.
+  enabled: process.env.NODE_ENV !== "development",
   dsn: "https://c3b6e5fb4e82706056249b00e4ba5ccc@o4511346953224192.ingest.us.sentry.io/4511346971705344",
 
   tracesSampleRate: process.env.VERCEL_ENV === "production" ? 0.1 : 1,

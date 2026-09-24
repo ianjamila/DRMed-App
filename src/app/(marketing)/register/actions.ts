@@ -12,6 +12,7 @@ import { recordSelfRegistrationGrant } from "@/lib/consent/self-registration";
 import { RegistrationSchema } from "@/lib/validations/registration";
 import { SITE } from "@/lib/marketing/site";
 import { sendMetaCapiEvent } from "@/lib/analytics/meta-capi";
+import { isFormData, MALFORMED_FORM_ERROR } from "@/lib/validations/form-data";
 import {
   renderEmailShell, emailParagraph, emailHighlight, emailButton, escapeHtml,
 } from "@/lib/notifications/branded-email";
@@ -28,6 +29,7 @@ export async function submitRegistrationAction(
   _prev: RegistrationResult | null,
   formData: FormData,
 ): Promise<RegistrationResult> {
+  if (!isFormData(formData)) return { ok: false, error: MALFORMED_FORM_ERROR };
   if ((formData.get("website") ?? "") !== "") return HONEYPOT_OK;
 
   const { ip, ua } = await ipAndAgent();
