@@ -155,11 +155,11 @@ describe("Messages & Bookings section (above Front Desk, 2026-09-24)", () => {
     expect(ariaCurrentHrefs(render("admin", "/staff/messages/abc-123"))).toEqual(["/staff/messages"]);
   });
 
-  it("puts Reception Queue and Patients below it, flat, followed by the old Billing items", () => {
+  it("holds Quick Quote, then Patients and Reception Queue below it, flat, followed by the old Billing items", () => {
     const html = render("reception", "/staff");
     expect(detailsTagContaining(html, "/staff/visits/queue")).toBeNull();
     expect(detailsTagContaining(html, "/staff/patients")).toBeNull();
-    const order = ['href="/staff/messages"', 'href="/staff/visits/queue"', 'href="/staff/patients"', 'href="/staff/visits"', 'href="/staff/quote"', 'href="/staff/payments/cash-drawer"'].map((h) => html.indexOf(h));
+    const order = ['href="/staff/appointments"', 'href="/staff/messages"', 'href="/staff/quote"', 'href="/staff/patients"', 'href="/staff/visits/queue"', 'href="/staff/visits"', 'href="/staff/payments/cash-drawer"'].map((h) => html.indexOf(h));
     expect(order.every((pos) => pos > -1)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     expect(html).not.toMatch(/>Billing</);
@@ -167,11 +167,11 @@ describe("Messages & Bookings section (above Front Desk, 2026-09-24)", () => {
 });
 
 describe("Front Desk divider", () => {
-  it("draws one hidden rule between Patients and Visit Records", () => {
+  it("draws one hidden rule between Reception Queue and Visit Records", () => {
     const html = render("reception", "/staff");
     const dividers = [...html.matchAll(/data-nav-divider=""/g)].map((m) => m.index!);
     expect(dividers).toHaveLength(1);
-    expect(html.indexOf('href="/staff/patients"')).toBeLessThan(dividers[0]);
+    expect(html.indexOf('href="/staff/visits/queue"')).toBeLessThan(dividers[0]);
     expect(dividers[0]).toBeLessThan(html.indexOf('href="/staff/visits"'));
     expect(html).toMatch(/<li aria-hidden="true" data-nav-divider=""/);
   });

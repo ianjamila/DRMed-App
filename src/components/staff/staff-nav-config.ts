@@ -91,9 +91,10 @@ export const STAFF_NAV: StaffNavSection[] = [
     ],
   },
   {
-    // Sits above Front Desk (owner request, 2026-09-24): the two "someone is
+    // Sits above Front Desk (owner request, 2026-09-24): the "someone is
     // asking" pages are the first thing reception checks, so they get their
-    // own always-open section at the top instead of a collapsed subgroup.
+    // own always-open section at the top. Quick Quote joins them — a quote is
+    // how reception answers a price inquiry from either page.
     heading: "Messages & Bookings",
     items: [
       {
@@ -110,22 +111,27 @@ export const STAFF_NAV: StaffNavSection[] = [
         description: "Messages people send through the Contact page on drmed.ph. Reply to them, book them an appointment, or close them. The number next to it counts the messages nobody has replied to yet.",
         roles: ["reception", "admin"],
       },
+      {
+        // Reception + admin only (owner decision 2026-09-24): medtech lost the
+        // sidebar item, the lab dashboard shortcut, Cmd+K and the page itself.
+        // Admin keeps the lab-dashboard shortcut. Sits with Messages & Bookings
+        // (owner request 2026-09-24): quotes answer the same phone/website
+        // inquiries those pages handle. Roles come from
+        // QUICK_QUOTE_ROLES, the one list every doorway to /staff/quote uses.
+        href: "/staff/quote",
+        quicklink: {"reception":{"order":2,"group":"Messages & Bookings"},"lab":{"order":1,"roles":["admin"]}},
+        label: ROUTE_NAME["/staff/quote"],
+        description: "Build a price quote without creating a visit. Useful for phone inquiries: 'How much for a CBC + Urinalysis + Lipid panel?' Generates a shareable quote with HMO or cash pricing.",
+        roles: QUICK_QUOTE_ROLES,
+      },
     ],
   },
   {
-    // Ordered by the daily flow (sidebar cleanup, 2026-09-15): the queue is
-    // where reception lives, Patients is the second-most-used page. The old
-    // Billing section's items follow (merged in 2026-09-24, owner request):
-    // Visit Records, Quick Quote, Cash Drawer.
+    // Patients first, then the Reception Queue (owner request 2026-09-24).
+    // The old Billing section's items follow below a divider (merged in
+    // 2026-09-24): Visit Records, Cash Drawer.
     heading: "Front Desk",
     items: [
-      {
-        href: "/staff/visits/queue",
-        quicklink: {"reception":{"order":2,"group":"Front Desk"}},
-        label: ROUTE_NAME["/staff/visits/queue"],
-        description: "Today's live front-desk worklist in three stages: Waiting for payment (record the payment), Processing (lab/imaging still working on results) and Completed (paid, nothing outstanding — print the patient's billing). Updates on its own as payments come in and tests finish.",
-        roles: ["reception", "admin"],
-      },
       {
         href: "/staff/patients",
         quicklink: {"reception":{"order":3,"group":"Front Desk"}},
@@ -139,8 +145,15 @@ export const STAFF_NAV: StaffNavSection[] = [
         roles: ["reception", "admin"],
       },
       {
-        href: "/staff/visits",
+        href: "/staff/visits/queue",
         quicklink: {"reception":{"order":5,"group":"Front Desk"}},
+        label: ROUTE_NAME["/staff/visits/queue"],
+        description: "Today's live front-desk worklist in three stages: Waiting for payment (record the payment), Processing (lab/imaging still working on results) and Completed (paid, nothing outstanding — print the patient's billing). Updates on its own as payments come in and tests finish.",
+        roles: ["reception", "admin"],
+      },
+      {
+        href: "/staff/visits",
+        quicklink: {"reception":{"order":6,"group":"Front Desk"}},
         dividerBefore: true,
         label: ROUTE_NAME["/staff/visits"],
         // /staff/visits is the visit records page (every visit ever); each
@@ -154,17 +167,6 @@ export const STAFF_NAV: StaffNavSection[] = [
         excludePrefixes: ["/staff/visits/new", "/staff/visits/queue"],
         description: "Every visit ever, searchable by date / patient / status. Open a visit to print its patient billing (A5) and re-issue receipts. This is the record side of billing — to start a new charge, use + New visit on the Reception Queue.",
         roles: ["reception", "admin"],
-      },
-      {
-        // Reception + admin only (owner decision 2026-09-24): medtech lost the
-        // sidebar item, the lab dashboard shortcut, Cmd+K and the page itself.
-        // Admin keeps the lab-dashboard shortcut. Roles come from
-        // QUICK_QUOTE_ROLES, the one list every doorway to /staff/quote uses.
-        href: "/staff/quote",
-        quicklink: {"reception":{"order":6,"group":"Front Desk"},"lab":{"order":1,"roles":["admin"]}},
-        label: ROUTE_NAME["/staff/quote"],
-        description: "Build a price quote without creating a visit. Useful for phone inquiries: 'How much for a CBC + Urinalysis + Lipid panel?' Generates a shareable quote with HMO or cash pricing.",
-        roles: QUICK_QUOTE_ROLES,
       },
       {
         href: "/staff/payments/cash-drawer",
