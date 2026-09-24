@@ -16,6 +16,9 @@ import { isDoctorKind } from "@/lib/visits/order-lines";
 import { ClaimButton } from "../claim-button";
 import { ReassignPanel } from "./reassign-panel";
 import { UnclaimOwnButton } from "./unclaim-own-button";
+import { claimRemarks } from "@/lib/queue/claim-remarks";
+import { fetchClaimEvents } from "@/lib/queue/fetch-claim-events";
+import { ClaimHistory } from "@/components/staff/claim-remarks-list";
 import { UploadResultForm } from "./upload-form";
 import { ViewResultButton } from "./view-result-button";
 import { StructuredResultForm } from "./structured-form";
@@ -344,6 +347,12 @@ export default async function QueueTestDetailPage({ params }: Props) {
     assigneeName = holder?.full_name ?? "(unknown staff)";
   }
 
+  // Claim history (claimed / unclaimed / reassigned) — the same reader as
+  // the queue's Remarks column.
+  const history = claimRemarks(
+    (await fetchClaimEvents(supabase, [test.id])).get(test.id) ?? [],
+  );
+
   // Decide which workflow surface to render in the action card.
   // Order of precedence:
   //   structured-form  → in-house service with a template, editable, no
@@ -402,6 +411,7 @@ export default async function QueueTestDetailPage({ params }: Props) {
               {patient.phone}
             </p>
           ) : null}
+          <ClaimHistory remarks={history} className="mt-4" />
         </div>
         <div>
           <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">

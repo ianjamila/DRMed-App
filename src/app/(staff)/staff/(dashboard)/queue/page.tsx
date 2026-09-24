@@ -13,10 +13,11 @@ import { ClaimButton } from "./claim-button";
 import { QueueUnclaimButton } from "./queue-unclaim-button";
 import {
   claimRemarks,
-  eventsByTest,
   MAX_REMARKS_SHOWN,
   type ClaimEvent,
 } from "@/lib/queue/claim-remarks";
+import { fetchClaimEvents } from "@/lib/queue/fetch-claim-events";
+import { ClaimRemarksList } from "@/components/staff/claim-remarks-list";
 import { sectionTabClass, sectionTabsNavClass } from "@/components/staff/section-tabs-style";
 import { PageHeader } from "@/components/staff/page-header";
 import {
@@ -111,7 +112,7 @@ const TEST_STATUS_STYLE: Record<string, string> = {
   in_progress: "bg-sky-100 text-sky-900",
 };
 
-type QueueFilter = "mine" | "all" | "pending_release" | "released_today";
+type QueueFilter = "mine" | "all" | "unclaimed" | "pending_release" | "released_today";
 
 // Rows per page. The queue is a live worklist that rarely fills one page, so
 // the pager stays hidden day to day — but the date filter can reach back into a
@@ -274,7 +275,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   // visits only. Applied in the query so paging counts stay honest. "Pending
   // release" and "Released today" are records of completed work, not claimable
   // work, so they stay ungated (release itself is trigger-enforced on payment).
-  const worklistTab = filter === "all" || filter === "mine";
+  const worklistTab = filter === "all" || filter === "mine" || filter === "unclaimed";
   if (worklistTab) {
     query = query.or(LAB_QUEUE_GATE_VISITS_OR, { foreignTable: "visits" });
   }
@@ -309,6 +310,13 @@ export default async function QueuePage({ searchParams }: SearchProps) {
 
   if (filter === "mine" && user) {
     query = query.eq("assigned_to", user.id);
+  }
+
+  // Waiting for someone to pick up — the same predicate as the dashboards'
+  // "Unclaimed" cards (requested/in_progress with nobody holding it), so a
+  // card's number and the tab it opens agree.
+  if (filter === "unclaimed") {
+    query = query.is("assigned_to", null);
   }
 
   // Same predicate as the Mine tab, applied on top of ANY tab. Harmless to
@@ -462,15 +470,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   // itself is admin-only, and the technicians are who need to see it. One call
   // for the whole page (≤ 100 rows; the function caps at 200).
   const pageTestIds = (rows ?? []).map((r) => r.id);
-  const remarksByTest = eventsByTest(
-    pageTestIds.length > 0
-      ? (
-          await supabase.rpc("queue_claim_remarks", {
-            p_test_request_ids: pageTestIds,
-          })
-        ).data
-      : [],
-  );
+  const remarksByTest = await fetchClaimEvents(supabase, pageTestIds);
   const cardRemarks = (card: QueueCard) =>
     claimRemarks(
       (card.kind === "grouped" ? card.memberIds : [card.testRequestId]).flatMap(
@@ -587,6 +587,11 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           active={filter === "all"}
         />
         <FilterTab
+          href={buildHref({ filter: "unclaimed", page: null })}
+          label="Unclaimed"
+          active={filter === "unclaimed"}
+        />
+        <FilterTab
           href={buildHref({ filter: "pending_release", page: null })}
           label="Pending release"
           active={filter === "pending_release"}
@@ -607,8 +612,9 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           for the same reason the tabs are not in the header's actions slot —
           this page's subtitle changes length on every tab, so anything sharing
           that row visibly jumps. The Mine tab already IS mine, so the toggle
-          would be a no-op there. */}
-      {filter !== "mine" ? (
+          would be a no-op there — and on Unclaimed it could only ever empty
+          the list. */}
+      {filter !== "mine" && filter !== "unclaimed" ? (
         <div className="mb-4">
           <Link
             href={buildHref({ mine: mineOnly ? null : "1", page: null })}
@@ -786,7 +792,9 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                 >
                   {hasFilters
                     ? "No queued tests match these filters."
-                    : "Queue is empty."}
+                    : filter === "unclaimed"
+                      ? "Nothing is waiting to be picked up."
+                      : "Queue is empty."}
                 </td>
               </tr>
             ) : (
@@ -1020,32 +1028,9 @@ function RemarksCell({ remarks }: { remarks: ReturnType<typeof claimRemarks> }) 
       </td>
     );
   }
-  const hidden = Math.max(0, remarks.length - MAX_REMARKS_SHOWN);
-  const shown = remarks.slice(hidden);
   return (
     <td className="min-w-48 max-w-xs px-4 py-3 text-xs">
-      <ul className="space-y-1">
-        {hidden > 0 ? (
-          <li className="text-[color:var(--color-brand-text-soft)]">
-            +{hidden} earlier
-          </li>
-        ) : null}
-        {shown.map((r) => (
-          <li
-            key={r.key}
-            className={
-              r.notable
-                ? "font-semibold text-amber-800"
-                : "text-[color:var(--color-brand-text-mid)]"
-            }
-          >
-            {r.text}
-            <span className="block font-normal text-[color:var(--color-brand-text-soft)]">
-              {manilaDateTime(r.at)}
-            </span>
-          </li>
-        ))}
-      </ul>
+      <ClaimRemarksList remarks={remarks} max={MAX_REMARKS_SHOWN} />
     </td>
   );
 }

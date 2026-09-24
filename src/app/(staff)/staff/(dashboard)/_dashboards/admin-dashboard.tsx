@@ -448,6 +448,34 @@ async function loadAdminStats(show: (id: string) => boolean) {
       : SKIP_COUNT,
   ]);
 
+  // "Unclaimed": lab lines nobody holds yet, on the same money gate as the
+  // Queue card — exactly the rows /staff/queue?filter=unclaimed lists. X-ray
+  // is split out because an admin can no longer claim one (X-ray technician
+  // only), so those wait on the technician, not on whoever is free.
+  const unclaimedQuery = (xrayOnly: boolean) => {
+    let q = supabase
+      .from("test_requests")
+      .select("id, services!inner ( id, section ), visits!inner ( id )", {
+        count: "exact",
+        head: true,
+      })
+      .in("status", ["requested", "in_progress"])
+      .is("assigned_to", null)
+      .eq("is_package_header", false)
+      .is("deleted_at", null)
+      .is("visits.deleted_at", null)
+      .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
+      .or(LAB_QUEUE_GATE_VISITS_OR, { foreignTable: "visits" });
+    if (xrayOnly) q = q.eq("services.section", "imaging_xray");
+    return q;
+  };
+  const [queueUnclaimed, queueUnclaimedXray] = show("admin.queue_unclaimed")
+    ? await Promise.all([unclaimedQuery(false), unclaimedQuery(true)])
+    : [
+        { count: 0, error: null },
+        { count: 0, error: null },
+      ];
+
   // N19: this file used to read no `.error` at all — a failed query and a
   // genuinely empty one both rendered as a reassuring zero. Collect every
   // scope's error, report the failing ones, and keep a per-widget boolean
@@ -469,6 +497,7 @@ async function loadAdminStats(show: (id: string) => boolean) {
     { scope: "gross_profit_ops", error: grossProfitRows.error },
     { scope: "net_income_books", error: booksLines.error },
     { scope: "new_messages", error: newMessagesCount.error },
+    { scope: "queue_unclaimed", error: queueUnclaimed.error ?? queueUnclaimedXray.error },
   ];
   await Promise.all(
     namedResults
@@ -609,6 +638,9 @@ async function loadAdminStats(show: (id: string) => boolean) {
     visitsTodayError: Boolean(visitsToday.error),
     queueTotal: queueTotal.count ?? 0,
     queueTotalError: Boolean(queueTotal.error),
+    queueUnclaimed: queueUnclaimed.count ?? 0,
+    queueUnclaimedXray: queueUnclaimedXray.count ?? 0,
+    queueUnclaimedError: Boolean(queueUnclaimed.error || queueUnclaimedXray.error),
     releasedToday: releasedToday.count ?? 0,
     releasedTodayError: Boolean(releasedToday.error),
     releasedByStaffRows,
@@ -696,6 +728,7 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
     show("admin.revenue_today") ||
     show("admin.visits_today") ||
     show("admin.queue_total") ||
+    show("admin.queue_unclaimed") ||
     show("admin.released_today") ||
     showDupCard ||
     show("admin.new_messages");
@@ -775,6 +808,19 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
                 hint="Lab & imaging lines awaiting a result"
                 href="/staff/queue"
                 error={stats.queueTotalError}
+              />
+            )}
+            {show("admin.queue_unclaimed") && (
+              <StatCard
+                label="Unclaimed"
+                value={stats.queueUnclaimed}
+                hint={
+                  stats.queueUnclaimedXray > 0
+                    ? `Waiting for someone to pick up · ${stats.queueUnclaimedXray} x-ray for the X-ray technician`
+                    : "Paid lab & imaging lines nobody has picked up"
+                }
+                href="/staff/queue?filter=unclaimed"
+                error={stats.queueUnclaimedError}
               />
             )}
             {show("admin.released_today") && (
