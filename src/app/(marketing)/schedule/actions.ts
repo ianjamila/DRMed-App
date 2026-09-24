@@ -349,6 +349,10 @@ export async function submitBookingAction(_prev: BookingResult | null, formData:
     return { ok: true, patient: { patientId: row.id, drmId: row.drm_id, email: row.email, resolution: "existing" } };
   };
 
+  // appointments.source (0154). `attribution` is already null for a portal
+  // booking (read above), so a portal row never carries ad tracking.
+  const bookingSource = isPortalSource ? "patient_portal" : "online_booking";
+
   const isFormOnly =
     isNonDoctor && serviceIds.filter((id): id is string => !!id).length === 0;
 
@@ -358,6 +362,8 @@ export async function submitBookingAction(_prev: BookingResult | null, formData:
         intakePreference: intakePreference ?? "callback",
         notes: data.notes,
         createdBy: null,
+        source: bookingSource,
+        attribution,
         resolvePatient: resolveThunk,
       })
     : await createAppointmentGroup(admin, {
@@ -369,6 +375,8 @@ export async function submitBookingAction(_prev: BookingResult | null, formData:
         createdBy: null,
         mode: "strict",
         override: false,
+        source: bookingSource,
+        attribution,
         resolvePatient: resolveThunk,
       });
 

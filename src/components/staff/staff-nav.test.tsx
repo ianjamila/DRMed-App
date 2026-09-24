@@ -11,9 +11,13 @@ vi.mock("next/navigation", () => ({
 
 const { StaffNav } = await import("./staff-nav");
 
-function render(role: Parameters<typeof StaffNav>[0]["role"], path: string) {
+function render(
+  role: Parameters<typeof StaffNav>[0]["role"],
+  path: string,
+  badges?: Record<string, number>,
+) {
   pathname.current = path;
-  return renderToStaticMarkup(<StaffNav role={role} />);
+  return renderToStaticMarkup(<StaffNav role={role} badges={badges} />);
 }
 
 // <details open> serializes as `<details open=""...>`; a collapsed one has no
@@ -130,29 +134,29 @@ function ariaCurrentHrefs(html: string): string[] {
     .map((m) => m[0].match(/href="([^"]*)"/)![1]);
 }
 
-describe("Inquiries & Bookings subgroup (sidebar cleanup)", () => {
+describe("Messages & Bookings subgroup (sidebar cleanup)", () => {
   it("renders inside Front Desk as a <details> collapsed by default", () => {
     const html = render("reception", "/staff");
-    expect(html).toContain("Inquiries &amp; Bookings");
+    expect(html).toContain("Messages &amp; Bookings");
     const tag = detailsTagContaining(html, "/staff/appointments");
     expect(tag).not.toBeNull();
     expect(isOpen(tag)).toBe(false);
-    expect(detailsTagContaining(html, "/staff/inquiries")).toBe(tag);
+    expect(detailsTagContaining(html, "/staff/messages")).toBe(tag);
   });
 
-  it("lists Appointments before Inquiries", () => {
+  it("lists Appointments before Website Messages", () => {
     const html = render("reception", "/staff");
     expect(html.indexOf('href="/staff/appointments"')).toBeLessThan(
-      html.indexOf('href="/staff/inquiries"'),
+      html.indexOf('href="/staff/messages"'),
     );
   });
 
-  it("auto-expands on Appointments and on a nested Inquiries route", () => {
+  it("auto-expands on Appointments and on a nested Messages route", () => {
     expect(
       isOpen(detailsTagContaining(render("reception", "/staff/appointments"), "/staff/appointments")),
     ).toBe(true);
     expect(
-      isOpen(detailsTagContaining(render("admin", "/staff/inquiries/abc-123"), "/staff/inquiries")),
+      isOpen(detailsTagContaining(render("admin", "/staff/messages/abc-123"), "/staff/messages")),
     ).toBe(true);
   });
 
@@ -161,8 +165,39 @@ describe("Inquiries & Bookings subgroup (sidebar cleanup)", () => {
     expect(detailsTagContaining(html, "/staff/visits/queue")).toBeNull();
     expect(detailsTagContaining(html, "/staff/patients")).toBeNull();
     expect(html.indexOf('href="/staff/patients"')).toBeLessThan(
-      html.indexOf("Inquiries &amp; Bookings"),
+      html.indexOf("Messages &amp; Bookings"),
     );
+  });
+});
+
+describe("nav count badges", () => {
+  it("renders the pill with the count for an item with a badge", () => {
+    const html = render("reception", "/staff", { "/staff/messages": 3 });
+    expect(html).toMatch(/<span aria-hidden="true">3<\/span>/);
+    expect(html).toContain("3 new");
+  });
+
+  it("renders no pill when the count is 0 or the item has no entry", () => {
+    const html = render("reception", "/staff", { "/staff/messages": 0 });
+    expect(html).not.toMatch(/aria-hidden="true">\d/);
+    const htmlNoBadges = render("reception", "/staff");
+    expect(htmlNoBadges).not.toMatch(/aria-hidden="true">\d/);
+  });
+
+  it("caps the display at 99+ for a large count", () => {
+    const html = render("reception", "/staff", { "/staff/messages": 150 });
+    expect(html).toMatch(/<span aria-hidden="true">99\+<\/span>/);
+  });
+
+  it("also shows the total on the collapsed subgroup's summary line", () => {
+    const html = render("reception", "/staff", { "/staff/messages": 5 });
+    const tag = detailsTagContaining(html, "/staff/messages");
+    expect(tag).not.toBeNull();
+    expect(isOpen(tag)).toBe(false);
+    // The summary (before the details body) carries its own copy of the badge.
+    const summaryEnd = html.indexOf("</summary>", html.indexOf("Messages &amp; Bookings"));
+    const summaryHtml = html.slice(html.indexOf("Messages &amp; Bookings"), summaryEnd);
+    expect(summaryHtml).toContain("5 new");
   });
 });
 

@@ -18,19 +18,19 @@ Key reference artifacts:
 - `IMPLEMENTATION_PLAN.md` — original phase plan (historical; cross-check before relying on it)
 - `README.md` — operational setup
 - `.env.example` — env-var inventory
-- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.7, 24 Sep 2026): every
+- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.8, 24 Sep 2026): every
   screen, label and blocked-message the app shows, checked against the code. Update it in the
   PR that changes a flow it describes.
 - `docs/superpowers/specs/` and `docs/superpowers/audits/` — design specs and audits for
   every post-1.0 programme (partner revisions, release lifecycle, group templates, EOD
   denomination count…). Read the spec before re-deriving a design decision.
 
-Migration ledger: **prod head = 0152** (2026-09-16), applied through the linked CLI.
-**0151** (`rls_initplan_and_policy_consolidation`, #192) is also applied and verified:
-159 public policies, zero unwrapped helper calls, and no unexpected policyless tables.
-The linked CLI confirms no pending migrations. **0153** (`booking_settings`, the online-booking
-pause switch) is in flight on `feat/pause-online-bookings` and must be pushed before its PR
-merges. **Next unused number: 0154**, subject to checking open branches again.
+Migration ledger: **prod head = 0153** (`booking_settings`, the online-booking pause switch,
+#196, applied 2026-09-23 and verified by object). **0151** (`rls_initplan_and_policy_consolidation`,
+#192) is also applied and verified: 159 public policies, zero unwrapped helper calls, and no
+unexpected policyless tables. **0154** (`website_messages_inbox`) is in flight on
+`feat/website-messages` and must be pushed before its PR merges. **Next unused number: 0155**,
+subject to checking open branches again.
 `ls supabase/migrations | tail -3` is NOT enough to pick the next number — it only sees your
 own worktree, and on 2026-09-15 two branches claimed 0147 (and P0050) the same afternoon.
 Check the open branches too:
@@ -81,7 +81,7 @@ Compliance target: **Philippine Data Privacy Act (RA 10173)**. Locale: en-PH, As
 | `npm run db:types:remote` | Same, against the live DB via `SUPABASE_DB_URL` — **currently unusable** (`SUPABASE_DB_URL` is commented out in `.env.local`; no password on file) |
 | `npm run db:diff -- <name>` | Generate a new migration from local schema changes |
 | `npm run db:reset` | Reset local Supabase to migrations + `supabase/seed.sql` (destroys local data) |
-| `supabase db push` | Apply migrations to the linked remote project — **the user runs this** (`! cd ~/Claude/DRMed && /opt/homebrew/bin/supabase db push`); Claude-run pushes and MCP DDL are blocked by the auto-mode classifier |
+| `supabase db push` | Apply migrations to the linked remote project. **Claude runs this itself** (owner authorisation, 2026-09-24 — don't hand the command to the user): from a worktree on current main with `supabase/.temp/{project-ref,linked-project.json,pooler-url}` copied in, `--dry-run` first, right before the merge. Never from a stale main checkout. MCP `apply_migration` stays off-limits (timestamp version) |
 | `supabase start` | Run a local Supabase stack (needs Docker) — the only "staging" |
 | `npm run seed:test` / `seed:services` / `seed:physicians` / `seed:hmo` / `seed:templates` / `seed:signatures` / etc. | Idempotent seed scripts — target the **local** stack by default (see below) |
 | `npm run smoke:results` / `smoke:chemistry` / `smoke:dashboards` | Render-pipeline / consolidated-chemistry / dashboard smoke tests |
@@ -162,7 +162,7 @@ Other DB-side automation to be aware of (details and P-codes in the `drmed-migra
 - **Soft delete (0125):** `visits` and `test_requests` carry `deleted_at/by/reason`; guard triggers P0042–P0046 decide deletability (only `unpaid`) and block payments/status changes on deleted visits. **Every read of those tables filters `deleted_at is null`.** **0147 adds P0050** to both delete guards: an entry carrying a non-voided `hmo_claim_item` is money already billed to an HMO, and since 0146 the HMO reports skip deleted rows, so deleting it would drop a real receivable out of AR. Reachable via undo-release — a claimed line goes back to `ready_for_release`, 0110 does not void its claim, and 0133 keeps an HMO visit `unpaid` forever, so neither P0042 nor P0043 fires. `src/lib/visits/deletion.ts` mirrors it for the UI (`hasOpenHmoClaim`, reason `hmo_claimed`) and `deletion.test.ts` pins the migration's SQL text so the two can't drift.
 - Package headers (0040) auto-promote to `ready_for_release`; components are ₱0 rows with `parent_id`. Multi-row inserts list headers before components.
 - The statutory Senior/PWD discount row is locked at 20% (P0047, 0128); the EOD denomination breakdown must tie to the counted total (P0048, 0132).
-- Every `raise exception` with a `P00NN` code needs a translation in `src/lib/accounting/pg-errors.ts` (in use: P0001–P0034, P0040–P0052; next free P0053).
+- Every `raise exception` with a `P00NN` code needs a translation in `src/lib/accounting/pg-errors.ts` (in use: P0001–P0034, P0040–P0053; next free P0054).
 - **And every RUNTIME `raise exception` needs an errcode at all.** A bare raise is untranslatable by construction — `translatePgError` has no key to match, so the `default:` branch shows the user the raw Postgres string. Use a `P00NN` (and register it above) or a standard SQLSTATE like `check_violation` where that is genuinely what it is. Post-condition asserts inside a `do $ … $` block are exempt — they abort a deploy, never a user. `pg-error-coverage.test.ts` enforces both rules and freezes the three pre-existing bare raises — all internal-consistency guards — so the set can only shrink.
 
 ### Three Supabase clients with strict separation
@@ -210,6 +210,7 @@ All Server Actions return `{ ok: true, data } | { ok: false, error }`. User-faci
 | Manila/PHT date helpers (`todayManilaISODate`, `manilaISODate`, `manilaParts`, `isISODate`, `shiftISODate`, `manilaRangeUtc`), the calendar arithmetic (`isoDateParts`, `firstOfMonthISO`, `lastOfMonthISO`, `daysInMonth`) + the canonical display formatters `manilaDate` / `manilaDateTime` / `manilaTime` / `manilaLongDate` / `friendlyManilaDate` — never build a date format in a page; `date-render-surfaces.test.ts` enforces the display half and `manila-usage.test.ts` the computation half | `src/lib/dates/manila.ts` |
 | The long-form appointment stamp used in patient comms (`formatManilaDateTime`) | `src/lib/notifications/format-manila-datetime.ts` |
 | Report period presets (`buildPeriodPresets`, `buildAsOfPresets`, `priorYearRange`) and carrying a period across a tab bar (`carryParams`, `statementPeriodQueries`) | `src/lib/reports/{period-presets,statement-period}.ts` |
+| Website Messages inbox vocabulary (statuses, kinds, `CORPORATE_SUBJECT`), the message → booking seam, and how a patient reached us (`appointments.source`) | `src/lib/contact-messages/{labels,booking-link}.ts`, `src/lib/appointments/source.ts` — pinned to 0154 by `website-messages-schema.test.ts` |
 | Staff list-page URL contract (sort/dir/page/size parsing, sort-column allow-list) | `src/lib/ui/table-params.ts`; components `src/components/staff/{sortable-th,list-pagination}.tsx` |
 | Rate-limit checker (per-bucket) | `src/lib/rate-limit/check.ts` |
 | Pure visit-domain rules (classification, deletability, lab payment gate, receipt policy, doctor-fee split, visit # search) | `src/lib/visits/{classification,deletion,lab-gate,receipt-policy,consultation-fee,visit-number-filter}.ts` |
@@ -238,7 +239,7 @@ All Server Actions return `{ ok: true, data } | { ok: false, error }`. User-faci
 - **PostgREST limits:** aggregates are disabled (`PGRST123`) and a bare select caps at 1000 rows — real aggregates need a SQL function (`visits_classification_summary` is the model); exports chunk with `.range()`. The cap is silent and it is not hypothetical: the Operations Trends chart read `v_ops_daily_totals` (grain `(business_date, section)` — TWO rows a trading day) with a plain select and was understating all-time gross profit by ₱4.5M across 9 missing months before anyone noticed. Any all-time or multi-year read goes through `fetchAllRows` from `src/lib/reports/paging.ts` with a total order. Multi-row inserts NULL-fill keys missing from some rows (not column defaults) — send a uniform key set.
 - **Ordering by an EMBEDDED column:** `.order(col, { referencedTable: "patients" })` does **not** reorder the parent rows — it emits `patients.order=…`, which PostgREST applies *within* the embedded array, so `visits` comes back in the same order both directions. Pass the path as the column instead: `.order("patients(last_name)")` (needs `patients!inner` in the select). Verified empirically 2026-09-14; `archive-query.test.ts` pins the emitted plan.
 - **Every paged ordering needs a unique final tie-break** (`id`). Without a total order, `.range()` silently drops or repeats rows between pages — and a chunked export (`fetchArchiveAll`) corrupts worse than the table, because the instability compounds across 1000-row chunks. The same rule applies to a CLIENT-side comparator over an in-memory array: end it with `a.id.localeCompare(b.id)` or the page slice shifts between renders.
-- **A bare `.limit(n)` on a list page is a silent cap.** Rows past it are unreachable and nothing on screen says so, so the page looks complete and is not — `/staff/inquiries` (50), `/staff/admin/gift-codes` (100), `critical-alerts` acknowledged (50) and the AP bills/payments indexes (50) all shipped this. Either page it properly with `count: "exact"`, or keep the cap and say so in-band the way the report pages do. **A pager whose total comes from the fetched array is only honest if the fetch is the whole matching set** — AP bills fetched 50 and the pager read "of 50" while 75 bills matched.
+- **A bare `.limit(n)` on a list page is a silent cap.** Rows past it are unreachable and nothing on screen says so, so the page looks complete and is not — `/staff/inquiries` (50, page since removed by 0154), `/staff/admin/gift-codes` (100), `critical-alerts` acknowledged (50) and the AP bills/payments indexes (50) all shipped this. Either page it properly with `count: "exact"`, or keep the cap and say so in-band the way the report pages do. **A pager whose total comes from the fetched array is only honest if the fetch is the whole matching set** — AP bills fetched 50 and the pager read "of 50" while 75 bills matched.
 - **A filter applied AFTER the fetch breaks server-side paging.** `count: "exact"` then reports the unfiltered total and `.range()` pages the unfiltered set. Move the filter into the query, or (when it genuinely cannot move, as on `/staff/users`, where email and last-sign-in come from the Auth admin API) do the sorting and paging in memory too, so the pager's total is the filtered length.
 - **A comparator that can return NaN silently disables its own tie-break.** `visit_number` is a TEXT column — new visits are `lpad(seq, 4, '0')` and read like numbers, but the historical import also wrote `H-1001` and `H-DOCTOR_CONSULTATION-0-7343`, and prod Patient AR is full of them. `Number()` on those is NaN, `NaN - NaN` is NaN, and `cmp !== 0` is TRUE for NaN — so the `id` tie-break below is never reached and Array.sort orders those rows however it likes. Compare a text column as text. More generally: a comparator must return a real number for every pair, and `Number(x)` on anything not proven numeric does not.
 - **A fold applied AFTER the fetch must preserve the query order, or it silently undoes the sort.** Both `test_requests` worklists group their rows before rendering — the lab queue folds a chemistry panel into one card, the results archive folds a visit's tests into one row — and both then RE-SORTED the folded list by a hardcoded timestamp to recover an order the fold had lost. That re-sort is invisible until a column header exists, at which point every sort but the hardcoded one is a no-op. Build the fold so it keeps the order instead: a `Map` iterates in insertion order, so insert a group when its FIRST member is seen and mutate it in place, and never append the grouped items after the ungrouped ones.
@@ -269,6 +270,6 @@ All Server Actions return `{ ok: true, data } | { ok: false, error }`. User-faci
 2. Replay on a fresh local stack: `supabase start && npm run db:reset` — the full history must apply to an empty DB (data migrations guard, never `raise`, on missing rows).
 3. `npm test && npm run typecheck && npm run lint`; add a `pg-errors.ts` translation for every new P-code; restate function ACLs explicitly (see `drmed-migrations`).
 4. Open the PR. The Vercel preview build fails if the migration hasn't been applied to the linked project.
-5. Apply to prod **before merging**: ask the user to run `! cd ~/Claude/DRMed && /opt/homebrew/bin/supabase db push` (it stamps the ledger with the real `00NN` version). If MCP `execute_sql` is used instead, wrap in `begin; … commit;` and insert the `schema_migrations` row by hand; never MCP `apply_migration` (timestamp version → `db push` re-applies it).
+5. Apply to prod **before merging**: run `supabase db push` yourself from the PR's worktree (`--dry-run` first; it stamps the ledger with the real `00NN` version). Time it right before the merge when the live app would break against the new schema (e.g. a dropped table it still reads). If MCP `execute_sql` is used instead, wrap in `begin; … commit;` and insert the `schema_migrations` row by hand; never MCP `apply_migration` (timestamp version → `db push` re-applies it).
 6. Verify on prod (ledger head, objects, grants), merge, confirm the Vercel production deploy landed — merge ≠ deploy.
 7. Regenerate types: `npm run db:types` (empty diff for CHECK/trigger/function-only changes is expected).

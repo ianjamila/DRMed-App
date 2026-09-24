@@ -18,8 +18,9 @@ import {
 } from "@/components/ui/sheet";
 import { QrCode } from "@/components/ui/qr-code";
 import { KINDS_PER_BRANCH, BOOKING_BRANCHES, type BookingBranch } from "@/lib/validations/booking";
-import type { StaffBookingInput } from "@/lib/validations/staff-booking";
+import { STAFF_BOOKING_NOTES_MAX, type StaffBookingInput } from "@/lib/validations/staff-booking";
 import type { BookingConflict } from "@/lib/appointments/timing";
+import { STAFF_SELECTABLE_SOURCES, APPOINTMENT_SOURCE_LABEL } from "@/lib/appointments/source";
 import {
   PRE_REGISTERED_LABEL_SHORT,
   PRE_REGISTERED_BADGE_CLASS,
@@ -55,6 +56,19 @@ type PatientMode = "existing" | "new" | "walk_in";
 
 const INPUT_CLS = "rounded-md border border-[color:var(--color-brand-bg-mid)] px-3 py-2 text-sm";
 
+// Opens the sheet pre-filled from the Website Messages inbox's "Book
+// appointment" button (appointments/page.tsx's `?from_message=`). Sent back
+// to the server as `contact_message_id` so createStaffAppointmentAction can
+// link the resulting booking to the message.
+export interface NewAppointmentPrefill {
+  contactMessageId: string;
+  senderName: string;
+  walkInName: string;
+  walkInPhone: string;
+  source: "website_message";
+  notes: string;
+}
+
 // datetime-local has no zone; staff + clinic are Asia/Manila (UTC+8, no DST).
 function toManilaIso(localValue: string): string | null {
   if (!localValue) return null;
@@ -67,6 +81,7 @@ export function NewAppointmentSheet({
   physicians,
   selfBookUrl,
   onlineBookingPaused = false,
+  prefill,
 }: {
   services: ServiceOption[];
   physicians: PhysicianOption[];
@@ -75,13 +90,18 @@ export function NewAppointmentSheet({
   // to the "contact reception" notice, so the sheet says so instead of
   // offering it (booking_settings, 0153).
   onlineBookingPaused?: boolean;
+  // Set only by /staff/appointments?from_message=<id> — opens the sheet
+  // automatically, pre-filled for a website message. Absent on every other
+  // render, and the component's own default state below is unchanged in
+  // that case.
+  prefill?: NewAppointmentPrefill;
 }) {
   const router = useRouter();
-  const [open, setOpen] = React.useState(false);
+  const [open, setOpen] = React.useState(() => Boolean(prefill));
   const [pending, startTransition] = React.useTransition();
 
   // Patient
-  const [mode, setMode] = React.useState<PatientMode>("existing");
+  const [mode, setMode] = React.useState<PatientMode>(() => (prefill ? "walk_in" : "existing"));
   const [query, setQuery] = React.useState("");
   const [results, setResults] = React.useState<PatientSearchRow[]>([]);
   const [selected, setSelected] = React.useState<PatientSearchRow | null>(null);
@@ -96,7 +116,26 @@ export function NewAppointmentSheet({
     email: "",
     address: "",
   });
-  const [walkIn, setWalkIn] = React.useState({ walk_in_name: "", walk_in_phone: "" });
+  const [walkIn, setWalkIn] = React.useState(() => ({
+    walk_in_name: prefill?.walkInName ?? "",
+    walk_in_phone: prefill?.walkInPhone ?? "",
+  }));
+
+  // How the patient reached us (0154) — required. Preset from a message
+  // booking, otherwise blank until reception picks one.
+  const [source, setSource] = React.useState<string>(() => prefill?.source ?? "");
+  const [notes, setNotes] = React.useState<string>(() => prefill?.notes ?? "");
+
+  // The Website Messages inbox link this booking should close the loop on —
+  // undefined for every ordinary booking. Cleared (not re-armed) by
+  // resetAll(), so cancelling or re-submitting starts the next booking blank
+  // rather than silently re-linking the same message.
+  const [contactMessageId, setContactMessageId] = React.useState<string | undefined>(
+    () => prefill?.contactMessageId,
+  );
+  const [isFromMessage, setIsFromMessage] = React.useState(() => Boolean(prefill));
+  const fromMessageSenderName = prefill?.senderName ?? null;
+  const fromMessageMissingPhone = Boolean(prefill) && !prefill?.walkInPhone;
 
   // Booking
   const [branch, setBranch] = React.useState<BookingBranch>("diagnostic_package");
@@ -164,6 +203,10 @@ export function NewAppointmentSheet({
     setUpcoming([]);
     setNewP({ first_name: "", last_name: "", middle_name: "", birthdate: "", sex: "", phone: "", email: "", address: "" });
     setWalkIn({ walk_in_name: "", walk_in_phone: "" });
+    setSource("");
+    setNotes("");
+    setContactMessageId(undefined);
+    setIsFromMessage(false);
     setBranch("diagnostic_package");
     setServiceIds([]);
     setServiceId("");
@@ -242,18 +285,32 @@ export function NewAppointmentSheet({
       service_ids: branch === "doctor_appointment" ? undefined : serviceIds,
       physician_id: branch === "doctor_appointment" ? physicianId : undefined,
       scheduled_at: takesTime ? toManilaIso(scheduledAtLocal) : null,
-      notes: null,
+      notes: notes.trim() ? notes.trim() : null,
       send_confirmation: sendConfirmation,
       override,
+      source,
+      contact_message_id: contactMessageId,
     };
+
+    // Booking from a message navigates to a plain URL afterward, dropping
+    // ?from_message= — otherwise a page refresh (e.g. the realtime
+    // subscription below) would re-derive the same prefill and the operator
+    // would see the sheet's initial state again next time they open it.
+    const wasFromMessage = Boolean(contactMessageId);
 
     startTransition(async () => {
       const result = await createStaffAppointmentAction(input);
       if (result.ok) {
-        toast.success("Appointment created.");
+        toast.success(
+          wasFromMessage ? "Appointment created and the message marked booked." : "Appointment created.",
+        );
         setOpen(false);
         resetAll();
-        router.refresh();
+        if (wasFromMessage) {
+          router.push("/staff/appointments");
+        } else {
+          router.refresh();
+        }
         return;
       }
       if ("code" in result && result.code === "conflict") {
@@ -288,6 +345,19 @@ export function NewAppointmentSheet({
         </SheetHeader>
 
         <div className="flex flex-col gap-5">
+          {isFromMessage && fromMessageSenderName ? (
+            <div className="rounded-md border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
+              <p className="font-semibold">
+                Booking for a website message from {fromMessageSenderName}.
+              </p>
+              {fromMessageMissingPhone ? (
+                <p className="mt-1 text-xs">
+                  This message had no phone number on file — add one below before saving.
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
           {/* 1. Patient */}
           <section className="flex flex-col gap-2">
             <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Patient</p>
@@ -425,6 +495,24 @@ export function NewAppointmentSheet({
             )}
           </section>
 
+          {/* 1.5. How did they reach us — required (0154). */}
+          <section className="flex flex-col gap-2">
+            <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">How did they reach us?</p>
+            <select
+              value={source}
+              onChange={(e) => setSource(e.target.value)}
+              className={INPUT_CLS}
+              aria-label="How did they reach us?"
+            >
+              <option value="">Choose…</option>
+              {STAFF_SELECTABLE_SOURCES.map((s) => (
+                <option key={s} value={s}>
+                  {APPOINTMENT_SOURCE_LABEL[s]}
+                </option>
+              ))}
+            </select>
+          </section>
+
           {/* 2. Booking type */}
           <section className="flex flex-col gap-2">
             <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Booking type</p>
@@ -500,6 +588,19 @@ export function NewAppointmentSheet({
               <p className="text-xs text-muted-foreground">30-minute slots, Mon–Sat 8:00 AM–4:30 PM. Same-day is allowed.</p>
             </section>
           )}
+
+          {/* 5. Notes — optional, always available (not just for message bookings). */}
+          <section className="flex flex-col gap-2">
+            <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Notes (optional)</p>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={2}
+              maxLength={STAFF_BOOKING_NOTES_MAX}
+              placeholder="Anything reception or the doctor should know"
+              className={`${INPUT_CLS} resize-none`}
+            />
+          </section>
 
           {/* Conflicts (overridable) */}
           {conflicts.length > 0 && (

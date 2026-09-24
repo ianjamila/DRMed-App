@@ -109,7 +109,7 @@ export const STAFF_NAV: StaffNavSection[] = [
     ],
     subgroups: [
       {
-        heading: "Inquiries & Bookings",
+        heading: "Messages & Bookings",
         items: [
           {
             href: "/staff/appointments",
@@ -119,10 +119,10 @@ export const STAFF_NAV: StaffNavSection[] = [
             roles: ["reception", "admin"],
           },
           {
-            href: "/staff/inquiries",
+            href: "/staff/messages",
             quicklink: {"reception":{"order":4,"group":"Front Desk"}},
-            label: ROUTE_NAME["/staff/inquiries"],
-            description: "Inquiries that came in through the website chat or Messenger but haven't been converted into a real appointment yet. Follow up here to book them or close the thread.",
+            label: ROUTE_NAME["/staff/messages"],
+            description: "Messages people send through the Contact page on drmed.ph. Reply to them, book them an appointment, or close them. The number next to it counts the messages nobody has replied to yet.",
             roles: ["reception", "admin"],
           },
         ],
@@ -452,7 +452,7 @@ export const STAFF_NAV: StaffNavSection[] = [
             // prefix match keeps this item lit on the /ops tab too.
             href: "/staff/marketing",
             label: SECTION_NAME["/staff/marketing"],
-            description: "The marketing workspace, in two tabs: Ad Performance (upload your Meta + Google ad CSV exports to see spend, cost per booking, and the lead funnel) and Ops Tracker (daily/weekly/monthly checklists, the 12-week launch roadmap, and the campaign status board). Data is saved in this browser only.",
+            description: "The marketing workspace, in three tabs: Ad Performance (upload your Meta + Google ad CSV exports to see spend, cost per booking and the lead funnel, next to the real bookings and website messages each campaign brought in according to the clinic's records), Ops Tracker (daily/weekly/monthly checklists, the 12-week launch roadmap and the campaign status board), and Booking Sources (where appointments and website messages came from, by source and by ad campaign). Uploaded ad files and the Ops Tracker are saved in this browser only.",
             roles: ["admin"],
           },
         ],
@@ -740,6 +740,36 @@ export function quickLinksFor(role: StaffRole, audience: DashboardAudience) {
   return links.sort((a, b) => a.order - b.order).map(({ item, group, routeName }) => ({
     ...item, label: routeName ? ROUTE_NAME[item.href] : item.label, group,
   }));
+}
+
+/** Badge count for one item, keyed by href. Defaults to 0 when no map or no entry. */
+export function itemBadgeCount(
+  item: StaffNavItem,
+  badges?: Record<string, number>,
+): number {
+  return badges?.[item.href] ?? 0;
+}
+
+/** Sum of every item's badge in a subgroup — shown on its `<summary>` so the
+ * total is visible even while the subgroup is collapsed. */
+export function subgroupBadgeTotal(
+  group: StaffNavSubgroup,
+  badges?: Record<string, number>,
+): number {
+  return group.items.reduce((sum, item) => sum + itemBadgeCount(item, badges), 0);
+}
+
+/** Sum of every item's badge across a whole section (flat items + subgroups) —
+ * shown on a `collapsible` section's `<summary>` for the same reason. */
+export function sectionBadgeTotal(
+  section: StaffNavSection,
+  badges?: Record<string, number>,
+): number {
+  const itemsTotal =
+    section.items?.reduce((sum, item) => sum + itemBadgeCount(item, badges), 0) ?? 0;
+  const subgroupsTotal =
+    section.subgroups?.reduce((sum, g) => sum + subgroupBadgeTotal(g, badges), 0) ?? 0;
+  return itemsTotal + subgroupsTotal;
 }
 
 export function quickLinkGroupsFor(role: StaffRole, audience: DashboardAudience) {

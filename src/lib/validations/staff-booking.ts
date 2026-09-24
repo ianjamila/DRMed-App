@@ -1,10 +1,16 @@
 import { z } from "zod";
 import { manilaSlotFor, isValidSlot } from "@/lib/validations/booking";
+import { STAFF_SELECTABLE_SOURCES } from "@/lib/appointments/source";
 
 // Tolerates "", null, undefined, or a real string (the staff action may omit
 // optional fields entirely, unlike the FormData public flow which sends "").
 const optionalText = (max: number) =>
   z.string().trim().max(max).or(z.literal("")).nullish().transform((v) => (v == null || v === "" ? null : v));
+
+// The staff "+ New appointment" slide-over's Notes field is optional on every
+// booking (not just message bookings) — this is the single source for both
+// the schema's max() below and the textarea's `maxLength` so they can't drift.
+export const STAFF_BOOKING_NOTES_MAX = 2000;
 
 // Staff timing is RELAXED vs the public form: the "≥1 hour ahead" lead-time rule
 // is dropped (same-day / short-notice / re-entered bookings are allowed). It must
@@ -29,6 +35,25 @@ const relaxedScheduledAt = z
     }
     return d.toISOString();
   });
+
+// A plain string.refine (not z.enum) so the type predicate narrows to
+// AppointmentSource on parse while the client's raw select value (typed
+// `string`, may be "" before a choice is made) assigns straight into the
+// input shape with no cast — the server is what actually enforces this.
+function isStaffSelectableSource(v: unknown): v is (typeof STAFF_SELECTABLE_SOURCES)[number] {
+  return typeof v === "string" && (STAFF_SELECTABLE_SOURCES as readonly string[]).includes(v);
+}
+const staffSourceSchema = z
+  .union([z.string(), z.null(), z.undefined()])
+  .transform((v) => v ?? "")
+  .refine(isStaffSelectableSource, "Choose how they reached us.");
+
+// "" (never chosen) or a genuinely malformed value both collapse to
+// undefined — createStaffAppointmentAction only links a message when this is
+// a real uuid.
+const optionalMessageId = z
+  .union([z.string().uuid("Invalid message id."), z.literal(""), z.null(), z.undefined()])
+  .transform((v) => (v == null || v === "" ? undefined : v));
 
 const StaffPatientUnion = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("existing"), patient_id: z.string().uuid("Pick a patient.") }),
@@ -59,9 +84,16 @@ export const StaffBookingSchema = z
     service_ids: z.array(z.string().uuid()).optional(),
     physician_id: z.string().uuid().optional(),
     scheduled_at: relaxedScheduledAt,
-    notes: optionalText(2000),
+    notes: optionalText(STAFF_BOOKING_NOTES_MAX),
     send_confirmation: z.boolean().default(true),
     override: z.boolean().default(false),
+    // How the patient reached us (0154) — required so every staff-made
+    // booking is countable in the Booking Sources report.
+    source: staffSourceSchema,
+    // Set when this booking was made from the Website Messages inbox's
+    // "Book appointment" button — createStaffAppointmentAction links the
+    // message to the resulting booking.
+    contact_message_id: optionalMessageId,
   })
   .superRefine((val, ctx) => {
     if (val.branch === "doctor_appointment") {

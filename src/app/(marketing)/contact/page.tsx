@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { MapPin, Clock, Phone, Mail, Navigation, Car, HelpCircle, ExternalLink } from "lucide-react";
 import { PageHero } from "@/components/marketing/page-hero";
 import { SectionHeading, PillLink } from "@/components/marketing/ui";
@@ -5,6 +6,7 @@ import { Reveal } from "@/components/marketing/motion";
 import { CONTACT, SOCIAL, AREAS_SERVED } from "@/lib/marketing/site";
 import { addressLines, hoursLabel, telHref, directionsHrefs, mapEmbedSrc } from "@/lib/marketing/nap";
 import { ContactForm } from "./contact-form";
+import { ContactFormWithPreset } from "./contact-form-with-preset";
 import { MapEmbed } from "@/components/marketing/map-embed";
 import { OpenNowPill } from "@/components/marketing/home/OpenNowPill";
 import { JsonLd } from "@/components/marketing/json-ld";
@@ -176,7 +178,14 @@ export default async function ContactPage() {
               <p className="mt-1.5 mb-6 text-[13px] text-[color:var(--color-ink-soft)]">
                 For appointments, corporate packages, or general inquiries.
               </p>
-              <ContactForm />
+              {/* A `?subject=` preset (e.g. from a "Get a Corporate Quote" CTA)
+                  is read client-side via useSearchParams, wrapped in
+                  Suspense, so this page keeps its static/ISR rendering
+                  instead of being forced dynamic by a `searchParams` prop —
+                  only this leaf re-renders per request. */}
+              <Suspense fallback={<ContactForm />}>
+                <ContactFormWithPreset />
+              </Suspense>
             </div>
           </Reveal>
         </div>

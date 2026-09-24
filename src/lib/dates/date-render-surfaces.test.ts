@@ -103,7 +103,6 @@ const INLINE_FORMAT_FILES: Record<string, string> = {
   "src/app/(staff)/staff/(dashboard)/admin/gift-codes/page.tsx": "2-digit year — dense code table",
   "src/app/(staff)/staff/(dashboard)/admin/gift-codes/[id]/page.tsx": "gift-code lifecycle stamps",
   "src/app/(staff)/staff/(dashboard)/admin/gift-codes/sales/page.tsx": "no year — same-year sales list",
-  "src/app/(staff)/staff/(dashboard)/inquiries/page.tsx": "no year — current inquiries only",
   "src/lib/results/pdf-document.tsx": "fixed-width date inside the rendered lab PDF",
   "src/lib/marketing/nap.ts": "opening hours: weekday + 24-hour clock",
   "src/app/(staff)/staff/(dashboard)/payments/eod/eod-client.tsx": "long date + weekday, EOD header",

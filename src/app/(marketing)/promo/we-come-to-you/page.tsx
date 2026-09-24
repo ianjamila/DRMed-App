@@ -194,7 +194,7 @@ export default async function WeComeToYouPage() {
           </Reveal>
           <Reveal delay={0.1}>
             <div className="mt-8">
-              <PillLink href="/contact" variant="navy">
+              <PillLink href="/contact?subject=Corporate%20%2F%20HMO" variant="navy">
                 Get a Corporate Quote{" "}
                 <ArrowRight className="h-4 w-4" aria-hidden="true" />
               </PillLink>

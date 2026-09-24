@@ -3,6 +3,14 @@
 import { PageHeader } from "@/components/staff/page-header";
 
 import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
+import { manilaDate, shiftISODate, todayManilaISODate } from "@/lib/dates/manila";
+import {
+  filterDailyCampaignCountsByRange,
+  joinCampaignResults,
+  type AdCampaignSpend,
+  type CampaignResultsJoin,
+  type DailyCampaignCounts,
+} from "@/lib/marketing/campaign-results";
 
 // Ad-spend analytics dashboard, ported from the standalone marketing-kit tool
 // (DRMed-marketing-kit/dashboards/drmed-ad-dashboard.jsx). Fully client-side:
@@ -485,7 +493,21 @@ function Card({
 }
 
 /* ============================ component ============================ */
-export function AdPerformanceDashboard() {
+interface AdPerformanceDashboardProps {
+  // Day × campaign booking/message COUNTS from the clinic's own database —
+  // computed server-side in marketing/page.tsx via
+  // src/lib/marketing/campaign-results.ts. No names, ids, contact details or
+  // raw attribution ever reach this component (RA 10173).
+  dailyCampaignCounts: DailyCampaignCounts[];
+  // True when the 400-day server fetch hit REPORT_EXPORT_MAX_ROWS on either
+  // appointments or contact_messages, so the counts below may undercount.
+  campaignResultsTruncated: boolean;
+}
+
+export function AdPerformanceDashboard({
+  dailyCampaignCounts,
+  campaignResultsTruncated,
+}: AdPerformanceDashboardProps) {
   // Persisted rows are read once, lazily, in the initializers below (no
   // setState-in-effect rehydration step). `hydrated` gates the render so the
   // server (which can't see localStorage) never paints mismatched HTML.
@@ -564,6 +586,29 @@ export function AdPerformanceDashboard() {
       .sort((a, b) => a.date.localeCompare(b.date))
       .map((d) => ({ ...d, label: d.date.slice(5).replace("-", "/") }));
   }, [filtered]);
+
+  /* ---------- real bookings from the clinic's records ---------- */
+  // The date range the currently-filtered ad data covers. When nothing in
+  // `filtered` carries a usable date (an unparsed CSV column), fall back to
+  // the last 28 Manila days and say so, rather than showing nothing.
+  const { rangeFrom, rangeTo, usingFallbackRange } = useMemo(() => {
+    const usable = [...new Set(filtered.map((r) => r.date).filter(Boolean))].sort();
+    if (usable.length) {
+      return { rangeFrom: usable[0]!, rangeTo: usable[usable.length - 1]!, usingFallbackRange: false };
+    }
+    const today = todayManilaISODate();
+    return { rangeFrom: shiftISODate(today, -27), rangeTo: today, usingFallbackRange: true };
+  }, [filtered]);
+
+  const adSpendByCampaign = useMemo<AdCampaignSpend[]>(
+    () => byCampaign.map((c) => ({ campaign: c.name, spend: c.spend })),
+    [byCampaign],
+  );
+
+  const campaignResults: CampaignResultsJoin = useMemo(() => {
+    const periodCounts = filterDailyCampaignCountsByRange(dailyCampaignCounts, rangeFrom, rangeTo);
+    return joinCampaignResults(periodCounts, adSpendByCampaign);
+  }, [dailyCampaignCounts, rangeFrom, rangeTo, adSpendByCampaign]);
 
   /* ---------- handlers ---------- */
   const onUpload = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -988,6 +1033,153 @@ export function AdPerformanceDashboard() {
           </div>
         </Card>
 
+        {/* real bookings, from the clinic's own records */}
+        <div className="mt-4">
+          <Card title="Real bookings — from the clinic's records" pad={false}>
+            <div className="px-4 pt-1 pb-3">
+              <p className="text-xs" style={{ color: C.sub }}>
+                Counted from the clinic&apos;s own appointment and website-message records for{" "}
+                <span style={num}>
+                  {manilaDate(rangeFrom)} – {manilaDate(rangeTo)}
+                </span>
+                {usingFallbackRange
+                  ? " (couldn't find dates in your ad data, so showing the last 28 days instead)"
+                  : ""}
+                , matched to your uploaded campaigns by name. This is separate from the platform&apos;s
+                own reported conversions above — Meta and Google both undercount for this account, so
+                these figures are what actually happened in the clinic.
+              </p>
+              {campaignResultsTruncated && (
+                <p className="text-xs mt-2 rounded-lg px-3 py-2" style={{ background: C.bg, color: C.sub }}>
+                  There are more clinic records than this page can read in one go, so the figures
+                  below may undercount.
+                </p>
+              )}
+            </div>
+
+            {campaignResults.matched.length === 0 ? (
+              <p className="px-4 pb-4 text-xs" style={{ color: C.sub }}>
+                No uploaded campaign name matches a clinic booking or message yet. Upload your CSV, or
+                check that the campaign names above match the utm_campaign tag on your ad links.
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr style={{ borderBottom: `1px solid ${C.line}` }}>
+                      <th className="px-3 py-2 text-xs font-semibold text-left" style={{ color: C.sub }}>
+                        Campaign
+                      </th>
+                      <th className="px-3 py-2 text-xs font-semibold text-right" style={{ color: C.sub }}>
+                        Real bookings
+                      </th>
+                      <th className="px-3 py-2 text-xs font-semibold text-right" style={{ color: C.sub }}>
+                        Cancelled/no-show
+                      </th>
+                      <th className="px-3 py-2 text-xs font-semibold text-right" style={{ color: C.sub }}>
+                        Website messages
+                      </th>
+                      <th className="px-3 py-2 text-xs font-semibold text-right" style={{ color: C.sub }}>
+                        Cost / real booking
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {campaignResults.matched.map((c) => (
+                      <tr key={c.campaign} style={{ borderBottom: `1px solid ${C.line}` }}>
+                        <td className="px-3 py-2.5 font-medium" style={{ color: C.text }}>
+                          {c.campaign}
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-semibold" style={num}>
+                          {int(c.bookings)}
+                        </td>
+                        <td className="px-3 py-2.5 text-right" style={{ color: C.sub, ...num }}>
+                          {int(c.cancelledBookings)}
+                        </td>
+                        <td className="px-3 py-2.5 text-right" style={{ color: C.sub, ...num }}>
+                          {int(c.messages)}
+                        </td>
+                        <td
+                          className="px-3 py-2.5 text-right font-semibold"
+                          style={{
+                            color: c.costPerBooking == null ? C.sub : c.costPerBooking <= target ? C.good : C.bad,
+                            ...num,
+                          }}
+                        >
+                          {c.costPerBooking == null ? "—" : peso(c.costPerBooking)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <td className="px-3 py-2.5 font-semibold" style={{ color: C.ink }}>
+                        Total (matched campaigns)
+                      </td>
+                      <td className="px-3 py-2.5 text-right font-semibold" style={num}>
+                        {int(campaignResults.totals.bookings)}
+                      </td>
+                      <td className="px-3 py-2.5 text-right" style={{ color: C.sub }}>
+                        —
+                      </td>
+                      <td className="px-3 py-2.5 text-right font-semibold" style={num}>
+                        {int(campaignResults.totals.messages)}
+                      </td>
+                      <td
+                        className="px-3 py-2.5 text-right font-semibold"
+                        style={{
+                          color:
+                            campaignResults.totals.costPerBooking == null
+                              ? C.sub
+                              : campaignResults.totals.costPerBooking <= target
+                                ? C.good
+                                : C.bad,
+                          ...num,
+                        }}
+                      >
+                        {campaignResults.totals.costPerBooking == null
+                          ? "—"
+                          : peso(campaignResults.totals.costPerBooking)}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+
+            {(campaignResults.unmatchedClinicCampaigns.length > 0 ||
+              campaignResults.unmatchedAdCampaigns.length > 0) && (
+              <div className="px-4 pt-1 pb-4 space-y-2">
+                {campaignResults.unmatchedAdCampaigns.length > 0 && (
+                  <div className="text-xs" style={{ color: C.sub }}>
+                    <span className="font-medium" style={{ color: C.text }}>
+                      Uploaded campaigns with spend but no matching bookings:
+                    </span>{" "}
+                    {campaignResults.unmatchedAdCampaigns.map((name, i) => (
+                      <span key={name}>
+                        {i > 0 && ", "}
+                        {name}
+                        {" "}
+                        <span style={{ color: C.sub }}>
+                          (check the ad&apos;s link includes utm_campaign={name})
+                        </span>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {campaignResults.unmatchedClinicCampaigns.length > 0 && (
+                  <div className="text-xs" style={{ color: C.sub }}>
+                    <span className="font-medium" style={{ color: C.text }}>
+                      Website campaigns with bookings but no uploaded ad data:
+                    </span>{" "}
+                    {campaignResults.unmatchedClinicCampaigns.join(", ")}
+                  </div>
+                )}
+              </div>
+            )}
+          </Card>
+        </div>
+
         {/* ad table */}
         <div className="mt-4">
           <Card title={ROUTE_NAME["/staff/marketing"]} pad={false}>
@@ -1095,7 +1287,9 @@ export function AdPerformanceDashboard() {
             />
           </label>
           <p className="text-xs" style={{ color: C.sub }}>
-            Upload your Meta + Google CSV exports (use the template). Your data stays in this browser.
+            Upload your Meta + Google CSV exports (use the template) — that file stays in this
+            browser. The real-bookings and website-messages figures above come from the clinic&apos;s
+            own database.
           </p>
         </div>
       </div>

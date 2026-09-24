@@ -263,10 +263,18 @@ export type Database = {
             referencedRelation: "v_patients_directory"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "appointment_attachments_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "v_patients_without_consent"
+            referencedColumns: ["id"]
+          },
         ]
       }
       appointments: {
         Row: {
+          attribution: Json | null
           booking_group_id: string | null
           created_at: string
           created_by: string | null
@@ -278,11 +286,13 @@ export type Database = {
           reminder_sent_at: string | null
           scheduled_at: string | null
           service_id: string | null
+          source: string | null
           status: string
           walk_in_name: string | null
           walk_in_phone: string | null
         }
         Insert: {
+          attribution?: Json | null
           booking_group_id?: string | null
           created_at?: string
           created_by?: string | null
@@ -294,11 +304,13 @@ export type Database = {
           reminder_sent_at?: string | null
           scheduled_at?: string | null
           service_id?: string | null
+          source?: string | null
           status?: string
           walk_in_name?: string | null
           walk_in_phone?: string | null
         }
         Update: {
+          attribution?: Json | null
           booking_group_id?: string | null
           created_at?: string
           created_by?: string | null
@@ -310,6 +322,7 @@ export type Database = {
           reminder_sent_at?: string | null
           scheduled_at?: string | null
           service_id?: string | null
+          source?: string | null
           status?: string
           walk_in_name?: string | null
           walk_in_phone?: string | null
@@ -327,6 +340,13 @@ export type Database = {
             columns: ["patient_id"]
             isOneToOne: false
             referencedRelation: "v_patients_directory"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "appointments_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "v_patients_without_consent"
             referencedColumns: ["id"]
           },
           {
@@ -412,6 +432,13 @@ export type Database = {
             columns: ["patient_id"]
             isOneToOne: false
             referencedRelation: "v_patients_directory"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "audit_log_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "v_patients_without_consent"
             referencedColumns: ["id"]
           },
         ]
@@ -1280,50 +1307,117 @@ export type Database = {
         }
         Relationships: []
       }
+      contact_message_replies: {
+        Row: {
+          body: string
+          channel: string
+          created_at: string
+          id: string
+          message_id: string
+          outcome: string
+          outcome_detail: string | null
+          sent_by: string
+          sent_to: string
+        }
+        Insert: {
+          body: string
+          channel: string
+          created_at?: string
+          id?: string
+          message_id: string
+          outcome: string
+          outcome_detail?: string | null
+          sent_by: string
+          sent_to: string
+        }
+        Update: {
+          body?: string
+          channel?: string
+          created_at?: string
+          id?: string
+          message_id?: string
+          outcome?: string
+          outcome_detail?: string | null
+          sent_by?: string
+          sent_to?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "contact_message_replies_message_id_fkey"
+            columns: ["message_id"]
+            isOneToOne: false
+            referencedRelation: "contact_messages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       contact_messages: {
         Row: {
+          attribution: Json | null
           created_at: string
           email: string | null
-          handled: boolean
           handled_at: string | null
           handled_by: string | null
           id: string
           ip_address: unknown
+          kind: string
+          linked_appointment_id: string | null
           message: string
           name: string
           phone: string | null
+          staff_notes: string | null
+          status: string
           subject: string | null
+          updated_at: string
           user_agent: string | null
         }
         Insert: {
+          attribution?: Json | null
           created_at?: string
           email?: string | null
-          handled?: boolean
           handled_at?: string | null
           handled_by?: string | null
           id?: string
           ip_address?: unknown
+          kind?: string
+          linked_appointment_id?: string | null
           message: string
           name: string
           phone?: string | null
+          staff_notes?: string | null
+          status?: string
           subject?: string | null
+          updated_at?: string
           user_agent?: string | null
         }
         Update: {
+          attribution?: Json | null
           created_at?: string
           email?: string | null
-          handled?: boolean
           handled_at?: string | null
           handled_by?: string | null
           id?: string
           ip_address?: unknown
+          kind?: string
+          linked_appointment_id?: string | null
           message?: string
           name?: string
           phone?: string | null
+          staff_notes?: string | null
+          status?: string
           subject?: string | null
+          updated_at?: string
           user_agent?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "contact_messages_linked_appointment_id_fkey"
+            columns: ["linked_appointment_id"]
+            isOneToOne: false
+            referencedRelation: "appointments"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       critical_alerts: {
         Row: {
@@ -1391,6 +1485,13 @@ export type Database = {
             columns: ["patient_id"]
             isOneToOne: false
             referencedRelation: "v_patients_directory"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "critical_alerts_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "v_patients_without_consent"
             referencedColumns: ["id"]
           },
           {
@@ -2763,75 +2864,6 @@ export type Database = {
         }
         Relationships: []
       }
-      inquiries: {
-        Row: {
-          called_at: string
-          caller_name: string
-          channel: string
-          contact: string
-          created_at: string
-          created_by: string | null
-          drop_reason: string | null
-          id: string
-          linked_appointment_id: string | null
-          linked_visit_id: string | null
-          notes: string | null
-          received_by_id: string | null
-          service_interest: string | null
-          status: string
-          updated_at: string
-        }
-        Insert: {
-          called_at?: string
-          caller_name: string
-          channel: string
-          contact: string
-          created_at?: string
-          created_by?: string | null
-          drop_reason?: string | null
-          id?: string
-          linked_appointment_id?: string | null
-          linked_visit_id?: string | null
-          notes?: string | null
-          received_by_id?: string | null
-          service_interest?: string | null
-          status?: string
-          updated_at?: string
-        }
-        Update: {
-          called_at?: string
-          caller_name?: string
-          channel?: string
-          contact?: string
-          created_at?: string
-          created_by?: string | null
-          drop_reason?: string | null
-          id?: string
-          linked_appointment_id?: string | null
-          linked_visit_id?: string | null
-          notes?: string | null
-          received_by_id?: string | null
-          service_interest?: string | null
-          status?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "inquiries_linked_appointment_id_fkey"
-            columns: ["linked_appointment_id"]
-            isOneToOne: false
-            referencedRelation: "appointments"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "inquiries_linked_visit_id_fkey"
-            columns: ["linked_visit_id"]
-            isOneToOne: false
-            referencedRelation: "visits"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       inventory_items: {
         Row: {
           code: string | null
@@ -3301,6 +3333,13 @@ export type Database = {
             referencedRelation: "v_patients_directory"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "patient_consents_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "v_patients_without_consent"
+            referencedColumns: ["id"]
+          },
         ]
       }
       patient_merges: {
@@ -3353,6 +3392,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "patient_merges_keep_id_fkey"
+            columns: ["keep_id"]
+            isOneToOne: false
+            referencedRelation: "v_patients_without_consent"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "patient_merges_source_id_fkey"
             columns: ["source_id"]
             isOneToOne: false
@@ -3364,6 +3410,13 @@ export type Database = {
             columns: ["source_id"]
             isOneToOne: false
             referencedRelation: "v_patients_directory"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "patient_merges_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: false
+            referencedRelation: "v_patients_without_consent"
             referencedColumns: ["id"]
           },
         ]
@@ -3488,6 +3541,13 @@ export type Database = {
             columns: ["merged_into_id"]
             isOneToOne: false
             referencedRelation: "v_patients_directory"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "patients_merged_into_id_fkey"
+            columns: ["merged_into_id"]
+            isOneToOne: false
+            referencedRelation: "v_patients_without_consent"
             referencedColumns: ["id"]
           },
           {
@@ -5945,6 +6005,13 @@ export type Database = {
             columns: ["patient_id"]
             isOneToOne: false
             referencedRelation: "v_patients_directory"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "visits_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "v_patients_without_consent"
             referencedColumns: ["id"]
           },
         ]

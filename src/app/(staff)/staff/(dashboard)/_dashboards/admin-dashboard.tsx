@@ -140,6 +140,7 @@ async function loadAdminStats(show: (id: string) => boolean) {
     staleDrafts,
     grossProfitRows,
     booksLines,
+    newMessagesCount,
   ] = await Promise.all([
     // The audit wanted all three of these cut as "throughput decoration".
     // The owner deferred Visits today and Queue to a LATER re-review, so
@@ -439,6 +440,12 @@ async function loadAdminStats(show: (id: string) => boolean) {
           (error: unknown) => ({ data: null, error }),
         )
       : SKIP_DATA,
+    show("admin.new_messages")
+      ? supabase
+          .from("contact_messages")
+          .select("id", { count: "exact", head: true })
+          .eq("status", "new")
+      : SKIP_COUNT,
   ]);
 
   // N19: this file used to read no `.error` at all — a failed query and a
@@ -461,6 +468,7 @@ async function loadAdminStats(show: (id: string) => boolean) {
     { scope: "strip_stale_drafts", error: staleDrafts.error },
     { scope: "gross_profit_ops", error: grossProfitRows.error },
     { scope: "net_income_books", error: booksLines.error },
+    { scope: "new_messages", error: newMessagesCount.error },
   ];
   await Promise.all(
     namedResults
@@ -650,6 +658,8 @@ async function loadAdminStats(show: (id: string) => boolean) {
     dupCandidates,
     dupTruncated,
     dupError,
+    newMessages: newMessagesCount.count ?? 0,
+    newMessagesError: Boolean(newMessagesCount.error),
     currentFiscalYear,
     today,
     monthStart,
@@ -687,7 +697,8 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
     show("admin.visits_today") ||
     show("admin.queue_total") ||
     show("admin.released_today") ||
-    showDupCard;
+    showDupCard ||
+    show("admin.new_messages");
 
   const showMoney =
     show("admin.net_income_mtd") ||
@@ -783,6 +794,16 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
                 href="/staff/admin/patient-merge/candidates"
                 accent={stats.dupCandidates > 0 ? "warn" : "default"}
                 error={stats.dupError}
+              />
+            )}
+            {show("admin.new_messages") && (
+              <StatCard
+                label="Website messages"
+                value={stats.newMessages}
+                hint="Waiting for a reply"
+                href="/staff/messages"
+                accent={stats.newMessages > 0 ? "warn" : "default"}
+                error={stats.newMessagesError}
               />
             )}
           </div>

@@ -11,10 +11,14 @@ import {
   HamburgerIcon,
   MobileDrawer,
 } from "@/components/ui/mobile-drawer";
+import { NavBadge } from "./nav-badge";
 import {
   isItemActive,
   isSectionActive,
   isSubgroupActive,
+  itemBadgeCount,
+  sectionBadgeTotal,
+  subgroupBadgeTotal,
   visibleNavFor,
   type StaffNavItem,
   type StaffNavSection,
@@ -26,6 +30,9 @@ interface Props {
   role: StaffRole;
   email: string;
   fullName: string;
+  // Count badges keyed by item href (e.g. `{ "/staff/messages": 3 }`).
+  // Optional and additive — an item with no entry renders no badge.
+  badges?: Record<string, number>;
 }
 
 const ROLE_LABEL: Record<StaffRole, string> = {
@@ -40,10 +47,12 @@ function MobileNavLink({
   item,
   active,
   onClick,
+  badgeCount,
 }: {
   item: StaffNavItem;
   active: boolean;
   onClick: () => void;
+  badgeCount: number;
 }) {
   const descriptionId = useId();
   return (
@@ -59,7 +68,10 @@ function MobileNavLink({
             : "block rounded-md pl-3 pr-11 py-3 text-sm font-medium text-[color:var(--color-brand-text-mid)] transition-colors hover:bg-[color:var(--color-brand-bg)] hover:text-[color:var(--color-brand-navy)]"
         }
       >
-        {item.label}
+        <span className="flex items-center gap-2">
+          <span>{item.label}</span>
+          <NavBadge count={badgeCount} />
+        </span>
       </Link>
       {item.description ? <Tooltip content={item.description} label={`About ${item.label}`} descriptionId={descriptionId} /> : null}
     </li>
@@ -70,10 +82,12 @@ function MobileSubgroup({
   group,
   pathname,
   onClick,
+  badges,
 }: {
   group: StaffNavSubgroup;
   pathname: string;
   onClick: () => void;
+  badges?: Record<string, number>;
 }) {
   const containsActive = isSubgroupActive(group, pathname);
   return (
@@ -83,7 +97,10 @@ function MobileSubgroup({
       className="group/mobsub"
     >
       <summary className="flex cursor-pointer list-none items-center justify-between rounded-md px-3 py-2 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)] hover:bg-[color:var(--color-brand-bg)] hover:text-[color:var(--color-brand-navy)]">
-        <span>{group.heading}</span>
+        <span className="flex items-center gap-2">
+          <span>{group.heading}</span>
+          <NavBadge count={subgroupBadgeTotal(group, badges)} />
+        </span>
         <svg
           aria-hidden="true"
           viewBox="0 0 12 12"
@@ -106,6 +123,7 @@ function MobileSubgroup({
             item={item}
             active={isItemActive(item, pathname)}
             onClick={onClick}
+            badgeCount={itemBadgeCount(item, badges)}
           />
         ))}
       </ul>
@@ -119,10 +137,12 @@ function MobileSectionBody({
   section,
   pathname,
   onClick,
+  badges,
 }: {
   section: StaffNavSection;
   pathname: string;
   onClick: () => void;
+  badges?: Record<string, number>;
 }) {
   const hasItems = Boolean(section.items && section.items.length > 0);
   return (
@@ -135,6 +155,7 @@ function MobileSectionBody({
               item={item}
               active={isItemActive(item, pathname)}
               onClick={onClick}
+              badgeCount={itemBadgeCount(item, badges)}
             />
           ))}
         </ul>
@@ -147,6 +168,7 @@ function MobileSectionBody({
               group={group}
               pathname={pathname}
               onClick={onClick}
+              badges={badges}
             />
           ))}
         </div>
@@ -160,10 +182,12 @@ function MobileCollapsibleSection({
   section,
   pathname,
   onClick,
+  badges,
 }: {
   section: StaffNavSection;
   pathname: string;
   onClick: () => void;
+  badges?: Record<string, number>;
 }) {
   const containsActive = isSectionActive(section, pathname);
   return (
@@ -176,7 +200,10 @@ function MobileCollapsibleSection({
         className="flex cursor-pointer list-none items-center justify-between rounded-md px-3 pb-2 pt-0.5 text-[10px] font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)] hover:text-[color:var(--color-brand-navy)]"
         aria-label={`Toggle ${section.heading}`}
       >
-        <span>{section.heading}</span>
+        <span className="flex items-center gap-2">
+          <span>{section.heading}</span>
+          <NavBadge count={sectionBadgeTotal(section, badges)} />
+        </span>
         <svg
           aria-hidden="true"
           viewBox="0 0 12 12"
@@ -196,6 +223,7 @@ function MobileCollapsibleSection({
         section={section}
         pathname={pathname}
         onClick={onClick}
+        badges={badges}
       />
     </details>
   );
@@ -204,7 +232,7 @@ function MobileCollapsibleSection({
 // Mobile-only hamburger + slide-in drawer for the staff portal. Mirrors
 // the desktop sidebar's nav so reception can navigate from a phone, and
 // closes itself on route change.
-export function StaffMobileNavTrigger({ role, email, fullName }: Props) {
+export function StaffMobileNavTrigger({ role, email, fullName, badges }: Props) {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
   const close = () => setOpen(false);
@@ -256,6 +284,7 @@ export function StaffMobileNavTrigger({ role, email, fullName }: Props) {
                 section={section}
                 pathname={pathname}
                 onClick={close}
+                badges={badges}
               />
             ) : (
               <div key={section.heading}>
@@ -266,6 +295,7 @@ export function StaffMobileNavTrigger({ role, email, fullName }: Props) {
                   section={section}
                   pathname={pathname}
                   onClick={close}
+                  badges={badges}
                 />
               </div>
             ),

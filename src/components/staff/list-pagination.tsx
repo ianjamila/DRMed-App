@@ -28,7 +28,7 @@ export const pagerControlClass =
  * of asserting a precision the number doesn't have.
  *
  * `noun` is pluralised by appending "s", which is wrong for an irregular
- * noun like "inquiry" — pass `plural` explicitly ("inquiries") when that's
+ * noun like "policy" — pass `plural` explicitly ("policies") when that's
  * the case.
  */
 export function PaginationRangeLabel({

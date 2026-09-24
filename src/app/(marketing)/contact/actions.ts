@@ -6,11 +6,13 @@ import { ContactSchema } from "@/lib/validations/contact";
 import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit/check";
 import { sendMetaCapiEvent } from "@/lib/analytics/meta-capi";
 import { SITE } from "@/lib/marketing/site";
+import { CORPORATE_SUBJECT, contactMessageKindForSubject } from "@/lib/contact-messages/labels";
+import { readAttributionCookie } from "@/lib/analytics/attribution-server";
+import { sendNewMessageAlert } from "@/lib/contact-messages/alert";
+import { after } from "next/server";
+import type { Json } from "@/types/database";
 
 export type ContactResult = { ok: true } | { ok: false; error: string };
-
-// Kept in sync with contact-form.tsx's CORPORATE_SUBJECT.
-const CORPORATE_SUBJECT = "Corporate / HMO";
 
 export async function submitContactMessage(
   _prev: ContactResult | null,
@@ -54,24 +56,47 @@ export async function submitContactMessage(
     };
   }
 
-  const admin = createAdminClient();
-  const { error } = await admin.from("contact_messages").insert({
-    name: parsed.data.name,
-    email: parsed.data.email || null,
-    phone: parsed.data.phone || null,
-    subject: parsed.data.subject || null,
-    message: parsed.data.message,
-    ip_address: ipAddress,
-    user_agent: userAgent,
-  });
+  const attribution = await readAttributionCookie();
+  const kind = contactMessageKindForSubject(parsed.data.subject || null);
 
-  if (error) {
+  const admin = createAdminClient();
+  const { data: inserted, error } = await admin
+    .from("contact_messages")
+    .insert({
+      name: parsed.data.name,
+      email: parsed.data.email || null,
+      phone: parsed.data.phone || null,
+      subject: parsed.data.subject || null,
+      message: parsed.data.message,
+      ip_address: ipAddress,
+      user_agent: userAgent,
+      kind,
+      attribution: attribution as unknown as Json,
+    })
+    .select("id, created_at")
+    .single();
+
+  if (error || !inserted) {
     console.error("contact_messages insert failed", error);
     return {
       ok: false,
       error: "Sorry — we couldn't send your message. Please try again or call us.",
     };
   }
+
+  // Staff alert — never allowed to fail the visitor's submission. after()
+  // runs once the response has been sent, so a slow/failing email send can't
+  // add latency or an error to the form; sendNewMessageAlert also never
+  // throws on its own (belt-and-braces).
+  after(() =>
+    sendNewMessageAlert({
+      id: inserted.id,
+      name: parsed.data.name,
+      subject: parsed.data.subject || null,
+      kind,
+      createdAt: inserted.created_at,
+    }),
+  );
 
   // Server-side mirror of the browser Pixel event fired from contact-form.tsx,
   // de-duped via the shared event_id. Corporate/HMO inquiries fire as a

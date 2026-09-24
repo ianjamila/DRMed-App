@@ -1,13 +1,16 @@
 "use client";
 
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import Link from "next/link";
 import { formatPhp } from "@/lib/marketing/format";
 import { Panel } from "@/components/ui/panel";
+import { Button } from "@/components/ui/button";
 import {
   isSeniorPwdEligible,
   seniorPwdDiscount,
   seniorPwdPrice,
 } from "@/lib/pricing/senior";
+import { updateMessageStatusAction } from "../messages/actions";
 
 export interface QuoteService {
   id: string;
@@ -38,14 +41,23 @@ function seniorDiscountOf(s: QuoteService): number {
   });
 }
 
+/** Set when the quote page was opened from a website message's "Send a
+ * quote" button (`?message=<id>`) — greets the sender by name in the copied
+ * summary and offers to mark the message replied once it's copied. */
+export interface QuoteMessageContext {
+  messageId: string;
+  firstName: string;
+}
+
 interface Props {
   services: QuoteService[];
+  messageContext?: QuoteMessageContext | null;
 }
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100, 200] as const;
 type PageSize = (typeof PAGE_SIZE_OPTIONS)[number];
 
-export function QuoteWorkbench({ services }: Props) {
+export function QuoteWorkbench({ services, messageContext = null }: Props) {
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
   const [picked, setPicked] = useState<Set<string>>(new Set());
@@ -54,6 +66,8 @@ export function QuoteWorkbench({ services }: Props) {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<PageSize>(50);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [markReplyPending, startMarkReply] = useTransition();
+  const [markedReplied, setMarkedReplied] = useState(false);
 
   // Auto-focus on mount; re-focus on Cmd/Ctrl+K from anywhere on this page.
   useEffect(() => {
@@ -142,6 +156,7 @@ export function QuoteWorkbench({ services }: Props) {
   // (and flags items that don't qualify).
   function builderSummary(): string {
     if (pickedList.length === 0) return "";
+    const greeting = messageContext ? `Hi ${messageContext.firstName},\n\n` : "";
     const lines = pickedList.map((s) => {
       if (seniorMode) {
         const sp = seniorPriceOf(s);
@@ -165,11 +180,37 @@ export function QuoteWorkbench({ services }: Props) {
         out.push(`HMO total: ${formatPhp(builderTotals.hmo)}${note}`);
       }
     }
-    return out.join("\n");
+    return greeting + out.join("\n");
+  }
+
+  function markMessageReplied() {
+    if (!messageContext) return;
+    startMarkReply(async () => {
+      const result = await updateMessageStatusAction(messageContext.messageId, "replied");
+      if (!result.ok) {
+        alert(result.error);
+        return;
+      }
+      setMarkedReplied(true);
+    });
   }
 
   return (
     <div className="space-y-6">
+      {messageContext ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-bg)] px-4 py-3 text-sm">
+          <p className="text-[color:var(--color-brand-text-mid)]">
+            Quoting for <span className="font-semibold text-[color:var(--color-brand-navy)]">{messageContext.firstName}</span> — from a website message.
+          </p>
+          <Link
+            href={`/staff/messages/${messageContext.messageId}`}
+            className="font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
+          >
+            Back to message
+          </Link>
+        </div>
+      ) : null}
+
       <div>
         <label htmlFor="quote-search" className="sr-only">
           Search services
@@ -407,6 +448,19 @@ export function QuoteWorkbench({ services }: Props) {
                 </button>
               </div>
             </div>
+            {messageContext && builderCopied ? (
+              <div className="mt-3 flex justify-end">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="success"
+                  disabled={markReplyPending || markedReplied}
+                  onClick={markMessageReplied}
+                >
+                  {markedReplied ? "Marked as replied ✓" : markReplyPending ? "…" : "Mark message as replied"}
+                </Button>
+              </div>
+            ) : null}
           </>
         )}
       </aside>
