@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { CONS_H0, CONS_H1, CUST_HEADER, LAB_H0, LAB_H1 } from "../__fixtures__/tab-headers";
 import type { Cell } from "../types";
 import { parseCustomersTab } from "./customers";
-import { parseConsultTab, parseLabTab } from "./encounters";
+import { money, parseConsultTab, parseLabTab } from "./encounters";
 
 const TODAY = "2026-09-24";
 
@@ -46,6 +46,77 @@ describe("parseCustomersTab", () => {
   it("refuses a tab whose headers moved", () => {
     const moved = [...CUST_HEADER]; moved.splice(4, 0, "New column");
     expect(() => parseCustomersTab([moved], { today: TODAY, aliases: new Map() })).toThrow(/header/i);
+  });
+  it("keeps a stable invalid_row key when a formula column (Age) changes", () => {
+    const rowA = cust({ 4: "Madonna", 7: 30 });
+    const rowB = cust({ 4: "Madonna", 7: 45 });
+    const pA = parseCustomersTab([CUST_HEADER, rowA], { today: TODAY, aliases: new Map() });
+    const pB = parseCustomersTab([CUST_HEADER, rowB], { today: TODAY, aliases: new Map() });
+    expect(pA.issues).toHaveLength(1);
+    expect(pA.issues[0].item_key).toBe(pB.issues[0].item_key);
+  });
+  it("tags a registered_on date issue with reason unparseable vs out_of_range", () => {
+    const p1 = parseCustomersTab([CUST_HEADER, cust({ 20: "GCASH" })], { today: TODAY, aliases: new Map() });
+    expect(p1.issues[0].payload).toMatchObject({ column: "Timestamp", reason: "unparseable" });
+
+    const p2 = parseCustomersTab([CUST_HEADER, cust({ 20: "2027-01-01" })], { today: TODAY, aliases: new Map() });
+    expect(p2.issues[0].payload).toMatchObject({ column: "Timestamp", reason: "out_of_range" });
+  });
+  it("tags a dob date issue with reason unparseable vs out_of_range", () => {
+    const p1 = parseCustomersTab([CUST_HEADER, cust({ 6: "not a date" })], { today: TODAY, aliases: new Map() });
+    const dobIssue1 = p1.issues.find((i) => i.payload.column === "Date of Birth");
+    expect(dobIssue1?.payload).toMatchObject({ reason: "unparseable" });
+
+    const p2 = parseCustomersTab([CUST_HEADER, cust({ 6: "2027-01-01" })], { today: TODAY, aliases: new Map() });
+    const dobIssue2 = p2.issues.find((i) => i.payload.column === "Date of Birth");
+    expect(dobIssue2?.payload).toMatchObject({ reason: "out_of_range" });
+  });
+  it("falls back to Last/First/M.I. columns when Full Name is blank", () => {
+    const row = cust({ 4: "", 0: "Dela Cruz", 1: "Juan", 2: "Santos" });
+    const p = parseCustomersTab([CUST_HEADER, row], { today: TODAY, aliases: new Map() });
+    expect(p.rows).toHaveLength(1);
+    expect(p.rows[0]).toMatchObject({ first: "Juan", middle: "Santos", last: "Dela Cruz", fullNameRaw: "" });
+  });
+  it("leaves the senior/PWD pair null when a kind is given without a number", () => {
+    const row = cust({ 13: "Senior", 14: "" });
+    const p = parseCustomersTab([CUST_HEADER, row], { today: TODAY, aliases: new Map() });
+    expect(p.rows[0]).toMatchObject({ seniorKind: null, seniorNumber: null });
+  });
+  it("lowercases email", () => {
+    const row = cust({ 12: "Juan.DelaCruz@Example.COM" });
+    const p = parseCustomersTab([CUST_HEADER, row], { today: TODAY, aliases: new Map() });
+    expect(p.rows[0].email).toBe("juan.delacruz@example.com");
+  });
+  it("builds address the way the May importer did, collapsing a trailing-comma cell", () => {
+    const row = cust({ 8: "12 Main St,", 9: "", 10: "Pasig," });
+    const p = parseCustomersTab([CUST_HEADER, row], { today: TODAY, aliases: new Map() });
+    expect(p.rows[0].address).toBe("12 Main St, Pasig");
+  });
+  it("merges an exact duplicate: never overwrites a set field, fills a null one", () => {
+    const rowA = cust({ 16: "GOOGLE", 12: "" });
+    const rowB = cust({ 16: "FACEBOOK", 12: "juan@example.com" });
+    const p = parseCustomersTab([CUST_HEADER, rowA, rowB], { today: TODAY, aliases: new Map() });
+    expect(p.rows).toHaveLength(1);
+    const r = p.rows[0];
+    expect(r.dupCount).toBe(2);
+    expect(r.referralSourceId).toBe("online_google");
+    expect(r.email).toBe("juan@example.com");
+  });
+});
+
+describe("money", () => {
+  it("accepts a leading PHP/Php/P currency word", () => {
+    expect(money("PHP 350")).toBe(350);
+    expect(money("Php350")).toBe(350);
+  });
+  it("accepts trailing '/-' and a bare trailing '.'", () => {
+    expect(money("350.")).toBe(350);
+    expect(money("1,970/-")).toBe(1970);
+  });
+  it("still returns null for non-numeric or blank text", () => {
+    expect(money("N/A")).toBeNull();
+    expect(money("")).toBeNull();
+    expect(money("cash")).toBeNull();
   });
 });
 
@@ -103,5 +174,57 @@ describe("parseLabTab / parseConsultTab", () => {
     const p = parseLabTab(rows, { today: TODAY, windowStart: WIN });
     expect(p.rows).toHaveLength(0);
     expect(p.issues).toHaveLength(0);
+  });
+  it("refuses a LAB tab whose headers moved", () => {
+    const moved = [...LAB_H0]; moved.splice(3, 0, "New column");
+    expect(() => parseLabTab([moved, LAB_H1], { today: TODAY, windowStart: WIN })).toThrow(/header/i);
+  });
+  it("refuses a CONSULT tab whose headers moved", () => {
+    const moved = [...CONS_H0]; moved.splice(3, 0, "New column");
+    expect(() => parseConsultTab([moved, CONS_H1], { today: TODAY, windowStart: WIN })).toThrow(/header/i);
+  });
+  it("keeps a stable unparseable_date key when DATE RELEASED changes", () => {
+    const rowA = [46168, 1, 10, "Madonna", "N/A", "", "", "CBC", 350, "", "", "", "", 300, "CASH", "", "Viber", 46169, "old remark"];
+    const rowB = [...rowA]; rowB[17] = 12345; rowB[0] = "not a date";
+    rowA[0] = "not a date";
+    const pA = parseLabTab([LAB_H0, LAB_H1, rowA], { today: TODAY, windowStart: WIN });
+    const pB = parseLabTab([LAB_H0, LAB_H1, rowB], { today: TODAY, windowStart: WIN });
+    expect(pA.issues).toHaveLength(1);
+    expect(pA.issues[0].item_key).toBe(pB.issues[0].item_key);
+  });
+  it("keeps a stable invalid_row key when REMARKS changes", () => {
+    const rowA = [46168, 1, 10, "Madonna", "N/A", "", "", "CBC", 350, "", "", "", "", 300, "CASH", "", "Viber", 46169, "old remark"];
+    const rowB = [...rowA]; rowB[18] = "a totally different remark";
+    const pA = parseLabTab([LAB_H0, LAB_H1, rowA], { today: TODAY, windowStart: WIN });
+    const pB = parseLabTab([LAB_H0, LAB_H1, rowB], { today: TODAY, windowStart: WIN });
+    expect(pA.issues).toHaveLength(1);
+    expect(pA.issues[0].kind).toBe("invalid_row");
+    expect(pA.issues[0].item_key).toBe(pB.issues[0].item_key);
+  });
+  it("tags a DATE issue with reason unparseable vs out_of_range", () => {
+    const badRow = [ "banana", 1, 10, "Dela Cruz, Juan", "N/A", "", "", "CBC", 350, "", "", "", "", 300, "CASH", "", "", ""];
+    const p1 = parseLabTab([LAB_H0, LAB_H1, badRow], { today: TODAY, windowStart: WIN });
+    expect(p1.issues[0].payload).toMatchObject({ reason: "unparseable" });
+
+    const futureRow = [ "2027-01-01", 1, 10, "Dela Cruz, Juan", "N/A", "", "", "CBC", 350, "", "", "", "", 300, "CASH", "", "", ""];
+    const p2 = parseLabTab([LAB_H0, LAB_H1, futureRow], { today: TODAY, windowStart: WIN });
+    expect(p2.issues[0].payload).toMatchObject({ reason: "out_of_range" });
+  });
+  it("treats a junk DATE RELEASED as releasedOn null without raising an issue", () => {
+    const rows = [LAB_H0, LAB_H1,
+      [46168, 1, 10, "Dela Cruz, Juan", "N/A", "", "", "CBC", 350, "", "", "", "", 300, "CASH", "", "Viber", "MAX"]];
+    const p = parseLabTab(rows, { today: TODAY, windowStart: WIN });
+    expect(p.rows[0].releasedOn).toBeNull();
+    expect(p.issues).toHaveLength(0);
+  });
+  it("counts rowsRead, in-window rows, and undated rows independently", () => {
+    const rows = [LAB_H0, LAB_H1,
+      [46168, 1, 10, "Dela Cruz, Juan", "N/A", "", "", "CBC", 350, "", "", "", "", 300, "CASH", "", "", ""],
+      [45261, 2, 11, "Reyes, Ana", "N/A", "", "", "CBC", 350, "", "", "", "", 350, "CASH", "", "", ""],
+      ["", 3, 12, "Santos, Maria", "N/A", "", "", "CBC", 350, "", "", "", "", 300, "CASH", "", "", ""]];
+    const p = parseLabTab(rows, { today: TODAY, windowStart: WIN });
+    expect(p.rowsRead).toBe(3);
+    expect(p.rows).toHaveLength(1);
+    expect(p.undated).toBe(1);
   });
 });

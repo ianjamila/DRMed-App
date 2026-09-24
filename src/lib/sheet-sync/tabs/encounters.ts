@@ -7,12 +7,29 @@ import { assertHeaders, CONSULT_HEADERS, LAB_HEADERS } from "./headers";
 const text = (c: Cell): string => (c === null || c === undefined ? "" : String(c)).trim();
 const orNull = (s: string) => (s ? s : null);
 
-/** Numbers arrive as numbers; typed amounts as "1,970" / "₱350" / "N/A". */
+/**
+ * Numbers arrive as numbers; typed amounts as "1,970" / "₱350" / "N/A" /
+ * "PHP 350" / "Php350" / "350." / "1,970/-". Still null for anything that
+ * isn't ultimately a plain number.
+ */
 export function money(c: Cell): number | null {
   if (typeof c === "number") return Number.isFinite(c) ? Math.round(c * 100) / 100 : null;
-  const t = text(c).replace(/[₱,\s]/g, "");
+  let t = text(c).replace(/[₱,\s]/g, "");
+  t = t.replace(/^(?:PHP|P)/i, "");
+  t = t.replace(/\/-$/, "");
+  t = t.replace(/\.$/, "");
   if (!/^-?\d+(\.\d+)?$/.test(t)) return null;
   return Math.round(Number(t) * 100) / 100;
+}
+
+/**
+ * Identifying cells only (spec Task 1) — REMARKS, DATE RELEASED and other
+ * non-identifying columns must not change the key, or editing them would
+ * silently reopen a dismissed review item.
+ */
+function identityKey(tab: string, r: Cell[], nameCellText: string): string {
+  const stable = sha1Hex([nameCellText, text(r[1]), text(r[2]), text(r[0])].join("␟"));
+  return `${tab}:${stable}`;
 }
 
 interface Layout {
@@ -63,8 +80,8 @@ function parseEncounterTab(layout: Layout, rows: Cell[][], opts: { today: string
     const rowHash = sha1Hex(JSON.stringify(r));
     const d = parseEventDateCell(r[0], opts.today);
     if (d.issue) {
-      issues.push({ kind: "unparseable_date", item_key: `${layout.tab}:${rowHash}`,
-        payload: { tab: layout.tab, sheet_row: i + 1, column: "DATE", value: text(r[0]), name_raw: nameRaw } });
+      issues.push({ kind: "unparseable_date", item_key: identityKey(layout.tab, r, nameRaw),
+        payload: { tab: layout.tab, sheet_row: i + 1, column: "DATE", value: text(r[0]), name_raw: nameRaw, reason: d.issue } });
       continue;
     }
     if (!d.iso) { undated++; continue; }
@@ -73,7 +90,7 @@ function parseEncounterTab(layout: Layout, rows: Cell[][], opts: { today: string
     const name = parseName(nameRaw, null, null, null);
     const parts = { first: name.first_name, middle: name.middle_name, last: name.last_name };
     if (name.unparseable || !parts.first || !parts.last) {
-      issues.push({ kind: "invalid_row", item_key: `${layout.tab}:${rowHash}`,
+      issues.push({ kind: "invalid_row", item_key: identityKey(layout.tab, r, nameRaw),
         payload: { tab: layout.tab, sheet_row: i + 1, reason: "name needs a surname and a first name", name_raw: nameRaw } });
       continue;
     }
