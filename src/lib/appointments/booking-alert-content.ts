@@ -51,7 +51,11 @@ export function bookingServicesLabel(serviceCount: number): string {
 }
 
 export function buildBookingAlertEmail(input: BookingAlertInput): BookingAlertContent {
-  const first = firstNameOf(input.firstName);
+  // firstNameOf falls back to "there" (a greeting) for a blank or
+  // control-character-only name; here a missing name must read as a sentence
+  // subject instead.
+  const parsedFirst = firstNameOf(input.firstName);
+  const first = parsedFirst === "there" ? "A patient" : parsedFirst;
   const type = BOOKING_BRANCH_LABEL[input.branch];
   const when = bookingWhenLabel(input);
   const services = bookingServicesLabel(input.serviceCount);
@@ -78,7 +82,7 @@ export function buildBookingAlertEmail(input: BookingAlertInput): BookingAlertCo
   const html = renderEmailShell({
     heading: input.pendingCallback ? "New online booking — call back needed" : "New online booking",
     contentHtml:
-      emailParagraph(escapeHtml(intro).replace(escapeHtml(first), `<b>${escapeHtml(first)}</b>`)) +
+      emailParagraph(`<b>${escapeHtml(first)}</b>${escapeHtml(intro.slice(first.length))}`) +
       emailDetailBox([
         { label: "Type", value: type },
         { label: "When", value: when },

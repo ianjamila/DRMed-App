@@ -49,6 +49,17 @@ describe("buildBookingAlertEmail", () => {
   });
 });
 
+describe("a missing first name", () => {
+  it("reads as \"A patient\", never the greeting fallback", () => {
+    for (const firstName of [null, "", "   ", "\u0007"]) {
+      const e = buildBookingAlertEmail({ ...base, firstName });
+      expect(e.text).toContain("A patient booked online.");
+      expect(e.text).not.toMatch(/\bthere booked/);
+      expect(e.html).toContain("<b>A patient</b>");
+    }
+  });
+});
+
 describe("labels", () => {
   it("walk-in when there is no slot and no call back", () => {
     expect(bookingWhenLabel({ scheduledAtIso: null, pendingCallback: false })).toBe(
