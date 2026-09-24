@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
+import { canUseQuickQuote } from "@/lib/staff/quote-access";
 import { detailMetadata } from "@/lib/staff/detail-metadata";
 import { Panel } from "@/components/ui/panel";
 import { manilaDateTime } from "@/lib/dates/manila";
@@ -335,6 +336,7 @@ export default async function MessageDetailPage({ params }: Props) {
               staffNotes={message.staff_notes ?? ""}
               firstName={firstNameOf(message.name)}
               hasLinkedAppointment={!!message.linked_appointment_id}
+              canQuote={canUseQuickQuote(session.role)}
             />
           </Panel>
         </div>

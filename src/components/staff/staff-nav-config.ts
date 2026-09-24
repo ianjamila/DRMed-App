@@ -1,4 +1,5 @@
 import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
+import { QUICK_QUOTE_ROLES } from "@/lib/staff/quote-access";
 // Sidebar nav items and which roles can see each.
 // Used by StaffShell to render a role-filtered list.
 
@@ -40,10 +41,13 @@ export interface StaffNavItem {
   // /staff/visits/new (the New visit form, which no sidebar item owns — it is
   // reached from the Reception Queue's + New visit button).
   excludePrefixes?: string[];
-  // Draw a thin unlabeled rule above this item to split a section into two
-  // visual groups without adding another heading (Front Desk: the daily-flow
-  // items above, the money items below). Skipped when the item is the first
-  // one a role can see, so a filtered list never opens with a stray line.
+  // Draw a thin unlabeled rule above this item to split a long list into
+  // visual groups without adding another heading (Front Desk: daily flow |
+  // money; Books & Reports: books | reports; Catalog & Setup: catalog |
+  // accounting setup; Admin Tools: people & logs | settings | patient data;
+  // Operations: clinic ops | sales & marketing). Works in sections and
+  // subgroups alike. Skipped when the item is the first one a role can see,
+  // so a filtered list never opens with a stray line.
   dividerBefore?: boolean;
   roles: readonly StaffRole[];
 }
@@ -154,12 +158,13 @@ export const STAFF_NAV: StaffNavSection[] = [
       {
         // Reception + admin only (owner decision 2026-09-24): medtech lost the
         // sidebar item, the lab dashboard shortcut, Cmd+K and the page itself.
-        // Admin keeps the lab-dashboard shortcut.
+        // Admin keeps the lab-dashboard shortcut. Roles come from
+        // QUICK_QUOTE_ROLES, the one list every doorway to /staff/quote uses.
         href: "/staff/quote",
         quicklink: {"reception":{"order":6,"group":"Front Desk"},"lab":{"order":1,"roles":["admin"]}},
         label: ROUTE_NAME["/staff/quote"],
         description: "Build a price quote without creating a visit. Useful for phone inquiries: 'How much for a CBC + Urinalysis + Lipid panel?' Generates a shareable quote with HMO or cash pricing.",
-        roles: ["reception", "admin"],
+        roles: QUICK_QUOTE_ROLES,
       },
       {
         href: "/staff/payments/cash-drawer",
@@ -368,6 +373,7 @@ export const STAFF_NAV: StaffNavSection[] = [
           },
           {
             href: "/staff/admin/operations",
+            dividerBefore: true,
             excludePrefixes: ["/staff/admin/operations/cron-health"],
             quicklink: {"admin":{"order":2}},
             // Dashboard action/view owned here without adding a sidebar row.
@@ -441,6 +447,7 @@ export const STAFF_NAV: StaffNavSection[] = [
           },
           {
             href: "/staff/admin/gift-codes",
+            dividerBefore: true,
             label: ROUTE_NAME["/staff/admin/gift-codes"],
             description: "Every prepaid gift code ever sold (active, redeemed, expired), with the buyer and recipient details. Use to look up a specific code if a customer can't find theirs, or to track total outstanding gift-code liability.",
             roles: ["admin"],
@@ -503,6 +510,7 @@ export const STAFF_NAV: StaffNavSection[] = [
           },
           {
             href: "/staff/admin/accounting/chart-of-accounts",
+            dividerBefore: true,
             label: ROUTE_NAME["/staff/admin/accounting/chart-of-accounts"],
             description: "Master list of every 'bucket' your money lives in: Cash on Hand, BPI, BDO, GCash, Accounts Receivable, Revenue, Rent expense, etc. Each bucket has a 4-digit code. Add a new account when you open a new bank, start using a new wallet (Maya), or need to track a new kind of expense.",
             roles: ["admin"],
@@ -538,6 +546,7 @@ export const STAFF_NAV: StaffNavSection[] = [
           },
           {
             href: "/staff/admin/settings/dashboard-cards",
+            dividerBefore: true,
             label: ROUTE_NAME["/staff/admin/settings/dashboard-cards"],
             description: "Pick which summary cards (today's revenue, pending releases, low inventory, etc.) appear on each role's home dashboard. Different roles see different cards by default.",
             roles: ["admin"],
@@ -568,6 +577,7 @@ export const STAFF_NAV: StaffNavSection[] = [
           },
           {
             href: "/staff/admin/import-patients",
+            dividerBefore: true,
             label: ROUTE_NAME["/staff/admin/import-patients"],
             description: "Bulk-import patients from a CSV file — used during initial setup or when migrating from another system. Reads name, DOB, phone, email columns and creates one patient record per row.",
             roles: ["admin"],

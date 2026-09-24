@@ -133,6 +133,12 @@ describe("mobile drawer — Front Desk divider", () => {
   });
 });
 
+describe("mobile drawer — Admin subgroup dividers", () => {
+  it("draws the same six rules for admin", () => {
+    expect(render("admin", "/staff").match(/data-nav-divider=""/g)).toHaveLength(6);
+  });
+});
+
 describe("mobile drawer — nav count badges", () => {
   it("renders the pill with the count for an item with a badge", () => {
     const html = render("reception", "/staff", { "/staff/messages": 3 });

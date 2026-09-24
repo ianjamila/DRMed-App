@@ -177,6 +177,28 @@ describe("Front Desk divider", () => {
   });
 });
 
+describe("Admin subgroup dividers", () => {
+  const dividerCount = (html: string) => html.match(/data-nav-divider=""/g)?.length ?? 0;
+
+  it("admin gets the Front Desk rule plus the five Admin subgroup rules", () => {
+    expect(dividerCount(render("admin", "/staff"))).toBe(6);
+  });
+
+  it("puts the Books & Reports rule between Recurring Monthly Entries and Daily Monitoring", () => {
+    const html = render("admin", "/staff/admin/accounting/journal");
+    const before = html.indexOf('href="/staff/admin/accounting/accrual-templates"');
+    const after = html.indexOf('href="/staff/admin/operations"');
+    const rule = html.indexOf('data-nav-divider=""', before);
+    expect(before).toBeGreaterThan(-1);
+    expect(rule).toBeGreaterThan(before);
+    expect(rule).toBeLessThan(after);
+  });
+
+  it("medtech (Inventory only under Operations) sees no rules at all", () => {
+    expect(dividerCount(render("medtech", "/staff"))).toBe(0);
+  });
+});
+
 describe("nav count badges", () => {
   it("renders the pill with the count for an item with a badge", () => {
     const html = render("reception", "/staff", { "/staff/messages": 3 });

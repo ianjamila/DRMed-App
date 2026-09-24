@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
+import { canUseQuickQuote } from "@/lib/staff/quote-access";
 import { createClient } from "@/lib/supabase/server";
 import { loadMessageForBooking } from "@/lib/contact-messages/booking-link";
 import { firstNameOf } from "@/lib/contact-messages/first-name";
@@ -15,7 +16,7 @@ interface Props {
 
 export default async function QuotePage({ searchParams }: Props) {
   const session = await requireActiveStaff();
-  if (!["reception", "admin"].includes(session.role)) {
+  if (!canUseQuickQuote(session.role)) {
     redirect("/staff");
   }
 

@@ -108,14 +108,17 @@ function Subgroup({
         </svg>
       </summary>
       <ul className="mt-1 flex flex-col gap-0.5 pl-2">
-        {group.items.map((item) => (
-          <li key={item.href}>
-            <NavLink
-              item={item}
-              active={isItemActive(item, pathname)}
-              badgeCount={itemBadgeCount(item, badges)}
-            />
-          </li>
+        {group.items.map((item, i) => (
+          <Fragment key={item.href}>
+            {item.dividerBefore && i > 0 ? <NavDivider /> : null}
+            <li>
+              <NavLink
+                item={item}
+                active={isItemActive(item, pathname)}
+                badgeCount={itemBadgeCount(item, badges)}
+              />
+            </li>
+          </Fragment>
         ))}
       </ul>
     </details>

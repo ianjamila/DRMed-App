@@ -118,14 +118,16 @@ function MobileSubgroup({
         </svg>
       </summary>
       <ul className="mt-1 flex flex-col gap-0.5 pl-2">
-        {group.items.map((item) => (
-          <MobileNavLink
-            key={item.href}
-            item={item}
-            active={isItemActive(item, pathname)}
-            onClick={onClick}
-            badgeCount={itemBadgeCount(item, badges)}
-          />
+        {group.items.map((item, i) => (
+          <Fragment key={item.href}>
+            {item.dividerBefore && i > 0 ? <NavDivider /> : null}
+            <MobileNavLink
+              item={item}
+              active={isItemActive(item, pathname)}
+              onClick={onClick}
+              badgeCount={itemBadgeCount(item, badges)}
+            />
+          </Fragment>
         ))}
       </ul>
     </details>

@@ -18,6 +18,10 @@ interface Props {
   staffNotes: string;
   firstName: string;
   hasLinkedAppointment: boolean;
+  // Whether this viewer may open Quick Quote (QUICK_QUOTE_ROLES). The inbox is
+  // reception + admin today, which is the same list, but the button must not
+  // outlive that coincidence if either list changes.
+  canQuote: boolean;
 }
 
 export function MessageActionsPanel({
@@ -26,6 +30,7 @@ export function MessageActionsPanel({
   kind,
   staffNotes,
   hasLinkedAppointment,
+  canQuote,
 }: Props) {
   const router = useRouter();
   const [statusPending, startStatus] = useTransition();
@@ -122,12 +127,14 @@ export function MessageActionsPanel({
             Book appointment
           </Link>
         ) : null}
-        <Link
-          href={`/staff/quote?message=${messageId}`}
-          className="min-h-11 inline-flex items-center rounded-md border border-[color:var(--color-brand-bg-mid)] px-3 py-2 text-xs font-bold text-[color:var(--color-brand-navy)] hover:border-[color:var(--color-brand-cyan)]"
-        >
-          Send a quote
-        </Link>
+        {canQuote ? (
+          <Link
+            href={`/staff/quote?message=${messageId}`}
+            className="min-h-11 inline-flex items-center rounded-md border border-[color:var(--color-brand-bg-mid)] px-3 py-2 text-xs font-bold text-[color:var(--color-brand-navy)] hover:border-[color:var(--color-brand-cyan)]"
+          >
+            Send a quote
+          </Link>
+        ) : null}
       </div>
 
       {hasLinkedAppointment && status !== "booked" ? (

@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import ts from "typescript";
 import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
 import { describe, expect, it } from "vitest";
+import { QUICK_QUOTE_ROLES, canUseQuickQuote } from "@/lib/staff/quote-access";
 import {
   quickLinksFor,
   quickLinkGroupsFor,
@@ -140,8 +141,22 @@ describe("Front Desk is ordered by the daily flow", () => {
   });
 
   it("splits the daily-flow items from the money items with one divider, above Visit Records", () => {
+    const front = section(STAFF_NAV, "Front Desk");
+    expect(front?.items?.filter((i) => i.dividerBefore).map((i) => i.href)).toEqual(["/staff/visits"]);
+  });
+
+  it("pins every divider in the sidebar, and none sits on a list's first item", () => {
     const flagged = allItems(STAFF_NAV).filter((i) => i.dividerBefore).map((i) => i.href);
-    expect(flagged).toEqual(["/staff/visits"]);
+    expect(flagged).toEqual([
+      "/staff/visits",
+      "/staff/admin/operations",
+      "/staff/admin/gift-codes",
+      "/staff/admin/accounting/chart-of-accounts",
+      "/staff/admin/settings/dashboard-cards",
+      "/staff/admin/import-patients",
+    ]);
+    const lists = STAFF_NAV.flatMap((s) => [s.items ?? [], ...(s.subgroups ?? []).map((g) => g.items)]);
+    for (const list of lists) expect(list[0]?.dividerBefore ?? false).toBe(false);
   });
 
   it("has no Billing section any more (folded into Front Desk 2026-09-24)", () => {
@@ -725,5 +740,21 @@ describe("Cron Health navigation", () => {
   it("lights only Cron Health, leaving Daily Monitoring active on its own views", () => {
     expect(activeHrefs(href)).toEqual([href]);
     expect(activeHrefs("/staff/admin/operations/cash")).toEqual(["/staff/admin/operations"]);
+  });
+});
+
+describe("Quick Quote access has one source of truth", () => {
+  it("the sidebar item uses QUICK_QUOTE_ROLES", () => {
+    expect(itemByHref("/staff/quote").roles).toBe(QUICK_QUOTE_ROLES);
+  });
+
+  it.each([
+    ["reception", true],
+    ["admin", true],
+    ["medtech", false],
+    ["xray_technician", false],
+    ["pathologist", false],
+  ] as const)("canUseQuickQuote(%s) is %s", (role, expected) => {
+    expect(canUseQuickQuote(role)).toBe(expected);
   });
 });
