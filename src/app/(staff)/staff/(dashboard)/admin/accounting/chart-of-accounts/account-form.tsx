@@ -5,7 +5,12 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { CoaResult } from "./actions";
 import { accountTypeGroupLabel, groupAccountsByType } from "@/lib/accounting/account-groups";
-import { StableCheckbox, StableInput, StableTextarea } from "@/components/forms/stable-fields";
+import {
+  StableCheckbox,
+  StableInput,
+  StableTextarea,
+  useResetSafeSelect,
+} from "@/components/forms/stable-fields";
 
 interface AccountDefaults {
   id?: string;
@@ -52,9 +57,13 @@ export function AccountForm({
   const [type, setType] = useState(defaults.type);
   const [parentId, setParentId] = useState(defaults.parent_id ?? "");
   // React 19 resets the form when the action returns, so a failed save used
-  // to put back every value typed. The text fields and tick-boxes use the
-  // shared Stable* wrappers so they keep what was entered.
+  // to put back every value typed. Text fields, tick-boxes and dropdowns use the
+  // shared reset-safe helpers so they keep what was entered.
   const parentGroups = useMemo(() => groupAccountsByType(parents), [parents]);
+  // Type and Parent stay local state (changing Type clears a Parent that no
+  // longer fits), so they take the reset-safe hook directly.
+  const typeRef = useResetSafeSelect(type);
+  const parentRef = useResetSafeSelect(parentId);
 
   // A parent must be the same type (the server enforces it too), so changing
   // Type drops a parent that no longer fits rather than leaving a choice the
@@ -96,6 +105,7 @@ export function AccountForm({
 
       <Field label="Type">
         <select
+          ref={typeRef}
           name="type"
           required
           value={type}
@@ -115,6 +125,7 @@ export function AccountForm({
         hint={`Used for roll-up hierarchy. Only ${accountTypeGroupLabel(type)} accounts can be picked — a parent must be the same type as this account.`}
       >
         <select
+          ref={parentRef}
           name="parent_id"
           value={parentId}
           onChange={(e) => setParentId(e.target.value)}

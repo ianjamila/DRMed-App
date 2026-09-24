@@ -36,11 +36,37 @@ type SelectBase = Omit<
   "value" | "onChange" | "defaultValue"
 > & { defaultValue?: string };
 
+// A controlled <select> is NOT safe the way a controlled text input is. React
+// keeps a text input's value attribute in step with its value, so the form
+// reset lands on what was typed — but it never touches an option's
+// defaultSelected, so the reset puts the select back on its first/initial
+// option while React state still holds the choice. The screen then shows the
+// old option and the next Save submits it (a service meant as "Vaccine" saved
+// as "Lab test"). This hook does for a select what React does for text: after
+// every render it marks the chosen option as the default, and puts the choice
+// back if a reset has already moved it.
+export function useResetSafeSelect(value: string) {
+  const ref = React.useRef<HTMLSelectElement>(null);
+  React.useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    for (const option of Array.from(el.options)) {
+      option.defaultSelected = option.value === value;
+    }
+    if (el.value !== value && Array.from(el.options).some((o) => o.value === value)) {
+      el.value = value;
+    }
+  });
+  return ref;
+}
+
 export function StableSelect({ defaultValue = "", ...rest }: SelectBase) {
   const [value, setValue] = React.useState(defaultValue);
+  const ref = useResetSafeSelect(value);
   return (
     <select
       {...rest}
+      ref={ref}
       value={value}
       onChange={(e) => setValue(e.target.value)}
     />
