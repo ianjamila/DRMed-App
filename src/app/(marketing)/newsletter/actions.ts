@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { SubscribeSchema } from "@/lib/validations/newsletter";
 import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit/check";
+import { isFormData, MALFORMED_FORM_ERROR } from "@/lib/validations/form-data";
 
 export type SubscribeResult =
   | { ok: true; alreadyActive: boolean }
@@ -14,6 +15,7 @@ export async function subscribeAction(
   _prev: SubscribeResult | null,
   formData: FormData,
 ): Promise<SubscribeResult> {
+  if (!isFormData(formData)) return { ok: false, error: MALFORMED_FORM_ERROR };
   // Honeypot — silent drop if filled.
   if ((formData.get("website") ?? "") !== "") {
     return { ok: true, alreadyActive: false };

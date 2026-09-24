@@ -13,6 +13,7 @@ import { audit } from "@/lib/audit/log";
 import { PatientSignInSchema } from "@/lib/validations/auth";
 import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit/check";
 import { selectActivePins, type VisitPinCandidate } from "@/lib/auth/pin-selection";
+import { isFormData, MALFORMED_FORM_ERROR } from "@/lib/validations/form-data";
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_MINUTES = 15;
@@ -27,6 +28,7 @@ export async function signInPatient(
   _prevState: SignInResult | null,
   formData: FormData,
 ): Promise<SignInResult> {
+  if (!isFormData(formData)) return { ok: false, error: MALFORMED_FORM_ERROR };
   const h = await headers();
   const ipAddress = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
   const userAgent = h.get("user-agent");

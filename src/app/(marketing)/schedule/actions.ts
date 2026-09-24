@@ -24,6 +24,7 @@ import { readAttributionCookie } from "@/lib/analytics/attribution-server";
 import { SITE } from "@/lib/marketing/site";
 import { getOnlineBookingStatus } from "@/lib/booking/online-booking";
 import { BOOKING_PAUSED_ERROR } from "@/lib/booking/online-booking-copy";
+import { isFormData, MALFORMED_FORM_ERROR } from "@/lib/validations/form-data";
 
 export type BookingResult =
   | {
@@ -132,6 +133,7 @@ export async function lookupPatientAction(
   _prev: LookupPatientResult | null,
   formData: FormData,
 ): Promise<LookupPatientResult> {
+  if (!isFormData(formData)) return { ok: false, error: MALFORMED_FORM_ERROR };
   const { ip: requestIp, ua: userAgent } = await ipAndAgent();
 
   if (requestIp) {
@@ -203,6 +205,7 @@ async function maybeSubscribe(admin: AdminClient, email: string, ipAddress: stri
 }
 
 export async function submitBookingAction(_prev: BookingResult | null, formData: FormData): Promise<BookingResult> {
+  if (!isFormData(formData)) return { ok: false, error: MALFORMED_FORM_ERROR };
   if ((formData.get("website") ?? "") !== "") {
     return HONEYPOT_OK;
   }
