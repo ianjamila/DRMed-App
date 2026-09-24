@@ -124,11 +124,11 @@ describe("mobile drawer — Messages & Bookings section", () => {
 });
 
 describe("mobile drawer — Front Desk divider", () => {
-  it("draws the same single rule between Patients and Visit Records", () => {
+  it("draws the same single rule between Reception Queue and Visit Records", () => {
     const html = render("reception", "/staff");
     const dividers = [...html.matchAll(/data-nav-divider=""/g)].map((m) => m.index!);
     expect(dividers).toHaveLength(1);
-    expect(html.indexOf('href="/staff/patients"')).toBeLessThan(dividers[0]);
+    expect(html.indexOf('href="/staff/visits/queue"')).toBeLessThan(dividers[0]);
     expect(dividers[0]).toBeLessThan(html.indexOf('href="/staff/visits"'));
   });
 });

@@ -155,13 +155,12 @@ describe("Lab & Imaging order (owner request 2026-09-24)", () => {
 });
 
 describe("Front Desk is ordered by the daily flow", () => {
-  it("lists Reception Queue, Patients, then the former Billing items, with no subgroups", () => {
+  it("lists Patients, Reception Queue, then the former Billing items, with no subgroups", () => {
     const front = section(visibleNavFor("reception"), "Front Desk");
     expect(front?.items?.map((i) => i.href)).toEqual([
-      "/staff/visits/queue",
       "/staff/patients",
+      "/staff/visits/queue",
       "/staff/visits",
-      "/staff/quote",
       "/staff/payments/cash-drawer",
     ]);
     expect(front?.subgroups).toBeUndefined();
@@ -209,7 +208,7 @@ describe("Messages & Bookings sits above Front Desk", () => {
     const group = section(visibleNavFor("reception"), "Messages & Bookings");
     expect(group?.collapsible).toBeFalsy();
     expect(group?.subgroups).toBeUndefined();
-    expect(hrefsIn(group)).toEqual(["/staff/appointments", "/staff/messages"]);
+    expect(hrefsIn(group)).toEqual(["/staff/appointments", "/staff/messages", "/staff/quote"]);
   });
 
   it("is active on either of its pages", () => {
@@ -372,10 +371,10 @@ describe("visible hrefs per role", () => {
       "/staff",
       "/staff/appointments",
       "/staff/messages",
-      "/staff/visits/queue",
-      "/staff/patients",
-      "/staff/visits",
       "/staff/quote",
+      "/staff/patients",
+      "/staff/visits/queue",
+      "/staff/visits",
       "/staff/payments/cash-drawer",
       "/staff/profile",
       "/staff/payslips",
@@ -718,11 +717,11 @@ describe("PageHeader section ownership", () => {
 describe("derived dashboard shortcuts preserve the visible set", () => {
   it("preserves reception groups, labels and order, including parked/action links", () => {
     expect(quickLinkGroupsFor("reception", "reception").map((g) => [g.label, g.items.map((i) => i.label)])).toEqual([
-      ["Messages & Bookings", ["Appointments", "Website Messages"]],
-      ["Front Desk", ["Reception Queue", "Patients", "New Patient", "Visit Records", "Quick Quote", "Cash Drawer", "Petty Cash", "Sell Gift Code"]],
+      ["Messages & Bookings", ["Appointments", "Website Messages", "Quick Quote"]],
+      ["Front Desk", ["Patients", "New Patient", "Reception Queue", "Visit Records", "Cash Drawer", "Petty Cash", "Sell Gift Code"]],
     ]);
     expect(quickLinksFor("reception", "reception").map((i) => i.href)).toEqual([
-      "/staff/appointments", "/staff/messages", "/staff/visits/queue", "/staff/patients", "/staff/patients/new", "/staff/visits", "/staff/quote", "/staff/payments/cash-drawer", "/staff/payments/petty-cash", "/staff/gift-codes/sell",
+      "/staff/appointments", "/staff/messages", "/staff/quote", "/staff/patients", "/staff/patients/new", "/staff/visits/queue", "/staff/visits", "/staff/payments/cash-drawer", "/staff/payments/petty-cash", "/staff/gift-codes/sell",
     ]);
   });
   it("preserves all ten admin shortcuts", () => {

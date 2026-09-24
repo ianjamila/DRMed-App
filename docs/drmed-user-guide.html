@@ -425,11 +425,11 @@
         <tr><td colspan="6"><b>Messages &amp; Bookings</b></td></tr>
         <tr><td>Appointments</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
         <tr><td>Website Messages — the sidebar badge counts messages nobody has replied to yet</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
-        <tr><td colspan="6"><b>Front Desk</b></td></tr>
-        <tr><td>Reception Queue</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
-        <tr><td>Patients</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
-        <tr><td>Visit Records (with New Visit tab)</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
         <tr><td>Quick Quote</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
+        <tr><td colspan="6"><b>Front Desk</b></td></tr>
+        <tr><td>Patients</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
+        <tr><td>Reception Queue</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
+        <tr><td>Visit Records (with New Visit tab)</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
         <tr><td>Cash Drawer (Cash In &amp; Out, Petty Cash and End of Day tabs)</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
         <tr><td colspan="6"><b>Lab &amp; Imaging</b></td></tr>
         <tr><td>Queue</td><td class="no">·</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
@@ -724,7 +724,7 @@
   <section class="sub" id="rec-other">
     <h3>3.12 Quick Quote and gift codes</h3>
     <dl class="defs">
-      <dt>Quick Quote</dt><dd>Front Desk › <kbd class="ui">Quick Quote</kbd>. A searchable price list you can read out or copy into a chat reply. Nothing is saved. Press <kbd class="ui">Cmd/Ctrl + K</kbd> to jump to the search box. Opened from a Website Message's <kbd class="ui">Send a quote</kbd> button (3.11) it shows <q>Quoting for &lt;first name&gt; — from a website message.</q> with a <kbd class="ui">Back to message</kbd> link, greets the sender by first name at the top of the copied summary, and once you've copied it offers <kbd class="ui">Mark message as replied</kbd> right there.</dd>
+      <dt>Quick Quote</dt><dd>Messages &amp; Bookings › <kbd class="ui">Quick Quote</kbd>. A searchable price list you can read out or copy into a chat reply. Nothing is saved. Press <kbd class="ui">Cmd/Ctrl + K</kbd> to jump to the search box. Opened from a Website Message's <kbd class="ui">Send a quote</kbd> button (3.11) it shows <q>Quoting for &lt;first name&gt; — from a website message.</q> with a <kbd class="ui">Back to message</kbd> link, greets the sender by first name at the top of the copied summary, and once you've copied it offers <kbd class="ui">Mark message as replied</kbd> right there.</dd>
       <dt>Sell a gift code</dt><dd>Type <code class="route">/staff/gift-codes/sell</code> (the sidebar item is parked). Enter buyer name and contact, payment method and reference, the code you are handing over, then <kbd class="ui">Record sale</kbd>. The recipient redeems it later as a payment method (3.6).</dd>
       <dt>Refund a gift code sale</dt><dd>Type <code class="route">/staff/gift-codes/refund</code> (also parked; linked from the Sell page). Look up the code, type a reason, then <kbd class="ui">Refund this sale</kbd>. Use this for a mis-keyed sale — wrong buyer, wrong tender, customer changed their mind — <b>before the code has been redeemed</b>. It takes the money back out of today&apos;s drawer count and puts the code back on sale. Trying to <b>Void</b> the sale from the Cash Drawer (3.10) now points here instead of Admin. If the code has already been redeemed on a visit, void that payment instead (3.6) — the code returns to Purchased and can then be refunded. Admin can also do this from a code&apos;s detail page (<b>Gift Codes</b> in Operations), where <b>Cancel this code</b> stays for the rare case a code should never be sellable again — cancelling is permanent, refunding is not.</dd>
     </dl>
