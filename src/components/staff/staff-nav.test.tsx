@@ -180,8 +180,8 @@ describe("Front Desk divider", () => {
 describe("Admin subgroup dividers", () => {
   const dividerCount = (html: string) => html.match(/data-nav-divider=""/g)?.length ?? 0;
 
-  it("admin gets the Front Desk rule plus the five Admin subgroup rules", () => {
-    expect(dividerCount(render("admin", "/staff"))).toBe(6);
+  it("admin gets the Front Desk rule plus the seven Admin subgroup rules", () => {
+    expect(dividerCount(render("admin", "/staff"))).toBe(8);
   });
 
   it("puts the Books & Reports rule between Recurring Monthly Entries and Daily Monitoring", () => {

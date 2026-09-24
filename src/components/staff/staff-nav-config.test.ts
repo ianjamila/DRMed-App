@@ -127,6 +127,23 @@ describe("Hidden Tabs is admin-only", () => {
 // Sidebar cleanup (2026-09-15, Fable + Codex review, owner approved).
 // ---------------------------------------------------------------------------
 
+describe("Payroll is grouped pay cycle | staff records | setup", () => {
+  it("orders the items into three runs, with a divider opening the second and third", () => {
+    const payroll = section(visibleNavFor("admin"), "Admin")!.subgroups!.find((g) => g.heading === "Payroll")!;
+    expect(payroll.items.map((i) => [i.href, Boolean(i.dividerBefore)])).toEqual([
+      ["/staff/admin/payroll/runs", false],
+      ["/staff/admin/payroll/periods", false],
+      ["/staff/admin/payroll/employees", true],
+      ["/staff/admin/payroll/ot-slips", false],
+      ["/staff/admin/payroll/leaves", false],
+      ["/staff/admin/reports/staff-advances", false],
+      ["/staff/admin/payroll/holidays", true],
+      ["/staff/admin/payroll/rates", false],
+      ["/staff/admin/payroll/settings", false],
+    ]);
+  });
+});
+
 describe("Front Desk is ordered by the daily flow", () => {
   it("lists Reception Queue, Patients, then the former Billing items, with no subgroups", () => {
     const front = section(visibleNavFor("reception"), "Front Desk");
@@ -149,6 +166,8 @@ describe("Front Desk is ordered by the daily flow", () => {
     const flagged = allItems(STAFF_NAV).filter((i) => i.dividerBefore).map((i) => i.href);
     expect(flagged).toEqual([
       "/staff/visits",
+      "/staff/admin/payroll/employees",
+      "/staff/admin/payroll/holidays",
       "/staff/admin/operations",
       "/staff/admin/gift-codes",
       "/staff/admin/accounting/chart-of-accounts",

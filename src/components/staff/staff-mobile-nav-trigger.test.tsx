@@ -134,8 +134,8 @@ describe("mobile drawer — Front Desk divider", () => {
 });
 
 describe("mobile drawer — Admin subgroup dividers", () => {
-  it("draws the same six rules for admin", () => {
-    expect(render("admin", "/staff").match(/data-nav-divider=""/g)).toHaveLength(6);
+  it("draws the same eight rules for admin", () => {
+    expect(render("admin", "/staff").match(/data-nav-divider=""/g)).toHaveLength(8);
   });
 });
 

@@ -45,8 +45,8 @@ export interface StaffNavItem {
   // visual groups without adding another heading (Front Desk: daily flow |
   // money; Books & Reports: books | reports; Catalog & Setup: catalog |
   // accounting setup; Admin Tools: people & logs | settings | patient data;
-  // Operations: clinic ops | sales & marketing). Works in sections and
-  // subgroups alike. Skipped when the item is the first one a role can see,
+  // Operations: clinic ops | sales & marketing; Payroll: pay cycle | staff
+  // records | setup). Works in sections and subgroups alike. Skipped when the item is the first one a role can see,
   // so a filtered list never opens with a stray line.
   dividerBefore?: boolean;
   roles: readonly StaffRole[];
@@ -265,6 +265,9 @@ export const STAFF_NAV: StaffNavSection[] = [
         ],
       },
       {
+        // Three groups split by dividers (2026-09-24): the pay cycle (Run
+        // Payroll, Pay Periods) | staff records (Employees, Overtime, Leaves,
+        // Cash Advances) | setup (Holidays, Government Rates, Settings).
         heading: "Payroll",
         items: [
           {
@@ -282,6 +285,7 @@ export const STAFF_NAV: StaffNavSection[] = [
           },
           {
             href: "/staff/admin/payroll/employees",
+            dividerBefore: true,
             label: ROUTE_NAME["/staff/admin/payroll/employees"],
             description: "Every paid employee (receptionists, medtechs, etc. — NOT the PF-paid doctors). Each profile has base salary, SSS/PhilHealth/Pag-IBIG ID numbers, tax info, and benefits. Add a new hire here before their first payroll.",
             roles: ["admin"],
@@ -299,7 +303,14 @@ export const STAFF_NAV: StaffNavSection[] = [
             roles: ["admin"],
           },
           {
+            href: "/staff/admin/reports/staff-advances",
+            label: ROUTE_NAME["/staff/admin/reports/staff-advances"],
+            description: "When staff borrow against future salary (cash advances, loans), the unpaid balance shows here. The next payroll auto-deducts toward repayment. Use to see who still owes what.",
+            roles: ["admin"],
+          },
+          {
             href: "/staff/admin/payroll/holidays",
+            dividerBefore: true,
             label: ROUTE_NAME["/staff/admin/payroll/holidays"],
             description: "Mark which Philippine holidays apply this year, and whether each is a regular holiday (200% pay if worked) or special non-working (130% pay if worked). The payroll engine uses this to compute holiday pay automatically.",
             roles: ["admin"],
@@ -314,12 +325,6 @@ export const STAFF_NAV: StaffNavSection[] = [
             href: "/staff/admin/payroll/settings",
             label: ROUTE_NAME["/staff/admin/payroll/settings"],
             description: "Global payroll configuration — pay cycle dates (e.g., pay on the 5th and 20th), minimum wage compliance threshold, default tax status, and 13th-month bonus settings.",
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/reports/staff-advances",
-            label: ROUTE_NAME["/staff/admin/reports/staff-advances"],
-            description: "When staff borrow against future salary (cash advances, loans), the unpaid balance shows here. The next payroll auto-deducts toward repayment. Use to see who still owes what.",
             roles: ["admin"],
           },
         ],
