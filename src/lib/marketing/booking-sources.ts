@@ -5,8 +5,9 @@
  * `manilaRangeUtc` and fetched with `fetchAllRows` by the page — this folds
  * appointment rows into booking GROUPS, classifies each group active vs.
  * cancelled/no-show, and tallies both bookings and website messages by
- * source / ad campaign. No `server-only`, no DB — vitest-tested in
- * `booking-sources.test.ts`.
+ * source / ad campaign. It also tallies the NEW PATIENTS created in the
+ * period by how they heard about us (`patients.referral_source`). No
+ * `server-only`, no DB — vitest-tested in `booking-sources.test.ts`.
  */
 import { parseAttributionCookie, type Attribution } from "@/lib/analytics/attribution";
 import {
@@ -32,6 +33,12 @@ import {
   type ContactMessageKind,
   type ContactMessageStatus,
 } from "@/lib/contact-messages/labels";
+import {
+  REFERRAL_NOT_RECORDED_LABEL,
+  REFERRAL_SOURCE_IDS,
+  REFERRAL_SOURCE_LABEL,
+  isReferralSource,
+} from "@/lib/patients/referral-sources";
 
 // The label used whenever an attribution has no usable UTM campaign/source/
 // medium (organic traffic, or a booking with no attribution at all — every
@@ -308,5 +315,66 @@ export function summarizeMessages(rows: readonly ContactMessageSourceRow[]): Web
     byCampaign: Array.from(campaignCounts.entries())
       .map(([label, count]) => ({ label, count }))
       .sort(sortByCountDesc),
+  };
+}
+
+export interface NewPatientSourceRow {
+  id: string;
+  referral_source: string | null;
+  created_at: string;
+}
+
+export interface ReferralCount {
+  // null = "Not recorded". A string that is not a known id is a row added
+  // straight to the referral_sources lookup — counted under its raw id rather
+  // than folded into Other, so it is visible.
+  source: string | null;
+  label: string;
+  count: number;
+}
+
+export interface NewPatientReferralStats {
+  total: number;
+  // total minus "Not recorded" — how many answered the question.
+  recorded: number;
+  // Every REFERRAL_SOURCE_IDS value + "Not recorded", zero rows kept so the
+  // table is stable across periods (same as bySource), then any unknown ids.
+  bySource: ReferralCount[];
+}
+
+// New patients by how they heard about us. The page passes every patient
+// CREATED in the period (merged duplicates excluded), whichever form made it:
+// the staff New Patient form asks since 2026-09-11, the website booking and
+// registration forms since 0158, and the staff "+ New appointment" slide-over
+// does not ask at all — its patients count as Not recorded.
+export function summarizeNewPatientReferrals(
+  rows: readonly NewPatientSourceRow[],
+): NewPatientReferralStats {
+  const counts = new Map<string | null, number>();
+  for (const id of REFERRAL_SOURCE_IDS) counts.set(id, 0);
+  counts.set(null, 0);
+  for (const r of rows) {
+    const key = r.referral_source ? r.referral_source : null;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+
+  const unknown = Array.from(counts.entries())
+    .filter(([key]) => key !== null && !isReferralSource(key))
+    .map(([key, count]) => ({ source: key, label: key as string, count }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+
+  const notRecorded = counts.get(null) ?? 0;
+  return {
+    total: rows.length,
+    recorded: rows.length - notRecorded,
+    bySource: [
+      ...REFERRAL_SOURCE_IDS.map((id) => ({
+        source: id,
+        label: REFERRAL_SOURCE_LABEL[id],
+        count: counts.get(id) ?? 0,
+      })),
+      ...unknown,
+      { source: null, label: REFERRAL_NOT_RECORDED_LABEL, count: notRecorded },
+    ],
   };
 }

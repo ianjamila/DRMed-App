@@ -3,6 +3,7 @@ import {
   groupBookings,
   summarizeBookings,
   summarizeMessages,
+  summarizeNewPatientReferrals,
   NO_CAMPAIGN_LABEL,
   type AppointmentSourceRow,
   type ContactMessageSourceRow,
@@ -242,5 +243,60 @@ describe("summarizeMessages", () => {
     ]);
     expect(stats.byCampaign.find((c) => c.label === "facebook / cpc")?.count).toBe(1);
     expect(stats.byCampaign.find((c) => c.label === NO_CAMPAIGN_LABEL)?.count).toBe(1);
+  });
+});
+
+describe("summarizeNewPatientReferrals", () => {
+  const p = (id: string, referral_source: string | null) => ({
+    id,
+    referral_source,
+    created_at: "2026-09-20T02:00:00Z",
+  });
+
+  it("zero-fills every source plus Not recorded, in the lookup's order", () => {
+    const s = summarizeNewPatientReferrals([]);
+    expect(s.total).toBe(0);
+    expect(s.recorded).toBe(0);
+    expect(s.bySource.map((r) => r.label)).toEqual([
+      "Doctor referral",
+      "Customer referral",
+      "Facebook",
+      "Website",
+      "Google",
+      "Instagram",
+      "TikTok",
+      "Walk-in",
+      "Returning patient",
+      "Northridge tenant / employee",
+      "Gift code",
+      "Other",
+      "Not recorded",
+    ]);
+    expect(s.bySource.every((r) => r.count === 0)).toBe(true);
+  });
+
+  it("counts each answer and puts blanks under Not recorded", () => {
+    const s = summarizeNewPatientReferrals([
+      p("1", "online_facebook"),
+      p("2", "online_facebook"),
+      p("3", "online_google"),
+      p("4", null),
+      p("5", ""),
+    ]);
+    const count = (label: string) => s.bySource.find((r) => r.label === label)?.count;
+    expect(s.total).toBe(5);
+    expect(s.recorded).toBe(3);
+    expect(count("Facebook")).toBe(2);
+    expect(count("Google")).toBe(1);
+    expect(count("Not recorded")).toBe(2);
+    expect(count("Other")).toBe(0);
+  });
+
+  it("keeps an id the code does not know under its raw id, ahead of Not recorded", () => {
+    const s = summarizeNewPatientReferrals([p("1", "online_youtube"), p("2", null)]);
+    const labels = s.bySource.map((r) => r.label);
+    expect(labels.slice(-2)).toEqual(["online_youtube", "Not recorded"]);
+    expect(s.bySource.find((r) => r.label === "online_youtube")?.count).toBe(1);
+    expect(s.recorded).toBe(1);
   });
 });

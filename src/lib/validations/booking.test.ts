@@ -16,6 +16,7 @@ const basePatient = {
   phone: "09171234567",
   email: "ana@example.com",
   address: "",
+  referral_source: "online_facebook",
   notes: "",
   marketing_consent: "off",
   service_agreement: "on",
@@ -49,5 +50,30 @@ describe("BookingSchema — lab-request form path", () => {
       scheduled_at: "",
     });
     expect(r.success).toBe(true);
+  });
+});
+
+describe("BookingSchema — how did you hear about us", () => {
+  const booking = { ...basePatient, branch: "lab_request", service_ids: [], scheduled_at: "" };
+
+  it("keeps the answer", () => {
+    const r = BookingSchema.safeParse(booking);
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.referral_source).toBe("online_facebook");
+  });
+
+  it("requires an answer from a new patient, on the referral_source field", () => {
+    for (const blank of ["", undefined]) {
+      const r = BookingSchema.safeParse({ ...booking, referral_source: blank });
+      expect(r.success).toBe(false);
+      if (!r.success) {
+        expect(r.error.issues[0]?.path).toEqual(["referral_source"]);
+        expect(r.error.issues[0]?.message).toBe("Tell us how you heard about us.");
+      }
+    }
+  });
+
+  it("rejects a value that is not a lookup id", () => {
+    expect(BookingSchema.safeParse({ ...booking, referral_source: "facebook" }).success).toBe(false);
   });
 });

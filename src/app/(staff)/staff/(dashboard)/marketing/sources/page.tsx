@@ -11,8 +11,10 @@ import { ProportionTable } from "./_components/proportion-table";
 import {
   summarizeBookings,
   summarizeMessages,
+  summarizeNewPatientReferrals,
   type AppointmentSourceRow,
   type ContactMessageSourceRow,
+  type NewPatientSourceRow,
 } from "@/lib/marketing/booking-sources";
 
 export const metadata = { title: ROUTE_NAME["/staff/marketing/sources"] };
@@ -39,6 +41,7 @@ export default async function BookingSourcesReportPage({ searchParams }: SearchP
   const [
     { rows: apptRows, truncated: apptTruncated },
     { rows: msgRows, truncated: msgTruncated },
+    { rows: patientRows, truncated: patientTruncated },
   ] = await Promise.all([
     fetchAllRows<AppointmentSourceRow>(
       (rFrom, rTo) => {
@@ -68,10 +71,29 @@ export default async function BookingSourcesReportPage({ searchParams }: SearchP
       },
       REPORT_EXPORT_MAX_ROWS,
     ),
+    // New patients created in the period. A merged duplicate (dedup tool) is
+    // the same person as the row it was merged into, so it is left out.
+    fetchAllRows<NewPatientSourceRow>(
+      (rFrom, rTo) => {
+        let q = supabase
+          .from("patients")
+          .select("id, referral_source, created_at")
+          .is("merged_into_id", null);
+        if (fromIso) q = q.gte("created_at", fromIso);
+        if (toIso) q = q.lt("created_at", toIso);
+        return q
+          .order("created_at", { ascending: true })
+          .order("id", { ascending: true })
+          .range(rFrom, rTo)
+          .returns<NewPatientSourceRow[]>();
+      },
+      REPORT_EXPORT_MAX_ROWS,
+    ),
   ]);
 
   const bookings = summarizeBookings(apptRows);
   const messages = summarizeMessages(msgRows);
+  const newPatients = summarizeNewPatientReferrals(patientRows);
 
   const bookedRatePct = messages.bookedRate == null ? "—" : `${Math.round(messages.bookedRate * 100)}%`;
 
@@ -80,7 +102,7 @@ export default async function BookingSourcesReportPage({ searchParams }: SearchP
       <PageHeader
         eyebrow={SECTION_NAME["/staff/marketing"]}
         title={ROUTE_NAME["/staff/marketing/sources"]}
-        subtitle="Where appointments and website messages came from, for a chosen period. Online
+        subtitle="Where appointments, website messages and new patients came from, for a chosen period. Online
           bookings and messages tag themselves automatically; a booking made by phone or in
           person is only countable here from the day reception started picking “How did they
           reach us?” in the New appointment form."
@@ -88,7 +110,7 @@ export default async function BookingSourcesReportPage({ searchParams }: SearchP
 
       <PeriodChips pathname={PATHNAME} from={from} to={to} todayISO={todayISO} />
 
-      {apptTruncated || msgTruncated ? (
+      {apptTruncated || msgTruncated || patientTruncated ? (
         <p
           role="status"
           className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
@@ -99,7 +121,7 @@ export default async function BookingSourcesReportPage({ searchParams }: SearchP
         </p>
       ) : null}
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           label="Bookings"
           value={bookings.activeBookingGroups.toLocaleString("en-PH")}
@@ -114,6 +136,11 @@ export default async function BookingSourcesReportPage({ searchParams }: SearchP
           label="Message → booking rate"
           value={bookedRatePct}
           hint="Website messages whose status is Booked, over all messages in the period."
+        />
+        <StatCard
+          label="New patients"
+          value={newPatients.total.toLocaleString("en-PH")}
+          hint={`${newPatients.recorded.toLocaleString("en-PH")} said how they heard about us`}
         />
       </div>
 
@@ -139,6 +166,17 @@ export default async function BookingSourcesReportPage({ searchParams }: SearchP
           every other staff booking shows as no ad tag. “Cancelled / no-show” counts bookings
           under that campaign that were later cancelled or marked no-show — they're counted
           separately and are not part of Count or Share."
+      />
+
+      <ProportionTable
+        title="New patients by how they heard about us"
+        columnLabel="Heard about us from"
+        rows={newPatients.bySource.map((s) => ({ label: s.label, count: s.count }))}
+        note="Every patient record created in the period, whoever made it. Reception answers
+          “Referral source” on the New Patient form (required since 11 September 2026), and
+          patients answer “How did you hear about us?” when they book or register on the website
+          (from 24 September 2026). Patients added from the New appointment form are not asked
+          and show as Not recorded, as do older records. Merged duplicates are not counted."
       />
 
       <ProportionTable

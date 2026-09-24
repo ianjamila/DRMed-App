@@ -10,6 +10,7 @@ const base = {
   phone: "09171234567",
   email: "maria@example.com",
   address: "",
+  referral_source: "online_google",
   data_privacy_consent: "on",
   marketing_consent: "off",
 };
@@ -45,5 +46,26 @@ describe("RegistrationSchema", () => {
       expect(r.data.data_privacy_consent).toBe(true);
       expect(r.data.marketing_consent).toBe(false);
     }
+  });
+});
+
+describe("RegistrationSchema — how did you hear about us", () => {
+  it("keeps the answer", () => {
+    const r = RegistrationSchema.safeParse(base);
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.referral_source).toBe("online_google");
+  });
+
+  it("requires an answer, on the referral_source field", () => {
+    const r = RegistrationSchema.safeParse({ ...base, referral_source: "" });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      expect(r.error.issues[0]?.path).toEqual(["referral_source"]);
+      expect(r.error.issues[0]?.message).toBe("Tell us how you heard about us.");
+    }
+  });
+
+  it("rejects a value that is not a lookup id", () => {
+    expect(RegistrationSchema.safeParse({ ...base, referral_source: "friend" }).success).toBe(false);
   });
 });

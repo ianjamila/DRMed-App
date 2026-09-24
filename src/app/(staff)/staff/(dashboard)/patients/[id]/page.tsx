@@ -13,6 +13,7 @@ import { getPatientConsentState } from "@/lib/consent/gate";
 import { ConsentPanel } from "./consent/consent-panel";
 import { paymentStatusLabel } from "@/lib/ui/payment-status";
 import { formatPatientName } from "@/lib/patients/format-name";
+import { referralSourceLabel } from "@/lib/patients/referral-sources";
 import {
   PRE_REGISTERED_LABEL_FULL,
   PRE_REGISTERED_BADGE_CLASS,
@@ -50,17 +51,6 @@ const PAYMENT_STATUS_STYLE: Record<string, string> = {
   partial: "bg-amber-100 text-amber-900",
   paid: "bg-emerald-100 text-emerald-900",
   waived: "bg-slate-200 text-slate-800",
-};
-
-const REFERRAL_LABEL: Record<string, string> = {
-  doctor_referral: "Doctor referral",
-  customer_referral: "Customer referral",
-  online_facebook: "Facebook",
-  online_website: "Website",
-  online_google: "Google",
-  walk_in: "Walk-in",
-  tenant_employee_northridge: "Northridge tenant/employee",
-  other: "Other",
 };
 
 const RELEASE_LABEL: Record<string, string> = {
@@ -169,11 +159,7 @@ export default async function PatientDetailPage({ params }: Props) {
       <section className="mt-6 grid gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5 sm:grid-cols-3">
         <Field
           label="Referral source"
-          value={
-            patient.referral_source
-              ? REFERRAL_LABEL[patient.referral_source] ?? patient.referral_source
-              : "—"
-          }
+          value={referralSourceLabel(patient.referral_source) ?? "—"}
         />
         <Field
           label="Referred by"
