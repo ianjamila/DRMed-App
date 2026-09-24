@@ -1,3 +1,14 @@
+import type { BookingBranch } from "@/lib/validations/booking";
+
+/** Plain labels for the four booking types (`BOOKING_BRANCHES`), shared by the
+ * staff "+ New appointment" sheet and the staff new-booking alert email. */
+export const BOOKING_BRANCH_LABEL: Record<BookingBranch, string> = {
+  diagnostic_package: "Diagnostic package",
+  lab_request: "Lab request",
+  doctor_appointment: "Doctor appointment",
+  home_service: "Home service",
+};
+
 /**
  * Human-readable labels for `appointments.status`.
  *

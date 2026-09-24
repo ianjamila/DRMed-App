@@ -247,7 +247,7 @@
 <div class="layout">
 <nav class="toc" aria-label="Contents">
   <p class="toc-brand">drmed<span>.</span>ph</p>
-  <p class="toc-tag">User guide · v2.11</p>
+  <p class="toc-tag">User guide · v2.12</p>
   <div class="filter" role="group" aria-label="Show chapters for">
     <button type="button" data-filter="all" aria-pressed="true">All roles</button>
     <button type="button" data-filter="reception">Reception</button>
@@ -323,7 +323,7 @@
   <div class="meta">
     <div><strong>Audience</strong>Reception · Medtech · X-ray · Pathologist · Admin · Patients</div>
     <div><strong>Covers</strong>Everything live in production as of the September 2026 release</div>
-    <div><strong>Version</strong>2.11 · 24 September 2026</div>
+    <div><strong>Version</strong>2.12 · 24 September 2026</div>
     <div><strong>Replaces</strong>Staff User Guide v1.0 (22 May 2026)</div>
   </div>
 </header>
@@ -482,7 +482,7 @@
       <dt>Row actions</dt><dd><kbd class="ui">Mark arrived</kbd> · <kbd class="ui">No-show</kbd> · <kbd class="ui">Cancel</kbd> · <kbd class="ui">↶ Revert</kbd> · <kbd class="ui">+ Start visit</kbd></dd></dl></div>
     <p>A search box sits beside <kbd class="ui">+ New appointment</kbd>. Typing a name, DRM-ID or phone number — or clicking <kbd class="ui">Sort this list →</kbd> to sort a column without searching — switches the page from the four grouped sections above to one flat list, each row tagged with a small badge (<span class="tab">Pending callback</span>, <span class="tab">Walk-in waiting</span>, <span class="tab">Today</span> or <span class="tab">Next 30 days</span>) showing which section it came from. Click any column heading to sort, and a page-size picker (5/10/25/50/100) appears once you're in this view. <kbd class="ui">← Back to grouped view</kbd> returns to the normal four sections.</p>
     <div class="note warn"><span class="k">Search doesn't reach everywhere</span><div><p>The search box only looks inside the same four sections this page always shows — pending callbacks, walk-ins waiting, today, and the next 30 days. It will not find an appointment that is older, cancelled, or already completed. Use Visit Records (3.7) for those.</p></div></div>
-    <p>Every booking made on the public <code class="route">/schedule</code> page lands here, one row per service. Bookings for a doctor who has no published schedule, and all home-service requests, arrive as <span class="status">pending callback</span>: the patient has been told you will call within one working day to agree a time.</p>
+    <p>Every booking made on the public <code class="route">/schedule</code> page lands here, one row per service. Bookings for a doctor who has no published schedule, and all home-service requests, arrive as <span class="status">pending callback</span>: the patient has been told you will call within one working day to agree a time. Reception and Admin are also emailed about each one (never for a booking reception makes) — see Email Alerts, 5.2.</p>
     <p>Beside the search box, a <b>Source</b> drop-down (<q>All sources</q> by default) filters the list by how the patient reached the clinic: <kbd class="ui">Online booking</kbd>, <kbd class="ui">Patient portal</kbd>, <kbd class="ui">Website message</kbd>, <kbd class="ui">Phone call</kbd>, <kbd class="ui">Text message</kbd>, <kbd class="ui">Facebook / Messenger</kbd>, <kbd class="ui">Walk-in</kbd>, <kbd class="ui">Referral</kbd>, <kbd class="ui">Other</kbd>, or <kbd class="ui">Not recorded</kbd> for a booking made before this question existed. Picking one switches the page to the flat, sortable list the same way typing a search or clicking <kbd class="ui">Sort this list →</kbd> does, and that flat list carries its own <b>Source</b> column. In the grouped view a card instead shows a small <q>via …</q> line under its status chip whenever a source is on file.</p>
     <div class="note warn"><span class="k">When online booking is paused</span><div><p>An admin can pause online booking (Admin Tools › <b>Online Booking</b>). An amber banner then reads <q>Online booking is paused.</q> at the top of this page, and patients who try to book on the website or in the portal are asked to call, text, or message reception instead — so expect more calls and Messenger chats. Book them yourself with <kbd class="ui">+ New appointment</kbd>, which keeps working as normal. The slide-over hides the self-book QR while booking is paused, because it would only lead to the same notice.</p></div></div>
     <ol class="steps">
@@ -926,10 +926,11 @@
   <section class="sub" id="adm-alerts">
     <h3>5.2 Email Alerts</h3>
     <div class="screen"><div class="where">Admin › Admin Tools › <kbd class="ui">Email Alerts</kbd> · <code class="route">/staff/admin/settings/alerts</code> · Admin only</div></div>
-    <p class="intro">Choose who gets the clinic's alert emails — new website messages, result-template problems and possible duplicate patients. Switch each alert on or off, pick staff one by one, or add a shared inbox. Every change here is recorded in the audit log.</p>
-    <p>One card per alert:</p>
+    <p class="intro">Choose who gets the clinic's alert emails — new website messages, new online bookings, result-template problems and possible duplicate patients. Switch each alert on or off, pick staff one by one, or add a shared inbox. Every change here is recorded in the audit log.</p>
+    <p>One card per alert — four in all:</p>
     <dl class="defs">
       <dt>New website message</dt><dd>Sent the moment someone writes in through the Contact page on drmed.ph. It shows the sender's first name and subject only — staff sign in to read the message. Goes by default to <b>Reception</b> and <b>Admin</b>.</dd>
+      <dt>New online booking</dt><dd>Sent when a patient books through the website's Schedule page or the patient portal — never for a booking reception makes, and nothing while online booking is paused. It shows the patient's first name, the booking type, when it's for (or that they need a call back to set a time, or that it's a walk-in with no fixed time), how many services, and whether it came from the website or the portal — never contact details or which tests or services. The subject line starts with <q>[Call back]</q> when a call back is needed. Goes by default to <b>Reception</b> and <b>Admin</b>.</dd>
       <dt>Result template problems</dt><dd>The daily and weekly check of lab result templates. Sent only when it finds a problem (a broken or missing template, or the daily check itself stopped running). Goes by default to <b>Admin</b>.</dd>
       <dt>Possible duplicate patients</dt><dd>A daily digest of patient records that look like the same person, with a link to review and merge them. Sent only on days when there is something to review. Goes by default to <b>Admin</b>.</dd>
     </dl>
@@ -961,7 +962,7 @@
         <tr><td>Consent coverage</td><td>Books &amp; Reports › <b>Patients Without Consent</b></td><td>Who still needs the form signed before you turn the consent gate on. <kbd class="ui">Export CSV</kbd> is the call list — it includes phone and email.</td></tr>
         <tr><td>HMO money</td><td>Admin › <b>HMO Claims</b> · Daily Monitoring › <span class="tab">HMO Receivables</span></td><td>Unbilled claims, batches sent, aging by provider.</td></tr>
         <tr><td>Who did what</td><td>Admin Tools › <b>Audit Log</b></td><td>Filter by action, DRM-ID, actor (Staff · Patient · System · Anonymous) and dates. Read-only by design.</td></tr>
-        <tr><td>Did the emails go out</td><td>Admin Tools › <b>Emails Sent</b></td><td>Every result-ready, booking, reminder, welcome, newsletter and website-message-alert email with Sent / Failed / No email on file. <kbd class="ui">Failures only</kbd> is the useful button.</td></tr>
+        <tr><td>Did the emails go out</td><td>Admin Tools › <b>Emails Sent</b></td><td>Every result-ready, booking, reminder, welcome, newsletter, website-message-alert and online-booking-alert email with Sent / Failed / No email on file. <kbd class="ui">Failures only</kbd> is the useful button.</td></tr>
       </tbody>
     </table></div>
     <div class="note why"><span class="k">About those exports</span><div><p>Every <kbd class="ui">Export CSV</kbd> on these pages downloads exactly what the filters above it select, and every download is written to the audit log with your name, the filters used and the row count — never the contents. Only Admin can open them.</p><p>An export stops at 20,000 rows and adds a last line reading <q>TRUNCATED — more rows matched than the 20000 exported. Narrow the filters.</q> The pages themselves show fewer rows than the export does (most stop at 500) and say so above the table, so a page that looks short is not a short export.</p></div></div>
@@ -1166,7 +1167,7 @@
     <dt>Audit Log</dt><dd>The tamper-evident record of every action, view, print and download. Required by RA 10173.</dd>
     <dt>Online Booking pause</dt><dd>An admin switch that replaces the online booking form with a <q>contact reception</q> notice. Staff booking is unaffected.</dd>
     <dt>Consent Gate</dt><dd>An admin switch that blocks release for patients without consent on file. Off today.</dd>
-    <dt>Email Alerts</dt><dd>The Admin Tools page (5.2) that controls who gets the new-website-message, result-template-problem and possible-duplicate-patients alert emails — on/off per alert, staff switched in or out, and extra addresses.</dd>
+    <dt>Email Alerts</dt><dd>The Admin Tools page (5.2) that controls who gets the new-website-message, new-online-booking, result-template-problem and possible-duplicate-patients alert emails — on/off per alert, staff switched in or out, and extra addresses.</dd>
     <dt>Website message</dt><dd>A message sent through the site's Contact form, tracked in the Website Messages inbox (3.11) until it's replied to, booked or closed.</dd>
     <dt>Reply (website message)</dt><dd>An email or text sent from inside a website message's Reply panel (3.11), to the sender's own address or number only. Kept in that message's Reply history; sending one moves a New message to Replied automatically.</dd>
     <dt>Source (How did they reach us?)</dt><dd>How a patient reached the clinic for an appointment: online booking, the patient portal, a website message, phone, text, Messenger, walk-in, referral or other. Shown as <q>via …</q> on an appointment card and as a Source column and filter on Appointments (3.1).</dd>
@@ -1174,7 +1175,7 @@
 </section>
 
 <footer class="end">
-  <p>drmed.ph User Guide · v2.11 · 24 September 2026 · Matches the production release at migration 0156 (0155 applied after it). Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
+  <p>drmed.ph User Guide · v2.12 · 24 September 2026 · Matches the production release at migration 0157. Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
 </footer>
 </main>
 </div>
