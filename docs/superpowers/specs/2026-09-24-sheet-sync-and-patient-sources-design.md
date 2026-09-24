@@ -516,7 +516,8 @@ verification, final guide pass.
 PRs 4–5 are intentionally left as outlines: both reviewers flagged their open questions as
 needing a focused review round of their own (Codex: astra high on conversion-to-Books ownership).
 
-## 13. Open questions for the owner
+## 13. Owner answers (2026-09-24)
 
-1. Settle review items: admin only (default), or also a reception lead?
-2. Is 00:00 Manila a good nightly time (reception may still be editing late)? Alternative 02:00.
+- Spec v3 **approved** for PRs 1–3; PRs 4–5 need their own spec + review.
+- Review queue: **admins only**.
+- Nightly run: **00:00 Manila** (`0 16 * * *` UTC), as in §5.4.
