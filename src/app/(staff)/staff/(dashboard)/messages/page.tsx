@@ -21,7 +21,11 @@ import {
 import { manilaDateTime } from "@/lib/dates/manila";
 import { patientSearchOrClauses } from "@/lib/patients/search";
 import { ROUTE_NAME } from "@/lib/staff/route-names";
-import { CONTACT_MESSAGE_STATUS_LABEL, contactMessageStatusLabel } from "@/lib/contact-messages/labels";
+import {
+  CONTACT_MESSAGE_STATUS_LABEL,
+  contactFormLocationLabel,
+  contactMessageStatusLabel,
+} from "@/lib/contact-messages/labels";
 import { attributionCampaignLabel } from "@/lib/appointments/source";
 import type { Attribution } from "@/lib/analytics/attribution";
 import { messagePreview } from "@/lib/contact-messages/preview";
@@ -73,6 +77,7 @@ interface MessageRow {
   message: string;
   status: string;
   kind: string;
+  form_location: string | null;
   created_at: string;
   attribution: unknown;
 }
@@ -133,7 +138,7 @@ export default async function MessagesPage({ searchParams }: SearchProps) {
 
   let listQuery = supabase
     .from("contact_messages")
-    .select("id, name, email, phone, subject, message, status, kind, created_at, attribution", {
+    .select("id, name, email, phone, subject, message, status, kind, form_location, created_at, attribution", {
       count: "exact",
     });
   if (status !== "all") listQuery = listQuery.eq("status", status);
@@ -260,6 +265,7 @@ export default async function MessagesPage({ searchParams }: SearchProps) {
               <SortableTh label="From" href={sortHref("name")} state={ariaSortFor(sort, "name")} />
               <PlainTh label="Contact" />
               <PlainTh label="Subject" />
+              <PlainTh label="Sent from" />
               <PlainTh label="Message" />
               <SortableTh label="Status" href={sortHref("status")} state={ariaSortFor(sort, "status")} />
               <PlainTh label="Ad campaign" />
@@ -269,7 +275,7 @@ export default async function MessagesPage({ searchParams }: SearchProps) {
             {rows.length === 0 ? (
               <tr>
                 <td
-                  colSpan={7}
+                  colSpan={8}
                   className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]"
                 >
                   {isFiltered ? "No messages match your search." : EMPTY_LABEL[status]}
@@ -303,6 +309,9 @@ export default async function MessagesPage({ searchParams }: SearchProps) {
                   </td>
                   <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
                     {r.subject ?? "—"}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-xs text-[color:var(--color-brand-text-soft)]">
+                    {contactFormLocationLabel(r.form_location)}
                   </td>
                   <td className="px-4 py-3 min-w-72 max-w-md text-[color:var(--color-brand-text-mid)]">
                     <MessageCell id={r.id} message={r.message} />

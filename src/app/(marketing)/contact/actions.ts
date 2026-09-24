@@ -46,6 +46,7 @@ export async function submitContactMessage(
     email: formData.get("email") ?? "",
     phone: formData.get("phone") ?? "",
     subject: formData.get("subject") ?? "",
+    formLocation: formData.get("form_location"),
     message: formData.get("message"),
   });
 
@@ -71,6 +72,7 @@ export async function submitContactMessage(
       ip_address: ipAddress,
       user_agent: userAgent,
       kind,
+      form_location: parsed.data.formLocation,
       attribution: attribution as unknown as Json,
     })
     .select("id, created_at")
@@ -94,6 +96,7 @@ export async function submitContactMessage(
       name: parsed.data.name,
       subject: parsed.data.subject || null,
       kind,
+      formLocation: parsed.data.formLocation,
       createdAt: inserted.created_at,
     }),
   );

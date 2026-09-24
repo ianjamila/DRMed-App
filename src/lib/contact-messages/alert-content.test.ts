@@ -33,6 +33,7 @@ describe("buildAlertEmail", () => {
     name: "Juan dela Cruz",
     subject: "Laboratory Tests",
     kind: "general" as const,
+    formLocation: "home" as const,
     createdAt: "2026-09-24T05:00:00.000Z",
     messageUrl: "https://drmed.ph/staff/messages/abc-123",
   };
@@ -49,6 +50,12 @@ describe("buildAlertEmail", () => {
     const email = buildAlertEmail({ ...base, kind: "corporate" });
     expect(email.subject.startsWith("[Corporate lead] ")).toBe(true);
     expect(email.text).toContain("Corporate / HMO lead");
+  });
+
+  it("says which page's form sent it", () => {
+    expect(buildAlertEmail(base).text).toContain("Sent from: Home page");
+    expect(buildAlertEmail({ ...base, formLocation: "contact" }).html).toContain("Contact page");
+    expect(buildAlertEmail({ ...base, formLocation: null }).text).toContain("Sent from: Not recorded");
   });
 
   it("falls back to General when no subject was picked", () => {

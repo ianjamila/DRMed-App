@@ -183,7 +183,7 @@ export default async function ContactPage() {
                   Suspense, so this page keeps its static/ISR rendering
                   instead of being forced dynamic by a `searchParams` prop —
                   only this leaf re-renders per request. */}
-              <Suspense fallback={<ContactForm />}>
+              <Suspense fallback={<ContactForm location="contact" />}>
                 <ContactFormWithPreset />
               </Suspense>
             </div>

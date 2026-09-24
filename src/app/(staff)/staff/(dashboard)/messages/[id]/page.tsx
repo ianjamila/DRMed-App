@@ -13,12 +13,14 @@ import {
   CONTACT_MESSAGE_KIND_LABEL,
   CONTACT_MESSAGE_STATUS_HINT,
   contactMessageStatusLabel,
+  isContactFormLocation,
   isContactMessageKind,
   isContactMessageStatus,
   isReplyChannel,
   isReplyOutcome,
   REPLY_CHANNEL_LABEL,
   REPLY_OUTCOME_LABEL,
+  type ContactFormLocation,
 } from "@/lib/contact-messages/labels";
 import { firstNameOf } from "@/lib/contact-messages/first-name";
 import { normalizePhPhone } from "@/lib/notifications/sms";
@@ -41,7 +43,7 @@ const loadMessage = cache(async (id: string) => {
   return supabase
     .from("contact_messages")
     .select(
-      "id, name, email, phone, subject, message, status, kind, staff_notes, created_at, handled_by, handled_at, linked_appointment_id, attribution",
+      "id, name, email, phone, subject, message, status, kind, form_location, staff_notes, created_at, handled_by, handled_at, linked_appointment_id, attribution",
     )
     .eq("id", id)
     .maybeSingle();
@@ -69,6 +71,13 @@ function smsHref(phone: string): string {
 function mailtoHref(email: string): string {
   return `mailto:${email}?subject=${encodeURIComponent("Re: your message to DR Med")}`;
 }
+
+// "Sent from the …" on the message header. The home page names its section
+// so reception can find the exact form a patient used.
+const SENT_FROM_PHRASE: Record<ContactFormLocation, string> = {
+  home: "home page (“Send us a message” section)",
+  contact: "Contact page",
+};
 
 const ATTRIBUTION_ROWS: ReadonlyArray<{ key: keyof Attribution; label: string }> = [
   { key: "utm_source", label: "Source" },
@@ -147,7 +156,12 @@ export default async function MessageDetailPage({ params }: Props) {
           {message.name}
         </h1>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
-          Received {manilaDateTime(message.created_at)}
+          Received {manilaDateTime(message.created_at)} · Sent from the{" "}
+          {isContactFormLocation(message.form_location) ? (
+            <span className="font-semibold">{SENT_FROM_PHRASE[message.form_location]}</span>
+          ) : (
+            "website (which page was not recorded — this message came in before that was tracked)"
+          )}
         </p>
       </header>
 
