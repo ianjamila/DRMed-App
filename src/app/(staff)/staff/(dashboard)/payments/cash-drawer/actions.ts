@@ -7,6 +7,7 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
+import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import {
   DENOMINATION_KEYS,
@@ -19,6 +20,7 @@ import {
   RecordCashAdjustmentSchema,
   VoidCashAdjustmentSchema,
   CloseEodSchema,
+  ReopenEodSchema,
   type RecordCashAdjustmentInput,
 } from "@/lib/validations/accounting";
 import type { Database } from "@/types/database";
@@ -359,4 +361,55 @@ export async function closeEodAction(
   revalidatePath("/staff/payments/cash-drawer");
   revalidatePath("/staff/payments/eod");
   return { ok: true, data: { close_id: data.id, variance_php: variance } };
+}
+
+/** Admin only: reopen a closed day so it can be corrected and closed again. */
+export async function reopenEodCloseAction(
+  close_id: string,
+  reopen_reason: string,
+): Promise<ActionResult> {
+  const session = await requireAdminStaff();
+
+  const parsed = ReopenEodSchema.safeParse({ close_id, reopen_reason });
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid." };
+
+  const admin = createAdminClient();
+  const { data: before } = await admin
+    .from("eod_close_records")
+    .select("id, business_date, shift_id, status")
+    .eq("id", parsed.data.close_id)
+    .maybeSingle();
+  if (!before) return { ok: false, error: "Close record not found." };
+  if (before.status !== "closed") return { ok: false, error: "Close is already reopened." };
+
+  const { error } = await admin
+    .from("eod_close_records")
+    .update({
+      status: "reopened",
+      reopened_at: new Date().toISOString(),
+      reopened_by: session.user_id,
+      reopen_reason: parsed.data.reopen_reason,
+    })
+    .eq("id", parsed.data.close_id);
+  if (error) return { ok: false, error: translatePgError(error) };
+
+  const h = await headers();
+  await audit({
+    actor_id: session.user_id,
+    actor_type: "staff",
+    action: "eod_close.reopened",
+    resource_type: "eod_close_records",
+    resource_id: parsed.data.close_id,
+    metadata: {
+      business_date: before.business_date,
+      shift_id: before.shift_id,
+      reopen_reason: parsed.data.reopen_reason,
+    },
+    ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    user_agent: h.get("user-agent"),
+  });
+
+  revalidatePath("/staff/payments/cash-drawer");
+  revalidatePath("/staff/payments/eod");
+  return { ok: true, data: undefined };
 }

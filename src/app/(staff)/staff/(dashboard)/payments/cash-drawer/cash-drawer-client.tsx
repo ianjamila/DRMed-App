@@ -9,6 +9,15 @@ import { PaymentsTabs } from "../_components/payments-tabs";
 import { PageHeader } from "@/components/staff/page-header";
 import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
 import { friendlyManilaDate, manilaTime } from "@/lib/dates/manila";
+import {
+  accountChoicesFor,
+  cashKindLabel as kindLabel,
+  groupAccounts,
+  pettyCashChoices,
+  staffPicksAccount,
+  startingPick,
+  type CashRule,
+} from "@/lib/accounting/money-routing";
 import type { Database } from "@/types/database";
 
 type Adjustment = Database["public"]["Tables"]["eod_cash_adjustments"]["Row"];
@@ -18,26 +27,6 @@ type Staff = { id: string; full_name: string; role: string };
 
 const PESO = (n: number) =>
   new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format(n);
-
-// Plain-English labels for the stored `kind` codes, so reception never sees
-// raw values like "petty_cash" or "float_topup".
-const KIND_LABEL: Record<string, string> = {
-  petty_cash: "Petty cash",
-  salary_advance: "Salary advance",
-  courier: "Courier / delivery",
-  other_payout: "Other",
-  float_topup: "Cash added to drawer",
-  float_pullout: "Cash removed from drawer",
-  // Pre-existing gap, not previously in this map: a cash salary payout from
-  // /cash-drawer (0044) used to render as the raw "salary_payout" string.
-  salary_payout: "Salary payout",
-  // N14 (0139): a cash gift-code sale.
-  gift_code_sale: "Gift code sold",
-  // 0149: written by the AP subledger, not by this page — a supplier bill paid
-  // in cash out of the till.
-  bill_payment: "Supplier bill paid",
-};
-const kindLabel = (k: string) => KIND_LABEL[k] ?? k;
 
 export function CashDrawerClient(props: {
   sessionUserId: string;
@@ -49,6 +38,7 @@ export function CashDrawerClient(props: {
   state: Record<string, unknown>;
   rows: Adjustment[];
   accounts: Account[];
+  routing: (CashRule & { kind: string })[];
   staff: Staff[];
 }) {
   const router = useRouter();
@@ -131,7 +121,7 @@ export function CashDrawerClient(props: {
             <strong className="text-[color:var(--color-brand-navy)]">Starting cash</strong>
             {props.isAdmin && (
               <Link
-                href="/staff/admin/accounting/cash-routing"
+                href="/staff/admin/accounting/money-routing#starting-cash"
                 className="text-xs font-semibold text-[color:var(--color-brand-cyan)] underline hover:text-[color:var(--color-brand-navy)]"
               >
                 Edit
@@ -276,6 +266,7 @@ export function CashDrawerClient(props: {
           businessDate={props.businessDate}
           shiftId={props.currentShiftId}
           accounts={props.accounts}
+          routing={props.routing}
           staff={props.staff}
           onClose={() => setOpenModal(null)}
           onSaved={() => { setOpenModal(null); router.refresh(); }}
@@ -290,17 +281,26 @@ function AdjustmentModal(props: {
   businessDate: string;
   shiftId: string;
   accounts: Account[];
+  routing: (CashRule & { kind: string })[];
   staff: Staff[];
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [kind, setKind] = useState<string>(
+  const rules = new Map(props.routing.map((r) => [r.kind, r]));
+  const petty = pettyCashChoices(props.accounts);
+  // Start the picker on the account Money Routing names for this kind. Petty
+  // cash shows the Petty Cash tab's categories, so only pre-fill one of those.
+  const firstPick = (k: string) => {
+    const id = startingPick(rules.get(k), props.accounts);
+    return k === "petty_cash" && !petty.some((c) => c.account.id === id) ? "" : id;
+  };
+  const initialKind =
     props.mode === "topup" ? "float_topup" :
     props.mode === "pullout" ? "float_pullout" :
-    "petty_cash"
-  );
+    "petty_cash";
+  const [kind, setKind] = useState<string>(initialKind);
   const [amount, setAmount] = useState("");
-  const [contraId, setContraId] = useState("");
+  const [contraId, setContraId] = useState(() => firstPick(initialKind));
   const [staffId, setStaffId] = useState("");
   const [payee, setPayee] = useState("");
   const [notes, setNotes] = useState("");
@@ -308,6 +308,13 @@ function AdjustmentModal(props: {
   const [err, setErr] = useState<string | null>(null);
 
   const payoutKinds = ["petty_cash", "salary_advance", "courier", "other_payout"];
+  const changeKind = (k: string) => {
+    setKind(k);
+    setContraId(firstPick(k));
+  };
+  // Money Routing decides whether reception picks the account for this kind.
+  const showPicker = staffPicksAccount(kind, rules.get(kind));
+  const pettyHint = petty.find((c) => c.account.id === contraId)?.hint;
 
   // The "contra" account means different things per action; label it plainly.
   const contraLabel =
@@ -315,7 +322,7 @@ function AdjustmentModal(props: {
       ? "Where did the cash come from?"
       : props.mode === "pullout"
         ? "Where is the cash going?"
-        : "Expense account";
+        : "Which account should this be recorded to?";
 
   const onSubmit = () => {
     setErr(null);
@@ -344,7 +351,7 @@ function AdjustmentModal(props: {
         {props.mode === "payout" && (
           <label className="mt-3 block text-sm">
             What is this for?
-            <select value={kind} onChange={(e) => setKind(e.target.value)} className="mt-1 block w-full rounded border px-2 py-2">
+            <select value={kind} onChange={(e) => changeKind(e.target.value)} className="mt-1 block w-full rounded border px-2 py-2">
               {payoutKinds.map((k) => <option key={k} value={k}>{kindLabel(k)}</option>)}
             </select>
           </label>
@@ -362,12 +369,26 @@ function AdjustmentModal(props: {
             </select>
           </label>
         )}
-        {kind !== "salary_advance" && kind !== "courier" && (
+        {showPicker && kind === "petty_cash" && (
+          <label className="mt-3 block text-sm">
+            Category
+            <select value={contraId} onChange={(e) => setContraId(e.target.value)} className="mt-1 block w-full rounded border px-2 py-2">
+              <option value="">— pick —</option>
+              {petty.map((c) => <option key={c.account.id} value={c.account.id} title={c.hint}>{c.category}</option>)}
+            </select>
+            {pettyHint && <span className="mt-1 block text-xs text-[color:var(--color-brand-text-soft)]">{pettyHint}</span>}
+          </label>
+        )}
+        {showPicker && kind !== "petty_cash" && (
           <label className="mt-3 block text-sm">
             {contraLabel}
             <select value={contraId} onChange={(e) => setContraId(e.target.value)} className="mt-1 block w-full rounded border px-2 py-2">
               <option value="">— pick —</option>
-              {props.accounts.map((a) => <option key={a.id} value={a.id}>{a.code} {a.name}</option>)}
+              {groupAccounts(accountChoicesFor({ side: "cash", key: kind }, props.accounts, contraId || null)).map((g) => (
+                <optgroup key={g.label} label={g.label}>
+                  {g.accounts.map((a) => <option key={a.id} value={a.id}>{a.code} {a.name}</option>)}
+                </optgroup>
+              ))}
             </select>
           </label>
         )}

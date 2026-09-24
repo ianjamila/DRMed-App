@@ -138,6 +138,15 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+  // Payment Routing and Cash Routing were merged into one Money Routing page;
+  // keep old bookmarks working. Temporary (307) so the paths stay reusable.
+  async redirects() {
+    return ["payment-routing", "cash-routing"].map((old) => ({
+      source: `/staff/admin/accounting/${old}`,
+      destination: "/staff/admin/accounting/money-routing",
+      permanent: false,
+    }));
+  },
 };
 
 export default withSentryConfig(nextConfig, {

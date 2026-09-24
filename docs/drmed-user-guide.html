@@ -247,7 +247,7 @@
 <div class="layout">
 <nav class="toc" aria-label="Contents">
   <p class="toc-brand">drmed<span>.</span>ph</p>
-  <p class="toc-tag">User guide · v2.8</p>
+  <p class="toc-tag">User guide · v2.9</p>
   <div class="filter" role="group" aria-label="Show chapters for">
     <button type="button" data-filter="all" aria-pressed="true">All roles</button>
     <button type="button" data-filter="reception">Reception</button>
@@ -322,7 +322,7 @@
   <div class="meta">
     <div><strong>Audience</strong>Reception · Medtech · X-ray · Pathologist · Admin · Patients</div>
     <div><strong>Covers</strong>Everything live in production as of the September 2026 release</div>
-    <div><strong>Version</strong>2.8 · 24 September 2026</div>
+    <div><strong>Version</strong>2.9 · 24 September 2026</div>
     <div><strong>Replaces</strong>Staff User Guide v1.0 (22 May 2026)</div>
   </div>
 </header>
@@ -668,9 +668,9 @@
     <h4>During the day</h4>
     <ol class="steps">
       <li><p class="step-title">At the start of the shift, check <b>Starting cash</b> matches what is physically in the drawer.</p><p>Use <kbd class="ui">+ Add cash to drawer</kbd> if the float was topped up.</p></li>
-      <li><p class="step-title">Whenever cash leaves the drawer for something other than change, record it with <kbd class="ui">+ Pay out cash</kbd>.</p><p>Courier fees, a staff cash advance, a salary payout. Petty-cash purchases have their own screen (below).</p></li>
+      <li><p class="step-title">Whenever cash leaves the drawer for something other than change, record it with <kbd class="ui">+ Pay out cash</kbd>.</p><p>Courier fees, a staff cash advance, a salary payout. Petty-cash purchases have their own screen (below).</p><p>When the form asks which account to use, it starts on the clinic's usual choice and lists only accounts that fit — <b>Petty cash</b> shows the same short list of categories as the Petty Cash screen. Admin sets the usual choice, and whether reception is asked at all, in <kbd class="ui">Money Routing</kbd>.</p></li>
     </ol>
-    <div class="note why"><span class="k">Where Starting cash comes from</span><div><p>Starting cash is not typed in each day — it is the clinic's baseline change fund plus every top-up and minus every pull-out recorded since. Admin sees an <kbd class="ui">Edit</kbd> link beside <b>Starting cash</b> that opens the baseline (<kbd class="ui">Cash Routing</kbd> under Admin › Catalog &amp; Setup); reception never sees this link and cannot change it. Because the baseline is shared, editing it changes the starting amount for <b>every</b> day, not just today — use <kbd class="ui">+ Add cash to drawer</kbd> / <kbd class="ui">+ Remove cash from drawer</kbd> for a one-off change instead.</p></div></div>
+    <div class="note why"><span class="k">Where Starting cash comes from</span><div><p>Starting cash is not typed in each day — it is the clinic's baseline change fund plus every top-up and minus every pull-out recorded since. Admin sees an <kbd class="ui">Edit</kbd> link beside <b>Starting cash</b> that opens the baseline (<kbd class="ui">Money Routing</kbd> under Admin › Catalog &amp; Setup); reception never sees this link and cannot change it. Because the baseline is shared, editing it changes the starting amount for <b>every</b> day, not just today — use <kbd class="ui">+ Add cash to drawer</kbd> / <kbd class="ui">+ Remove cash from drawer</kbd> for a one-off change instead.</p></div></div>
     <h4>Closing</h4>
     <ol class="steps">
       <li><p class="step-title">Click <kbd class="ui">Count &amp; close day →</kbd>. The <span class="tab">End of Day</span> tab opens, headed <q>End of Day · <i>today's date</i></q> under a small <b>Cash Drawer</b> label.</p></li>
@@ -996,7 +996,7 @@
       <dt>Daily Monitoring</dt><dd>Reproduces the manual DAILY MONITORING sheet: <span class="tab">Daily Sheet</span> · <span class="tab">Daily Revenue</span> · <span class="tab">Cash &amp; Cards</span> · <span class="tab">Expenses &amp; P&amp;L</span> · <span class="tab">HMO Receivables</span> · <span class="tab">Monthly Trends</span>. Daily Revenue keeps its month-to-date default and existing CSV export; old bookmarks redirect with their filters intact. The selected period follows you across tabs; Monthly Trends shows all months and keeps the period for your return.</dd>
       <dt>Financial Statements</dt><dd><span class="tab">Income Statement</span> · <span class="tab">Balance Sheet</span> · <span class="tab">Cash Flow</span> with prior-year comparison. Each page uses its statement name as its heading. Switching to Balance Sheet uses the period’s closing date; switching back uses that year through the closing date. <b>Budget vs Actual</b> sits beside it.</dd>
       <dt>Bank Reconciliation · Monthly Periods</dt><dd>Match statement lines to entries; close each month when done.</dd>
-      <dt>Chart of Accounts · Payment Routing · Cash Routing</dt><dd>The account list, and the rules that say which account a GCash payment or a cash shortage lands in. Change only when you add a bank or a payment method.</dd>
+      <dt>Chart of Accounts · Money Routing</dt><dd>The account list, and the rules that say which account each way of paying (GCash, card, bank…) and each cash-drawer entry lands in, plus the drawer's daily <b>Starting cash</b>. Every row is read-only until you click <kbd class="ui">Edit</kbd>, and shows who last changed it. Rows other parts of the books depend on — gift codes, salary payouts and salary advances — are marked <b>Fixed</b> and cannot be changed. The cash-drawer rules stay folded away until reception records its first payout, top-up or pull-out. The old Payment Routing and Cash Routing links open this page. Change only when you add a bank or a payment method.</dd>
       <dt>External Sync Status</dt><dd>The daily 5 pm push of rows to the accountant's Google Sheet, with a re-run button.</dd>
     </dl>
     <p>The admin dashboard quicklinks include <b>Expenses Overview</b>, <b>Monthly Periods</b>, <b>Run Payroll</b>, <b>Financial Statements</b>, <b>Daily Monitoring</b>, <b>Pay Doctors</b> and <b>Journal Entries</b>.</p>
@@ -1149,7 +1149,7 @@
 </section>
 
 <footer class="end">
-  <p>drmed.ph User Guide · v2.8 · 24 September 2026 · Matches the production release at migration 0154. Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
+  <p>drmed.ph User Guide · v2.9 · 24 September 2026 · Matches the production release at migration 0154. Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
 </footer>
 </main>
 </div>

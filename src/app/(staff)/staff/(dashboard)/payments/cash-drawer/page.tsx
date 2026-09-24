@@ -52,6 +52,12 @@ export default async function CashDrawerPage({
     .eq("is_active", true)
     .order("code");
 
+  // Money Routing: whether reception picks the account for each kind, and the
+  // account the picker starts on.
+  const { data: routing } = await admin
+    .from("cash_adjustment_account_map")
+    .select("kind, account_id, requires_user_choice");
+
   const { data: staff } = await admin
     .from("staff_profiles")
     .select("id, full_name, role")
@@ -69,6 +75,7 @@ export default async function CashDrawerPage({
       state={(state as Record<string, unknown>) ?? {}}
       rows={rows ?? []}
       accounts={accounts ?? []}
+      routing={routing ?? []}
       staff={staff ?? []}
     />
   );
