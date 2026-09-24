@@ -161,6 +161,11 @@ export function translatePgError(err: PgError): string {
       // Doing that would hand the cash back to the till while the books still
       // show the supplier as paid.
       return err.message ?? "This cash drawer entry belongs to an AP bill payment. Void the payment itself so the books and the drawer stay together.";
+    // Website Messages (0154): what the sender wrote is a record, not a draft.
+    // Staff triage a message (status, type, notes, booking link) but never
+    // rewrite it.
+    case "P0053":
+      return "A website message cannot be edited. You can only change its status, type or notes.";
     default:
       return err.message ?? "Database error. Please try again.";
   }

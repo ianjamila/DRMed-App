@@ -5,6 +5,8 @@ import { manilaSlotFor, KINDS_PER_BRANCH, type BookingBranch } from "@/lib/valid
 import { dayWindowFor } from "@/lib/physicians/availability";
 import { decideAppointmentTiming, type BookingConflict, type ServiceRow } from "@/lib/appointments/timing";
 import { labRequestStatus, type IntakePreference } from "@/lib/appointments/lab-request";
+import type { AppointmentSource } from "@/lib/appointments/source";
+import type { Attribution } from "@/lib/analytics/attribution";
 
 // Server-side orchestration. Receives the admin client as a param (no service-
 // role import here), so it must only be called from server actions / route handlers.
@@ -33,6 +35,10 @@ export interface CreateAppointmentInput {
   createdBy: string | null; // auth.users id (staff) or null (public)
   mode: "strict" | "relaxed"; // strict = hard-block conflicts (public); relaxed = warn (staff)
   override: boolean; // relaxed only: proceed despite conflicts
+  // How the patient reached us (0154) and the first-party UTM cookie at the
+  // time of booking. Stamped on every row of the group.
+  source: AppointmentSource | null;
+  attribution: Attribution | null;
   // Resolve the patient ONLY after timing/conflicts pass, to avoid orphan rows on failure.
   resolvePatient: () => Promise<{ ok: true; patient: PatientResolution } | { ok: false; error: string }>;
 }
@@ -157,6 +163,8 @@ export async function createAppointmentGroup(
     walk_in_name: patient.walkInName ?? null,
     walk_in_phone: patient.walkInPhone ?? null,
     created_by: input.createdBy,
+    source: input.source,
+    attribution: input.attribution,
   }));
   // The pre-insert conflict SELECT above is fast-path UX; the RPC's advisory
   // lock + re-check is the authoritative last line against a slot race. A
@@ -197,6 +205,10 @@ export interface CreateLabRequestOnlyInput {
   intakePreference: IntakePreference;
   notes: string | null;
   createdBy: string | null;
+  // How the patient reached us (0154) and the first-party UTM cookie at the
+  // time of booking. Stamped on every row of the group.
+  source: AppointmentSource | null;
+  attribution: Attribution | null;
   resolvePatient: () => Promise<{ ok: true; patient: PatientResolution } | { ok: false; error: string }>;
 }
 
@@ -241,6 +253,8 @@ export async function createLabRequestOnlyBooking(
         walk_in_name: patient.walkInName ?? null,
         walk_in_phone: patient.walkInPhone ?? null,
         created_by: input.createdBy,
+        source: input.source,
+        attribution: input.attribution,
       },
     ],
   });
