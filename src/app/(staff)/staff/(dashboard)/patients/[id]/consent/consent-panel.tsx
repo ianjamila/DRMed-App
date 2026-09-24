@@ -39,6 +39,7 @@ export function ConsentPanel({
   current,
   signedAt,
   noticeVersion,
+  bookingOnlyConsent,
   isAdmin,
 }: {
   patientId: string;
@@ -47,6 +48,9 @@ export function ConsentPanel({
   current: boolean;
   signedAt: string | null;
   noticeVersion: string | null;
+  // Latest event is the old online-booking tick (contact details only): on
+  // record, but not consent on file — the patient still needs to sign.
+  bookingOnlyConsent: boolean;
   isAdmin: boolean;
 }) {
   const [pending, start] = useTransition();
@@ -135,7 +139,12 @@ export function ConsentPanel({
             {noticeVersion ? ` (notice ${noticeVersion})` : ""}
           </span>
         ) : (
-          <span className="text-amber-700">Not on file</span>
+          <span className="text-amber-700">
+            Not on file
+            {bookingOnlyConsent
+              ? " — the online booking checkbox covered contact details only. Have the patient sign."
+              : ""}
+          </span>
         )}
       </p>
 
@@ -173,13 +182,13 @@ export function ConsentPanel({
         )}
         {/* The full form with the signature on it (or the paper scan) —
             also for consents accepted online, which carry no file at all. */}
-        {current && (
+        {(current || bookingOnlyConsent) && (
           <Link
             href={`/staff/patients/${patientId}/consent/signed`}
             target="_blank"
           >
             <Button type="button" variant="outline" size="sm">
-              View signed form
+              {current ? "View signed form" : "View booking consent"}
             </Button>
           </Link>
         )}

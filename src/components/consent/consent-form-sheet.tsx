@@ -37,7 +37,9 @@ export interface ConsentFormSigned {
   // Set for a consent ticked on a public website form (/register, /schedule).
   // Those forms never showed the clinic notice, so the sheet shows the
   // statement the patient actually ticked in its place.
-  publicForm: { label: string; statement: string | null } | null;
+  // bookingOnly: the pre-0162 booking tick (contact details only), which
+  // does not count as consent on file.
+  publicForm: { label: string; statement: string | null; bookingOnly: boolean } | null;
   // The provenance line under the form: how, when and by whom it was recorded.
   record: string;
 }
@@ -127,10 +129,15 @@ export function ConsentFormSheet({
               </p>
             )}
             <p className="mt-3 text-xs text-[color:var(--color-brand-text-soft)]">
-              The statement linked to the Privacy Notice on the DRMed website. The
-              clinic&apos;s full data privacy consent notice was not shown on that
-              form — capture a signature at the counter for a full consent.
+              The statement linked to the Privacy Notice on the DRMed website; the
+              clinic&apos;s printed consent notice was not shown on that form.
             </p>
+            {signed.publicForm.bookingOnly && (
+              <p className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+                Does not count as data privacy consent: this covered contact
+                details for the booking only. Have the patient sign at the counter.
+              </p>
+            )}
           </div>
         ) : (
           <ConsentNotice version={signed?.noticeVersion} />

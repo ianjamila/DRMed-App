@@ -41,6 +41,7 @@ describe("selfRegistrationGrant", () => {
       signatory: "self",
       actor_kind: "patient",
       source_form: "register",
+      consent_scope: "full",
       accepted_statement: publicFormConsentStatement("register"),
       ip: "203.0.113.9",
       user_agent: "vitest",

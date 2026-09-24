@@ -9,7 +9,7 @@ import { formatPhoneLocal } from "@/lib/format/phone";
 import { ReissuePinButton } from "@/components/staff/reissue-pin-button";
 import { VerifyIdentityButton } from "./verify-identity-button";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
-import { getPatientConsentState } from "@/lib/consent/gate";
+import { getPatientConsentState, hasBookingOnlyConsent } from "@/lib/consent/gate";
 import { ConsentPanel } from "./consent/consent-panel";
 import { paymentStatusLabel } from "@/lib/ui/payment-status";
 import { formatPatientName } from "@/lib/patients/format-name";
@@ -71,7 +71,10 @@ export default async function PatientDetailPage({ params }: Props) {
 
   if (!patient) notFound();
 
-  const consent = await getPatientConsentState(id);
+  const [consent, bookingOnlyConsent] = await Promise.all([
+    getPatientConsentState(id),
+    hasBookingOnlyConsent(id),
+  ]);
 
   const { data: visits } = await supabase
     .from("visits")
@@ -200,6 +203,7 @@ export default async function PatientDetailPage({ params }: Props) {
           current={consent.current}
           signedAt={consent.signedAt}
           noticeVersion={consent.noticeVersion}
+          bookingOnlyConsent={bookingOnlyConsent}
           isAdmin={isAdmin}
         />
       </div>

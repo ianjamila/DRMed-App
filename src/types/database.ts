@@ -3264,6 +3264,7 @@ export type Database = {
           accepted_statement: string | null
           actor_kind: string
           artifact_path: string | null
+          consent_scope: string
           created_at: string
           created_by: string | null
           event_type: string
@@ -3284,6 +3285,7 @@ export type Database = {
           accepted_statement?: string | null
           actor_kind: string
           artifact_path?: string | null
+          consent_scope?: string
           created_at?: string
           created_by?: string | null
           event_type: string
@@ -3304,6 +3306,7 @@ export type Database = {
           accepted_statement?: string | null
           actor_kind?: string
           artifact_path?: string | null
+          consent_scope?: string
           created_at?: string
           created_by?: string | null
           event_type?: string

@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { LATEST_CONSENT_EVENT_ORDER } from "@/lib/consent/latest-event";
 
 export async function isConsentGateRequired(): Promise<boolean> {
   const admin = createAdminClient();
@@ -40,4 +41,26 @@ export async function getPatientConsentState(
     method: data?.consent_method ?? null,
     noticeVersion: data?.consent_notice_version ?? null,
   };
+}
+
+/**
+ * Whether the patient's latest consent event is a booking-only grant (0162):
+ * the old online-booking checkbox, which covered contact details for the
+ * booking only. It is recorded but does not count as consent on file, so the
+ * patient page tells reception to have the patient sign. Read only there —
+ * getPatientConsentState stays a single patients read for the many pages
+ * that call it.
+ */
+export async function hasBookingOnlyConsent(patientId: string): Promise<boolean> {
+  const admin = createAdminClient();
+  const { data } = await admin
+    .from("patient_consents")
+    .select("event_type, consent_scope")
+    .eq("patient_id", patientId)
+    .order(LATEST_CONSENT_EVENT_ORDER.column, {
+      ascending: LATEST_CONSENT_EVENT_ORDER.ascending,
+    })
+    .limit(1)
+    .maybeSingle();
+  return data?.event_type === "granted" && data.consent_scope === "booking_contact_only";
 }

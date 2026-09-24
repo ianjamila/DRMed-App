@@ -135,7 +135,7 @@ export default async function SignedConsentPage({
   const { data: consent } = await admin
     .from("patient_consents")
     .select(
-      "id, event_type, method, created_at, notice_version, signatory, signatory_name, signatory_relationship, artifact_path, source_form, accepted_statement, recorded_by:staff_profiles!patient_consents_created_by_fkey(full_name)",
+      "id, event_type, method, created_at, notice_version, signatory, signatory_name, signatory_relationship, artifact_path, source_form, accepted_statement, consent_scope, recorded_by:staff_profiles!patient_consents_created_by_fkey(full_name)",
     )
     .eq("patient_id", patient.id)
     .order(LATEST_CONSENT_EVENT_ORDER.column, {
@@ -223,6 +223,7 @@ export default async function SignedConsentPage({
         ? {
             label: publicFormLabel(consent.source_form),
             statement: consent.accepted_statement,
+            bookingOnly: consent.consent_scope === "booking_contact_only",
           }
         : null,
     record: recordLine(consent, recordedBy),

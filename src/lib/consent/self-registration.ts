@@ -29,6 +29,7 @@ export function selfRegistrationGrant(input: {
     signatory: "self",
     actor_kind: "patient",
     source_form: input.sourceForm,
+    consent_scope: "full",
     accepted_statement: publicFormConsentStatement(input.sourceForm),
     ip: input.ip,
     user_agent: input.userAgent,

@@ -24,11 +24,23 @@ export const PUBLIC_FORM_CONSENT: Record<ConsentSourceForm, PublicFormConsentWor
     lead: null,
     body: "I consent to drmed.ph processing my personal and health information for registration and care under the Philippine Data Privacy Act (RA 10173).",
   },
+  // Since 0162 the booking form asks for the same consent as registration
+  // (it creates the patient record too). Its original wording covered
+  // contact details only — see LEGACY_BOOKING_CONTACT_ONLY_STATEMENT.
   schedule: {
     lead: "Service agreement (required).",
-    body: "I consent to drmed.ph processing my contact details to fulfil this booking under the Philippine Data Privacy Act (RA 10173). Lab results are released only after payment.",
+    body: "I consent to drmed.ph processing my personal and health information for registration and care under the Philippine Data Privacy Act (RA 10173). Lab results are released only after payment.",
   },
 };
+
+/**
+ * What the booking form said from 2026-05-07 until 0162. It covered contact
+ * details for the booking only — not health information or results — so 0162
+ * marks grants carrying it consent_scope = 'booking_contact_only' and they no
+ * longer count as consent on file. Frozen: 0162 backfilled this exact text.
+ */
+export const LEGACY_BOOKING_CONTACT_ONLY_STATEMENT =
+  "Service agreement (required). I consent to drmed.ph processing my contact details to fulfil this booking under the Philippine Data Privacy Act (RA 10173). Lab results are released only after payment. See the Privacy Notice.";
 
 /** Where the statement's "Privacy Notice" link points. */
 export const PUBLIC_FORM_PRIVACY_HREF = "/privacy";
