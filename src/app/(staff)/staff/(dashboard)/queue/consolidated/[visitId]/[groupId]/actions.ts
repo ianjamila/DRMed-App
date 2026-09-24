@@ -8,7 +8,7 @@ import { createClient } from "@/lib/supabase/server";
 import { audit } from "@/lib/audit/log";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { labQueueGate } from "@/lib/visits/lab-gate";
-import { sectionsForRole } from "@/lib/auth/role-sections";
+import { canClaimSection, sectionsForRole } from "@/lib/auth/role-sections";
 import { scopeToAllowedSections } from "@/lib/visits/bulk-selection";
 import {
   finaliseConsolidatedReport,
@@ -61,6 +61,14 @@ export async function claimConsolidated(
       return {
         ok: false,
         error: "This report is outside the sections you can claim.",
+      };
+    }
+    // Single-owner sections (x-ray → x-ray technician) — the same rule as
+    // claimTestAction, so the two claim paths cannot drift.
+    if (members.some((m) => !canClaimSection(session.role, m.services.section))) {
+      return {
+        ok: false,
+        error: "Part of this report can only be claimed by another role.",
       };
     }
 

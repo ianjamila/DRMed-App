@@ -537,7 +537,7 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
                 label="Unclaimed in my sections"
                 value={stats.myUnclaimed}
                 hint="Requested or in progress, unassigned"
-                href="/staff/queue"
+                href="/staff/queue?filter=unclaimed"
                 accent={stats.myUnclaimed > 0 ? "warn" : "default"}
                 error={stats.myUnclaimedError}
               />
@@ -608,7 +608,7 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
                 title="Oldest unclaimed"
                 items={oldestItems}
                 emptyMessage="No unclaimed tests."
-                viewAllHref="/staff/queue"
+                viewAllHref="/staff/queue?filter=unclaimed"
                 error={stats.oldestUnclaimedError}
               />
             )}

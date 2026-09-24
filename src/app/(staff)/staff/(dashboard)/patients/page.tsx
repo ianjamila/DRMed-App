@@ -26,6 +26,7 @@ import {
 import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 import { manilaDate } from "@/lib/dates/manila";
+import { sectionTabClass } from "@/components/staff/section-tabs-style";
 
 export const metadata = {
   title: "Patients",
@@ -38,7 +39,20 @@ interface SearchProps {
     dir?: string;
     page?: string;
     size?: string;
+    consent?: string;
   }>;
+}
+
+// Consent filter (0162). Anything else in ?consent= means "all patients".
+const CONSENT_FILTERS = [
+  { value: null, label: "All patients" },
+  { value: "on_file", label: "Consent on file" },
+  { value: "missing", label: "No consent" },
+] as const;
+type ConsentFilter = "on_file" | "missing" | null;
+
+function parseConsentFilter(raw: string | undefined): ConsentFilter {
+  return raw === "on_file" || raw === "missing" ? raw : null;
 }
 
 const BASE_PATH = "/staff/patients";
@@ -90,6 +104,7 @@ interface PatientDirectoryRow {
   referral_source: string | null;
   referral_source_label: string | null;
   last_visit_date: string | null;
+  consent_current: boolean;
 }
 
 async function search(
@@ -97,6 +112,7 @@ async function search(
   sort: SortSpec<SortColumn>,
   page: number,
   size: number,
+  consent: ConsentFilter,
 ) {
   const supabase = await createClient();
   const [from, to] = rangeFor(page, size);
@@ -105,7 +121,7 @@ async function search(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- v_patients_directory (migration 0143) isn't in the generated Database type yet; row shape is restored below via .returns<PatientDirectoryRow[]>()
     .from("v_patients_directory" as any)
     .select(
-      "id, drm_id, first_name, middle_name, last_name, phone, email, pre_registered, created_at, referral_source, referral_source_label, last_visit_date",
+      "id, drm_id, first_name, middle_name, last_name, phone, email, pre_registered, created_at, referral_source, referral_source_label, last_visit_date, consent_current",
       { count: "exact" },
     );
 
@@ -116,6 +132,9 @@ async function search(
   for (const clause of patientSearchOrClauses(query)) {
     q = q.or(clause);
   }
+  // In the query, not after it, so the pager's count and .range() see the
+  // filtered set.
+  if (consent) q = q.eq("consent_current", consent === "on_file");
 
   q = q.order(sort.key, {
     ascending: sort.dir === "asc",
@@ -140,7 +159,8 @@ export default async function PatientsPage({ searchParams }: SearchProps) {
   const sort = parseSort(params.sort, params.dir, SORTABLE_COLUMNS, DEFAULT_SORT);
   const size = parsePageSize(params.size, PAGE_SIZE_DEFAULT);
   const page = parsePage(params.page);
-  const { rows: patients, total } = await search(query, sort, page, size);
+  const consent = parseConsentFilter(params.consent);
+  const { rows: patients, total } = await search(query, sort, page, size, consent);
   const totalPages = pageCount(total, size);
 
   // Same derivation the Appointments page uses, so the QR points at whatever
@@ -158,6 +178,7 @@ export default async function PatientsPage({ searchParams }: SearchProps) {
     sort: isDefaultSort ? null : sort.key,
     dir: isDefaultSort ? null : sort.dir,
     size: size === PAGE_SIZE_DEFAULT ? null : String(size),
+    consent,
   };
 
   const sortHref = (key: SortColumn) => {
@@ -198,8 +219,21 @@ export default async function PatientsPage({ searchParams }: SearchProps) {
         }
       />
 
-      <div className="mb-6">
+      <div className="mb-6 space-y-3">
         <PatientsSearchInput initialQuery={query} />
+        {/* Filter links keep search, sort and size; a new filter starts on page 1. */}
+        <nav aria-label="Consent filter" className="flex flex-wrap gap-2">
+          {CONSENT_FILTERS.map((f) => (
+            <Link
+              key={f.label}
+              href={buildListHref(BASE_PATH, baseParams, { consent: f.value, page: null })}
+              className={sectionTabClass(consent === f.value)}
+              aria-current={consent === f.value ? "page" : undefined}
+            >
+              {f.label}
+            </Link>
+          ))}
+        </nav>
       </div>
 
       <Panel className="overflow-x-auto">
@@ -213,6 +247,7 @@ export default async function PatientsPage({ searchParams }: SearchProps) {
               {th("referral_source_label", "Source")}
               {th("last_visit_date", "Last visit")}
               {th("created_at", "Registered")}
+              <PlainTh label="Consent" />
               <PlainTh label="Status" />
             </tr>
           </thead>
@@ -220,7 +255,7 @@ export default async function PatientsPage({ searchParams }: SearchProps) {
             {patients.length === 0 ? (
               <tr>
                 <td
-                  colSpan={8}
+                  colSpan={9}
                   className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]"
                 >
                   No patients match.
@@ -268,6 +303,24 @@ export default async function PatientsPage({ searchParams }: SearchProps) {
                     </td>
                     <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
                       {manilaDate(p.created_at)}
+                    </td>
+                    <td className="px-4 py-3 text-xs">
+                      {p.consent_current ? (
+                        <Link
+                          href={`/staff/patients/${p.id}/consent/signed`}
+                          target="_blank"
+                          className="font-semibold text-green-700 hover:underline"
+                        >
+                          On file
+                        </Link>
+                      ) : (
+                        <Link
+                          href={`/staff/patients/${p.id}#consent`}
+                          className="font-semibold text-amber-700 hover:underline"
+                        >
+                          Not on file
+                        </Link>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       {p.pre_registered ? (

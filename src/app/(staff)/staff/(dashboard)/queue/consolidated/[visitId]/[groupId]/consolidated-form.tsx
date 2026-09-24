@@ -19,6 +19,8 @@ interface Props {
   /** Set when the visit is still waiting for payment (item 10) — replaces the
    * claim button with a notice. Server action enforces the same gate. */
   claimBlockedHint: string | null;
+  /** Server-rendered claim history + Unclaim, shown under the header. */
+  claimPanel?: React.ReactNode;
 }
 
 export function ConsolidatedForm(props: Props) {
@@ -161,6 +163,8 @@ export function ConsolidatedForm(props: Props) {
           ))}
         </div>
       </header>
+
+      {props.claimPanel}
 
       <section className="mt-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
         {deferredReason ? (

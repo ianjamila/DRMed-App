@@ -1,6 +1,7 @@
 import type { Database } from "@/types/database";
 import type { PatientResolution } from "@/lib/appointments/create";
 import { CURRENT_CONSENT_NOTICE_VERSION } from "./notice";
+import { publicFormConsentStatement, type ConsentSourceForm } from "./public-form-consent";
 
 type ConsentInsert = Database["public"]["Tables"]["patient_consents"]["Insert"];
 
@@ -10,10 +11,13 @@ type ConsentInsert = Database["public"]["Tables"]["patient_consents"]["Insert"];
  * created_by: the patient granted it themselves; no staff member vouched.
  *
  * Pure (no server-only) so the row shape is unit-tested and both public forms
- * cannot drift apart.
+ * cannot drift apart. Records which form it came from and the exact statement
+ * the patient ticked (0162) — the clinic notice was never shown on either form,
+ * so notice_version alone would misstate what was agreed to.
  */
 export function selfRegistrationGrant(input: {
   patientId: string;
+  sourceForm: ConsentSourceForm;
   ip: string | null;
   userAgent: string | null;
 }): ConsentInsert {
@@ -24,6 +28,9 @@ export function selfRegistrationGrant(input: {
     notice_version: CURRENT_CONSENT_NOTICE_VERSION,
     signatory: "self",
     actor_kind: "patient",
+    source_form: input.sourceForm,
+    consent_scope: "full",
+    accepted_statement: publicFormConsentStatement(input.sourceForm),
     ip: input.ip,
     user_agent: input.userAgent,
   };
@@ -76,6 +83,7 @@ export async function recordSelfRegistrationGrant(
   deps: RecordConsentDeps,
   input: {
     patientId: string;
+    sourceForm: ConsentSourceForm;
     ip: string | null;
     userAgent: string | null;
     metadata?: Record<string, unknown>;

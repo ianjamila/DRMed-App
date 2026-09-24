@@ -3261,8 +3261,10 @@ export type Database = {
       }
       patient_consents: {
         Row: {
+          accepted_statement: string | null
           actor_kind: string
           artifact_path: string | null
+          consent_scope: string
           created_at: string
           created_by: string | null
           event_type: string
@@ -3276,11 +3278,14 @@ export type Database = {
           signatory: string | null
           signatory_name: string | null
           signatory_relationship: string | null
+          source_form: string | null
           user_agent: string | null
         }
         Insert: {
+          accepted_statement?: string | null
           actor_kind: string
           artifact_path?: string | null
+          consent_scope?: string
           created_at?: string
           created_by?: string | null
           event_type: string
@@ -3294,11 +3299,14 @@ export type Database = {
           signatory?: string | null
           signatory_name?: string | null
           signatory_relationship?: string | null
+          source_form?: string | null
           user_agent?: string | null
         }
         Update: {
+          accepted_statement?: string | null
           actor_kind?: string
           artifact_path?: string | null
+          consent_scope?: string
           created_at?: string
           created_by?: string | null
           event_type?: string
@@ -3312,6 +3320,7 @@ export type Database = {
           signatory?: string | null
           signatory_name?: string | null
           signatory_relationship?: string | null
+          source_form?: string | null
           user_agent?: string | null
         }
         Relationships: [
@@ -6559,6 +6568,18 @@ export type Database = {
         Returns: number
       }
       period_status_for: { Args: { p_date: string }; Returns: string }
+      queue_claim_remarks: {
+        Args: { p_test_request_ids: string[] }
+        Returns: {
+          action: string
+          actor_name: string
+          created_at: string
+          new_holder_name: string
+          previous_holder_name: string
+          reason: string
+          test_request_id: string
+        }[]
+      }
       recompute_clinic_fee_for_unreleased: { Args: never; Returns: Json }
       recompute_hmo_batch_status: {
         Args: { p_batch_id: string }

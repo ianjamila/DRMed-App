@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { CURRENT_CONSENT_NOTICE_VERSION } from "./notice";
+import { publicFormConsentStatement } from "./public-form-consent";
 import {
   recordSelfRegistrationGrant,
   selfRegistrationGrant,
@@ -26,6 +27,7 @@ describe("shouldRecordBookingConsent", () => {
 describe("selfRegistrationGrant", () => {
   const row = selfRegistrationGrant({
     patientId: "p-1",
+    sourceForm: "register",
     ip: "203.0.113.9",
     userAgent: "vitest",
   });
@@ -38,9 +40,19 @@ describe("selfRegistrationGrant", () => {
       notice_version: CURRENT_CONSENT_NOTICE_VERSION,
       signatory: "self",
       actor_kind: "patient",
+      source_form: "register",
+      consent_scope: "full",
+      accepted_statement: publicFormConsentStatement("register"),
       ip: "203.0.113.9",
       user_agent: "vitest",
     });
+  });
+
+  it("stores the statement of the form it came from", () => {
+    const booking = selfRegistrationGrant({ patientId: "p-3", sourceForm: "schedule", ip: null, userAgent: null });
+    expect(booking.source_form).toBe("schedule");
+    expect(booking.accepted_statement).toBe(publicFormConsentStatement("schedule"));
+    expect(booking.accepted_statement).not.toBe(row.accepted_statement);
   });
 
   it("never sets created_by — no staff member vouched for a self-service grant", () => {
@@ -48,14 +60,14 @@ describe("selfRegistrationGrant", () => {
   });
 
   it("passes null ip/agent through unchanged", () => {
-    const anon = selfRegistrationGrant({ patientId: "p-2", ip: null, userAgent: null });
+    const anon = selfRegistrationGrant({ patientId: "p-2", sourceForm: "register", ip: null, userAgent: null });
     expect(anon.ip).toBeNull();
     expect(anon.user_agent).toBeNull();
   });
 });
 
 describe("recordSelfRegistrationGrant", () => {
-  const input = { patientId: "p-1", ip: "203.0.113.9", userAgent: "vitest" };
+  const input = { patientId: "p-1", sourceForm: "schedule" as const, ip: "203.0.113.9", userAgent: "vitest" };
 
   it("inserts the self-registration grant row and reports it recorded", async () => {
     const inserted: unknown[] = [];

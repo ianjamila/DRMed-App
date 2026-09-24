@@ -9,8 +9,10 @@ import { formatPhoneLocal } from "@/lib/format/phone";
 import { ReissuePinButton } from "@/components/staff/reissue-pin-button";
 import { VerifyIdentityButton } from "./verify-identity-button";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
-import { getPatientConsentState } from "@/lib/consent/gate";
+import { getConsentHistory, getPatientConsentState } from "@/lib/consent/gate";
+import { latestIsBookingOnly } from "@/lib/consent/history";
 import { ConsentPanel } from "./consent/consent-panel";
+import { ConsentHistory } from "./consent/consent-history";
 import { paymentStatusLabel } from "@/lib/ui/payment-status";
 import { formatPatientName } from "@/lib/patients/format-name";
 import { referralSourceLabel } from "@/lib/patients/referral-sources";
@@ -71,7 +73,11 @@ export default async function PatientDetailPage({ params }: Props) {
 
   if (!patient) notFound();
 
-  const consent = await getPatientConsentState(id);
+  const [consent, consentHistory] = await Promise.all([
+    getPatientConsentState(id),
+    getConsentHistory(id),
+  ]);
+  const bookingOnlyConsent = latestIsBookingOnly(consentHistory);
 
   const { data: visits } = await supabase
     .from("visits")
@@ -195,11 +201,15 @@ export default async function PatientDetailPage({ params }: Props) {
       <div id="consent" className="mt-3 scroll-mt-24">
         <ConsentPanel
           patientId={id}
+          patientName={[patient.last_name, patient.first_name].filter(Boolean).join(", ")}
+          drmId={patient.drm_id}
           current={consent.current}
           signedAt={consent.signedAt}
           noticeVersion={consent.noticeVersion}
+          bookingOnlyConsent={bookingOnlyConsent}
           isAdmin={isAdmin}
         />
+        <ConsentHistory patientId={id} events={consentHistory} />
       </div>
 
       <section className="mt-8">

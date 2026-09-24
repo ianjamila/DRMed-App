@@ -9,6 +9,10 @@ import { isSectionAllowed } from "@/lib/auth/section-access";
 import { deriveEnabledParamIds } from "@/lib/results/enabled-params";
 import { labQueueGate } from "@/lib/visits/lab-gate";
 import { ConsolidatedForm } from "./consolidated-form";
+import { claimRemarks } from "@/lib/queue/claim-remarks";
+import { fetchClaimEvents } from "@/lib/queue/fetch-claim-events";
+import { ClaimHistory } from "@/components/staff/claim-remarks-list";
+import { QueueUnclaimButton } from "../../../queue-unclaim-button";
 
 const loadConsolidatedDetail = cache(async (visitId: string, groupId: string) => {
   const session = await requireActiveStaff();
@@ -143,6 +147,25 @@ export default async function ConsolidatedQueuePage({
     : requests[0].visits;
   const claimGate = labQueueGate(firstVisit);
 
+  // Claim history for the whole panel (a group claim/unclaim writes one event
+  // per member; claimRemarks folds those into one line), plus Unclaim — the
+  // single-test page has "Your claim › Unclaim", and this page had nothing.
+  // Same rule as the queue row: the holder, or an admin; every member still
+  // in progress. unclaimFromQueueAction re-proves all of it.
+  const testRequestIds = requests.map((r) => r.id);
+  const events = await fetchClaimEvents(supabase, testRequestIds);
+  const history = claimRemarks(testRequestIds.flatMap((id) => events.get(id) ?? []));
+  // A non-admin must hold EVERY member — the same all-or-nothing check
+  // performUnclaim makes, so the button never offers what the action refuses.
+  const canUnclaim =
+    claimedBy !== null &&
+    requests.every(
+      (r) =>
+        r.status === "in_progress" &&
+        r.assigned_to !== null &&
+        (session.role === "admin" || r.assigned_to === myStaffId),
+    );
+
   return (
     <ConsolidatedForm
       claimBlockedHint={claimGate.ok ? null : claimGate.hint}
@@ -153,7 +176,15 @@ export default async function ConsolidatedQueuePage({
         const svc = Array.isArray(r.services) ? r.services[0] : r.services;
         return svc?.code ?? "";
       })}
-      testRequestIds={requests.map((r) => r.id)}
+      testRequestIds={testRequestIds}
+      claimPanel={
+        <div className="mt-4 flex flex-wrap items-start justify-between gap-4 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
+          <ClaimHistory remarks={history} />
+          {canUnclaim ? (
+            <QueueUnclaimButton testRequestIds={testRequestIds} entryLabel={group.name} />
+          ) : null}
+        </div>
+      }
       enabledParamIds={enabledParamIds}
       claimedBy={claimedBy}
       myStaffId={myStaffId}
