@@ -34,8 +34,9 @@ Appointments" → then "include all the also-worth-considering and fix it".
    - RLS: no anon access at all (the form inserts with service role); reception/admin SELECT +
      UPDATE; no DELETE through a JWT ("Closed" dismisses, spam included).
 3. **Alerts** — a count badge on the sidebar item and two reception dashboard cards (+ one admin
-   card), and an email per new message to `CONTACT_ALERT_EMAILS` (comma list) or, when unset,
-   every active reception + admin account. **The email carries no message body and no contact
+   card), and an email per new message to whoever Admin Tools › Email Alerts switches on (0155 —
+   default: every active reception + admin account; it replaced the original
+   `CONTACT_ALERT_EMAILS` env var). **The email carries no message body and no contact
    details** (RA 10173 — staff sign in to read it): first name, subject, corporate flag, a
    button to the message. Audited as `contact_message.alert_sent`.
 4. **Book appointment from a message** — reuses the standard "+ New appointment" slide-over

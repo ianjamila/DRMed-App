@@ -563,6 +563,12 @@ export const STAFF_NAV: StaffNavSection[] = [
             roles: ["admin"],
           },
           {
+            href: "/staff/admin/settings/alerts",
+            label: ROUTE_NAME["/staff/admin/settings/alerts"],
+            description: "Choose who gets the clinic's alert emails — new website messages, result-template problems and possible duplicate patients. Switch each alert on or off, pick staff one by one, or add a shared inbox.",
+            roles: ["admin"],
+          },
+          {
             href: "/staff/admin/import-patients",
             label: ROUTE_NAME["/staff/admin/import-patients"],
             description: "Bulk-import patients from a CSV file — used during initial setup or when migrating from another system. Reads name, DOB, phone, email columns and creates one patient record per row.",

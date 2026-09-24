@@ -25,12 +25,12 @@ Key reference artifacts:
   every post-1.0 programme (partner revisions, release lifecycle, group templates, EOD
   denomination count…). Read the spec before re-deriving a design decision.
 
-Migration ledger: **prod head = 0153** (`booking_settings`, the online-booking pause switch,
-#196, applied 2026-09-23 and verified by object). **0151** (`rls_initplan_and_policy_consolidation`,
+Migration ledger: **prod head = 0154** (`website_messages_inbox`, #198, pushed by Claude and
+verified by object 2026-09-24). **0155** (`staff_alert_recipients`) is in flight on
+`feat/email-alert-recipients`. **0153** (`booking_settings`, #196) is applied and verified. **0151** (`rls_initplan_and_policy_consolidation`,
 #192) is also applied and verified: 159 public policies, zero unwrapped helper calls, and no
-unexpected policyless tables. **0154** (`website_messages_inbox`) is in flight on
-`feat/website-messages` and must be pushed before its PR merges. **Next unused number: 0155**,
-subject to checking open branches again.
+unexpected policyless tables. **Next unused number: 0156**, subject to checking open branches
+again.
 `ls supabase/migrations | tail -3` is NOT enough to pick the next number — it only sees your
 own worktree, and on 2026-09-15 two branches claimed 0147 (and P0050) the same afternoon.
 Check the open branches too:
@@ -211,6 +211,7 @@ All Server Actions return `{ ok: true, data } | { ok: false, error }`. User-faci
 | The long-form appointment stamp used in patient comms (`formatManilaDateTime`) | `src/lib/notifications/format-manila-datetime.ts` |
 | Report period presets (`buildPeriodPresets`, `buildAsOfPresets`, `priorYearRange`) and carrying a period across a tab bar (`carryParams`, `statementPeriodQueries`) | `src/lib/reports/{period-presets,statement-period}.ts` |
 | Website Messages inbox vocabulary (statuses, kinds, `CORPORATE_SUBJECT`), the message → booking seam, and how a patient reached us (`appointments.source`) | `src/lib/contact-messages/{labels,booking-link}.ts`, `src/lib/appointments/source.ts` — pinned to 0154 by `website-messages-schema.test.ts` |
+| Who receives each STAFF alert email (website message, template health, duplicate-patient digest): the registry + defaults, and the resolver every sender calls — managed in Admin Tools › Email Alerts (0155) | `src/lib/notifications/{staff-alerts,staff-alert-recipients}.ts` |
 | Staff list-page URL contract (sort/dir/page/size parsing, sort-column allow-list) | `src/lib/ui/table-params.ts`; components `src/components/staff/{sortable-th,list-pagination}.tsx` |
 | Rate-limit checker (per-bucket) | `src/lib/rate-limit/check.ts` |
 | Pure visit-domain rules (classification, deletability, lab payment gate, receipt policy, doctor-fee split, visit # search) | `src/lib/visits/{classification,deletion,lab-gate,receipt-policy,consultation-fee,visit-number-filter}.ts` |

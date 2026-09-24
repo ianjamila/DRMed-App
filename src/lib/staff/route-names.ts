@@ -61,6 +61,7 @@ export const ROUTE_NAME: Record<string, string> = {
   "/staff/admin/seo": "Search Engines (IndexNow)",
   "/staff/admin/settings/consent-gate": "Consent Gate",
   "/staff/admin/settings/online-booking": "Online Booking",
+  "/staff/admin/settings/alerts": "Email Alerts",
   "/staff/admin/import-patients": "Import Patients",
   "/staff/admin/patient-merge": "Merge Duplicate Patients",
   "/staff/profile": "My Profile",

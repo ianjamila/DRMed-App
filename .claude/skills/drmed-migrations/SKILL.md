@@ -7,7 +7,7 @@ description: Use when working on DRMed database schema changes, Supabase migrati
 
 ## What this is
 
-Sequential migrations under `supabase/migrations/`, zero-padded numeric naming (`0001_init.sql` → `0149_ap_cash_bill_payment_drawer_link.sql`). The numbering has gaps (0056–0058 never existed) — that's fine, repo and remote skip them identically; gaps are NOT drift. **Prod ledger head = 0153 (2026-09-23). 0154 is in flight on `feat/website-messages`; next unused 0155.** Every schema change has a fixed workflow + a per-table checklist (RLS + audit + payment-gating + function ACL). Get the checklist wrong and you create either a compliance gap, an anon-callable RPC, or a query that returns empty silently.
+Sequential migrations under `supabase/migrations/`, zero-padded numeric naming (`0001_init.sql` → `0149_ap_cash_bill_payment_drawer_link.sql`). The numbering has gaps (0056–0058 never existed) — that's fine, repo and remote skip them identically; gaps are NOT drift. **Prod ledger head = 0154 (2026-09-24, #198). 0155 is in flight on `feat/email-alert-recipients`; next unused 0156.** Every schema change has a fixed workflow + a per-table checklist (RLS + audit + payment-gating + function ACL). Get the checklist wrong and you create either a compliance gap, an anon-callable RPC, or a query that returns empty silently.
 
 ## Landmark migrations (where the load-bearing objects live)
 
@@ -49,6 +49,7 @@ supabase/migrations/
 
 0152_cash_journal_descriptions.sql       ← readable cash-adjustment JE descriptions; same posting body/ACL as 0149. 0151 was reserved on perf/rls-initplan-realtime; this independent migration does not include or require that RLS change.
 0153_booking_settings.sql                ← the online-booking pause singleton (admin switch; service-role reads, one staff-read policy).
+0155_staff_alert_recipients.sql          ← Admin Tools › Email Alerts: `staff_alert_settings` (on/off per staff alert, 3 seeded keys pinned by `staff-alerts.test.ts`) + `staff_alert_recipients` (per-staff override XOR extra address, `subscribed` switch); admin-only RLS; senders read via `resolveStaffAlertRecipients` (service role). No staff row = the alert's role default from `staff-alerts.ts`. Replaced the `CONTACT_ALERT_EMAILS` env var.
 0154_website_messages_inbox.sql          ← drops the never-used `inquiries` (refuses if rows appear); `contact_messages` becomes the Website Messages inbox (status/kind/staff_notes/linked_appointment_id/attribution; P0053 immutability trigger; anon access REVOKED — 0004’s `with check (true)` anon INSERT policy let anyone skip the form’s honeypot + rate limit; reception/admin SELECT + UPDATE, no JWT DELETE); `appointments.source` + `attribution` backfilled from `appointment.booked` audit rows; `appointments_insert_slot_guarded` re-created to insert both (ACL restated service_role-only); `contact_message_replies` = append-only reply log (reception/admin SELECT + INSERT as themselves — `sent_by = (select auth.uid())` — no UPDATE/DELETE). CHECK lists pinned by `website-messages-schema.test.ts`; seed.sql carries the matching re-revoke.
 
 supabase/seed.sql                        ← post-`db reset` grants (tables + sequences ONLY, never routines) + named re-revokes (0134, 0135, 0136, 0148, 0150, 0154 — `seed-grant-parity.test.ts` fails when a migration revoke is not mirrored)
