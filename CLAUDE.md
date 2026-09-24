@@ -34,7 +34,11 @@ first from a parallel branch) and verified by object 2026-09-24; **0154** (#198)
 #192) is also applied and verified: 159 public policies, zero unwrapped helper calls, and no
 unexpected policyless tables. **0158** (`resolve_patient_referral_source`) is in flight on
 `feat/booking-referral-source` and must be pushed before its PR merges.
-**Next unused number: 0159**, subject to checking open branches again.
+**0163** (`drm_id_width`, `fix/drm-id-width`) fixes `generate_drm_id()` truncating past DRM-9999.
+Open branches already hold 0159 (`fix/retire-send-out-accrual`), 0160 (BOTH `feat/payment-edit` and
+`feat/xray-claim-gate`) and 0162 (`feat/consent-extras`); 0161 was left free for the 0160 renumber.
+Whichever lands after a higher number needs `db push --include-all`.
+**Next unused number: 0164**, subject to checking open branches again.
 `ls supabase/migrations | tail -3` is NOT enough to pick the next number — it only sees your
 own worktree, and on 2026-09-15 two branches claimed 0147 (and P0050) the same afternoon.
 Check the open branches too:
