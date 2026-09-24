@@ -13,6 +13,7 @@ import {
   type DenominationCounts,
 } from "@/lib/accounting/cash-denominations";
 import { manilaDateTime } from "@/lib/dates/manila";
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 import { PrintButton } from "./print-button";
 
 export const metadata = { title: "Cash count sheet" };
@@ -133,7 +134,7 @@ export default async function CashCountSheetPage({
           href={`/staff/payments/eod?date=${close.business_date}&shift=${close.shift_id}`}
           className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
         >
-          ← End of day
+          ← {ROUTE_NAME["/staff/payments/eod"]}
         </Link>
         <PrintButton />
       </div>

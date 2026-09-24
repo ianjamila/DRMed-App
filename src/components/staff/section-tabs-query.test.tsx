@@ -72,7 +72,7 @@ describe("StatementTabs", () => {
 });
 
 describe("PaymentsTabs", () => {
-  it("renders Cash Drawer | Petty Cash | End of Day, in that order", () => {
+  it("renders Cash In & Out | Petty Cash | End of Day, in that order", () => {
     const html = renderToStaticMarkup(<PaymentsTabs />);
     expect(hrefs(html)).toEqual([
       "/staff/payments/cash-drawer",
@@ -80,7 +80,8 @@ describe("PaymentsTabs", () => {
       "/staff/payments/eod",
     ]);
     expect(html.replace(/<[^>]+>/g, "|")).toMatch(
-      /Cash Drawer\|+Petty Cash\|+End of Day/,
+      // renderToStaticMarkup escapes the ampersand.
+      /Cash In &amp; Out\|+Petty Cash\|+End of Day/,
     );
   });
 
