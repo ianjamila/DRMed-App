@@ -29,7 +29,7 @@ export interface StaffNavItem {
   exact?: boolean;
   // Extra prefixes that also mark this item active. Use when href points at
   // one tab of a tabbed page and the item should stay lit on the sibling tabs
-  // (Cash Drawer lands on /staff/payments/cash-drawer and stays lit on the
+  // (Cash Drawer lands on its Cash In & Out tab and stays lit on the
   // Petty Cash and End of Day tabs). List the sibling routes individually —
   // never a shared parent like /staff/payments, which would also light the
   // item on /staff/payments/new (Record payment), a route no sidebar item owns.
@@ -162,14 +162,17 @@ export const STAFF_NAV: StaffNavSection[] = [
         quicklink: {"reception":{"order":8,"group":"Billing"}},
         // Dashboard action/view owned here without adding a sidebar row.
         shortcuts: [{ href: "/staff/payments/petty-cash", label: ROUTE_NAME["/staff/payments/petty-cash"], roles: ["reception","admin"], quicklink: {"reception":{"order":9,"group":"Billing"}} }],
-        label: ROUTE_NAME["/staff/payments/cash-drawer"],
-        // One item for the whole till: lands on the Cash Drawer tab; Petty
+        // An umbrella: "Cash Drawer" names the whole till, while the landing tab
+        // is "Cash In & Out" (the running balance and movement log) — naming the
+        // item after that one tab would hide Petty Cash and End of Day.
+        label: SECTION_NAME["/staff/payments/cash-drawer"],
+        // One item for the whole till: lands on the Cash In & Out tab; Petty
         // Cash and End of Day are the other two tabs of the same page
         // (PaymentsTabs). activePrefixes keeps this item lit on both sibling
         // routes. NOT the /staff/payments parent — that would also light it on
         // /staff/payments/new (Record payment), which no sidebar item owns.
         activePrefixes: ["/staff/payments/petty-cash", "/staff/payments/eod"],
-        description: "Your shift cash workspace, in three tabs. Cash Drawer: start your drawer with a counted amount of starting cash. Petty Cash: log small cash expenses paid from the till (transport, courier, supplies, minor repairs) so the day's count still ties. End of Day: count the drawer again to see the difference. Anything paid by GCash, bank transfer, or a vendor invoice goes through admin.",
+        description: "Your shift cash workspace, in three tabs. Cash In & Out: start your drawer with a counted amount of starting cash and record cash paid out. Petty Cash: log small cash expenses paid from the till (transport, courier, supplies, minor repairs) so the day's count still ties. End of Day: count the drawer again to see the difference. Anything paid by GCash, bank transfer, or a vendor invoice goes through admin.",
         roles: ["reception", "admin"],
       },
     ],
@@ -449,7 +452,7 @@ export const STAFF_NAV: StaffNavSection[] = [
             // prefix match keeps this item lit on the /ops tab too.
             href: "/staff/marketing",
             label: SECTION_NAME["/staff/marketing"],
-            description: "The marketing workspace, in three tabs: Ad Performance (upload your Meta + Google ad CSV exports to see spend, cost per booking, and the lead funnel), Ops Tracker (daily/weekly/monthly checklists, the 12-week launch roadmap, and the campaign status board) — both saved in this browser only — and Booking Sources (live from the clinic's records: where appointments and website messages came from, by source and by ad campaign).",
+            description: "The marketing workspace, in three tabs: Ad Performance (upload your Meta + Google ad CSV exports to see spend, cost per booking and the lead funnel, next to the real bookings and website messages each campaign brought in according to the clinic's records), Ops Tracker (daily/weekly/monthly checklists, the 12-week launch roadmap and the campaign status board), and Booking Sources (where appointments and website messages came from, by source and by ad campaign). Uploaded ad files and the Ops Tracker are saved in this browser only.",
             roles: ["admin"],
           },
         ],

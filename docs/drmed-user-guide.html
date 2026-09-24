@@ -247,7 +247,7 @@
 <div class="layout">
 <nav class="toc" aria-label="Contents">
   <p class="toc-brand">drmed<span>.</span>ph</p>
-  <p class="toc-tag">User guide · v2.7</p>
+  <p class="toc-tag">User guide · v2.8</p>
   <div class="filter" role="group" aria-label="Show chapters for">
     <button type="button" data-filter="all" aria-pressed="true">All roles</button>
     <button type="button" data-filter="reception">Reception</button>
@@ -322,7 +322,7 @@
   <div class="meta">
     <div><strong>Audience</strong>Reception · Medtech · X-ray · Pathologist · Admin · Patients</div>
     <div><strong>Covers</strong>Everything live in production as of the September 2026 release</div>
-    <div><strong>Version</strong>2.7 · 24 September 2026</div>
+    <div><strong>Version</strong>2.8 · 24 September 2026</div>
     <div><strong>Replaces</strong>Staff User Guide v1.0 (22 May 2026)</div>
   </div>
 </header>
@@ -429,7 +429,7 @@
         <tr><td colspan="6"><b>Billing</b></td></tr>
         <tr><td>Visit Records (with New Visit tab)</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
         <tr><td>Quick Quote</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
-        <tr><td>Cash Drawer (with Petty Cash and End of Day tabs)</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
+        <tr><td>Cash Drawer (Cash In &amp; Out, Petty Cash and End of Day tabs)</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
         <tr><td colspan="6"><b>Lab &amp; Imaging</b></td></tr>
         <tr><td>Queue</td><td class="no">·</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
         <tr><td>Critical Alerts</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td><td class="yes">✓</td></tr>
@@ -661,9 +661,9 @@
   <!-- 3.10 -->
   <section class="sub" id="rec-cash">
     <h3>3.10 Cash Drawer, Petty Cash and End of Day</h3>
-    <div class="screen"><div class="where">Sidebar › Billing › <kbd class="ui">Cash Drawer</kbd> · <code class="route">/staff/payments/cash-drawer</code> · tabs <span class="tab">Cash Drawer</span> | <span class="tab">Petty Cash</span> | <span class="tab">End of Day</span> — the End of Day tab = <code class="route">/staff/payments/eod</code></div>
-      <dl><dt>Drawer shows</dt><dd><b>Starting cash</b> · <b>Cash received today</b> · <b>Cash paid out</b> · <b>Cash you should have now</b></dd>
-      <dt>Drawer buttons</dt><dd><kbd class="ui">+ Pay out cash</kbd> · <kbd class="ui">+ Add cash to drawer</kbd> · <kbd class="ui">+ Remove cash from drawer</kbd> · <kbd class="ui">Count &amp; close day →</kbd></dd></dl></div>
+    <div class="screen"><div class="where">Sidebar › Billing › <kbd class="ui">Cash Drawer</kbd> · <code class="route">/staff/payments/cash-drawer</code> · tabs <span class="tab">Cash In &amp; Out</span> | <span class="tab">Petty Cash</span> | <span class="tab">End of Day</span> — the End of Day tab = <code class="route">/staff/payments/eod</code></div>
+      <dl><dt>Cash In &amp; Out shows</dt><dd><b>Starting cash</b> · <b>Cash received today</b> · <b>Cash paid out</b> · <b>Cash you should have now</b></dd>
+      <dt>Cash In &amp; Out buttons</dt><dd><kbd class="ui">+ Pay out cash</kbd> · <kbd class="ui">+ Add cash to drawer</kbd> · <kbd class="ui">+ Remove cash from drawer</kbd> · <kbd class="ui">Count &amp; close day →</kbd></dd></dl></div>
     <h4>During the day</h4>
     <ol class="steps">
       <li><p class="step-title">At the start of the shift, check <b>Starting cash</b> matches what is physically in the drawer.</p><p>Use <kbd class="ui">+ Add cash to drawer</kbd> if the float was topped up.</p></li>
@@ -672,7 +672,7 @@
     <div class="note why"><span class="k">Where Starting cash comes from</span><div><p>Starting cash is not typed in each day — it is the clinic's baseline change fund plus every top-up and minus every pull-out recorded since. Admin sees an <kbd class="ui">Edit</kbd> link beside <b>Starting cash</b> that opens the baseline (<kbd class="ui">Cash Routing</kbd> under Admin › Catalog &amp; Setup); reception never sees this link and cannot change it. Because the baseline is shared, editing it changes the starting amount for <b>every</b> day, not just today — use <kbd class="ui">+ Add cash to drawer</kbd> / <kbd class="ui">+ Remove cash from drawer</kbd> for a one-off change instead.</p></div></div>
     <h4>Closing</h4>
     <ol class="steps">
-      <li><p class="step-title">Click <kbd class="ui">Count &amp; close day →</kbd>. The page is titled <q>Close &amp; count cash</q> with today's date.</p></li>
+      <li><p class="step-title">Click <kbd class="ui">Count &amp; close day →</kbd>. The <span class="tab">End of Day</span> tab opens, headed <q>End of Day · <i>today's date</i></q> under a small <b>Cash Drawer</b> label.</p></li>
       <li><p class="step-title">Count the drawer by denomination and type each count into the <b>Bills</b> and <b>Coins</b> columns.</p><p>Bills: ₱1,000 · ₱500 · ₱200 · ₱100 · ₱50 · ₱20. Coins: ₱20 · ₱10 · ₱5 · ₱1 · 25¢. The ₱20 bill and ₱20 coin are separate rows.</p></li>
       <li><p class="step-title">Read <b>Cash you actually counted</b> and <b>Difference (over / short)</b>. They are calculated from your counts; you never type a total.</p></li>
       <li><p class="step-title">If the difference is not zero, type the <b>Reason for the difference</b>. It is required.</p></li>
@@ -1145,7 +1145,7 @@
 </section>
 
 <footer class="end">
-  <p>drmed.ph User Guide · v2.7 · 24 September 2026 · Matches the production release at migration 0154. Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
+  <p>drmed.ph User Guide · v2.8 · 24 September 2026 · Matches the production release at migration 0154. Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
 </footer>
 </main>
 </div>

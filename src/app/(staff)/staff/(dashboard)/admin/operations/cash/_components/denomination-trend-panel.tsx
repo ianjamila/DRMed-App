@@ -37,7 +37,7 @@ export function DenominationTrendPanel({ trend }: { trend: DenominationTrend }) 
           {trend.closedDays === 0 ? (
             <EmptyState
               title="No end-of-day closes recorded in this period"
-              description="Close shifts in Cash drawer → EOD to populate."
+              description="Close shifts in Cash Drawer → End of Day to populate."
             />
           ) : (
             <>

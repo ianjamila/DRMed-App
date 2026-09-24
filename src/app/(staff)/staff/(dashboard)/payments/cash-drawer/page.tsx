@@ -3,9 +3,10 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { redirect } from "next/navigation";
 import { isISODate, todayManilaISODate } from "@/lib/dates/manila";
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 import { CashDrawerClient } from "./cash-drawer-client";
 
-export const metadata = { title: "Cash Drawer" };
+export const metadata = { title: ROUTE_NAME["/staff/payments/cash-drawer"] };
 export const dynamic = "force-dynamic";
 
 interface SearchParams { date?: string; shift?: string }

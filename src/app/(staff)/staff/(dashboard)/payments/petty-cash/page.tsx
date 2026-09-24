@@ -4,13 +4,14 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isISODate, todayManilaISODate } from "@/lib/dates/manila";
 import { PageHeader } from "@/components/staff/page-header";
+import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
 import { PaymentsTabs } from "../_components/payments-tabs";
 import { PETTY_CASH_COA_TO_CATEGORY } from "@/lib/accounting/expense-mappings";
 import { PettyCashDatePicker } from "./petty-cash-date-picker";
 import { PettyCashForm } from "./petty-cash-form";
 import { PettyCashList, type PettyCashRow } from "./petty-cash-list";
 
-export const metadata = { title: "Petty Cash" };
+export const metadata = { title: ROUTE_NAME["/staff/payments/petty-cash"] };
 export const dynamic = "force-dynamic";
 
 interface SearchParams {
@@ -87,7 +88,8 @@ export default async function PettyCashPage({
     <div className="px-4 py-8 sm:px-6 lg:px-8">
       <PaymentsTabs />
       <PageHeader
-        title="Petty Cash"
+        eyebrow={SECTION_NAME["/staff/payments/cash-drawer"]}
+        title={ROUTE_NAME["/staff/payments/petty-cash"]}
         subtitle="Log small cash expenses paid from the till — transport, courier, office or lab supplies, minor repairs. Each entry comes straight out of the drawer, so the day's expected cash drops by the same amount and the count still ties. For anything paid by GCash, bank transfer, or a vendor invoice, ask admin."
       />
 
@@ -105,7 +107,7 @@ export default async function PettyCashPage({
             {isToday ? "Today's petty cash" : "Petty cash for this day"}
           </h2>
           <p className="text-xs text-[color:var(--color-brand-text-soft)]">
-            Includes cash paid out from the Cash drawer screen, so this matches
+            Includes cash paid out from the {ROUTE_NAME["/staff/payments/cash-drawer"]} tab, so this matches
             what the drawer expects.
           </p>
           <PettyCashList rows={rows} isToday={isToday} />

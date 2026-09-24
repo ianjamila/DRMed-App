@@ -402,6 +402,7 @@ const NAME_EXCEPTIONS: NameException[] = [
     ["/staff/admin/operations", "Daily Monitoring"],
     ["/staff/admin/accounting/financial-statements", "Financial Statements"],
     ["/staff/marketing", "Marketing"],
+    ["/staff/payments/cash-drawer", "Cash Drawer"],
   ].map(([href, label]) => ({
     file: NAV_FILE, href, label,
     why: "An umbrella opens a section containing several views; naming it after its first tab would conceal the other views.",
@@ -598,7 +599,7 @@ describe("route name registry ownership", () => {
   });
 });
 
-// The four adopted families use one header API, with no duplicated layout kicker.
+// The adopted families use one header API, with no duplicated layout kicker.
 // An exception must identify a file and argue why separate section wording is
 // correct (not merely that it predates this guard). Metric captions are separate.
 const EYEBROW_EXCEPTIONS: Record<string, { nodes: string[]; why: string }> = {
@@ -606,17 +607,28 @@ const EYEBROW_EXCEPTIONS: Record<string, { nodes: string[]; why: string }> = {
     nodes: ["p:SummaryTile"],
     why: "SummaryTile labels a cash metric inside an article; it is not the page section eyebrow and must describe its own value.",
   },
+  [`${DASHBOARD_DIR}/payments/eod/[closeId]/count-sheet/page.tsx`]: {
+    nodes: ["h1:CashCountSheetPage"],
+    why: "The printed count sheet is a signed paper record under the clinic letterhead; its heading names that document, not the on-screen Cash Drawer section.",
+  },
 };
-const HEADER_FAMILIES = ["admin/accounting/ap", "admin/operations", "admin/accounting/financial-statements", "marketing"];
+const HEADER_FAMILIES: [dir: string, sectionHref: string][] = [
+  ...["admin/accounting/ap", "admin/operations", "admin/accounting/financial-statements", "marketing"]
+    .map((family): [string, string] => [family, `/staff/${family}`]),
+  // Cash Drawer's three tabs are sibling folders under payments/, beside
+  // Record payment (payments/new), which is not part of the section.
+  ...["cash-drawer", "petty-cash", "eod"]
+    .map((tab): [string, string] => [`payments/${tab}`, "/staff/payments/cash-drawer"]),
+];
 
 describe("PageHeader section ownership", () => {
-  it.each(HEADER_FAMILIES)("%s reads its eyebrow from SECTION_NAME", (family) => {
+  it.each(HEADER_FAMILIES)("%s reads its eyebrow from SECTION_NAME", (family, sectionHref) => {
     let headers = 0;
     for (const file of sourceFiles(`${DASHBOARD_DIR}/${family}`)) {
       if (file.includes(".test.")) continue;
       const exception = EYEBROW_EXCEPTIONS[file];
       if (exception) expect(exception.why.length).toBeGreaterThan(50);
-      const result = navigationNames(file, readFileSync(file, "utf8"), `/staff/${family}`);
+      const result = navigationNames(file, readFileSync(file, "utf8"), sectionHref);
       expect(result.handRolledHeaders, file).toEqual(exception?.nodes ?? []);
       expect(result.eyebrows.every(Boolean), file).toBe(true);
       headers += result.eyebrows.length;

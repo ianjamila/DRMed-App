@@ -6,6 +6,8 @@ import Link from "next/link";
 import { recordCashAdjustmentAction, voidCashAdjustmentAction }
   from "./actions";
 import { PaymentsTabs } from "../_components/payments-tabs";
+import { PageHeader } from "@/components/staff/page-header";
+import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
 import { friendlyManilaDate, manilaTime } from "@/lib/dates/manila";
 import type { Database } from "@/types/database";
 
@@ -79,48 +81,49 @@ export function CashDrawerClient(props: {
   return (
     <main className="px-4 py-8 sm:px-6 lg:px-8">
       <PaymentsTabs />
-      <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Cash Drawer
-        </h1>
-        <div className="flex flex-col items-start gap-1 text-sm text-[color:var(--color-brand-text-soft)] sm:items-end">
-          <span className="font-medium text-[color:var(--color-brand-navy)]">
-            {friendlyManilaDate(props.businessDate)}
-          </span>
-          <div className="flex items-center gap-2">
-            <input
-              type="date"
-              value={props.businessDate}
-              max={props.today}
-              onChange={(e) =>
-                router.push(`/staff/payments/cash-drawer?date=${e.target.value}&shift=${props.currentShiftId}`)
-              }
-              className="rounded border px-2 py-1"
-            />
-            {props.shifts.length > 1 && (
-              <select
-                value={props.currentShiftId}
+      <PageHeader
+        eyebrow={SECTION_NAME["/staff/payments/cash-drawer"]}
+        title={ROUTE_NAME["/staff/payments/cash-drawer"]}
+        actions={
+          <div className="flex flex-col items-start gap-1 text-sm text-[color:var(--color-brand-text-soft)] sm:items-end">
+            <span className="font-medium text-[color:var(--color-brand-navy)]">
+              {friendlyManilaDate(props.businessDate)}
+            </span>
+            <div className="flex items-center gap-2">
+              <input
+                type="date"
+                value={props.businessDate}
+                max={props.today}
                 onChange={(e) =>
-                  router.push(`/staff/payments/cash-drawer?date=${props.businessDate}&shift=${e.target.value}`)
+                  router.push(`/staff/payments/cash-drawer?date=${e.target.value}&shift=${props.currentShiftId}`)
                 }
                 className="rounded border px-2 py-1"
-              >
-                {props.shifts.map((sh) => (
-                  <option key={sh.id} value={sh.id}>{sh.label}</option>
-                ))}
-              </select>
-            )}
-            {!isToday && (
-              <Link
-                href={`/staff/payments/cash-drawer?shift=${props.currentShiftId}`}
-                className="rounded border border-[color:var(--color-brand-navy)] px-3 py-1 font-semibold text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-navy)] hover:text-white"
-              >
-                Back to today
-              </Link>
-            )}
+              />
+              {props.shifts.length > 1 && (
+                <select
+                  value={props.currentShiftId}
+                  onChange={(e) =>
+                    router.push(`/staff/payments/cash-drawer?date=${props.businessDate}&shift=${e.target.value}`)
+                  }
+                  className="rounded border px-2 py-1"
+                >
+                  {props.shifts.map((sh) => (
+                    <option key={sh.id} value={sh.id}>{sh.label}</option>
+                  ))}
+                </select>
+              )}
+              {!isToday && (
+                <Link
+                  href={`/staff/payments/cash-drawer?shift=${props.currentShiftId}`}
+                  className="rounded border border-[color:var(--color-brand-navy)] px-3 py-1 font-semibold text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-navy)] hover:text-white"
+                >
+                  Back to today
+                </Link>
+              )}
+            </div>
           </div>
-        </div>
-      </header>
+        }
+      />
 
       <section className="rounded-lg border bg-white p-4 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b py-2">
