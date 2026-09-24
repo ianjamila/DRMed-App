@@ -30,7 +30,7 @@ export function CashReconPanel({ rows }: { rows: CashReconRow[] }) {
           {allUnreconciled ? (
             <EmptyState
               title="No end-of-day closes recorded in this period"
-              description="Close shifts in Cash drawer → EOD to populate."
+              description="Close shifts in Cash Drawer → End of Day to populate."
             />
           ) : (
             <div className="overflow-x-auto">

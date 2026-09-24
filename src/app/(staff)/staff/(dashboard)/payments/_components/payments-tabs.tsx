@@ -6,9 +6,9 @@ import { useSearchParams } from "next/navigation";
 import { SectionTabs } from "@/components/staff/section-tabs";
 import { carryParams } from "@/lib/reports/statement-period";
 
-// Cash Drawer is first so it's the default landing tab (the sidebar's one
-// "Cash Drawer" item points here and stays lit on all three tabs via
-// activePrefixes). Petty Cash sits in the middle: it is the same physical till
+// Cash In & Out is first so it's the default landing tab (the sidebar's one
+// "Cash Drawer" item names the whole till, points here and stays lit on all
+// three tabs via activePrefixes). Petty Cash sits in the middle: it is the same physical till
 // — every entry lowers the drawer's expected cash — so it is a view of the
 // drawer, not a separate page (sidebar cleanup, 2026-09-15).
 const TABS = [

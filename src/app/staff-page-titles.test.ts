@@ -191,6 +191,8 @@ describe("audited route names", () => {
     ["/staff/admin/accounting/financial-statements", "Income Statement"],
     ["/staff/admin/accounting/financial-statements/balance-sheet", "Balance Sheet"],
     ["/staff/admin/accounting/financial-statements/cash-flow", "Cash Flow"],
+    ["/staff/payments/cash-drawer", "Cash In & Out"],
+    ["/staff/payments/petty-cash", "Petty Cash"],
     ["/staff/payments/eod", "End of Day"],
     ["/staff/marketing", "Ad Performance"],
     ["/staff/marketing/ops", "Ops Tracker"],

@@ -1,6 +1,7 @@
 "use client";
 
-import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
+import { PageHeader } from "@/components/staff/page-header";
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
@@ -243,12 +244,11 @@ export function EodClient(props: {
           to the subtitle rather than being dropped: this is a reception screen,
           and CLAUDE.md's plain-language rule still applies to what it asks the
           user to do. */}
-      <h1 className="font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">
-        {ROUTE_NAME["/staff/payments/eod"]} · {formatBusinessDate(props.businessDate)}
-      </h1>
-      <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
-        Close and count the cash drawer.
-      </p>
+      <PageHeader
+        eyebrow={SECTION_NAME["/staff/payments/cash-drawer"]}
+        title={<>{ROUTE_NAME["/staff/payments/eod"]} · {formatBusinessDate(props.businessDate)}</>}
+        subtitle="Close and count the cash drawer."
+      />
 
       {closed ? (
         <Alert variant="success" className="mt-5">
@@ -341,7 +341,7 @@ export function EodClient(props: {
           {err && <p className="mt-3 text-sm text-red-600">{err}</p>}
 
           <div className="mt-5 flex flex-wrap gap-2">
-            <a href={`/staff/payments/cash-drawer?date=${props.businessDate}&shift=${props.shiftId}`} className="min-h-[44px] rounded border px-4 py-2 text-sm">Back to cash drawer</a>
+            <a href={`/staff/payments/cash-drawer?date=${props.businessDate}&shift=${props.shiftId}`} className="min-h-[44px] rounded border px-4 py-2 text-sm">Back to {ROUTE_NAME["/staff/payments/cash-drawer"]}</a>
             <button
               onClick={onClose}
               disabled={pending || !anyEntered || (variance !== 0 && !reason)}

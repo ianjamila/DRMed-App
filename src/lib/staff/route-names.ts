@@ -7,7 +7,7 @@ export const ROUTE_NAME: Record<string, string> = {
   "/staff/inquiries": "Inquiries",
   "/staff/visits": "Visit Records",
   "/staff/quote": "Quick Quote",
-  "/staff/payments/cash-drawer": "Cash Drawer",
+  "/staff/payments/cash-drawer": "Cash In & Out",
   "/staff/queue": "Queue",
   "/staff/critical-alerts": "Critical Alerts",
   "/staff/results": "Results",
@@ -114,6 +114,7 @@ export const ROUTE_NAME: Record<string, string> = {
 
 /** Umbrella links name the section, even when its landing page is a specific view. */
 export const SECTION_NAME: Record<string, string> = {
+  "/staff/payments/cash-drawer": "Cash Drawer",
   "/staff/admin/accounting/ap": "Expenses",
   "/staff/admin/operations": "Daily Monitoring",
   "/staff/admin/accounting/financial-statements": "Financial Statements",
