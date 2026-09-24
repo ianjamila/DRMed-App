@@ -155,10 +155,16 @@ export default async function ConsolidatedQueuePage({
   const testRequestIds = requests.map((r) => r.id);
   const events = await fetchClaimEvents(supabase, testRequestIds);
   const history = claimRemarks(testRequestIds.flatMap((id) => events.get(id) ?? []));
+  // A non-admin must hold EVERY member — the same all-or-nothing check
+  // performUnclaim makes, so the button never offers what the action refuses.
   const canUnclaim =
     claimedBy !== null &&
-    requests.every((r) => r.status === "in_progress" && r.assigned_to !== null) &&
-    (session.role === "admin" || claimedBy === myStaffId);
+    requests.every(
+      (r) =>
+        r.status === "in_progress" &&
+        r.assigned_to !== null &&
+        (session.role === "admin" || r.assigned_to === myStaffId),
+    );
 
   return (
     <ConsolidatedForm
