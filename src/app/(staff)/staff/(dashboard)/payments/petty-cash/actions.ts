@@ -4,6 +4,7 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { audit } from "@/lib/audit/log";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { ipAndAgent, firstIssue } from "@/lib/server/action-helpers";
 import {
   postTillCashExpense,
@@ -13,6 +14,8 @@ import {
   PETTY_CASH_CATEGORIES,
   type ExpenseCategory,
 } from "@/lib/accounting/expense-mappings";
+import { isSendOutCategory, sendOutLabRule } from "@/lib/accounting/partner-labs";
+import { verifyPartnerLab } from "@/lib/accounting/partner-labs.server";
 import { todayManilaISODate } from "@/lib/dates/manila";
 
 type ActionResult<T = void> =
@@ -63,6 +66,10 @@ const PettyCashSchema = z.object({
   amount_php: z.number().positive("Amount must be greater than 0"),
   vendor_label: z.string().max(200).optional().nullable(),
   description: z.string().max(500).optional().nullable(),
+  // 0164: the partner lab a Send Out expense paid. Required-iff-Send-Out is
+  // enforced by `sendOutLabRule`, not here — the schema doesn't know the
+  // category/vendor pairing rule, only that the shape is a nullable uuid.
+  vendor_id: z.string().uuid().optional().nullable(),
 });
 
 export type PettyCashInput = z.infer<typeof PettyCashSchema>;
@@ -92,13 +99,37 @@ export async function createPettyCashExpenseAction(
   }
   const input = parsed.data;
 
+  const isSendOut = isSendOutCategory(input.category);
+  const labError = sendOutLabRule(isSendOut, input.vendor_id);
+  if (labError) return { ok: false, error: labError };
+
+  let labName: string | null = null;
+  if (input.vendor_id) {
+    const verifyError = await verifyPartnerLab(input.vendor_id);
+    if (verifyError) return { ok: false, error: verifyError };
+
+    const admin = createAdminClient();
+    const { data: lab } = await admin
+      .from("vendors")
+      .select("name")
+      .eq("id", input.vendor_id)
+      .maybeSingle();
+    labName = lab?.name ?? null;
+  }
+
+  // If reception left "Paid to" blank, default it to the lab's name so the
+  // journal description reads "Send Out — Hi Precision" instead of just
+  // "Send Out".
+  const vendorLabel = input.vendor_label?.trim() || labName;
+
   const posted = await postTillCashExpense({
     business_date: input.expense_date,
     category: input.category,
     amount_php: input.amount_php,
-    vendor_label: input.vendor_label ?? null,
+    vendor_label: vendorLabel,
     description: input.description ?? null,
     actorId: session.user_id,
+    vendor_id: input.vendor_id ?? null,
   });
   if (!posted.ok) return posted;
 
@@ -112,7 +143,8 @@ export async function createPettyCashExpenseAction(
     metadata: {
       category: input.category,
       amount_php: Math.round(input.amount_php * 100) / 100,
-      vendor_label: input.vendor_label?.trim() || null,
+      vendor_label: vendorLabel,
+      vendor_id: input.vendor_id ?? null,
       business_date: posted.data.business_date,
       shift_id: posted.data.shift_id,
       journal_entry_id: posted.data.journal_entry_id,

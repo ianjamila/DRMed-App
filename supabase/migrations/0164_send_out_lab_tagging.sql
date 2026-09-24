@@ -180,6 +180,9 @@ as $$
         end
       )                                       as vendor_id
     from public.journal_lines   jl
+    -- Join the account by code rather than calling coa_uuid_for_code(): that
+    -- helper is service_role-only (0119) and this function runs as the caller.
+    join public.chart_of_accounts coa on coa.id = jl.account_id and coa.code = '6420'
     join public.journal_entries je  on je.id = jl.entry_id
     join public.journal_entries src on src.id = case
                                          when je.source_kind = 'reversal' and je.reverses is not null
@@ -190,8 +193,7 @@ as $$
            on src.source_kind = 'cash_adjustment' and eca.id = src.source_id
     left join public.bills b
            on src.source_kind = 'bill_post' and b.id = src.source_id
-    where jl.account_id = public.coa_uuid_for_code('6420')
-      and je.status in ('posted', 'reversed')
+    where je.status in ('posted', 'reversed')
       and (p_start is null or je.posting_date >= p_start)
       and (p_end   is null or je.posting_date <= p_end)
   )

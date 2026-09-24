@@ -23,6 +23,8 @@ import {
   ReopenEodSchema,
   type RecordCashAdjustmentInput,
 } from "@/lib/validations/accounting";
+import { SEND_OUT_ACCOUNT_CODE, sendOutLabRule } from "@/lib/accounting/partner-labs";
+import { verifyPartnerLab } from "@/lib/accounting/partner-labs.server";
 import type { Database } from "@/types/database";
 
 type ActionResult<T = void> = { ok: true; data: T } | { ok: false; error: string };
@@ -73,6 +75,28 @@ export async function recordCashAdjustmentAction(
   }
 
   const admin = createAdminClient();
+
+  // 0164: the schema only knows `contra_account_id` is a uuid, not what it
+  // points at — look up its code so we can tell whether this is a Send Out
+  // (6420) petty-cash payout, which is the only case a lab is required (or
+  // allowed).
+  let contraCode: string | null = null;
+  if (parsed.data.contra_account_id) {
+    const { data: contra } = await admin
+      .from("chart_of_accounts")
+      .select("code")
+      .eq("id", parsed.data.contra_account_id)
+      .maybeSingle();
+    contraCode = contra?.code ?? null;
+  }
+  const isSendOut = parsed.data.kind === "petty_cash" && contraCode === SEND_OUT_ACCOUNT_CODE;
+  const labError = sendOutLabRule(isSendOut, parsed.data.vendor_id);
+  if (labError) return { ok: false, error: labError };
+  if (parsed.data.vendor_id) {
+    const verifyError = await verifyPartnerLab(parsed.data.vendor_id);
+    if (verifyError) return { ok: false, error: verifyError };
+  }
+
   const { data, error } = await admin
     .from("eod_cash_adjustments")
     .insert({
@@ -83,6 +107,7 @@ export async function recordCashAdjustmentAction(
       payee: parsed.data.payee ?? null,
       payee_staff_id: parsed.data.payee_staff_id ?? null,
       contra_account_id: parsed.data.contra_account_id ?? null,
+      vendor_id: parsed.data.vendor_id ?? null,
       notes: parsed.data.notes ?? null,
       recorded_by: session.user_id,
     })
@@ -113,6 +138,7 @@ export async function recordCashAdjustmentAction(
       shift_id: parsed.data.shift_id,
       contra_account_id: parsed.data.contra_account_id ?? null,
       payee_staff_id: parsed.data.payee_staff_id ?? null,
+      vendor_id: parsed.data.vendor_id ?? null,
       journal_entry_id: je?.id ?? null,
       journal_entry_number: je?.entry_number ?? null,
     },

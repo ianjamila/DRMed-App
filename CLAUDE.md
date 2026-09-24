@@ -35,6 +35,7 @@ first from a parallel branch) and verified by object 2026-09-24; **0154** (#198)
 #192) is also applied and verified: 159 public policies, zero unwrapped helper calls, and no
 unexpected policyless tables. Prod also has **0163** (`drm_id_width`) out of order, so 0161/0162
 land later with `db push --include-all`.
+**0159** (`retire_send_out_accrual`) is applied. **0164** (`send_out_lab_tagging`) and **0166** (`drop_send_out_accrual_tables`) are in flight on `fix/retire-send-out-accrual` — 0166 must be pushed right before that PR merges (the app on main still reads the dropped column).
 
 **Rule — claim a number before you use it: `npm run claim -- migration` / `npm run claim -- pcode <n>`.**
 Several sessions work here at once, each in its own worktree, and picking "the next number" by
@@ -233,6 +234,7 @@ All Server Actions return `{ ok: true, data } | { ok: false, error }`. User-faci
 | Discount arithmetic (form preview AND server recompute) | `src/lib/pricing/discounts.ts` |
 | Shared visit actions (queue delete/restore, PIN re-issue) | `src/lib/actions/visits/{queue-deletion,reissue-pin}.ts` |
 | Cash denominations, amount-in-words, PF labels, Expenses (AP) bill-status + payment-method labels, chart-of-accounts grouping + same-type parent rule | `src/lib/accounting/{cash-denominations,amount-in-words,pf-labels,ap-labels,account-groups}.ts` |
+| Send Out expenses and partner labs: the "Which lab?" rule (`sendOutLabRule`), `SEND_OUT_CATEGORY` / 6420, `loadPartnerLabs` / `verifyPartnerLab`; the Send-out Labs report pivots | `src/lib/accounting/partner-labs{,.server}.ts`, `src/lib/reports/send-out-labs.ts` |
 | Words for a stored snake_case code with no label yet (`humaniseCode`) — label maps fall back to it so a raw code never reaches a staff screen | `src/lib/format/humanise-code.ts` |
 | CSV escaping (one copy) | `src/lib/csv/escape.ts` |
 | Results-archive tab config and per-test status words (`testStatusLabel`, shared with the portal), template drift checks | `src/lib/results/{status-filter,template-health}.ts` |

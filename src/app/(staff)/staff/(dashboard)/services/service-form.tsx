@@ -44,6 +44,11 @@ const SECTION_OPTIONS: { value: string; label: string }[] = [
   { value: "home_service", label: "Home service" },
 ];
 
+export interface PartnerLabOption {
+  id: string;
+  name: string;
+}
+
 interface ServiceDefaults {
   id?: string;
   code: string;
@@ -56,6 +61,10 @@ interface ServiceDefaults {
   kind: string;
   section: string | null;
   is_send_out: boolean;
+  // The vendor FK is what's saved; send_out_lab is kept only to show a
+  // read-only fallback note for legacy free-text values that match no
+  // partner lab (see the note under the select below).
+  send_out_vendor_id: string | null;
   send_out_lab: string | null;
   image_url: string | null;
   is_active: boolean;
@@ -64,6 +73,7 @@ interface ServiceDefaults {
 
 interface Props {
   initial?: ServiceDefaults;
+  partnerLabs?: PartnerLabOption[];
 }
 
 function n(v: number | string | null | undefined): number | null {
@@ -72,7 +82,7 @@ function n(v: number | string | null | undefined): number | null {
   return Number.isFinite(x) ? x : null;
 }
 
-export function ServiceForm({ initial }: Props) {
+export function ServiceForm({ initial, partnerLabs = [] }: Props) {
   const router = useRouter();
   const isEdit = Boolean(initial?.id);
 
@@ -87,6 +97,10 @@ export function ServiceForm({ initial }: Props) {
 
   const formRef = useRef<HTMLFormElement>(null);
   const skipConfirmRef = useRef(false);
+  // Gate the "Partner lab" select on the LIVE checkbox value, not the
+  // server-rendered initial value — otherwise ticking "Send-out test" never
+  // reveals the field, and unticking it wouldn't hide a stale selection.
+  const [isSendOut, setIsSendOut] = useState(initial?.is_send_out ?? false);
   const [imageUrl, setImageUrl] = useState(initial?.image_url ?? "");
   const showImagePreview = /^(https?:\/\/|\/)/.test(imageUrl.trim());
   const [confirming, setConfirming] = useState<{
@@ -293,20 +307,36 @@ export function ServiceForm({ initial }: Props) {
               type="checkbox"
               name="is_send_out"
               defaultChecked={initial?.is_send_out ?? false}
+              onChange={(e) => setIsSendOut(e.target.checked)}
             />
             <span>Send-out test</span>
           </label>
-          <div className="grid gap-1.5">
-            <Label htmlFor="send_out_lab">Send-out lab (optional)</Label>
-            <StableInput
-              id="send_out_lab"
-              name="send_out_lab"
-              maxLength={160}
-              defaultValue={initial?.send_out_lab ?? ""}
-              placeholder="e.g. Hi Precision"
-            />
-          </div>
         </div>
+
+        {isSendOut ? (
+          <div className="grid gap-1.5">
+            <Label htmlFor="send_out_vendor_id">Partner lab</Label>
+            <StableSelect
+              id="send_out_vendor_id"
+              name="send_out_vendor_id"
+              defaultValue={initial?.send_out_vendor_id ?? ""}
+              className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+            >
+              <option value="">— Not set —</option>
+              {partnerLabs.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.name}
+                </option>
+              ))}
+            </StableSelect>
+            {!initial?.send_out_vendor_id && initial?.send_out_lab ? (
+              <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+                Currently recorded as: {initial.send_out_lab}. Pick a lab
+                above to keep it as a proper partner-lab link.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="flex items-center gap-2 text-sm">

@@ -1107,188 +1107,6 @@ export type Database = {
         }
         Relationships: []
       }
-      cogs_send_out_entries: {
-        Row: {
-          accrued_at: string
-          id: string
-          journal_entry_id: string | null
-          service_id: string
-          test_request_id: string
-          trued_up_at: string | null
-          trueup_id: string | null
-          unit_cost_php: number
-          vendor_id: string | null
-          void_reason: string | null
-          voided_at: string | null
-          voided_by: string | null
-        }
-        Insert: {
-          accrued_at?: string
-          id?: string
-          journal_entry_id?: string | null
-          service_id: string
-          test_request_id: string
-          trued_up_at?: string | null
-          trueup_id?: string | null
-          unit_cost_php: number
-          vendor_id?: string | null
-          void_reason?: string | null
-          voided_at?: string | null
-          voided_by?: string | null
-        }
-        Update: {
-          accrued_at?: string
-          id?: string
-          journal_entry_id?: string | null
-          service_id?: string
-          test_request_id?: string
-          trued_up_at?: string | null
-          trueup_id?: string | null
-          unit_cost_php?: number
-          vendor_id?: string | null
-          void_reason?: string | null
-          voided_at?: string | null
-          voided_by?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "cogs_send_out_entries_journal_entry_id_fkey"
-            columns: ["journal_entry_id"]
-            isOneToOne: false
-            referencedRelation: "journal_entries"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "cogs_send_out_entries_service_id_fkey"
-            columns: ["service_id"]
-            isOneToOne: false
-            referencedRelation: "services"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "cogs_send_out_entries_service_id_fkey"
-            columns: ["service_id"]
-            isOneToOne: false
-            referencedRelation: "v_daily_revenue_by_service"
-            referencedColumns: ["service_id"]
-          },
-          {
-            foreignKeyName: "cogs_send_out_entries_test_request_id_fkey"
-            columns: ["test_request_id"]
-            isOneToOne: false
-            referencedRelation: "test_requests"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "cogs_send_out_entries_trueup_id_fkey"
-            columns: ["trueup_id"]
-            isOneToOne: false
-            referencedRelation: "cogs_send_out_trueups"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "cogs_send_out_entries_vendor_id_fkey"
-            columns: ["vendor_id"]
-            isOneToOne: false
-            referencedRelation: "vendors"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "cogs_send_out_entries_voided_by_fkey"
-            columns: ["voided_by"]
-            isOneToOne: false
-            referencedRelation: "staff_profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      cogs_send_out_trueups: {
-        Row: {
-          accrued_total_php: number
-          bill_id: string | null
-          billed_total_php: number
-          id: string
-          journal_entry_id: string | null
-          matched_at: string
-          matched_by: string
-          period_end_date: string
-          period_start_date: string
-          variance_php: number
-          vendor_id: string
-          void_reason: string | null
-          voided_at: string | null
-          voided_by: string | null
-        }
-        Insert: {
-          accrued_total_php: number
-          bill_id?: string | null
-          billed_total_php: number
-          id?: string
-          journal_entry_id?: string | null
-          matched_at?: string
-          matched_by: string
-          period_end_date: string
-          period_start_date: string
-          variance_php: number
-          vendor_id: string
-          void_reason?: string | null
-          voided_at?: string | null
-          voided_by?: string | null
-        }
-        Update: {
-          accrued_total_php?: number
-          bill_id?: string | null
-          billed_total_php?: number
-          id?: string
-          journal_entry_id?: string | null
-          matched_at?: string
-          matched_by?: string
-          period_end_date?: string
-          period_start_date?: string
-          variance_php?: number
-          vendor_id?: string
-          void_reason?: string | null
-          voided_at?: string | null
-          voided_by?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "cogs_send_out_trueups_bill_id_fkey"
-            columns: ["bill_id"]
-            isOneToOne: false
-            referencedRelation: "bills"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "cogs_send_out_trueups_journal_entry_id_fkey"
-            columns: ["journal_entry_id"]
-            isOneToOne: false
-            referencedRelation: "journal_entries"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "cogs_send_out_trueups_matched_by_fkey"
-            columns: ["matched_by"]
-            isOneToOne: false
-            referencedRelation: "staff_profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "cogs_send_out_trueups_vendor_id_fkey"
-            columns: ["vendor_id"]
-            isOneToOne: false
-            referencedRelation: "vendors"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "cogs_send_out_trueups_voided_by_fkey"
-            columns: ["voided_by"]
-            isOneToOne: false
-            referencedRelation: "staff_profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       consent_settings: {
         Row: {
           gate_required: boolean
@@ -5332,7 +5150,6 @@ export type Database = {
           requires_time_slot: boolean
           section: string | null
           send_out_lab: string | null
-          send_out_unit_cost_php: number | null
           send_out_vendor_id: string | null
           senior_discount_php: number | null
           senior_pwd_eligible: boolean
@@ -5359,7 +5176,6 @@ export type Database = {
           requires_time_slot?: boolean
           section?: string | null
           send_out_lab?: string | null
-          send_out_unit_cost_php?: number | null
           send_out_vendor_id?: string | null
           senior_discount_php?: number | null
           senior_pwd_eligible?: boolean
@@ -5386,7 +5202,6 @@ export type Database = {
           requires_time_slot?: boolean
           section?: string | null
           send_out_lab?: string | null
-          send_out_unit_cost_php?: number | null
           send_out_vendor_id?: string | null
           senior_discount_php?: number | null
           senior_pwd_eligible?: boolean

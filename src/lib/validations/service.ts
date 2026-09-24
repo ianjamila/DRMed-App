@@ -72,7 +72,6 @@ export const ServiceSchema = z.object({
     .transform((v) => (v === "" ? null : v))
     .nullable(),
   is_send_out: checkbox,
-  send_out_lab: optionalText,
   // Public listing image: absolute URL (https://…) or site-relative path
   // (/photos/x.jpg). Empty → null (falls back to the brand default image).
   image_url: z
@@ -94,3 +93,53 @@ export const ServiceSchema = z.object({
 });
 
 export type ServiceInput = z.infer<typeof ServiceSchema>;
+
+// ---------------------------------------------------------------------------
+// Send-out lab selection (0164) — the service form's "Partner lab" select
+// replaced the old free-text `send_out_lab` input. `services.send_out_lab`
+// (text) is still the column every reader (lab queue, quotes, marketing
+// catalogue) displays, so it's derived here from the chosen vendor's name
+// rather than typed directly.
+// ---------------------------------------------------------------------------
+
+export interface PartnerLabOption {
+  id: string;
+  name: string;
+}
+
+export interface SendOutVendorSelection {
+  vendorId: string | null;
+  labName: string | null;
+}
+
+export type SendOutVendorResult =
+  | { ok: true; data: SendOutVendorSelection }
+  | { ok: false; error: string };
+
+/**
+ * Resolves the form's raw `send_out_vendor_id` selection into the pair of
+ * columns actually persisted. Pure — takes the candidate partner-lab list as
+ * a parameter instead of querying, so it's unit-testable without a DB.
+ *
+ * - Not a send-out service → always null/null, regardless of what was
+ *   submitted (a direct POST can't smuggle a vendor onto a non-send-out row).
+ * - Send-out with no lab picked ("— Not set —") → null/null.
+ * - Send-out with a lab picked → the vendor must be in the active
+ *   partner-lab list, or this returns an error.
+ */
+export function resolveSendOutVendorSelection(
+  isSendOut: boolean,
+  selectedVendorId: string | null | undefined,
+  activePartnerLabs: PartnerLabOption[],
+): SendOutVendorResult {
+  if (!isSendOut) return { ok: true, data: { vendorId: null, labName: null } };
+
+  const trimmed = (selectedVendorId ?? "").trim();
+  if (trimmed === "") return { ok: true, data: { vendorId: null, labName: null } };
+
+  const match = activePartnerLabs.find((v) => v.id === trimmed);
+  if (!match) {
+    return { ok: false, error: "Selected lab is not an active partner lab." };
+  }
+  return { ok: true, data: { vendorId: match.id, labName: match.name } };
+}

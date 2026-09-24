@@ -152,7 +152,10 @@ export async function reverseJournalEntryBySource(
 
   const { data: lines, error: linesReadErr } = await admin
     .from("journal_lines")
-    .select("account_id, debit_php, credit_php, description, line_order")
+    // vendor_id (0164): the partner lab on a Send Out line — carried into the
+    // reversal by reversePfJournalLine so a reversed Send Out stays
+    // attributed to its lab in send_out_spend_by_lab.
+    .select("account_id, debit_php, credit_php, description, line_order, vendor_id")
     .eq("entry_id", original.id)
     .order("line_order");
   if (linesReadErr || !lines) {

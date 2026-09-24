@@ -8,6 +8,10 @@ export interface PfJournalLine {
   credit_php: number;
   description: string | null;
   line_order: number;
+  /** 0164: the partner lab on a Send Out line, when the original line carried
+   *  one. Optional so every other caller (PF disbursements never set this)
+   *  stays unaffected. */
+  vendor_id?: string | null;
 }
 
 /**
@@ -15,7 +19,9 @@ export interface PfJournalLine {
  * void: debit/credit swapped, the description prefixed. Used identically by
  * the single-disbursement void path and the bulk EOD payout's
  * failure-rollback path via voidPfDisbursementAndUnlink() so the two can't
- * drift on how a reversal line is built.
+ * drift on how a reversal line is built. Also reused by
+ * `reverseJournalEntryBySource` (journal-entry.ts) for a general manual
+ * reversal, which is how a reversed Send Out line keeps its lab tag (0164).
  */
 export function reversePfJournalLine(
   entryId: string,
@@ -27,6 +33,7 @@ export function reversePfJournalLine(
   debit_php: number;
   credit_php: number;
   description: string;
+  vendor_id: string | null;
 } {
   return {
     entry_id: entryId,
@@ -35,5 +42,6 @@ export function reversePfJournalLine(
     debit_php: line.credit_php,
     credit_php: line.debit_php,
     description: `Reversal: ${line.description ?? ""}`,
+    vendor_id: line.vendor_id ?? null,
   };
 }

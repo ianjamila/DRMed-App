@@ -141,8 +141,8 @@ const nextConfig: NextConfig = {
   // Payment Routing and Cash Routing were merged into one Money Routing page;
   // keep old bookmarks working. Temporary (307) so the paths stay reusable.
   // The Outside-Lab Costs / Performance pages were retired by 0159 (send-out
-  // cost is now just the "Send Out" expense), so their bookmarks land on
-  // Expenses.
+  // cost is now just the "Send Out" expense); 0164 gives that spend its own
+  // report, so their bookmarks land on Send-out Labs rather than Expenses.
   async redirects() {
     return [
       ...["payment-routing", "cash-routing"].map((old) => ({
@@ -152,7 +152,7 @@ const nextConfig: NextConfig = {
       })),
       {
         source: "/staff/admin/accounting/cogs/send-outs/:path*",
-        destination: "/staff/admin/accounting/ap",
+        destination: "/staff/admin/accounting/send-out-labs",
         permanent: false,
       },
     ];

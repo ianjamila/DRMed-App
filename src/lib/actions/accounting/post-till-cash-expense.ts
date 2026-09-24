@@ -61,6 +61,9 @@ export async function postTillCashExpense(args: {
   vendor_label: string | null;
   description: string | null;
   actorId: string;
+  /** 0164: the partner lab a Send Out expense paid. Validate with
+   *  `sendOutLabRule` + `verifyPartnerLab` before calling this. */
+  vendor_id?: string | null;
 }): Promise<PostTillCashResult> {
   const contraCode = CATEGORY_TO_COA[args.category];
   if (!contraCode) {
@@ -122,6 +125,7 @@ export async function postTillCashExpense(args: {
       amount_php: amount,
       payee: vendor ? vendor.slice(0, 120) : null,
       contra_account_id: contra.id,
+      vendor_id: args.vendor_id ?? null,
       notes: args.description?.trim()?.slice(0, 500) || null,
       recorded_by: args.actorId,
     })

@@ -18,6 +18,7 @@ import {
   startingPick,
   type CashRule,
 } from "@/lib/accounting/money-routing";
+import { SEND_OUT_ACCOUNT_CODE, type PartnerLab } from "@/lib/accounting/partner-labs";
 import type { Database } from "@/types/database";
 
 type Adjustment = Database["public"]["Tables"]["eod_cash_adjustments"]["Row"];
@@ -40,6 +41,7 @@ export function CashDrawerClient(props: {
   accounts: Account[];
   routing: (CashRule & { kind: string })[];
   staff: Staff[];
+  partnerLabs: PartnerLab[];
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -268,6 +270,7 @@ export function CashDrawerClient(props: {
           accounts={props.accounts}
           routing={props.routing}
           staff={props.staff}
+          partnerLabs={props.partnerLabs}
           onClose={() => setOpenModal(null)}
           onSaved={() => { setOpenModal(null); router.refresh(); }}
         />
@@ -283,6 +286,7 @@ function AdjustmentModal(props: {
   accounts: Account[];
   routing: (CashRule & { kind: string })[];
   staff: Staff[];
+  partnerLabs: PartnerLab[];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -302,6 +306,7 @@ function AdjustmentModal(props: {
   const [amount, setAmount] = useState("");
   const [contraId, setContraId] = useState(() => firstPick(initialKind));
   const [staffId, setStaffId] = useState("");
+  const [vendorId, setVendorId] = useState("");
   const [payee, setPayee] = useState("");
   const [notes, setNotes] = useState("");
   const [pending, start] = useTransition();
@@ -311,10 +316,15 @@ function AdjustmentModal(props: {
   const changeKind = (k: string) => {
     setKind(k);
     setContraId(firstPick(k));
+    setVendorId("");
   };
   // Money Routing decides whether reception picks the account for this kind.
   const showPicker = staffPicksAccount(kind, rules.get(kind));
   const pettyHint = petty.find((c) => c.account.id === contraId)?.hint;
+  // 0164: a Send Out (6420) petty-cash payout must say which partner lab it
+  // paid — the same rule `sendOutLabRule` enforces server-side.
+  const selectedAccountCode = props.accounts.find((a) => a.id === contraId)?.code;
+  const isSendOut = kind === "petty_cash" && selectedAccountCode === SEND_OUT_ACCOUNT_CODE;
 
   // The "contra" account means different things per action; label it plainly.
   const contraLabel =
@@ -326,6 +336,10 @@ function AdjustmentModal(props: {
 
   const onSubmit = () => {
     setErr(null);
+    if (isSendOut && !vendorId) {
+      setErr("Pick which lab you paid.");
+      return;
+    }
     start(async () => {
       const r = await recordCashAdjustmentAction({
         business_date: props.businessDate,
@@ -335,6 +349,7 @@ function AdjustmentModal(props: {
         payee: payee || null,
         payee_staff_id: kind === "salary_advance" ? (staffId || null) : null,
         contra_account_id: contraId || null,
+        vendor_id: isSendOut ? (vendorId || null) : null,
         notes: notes || null,
       });
       if (!r.ok) setErr(r.error);
@@ -372,11 +387,24 @@ function AdjustmentModal(props: {
         {showPicker && kind === "petty_cash" && (
           <label className="mt-3 block text-sm">
             Category
-            <select value={contraId} onChange={(e) => setContraId(e.target.value)} className="mt-1 block w-full rounded border px-2 py-2">
+            <select
+              value={contraId}
+              onChange={(e) => { setContraId(e.target.value); setVendorId(""); }}
+              className="mt-1 block w-full rounded border px-2 py-2"
+            >
               <option value="">— pick —</option>
               {petty.map((c) => <option key={c.account.id} value={c.account.id} title={c.hint}>{c.category}</option>)}
             </select>
             {pettyHint && <span className="mt-1 block text-xs text-[color:var(--color-brand-text-soft)]">{pettyHint}</span>}
+          </label>
+        )}
+        {isSendOut && (
+          <label className="mt-3 block text-sm">
+            Which lab?
+            <select value={vendorId} onChange={(e) => setVendorId(e.target.value)} className="mt-1 block w-full rounded border px-2 py-2">
+              <option value="">— pick —</option>
+              {props.partnerLabs.map((lab) => <option key={lab.id} value={lab.id}>{lab.name}</option>)}
+            </select>
           </label>
         )}
         {showPicker && kind !== "petty_cash" && (

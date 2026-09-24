@@ -15,6 +15,7 @@ export const ROUTE_NAME: Record<string, string> = {
   "/staff/admin/accounting/ap": "Expenses Overview",
   "/staff/admin/accounting/pf-payouts": "Pay Doctors",
   "/staff/admin/accounting/pf-ytd-summary": "Doctor Pay (This Year)",
+  "/staff/admin/accounting/send-out-labs": "Send-out Labs",
   "/staff/admin/payroll/runs": "Run Payroll",
   "/staff/admin/payroll/periods": "Pay Periods",
   "/staff/admin/payroll/employees": "Employees",

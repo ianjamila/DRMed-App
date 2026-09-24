@@ -319,6 +319,12 @@ export const STAFF_NAV: StaffNavSection[] = [
         heading: "Books & Reports",
         items: [
           {
+            href: "/staff/admin/accounting/send-out-labs",
+            label: ROUTE_NAME["/staff/admin/accounting/send-out-labs"],
+            description: "How much each partner lab costs per month, what send-out tests earn against that, and how fast each lab returns results.",
+            roles: ["admin"],
+          },
+          {
             href: "/staff/admin/accounting/journal",
             quicklink: {"admin":{"order":4}},
             // The list page's "+ New journal entry" button reaches /journal/new,

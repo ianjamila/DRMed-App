@@ -2,11 +2,13 @@ import { fetchCompleteRows } from "@/lib/reports/paging";
 import { redirect } from "next/navigation";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 import { isISODate, todayManilaISODate } from "@/lib/dates/manila";
 import { PageHeader } from "@/components/staff/page-header";
 import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
 import { PaymentsTabs } from "../_components/payments-tabs";
 import { PETTY_CASH_COA_TO_CATEGORY } from "@/lib/accounting/expense-mappings";
+import { loadPartnerLabs } from "@/lib/accounting/partner-labs.server";
 import { PettyCashDatePicker } from "./petty-cash-date-picker";
 import { PettyCashForm } from "./petty-cash-form";
 import { PettyCashList, type PettyCashRow } from "./petty-cash-list";
@@ -31,6 +33,12 @@ export default async function PettyCashPage({
   const business_date = isISODate(params.date) ? params.date : today;
   const isToday = business_date === today;
   const admin = createAdminClient();
+
+  // 0164: reception can read active partner labs directly (vendors' read
+  // policy allows it), so use the RLS-scoped server client here rather than
+  // the admin one.
+  const supabase = await createClient();
+  const partnerLabs = await loadPartnerLabs(supabase);
 
   // Reception can't read these tables via RLS (admin-only), so read with the
   // service-role client here in the RSC.
@@ -100,7 +108,7 @@ export default async function PettyCashPage({
             future one — a payout can't leave the till before the day happens.
             Recording into an already-closed day is refused by the DB (P0015)
             with a message telling reception to ask admin to reopen. */}
-        <PettyCashForm defaultDate={business_date} maxDate={today} />
+        <PettyCashForm defaultDate={business_date} maxDate={today} partnerLabs={partnerLabs} />
 
         <section className="space-y-3">
           <h2 className="font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">

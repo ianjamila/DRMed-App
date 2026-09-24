@@ -39,6 +39,7 @@ export default async function EditVendorPage({
         default_wt_classification: v.data.default_wt_classification,
         default_wt_rate: v.data.default_wt_rate,
         notes: v.data.notes,
+        is_partner_lab: v.data.is_partner_lab,
       }}
       expenseAccounts={accounts ?? []}
     />

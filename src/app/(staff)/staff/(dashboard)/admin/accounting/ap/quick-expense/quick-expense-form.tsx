@@ -9,13 +9,16 @@ import {
   type ExpenseCategory,
   type Mop,
 } from "@/lib/accounting/expense-mappings";
+import { isSendOutCategory, type PartnerLab } from "@/lib/accounting/partner-labs";
 import { createQuickExpenseAction } from "@/lib/actions/accounting/quick-expense";
 
 interface Props {
   defaultDate: string;
+  /** Active partner labs for the "Which lab?" picker (Send Out category only). */
+  partnerLabs: PartnerLab[];
 }
 
-export function QuickExpenseForm({ defaultDate }: Props) {
+export function QuickExpenseForm({ defaultDate, partnerLabs }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [err, setErr] = useState<string | null>(null);
@@ -27,6 +30,8 @@ export function QuickExpenseForm({ defaultDate }: Props) {
   const [amountText, setAmountText] = useState("");
   const [vendor, setVendor] = useState("");
   const [description, setDescription] = useState("");
+  const [vendorId, setVendorId] = useState("");
+  const isSendOut = isSendOutCategory(category);
 
   function reset() {
     setCategory("");
@@ -34,6 +39,7 @@ export function QuickExpenseForm({ defaultDate }: Props) {
     setAmountText("");
     setVendor("");
     setDescription("");
+    setVendorId("");
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -54,6 +60,10 @@ export function QuickExpenseForm({ defaultDate }: Props) {
       setErr("Pick a payment source.");
       return;
     }
+    if (isSendOut && !vendorId) {
+      setErr("Pick which lab you paid.");
+      return;
+    }
 
     startTransition(async () => {
       const r = await createQuickExpenseAction({
@@ -63,6 +73,7 @@ export function QuickExpenseForm({ defaultDate }: Props) {
         amount_php: amount,
         vendor_label: vendor || null,
         description: description || null,
+        vendor_id: isSendOut ? vendorId : null,
       });
       if (!r.ok) {
         setErr(r.error);
@@ -117,7 +128,10 @@ export function QuickExpenseForm({ defaultDate }: Props) {
       <Field label="Category" required>
         <select
           value={category}
-          onChange={(e) => setCategory(e.target.value as ExpenseCategory | "")}
+          onChange={(e) => {
+            setCategory(e.target.value as ExpenseCategory | "");
+            setVendorId("");
+          }}
           required
           className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm"
         >
@@ -129,6 +143,24 @@ export function QuickExpenseForm({ defaultDate }: Props) {
           ))}
         </select>
       </Field>
+
+      {isSendOut && (
+        <Field label="Which lab?" required>
+          <select
+            value={vendorId}
+            onChange={(e) => setVendorId(e.target.value)}
+            required
+            className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm"
+          >
+            <option value="">— Pick a lab —</option>
+            {partnerLabs.map((lab) => (
+              <option key={lab.id} value={lab.id}>
+                {lab.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
 
       <Field label="Amount (PHP)" required>
         <input

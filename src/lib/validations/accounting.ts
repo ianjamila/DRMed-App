@@ -259,6 +259,12 @@ export const RecordCashAdjustmentSchema = z
     payee: z.string().trim().max(120).nullable().optional(),
     payee_staff_id: z.string().uuid().nullable().optional(),
     contra_account_id: z.string().uuid().nullable().optional(),
+    // 0164: the partner lab a Send Out (6420) petty-cash payout paid. Whether
+    // it's required (or must be blank) depends on the CHOSEN ACCOUNT, which
+    // this schema can't see (it only has the account's uuid, not its code) —
+    // that check is `sendOutLabRule` in the action, after the account is
+    // looked up.
+    vendor_id: z.string().uuid().nullable().optional(),
     notes: z.string().trim().max(500).nullable().optional(),
   })
   .refine(
@@ -576,6 +582,9 @@ export const vendorCreateSchema = z.object({
   default_wt_classification: z.string().nullable().optional(),
   default_wt_rate: z.number().min(0).max(1).nullable().optional(),
   notes: z.string().nullable().optional(),
+  // Partner labs are the short list reception can pick from when tagging a
+  // Send Out payout / cash-drawer adjustment (0164). Admin-only to flip.
+  is_partner_lab: z.boolean().optional(),
 });
 
 export const vendorUpdateSchema = vendorCreateSchema.extend({

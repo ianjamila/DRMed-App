@@ -139,14 +139,14 @@ begin
   values ('SMOKE125-SHARE', 'SMOKE-12.5 Consult (shareholder)', 'doctor_consultation', 700, true, false)
   returning id into v_svc_shareholder;
 
-  -- Send-out with cost configured
+  -- Send-out linked to a partner lab (per-service unit cost dropped by 0166)
   insert into public.services (code, name, kind, price_php, is_active, is_send_out,
-                               send_out_unit_cost_php, send_out_vendor_id)
-  values ('SMOKE125-SO1', 'SMOKE-12.5 Sendout (cost=500)', 'lab_test', 1200, true, true,
-          500.00, v_vendor_id)
+                               send_out_vendor_id)
+  values ('SMOKE125-SO1', 'SMOKE-12.5 Sendout (partner lab)', 'lab_test', 1200, true, true,
+          v_vendor_id)
   returning id into v_svc_sendout_cost;
 
-  -- Send-out with NULL cost (D10 path)
+  -- Send-out with no partner lab
   insert into public.services (code, name, kind, price_php, is_active, is_send_out)
   values ('SMOKE125-SO2', 'SMOKE-12.5 Sendout (no cost)', 'lab_test', 800, true, true)
   returning id into v_svc_sendout_null;
@@ -456,8 +456,8 @@ end $$;
 
 -- ============================================================================
 -- ASSERTION 4 (rewritten for 0159)
--- Send-out test with unit_cost=500 → release JE books revenue only: NO 6420 /
--- 2150 lines and NO cogs_send_out_entries row. Partner labs are paid on the
+-- Send-out test → release JE books revenue only: NO 6420 / 2150 lines, and
+-- the cogs_send_out_entries subledger no longer exists (dropped by 0166). Partner labs are paid on the
 -- spot and recorded as a "Send Out" expense, so booking cost here would count
 -- it twice.
 -- ============================================================================
@@ -504,10 +504,8 @@ begin
   assert v_rev_lines = 2,
     format('A4: expected 2 revenue-side lines (receivable + revenue), got %s', v_rev_lines);
 
-  select count(*) into v_cogs_cnt from public.cogs_send_out_entries
-    where test_request_id = v_tr_id;
-  assert v_cogs_cnt = 0,
-    format('A4: expected no cogs_send_out_entries row since 0159, got %s', v_cogs_cnt);
+  v_cogs_cnt := case when to_regclass('public.cogs_send_out_entries') is null then 0 else 1 end;
+  assert v_cogs_cnt = 0, 'A4: cogs_send_out_entries should be dropped (0166)';
 
   insert into smoke_125_ids values ('tr_sendout_cost', v_tr_id);
 
@@ -559,10 +557,8 @@ begin
   assert v_line_count = 0,
     format('A5: expected 0 lines for 6420/2150, got %s', v_line_count);
 
-  select count(*) into v_cogs_cnt from public.cogs_send_out_entries
-    where test_request_id = v_tr_id;
-  assert v_cogs_cnt = 0,
-    format('A5: expected no cogs_send_out_entries row since 0159, got %s', v_cogs_cnt);
+  v_cogs_cnt := case when to_regclass('public.cogs_send_out_trueups') is null then 0 else 1 end;
+  assert v_cogs_cnt = 0, 'A5: cogs_send_out_trueups should be dropped (0166)';
 
   select count(*) into v_audit_cnt
     from public.audit_log
@@ -1432,10 +1428,6 @@ begin
     where journal_entry_id = any(v_je_ids);
   update public.doctor_pf_disbursements set journal_entry_id = null
     where journal_entry_id = any(v_je_ids);
-  update public.cogs_send_out_entries set journal_entry_id = null
-    where journal_entry_id = any(v_je_ids);
-  update public.cogs_send_out_trueups set journal_entry_id = null
-    where journal_entry_id = any(v_je_ids);
 
   -- Step 4: delete lines
   delete from public.journal_lines where entry_id = any(v_je_ids);
@@ -1451,21 +1443,7 @@ end $$;
 
 do $$
 begin
-  -- Subledger tables: doctor_pf_entries, cogs_send_out_entries, cogs_send_out_trueups
-  -- Entries reference trueups (FK), so clear trueup_id references first.
-  update public.cogs_send_out_entries set trueup_id = null, trued_up_at = null
-    where test_request_id in (
-      select val from smoke_125_ids
-      where key in ('tr_sendout_cost','tr_sendout_null'));
-
-  delete from public.cogs_send_out_trueups
-    where id in (select val from smoke_125_ids where key in ('trueup_a11_id','trueup_a12_id'));
-
-  delete from public.cogs_send_out_entries
-    where test_request_id in (
-      select val from smoke_125_ids
-      where key in ('tr_sendout_cost','tr_sendout_null'));
-
+  -- Subledger tables: doctor_pf_entries (the send-out subledger was dropped by 0166).
   -- doctor_pf_entries: clear disbursement_id FK before deleting disbursements
   update public.doctor_pf_entries set disbursement_id = null
     where disbursement_id in (
