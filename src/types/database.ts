@@ -2080,6 +2080,7 @@ export type Database = {
           recorded_at: string
           recorded_by: string
           shift_id: string
+          vendor_id: string | null
           void_reason: string | null
           voided_at: string | null
           voided_by: string | null
@@ -2098,6 +2099,7 @@ export type Database = {
           recorded_at?: string
           recorded_by: string
           shift_id: string
+          vendor_id?: string | null
           void_reason?: string | null
           voided_at?: string | null
           voided_by?: string | null
@@ -2116,6 +2118,7 @@ export type Database = {
           recorded_at?: string
           recorded_by?: string
           shift_id?: string
+          vendor_id?: string | null
           void_reason?: string | null
           voided_at?: string | null
           voided_by?: string | null
@@ -2161,6 +2164,13 @@ export type Database = {
             columns: ["shift_id"]
             isOneToOne: false
             referencedRelation: "cash_shifts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "eod_cash_adjustments_vendor_id_fkey"
+            columns: ["vendor_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
             referencedColumns: ["id"]
           },
           {
@@ -3098,6 +3108,7 @@ export type Database = {
           entry_id: string
           id: string
           line_order: number
+          vendor_id: string | null
         }
         Insert: {
           account_id: string
@@ -3107,6 +3118,7 @@ export type Database = {
           entry_id: string
           id?: string
           line_order: number
+          vendor_id?: string | null
         }
         Update: {
           account_id?: string
@@ -3116,6 +3128,7 @@ export type Database = {
           entry_id?: string
           id?: string
           line_order?: number
+          vendor_id?: string | null
         }
         Relationships: [
           {
@@ -3130,6 +3143,13 @@ export type Database = {
             columns: ["entry_id"]
             isOneToOne: false
             referencedRelation: "journal_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "journal_lines_vendor_id_fkey"
+            columns: ["vendor_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
             referencedColumns: ["id"]
           },
         ]
@@ -5875,6 +5895,7 @@ export type Database = {
           email: string | null
           id: string
           is_active: boolean
+          is_partner_lab: boolean
           name: string
           notes: string | null
           phone: string | null
@@ -5891,6 +5912,7 @@ export type Database = {
           email?: string | null
           id?: string
           is_active?: boolean
+          is_partner_lab?: boolean
           name: string
           notes?: string | null
           phone?: string | null
@@ -5907,6 +5929,7 @@ export type Database = {
           email?: string | null
           id?: string
           is_active?: boolean
+          is_partner_lab?: boolean
           name?: string
           notes?: string | null
           phone?: string | null
@@ -6622,6 +6645,39 @@ export type Database = {
       resolve_revenue_account: {
         Args: { p_service_kind: string }
         Returns: string
+      }
+      send_out_monthly_margin: {
+        Args: { p_end?: string; p_start?: string }
+        Returns: {
+          margin_php: number
+          month: string
+          revenue_php: number
+          spend_php: number
+          tests: number
+        }[]
+      }
+      send_out_spend_by_lab: {
+        Args: { p_end?: string; p_start?: string }
+        Returns: {
+          entries: number
+          month: string
+          spend_php: number
+          vendor_id: string
+          vendor_name: string
+        }[]
+      }
+      send_out_turnaround_by_lab: {
+        Args: { p_end?: string; p_start?: string }
+        Returns: {
+          avg_hours: number
+          lab_name: string
+          median_hours: number
+          p90_hours: number
+          tests: number
+          vendor_id: string
+          with_promise: number
+          within_promise: number
+        }[]
       }
       set_patient_context: {
         Args: { p_patient_id: string }
