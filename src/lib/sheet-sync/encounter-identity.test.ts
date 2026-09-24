@@ -56,6 +56,30 @@ describe("assignIdentities", () => {
     const idx = buildPatientIndex([p("A", { middle_name: null }), p("B", { middle_name: null })]);
     expect(assignIdentities([line("Juan", null)], idx, links)[0].patientId).toBeNull();
   });
+  it("Important 5: an admin DOB-keyed decision does not claim every line of a name two live patients share", () => {
+    const idx = buildPatientIndex([p("A", { middle_name: null, birthdate: "1990-01-01" }), p("B", { middle_name: null, birthdate: "1985-05-05" })]);
+    const links = new Map([["dela cruz|juan#1990-01-01", { link_key: "dela cruz|juan#1990-01-01", patient_id: "A", decision: "link" as const, method: "admin" as const }]]);
+    expect(assignIdentities([line("Juan", null)], idx, links)[0]).toMatchObject({ patientId: null, identityKey: "name:dela cruz|juan" });
+  });
+  it("Important 5: the same admin decision still applies when only one live patient has the name", () => {
+    const idx = buildPatientIndex([p("A", { middle_name: null, birthdate: "1990-01-01" }), p("B", { first_name: "Jose", middle_name: null })]);
+    const links = new Map([["dela cruz|juan#1990-01-01", { link_key: "dela cruz|juan#1990-01-01", patient_id: "B", decision: "link" as const, method: "admin" as const }]]);
+    expect(assignIdentities([line("Juan", null)], idx, links)[0].patientId).toBe("B");
+  });
+  it("Important 5: with two live patients, an undated-key decision still speaks for the name", () => {
+    const idx = buildPatientIndex([p("A", { middle_name: null }), p("B", { middle_name: null })]);
+    const links = new Map([["dela cruz|juan#", { link_key: "dela cruz|juan#", patient_id: "B", decision: "link" as const, method: "admin" as const }]]);
+    expect(assignIdentities([line("Juan", null)], idx, links)[0].patientId).toBe("B");
+  });
+  it("Important 5 / Minor 2: any HOLD on the name (dated or not, any method) skips step 1; steps 2–4 still run", () => {
+    const idx = buildPatientIndex([p("A", { middle_name: null }), p("B", { first_name: "Jose", middle_name: null })]);
+    const links = new Map([
+      ["dela cruz|juan#", { link_key: "dela cruz|juan#", patient_id: "B", decision: "link" as const, method: "auto_exact" as const }],
+      ["dela cruz|juan#1990-01-01", { link_key: "dela cruz|juan#1990-01-01", patient_id: null, decision: "review" as const, method: "auto_exact" as const }]]);
+    expect(assignIdentities([line("Juan", null)], idx, links)[0]).toMatchObject({ patientId: "A", identityKey: "patient:A" });
+    links.delete("dela cruz|juan#1990-01-01");
+    expect(assignIdentities([line("Juan", null)], idx, links)[0].patientId).toBe("B");
+  });
   it("C3: a line spelled like a merged-away patient resolves to the survivor", () => {
     const idx = buildPatientIndex([p("S", { last_name: "Delacruz", middle_name: null }), p("M", { middle_name: null, merged_into_id: "S" })]);
     expect(assignIdentities([line("Juan", null)], idx, new Map())[0].identityKey).toBe("patient:S");

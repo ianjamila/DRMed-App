@@ -70,7 +70,13 @@ export function parseCustomersTab(
     const answer = mapAnswer(r[16], opts.aliases);
     const release = mapReleaseMedium(text(r[18]));
     const nameNorm = nameNormOf(parts);
-    const p10 = phone10(r[11]);
+    // The phone that is conflict-tested (phone10) must be the phone that would
+    // be FILLED (phoneE164): when the strict PH-mobile parser accepts the cell,
+    // phone10 is derived from its value ("0639171234567" is 13 digits, which the
+    // raw last-10 reading rejects as "two numbers" — it would then be filled
+    // but never compared). When it rejects the cell, phoneE164 is null and
+    // nothing is filled; the raw reading still guards identity (review round 2).
+    const p10 = phone.e164 ? phone.e164.slice(-10) : phone10(r[11]);
     const sourceKey = sourceKeyOf(nameNorm, p10, dobP.iso, regP.iso);
 
     const kind = mapSeniorPwdKind(text(r[13]));

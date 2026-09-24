@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { planCustomers } from "./customer-plan";
 import { buildPatientIndex } from "./patient-index";
 import { parseCustomersTab } from "./tabs/customers";
-import type { CustomerOp, FactsRecord, LinkRecord, PatientRecord } from "./types";
+import { applyOps, world, type World } from "./__fixtures__/customer-world";
+import type { CustomerOp, PatientRecord } from "./types";
 
 const TODAY = "2026-09-24";
 import { CUST_HEADER as HEADER } from "./__fixtures__/tab-headers";
@@ -128,52 +129,10 @@ describe("planCustomers — §5.3 identity rules", () => {
 
 // ---------------------------------------------------------------------------
 // Adversarial-review defects (C1–C3, I1–I5, M1–M5). Two-run tests replay the
-// run-1 ops the way sheet_sync_apply_customer_ops (0165) would, then re-plan.
+// run-1 ops the way sheet_sync_apply_customer_ops (0170) would (see
+// __fixtures__/customer-world.ts), then re-plan.
 // ---------------------------------------------------------------------------
 
-interface World { patients: PatientRecord[]; links: Map<string, LinkRecord>; facts: Map<string, FactsRecord> }
-const world = (patients: PatientRecord[], links: Array<LinkRecord> = []): World =>
-  ({ patients, links: new Map(links.map((l) => [l.link_key, l])), facts: new Map() });
-
-/** Applies run-1 ops like the SQL: creates get id `new:<create_key>`; links never overwrite admin rows. */
-function applyOps(ops: readonly CustomerOp[], w: World): World {
-  const patients = w.patients.map((p) => ({ ...p }));
-  const byId = new Map(patients.map((p) => [p.id, p]));
-  const links = new Map(w.links);
-  const facts = new Map(w.facts);
-  for (const o of ops) {
-    if (o.op === "create") {
-      const id = `new:${o.create_key}`;
-      const f = o.fields;
-      const rec: PatientRecord = { id, drm_id: id, first_name: f.first_name, middle_name: f.middle_name, last_name: f.last_name,
-        birthdate: f.birthdate ?? null, phone: f.phone ?? null, phone_normalized: null, email: f.email ?? null, sex: f.sex ?? null,
-        address: f.address ?? null, referred_by_doctor: f.referred_by_doctor ?? null,
-        preferred_release_medium: f.preferred_release_medium ?? null, senior_pwd_id_kind: f.senior_pwd_id_kind ?? null,
-        senior_pwd_id_number: f.senior_pwd_id_number ?? null, referral_source: f.referral_source ?? null,
-        referral_source_origin: f.referral_source ? "sheet" : null, merged_into_id: null };
-      patients.push(rec); byId.set(id, rec);
-      for (const k of o.link_keys) {
-        const ex = links.get(k);
-        if (ex && ex.method === "admin" && ex.decision !== "create") continue;
-        links.set(k, { link_key: k, patient_id: id, decision: "link", method: ex?.method ?? (o.method === "admin" ? "admin" : "auto_exact") });
-      }
-      facts.set(id, { patient_id: id, registered_on: o.facts.registered_on, sheet_new_repeat: o.facts.new_repeat, source_ref: o.facts.source_ref });
-    } else if (o.op === "link") {
-      const ex = links.get(o.link_key);
-      if (ex && ex.method === "admin") continue;
-      links.set(o.link_key, { link_key: o.link_key, patient_id: o.patient_id, decision: "link", method: o.method });
-    } else if (o.op === "fill") {
-      const p = byId.get(o.patient_id)!;
-      for (const [k, v] of Object.entries(o.fields) as Array<[keyof typeof o.fields, string | null]>) {
-        if (k === "referral_source") { p.referral_source = v; p.referral_source_origin = "sheet"; continue; }
-        if (p[k] === null) p[k] = v;
-      }
-    } else {
-      facts.set(o.patient_id, { patient_id: o.patient_id, registered_on: o.registered_on, sheet_new_repeat: o.new_repeat, source_ref: o.source_ref });
-    }
-  }
-  return { patients, links, facts };
-}
 const planIn = (rows: ReturnType<typeof rowsOf>, w: World, extra: Partial<Parameters<typeof planCustomers>[0]> = {}) =>
   planCustomers({ rows, index: buildPatientIndex(w.patients), links: w.links, facts: w.facts, prevRows: [], ...extra });
 const opsOf = (out: ReturnType<typeof planCustomers>, op: CustomerOp["op"]) => out.ops.filter((o) => o.op === op);
@@ -200,7 +159,8 @@ describe("planCustomers — identity per link key (review defects)", () => {
     const p = patient({ first_name: "Maria", middle_name: null, last_name: "Santos", birthdate: null, phone: "+639171111111" });
     const out = plan(rowsOf({ name: "Santos, Maria", phone: "09171111111", ts: 46100 },
       { name: "Santos, Maria", phone: "09172222222", ts: 46000, email: "other@example.com" }), [p]);
-    expect(out.ops).toEqual([]);
+    // Round 2: a conflict review is held (nothing else is written).
+    expect(out.ops).toEqual([{ op: "hold", link_key: "santos|maria#", reason: "phone differs and date of birth cannot confirm" }]);
     expect(out.review.map((r) => r.kind)).toEqual(["identity_conflict"]);
   });
   it("C1: a patient with no phone does not absorb two no-DOB rows that disagree on phone", () => {
@@ -401,7 +361,9 @@ describe("planCustomers — identity per link key (review defects)", () => {
     const p = patient({ birthdate: "1985-05-05" });
     const links = new Map([["dela cruz|juan santos#1990-01-01", { link_key: "dela cruz|juan santos#1990-01-01", patient_id: p.id, decision: "link" as const, method: "auto_exact" as const }]]);
     const out = plan(rowsOf({ name: "Dela Cruz, Juan Santos", dob: 32874 }), [p], { links });
-    expect(out.ops).toEqual([]);
+    // Round 2 (Minor 2): the demoted key is HELD so its stale auto link stops
+    // speaking for the name (encounter step 1) and no later run re-links it.
+    expect(out.ops).toEqual([{ op: "hold", link_key: "dela cruz|juan santos#1990-01-01", reason: "date of birth differs" }]);
     expect(out.review[0].kind).toBe("identity_conflict");
   });
   it("M3: the patient's phone is read from phone, not a stale phone_normalized", () => {
@@ -442,5 +404,182 @@ describe("planCustomers — identity per link key (review defects)", () => {
     const out = plan(rowsOf({ name: "Dela Cruz, Juan Santos", dob: 32874, ts: 46000 }, { name: "Dela Cruz, Juan Santos", dob: 33000, ts: 46100 }), [p], { links });
     expect(out.mirror.map((m) => m.link_state)).toEqual(["linked", "conflict"]);
     expect(opsOf(out, "fill")).toEqual([{ op: "fill", patient_id: p.id, fields: { birthdate: "1990-01-01" } }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Adversarial re-review of 1ba6603 (round 2). Inputs are the re-reviewer's
+// probes (rr-probe*.mts) and the release case its fuzz harness found.
+// ---------------------------------------------------------------------------
+
+const createOps = (out: ReturnType<typeof planCustomers>) => opsOf(out, "create") as Array<Extract<CustomerOp, { op: "create" }>>;
+
+describe("planCustomers — round 2 (order-independent run-2 check, per-key trust, holds)", () => {
+  it("Critical 1: an earlier UNDATED row cannot fill a patient ahead of a DOB-confirmed row whose phone differs — either order", () => {
+    const undated = { name: "Dela Cruz, Juan Santos", phone: "09172222222", email: "kid@example.com", addr: "Othertown" };
+    const dated = { name: "Dela Cruz, Juan Santos", dob: 32874, phone: "09171111111" };
+    for (const [first, second] of [[{ ...undated, ts: 45000 }, { ...dated, ts: 46000 }], [{ ...dated, ts: 46000 }, { ...undated, ts: 45000 }],
+      [{ ...undated, ts: 46100 }, { ...dated, ts: 46000 }], [{ ...dated, ts: 46000 }, { ...undated, ts: 46100 }]] as Spec[][]) {
+      const p = patient({ phone: null }); // DOB 1990-01-01, no phone yet
+      const w0 = world([p]);
+      const rows = rowsOf(first, second);
+      const out1 = planIn(rows, w0);
+      expect(reviewFor(out1, "dela cruz|juan santos#")[0]).toMatchObject({ kind: "identity_conflict" });
+      expect(opsOf(out1, "fill")).toEqual([{ op: "fill", patient_id: p.id, fields: { phone: "+639171111111" } }]);
+      const out2 = planIn(rows, applyOps(out1.ops, w0));
+      expect(out2.ops).toEqual([]);
+    }
+  });
+  it("Critical 1: rows without a DOB that disagree on phone, against a patient with neither, are all held back", () => {
+    const p = patient({ first_name: "Maria", middle_name: null, last_name: "Santos", birthdate: null });
+    const links = [{ link_key: "santos|maria#", patient_id: p.id, decision: "link" as const, method: "admin" as const }];
+    // The admin-linked undated key is trusted; a DIFFERENT auto key of the
+    // same patient (merged alias spelling) whose phone disagrees is demoted.
+    const alias = patient({ first_name: "Maria", middle_name: null, last_name: "Santoss", birthdate: null, merged_into_id: p.id });
+    const w0 = world([p, alias], links);
+    const rows = rowsOf({ name: "Santos, Maria", phone: "09171111111", ts: 46100 }, { name: "Santoss, Maria", phone: "09172222222", ts: 46000, email: "x@example.com" });
+    const out1 = planIn(rows, w0);
+    expect(reviewFor(out1, "santoss|maria#")[0]).toMatchObject({ kind: "identity_conflict" });
+    expect(opsOf(out1, "fill")).toEqual([{ op: "fill", patient_id: p.id, fields: { phone: "+639171111111" } }]);
+    expect(planIn(rows, applyOps(out1.ops, w0)).ops).toEqual([]);
+  });
+  it("Critical 2: an admin create on name#dob gives admin trust to THAT key only; the joined undated key stays conflict-tested", () => {
+    const links = [{ link_key: "garcia|jose#1990-01-01", patient_id: null, decision: "create" as const, method: "admin" as const }];
+    const w0 = world([], links);
+    const out1 = planIn(rowsOf({ name: "Garcia, Jose", dob: 32874, phone: "09170000001", ts: 46000 }, { name: "Garcia, Jose", ts: 46100 }), w0);
+    expect(createOps(out1)).toHaveLength(1);
+    expect(createOps(out1)[0]).toMatchObject({ link_keys: ["garcia|jose#", "garcia|jose#1990-01-01"], admin_link_keys: ["garcia|jose#1990-01-01"] });
+    const w1 = applyOps(out1.ops, w0);
+    expect(w1.links.get("garcia|jose#")).toMatchObject({ decision: "link", method: "auto_exact" });
+    expect(w1.links.get("garcia|jose#1990-01-01")).toMatchObject({ decision: "link", method: "admin" });
+    // Run 2: a new undated row with someone else's phone/email/address.
+    const out2 = planIn(rowsOf({ name: "Garcia, Jose", dob: 32874, phone: "09170000001", ts: 46000 }, { name: "Garcia, Jose", ts: 46100 },
+      { name: "Garcia, Jose", phone: "09179999999", ts: 46200, email: "someone.else@example.com", addr: "Elsewhere" }), w1);
+    expect(opsOf(out2, "fill")).toEqual([]);
+    expect(reviewFor(out2, "garcia|jose#")[0]).toMatchObject({ kind: "identity_conflict" });
+    expect(out2.ops).toEqual([{ op: "hold", link_key: "garcia|jose#", reason: expect.any(String) }]);
+  });
+  it("Critical 2: an admin create cluster that collides with another new person creates only its admin key", () => {
+    const links = [{ link_key: "garcia|jose#1990-01-01", patient_id: null, decision: "create" as const, method: "admin" as const }];
+    const out = planIn(rowsOf({ name: "Garcia, Jose", dob: 32874, ts: 46000 }, { name: "Garcia, Jose", phone: "09175550000", ts: 46100 },
+      { name: "Garcia, Joseph", phone: "09175550000", ts: 46200 }), world([], links));
+    expect(createOps(out).map((c) => c.link_keys)).toEqual([["garcia|jose#1990-01-01"]]);
+    expect(reviewFor(out, "garcia|jose#")[0]).toMatchObject({ kind: "possible_existing_patient" });
+    expect(opsOf(out, "hold").map((o) => (o as { link_key: string }).link_key).sort()).toEqual(["garcia|jose#", "garcia|joseph#"]);
+  });
+  it("Important 3: a batch-collision review is HELD, so run 2 cannot create one partner once the other stops being new", () => {
+    // Run 1: the two 1990-01-01 names collide (same DOB + first name); 0917…333 is on three new names (a shared line).
+    const rows = rowsOf({ name: "Santos, Ana Marie Lopez", dob: 32874, phone: "09171111111", ts: 46000 },
+      { name: "Dela Cruz, Ana Marie", dob: 32874, phone: "09173333333", ts: 46010 },
+      { name: "Reyes, Ana Cruz", dob: 39999, phone: "09173333333", ts: 46020 },
+      { name: "Dela Cruz, Juan", phone: "09173333333", ts: 46030 });
+    const w0 = world([]);
+    const out1 = planIn(rows, w0);
+    expect(opsOf(out1, "hold").map((o) => (o as { link_key: string }).link_key).sort())
+      .toEqual(["dela cruz|ana marie#1990-01-01", "santos|ana marie lopez#1990-01-01"]);
+    const w1 = applyOps(out1.ops, w0);
+    expect(w1.links.get("santos|ana marie lopez#1990-01-01")).toMatchObject({ decision: "review", patient_id: null });
+    const out2 = planIn(rows, w1);
+    expect(opsOf(out2, "create")).toEqual([]);
+    expect(out2.ops).toEqual([]);
+    expect(reviewFor(out2, "santos|ana marie lopez#1990-01-01")[0].payload.reason).toBe("held for an admin decision");
+  });
+  it("Important 3: a held key never links, creates or fills — even when a clean full-name match appears", () => {
+    const p = patient({ first_name: "Leo", middle_name: null, last_name: "Tan", birthdate: null, phone: null });
+    const links = new Map([["tan|leo#", { link_key: "tan|leo#", patient_id: null, decision: "review" as const, method: "auto_exact" as const }]]);
+    const out = plan(rowsOf({ name: "Tan, Leo", phone: "09171234567" }), [p], { links });
+    expect(out.ops).toEqual([]);
+    expect(out.review[0]).toMatchObject({ kind: "ambiguous_patient", item_key: "tan|leo#", payload: { reason: "held for an admin decision" } });
+    expect((out.review[0].payload.candidates as Array<{ patient_id: string }>).map((c) => c.patient_id)).toEqual([p.id]);
+    expect(out.mirror[0]).toMatchObject({ patient_id: null, link_state: "ambiguous" });
+  });
+  it("Important 3: a held key keeps the more specific kind this run computes", () => {
+    const p = patient({ first_name: "Leo", middle_name: null, last_name: "Tan", birthdate: "1985-05-05" });
+    const links = new Map([["tan|leo#1990-01-01", { link_key: "tan|leo#1990-01-01", patient_id: null, decision: "review" as const, method: "auto_exact" as const }]]);
+    const out = plan(rowsOf({ name: "Tan, Leo", dob: 32874 }), [p], { links });
+    expect(out.review[0]).toMatchObject({ kind: "identity_conflict", payload: { reason: "held for an admin decision" } });
+  });
+  it("Important 3: the shared-line threshold counts existing patients on the phone too", () => {
+    const rosa = patient({ first_name: "Rosa", middle_name: null, last_name: "Bautista", birthdate: "1960-01-01", phone: "+639178887777" });
+    const pedro = patient({ first_name: "Pedro", middle_name: null, last_name: "Bautista", birthdate: "1962-02-02", phone: "+639178887777" });
+    const rows = rowsOf({ name: "Tan, Leo", dob: 32874, phone: "09178887777" }, { name: "Tan, Leo", dob: 33000, phone: "09178887777" });
+    // One new name + two existing patients on the line → 3 → the line proves nothing: two people, two creates.
+    expect(createOps(plan(rows, [rosa, pedro]))).toHaveLength(2);
+    // One new name + one existing patient → 2 → the shared phone still says "maybe the same person".
+    expect(createOps(plan(rows, [rosa]))).toEqual([]);
+  });
+  it("Important 4: two NEW people with different names and different DOBs on one family phone are both created", () => {
+    const out = plan(rowsOf({ name: "Bautista, Rosa", dob: 25000, phone: "09178887777" }, { name: "Villanueva, Paolo", dob: 40000, phone: "09178887777" }), []);
+    expect(createOps(out)).toHaveLength(2);
+    expect(out.review).toEqual([]);
+  });
+  it("Important 4: the phone rule still applies to the same name or the same loose key, and when a DOB is missing", () => {
+    const sameLoose = plan(rowsOf({ name: "Tan, Leo Cruz", dob: 32874, phone: "09171234567" }, { name: "Tan, Leo", dob: 33000, phone: "09171234567" }), []);
+    expect(createOps(sameLoose)).toEqual([]);
+    const undated = plan(rowsOf({ name: "Bautista, Rosa", dob: 25000, phone: "09178887777" }, { name: "Villanueva, Paolo", phone: "09178887777" }), []);
+    expect(createOps(undated)).toEqual([]);
+  });
+  it("Minor 1: a 0639… phone is conflict-tested (phone10 agrees with the E.164 value that would be filled)", () => {
+    const q = patient({ birthdate: null, phone: "+639170000000" });
+    const out = plan(rowsOf({ name: "Dela Cruz, Juan Santos", phone: "0639171234567" }), [q]);
+    expect(out.review[0].kind).toBe("identity_conflict");
+    expect(opsOf(out, "fill")).toEqual([]);
+  });
+  it("Minor 2: a key with a stored AUTO link that is demoted in the per-patient pass is held", () => {
+    const p = patient({ birthdate: null, phone: null });
+    const links = new Map([["dela cruz|juan santos#1990-01-01", { link_key: "dela cruz|juan santos#1990-01-01", patient_id: p.id, decision: "link" as const, method: "auto_exact" as const }]]);
+    const out = plan(rowsOf({ name: "Dela Cruz, Juan Santos", dob: 32874, ts: 46000 }, { name: "Dela Cruz, Juan Santos", dob: 33000, ts: 46100 }), [p], { links });
+    expect(opsOf(out, "hold").map((o) => (o as { link_key: string }).link_key).sort())
+      .toEqual(["dela cruz|juan santos#1990-01-01", "dela cruz|juan santos#1990-05-07"]);
+    // Never re-sent once held: replaying run 1 leaves nothing to write.
+    const w0 = world([p], [...links.values()]);
+    const rows = rowsOf({ name: "Dela Cruz, Juan Santos", dob: 32874, ts: 46000 }, { name: "Dela Cruz, Juan Santos", dob: 33000, ts: 46100 });
+    const w1 = applyOps(planIn(rows, w0).ops, w0);
+    expect(w1.links.get("dela cruz|juan santos#1990-01-01")).toMatchObject({ decision: "review", patient_id: null, method: "auto_exact" });
+    expect(planIn(rows, w1).ops).toEqual([]);
+  });
+  it("Holds: evidence-based reviews are held; pure name ambiguity is not (it re-derives identically)", () => {
+    const a = patient({}); const b = patient({ birthdate: null });
+    expect(opsOf(plan(rowsOf({ name: "Dela Cruz, Juan Santos" }), [a, b]), "hold")).toEqual([]);
+    const loose = patient({ middle_name: null });
+    expect(opsOf(plan(rowsOf({ name: "Dela Cruz, Juan Santos", dob: 32874 }), [loose]), "hold")).toEqual([]);
+    // Corroboration evidence can weaken once this run writes (here: vanished-row evidence is only seen once).
+    const gone = patient({ last_name: "Delacruz", first_name: "Juan", middle_name: null, birthdate: null });
+    const out = plan(rowsOf({ name: "Dela Cruz, Juan Santos", dob: 32874 }), [gone], {
+      prevRows: [{ source_key: "gone", patient_id: gone.id, phone_norm: null, dob: "1990-01-01", link_state: "linked" }] });
+    expect(opsOf(out, "hold")).toEqual([{ op: "hold", link_key: "dela cruz|juan santos#1990-01-01", reason: "same phone or date of birth as an existing patient" }]);
+  });
+  it("Holds: a similar-name review IS held when this run creates a patient with that exact name", () => {
+    const similar = patient({ first_name: "Leo", middle_name: "Cruz", last_name: "Tan", birthdate: null });
+    const links = new Map([["tan|leo#1990-01-01", { link_key: "tan|leo#1990-01-01", patient_id: null, decision: "create" as const, method: "admin" as const }]]);
+    const out = plan(rowsOf({ name: "Tan, Leo", dob: 32874 }, { name: "Tan, Leo", dob: 33000 }), [similar], { links });
+    expect(createOps(out).map((c) => c.link_keys)).toEqual([["tan|leo#1990-01-01"]]);
+    expect(opsOf(out, "hold")).toEqual([{ op: "hold", link_key: "tan|leo#1990-05-07", reason: expect.any(String) }]);
+  });
+  it("Minor 2: never holds a key with an admin decision", () => {
+    const links = new Map([["tan|leo#", { link_key: "tan|leo#", patient_id: "gone-id", decision: "link" as const, method: "admin" as const }]]);
+    const out = plan(rowsOf({ name: "Tan, Leo" }), [], { links });
+    expect(out.review[0].kind).toBe("ambiguous_patient");
+    expect(opsOf(out, "hold")).toEqual([]);
+  });
+  it("order: a same-day tie between two rows is broken by content, never by sheet position", () => {
+    const one = { name: "Dela Cruz, Juan Santos", dob: 32874, phone: "09171111111", email: "one@example.com", ts: 46000.25 };
+    const two = { name: "Dela Cruz, Juan Santos", dob: 32874, phone: "09172222222", email: "two@example.com", ts: 46000.75 };
+    const fill = (rows: Spec[]) => { const p = patient({ phone: null }); return opsOf(plan(rowsOf(...rows), [p]), "fill").map((o) => (o as { fields: unknown }).fields); };
+    expect(fill([one, two])).toEqual(fill([two, one]));
+  });
+  it("applyOps mirrors the SQL: unknown channel → null, fill respects ownership, merged patients are skipped", () => {
+    const staff = patient({ referral_source: "walk_in", referral_source_origin: "staff" });
+    const merged = patient({ merged_into_id: staff.id, email: null });
+    const w = applyOps([
+      { op: "fill", patient_id: staff.id, fields: { referral_source: "online_facebook", email: "a@example.com" } },
+      { op: "fill", patient_id: merged.id, fields: { email: "b@example.com" } },
+      { op: "create", create_key: "k", method: "auto_exact", link_keys: ["k"], admin_link_keys: [],
+        fields: { first_name: "A", last_name: "B", middle_name: null, referral_source: "not_a_channel" },
+        legacy_intake: {}, facts: { registered_on: null, new_repeat: null, source_ref: "r" } },
+    ], world([staff, merged]));
+    expect(w.patients.find((x) => x.id === staff.id)).toMatchObject({ referral_source: "walk_in", referral_source_origin: "staff", email: "a@example.com" });
+    expect(w.patients.find((x) => x.id === merged.id)!.email).toBeNull();
+    expect(w.patients.find((x) => x.id === "new:k")).toMatchObject({ referral_source: null, referral_source_origin: null });
   });
 });

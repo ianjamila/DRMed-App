@@ -27,6 +27,17 @@ describe("parseCustomersTab", () => {
     });
     expect(r.raw["How did you know about DR Med?"]).toBe("FACEBOOK");
   });
+  it("Minor 1 (round 2): the conflict-test phone and the filled phone always agree", () => {
+    const cases: Cell[] = ["0639171234567", "09171234567", "639171234567", "9171234567", 9171234567, "+63 917 123 4567",
+      "0917 123 4567 / 0918 765 4321", "(02) 8123 4567", "12345", "", "0917-123-4567 loc 12"];
+    for (const phone of cases) {
+      const [r] = parseCustomersTab([CUST_HEADER, cust({ 11: phone })], { today: TODAY, aliases: new Map() }).rows;
+      // A number that would be written to patients.phone must also be the one conflict-tested.
+      if (r.phoneE164) expect(r.phone10, String(phone)).toBe(r.phoneE164.slice(-10));
+    }
+    const [r] = parseCustomersTab([CUST_HEADER, cust({ 11: "0639171234567" })], { today: TODAY, aliases: new Map() }).rows;
+    expect(r).toMatchObject({ phoneE164: "+639171234567", phone10: "9171234567" });
+  });
   it("collapses exact duplicates into one row with a count", () => {
     const p = parseCustomersTab([CUST_HEADER, cust({}), cust({})], { today: TODAY, aliases: new Map() });
     expect(p.rows).toHaveLength(1);

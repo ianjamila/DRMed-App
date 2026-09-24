@@ -124,10 +124,16 @@ export interface PatientRecord {
   merged_into_id: string | null;
 }
 
+/**
+ * A saved identity decision for one link key (sheet_patient_links).
+ * "review" is a HOLD: patient_id is null and the sync never auto-decides the
+ * key again — every run sends it to review until an admin resolves it (which
+ * replaces the row with an admin link or create).
+ */
 export interface LinkRecord {
   link_key: string;
   patient_id: string | null;
-  decision: "link" | "create";
+  decision: "link" | "create" | "review";
   method: "auto_exact" | "auto_loose" | "admin";
 }
 
@@ -152,13 +158,21 @@ export type FillFields = Partial<Record<
   string | null>>;
 
 export type CustomerOp =
-  | { op: "create"; create_key: string; method: "auto_exact" | "admin"; link_keys: string[];
+  /**
+   * `method` is for reporting only. Each link key is written with method
+   * "admin" when it is in `admin_link_keys` (its saved decision was an admin
+   * "create") and "auto_exact" otherwise, so a key that merely joined the
+   * admin-created person is conflict-tested again on every later run.
+   */
+  | { op: "create"; create_key: string; method: "auto_exact" | "admin"; link_keys: string[]; admin_link_keys: string[];
       fields: FillFields & { first_name: string; last_name: string; middle_name: string | null };
       legacy_intake: Record<string, unknown>;
       facts: { registered_on: string | null; new_repeat: "new" | "repeat" | null; source_ref: string } }
   | { op: "link"; link_key: string; patient_id: string; method: "auto_exact" | "auto_loose" }
   | { op: "fill"; patient_id: string; fields: FillFields }
-  | { op: "facts"; patient_id: string; registered_on: string | null; new_repeat: "new" | "repeat" | null; source_ref: string };
+  | { op: "facts"; patient_id: string; registered_on: string | null; new_repeat: "new" | "repeat" | null; source_ref: string }
+  /** Persist a review: upsert (link_key, patient_id null, decision "review"), never over an admin row. */
+  | { op: "hold"; link_key: string; reason: string };
 
 export type LinkState = "linked" | "ambiguous" | "conflict" | "possible_existing" | "unlinked";
 
@@ -177,5 +191,5 @@ export interface CustomerPlan {
   mirror: CustomerMirrorRow[];
   review: ReviewItemInput[];
   counts: { rows: number; linked_existing: number; link_new: number; create: number; fill: number;
-            facts: number; review: Record<string, number> };
+            facts: number; hold: number; review: Record<string, number> };
 }
