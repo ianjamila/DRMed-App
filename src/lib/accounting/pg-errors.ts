@@ -1,5 +1,7 @@
 import "server-only";
 
+import { eodClosedMessage } from "./eod-closed-message";
+
 interface PgError {
   code?: string;
   message?: string;
@@ -72,7 +74,8 @@ export function translatePgError(err: PgError): string {
     case "P0014":
       return err.message ?? "Can't commit — there are still rows with errors. Fix the workbook or resolve in the preview.";
     case "P0015":
-      return err.message ?? "End of day is already closed for that date. Ask an admin to reopen first.";
+      // The raw 0043 text leaks business_date and a UTC instant; say the day plainly.
+      return eodClosedMessage(err.message);
     case "P0017":
       return err.message ?? "Cannot edit this cash adjustment after its journal entry has posted. Void and re-create instead.";
     case "P0018":
