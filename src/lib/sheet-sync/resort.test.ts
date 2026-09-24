@@ -27,4 +27,8 @@ describe("computeResortGroups", () => {
     const g = computeResortGroups([pt("a", "FACEBOOK", "online_facebook"), pt("b", "WALK IN", "walk_in", "patient")], new Map());
     expect(g.groups).toEqual([]);
   });
+  it("M5: sheet-owned values are skipped, not counted as kept by staff", () => {
+    const g = computeResortGroups([pt("a", "Family / Friends", "online_facebook", "sheet"), pt("b", "Family / Friends", "customer_referral", "sheet")], new Map());
+    expect(g).toEqual({ groups: [], keptByStaff: 0 });
+  });
 });

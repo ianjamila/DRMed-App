@@ -19,7 +19,8 @@ export interface ResortGroup {
  * Proposal only (spec §4.1): patients whose CURRENT value still equals what the
  * 2026-05 mapper produced from their original answer, re-mapped with the new
  * rules. A value that differs from the old mapper's output was changed by staff
- * and is left alone (counted as keptByStaff). Groups are keyed by
+ * and is left alone (counted as keptByStaff). Patient- and sheet-owned values
+ * are skipped outright (the form / the nightly sync own them). Groups are keyed by
  * (normalised answer, from, to) and sorted by size.
  */
 export function computeResortGroups(patients: readonly ResortInput[], aliases: ReadonlyMap<string, string>) {
@@ -27,6 +28,7 @@ export function computeResortGroups(patients: readonly ResortInput[], aliases: R
   let keptByStaff = 0;
   for (const p of patients) {
     if (p.referral_source_origin === "patient") continue;
+    if (p.referral_source_origin === "sheet") continue; // the sync owns it; not a staff choice (review M5)
     const old = mapReferralSource(p.answer).id;
     if (p.referral_source !== old) { keptByStaff++; continue; }
     const next = mapAnswer(p.answer, aliases);

@@ -2,8 +2,26 @@
  * Customers identity plan (spec §5.3, plan Task 5): turns a snapshot of
  * Customers rows into ops (create / link / fill / facts), mirror rows and
  * review items. Pure and not server-only: the CLI imports it.
+ *
+ * Identity is decided per LINK KEY (name_norm ‖ dob), never per row: every
+ * row of a key gets the same answer, so one key can never be half linked,
+ * half reviewed or half created (and a decision saved for the key is re-tested
+ * against every row, every run). When unsure the rows go to review — a wrong
+ * link writes one person's phone/email/address/DOB onto another's record, and
+ * a wrong create makes a duplicate patient.
+ *
+ * Order per key group:
+ *   a. admin `link`  → that patient's survivor (no conflict test); unknown → review
+ *   b. `create` decision → create (method admin), never overridden
+ *   c. auto `link`   → survivor, conflict test on EVERY row; unknown → (d)
+ *   d. full-name (1 → conflict test / ≥2 → review) → loose (review) →
+ *      corroboration (review) → pending create
+ * then a per-patient pass tests every auto-linked row against what the patient
+ * will hold AFTER this run's fill, and pending creates become new-person
+ * clusters that are checked against each other before any is created.
  */
-import type { PatientIndex } from "./patient-index";
+import { isTokenMultisetSuperset, type PatientIndex } from "./patient-index";
+import { phone10 } from "./names";
 import type {
   CustomerMirrorRow, CustomerOp, CustomerPlan, CustomerRow, FactsRecord, FillFields, LinkRecord,
   LinkState, PatientRecord, PrevCustomerRow, ReviewItemInput,
@@ -18,10 +36,33 @@ interface Input {
   importedAtIso?: string;       // legacy_intake.imported_at; runner passes the run start
 }
 
+type IdentityReview = "ambiguous_patient" | "identity_conflict" | "possible_existing_patient";
+
 type Resolution =
-  | { kind: "linked"; patientId: string; newLink: null | "auto_exact" }
+  | { kind: "linked"; patientId: string; trusted: boolean; linkOp: null | "auto_exact" | "auto_loose" }
   | { kind: "create"; method: "auto_exact" | "admin" }
-  | { kind: "review"; state: LinkState; item: ReviewItemInput };
+  | { kind: "review"; review: IdentityReview; reason: string; candidates: string[]; extra?: Record<string, unknown> };
+
+interface Group {
+  key: string;            // linkKey
+  nameNorm: string;
+  looseKey: string;
+  dob: string | null;
+  rows: CustomerRow[];    // sheet order
+  res: Resolution;
+}
+
+interface Cluster {
+  groups: Group[];
+  nameNorm: string;
+  looseKey: string;
+  dob: string | null;
+  admin: boolean;
+}
+
+const STATE: Record<IdentityReview, LinkState> = {
+  ambiguous_patient: "ambiguous", identity_conflict: "conflict", possible_existing_patient: "possible_existing",
+};
 
 const FILL_COLUMNS = [
   "phone", "email", "birthdate", "sex", "address", "referred_by_doctor",
@@ -59,7 +100,7 @@ function fieldsOf(r: CustomerRow): Required<FillFields> {
 }
 
 /** First non-null value per field across a patient's rows, earliest row first. */
-function aggregate(rows: CustomerRow[]): Required<FillFields> {
+function aggregate(rows: readonly CustomerRow[]): Required<FillFields> {
   const sorted = [...rows].sort(byEarliest);
   const out = fieldsOf(sorted[0]);
   for (const r of sorted.slice(1)) {
@@ -71,7 +112,7 @@ function aggregate(rows: CustomerRow[]): Required<FillFields> {
   return out;
 }
 
-/** What the conditional fill would change — mirrors sheet_sync_apply_customer_ops (0159). */
+/** What the conditional fill would change — mirrors sheet_sync_apply_customer_ops (0165). */
 function fillDiff(p: PatientRecord, want: Required<FillFields>): FillFields {
   const diff: FillFields = {};
   for (const c of FILL_COLUMNS) {
@@ -87,138 +128,313 @@ function fillDiff(p: PatientRecord, want: Required<FillFields>): FillFields {
   return diff;
 }
 
-/**
- * Corroboration guard (spec §5.3): a live patient with the SAME DOB as the row
- * AND (the same first given token OR the same surname tokens) — a name typo
- * or reordering that DOB confirms is still the same person, unlike a bare
- * DOB coincidence.
- */
-function dobAndNameCorroborates(index: PatientIndex, patientId: string, surnameTokens: readonly string[], firstTok: string): boolean {
-  const p = index.byId.get(patientId)!;
-  const toks = index.tokens.get(patientId) ?? [];
-  const sameFirstToken = toks.includes(firstTok);
-  const sameSurnameTokens = !!p.last_name && surnameTokens.every((t) => toks.includes(t));
-  return sameFirstToken || sameSurnameTokens;
+// ---------------------------------------------------------------------------
+// Conflict test (spec §5.3): both DOBs present and different ⇒ conflict; both
+// phones present and different ⇒ conflict unless both DOBs are present and equal.
+// ---------------------------------------------------------------------------
+
+interface Facet { dob: string | null; phone: string | null }
+
+const patientFacet = (p: PatientRecord): Facet => ({ dob: p.birthdate, phone: phone10(p.phone) });
+
+function conflictReason(r: CustomerRow, p: Facet): string | null {
+  if (r.dob && p.dob && r.dob !== p.dob) return "date of birth differs";
+  const phoneDiffers = !!(r.phone10 && p.phone && r.phone10 !== p.phone);
+  const dobMatches = !!(r.dob && p.dob && r.dob === p.dob);
+  if (phoneDiffers && !dobMatches) return "phone differs and date of birth cannot confirm";
+  return null;
 }
+
+function groupConflict(rows: readonly CustomerRow[], p: Facet): string | null {
+  for (const r of rows) {
+    const why = conflictReason(r, p);
+    if (why) return why;
+  }
+  return null;
+}
+
+/** Two rows with phones present and different, and no shared DOB to confirm them. */
+function phonesConflict(a: readonly CustomerRow[], b: readonly CustomerRow[]): boolean {
+  for (const x of a) for (const y of b) {
+    if (x.phone10 && y.phone10 && x.phone10 !== y.phone10 && !(x.dob && y.dob && x.dob === y.dob)) return true;
+  }
+  return false;
+}
+
+const surnameTokensOf = (nameNorm: string) => nameNorm.split("|")[0].split(" ").filter(Boolean);
+const firstTokenOf = (looseKey: string) => looseKey.split("|")[1] ?? "";
 
 export function planCustomers(input: Input): CustomerPlan {
   const { index, links } = input;
-  const ops: CustomerOp[] = [];
-  const resolutions = new Map<string, Resolution>(); // by sourceKey
+  const review = (kind: IdentityReview, reason: string, candidates: readonly string[] = [], extra?: Record<string, unknown>): Resolution =>
+    ({ kind: "review", review: kind, reason, candidates: [...new Set(candidates)], extra });
+
+  // ---- Group rows by link key (first-appearance order). ----
+  const groups: Group[] = [];
+  const groupByKey = new Map<string, Group>();
+  for (const r of input.rows) {
+    let g = groupByKey.get(r.linkKey);
+    if (!g) {
+      g = { key: r.linkKey, nameNorm: r.nameNorm, looseKey: r.looseKey, dob: r.dob, rows: [], res: { kind: "create", method: "auto_exact" } };
+      groupByKey.set(r.linkKey, g);
+      groups.push(g);
+    }
+    g.rows.push(r);
+  }
 
   // Corroboration sources: rows linked last run that vanished from this snapshot.
   const currentKeys = new Set(input.rows.map((r) => r.sourceKey));
-  const vanished = input.prevRows.filter((p) => p.patient_id && !currentKeys.has(p.source_key));
+  const vanishedByPhone = new Map<string, string[]>();
+  const vanishedByDob = new Map<string, string[]>();
+  for (const v of input.prevRows) {
+    if (!v.patient_id || currentKeys.has(v.source_key)) continue;
+    if (v.phone_norm) vanishedByPhone.set(v.phone_norm, [...(vanishedByPhone.get(v.phone_norm) ?? []), v.patient_id]);
+    if (v.dob) vanishedByDob.set(v.dob, [...(vanishedByDob.get(v.dob) ?? []), v.patient_id]);
+  }
 
-  const live = (ids: readonly string[] | undefined) => (ids ?? []).filter((id) => index.isLive(id));
-
-  for (const r of input.rows) {
-    const link = links.get(r.linkKey);
-    if (link?.decision === "create") { resolutions.set(r.sourceKey, { kind: "create", method: "admin" }); continue; }
-    if (link?.decision === "link" && link.patient_id) {
-      const s = index.survivor(link.patient_id);
-      if (s) { resolutions.set(r.sourceKey, { kind: "linked", patientId: s, newLink: null }); continue; }
+  /** Spec §5.3 corroboration guard (review I5): evidence that a "new" row is an existing patient. */
+  function corroborate(g: Group): string[] {
+    const hits = new Set<string>();
+    for (const r of g.rows) {
+      const surname = surnameTokensOf(r.nameNorm);
+      const firstTok = firstTokenOf(r.looseKey);
+      const phoneUsable = !!r.phone10 && !index.junkOrShared(r.phone10);
+      if (phoneUsable) {
+        for (const id of index.byPhone.get(r.phone10!) ?? []) {
+          const p = index.byId.get(id)!;
+          if (r.dob && p.birthdate && r.dob !== p.birthdate) continue; // a relative sharing the line
+          hits.add(id);
+        }
+        for (const pid of vanishedByPhone.get(r.phone10!) ?? []) {
+          const s = index.survivor(pid);
+          if (s) hits.add(s);
+        }
+      }
+      if (r.dob) {
+        for (const id of index.byDob.get(r.dob) ?? []) {
+          const names = index.names.get(id) ?? [];
+          if (names.some((n) => n.firstToken === firstTok || (n.lastTokens.length > 0 && isTokenMultisetSuperset(n.lastTokens, surname)))) hits.add(id);
+        }
+        for (const pid of vanishedByDob.get(r.dob) ?? []) {
+          const s = index.survivor(pid);
+          if (!s) continue;
+          const names = index.names.get(s) ?? [];
+          if (names.some((n) => n.tokens.some((t) => r.tokens.includes(t)))) hits.add(s);
+        }
+      }
     }
-    const full = live(index.byFullName.get(r.nameNorm));
+    return [...hits];
+  }
+
+  /** Rule (d): no usable decision. */
+  function resolveFresh(g: Group, staleDecision: boolean): Resolution {
+    const full = index.byFullName.get(g.nameNorm) ?? [];
     if (full.length === 1) {
-      const p = index.byId.get(full[0])!;
-      const dobConflict = !!(r.dob && p.birthdate && r.dob !== p.birthdate);
-      const pPhone = p.phone_normalized;
-      const phoneDiffers = !!(r.phone10 && pPhone && r.phone10 !== pPhone);
-      const dobMatches = !!(r.dob && p.birthdate && r.dob === p.birthdate);
-      if (dobConflict || (phoneDiffers && !dobMatches)) {
-        resolutions.set(r.sourceKey, { kind: "review", state: "conflict", item: { kind: "identity_conflict", item_key: r.linkKey,
-          payload: { link_keys: [r.linkKey], rows: [rowPayload(r)], candidates: candidatePayload(index, full),
-            reason: dobConflict ? "date of birth differs" : "phone differs and date of birth cannot confirm" } } });
-      } else {
-        resolutions.set(r.sourceKey, { kind: "linked", patientId: p.id, newLink: "auto_exact" });
-      }
-      continue;
+      const why = groupConflict(g.rows, patientFacet(index.byId.get(full[0])!));
+      return why ? review("identity_conflict", why, full) : { kind: "linked", patientId: full[0], trusted: false, linkOp: "auto_exact" };
     }
-    if (full.length > 1) {
-      resolutions.set(r.sourceKey, { kind: "review", state: "ambiguous", item: { kind: "ambiguous_patient", item_key: r.linkKey,
-        payload: { link_keys: [r.linkKey], rows: [rowPayload(r)], candidates: candidatePayload(index, full), reason: "several patients share this full name" } } });
-      continue;
-    }
-    const loose = live(index.byLoose.get(r.looseKey));
-    if (loose.length > 0) {
-      resolutions.set(r.sourceKey, { kind: "review", state: "ambiguous", item: { kind: "ambiguous_patient", item_key: r.linkKey,
-        payload: { link_keys: [r.linkKey], rows: [rowPayload(r)], candidates: candidatePayload(index, loose), reason: "similar name (surname + first name) — not linked automatically" } } });
-      continue;
-    }
-    const surnameTokens = r.nameNorm.split("|")[0].split(" ");
-    const firstTok = r.looseKey.split("|")[1];
-    const hits = new Set<string>(live(r.phone10 ? index.byPhone.get(r.phone10) : []));
-    for (const id of live(r.dob ? index.byDob.get(r.dob) : [])) {
-      if (dobAndNameCorroborates(index, id, surnameTokens, firstTok)) hits.add(id);
-    }
-    for (const v of vanished) {
-      if ((r.phone10 && v.phone_norm === r.phone10) || (r.dob && v.dob === r.dob)) {
-        const s = index.survivor(v.patient_id!);
-        if (s) hits.add(s);
-      }
-    }
-    if (hits.size > 0) {
-      resolutions.set(r.sourceKey, { kind: "review", state: "possible_existing", item: { kind: "possible_existing_patient", item_key: r.linkKey,
-        payload: { link_keys: [r.linkKey], rows: [rowPayload(r)], candidates: candidatePayload(index, [...hits]), reason: "same phone or date of birth as an existing patient" } } });
-      continue;
-    }
-    resolutions.set(r.sourceKey, { kind: "create", method: "auto_exact" });
+    if (full.length > 1) return review("ambiguous_patient", "several patients share this full name", full);
+    const loose = index.byLoose.get(g.looseKey) ?? [];
+    if (loose.length > 0) return review("ambiguous_patient", "similar name (surname + first name) — not linked automatically", loose);
+    const hits = corroborate(g);
+    if (hits.length > 0) return review("possible_existing_patient", "same phone or date of birth as an existing patient", hits);
+    // A saved link whose patient is gone (deleted, or missing from this read):
+    // creating would silently re-make someone staff already removed or linked.
+    if (staleDecision) return review("ambiguous_patient", "the previously linked patient no longer exists");
+    return { kind: "create", method: "auto_exact" };
   }
 
-  // Merge review items that share a link key (one item per identity, rows listed).
-  const reviewByKey = new Map<string, ReviewItemInput>();
-  for (const res of resolutions.values()) {
-    if (res.kind !== "review") continue;
-    const prev = reviewByKey.get(res.item.item_key);
-    if (prev) (prev.payload.rows as unknown[]).push(...(res.item.payload.rows as unknown[]));
-    else reviewByKey.set(res.item.item_key, structuredClone(res.item));
+  // ---- Pass 1: one resolution per key group. ----
+  for (const g of groups) {
+    const link = links.get(g.key);
+    if (link?.decision === "link" && link.method === "admin") {
+      const s = link.patient_id ? index.survivor(link.patient_id) : null;
+      g.res = s ? { kind: "linked", patientId: s, trusted: true, linkOp: null }
+        : review("ambiguous_patient", "the chosen patient no longer exists");
+      continue;
+    }
+    if (link?.decision === "create") { g.res = { kind: "create", method: "admin" }; continue; }
+    if (link?.decision === "link") {
+      const s = link.patient_id ? index.survivor(link.patient_id) : null;
+      if (s) {
+        const why = groupConflict(g.rows, patientFacet(index.byId.get(s)!));
+        g.res = why ? review("identity_conflict", why, [s])
+          : { kind: "linked", patientId: s, trusted: false, linkOp: s !== link.patient_id ? (link.method === "auto_loose" ? "auto_loose" : "auto_exact") : null };
+        continue;
+      }
+      g.res = resolveFresh(g, true);
+      continue;
+    }
+    g.res = resolveFresh(g, false);
   }
 
-  // Creates: group by nameNorm; one patient per distinct DOB; undated rows join the
-  // single dated group, or go to review when the name has several DOBs.
-  const createRows = input.rows.filter((r) => resolutions.get(r.sourceKey)?.kind === "create");
-  const createGroups = new Map<string, CustomerRow[]>(); // createKey → rows
-  const byName = new Map<string, CustomerRow[]>();
-  for (const r of createRows) byName.set(r.nameNorm, [...(byName.get(r.nameNorm) ?? []), r]);
-  for (const [nameNorm, rows] of byName) {
-    const dobs = [...new Set(rows.map((r) => r.dob).filter((d): d is string => !!d))];
-    if (dobs.length <= 1) { createGroups.set(`${nameNorm}#${dobs[0] ?? ""}`, rows); continue; }
-    for (const d of dobs) createGroups.set(`${nameNorm}#${d}`, rows.filter((r) => r.dob === d));
-    const undated = rows.filter((r) => !r.dob);
-    if (undated.length) {
-      const key = `${nameNorm}#`;
-      for (const r of undated) resolutions.set(r.sourceKey, { kind: "review", state: "ambiguous", item: { kind: "ambiguous_patient", item_key: key, payload: {} } });
-      reviewByKey.set(key, { kind: "ambiguous_patient", item_key: key, payload: { link_keys: [key], rows: undated.map(rowPayload), candidates: [],
-        reason: "several new patients share this name with different dates of birth; this row has none" } });
+  // ---- Pass 2: per patient, test every auto-linked row against what the
+  // patient will hold after this run's fill (so run 2 agrees with run 1, and
+  // two different people cannot both be poured into one record). ----
+  const linkedByPatient = new Map<string, Group[]>();
+  for (const g of groups) {
+    if (g.res.kind !== "linked") continue;
+    linkedByPatient.set(g.res.patientId, [...(linkedByPatient.get(g.res.patientId) ?? []), g]);
+  }
+  for (const [pid, gs] of linkedByPatient) {
+    const p = index.byId.get(pid)!;
+    let active = gs;
+    for (;;) {
+      const rows = active.flatMap((g) => g.rows);
+      const auto = active.filter((g) => g.res.kind === "linked" && !g.res.trusted);
+      let demote: Group[] = [];
+      let reason = "";
+      if (!p.birthdate && new Set(rows.map((r) => r.dob).filter(Boolean)).size >= 2) {
+        demote = auto.filter((g) => g.dob);
+        reason = "rows with this name carry different dates of birth and the patient has none";
+      }
+      if (demote.length === 0) {
+        const agg = aggregate(rows);
+        const will: Facet = { dob: p.birthdate ?? agg.birthdate, phone: phone10(p.phone) ?? phone10(agg.phone) };
+        for (const g of auto) {
+          const why = groupConflict(g.rows, will);
+          if (why) { demote.push(g); reason = `${why} (compared with this run's other rows for the patient)`; }
+        }
+      }
+      if (demote.length === 0) break;
+      for (const g of demote) g.res = review("identity_conflict", reason, [pid]);
+      active = active.filter((g) => !demote.includes(g));
+      if (active.length === 0) break;
     }
   }
-  const createKeyBySource = new Map<string, string>();
-  for (const [createKey, rows] of createGroups) {
-    const agg = aggregate(rows);
-    const first = [...rows].sort(byEarliest)[0];
-    const methods = rows.map((r) => (resolutions.get(r.sourceKey) as { method: "auto_exact" | "admin" }).method);
+
+  // ---- Pass 3: pending creates → new-person clusters. ----
+  const byName = new Map<string, Group[]>();
+  for (const g of groups) byName.set(g.nameNorm, [...(byName.get(g.nameNorm) ?? []), g]);
+  const isPending = (g: Group) => g.res.kind === "create";
+  const isAdminCreate = (g: Group) => g.res.kind === "create" && g.res.method === "admin";
+
+  // A sibling key of the same name is linked to a patient (by a saved decision,
+  // since the full-name rule would have found it for every key alike): this
+  // "new" person may well be that patient.
+  for (const g of groups) {
+    if (!isPending(g) || isAdminCreate(g)) continue;
+    const linked = new Set<string>();
+    for (const s of byName.get(g.nameNorm)!) {
+      if (s === g || s.res.kind !== "linked") continue;
+      const p = index.byId.get(s.res.patientId)!;
+      if (g.dob && p.birthdate && g.dob !== p.birthdate) continue;
+      linked.add(p.id);
+    }
+    if (linked.size > 0) g.res = review("possible_existing_patient", "another row with this name is linked to this patient", [...linked]);
+  }
+
+  const clusters: Cluster[] = [];
+  const datedClustersByName = new Map<string, Cluster[]>();
+  const newCluster = (gs: Group[]): Cluster => {
+    const c = { groups: gs, nameNorm: gs[0].nameNorm, looseKey: gs[0].looseKey, dob: gs[0].dob, admin: gs.some(isAdminCreate) };
+    clusters.push(c);
+    return c;
+  };
+  for (const g of groups) {
+    if (!isPending(g) || !g.dob) continue;
+    const c = newCluster([g]);
+    datedClustersByName.set(g.nameNorm, [...(datedClustersByName.get(g.nameNorm) ?? []), c]);
+  }
+  for (const g of groups) {
+    if (!isPending(g) || g.dob) continue;
+    if (isAdminCreate(g)) { newCluster([g]); continue; }
+    const phones = new Set(g.rows.map((r) => r.phone10).filter(Boolean));
+    if (phones.size >= 2) {
+      g.res = review("ambiguous_patient", "rows under this name have different phone numbers and no date of birth to tell them apart");
+      continue;
+    }
+    const datedSiblings = byName.get(g.nameNorm)!.filter((s) => s.dob);
+    const dated = datedClustersByName.get(g.nameNorm) ?? [];
+    if (datedSiblings.length === 0) { newCluster([g]); continue; }
+    if (datedSiblings.length === 1 && dated.length === 1 && !phonesConflict(g.rows, dated[0].groups.flatMap((x) => x.rows))) {
+      dated[0].groups.push(g);
+      continue;
+    }
+    g.res = review("ambiguous_patient", dated.length > 1 || datedSiblings.length > 1
+      ? "several rows share this name with different dates of birth; this row has none"
+      : dated.length === 1
+        ? "this row has no date of birth and its phone differs from the dated row with this name"
+        : "this row has no date of birth and the dated row with this name is under review");
+  }
+
+  // Cross-cluster check (review I1): two spellings of one new person in the
+  // same batch must not both be created.
+  const phonesOf = new Map<Cluster, Set<string>>();
+  const namesPerPhone = new Map<string, Set<string>>();
+  for (const c of clusters) {
+    const set = new Set<string>();
+    for (const g of c.groups) for (const r of g.rows) if (r.phone10 && !index.junkOrShared(r.phone10)) set.add(r.phone10);
+    phonesOf.set(c, set);
+    for (const ph of set) namesPerPhone.set(ph, (namesPerPhone.get(ph) ?? new Set()).add(c.nameNorm));
+  }
+  // A phone typed on 3+ different new names (a clinic / agent line) proves nothing.
+  const batchShared = (ph: string) => (namesPerPhone.get(ph)?.size ?? 0) >= 3;
+  const collide = (a: Cluster, b: Cluster): boolean => {
+    for (const ph of phonesOf.get(a)!) if (!batchShared(ph) && phonesOf.get(b)!.has(ph)) return true;
+    if (a.nameNorm === b.nameNorm) return false; // different DOBs: legitimately different people
+    if (a.looseKey === b.looseKey) return true;
+    if (a.dob && a.dob === b.dob) {
+      const sa = surnameTokensOf(a.nameNorm), sb = surnameTokensOf(b.nameNorm);
+      if (firstTokenOf(a.looseKey) === firstTokenOf(b.looseKey)
+        || isTokenMultisetSuperset(sa, sb) || isTokenMultisetSuperset(sb, sa)) return true;
+    }
+    return false;
+  };
+  const buckets = new Map<string, Cluster[]>();
+  const addTo = (k: string, c: Cluster) => buckets.set(k, [...(buckets.get(k) ?? []), c]);
+  for (const c of clusters) {
+    addTo(`l:${c.looseKey}`, c);
+    if (c.dob) addTo(`d:${c.dob}`, c);
+    for (const ph of phonesOf.get(c)!) if (!batchShared(ph)) addTo(`p:${ph}`, c);
+  }
+  const partners = new Map<Cluster, Set<Cluster>>();
+  for (const bucket of buckets.values()) {
+    for (let i = 0; i < bucket.length; i++) for (let j = i + 1; j < bucket.length; j++) {
+      const a = bucket[i], b = bucket[j];
+      if (!collide(a, b)) continue;
+      partners.set(a, (partners.get(a) ?? new Set()).add(b));
+      partners.set(b, (partners.get(b) ?? new Set()).add(a));
+    }
+  }
+  const creating: Cluster[] = [];
+  for (const c of clusters) {
+    const others = partners.get(c);
+    if (!others || c.admin) { creating.push(c); continue; }
+    const similar = [...others].flatMap((o) => o.groups.flatMap((g) => g.rows.map(rowPayload)));
+    for (const g of c.groups) {
+      g.res = review("possible_existing_patient", "another new row in this sheet looks like the same person", [], { similar_new_rows: similar });
+    }
+  }
+
+  // ---- Ops. ----
+  const ops: CustomerOp[] = [];
+  const createKeyByGroup = new Map<Group, string>();
+  for (const c of creating) {
+    const rows = c.groups.flatMap((g) => g.rows);
+    const sorted = [...rows].sort(byEarliest);
+    const first = sorted[0];
+    const createKey = c.groups[0].key;
     ops.push({
-      op: "create", create_key: createKey, method: methods.includes("admin") ? "admin" : "auto_exact",
-      link_keys: [...new Set(rows.map((r) => r.linkKey))],
-      fields: { first_name: first.first!, last_name: first.last!, middle_name: first.middle, ...agg },
+      op: "create", create_key: createKey, method: c.admin ? "admin" : "auto_exact",
+      link_keys: c.groups.map((g) => g.key),
+      fields: { first_name: first.first!, last_name: first.last!, middle_name: first.middle, ...aggregate(rows) },
       legacy_intake: { source: "sheet_sync:CUSTOMER LIST2", imported_at: input.importedAtIso ?? null,
         original_row_index: first.sheetRow, raw: first.raw, import_warnings: [] },
-      facts: { registered_on: first.registeredOn, new_repeat: rows.slice().sort(byEarliest).find((r) => r.newRepeat)?.newRepeat ?? null,
+      facts: { registered_on: first.registeredOn, new_repeat: sorted.find((r) => r.newRepeat)?.newRepeat ?? null,
         source_ref: `CUSTOMER LIST2 r${first.sheetRow}` },
     });
-    for (const r of rows) createKeyBySource.set(r.sourceKey, createKey);
+    for (const g of c.groups) createKeyByGroup.set(g, createKey);
   }
 
-  // Linked: new link ops, then per-patient fill + facts diffs.
+  // Linked: link ops, then per-patient fill + facts diffs.
   const rowsByPatient = new Map<string, CustomerRow[]>();
-  for (const r of input.rows) {
-    const res = resolutions.get(r.sourceKey);
-    if (res?.kind !== "linked") continue;
-    rowsByPatient.set(res.patientId, [...(rowsByPatient.get(res.patientId) ?? []), r]);
-    const existing = links.get(r.linkKey);
-    if (res.newLink && (!existing || existing.patient_id !== res.patientId)) {
-      ops.push({ op: "link", link_key: r.linkKey, patient_id: res.patientId, method: res.newLink });
+  for (const g of groups) {
+    if (g.res.kind !== "linked") continue;
+    rowsByPatient.set(g.res.patientId, [...(rowsByPatient.get(g.res.patientId) ?? []), ...g.rows]);
+    const existing = links.get(g.key);
+    if (g.res.linkOp && (!existing || existing.patient_id !== g.res.patientId)) {
+      ops.push({ op: "link", link_key: g.key, patient_id: g.res.patientId, method: g.res.linkOp });
     }
   }
   let fills = 0;
@@ -230,14 +446,30 @@ export function planCustomers(input: Input): CustomerPlan {
     const sorted = [...rows].sort(byEarliest);
     const want = { registered_on: sorted[0].registeredOn, new_repeat: sorted.find((r) => r.newRepeat)?.newRepeat ?? null,
       source_ref: `CUSTOMER LIST2 r${sorted[0].sheetRow}` };
+    // source_ref is written but not compared (review I4): a row inserted or
+    // deleted above would otherwise re-send facts for thousands of patients.
     const have = input.facts.get(pid);
-    if (!have || have.registered_on !== want.registered_on || have.sheet_new_repeat !== want.new_repeat || have.source_ref !== want.source_ref) {
+    if (!have || have.registered_on !== want.registered_on || have.sheet_new_repeat !== want.new_repeat) {
       ops.push({ op: "facts", patient_id: pid, ...want }); factsOps++;
     }
   }
-  // Dedupe link ops (several rows can share a link key).
-  const seenLink = new Set<string>();
-  const dedupedOps = ops.filter((o) => (o.op !== "link" ? true : !seenLink.has(o.link_key) && !!seenLink.add(o.link_key)));
+
+  // ---- Review items: one per link key; never overwrite, merge instead. ----
+  const reviewByKey = new Map<string, ReviewItemInput>();
+  const addReview = (item: ReviewItemInput) => {
+    const prev = reviewByKey.get(item.item_key);
+    if (!prev) { reviewByKey.set(item.item_key, item); return; }
+    const rows = prev.payload.rows as Array<{ sheet_row: number }>;
+    for (const r of item.payload.rows as Array<{ sheet_row: number }>) if (!rows.some((x) => x.sheet_row === r.sheet_row)) rows.push(r);
+    const cands = prev.payload.candidates as Array<{ patient_id: string }>;
+    for (const c of item.payload.candidates as Array<{ patient_id: string }>) if (!cands.some((x) => x.patient_id === c.patient_id)) cands.push(c);
+  };
+  for (const g of groups) {
+    if (g.res.kind !== "review") continue;
+    addReview({ kind: g.res.review, item_key: g.key, payload: {
+      link_keys: [g.key], rows: g.rows.map(rowPayload), candidates: candidatePayload(index, g.res.candidates),
+      reason: g.res.reason, ...g.res.extra } });
+  }
 
   // Unmapped answers: one item per normalised answer.
   const unmapped = new Map<string, { answer: string; rows: number }>();
@@ -249,8 +481,9 @@ export function planCustomers(input: Input): CustomerPlan {
   for (const [norm, u] of unmapped) reviewByKey.set(`unmapped:${norm}`, { kind: "unmapped_source", item_key: norm, payload: u });
 
   const mirror: CustomerMirrorRow[] = input.rows.map((r) => {
-    const res = resolutions.get(r.sourceKey)!;
-    const createKey = createKeyBySource.get(r.sourceKey) ?? null;
+    const g = groupByKey.get(r.linkKey)!;
+    const res = g.res;
+    const createKey = createKeyByGroup.get(g) ?? null;
     return {
       sheet_row: r.sheetRow, source_key: r.sourceKey, dup_count: r.dupCount, full_name_raw: r.fullNameRaw,
       name_norm: r.nameNorm, loose_key: r.looseKey, link_key: r.linkKey, phone_norm: r.phone10, dob: r.dob,
@@ -259,7 +492,7 @@ export function planCustomers(input: Input): CustomerPlan {
       release_medium_raw: r.releaseMediumRaw,
       patient_id: res.kind === "linked" ? res.patientId : null,
       pending_create_key: createKey,
-      link_state: res.kind === "linked" || createKey ? "linked" : res.kind === "review" ? res.state : "unlinked",
+      link_state: res.kind === "linked" || createKey ? "linked" : res.kind === "review" ? STATE[res.review] : "unlinked",
       row_hash: r.rowHash,
     };
   });
@@ -267,11 +500,11 @@ export function planCustomers(input: Input): CustomerPlan {
   const reviewList = [...reviewByKey.values()];
   const reviewCounts: Record<string, number> = {};
   for (const i of reviewList) reviewCounts[i.kind] = (reviewCounts[i.kind] ?? 0) + 1;
-  const linkedExisting = [...resolutions.values()].filter((x) => x.kind === "linked").length;
+  const linkedExisting = input.rows.filter((r) => groupByKey.get(r.linkKey)!.res.kind === "linked").length;
   return {
-    ops: dedupedOps, mirror, review: reviewList,
+    ops, mirror, review: reviewList,
     counts: { rows: input.rows.length, linked_existing: linkedExisting,
-      link_new: dedupedOps.filter((o) => o.op === "link").length, create: createGroups.size,
+      link_new: ops.filter((o) => o.op === "link").length, create: creating.length,
       fill: fills, facts: factsOps, review: reviewCounts },
   };
 }

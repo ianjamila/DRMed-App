@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assignIdentities } from "./encounter-identity";
+import { assignIdentities, isTokenMultisetSuperset } from "./encounter-identity";
 import { buildPatientIndex } from "./patient-index";
 import type { EncounterLine, PatientRecord } from "./types";
 
@@ -37,5 +37,34 @@ describe("assignIdentities", () => {
   it("unlinked lab and consult spellings of one person share one name identity", () => {
     const [a, b] = assignIdentities([line("Ana", "Cruz", "Reyes"), line("Ana", null, "Reyes")], buildPatientIndex([]), new Map());
     expect(a.identityKey).toBe(b.identityKey);
+  });
+  it("I3: a DOB-keyed AUTO decision does not pick one of two live patients sharing the name", () => {
+    const links = new Map([["dela cruz|juan#1990-01-01", { link_key: "dela cruz|juan#1990-01-01", patient_id: "A", decision: "link" as const, method: "auto_exact" as const }]]);
+    const idx = buildPatientIndex([p("A", { middle_name: null, birthdate: "1990-01-01" }), p("B", { middle_name: null, birthdate: "1985-05-05" })]);
+    const [a] = assignIdentities([line("Juan", null)], idx, links);
+    expect(a).toMatchObject({ patientId: null, identityKey: "name:dela cruz|juan" });
+  });
+  it("I3: an undated-key decision (name#) applies whatever its method", () => {
+    const links = new Map([["dela cruz|juan#", { link_key: "dela cruz|juan#", patient_id: "B", decision: "link" as const, method: "auto_exact" as const }]]);
+    const idx = buildPatientIndex([p("A", { middle_name: null }), p("B", { middle_name: null })]);
+    expect(assignIdentities([line("Juan", null)], idx, links)[0].patientId).toBe("B");
+  });
+  it("I3: step 1 is skipped when the decisions point at two different patients", () => {
+    const links = new Map([
+      ["dela cruz|juan#", { link_key: "dela cruz|juan#", patient_id: "A", decision: "link" as const, method: "auto_exact" as const }],
+      ["dela cruz|juan#1985-05-05", { link_key: "dela cruz|juan#1985-05-05", patient_id: "B", decision: "link" as const, method: "admin" as const }]]);
+    const idx = buildPatientIndex([p("A", { middle_name: null }), p("B", { middle_name: null })]);
+    expect(assignIdentities([line("Juan", null)], idx, links)[0].patientId).toBeNull();
+  });
+  it("C3: a line spelled like a merged-away patient resolves to the survivor", () => {
+    const idx = buildPatientIndex([p("S", { last_name: "Delacruz", middle_name: null }), p("M", { middle_name: null, merged_into_id: "S" })]);
+    expect(assignIdentities([line("Juan", null)], idx, new Map())[0].identityKey).toBe("patient:S");
+  });
+  it("M4: the loose fallback needs a MULTISET superset (a repeated token must appear twice)", () => {
+    expect(isTokenMultisetSuperset(["dela", "cruz", "juan", "santos"], ["dela", "cruz", "juan", "dela"])).toBe(false);
+    expect(isTokenMultisetSuperset(["dela", "cruz", "juan", "dela"], ["dela", "cruz", "juan", "dela"])).toBe(true);
+    expect(isTokenMultisetSuperset(["dela", "cruz", "juan", "santos"], ["dela", "cruz", "juan"])).toBe(true);
+    const [a] = assignIdentities([line("Juan", "Dela")], buildPatientIndex([p("A")]), new Map());
+    expect(a.patientId).toBeNull();
   });
 });
