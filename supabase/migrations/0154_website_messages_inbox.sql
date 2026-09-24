@@ -1,7 +1,7 @@
 -- =============================================================================
 -- 0154 — Website Messages inbox, appointment source, retire Inquiries
 -- =============================================================================
--- Three changes that ship together (spec:
+-- Four changes that ship together (spec:
 -- docs/superpowers/specs/2026-09-24-website-messages-inbox.md):
 --
 -- 1. RETIRE `inquiries` (0012). Reception's manual inquiry log was never used:
@@ -41,6 +41,9 @@
 --    row's attribution; any other row with no `created_by` came through the
 --    public form too (only staff actions stamp created_by). Staff-created
 --    rows stay NULL = "Not recorded".
+--
+-- 4. `contact_message_replies` — replies reception sends from inside the app
+--    (email via Resend, text via Semaphore), one append-only row per attempt.
 --
 -- The CHECK lists below are pinned to src/lib/appointments/source.ts and
 -- src/lib/contact-messages/labels.ts by website-messages-schema.test.ts.
@@ -273,6 +276,67 @@ grant execute on function public.appointments_insert_slot_guarded(jsonb, uuid, t
   to service_role;
 
 -- ---------------------------------------------------------------------------
+-- 4. contact_message_replies — replies sent from inside the app
+-- ---------------------------------------------------------------------------
+-- Reception answers a website message by email (Resend) or text (Semaphore)
+-- from the message page. One row per send ATTEMPT, written by the server
+-- action after the provider call returns, so the page can show the thread and
+-- what actually happened: `sent`, `failed` (provider error) or `skipped`
+-- (notifications are off outside production). Append-only: no UPDATE or
+-- DELETE for any JWT role — a reply that went out cannot be un-sent, so its
+-- record cannot be rewritten either.
+--
+-- `sent_to` is the address/number the reply went to (the sender's own, from
+-- the message — never typed by staff). `body` is the staff-written reply.
+-- The CHECK lists are pinned to src/lib/contact-messages/labels.ts.
+create table if not exists public.contact_message_replies (
+  id             uuid primary key default gen_random_uuid(),
+  message_id     uuid not null references public.contact_messages(id) on delete cascade,
+  channel        text not null,
+  sent_to        text not null,
+  body           text not null,
+  outcome        text not null,
+  outcome_detail text,
+  sent_by        uuid not null references auth.users(id),
+  created_at     timestamptz not null default now(),
+  constraint contact_message_replies_channel_check
+    check (channel in ('email', 'sms')),
+  constraint contact_message_replies_outcome_check
+    check (outcome in ('sent', 'failed', 'skipped')),
+  constraint contact_message_replies_sent_to_len
+    check (char_length(sent_to) between 3 and 320),
+  constraint contact_message_replies_body_len
+    check (char_length(btrim(body)) between 1 and 5000),
+  constraint contact_message_replies_outcome_detail_len
+    check (outcome_detail is null or char_length(outcome_detail) <= 500)
+);
+
+create index if not exists idx_contact_message_replies_message
+  on public.contact_message_replies (message_id, created_at, id);
+
+alter table public.contact_message_replies enable row level security;
+
+revoke all on public.contact_message_replies from anon;
+revoke all on public.contact_message_replies from authenticated;
+grant select, insert on public.contact_message_replies to authenticated;
+
+create policy "contact_message_replies: reception/admin read"
+  on public.contact_message_replies
+  for select
+  to authenticated
+  using ((select public.has_role(array['reception', 'admin'])));
+
+-- A staff member can only record a reply as themselves.
+create policy "contact_message_replies: reception/admin insert own"
+  on public.contact_message_replies
+  for insert
+  to authenticated
+  with check (
+    (select public.has_role(array['reception', 'admin']))
+    and sent_by = (select auth.uid())
+  );
+
+-- ---------------------------------------------------------------------------
 -- Post-conditions
 -- ---------------------------------------------------------------------------
 do $$
@@ -298,6 +362,16 @@ begin
   if has_function_privilege('anon', 'public.appointments_insert_slot_guarded(jsonb, uuid, timestamptz, boolean)', 'execute')
      or has_function_privilege('authenticated', 'public.appointments_insert_slot_guarded(jsonb, uuid, timestamptz, boolean)', 'execute') then
     raise exception '0154 post-check: appointments_insert_slot_guarded is callable by a JWT role';
+  end if;
+  if has_table_privilege('anon', 'public.contact_message_replies', 'select')
+     or has_table_privilege('anon', 'public.contact_message_replies', 'insert')
+     or has_table_privilege('authenticated', 'public.contact_message_replies', 'update')
+     or has_table_privilege('authenticated', 'public.contact_message_replies', 'delete') then
+    raise exception '0154 post-check: contact_message_replies grants are wider than select/insert for staff';
+  end if;
+  if (select count(*) from pg_policies
+       where schemaname = 'public' and tablename = 'contact_message_replies') <> 2 then
+    raise exception '0154 post-check: contact_message_replies should have exactly 2 policies';
   end if;
 end;
 $$;

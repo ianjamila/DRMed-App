@@ -107,3 +107,8 @@ grant select on public.v_patients_without_consent to authenticated;
 revoke all on public.contact_messages from anon;
 revoke all on public.contact_messages from authenticated;
 grant select, update on public.contact_messages to authenticated;
+-- 0154, second table: the append-only reply log. Staff read and insert (as
+-- themselves, per RLS); nobody updates or deletes a reply that was sent.
+revoke all on public.contact_message_replies from anon;
+revoke all on public.contact_message_replies from authenticated;
+grant select, insert on public.contact_message_replies to authenticated;

@@ -66,3 +66,27 @@ export function contactMessageStatusLabel(status: string | null | undefined): st
 }
 
 export const STAFF_NOTES_MAX = 2000;
+
+// Replies sent from inside the app — `contact_message_replies` (0154).
+export const REPLY_CHANNELS = ["email", "sms"] as const;
+export type ReplyChannel = (typeof REPLY_CHANNELS)[number];
+
+export const REPLY_CHANNEL_LABEL: Record<ReplyChannel, string> = {
+  email: "Email",
+  sms: "Text message",
+};
+
+export const REPLY_OUTCOMES = ["sent", "failed", "skipped"] as const;
+export type ReplyOutcome = (typeof REPLY_OUTCOMES)[number];
+
+export const REPLY_OUTCOME_LABEL: Record<ReplyOutcome, string> = {
+  sent: "Sent",
+  failed: "Not sent — the provider refused it",
+  skipped: "Not sent — notifications are off in this environment",
+};
+
+// 0154's contact_message_replies_body_len cap. An email reply may use all of
+// it; a text is capped far lower in the app (REPLY_SMS_MAX) because every 160
+// characters is another billed SMS segment.
+export const REPLY_BODY_MAX = 5000;
+export const REPLY_SMS_MAX = 480;

@@ -11,6 +11,9 @@ import {
   CONTACT_MESSAGE_STATUSES,
   CORPORATE_SUBJECT,
   STAFF_NOTES_MAX,
+  REPLY_CHANNELS,
+  REPLY_OUTCOMES,
+  REPLY_BODY_MAX,
 } from "@/lib/contact-messages/labels";
 
 const MIGRATION = readFileSync(
@@ -45,6 +48,19 @@ describe("0154 CHECK constraints match the TypeScript vocabularies", () => {
   it("the staff-notes length cap", () => {
     const m = /char_length\(staff_notes\)\s*<=\s*(\d+)/i.exec(MIGRATION);
     expect(Number(m?.[1])).toBe(STAFF_NOTES_MAX);
+  });
+
+  it("contact_message_replies.channel", () => {
+    expect(checkList("contact_message_replies_channel_check", "channel")).toEqual([...REPLY_CHANNELS]);
+  });
+
+  it("contact_message_replies.outcome", () => {
+    expect(checkList("contact_message_replies_outcome_check", "outcome")).toEqual([...REPLY_OUTCOMES]);
+  });
+
+  it("the reply body length cap", () => {
+    const m = /char_length\(btrim\(body\)\)\s+between\s+1\s+and\s+(\d+)/i.exec(MIGRATION);
+    expect(Number(m?.[1])).toBe(REPLY_BODY_MAX);
   });
 
   it("the corporate backfill uses the form's subject literal", () => {
