@@ -33,6 +33,13 @@ describe("phone10", () => {
     expect(phone10("")).toBeNull();
     expect(phone10(undefined)).toBeNull();
   });
+  it("returns null for a cell holding two numbers or an extension, instead of a wrong tail", () => {
+    expect(phone10("09095534228 / 09171234567")).toBeNull();
+    expect(phone10("0909-553-4228 loc 12")).toBeNull();
+  });
+  it("still handles a bare 12-digit 639… mobile (the longest real PH shape)", () => {
+    expect(phone10("639095534228")).toBe("9095534228");
+  });
 });
 
 describe("hashes", () => {

@@ -72,6 +72,11 @@ function parseEncounterTab(layout: Layout, rows: Cell[][], opts: { today: string
     if (d.iso < opts.windowStart) continue;
     const name = parseName(nameRaw, null, null, null);
     const parts = { first: name.first_name, middle: name.middle_name, last: name.last_name };
+    if (name.unparseable || !parts.first || !parts.last) {
+      issues.push({ kind: "invalid_row", item_key: `${layout.tab}:${rowHash}`,
+        payload: { tab: layout.tab, sheet_row: i + 1, reason: "name needs a surname and a first name", name_raw: nameRaw } });
+      continue;
+    }
     out.push({
       tab: layout.tab, sheetRow: i + 1, serviceDate: d.iso, nameRaw, ...parts,
       nameNorm: nameNormOf(parts), looseKey: looseKeyOf(parts), tokens: tokensOf(parts),

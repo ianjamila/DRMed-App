@@ -33,6 +33,16 @@ describe("parseEventDateCell", () => {
   it("rejects impossible calendar dates", () => {
     expect(parseEventDateCell("2/30/2025", TODAY).iso).toBeNull();
   });
+  it("rejects a word that merely starts with a month's first 3 letters but isn't one", () => {
+    // "MARTES" is Tagalog for Tuesday; "MARCHING" is an unrelated English word.
+    // Both begin "MAR" but are not prefixes of "MARCH".
+    expect(parseEventDateCell("MARTES 5,2025", TODAY).issue).toBe("unparseable");
+    expect(parseEventDateCell("MARCHING 5,2025", TODAY).issue).toBe("unparseable");
+  });
+  it("still accepts a genuine month prefix, including short/known-typo forms", () => {
+    expect(parseEventDateCell("Sept 12,2025", TODAY).iso).toBe("2025-09-12");
+    expect(parseEventDateCell("JUNE 5,2025", TODAY).iso).toBe("2025-06-05");
+  });
 });
 
 describe("parseDobCell", () => {

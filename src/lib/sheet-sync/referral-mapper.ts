@@ -12,7 +12,7 @@ const TOKEN_FOLDS: ReadonlyArray<[RegExp, string]> = [
   [/^(FAMIL|FAMILY|FAMLIY|DAMILY)$/, "FAMILY"],
   [/^(FRIENDS?|FRIENS|FIRIENDS|FRINEDS)$/, "FRIENDS"],
   [/^FACEBO+K$|^FACEBOK$/, "FACEBOOK"],
-  [/^(DOCTO|DOCTORS|DOCTOR)$/, "DOCTOR"],
+  [/^(DOCTO|DOCTORS|DOCTOR|DR|DOC)$/, "DOCTOR"],
   [/^CUSTOMERS?$/, "CUSTOMER"],
   [/^PX$/, "PATIENT"],
   [/^WOMENS?$/, "WOMEN"],

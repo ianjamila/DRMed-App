@@ -1,4 +1,4 @@
-// Name normalization + parsing for patient matching.
+// Name normalization for patient matching.
 
 /** Lowercase, strip diacritics, drop punctuation, collapse whitespace. */
 export function normalizeName(raw: string): string {

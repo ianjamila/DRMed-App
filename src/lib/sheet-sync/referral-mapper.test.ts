@@ -31,4 +31,12 @@ describe("mapAnswer over every live spelling", () => {
     const aliases = new Map([["CUSTOMER LIST", "returning_patient"]]);
     expect(mapAnswer("customer list", aliases)).toEqual({ id: "returning_patient", norm: "CUSTOMER LIST", unmapped: false });
   });
+  it("folds DR and DOC to DOCTOR so short forms still map to doctor_referral", () => {
+    expect(mapAnswer("DR REFERRAL", new Map()).id).toBe("doctor_referral");
+    expect(mapAnswer("DOC REFERRAL", new Map()).id).toBe("doctor_referral");
+    expect(mapAnswer("DR. REFERRAL", new Map()).id).toBe("doctor_referral");
+  });
+  it("does not fold DOC/DR when they aren't a whole referral token (invented name)", () => {
+    expect(mapAnswer("SON OF DOC SMITH", new Map()).id).toBe("other");
+  });
 });

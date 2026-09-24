@@ -42,9 +42,33 @@ export function serialToISODate(serial: number): string | null {
   return civilFromDays(days);
 }
 
-const MONTHS: Record<string, number> = {
-  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+const MONTH_NAMES = [
+  "january", "february", "march", "april", "may", "june",
+  "july", "august", "september", "october", "november", "december",
+];
+
+/** Known live typos for month names, seen in the sheet (spec §5.1). */
+const MONTH_TYPOS: Record<string, number> = {
+  septmeber: 9,
+  febuary: 2,
 };
+
+/**
+ * A month word is accepted iff, case-insensitively with a trailing "."
+ * stripped, it is a prefix of length ≥ 3 of the full English month name
+ * (so "SEPT", "SEP", "SEPTEMBER", "AUG", "JUNE" all pass), or one of the
+ * known live typos above. This rejects a word whose first 3 letters merely
+ * coincide with a month's — "MARTES" (Tagalog for Tuesday) and "MARCHING"
+ * both start "MAR" but are not prefixes of "MARCH".
+ */
+function monthFromWord(raw: string): number | null {
+  const w = raw.replace(/\.$/, "").toLowerCase();
+  if (w.length < 3) return null;
+  const typo = MONTH_TYPOS[w];
+  if (typo) return typo;
+  const idx = MONTH_NAMES.findIndex((name) => name.startsWith(w));
+  return idx === -1 ? null : idx + 1;
+}
 
 function ymd(y: number, m: number, d: number): string | null {
   if (!Number.isInteger(y) || y < 1000 || y > 9999) return null;
@@ -70,12 +94,12 @@ function parseText(raw: string): string | null {
   if (m) return ymd(Number(m[3]), Number(m[1]), Number(m[2]));
   m = /^(\d{1,2})-([A-Za-z]{3,})-(\d{4})$/.exec(s);
   if (m) {
-    const mo = MONTHS[m[2].slice(0, 3).toLowerCase()];
+    const mo = monthFromWord(m[2]);
     return mo ? ymd(Number(m[3]), mo, Number(m[1])) : null;
   }
   m = /^([A-Za-z]{3,})\.?\s*(\d{1,2})\s*,?\s*(\d{4})$/.exec(s);
   if (m) {
-    const mo = MONTHS[m[1].slice(0, 3).toLowerCase()];
+    const mo = monthFromWord(m[1]);
     return mo ? ymd(Number(m[3]), mo, Number(m[2])) : null;
   }
   return null;

@@ -82,4 +82,26 @@ describe("parseLabTab / parseConsultTab", () => {
     expect(p.rows).toHaveLength(0);
     expect(p.issues[0].kind).toBe("unparseable_date");
   });
+  it("skips an in-window row whose name has no surname or first name, and reports it", () => {
+    // "Madonna" has no comma and one token: parseName gives first_name only,
+    // last_name null — a bare "surname|" or "|" identity key would collapse
+    // different people. serial 46168 = 2026-05-26, inside WIN.
+    const rows = [LAB_H0, LAB_H1,
+      [46168, 1, 10, "Madonna", "N/A", "", "", "CBC", 350, "", "", "", "", 300, "CASH", "", "Viber", 46169]];
+    const p = parseLabTab(rows, { today: TODAY, windowStart: WIN });
+    expect(p.rows).toHaveLength(0);
+    expect(p.rowsRead).toBe(1);
+    expect(p.issues).toEqual([{
+      kind: "invalid_row",
+      item_key: expect.stringMatching(/^lab:/),
+      payload: { tab: "lab", sheet_row: 3, reason: "name needs a surname and a first name", name_raw: "Madonna" },
+    }]);
+  });
+  it("does not raise invalid_row for an unparseable name in OLD history (before the window)", () => {
+    const rows = [LAB_H0, LAB_H1,
+      [45261, 1, 10, "Madonna", "N/A", "", "", "CBC", 350, "", "", "", "", 300, "CASH", "", "", ""]];
+    const p = parseLabTab(rows, { today: TODAY, windowStart: WIN });
+    expect(p.rows).toHaveLength(0);
+    expect(p.issues).toHaveLength(0);
+  });
 });

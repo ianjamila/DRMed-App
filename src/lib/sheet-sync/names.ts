@@ -51,11 +51,18 @@ export function isTokenSuperset(patient: readonly string[], line: readonly strin
   return line.every((t) => have.has(t));
 }
 
-/** Last 10 digits, matching `patients.phone_normalized` (0105). Null below 10 digits. */
+/**
+ * Last 10 digits, matching `patients.phone_normalized` (0105). Null below 10
+ * digits, and null above 12 — a PH mobile is at most 12 digits as
+ * 639XXXXXXXXX, so a longer digit run means the cell holds two numbers or an
+ * extension (e.g. "09095534228 / 09171234567", "0909-553-4228 loc 12") and a
+ * "last 10" tail would silently pick the wrong number.
+ */
 export function phone10(raw: unknown): string | null {
   if (raw === null || raw === undefined) return null;
   const digits = String(raw).replace(/[^0-9]/g, "");
-  return digits.length >= 10 ? digits.slice(-10) : null;
+  if (digits.length < 10 || digits.length > 12) return null;
+  return digits.slice(-10);
 }
 
 export function sha1Hex(text: string): string {
