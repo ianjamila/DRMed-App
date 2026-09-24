@@ -34,7 +34,7 @@ first from a parallel branch) and verified by object 2026-09-24; **0154** (#198)
 #192) is also applied and verified: 159 public policies, zero unwrapped helper calls, and no
 unexpected policyless tables. **0158** (`resolve_patient_referral_source`) is in flight on
 `feat/booking-referral-source` and must be pushed before its PR merges.
-**Next unused number: 0159**, subject to checking open branches again.
+**0159** (`retire_send_out_accrual`, #211) is on prod. **0160** (`queue_claim_remarks`) is on `feat/xray-claim-gate`. **Next unused number: 0161**, subject to checking open branches again.
 `ls supabase/migrations | tail -3` is NOT enough to pick the next number — it only sees your
 own worktree, and on 2026-09-15 two branches claimed 0147 (and P0050) the same afternoon.
 Check the open branches too:

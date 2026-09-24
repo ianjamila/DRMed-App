@@ -1,9 +1,22 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
-import { queueTitleForRole, sectionsForRole } from "@/lib/auth/role-sections";
+import {
+  canClaimSection,
+  claimOwnerLabel,
+  claimOwnerRole,
+  queueTitleForRole,
+  sectionsForRole,
+} from "@/lib/auth/role-sections";
 import { RealtimeRefresher, type Subscription } from "@/components/staff/realtime-refresher";
 import { ClaimButton } from "./claim-button";
+import { QueueUnclaimButton } from "./queue-unclaim-button";
+import {
+  claimRemarks,
+  eventsByTest,
+  MAX_REMARKS_SHOWN,
+  type ClaimEvent,
+} from "@/lib/queue/claim-remarks";
 import { sectionTabClass, sectionTabsNavClass } from "@/components/staff/section-tabs-style";
 import { PageHeader } from "@/components/staff/page-header";
 import {
@@ -50,6 +63,8 @@ type QueueCardSingle = {
   releasedAt: string | null;
   label: string;
   code: string;
+  // Decides whether the list offers Claim — x-ray is x-ray-technician only.
+  section: string | null;
   visitNumber: string;
   patientName: string;
   patientDrmId: string;
@@ -406,6 +421,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         releasedAt: r.released_at,
         label: svc.name,
         code: svc.code,
+        section: svc.section,
         visitNumber: visit.visit_number,
         patientName,
         patientDrmId: patient.drm_id,
@@ -426,7 +442,8 @@ export default async function QueuePage({ searchParams }: SearchProps) {
     : cards;
 
   // Admins see who holds each in-progress claim so stuck claims are visible
-  // straight from the list (unclaim/reassign lives on the detail page).
+  // straight from the list (Unclaim is on the row; reassign lives on the
+  // detail page).
   const claimerNames = new Map<string, string>();
   if (session.role === "admin") {
     const claimerIds = Array.from(
@@ -440,6 +457,36 @@ export default async function QueuePage({ searchParams }: SearchProps) {
       for (const p of claimers ?? []) claimerNames.set(p.id, p.full_name);
     }
   }
+  // Remarks column: each test's claim history (claimed / unclaimed / reassigned)
+  // from the audit log, via the queue_claim_remarks reader (0160) — audit_log
+  // itself is admin-only, and the technicians are who need to see it. One call
+  // for the whole page (≤ 100 rows; the function caps at 200).
+  const pageTestIds = (rows ?? []).map((r) => r.id);
+  const remarksByTest = eventsByTest(
+    pageTestIds.length > 0
+      ? (
+          await supabase.rpc("queue_claim_remarks", {
+            p_test_request_ids: pageTestIds,
+          })
+        ).data
+      : [],
+  );
+  const cardRemarks = (card: QueueCard) =>
+    claimRemarks(
+      (card.kind === "grouped" ? card.memberIds : [card.testRequestId]).flatMap(
+        (id): ClaimEvent[] => remarksByTest.get(id) ?? [],
+      ),
+    );
+
+  // Unclaim from the list: the holder may hand back their own claim, an admin
+  // anyone's (the detail page's ReassignPanel power). A result already
+  // uploaded moves the status on, so "in_progress" is the whole window. The
+  // server action re-proves every part of this.
+  const canUnclaim = (card: QueueCard) =>
+    card.status === "in_progress" &&
+    card.claimedBy !== null &&
+    (session.role === "admin" || card.claimedBy === user?.id);
+
   // `q` is applied after the fetch, so it can only narrow the page in hand —
   // everything else is a real DB filter and counts against the whole table.
   const hasServerFilters = hasDateRange || Boolean(visit);
@@ -727,13 +774,14 @@ export default async function QueuePage({ searchParams }: SearchProps) {
               <PlainTh label="Test" />
               {th("status", "Status")}
               <PlainTh label="Action" align="right" />
+              <PlainTh label="Remarks" />
             </tr>
           </thead>
           <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
             {matched.length === 0 ? (
               <tr>
                 <td
-                  colSpan={6}
+                  colSpan={7}
                   className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]"
                 >
                   {hasFilters
@@ -794,19 +842,33 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                         ) : null}
                       </td>
                       <td className="px-4 py-3 text-right">
-                        {card.status === "requested" ? (
+                        {card.status === "requested" &&
+                        canClaimSection(session.role, card.section) ? (
                           <ClaimButton
                             testRequestId={card.testRequestId}
                             navigateOnClaim
                           />
                         ) : (
-                          <Link
-                            href={card.href}
-                            className="text-xs font-bold text-[color:var(--color-brand-cyan)] hover:underline"
-                          >
-                            Open →
-                          </Link>
+                          <>
+                            <Link
+                              href={card.href}
+                              className="text-xs font-bold text-[color:var(--color-brand-cyan)] hover:underline"
+                            >
+                              Open →
+                            </Link>
+                            {card.status === "requested" ? (
+                              <ClaimOwnerHint section={card.section} />
+                            ) : null}
+                          </>
                         )}
+                        {canUnclaim(card) ? (
+                          <div className="mt-1 flex justify-end">
+                            <QueueUnclaimButton
+                              testRequestIds={[card.testRequestId]}
+                              entryLabel={card.label}
+                            />
+                          </div>
+                        ) : null}
                         {card.canDelete ? (
                           <div className="mt-1.5 flex justify-end">
                             <QueueDeleteDialog
@@ -818,6 +880,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                           </div>
                         ) : null}
                       </td>
+                      <RemarksCell remarks={cardRemarks(card)} />
                     </tr>
                   );
                 }
@@ -882,6 +945,14 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                       >
                         Open →
                       </Link>
+                      {canUnclaim(card) ? (
+                        <div className="mt-1 flex justify-end">
+                          <QueueUnclaimButton
+                            testRequestIds={card.memberIds}
+                            entryLabel={card.label}
+                          />
+                        </div>
+                      ) : null}
                       {card.canDelete ? (
                         <div className="mt-1.5 flex justify-end">
                           <QueueDeleteDialog
@@ -893,6 +964,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                         </div>
                       ) : null}
                     </td>
+                    <RemarksCell remarks={cardRemarks(card)} />
                   </tr>
                 );
               })
@@ -925,6 +997,56 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         noun="test"
       />
     </div>
+  );
+}
+
+// Where a Claim button would be, for a test only another role may claim
+// (x-ray → X-ray technician). Says why instead of silently offering nothing.
+function ClaimOwnerHint({ section }: { section: string | null }) {
+  const owner = claimOwnerRole(section);
+  if (!owner) return null;
+  return (
+    <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
+      {claimOwnerLabel(owner)} only
+    </p>
+  );
+}
+
+function RemarksCell({ remarks }: { remarks: ReturnType<typeof claimRemarks> }) {
+  if (remarks.length === 0) {
+    return (
+      <td className="px-4 py-3 text-xs text-[color:var(--color-brand-text-soft)]">
+        —
+      </td>
+    );
+  }
+  const hidden = Math.max(0, remarks.length - MAX_REMARKS_SHOWN);
+  const shown = remarks.slice(hidden);
+  return (
+    <td className="min-w-48 max-w-xs px-4 py-3 text-xs">
+      <ul className="space-y-1">
+        {hidden > 0 ? (
+          <li className="text-[color:var(--color-brand-text-soft)]">
+            +{hidden} earlier
+          </li>
+        ) : null}
+        {shown.map((r) => (
+          <li
+            key={r.key}
+            className={
+              r.notable
+                ? "font-semibold text-amber-800"
+                : "text-[color:var(--color-brand-text-mid)]"
+            }
+          >
+            {r.text}
+            <span className="block font-normal text-[color:var(--color-brand-text-soft)]">
+              {manilaDateTime(r.at)}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </td>
   );
 }
 

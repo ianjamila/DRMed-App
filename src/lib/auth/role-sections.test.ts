@@ -3,6 +3,8 @@ import {
   ALL_SECTIONS,
   DOCTOR_SECTIONS,
   LAB_SECTIONS,
+  canClaimSection,
+  claimOwnerRole,
   sectionsForRole,
 } from "./role-sections";
 import { scopeToAllowedSections } from "@/lib/visits/bulk-selection";
@@ -112,5 +114,38 @@ describe("LAB_SECTIONS", () => {
   it("names each doctor section, and only ones ALL_SECTIONS actually knows", () => {
     expect([...DOCTOR_SECTIONS]).toEqual(["consultation", "procedure"]);
     for (const d of DOCTOR_SECTIONS) expect(ALL_SECTIONS).toContain(d);
+  });
+});
+
+describe("canClaimSection — x-ray belongs to the x-ray technician", () => {
+  it("lets only xray_technician claim imaging_xray, even over unrestricted roles", () => {
+    expect(canClaimSection("xray_technician", "imaging_xray")).toBe(true);
+    expect(canClaimSection("admin", "imaging_xray")).toBe(false);
+    expect(canClaimSection("pathologist", "imaging_xray")).toBe(false);
+    expect(canClaimSection("medtech", "imaging_xray")).toBe(false);
+    expect(canClaimSection("reception", "imaging_xray")).toBe(false);
+  });
+
+  it("leaves every other section on the plain role-scope rule", () => {
+    for (const role of ROLES) {
+      const allowed = sectionsForRole(role);
+      for (const section of ALL_SECTIONS) {
+        if (section === "imaging_xray") continue;
+        const expected = allowed === null ? true : allowed.includes(section);
+        expect(canClaimSection(role, section), `${role} / ${section}`).toBe(expected);
+      }
+    }
+  });
+
+  it("keeps ultrasound and ECG claimable by admin/pathologist (only x-ray was restricted)", () => {
+    expect(claimOwnerRole("imaging_ultrasound")).toBeNull();
+    expect(claimOwnerRole("imaging_ecg")).toBeNull();
+    expect(canClaimSection("admin", "imaging_ultrasound")).toBe(true);
+  });
+
+  it("treats a null section as unrestricted-only, same as scopeToAllowedSections", () => {
+    expect(canClaimSection("admin", null)).toBe(true);
+    expect(canClaimSection("medtech", null)).toBe(false);
+    expect(canClaimSection("reception", null)).toBe(false);
   });
 });

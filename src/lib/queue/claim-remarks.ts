@@ -1,0 +1,94 @@
+// The lab queue's Remarks column: a test's claim history (claimed, unclaimed,
+// reassigned) turned into short plain-English lines. The rows come from the
+// queue_claim_remarks RPC (0160); this module is pure so it can be tested
+// without a database.
+
+export interface ClaimEvent {
+  test_request_id: string;
+  action: string;
+  created_at: string;
+  actor_name: string | null;
+  previous_holder_name: string | null;
+  new_holder_name: string | null;
+  reason: string | null;
+}
+
+export interface ClaimRemark {
+  /** Stable React key. */
+  key: string;
+  text: string;
+  at: string;
+  /** Unclaims and reassignments are the "something happened" rows. */
+  notable: boolean;
+}
+
+// A queue row shows at most this many lines; older ones fold into "+N earlier".
+export const MAX_REMARKS_SHOWN = 3;
+
+const SOMEONE = "someone";
+
+function describe(e: ClaimEvent): { text: string; notable: boolean } | null {
+  const actor = e.actor_name ?? SOMEONE;
+  const reason = e.reason ? ` — “${e.reason}”` : "";
+  switch (e.action) {
+    case "test_request.claimed":
+    case "test_request.claim":
+      return { text: `Claimed by ${actor}`, notable: false };
+    case "test_request.unclaimed": {
+      const prev = e.previous_holder_name;
+      // Self-service unclaim: the holder handed it back. Otherwise an admin
+      // took someone else's claim off them — name both.
+      const text =
+        !prev || prev === e.actor_name
+          ? `Unclaimed by ${actor}`
+          : `${actor} unclaimed ${prev}’s claim`;
+      return { text: text + reason, notable: true };
+    }
+    case "test_request.reassigned":
+      return {
+        text: `Reassigned ${e.previous_holder_name ?? SOMEONE} → ${e.new_holder_name ?? SOMEONE} by ${actor}`,
+        notable: true,
+      };
+    default:
+      return null;
+  }
+}
+
+/**
+ * Remarks for ONE queue row. A consolidated chemistry card passes the events
+ * of every member test; a group claim/unclaim writes one event per member, so
+ * those collapse to a single line here (same action, actor and minute).
+ * Oldest first — the column reads as a story.
+ */
+export function claimRemarks(events: readonly ClaimEvent[]): ClaimRemark[] {
+  const sorted = [...events].sort(
+    (a, b) =>
+      a.created_at.localeCompare(b.created_at) ||
+      a.action.localeCompare(b.action) ||
+      a.test_request_id.localeCompare(b.test_request_id),
+  );
+  const seen = new Set<string>();
+  const out: ClaimRemark[] = [];
+  for (const e of sorted) {
+    const d = describe(e);
+    if (!d) continue;
+    const dedupe = `${d.text}|${e.created_at.slice(0, 16)}`;
+    if (seen.has(dedupe)) continue;
+    seen.add(dedupe);
+    out.push({ key: `${e.test_request_id}|${e.action}|${e.created_at}`, text: d.text, at: e.created_at, notable: d.notable });
+  }
+  return out;
+}
+
+/** Group RPC rows by test id. */
+export function eventsByTest(
+  rows: readonly ClaimEvent[] | null | undefined,
+): Map<string, ClaimEvent[]> {
+  const map = new Map<string, ClaimEvent[]>();
+  for (const r of rows ?? []) {
+    const list = map.get(r.test_request_id);
+    if (list) list.push(r);
+    else map.set(r.test_request_id, [r]);
+  }
+  return map;
+}
