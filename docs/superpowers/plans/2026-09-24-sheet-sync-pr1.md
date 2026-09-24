@@ -3027,6 +3027,8 @@ export function sheetReaderFromEnv(env: NodeJS.ProcessEnv = process.env): () => 
 **Files:**
 - Create: `src/lib/sheet-sync/store.ts`, `src/lib/sheet-sync/run.ts`, `src/lib/sheet-sync/run.test.ts`, `src/lib/sheet-sync/fake-store.ts` (test helper; name ends `.ts` but lives beside the test and is imported only by tests)
 
+> **Contract changes since this task was written (review rounds, 2026-09-24) — they override the code below:** (1) `sheet_mirror_commit` takes `p_expected` (the staged row count) and raises 22023 on a mismatch; (2) link decisions include `"review"` (a hold) and ops include `{ op: "hold", link_key, reason }`, and `create` ops carry `admin_link_keys` — read the current `src/lib/sheet-sync/types.ts` and migration 0170 and type the store against them; (3) `_sheet_sync_fence` refuses writes on a dry-run lease, so the runner must never call a write RPC in a dry run (it already does not); (4) the P-codes are **P0062** (busy → `SyncBusyError`) and **P0063** (lease lost → `LeaseLostError`) — map those in `raise()`; (5) **patient soft delete:** if `origin/main` has `patients.deleted_at` when this task runs (branch `feat/patient-delete`, migration 0167), `loadPatients` must add `.is("deleted_at", null)` so the sync never links to or fills a deleted patient (merged patients are still loaded — the index needs them).
+
 - [ ] **Step 1: Write `store.ts`** — the interface plus the supabase implementation:
 
 ```ts
@@ -3067,7 +3069,7 @@ export interface SheetSyncStore {
   loadCustomerMirror(): Promise<PrevCustomerRow[]>;
   applyCustomerOps(lease: string, ops: CustomerOp[]): Promise<{ created: Record<string, string>; counts: Record<string, number> }>;
   stage(lease: string, tab: TabKey, rows: Json[]): Promise<void>;
-  commit(lease: string, tab: TabKey): Promise<number>;
+  commit(lease: string, tab: TabKey, expected: number): Promise<number>;
   upsertReview(lease: string, tab: TabKey, items: ReviewItemInput[], clearAbsent: boolean): Promise<Record<string, number>>;
   resortApply(lease: string, patientIds: string[], expectedOld: string | null, next: string | null): Promise<number>;
   aliasApply(lease: string, answerNorm: string, sourceId: string, actorId: string): Promise<number>;
@@ -3157,7 +3159,7 @@ export function createSupabaseStore(client: Client): SheetSyncStore {
       client.from("sheet_customer_rows").select("source_key, patient_id, phone_norm, dob, link_state").order("id").range(from, to) as never),
     applyCustomerOps: (lease, ops) => rpc("sheet_sync_apply_customer_ops", { p_lease_token: lease, p_ops: ops }),
     async stage(lease, tab, rows) { await rpc("sheet_mirror_stage", { p_lease_token: lease, p_tab: tab, p_rows: rows }); },
-    commit: (lease, tab) => rpc("sheet_mirror_commit", { p_lease_token: lease, p_tab: tab }),
+    commit: (lease, tab, expected) => rpc("sheet_mirror_commit", { p_lease_token: lease, p_tab: tab, p_expected: expected }),
     upsertReview: (lease, tab, items, clearAbsent) =>
       rpc("sheet_sync_upsert_review", { p_lease_token: lease, p_tab: tab, p_items: items, p_clear_absent: clearAbsent }),
     resortApply: (lease, ids, expectedOld, next) =>
@@ -3317,7 +3319,7 @@ export async function runSheetSync(opts: {
           const mirror = plan.mirror.map(({ pending_create_key, ...row }: CustomerMirrorRow) =>
             ({ ...row, patient_id: pending_create_key ? created[pending_create_key] ?? null : row.patient_id }));
           for (const batch of chunks(mirror, STAGE_CHUNK)) await store.stage(lease, "customers", batch as unknown as Json[]);
-          out.mirror_rows = await store.commit(lease, "customers");
+          out.mirror_rows = await store.commit(lease, "customers", mirror.length);
           await store.upsertReview(lease, "customers", review, true);
           out.applied = applied;
           if (Object.keys(created).length) {
@@ -3345,7 +3347,7 @@ export async function runSheetSync(opts: {
           planned: { mirror_rows: lines.length, linked: lines.filter((l) => l.patientId).length }, review: countKinds(parsed.issues) };
         if (!opts.dryRun) {
           for (const batch of chunks(lines.map(lineToRow), STAGE_CHUNK)) await store.stage(lease, tab, batch);
-          out.mirror_rows = await store.commit(lease, tab);
+          out.mirror_rows = await store.commit(lease, tab, lines.length);
           await store.upsertReview(lease, tab, parsed.issues, true);
         }
         perTab[tab] = out;
