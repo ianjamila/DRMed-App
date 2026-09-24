@@ -127,6 +127,7 @@ describe("staff page titles", () => {
       "(dashboard)/patients/[id]/page.tsx",
       "(dashboard)/patients/[id]/edit/page.tsx",
       "(dashboard)/patients/[id]/consent/print/page.tsx",
+      "(dashboard)/patients/[id]/consent/signed/page.tsx",
       "(dashboard)/visits/group/[groupId]/receipt/page.tsx",
       "(dashboard)/visits/[id]/page.tsx",
       "(dashboard)/visits/[id]/receipt/page.tsx",

@@ -6,10 +6,7 @@ import { Button } from "@/components/ui/button";
 import { SignaturePad } from "@/components/consent/signature-pad";
 import { recordConsentGrantAction } from "@/lib/actions/consent/grant";
 import { withdrawConsentAction } from "@/lib/actions/consent/withdraw";
-import {
-  uploadConsentArtifactAction,
-  viewConsentArtifactAction,
-} from "@/lib/actions/consent/artifact";
+import { uploadConsentArtifactAction } from "@/lib/actions/consent/artifact";
 import { manilaDate } from "@/lib/dates/manila";
 
 type Signatory = "self" | "guardian" | "representative";
@@ -39,14 +36,12 @@ export function ConsentPanel({
   current,
   signedAt,
   noticeVersion,
-  artifactPath,
   isAdmin,
 }: {
   patientId: string;
   current: boolean;
   signedAt: string | null;
   noticeVersion: string | null;
-  artifactPath: string | null;
   isAdmin: boolean;
 }) {
   const [pending, start] = useTransition();
@@ -55,7 +50,6 @@ export function ConsentPanel({
   const [name, setName] = useState("");
   const [rel, setRel] = useState("");
   const [err, setErr] = useState<string | null>(null);
-  const [viewing, startViewing] = useTransition();
 
   function saveSignature(png: string) {
     setErr(null);
@@ -108,19 +102,6 @@ export function ConsentPanel({
       });
       if (!res.ok) return setErr(res.error);
       setMode("idle");
-    });
-  }
-
-  function viewSignedForm() {
-    if (!artifactPath) return;
-    setErr(null);
-    startViewing(async () => {
-      const res = await viewConsentArtifactAction({
-        patientId,
-        path: artifactPath,
-      });
-      if (!res.ok) return setErr(res.error);
-      window.open(res.url, "_blank", "noopener");
     });
   }
 
@@ -185,16 +166,17 @@ export function ConsentPanel({
             Attach signed paper form
           </Button>
         )}
-        {artifactPath && (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={viewSignedForm}
-            disabled={viewing}
+        {/* The full form with the signature on it (or the paper scan) —
+            also for consents accepted online, which carry no file at all. */}
+        {current && (
+          <Link
+            href={`/staff/patients/${patientId}/consent/signed`}
+            target="_blank"
           >
-            {viewing ? "Opening…" : "View signed form"}
-          </Button>
+            <Button type="button" variant="outline" size="sm">
+              View signed form
+            </Button>
+          </Link>
         )}
         {current && isAdmin && (
           <Button
