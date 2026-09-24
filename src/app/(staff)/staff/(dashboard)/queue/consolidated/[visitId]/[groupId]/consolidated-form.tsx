@@ -2,7 +2,6 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { claimConsolidated, finaliseConsolidated } from "./actions";
 import type { ConsolidatedFormTemplate, ConsolidatedFormVisit } from "./page";
 import { normalisePatientSex } from "@/lib/results/types";
@@ -19,7 +18,10 @@ interface Props {
   /** Set when the visit is still waiting for payment (item 10) — replaces the
    * claim button with a notice. Server action enforces the same gate. */
   claimBlockedHint: string | null;
-  /** Server-rendered claim history + Unclaim, shown under the header. */
+  /** The visit already has a finished report for this group (shown above the
+   * form by the page) — these fields are for the tests added since. */
+  hasFinishedReports: boolean;
+  /** Server-rendered claim history + Unclaim, shown above the form. */
   claimPanel?: React.ReactNode;
 }
 
@@ -129,41 +131,14 @@ export function ConsolidatedForm(props: Props) {
         setDeferredReason(res.data.deferredReason ?? "payment");
         return;
       }
-      router.push("/staff/queue");
+      // Stay here: the page re-renders with the new report card (and its
+      // PDF) above, which is the medtech's confirmation of what was sent.
+      router.refresh();
     });
   }
 
   return (
-    <div className="px-4 py-8 sm:px-6 lg:px-8">
-      <Link
-        href="/staff/queue"
-        className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
-      >
-        ← Queue
-      </Link>
-
-      <header className="mt-3">
-        <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          {props.group.name}
-        </h1>
-        {/* DRM-ID + visit number deliberately omitted from result entry —
-            partner revision 11: the bench identifies the patient by name. */}
-        <p className="mt-1 font-semibold text-[color:var(--color-brand-navy)]">
-          {props.visit.patients.last_name}, {props.visit.patients.first_name}
-        </p>
-        <div className="mt-1 flex flex-wrap items-baseline gap-x-1.5 gap-y-1 text-sm text-[color:var(--color-brand-text-soft)]">
-          <span>Ordered:</span>
-          {props.orderedServiceCodes.map((code) => (
-            <span
-              key={code}
-              className="font-mono text-xs text-[color:var(--color-brand-navy)]"
-            >
-              {code}
-            </span>
-          ))}
-        </div>
-      </header>
-
+    <>
       {props.claimPanel}
 
       <section className="mt-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
@@ -225,7 +200,7 @@ export function ConsolidatedForm(props: Props) {
           >
             <div>
               <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
-                Enter result values
+                {props.hasFinishedReports ? "Enter the remaining results" : "Enter result values"}
               </h2>
               <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
                 Rows for un-ordered tests are greyed out. Enter SI or
@@ -342,12 +317,6 @@ export function ConsolidatedForm(props: Props) {
         ) : null}
       </section>
 
-      <Link
-        href={`/staff/visits/${props.visit.id}`}
-        className="mt-6 inline-block text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
-      >
-        Open visit →
-      </Link>
-    </div>
+    </>
   );
 }

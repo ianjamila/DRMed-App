@@ -961,6 +961,21 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                           />
                         </div>
                       ) : null}
+                      {/* Every member here is released, so the panel's one
+                          shared PDF is one click away. Any member id resolves
+                          it; Open lists each report if the visit has two. */}
+                      {releasedTab ? (
+                        <div className="mt-1.5">
+                          <a
+                            href={`/staff/results/${card.memberIds[0]}/pdf`}
+                            target="_blank"
+                            rel="noopener"
+                            className="text-xs font-bold text-[color:var(--color-brand-cyan)] hover:underline"
+                          >
+                            PDF →
+                          </a>
+                        </div>
+                      ) : null}
                       {card.canDelete ? (
                         <div className="mt-1.5 flex justify-end">
                           <QueueDeleteDialog
