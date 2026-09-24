@@ -1,6 +1,10 @@
 import Link from "next/link";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
+import { claimRemarks, MAX_REMARKS_SHOWN } from "@/lib/queue/claim-remarks";
+import { fetchClaimEvents } from "@/lib/queue/fetch-claim-events";
+import { ClaimRemarksList } from "@/components/staff/claim-remarks-list";
 import {
   isISODate,
   manilaDateTime,
@@ -238,6 +242,13 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
     }
   }
 
+  // Remarks column: each test's claim history, same reader and wording as the
+  // lab queue. Called through the signed-in staff client, NOT `admin` above —
+  // queue_claim_remarks gates on the caller's role, and the service role has
+  // none, so it would answer empty.
+  const claimEvents = await fetchClaimEvents(await createClient(), trIds);
+  const remarksFor = (testId: string) => claimRemarks(claimEvents.get(testId) ?? []);
+
   // Optional client-side filter when q is set. Server-side ilike across a join
   // is awkward in PostgREST, so post-filter the page rows here. Token-based:
   // every word must appear somewhere (name / DRM-ID / service), in any order.
@@ -445,7 +456,7 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
           </p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[900px] text-sm">
+            <table className="w-full min-w-[1100px] text-sm">
               <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                 <tr>
                   {/* Patient, Tests and PDF can't be ordered — see SORTABLE_COLUMNS. */}
@@ -456,6 +467,7 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
                   {th("completed_at", "Completed")}
                   {th("released_at", "Released")}
                   <PlainTh label="PDF" />
+                  <PlainTh label="Remarks" />
                   {th("visit_number", "Visit", "right")}
                 </tr>
               </thead>
@@ -558,6 +570,7 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
                           )}
                         </div>
                       </td>
+                      <RemarksCell tests={g.tests} remarksFor={remarksFor} />
                       <td className="px-4 py-3 text-right text-xs">
                         <Link
                           href={`/staff/visits/${g.visitId}`}
@@ -605,6 +618,39 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+// One archive row is a whole visit, so its remarks are listed per test — the
+// test code heads each block when the visit has more than one test.
+function RemarksCell({
+  tests,
+  remarksFor,
+}: {
+  tests: VisitGroup["tests"];
+  remarksFor: (testId: string) => ReturnType<typeof claimRemarks>;
+}) {
+  const blocks = tests
+    .map((t) => ({ test: t, remarks: remarksFor(t.id) }))
+    .filter((b) => b.remarks.length > 0);
+  if (blocks.length === 0) {
+    return (
+      <td className="px-4 py-3 text-xs text-[color:var(--color-brand-text-soft)]">—</td>
+    );
+  }
+  return (
+    <td className="min-w-48 max-w-xs px-4 py-3 text-xs">
+      <div className="flex flex-col gap-2">
+        {blocks.map(({ test, remarks }) => (
+          <div key={test.id}>
+            {tests.length > 1 ? (
+              <p className="font-mono text-[color:var(--color-brand-text-soft)]">{test.code}</p>
+            ) : null}
+            <ClaimRemarksList remarks={remarks} max={MAX_REMARKS_SHOWN} />
+          </div>
+        ))}
+      </div>
+    </td>
+  );
+}
 
 interface VisitGroup {
   visitId: string;

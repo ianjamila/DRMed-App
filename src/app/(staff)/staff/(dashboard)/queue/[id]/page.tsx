@@ -5,12 +5,20 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
-import { sectionsForRole } from "@/lib/auth/role-sections";
+import {
+  canClaimSection,
+  claimOwnerLabel,
+  claimOwnerRole,
+  sectionsForRole,
+} from "@/lib/auth/role-sections";
 import { isSectionAllowed } from "@/lib/auth/section-access";
 import { isDoctorKind } from "@/lib/visits/order-lines";
 import { ClaimButton } from "../claim-button";
 import { ReassignPanel } from "./reassign-panel";
 import { UnclaimOwnButton } from "./unclaim-own-button";
+import { claimRemarks } from "@/lib/queue/claim-remarks";
+import { fetchClaimEvents } from "@/lib/queue/fetch-claim-events";
+import { ClaimHistory } from "@/components/staff/claim-remarks-list";
 import { UploadResultForm } from "./upload-form";
 import { ViewResultButton } from "./view-result-button";
 import { StructuredResultForm } from "./structured-form";
@@ -225,6 +233,10 @@ export default async function QueueTestDetailPage({ params }: Props) {
   // Action enforces the same rule, so this is UX, not the guard.
   const claimGate = labQueueGate(visit);
   const claimable = test.status === "requested";
+  // x-ray is X-ray technician only (claimOwnerRole) — an admin can open the
+  // test but not claim it. claimTestAction enforces the same rule.
+  const claimOwner = claimOwnerRole(svc.section);
+  const mayClaim = canClaimSection(session.role, svc.section);
   const editable =
     ["in_progress", "result_uploaded"].includes(test.status) &&
     (ownedByMe || !test.assigned_to);
@@ -318,7 +330,13 @@ export default async function QueueTestDetailPage({ params }: Props) {
       .is("deleted_at", null)
       .in("role", ["medtech", "xray_technician", "pathologist", "admin"])
       .order("full_name");
-    labStaff = (staffRows ?? []).filter((s) => s.id !== test.assigned_to);
+    // Only people who could have claimed this test themselves — reassigning
+    // hands them the claim, so x-ray goes to X-ray technicians only.
+    labStaff = (staffRows ?? []).filter(
+      (s) =>
+        s.id !== test.assigned_to &&
+        canClaimSection(s.role as typeof session.role, svc.section),
+    );
     // Separate lookup: the current holder may be deactivated (that's exactly
     // the stuck-claim case), so the active-roster query above won't find them.
     const { data: holder } = await supabase
@@ -328,6 +346,12 @@ export default async function QueueTestDetailPage({ params }: Props) {
       .maybeSingle();
     assigneeName = holder?.full_name ?? "(unknown staff)";
   }
+
+  // Claim history (claimed / unclaimed / reassigned) — the same reader as
+  // the queue's Remarks column.
+  const history = claimRemarks(
+    (await fetchClaimEvents(supabase, [test.id])).get(test.id) ?? [],
+  );
 
   // Decide which workflow surface to render in the action card.
   // Order of precedence:
@@ -387,6 +411,7 @@ export default async function QueueTestDetailPage({ params }: Props) {
               {patient.phone}
             </p>
           ) : null}
+          <ClaimHistory remarks={history} className="mt-4" />
         </div>
         <div>
           <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
@@ -419,7 +444,16 @@ export default async function QueueTestDetailPage({ params }: Props) {
       </section>
 
       <section className="mt-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
-        {claimable ? (
+        {claimable && !mayClaim ? (
+          <p
+            role="status"
+            className="rounded-lg border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] px-4 py-3 text-sm text-[color:var(--color-brand-text-mid)]"
+          >
+            {claimOwner
+              ? `This test can only be claimed by an ${claimOwnerLabel(claimOwner)}. It stays in the queue until one of them picks it up.`
+              : "This test is outside the sections you can claim."}
+          </p>
+        ) : claimable ? (
           claimGate.ok ? (
             <div>
               <p className="text-sm text-[color:var(--color-brand-text-mid)]">

@@ -72,6 +72,50 @@ export function sectionsForRole(
   return SECTIONS_BY_ROLE[role];
 }
 
+// Sections whose bench work only ONE role may hold, even over the roles that
+// are otherwise unrestricted. An x-ray exposure is taken by a licensed
+// radiologic technologist, so an admin or pathologist who can see the imaging
+// queue still cannot claim an x-ray into their own name (owner decision,
+// 2026-09-24). Viewing, releasing and unclaiming are untouched — this narrows
+// CLAIMING (and reassigning, which hands someone a claim) only.
+//
+// Ultrasound and ECG are deliberately absent: the rule was asked for x-ray.
+const CLAIM_OWNER_BY_SECTION: Partial<
+  Record<ServiceSection, StaffSession["role"]>
+> = {
+  imaging_xray: "xray_technician",
+};
+
+/** The one role allowed to claim this section's work, or null when any role
+ *  that can see the section may claim it. */
+export function claimOwnerRole(
+  section: string | null | undefined,
+): StaffSession["role"] | null {
+  if (!section) return null;
+  return CLAIM_OWNER_BY_SECTION[section as ServiceSection] ?? null;
+}
+
+/** Can a staff member in `role` hold a claim on work in `section`? Both gates
+ *  must pass: the role's section scope (`[]` denies, `null` is unrestricted)
+ *  and the section's single-owner rule. */
+export function canClaimSection(
+  role: StaffSession["role"],
+  section: string | null | undefined,
+): boolean {
+  const allowed = sectionsForRole(role);
+  if (allowed !== null) {
+    if (!section || !allowed.includes(section as ServiceSection)) return false;
+  }
+  const owner = claimOwnerRole(section);
+  return owner === null || owner === role;
+}
+
+/** Plain name of a claim-owner role, for "X-ray technician only" hints and
+ *  refusal messages. */
+export function claimOwnerLabel(role: StaffSession["role"]): string {
+  return role === "xray_technician" ? "X-ray technician" : role.replace(/_/g, " ");
+}
+
 // Display label for a role used in headings, e.g. the queue page title.
 export function queueTitleForRole(role: StaffSession["role"]): string {
   switch (role) {

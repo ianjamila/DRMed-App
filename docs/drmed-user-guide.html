@@ -247,7 +247,7 @@
 <div class="layout">
 <nav class="toc" aria-label="Contents">
   <p class="toc-brand">drmed<span>.</span>ph</p>
-  <p class="toc-tag">User guide · v2.14</p>
+  <p class="toc-tag">User guide · v2.16</p>
   <div class="filter" role="group" aria-label="Show chapters for">
     <button type="button" data-filter="all" aria-pressed="true">All roles</button>
     <button type="button" data-filter="reception">Reception</button>
@@ -364,6 +364,7 @@
   <dl class="defs">
     <dt>requested</dt><dd>Reception has billed it. Nobody has picked it up yet.</dd>
     <dt>in progress</dt><dd>A medtech or x-ray tech has claimed it and is working on it.</dd>
+    <dt>handed back</dt><dd>Not a status — an amber chip under the status on the visit page (Admin and lab staff). It means someone claimed the test and then put it back in the queue; <q>×2</q> means it happened twice. Hover over it for who did it and why; the test page's <b>Claim history</b> has the full story.</dd>
     <dt>ready for release</dt><dd>Finalised. Reception can release it once the visit is paid.</dd>
     <dt>released</dt><dd>The patient can see and download it in the portal.</dd>
     <dt>cancelled / deleted</dt><dd>Removed from the queue by reception before payment. Nothing is billed for it, and it can be restored.</dd>
@@ -751,23 +752,24 @@
         <tr><td>Admin</td><td>Queue</td><td>Everything, plus who claimed each test</td></tr>
       </tbody>
     </table></div>
-    <p>Your dashboard (<q>Lab bench</q>) has four cards under <b>My queue</b>: <b>Unclaimed in my sections</b>, <b>Claimed by me</b>, <b>Send-out awaiting result</b> and <b>Released today (mine)</b>, plus an <b>Oldest unclaimed</b> strip. Each is a link into the queue.</p>
+    <p>Your dashboard (<q>Lab bench</q>) has four cards under <b>My queue</b>: <b>Unclaimed in my sections</b>, <b>Claimed by me</b>, <b>Send-out awaiting result</b> and <b>Released today (mine)</b>, plus an <b>Oldest unclaimed</b> strip. Each is a link into the queue; <b>Unclaimed in my sections</b> and the strip's <b>View all</b> open its <span class="tab">Unclaimed</span> tab.</p>
   </section>
 
   <!-- 4.2 -->
   <section class="sub" id="lab-queue">
     <h3>4.2 The queue</h3>
     <div class="screen"><div class="where">Sidebar › Lab &amp; Imaging › <kbd class="ui">Queue</kbd> · <code class="route">/staff/queue</code></div>
-      <dl><dt>Tabs</dt><dd><span class="tab">All</span> · <span class="tab">Pending release</span> · <span class="tab">Released today</span> · <span class="tab">Mine</span></dd>
+      <dl><dt>Tabs</dt><dd><span class="tab">All</span> · <span class="tab">Unclaimed</span> (paid work nobody has picked up — the same count as the dashboard cards) · <span class="tab">Pending release</span> · <span class="tab">Released today</span> · <span class="tab">Mine</span></dd>
       <dt>Filters</dt><dd><b>Requested from</b> / <b>…to</b> · <b>Patient / test search</b> (name, test or DRM-ID) · <b>Visit #</b> · <kbd class="ui">Apply</kbd> · <kbd class="ui">Clear filters</kbd></dd>
-      <dt>Row button</dt><dd><kbd class="ui">Claim</kbd></dd></dl></div>
+      <dt>Row buttons</dt><dd><kbd class="ui">Claim</kbd> · <kbd class="ui">Unclaim</kbd> (on a test you hold; an Admin sees it on every claimed test)</dd>
+      <dt>Remarks</dt><dd>The last column: who claimed the test, who unclaimed it and why, and any reassignment, oldest first with the time of each (the three most recent; older ones fold into <q>+N earlier</q>). Unclaims and reassignments show in amber.</dd></dl></div>
     <p>Rows are oldest first — click <b>Requested</b>, <b>Visit</b> or <b>Status</b> to re-sort, and a rows-per-page picker sits at the bottom. On <span class="tab">Released today</span> the first column reads <b>Released</b> and shows when the test left the bench, which is the order that tab is in. Each row shows the patient, the test (code and name), the visit number and a status chip. A chemistry order shows as one row, for example <q>Chemistry Panel (3 tests)</q>, because the whole panel is reported on one form (4.4). Package headers never appear; only the tests inside them do.</p>
     <ol class="steps">
       <li><p class="step-title">Start on <span class="tab">All</span>. Pick the oldest row you can run.</p><p>The subtitle reminds you: <q>Visits waiting for payment appear once they're paid or HMO-covered.</q> If a patient says they have paid and the test is not here, reception has not recorded it yet.</p></li>
-      <li><p class="step-title">Click <kbd class="ui">Claim</kbd>.</p><p>The test becomes <span class="status">in progress</span> under your name, moves to your <span class="tab">Mine</span> tab, and the entry page opens. Claim only what you are about to run; a claimed test is invisible to colleagues as available work. You can only claim work in your own sections — anything else answers <q>This test is outside the sections you can claim.</q></p></li>
+      <li><p class="step-title">Click <kbd class="ui">Claim</kbd>.</p><p>The test becomes <span class="status">in progress</span> under your name, moves to your <span class="tab">Mine</span> tab, and the entry page opens. Claim only what you are about to run; a claimed test is invisible to colleagues as available work. You can only claim work in your own sections — anything else answers <q>This test is outside the sections you can claim.</q></p><p><b>X-rays are X-ray technician only.</b> Admins and pathologists can see and open an x-ray test but cannot claim it: the row reads <q>X-ray technician only</q> where the button would be, and the test page says <q>This test can only be claimed by an X-ray technician.</q> Ultrasound and ECG are not restricted this way.</p></li>
       <li><p class="step-title">Use <span class="tab">Mine</span> to get back to anything you left half-done.</p></li>
     </ol>
-    <div class="note tip"><span class="k">Claimed the wrong one?</span><div><p>Put it back yourself. On the test page, under <b>Your claim</b>, click <kbd class="ui">Unclaim — put it back in the queue</kbd>, type a reason if you want one on record, then <kbd class="ui">Confirm unclaim</kbd>. The test returns to <span class="status">requested</span> for anyone in your section to pick up, and the unclaim is written to the audit log.</p><p>It works only while the test is still <span class="status">in progress</span> and nothing has been uploaded to it. Once a result is attached you get <q>You can only unclaim a test you currently hold that has no result yet.</q> and need an Admin, who has the <b>Assignment (admin)</b> panel with <kbd class="ui">Unclaim</kbd> and <kbd class="ui">Reassign to…</kbd> on any claimed test.</p></div></div>
+    <div class="note tip"><span class="k">Claimed the wrong one?</span><div><p>Put it back yourself — either straight from the queue with the row's <kbd class="ui">Unclaim</kbd> (type an optional reason, then <kbd class="ui">Confirm</kbd>; a chemistry panel row hands back the whole panel), or on the test page, under <b>Your claim</b>, click <kbd class="ui">Unclaim — put it back in the queue</kbd>, type a reason if you want one on record, then <kbd class="ui">Confirm unclaim</kbd>. The test returns to <span class="status">requested</span> for anyone in your section to pick up, the unclaim is written to the audit log, and it shows in the row's <b>Remarks</b> — and under <b>Claim history</b> on the test page — so the next person knows it was handed back. A chemistry panel's page has the same <kbd class="ui">Unclaim</kbd> beside its claim history.</p><p>It works only while the test is still <span class="status">in progress</span> and nothing has been uploaded to it. Once a result is attached you get <q>You can only unclaim a test you currently hold that has no result yet.</q> and need an Admin, who has the <b>Assignment (admin)</b> panel with <kbd class="ui">Unclaim</kbd> and <kbd class="ui">Reassign to…</kbd> on any claimed test.</p></div></div>
   </section>
 
   <!-- 4.3 -->
@@ -887,7 +889,7 @@
     <div class="screen"><div class="where">Sidebar › Lab &amp; Imaging › <kbd class="ui">Results</kbd> · <code class="route">/staff/results</code></div>
       <dl><dt>Tabs</dt><dd><span class="tab">All</span> · <span class="tab">Released</span> · <span class="tab">Ready for release</span> · <span class="tab">In progress</span> · <span class="tab">Unclaimed</span> · <span class="tab">Cancelled</span></dd>
       <dt>Filters</dt><dd><b>Requested from</b> / <b>…to</b> · <b>Patient / service search</b></dd>
-      <dt>Per row</dt><dd>one line per visit with its tests, timestamps, a <b>PDF →</b> link per finished test, and a link to the visit</dd></dl></div>
+      <dt>Per row</dt><dd>one line per visit with its tests, timestamps, a <b>PDF →</b> link per finished test, <b>Remarks</b> (each test's claim history — who claimed, unclaimed with the reason, or reassigned it — headed by the test code when the visit has several), and a link to the visit</dd></dl></div>
     <p>This is the look-up screen, not a work screen: nothing here releases or amends. Use it to find an old result, open or print its PDF, or spot tests nobody has picked up. <span class="tab">Unclaimed</span> opens sorted oldest first (every other tab opens newest first), and you can re-sort by <b>Status</b>, <b>Requested</b>, <b>Completed</b>, <b>Released</b> or <b>Visit</b>; a row marked <b>awaiting payment</b> is one reception hasn't been paid for yet, which is why it isn't on your queue.</p>
   </section>
 </section>
@@ -949,7 +951,7 @@
   <!-- 5.3 -->
   <section class="sub" id="adm-daily">
     <h3>5.3 Daily and weekly checks</h3>
-    <p>Your dashboard is titled <q>Clinic command centre</q>. The Money row shows <b>Net Income (Books)</b> (posted accrual revenue less contra revenue and expenses) beside <b>Gross Profit (Ops)</b> (released lab and consult revenue after discounts, before expenses). Both cover this month and open their corresponding report with those dates. Its <b>Operations</b> row (revenue today, visits, queue, released today, possible duplicates) and <b>What needs attention</b> strip are the morning glance. Then:</p>
+    <p>Your dashboard is titled <q>Clinic command centre</q>. The Money row shows <b>Net Income (Books)</b> (posted accrual revenue less contra revenue and expenses) beside <b>Gross Profit (Ops)</b> (released lab and consult revenue after discounts, before expenses). Both cover this month and open their corresponding report with those dates. Its <b>Operations</b> row (revenue today, visits, queue, <b>Unclaimed</b>, released today, possible duplicates) and <b>What needs attention</b> strip are the morning glance. <b>Unclaimed</b> counts paid lab and imaging tests nobody has picked up and opens the queue's <span class="tab">Unclaimed</span> tab; when x-rays are among them its hint says how many (<q>1 x-ray for the X-ray technician</q>), since only the X-ray technician can claim those. Then:</p>
     <div class="tbl-wrap"><table>
       <thead><tr><th>Check</th><th>Where (Admin ›)</th><th>What you are looking for</th></tr></thead>
       <tbody>
@@ -995,7 +997,7 @@
       <dt>Someone leaves</dt><dd>Untick <b>Active</b>. Their history stays. <kbd class="ui">Delete user…</kbd> (type their full name to confirm) is a soft delete and can be <kbd class="ui">Restore</kbd>d.</dd>
       <dt>Lost authenticator phone</dt><dd>The code is required on every sign-in route once enrolled, Google included, so losing the phone locks them out just the same. No screen removes an enrolled authenticator, so clearing the stale factor still needs someone with access to the Supabase project. Warn staff before they enrol (2.2) and see <a href="#limits">Known limitations</a>.</dd>
       <dt>Waive a balance</dt><dd>On the visit: <kbd class="ui">Waive balance</kbd> → <kbd class="ui">Confirm waive</kbd>. Admin-only, and irreversible in the sense that a waived visit can't be deleted.</dd>
-      <dt>Unclaim or reassign a test</dt><dd>Open the test from the queue; the <b>Assignment (admin)</b> panel has <kbd class="ui">Unclaim</kbd> and <kbd class="ui">Reassign to…</kbd>. You only need it now for someone else's stuck claim or to hand work to a named person — staff release their own claims themselves (4.2). Reassignment only offers active medtechs, X-ray technicians, pathologists and admins.</dd>
+      <dt>Unclaim or reassign a test</dt><dd>Open the test from the queue; the <b>Assignment (admin)</b> panel has <kbd class="ui">Unclaim</kbd> and <kbd class="ui">Reassign to…</kbd>. You only need it now for someone else's stuck claim or to hand work to a named person — staff release their own claims themselves (4.2). The queue row's own <kbd class="ui">Unclaim</kbd> does the same unclaim without opening the test. Reassignment only offers active staff who could claim that test themselves — so an x-ray lists X-ray technicians only; when nobody else qualifies the panel says <q>No one else can take this test right now</q>.</dd>
       <dt>Withdraw a patient's consent</dt><dd>Patient page › Consent panel › <kbd class="ui">Withdraw consent</kbd>, with a reason. Their results stay; future releases are blocked if the gate is on.</dd>
     </dl>
   </section>
@@ -1107,7 +1109,7 @@
     <dt>The test isn't on the lab queue.</dt><dd>The visit is <b>Waiting for payment</b>. Record the payment and it appears at once. If the visit is HMO-billed it should already be there — check the HMO was actually picked on the visit, not just written on the form.</dd>
     <dt>I'm reception and the visit page shows no tests.</dt><dd>By policy. Reception sees payments, receipts, PIN and physician on a visit, never the test lines or PDFs. Read progress from the Reception Queue row; the lab releases.</dd>
     <dt>The Release button is greyed out.</dt><dd>Hover it: it says either <q>Visit must be paid, waived, or HMO-covered before release</q> or <q>Patient consent not on file — capture consent first</q>. Reception fixes that, then you release. If the message mentions an attending physician, reception assigns one on the visit. An HMO visit is never blocked for money.</dd>
-    <dt>I claimed the wrong test.</dt><dd>Unclaim it yourself on the test page: <b>Your claim</b> › <kbd class="ui">Unclaim — put it back in the queue</kbd> › <kbd class="ui">Confirm unclaim</kbd>. Only while nothing has been uploaded to it; after that, ask an Admin.</dd>
+    <dt>I claimed the wrong test.</dt><dd>Unclaim it yourself — the row's <kbd class="ui">Unclaim</kbd> in the queue, or on the test page: <b>Your claim</b> › <kbd class="ui">Unclaim — put it back in the queue</kbd> › <kbd class="ui">Confirm unclaim</kbd>. Only while nothing has been uploaded to it; after that, ask an Admin.</dd>
     <dt>The patient wants a printed result at the counter.</dt><dd>The lab prints the PDF when releasing (method Physical or Pickup) and hands it to reception. Reception cannot open result PDFs.</dd>
     <dt>The patient lost their PIN.</dt><dd>Open the patient's page, click <kbd class="ui">Re-issue PIN</kbd>, print the slip. The old PIN stops working. Never read a PIN over the phone.</dd>
     <dt>I recorded a payment on the wrong visit.</dt><dd>Void it (reason required) and record it on the right visit. Nothing is ever edited in place.</dd>
@@ -1177,7 +1179,7 @@
 </section>
 
 <footer class="end">
-  <p>drmed.ph User Guide · v2.14 · 24 September 2026 · Matches the production release at migration 0158. Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
+  <p>drmed.ph User Guide · v2.16 · 24 September 2026 · Matches the production release at migration 0160. Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
 </footer>
 </main>
 </div>
