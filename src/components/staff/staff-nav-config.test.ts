@@ -144,6 +144,16 @@ describe("Payroll is grouped pay cycle | staff records | setup", () => {
   });
 });
 
+describe("Lab & Imaging order (owner request 2026-09-24)", () => {
+  it("lists Queue, then Results, then Critical Alerts", () => {
+    expect(hrefsIn(section(STAFF_NAV, "Lab & Imaging"))).toEqual([
+      "/staff/queue",
+      "/staff/results",
+      "/staff/critical-alerts",
+    ]);
+  });
+});
+
 describe("Front Desk is ordered by the daily flow", () => {
   it("lists Reception Queue, Patients, then the former Billing items, with no subgroups", () => {
     const front = section(visibleNavFor("reception"), "Front Desk");
@@ -398,8 +408,8 @@ describe("visible hrefs per role", () => {
     expect(allHrefs(visibleNavFor("pathologist"))).toEqual([
       "/staff",
       "/staff/queue",
-      "/staff/critical-alerts",
       "/staff/results",
+      "/staff/critical-alerts",
       "/staff/profile",
       "/staff/payslips",
     ]);
