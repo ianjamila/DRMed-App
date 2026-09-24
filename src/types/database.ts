@@ -3609,6 +3609,7 @@ export type Database = {
       payments: {
         Row: {
           amount_php: number
+          corrects_payment_id: string | null
           created_at: string
           id: string
           legacy_import_run_id: string | null
@@ -3625,6 +3626,7 @@ export type Database = {
         }
         Insert: {
           amount_php: number
+          corrects_payment_id?: string | null
           created_at?: string
           id?: string
           legacy_import_run_id?: string | null
@@ -3641,6 +3643,7 @@ export type Database = {
         }
         Update: {
           amount_php?: number
+          corrects_payment_id?: string | null
           created_at?: string
           id?: string
           legacy_import_run_id?: string | null
@@ -3656,6 +3659,13 @@ export type Database = {
           voided_by?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "payments_corrects_payment_id_fkey"
+            columns: ["corrects_payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "payments_legacy_import_run_id_fkey"
             columns: ["legacy_import_run_id"]
@@ -6549,6 +6559,18 @@ export type Database = {
         Returns: boolean
       }
       coa_uuid_for_code: { Args: { p_code: string }; Returns: string }
+      correct_payment: {
+        Args: {
+          p_actor_id: string
+          p_amount_php: number
+          p_method: string
+          p_notes: string
+          p_payment_id: string
+          p_reason: string
+          p_reference_number: string
+        }
+        Returns: string
+      }
       current_patient_id: { Args: never; Returns: string }
       employee_leave_balance: {
         Args: { p_as_of_date?: string; p_employee_id: string; p_kind: string }

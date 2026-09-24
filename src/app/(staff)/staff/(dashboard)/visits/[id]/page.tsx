@@ -24,6 +24,8 @@ import { UndoReleaseDialog } from "./undo-release-dialog";
 import { WaiveBalanceDialog } from "./waive-balance-dialog";
 import { AttendingPhysicianDialog } from "./attending-physician-dialog";
 import { VoidPaymentDialog } from "../../payments/[id]/void/void-payment-dialog";
+import { EditPaymentDialog } from "../../payments/[id]/edit/edit-payment-dialog";
+import { paymentEditability } from "@/lib/visits/payment-edit";
 import { countResultViews } from "@/lib/results/viewed-count";
 import { isConsentGateRequired, getPatientConsentState } from "@/lib/consent/gate";
 import { paymentStatusLabel } from "@/lib/ui/payment-status";
@@ -186,7 +188,9 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
         .order("requested_at", { ascending: true }),
       supabase
         .from("payments")
-        .select("id, amount_php, method, reference_number, received_at, notes, voided_at, voided_by, void_reason")
+        .select(
+          "id, amount_php, method, reference_number, received_at, notes, voided_at, voided_by, void_reason, corrects_payment_id, legacy_import_run_id, voided_by_staff:staff_profiles!voided_by ( full_name )",
+        )
         .eq("visit_id", id)
         .order("received_at", { ascending: false }),
       // Labels for recorded discount codes — includes retired (inactive) rows
@@ -304,6 +308,15 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
   const balance = Number(visit.total_php) - Number(visit.paid_php);
   const activePayments = (payments ?? []).filter((p) => !p.voided_at);
   const voidedPayments = (payments ?? []).filter((p) => p.voided_at);
+  // Edit payment (0160) links the corrected row to the original it voided,
+  // so the history can say "Edited" (and what it became) instead of "Deleted".
+  const paymentById = new Map((payments ?? []).map((p) => [p.id, p]));
+  const replacementOf = new Map(
+    (payments ?? [])
+      .filter((p) => p.corrects_payment_id)
+      .map((p) => [p.corrects_payment_id as string, p]),
+  );
+  const methodLabel = (m: string | null) => (m ? PAYMENT_METHOD_LABEL[m] ?? m : "—");
 
   const visitDeleted = visit.deleted_at !== null;
   const canManageDeletion = QUEUE_DELETE_ROLES.has(session.role);
@@ -1273,9 +1286,17 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                   </td>
                   <td className="px-4 py-3 font-semibold">
                     {formatPhp(p.amount_php)}
+                    {p.corrects_payment_id ? (
+                      <span className="mt-0.5 block text-xs font-normal text-[color:var(--color-brand-text-soft)]">
+                        Edited
+                        {paymentById.get(p.corrects_payment_id)
+                          ? ` · was ${formatPhp(paymentById.get(p.corrects_payment_id)!.amount_php)} ${methodLabel(paymentById.get(p.corrects_payment_id)!.method)}`
+                          : null}
+                      </span>
+                    ) : null}
                   </td>
                   <td className="px-4 py-3">
-                    {p.method ? PAYMENT_METHOD_LABEL[p.method] ?? p.method : "—"}
+                    {methodLabel(p.method)}
                   </td>
                   <td className="px-4 py-3 font-mono text-xs">
                     {p.reference_number ?? "—"}
@@ -1287,10 +1308,30 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                         write. RLS already keeps activePayments empty for
                         every other role, so this is defense-in-depth. */}
                     {canSeePayments ? (
-                      <VoidPaymentDialog
-                        paymentId={p.id}
-                        amountLabel={formatPhp(p.amount_php)}
-                      />
+                      <div className="flex items-center justify-end gap-4">
+                        {/* Edit is offered only where correct_payment (0160)
+                            would accept it — gift-code, HMO and imported
+                            payments can still be deleted and re-recorded. */}
+                        {paymentEditability(p).editable ? (
+                          <EditPaymentDialog
+                            paymentId={p.id}
+                            amount={Number(p.amount_php)}
+                            method={p.method}
+                            methodLabel={methodLabel(p.method)}
+                            referenceNumber={p.reference_number}
+                            notes={p.notes}
+                            receivedLabel={manilaDateTime(p.received_at)}
+                            visitTotal={Number(visit.total_php)}
+                            visitPaid={Number(visit.paid_php)}
+                          />
+                        ) : null}
+                        <VoidPaymentDialog
+                          paymentId={p.id}
+                          amountLabel={formatPhp(p.amount_php)}
+                          methodLabel={methodLabel(p.method)}
+                          isGiftCode={p.method === "gift_code"}
+                        />
+                      </div>
                     ) : null}
                   </td>
                 </tr>
@@ -1312,24 +1353,41 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
         {voidedPayments.length > 0 ? (
           <details className="mt-4 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] px-4 py-3">
             <summary className="cursor-pointer text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-              Voided payments ({voidedPayments.length})
+              Deleted &amp; edited payments ({voidedPayments.length})
             </summary>
             <ul className="mt-2 space-y-2 text-xs">
-              {voidedPayments.map((p) => (
-                <li key={p.id} className="rounded-md bg-white px-3 py-2">
-                  <div className="font-semibold text-[color:var(--color-brand-text-mid)]">
-                    {formatPhp(p.amount_php)} · {p.method ? PAYMENT_METHOD_LABEL[p.method] ?? p.method : "—"}
-                    <span className="ml-2 text-[color:var(--color-brand-text-soft)]">
-                      voided {p.voided_at ? manilaDateTime(p.voided_at) : ""}
-                    </span>
-                  </div>
-                  {p.void_reason ? (
-                    <div className="mt-1 text-[color:var(--color-brand-text-soft)]">
-                      Reason: {p.void_reason}
+              {voidedPayments.map((p) => {
+                const replacement = replacementOf.get(p.id);
+                const staff = Array.isArray(p.voided_by_staff) ? p.voided_by_staff[0] : p.voided_by_staff;
+                // correct_payment writes 'Edited: <reason>'; show the reason alone.
+                const reason =
+                  replacement && p.void_reason?.startsWith("Edited: ")
+                    ? p.void_reason.slice("Edited: ".length)
+                    : p.void_reason;
+                return (
+                  <li key={p.id} className="rounded-md bg-white px-3 py-2">
+                    <div className="font-semibold text-[color:var(--color-brand-text-mid)]">
+                      {formatPhp(p.amount_php)} · {methodLabel(p.method)}
+                      <span className="ml-2 text-[color:var(--color-brand-text-soft)]">
+                        {replacement ? "edited" : "deleted"}{" "}
+                        {p.voided_at ? manilaDateTime(p.voided_at) : ""}
+                        {staff?.full_name ? ` by ${staff.full_name}` : ""}
+                      </span>
                     </div>
-                  ) : null}
-                </li>
-              ))}
+                    {replacement ? (
+                      <div className="mt-1 text-[color:var(--color-brand-text-mid)]">
+                        Replaced by {formatPhp(replacement.amount_php)} {methodLabel(replacement.method)}
+                        {replacement.voided_at ? " (since deleted or edited)" : ""}
+                      </div>
+                    ) : null}
+                    {reason ? (
+                      <div className="mt-1 text-[color:var(--color-brand-text-soft)]">
+                        Reason: {reason}
+                      </div>
+                    ) : null}
+                  </li>
+                );
+              })}
             </ul>
           </details>
         ) : null}
