@@ -4,12 +4,10 @@ import { useState, useTransition } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { SignaturePad } from "@/components/consent/signature-pad";
+import { ConsentNotice } from "@/components/consent/consent-notice";
 import { recordConsentGrantAction } from "@/lib/actions/consent/grant";
 import { withdrawConsentAction } from "@/lib/actions/consent/withdraw";
-import {
-  uploadConsentArtifactAction,
-  viewConsentArtifactAction,
-} from "@/lib/actions/consent/artifact";
+import { uploadConsentArtifactAction } from "@/lib/actions/consent/artifact";
 import { manilaDate } from "@/lib/dates/manila";
 
 type Signatory = "self" | "guardian" | "representative";
@@ -39,14 +37,12 @@ export function ConsentPanel({
   current,
   signedAt,
   noticeVersion,
-  artifactPath,
   isAdmin,
 }: {
   patientId: string;
   current: boolean;
   signedAt: string | null;
   noticeVersion: string | null;
-  artifactPath: string | null;
   isAdmin: boolean;
 }) {
   const [pending, start] = useTransition();
@@ -55,7 +51,6 @@ export function ConsentPanel({
   const [name, setName] = useState("");
   const [rel, setRel] = useState("");
   const [err, setErr] = useState<string | null>(null);
-  const [viewing, startViewing] = useTransition();
 
   function saveSignature(png: string) {
     setErr(null);
@@ -108,19 +103,6 @@ export function ConsentPanel({
       });
       if (!res.ok) return setErr(res.error);
       setMode("idle");
-    });
-  }
-
-  function viewSignedForm() {
-    if (!artifactPath) return;
-    setErr(null);
-    startViewing(async () => {
-      const res = await viewConsentArtifactAction({
-        patientId,
-        path: artifactPath,
-      });
-      if (!res.ok) return setErr(res.error);
-      window.open(res.url, "_blank", "noopener");
     });
   }
 
@@ -185,16 +167,17 @@ export function ConsentPanel({
             Attach signed paper form
           </Button>
         )}
-        {artifactPath && (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={viewSignedForm}
-            disabled={viewing}
+        {/* The full form with the signature on it (or the paper scan) —
+            also for consents accepted online, which carry no file at all. */}
+        {current && (
+          <Link
+            href={`/staff/patients/${patientId}/consent/signed`}
+            target="_blank"
           >
-            {viewing ? "Opening…" : "View signed form"}
-          </Button>
+            <Button type="button" variant="outline" size="sm">
+              View signed form
+            </Button>
+          </Link>
         )}
         {current && isAdmin && (
           <Button
@@ -211,6 +194,19 @@ export function ConsentPanel({
 
       {(mode === "pad" || mode === "paper") && (
         <div className="mt-3 space-y-2">
+          {/* On screen there is no paper form in front of the patient, so the
+              notice they are agreeing to sits right above the pad — the same
+              wording the signed form will later show around the signature. */}
+          {mode === "pad" && (
+            <div className="rounded-lg border border-[color:var(--color-brand-bg-mid)] bg-white p-3">
+              <p className="mb-2 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)]">
+                Have the patient read this before signing
+              </p>
+              <div className="max-h-72 overflow-y-auto pr-1">
+                <ConsentNotice compact />
+              </div>
+            </div>
+          )}
           <div className="grid gap-2 sm:grid-cols-3">
             <select
               value={signatory}

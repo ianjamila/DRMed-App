@@ -448,6 +448,32 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
           <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
             {patient.last_name}, {patient.first_name}
           </h1>
+          <p className="mt-1 text-xs">
+            {consent.current ? (
+              <>
+                <span className="text-green-700">Privacy consent on file</span>
+                {" · "}
+                <Link
+                  href={`/staff/patients/${patient.id}/consent/signed`}
+                  target="_blank"
+                  className="font-bold text-[color:var(--color-brand-cyan)] hover:underline"
+                >
+                  View signed form
+                </Link>
+              </>
+            ) : (
+              <>
+                <span className="text-amber-700">Privacy consent not on file</span>
+                {" · "}
+                <Link
+                  href={`/staff/patients/${patient.id}#consent`}
+                  className="font-bold text-[color:var(--color-brand-cyan)] hover:underline"
+                >
+                  Capture it on the patient page
+                </Link>
+              </>
+            )}
+          </p>
         </div>
         {visitDeleted ? null : (
           <div className="flex flex-wrap items-center gap-2">

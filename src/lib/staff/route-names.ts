@@ -104,6 +104,7 @@ export const ROUTE_NAME: Record<string, string> = {
   "/staff/admin/payroll/runs/[id]/dtr": "Import DTR",
   "/staff/patients/[id]": "Patient",
   "/staff/patients/[id]/consent/print": "Consent form",
+  "/staff/patients/[id]/consent/signed": "Signed consent form",
   "/staff/patients/[id]/edit": "Edit patient",
   "/staff/payslips/[id]": "Payslip",
   "/staff/queue/[id]": "Test",

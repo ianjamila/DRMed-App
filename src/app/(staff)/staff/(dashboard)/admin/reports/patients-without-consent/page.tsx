@@ -26,7 +26,7 @@ import {
   parsePageSize,
   parseSort,
 } from "@/lib/ui/table-params";
-import { SortableTh } from "@/components/staff/sortable-th";
+import { PlainTh, SortableTh } from "@/components/staff/sortable-th";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 
 export const metadata = { title: "Patients Without Consent" };
@@ -153,6 +153,7 @@ export default async function PatientsWithoutConsentPage({
                   {th("visits", "Visits", "right")}
                   {th("last_visit", "Last visit")}
                   {th("contact", "Contact on file")}
+                  <PlainTh label="Consent form" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
@@ -196,6 +197,17 @@ export default async function PatientsWithoutConsentPage({
                           <ContactPill present={!!p.phone} label="Phone" />
                           <ContactPill present={!!p.email} label="Email" />
                         </div>
+                      </td>
+                      <td className="px-4 py-3 text-xs">
+                        {/* The form pre-filled with this patient, ready to hand
+                            over at their next visit. */}
+                        <Link
+                          href={`/staff/patients/${p.id}/consent/print`}
+                          target="_blank"
+                          className="font-bold text-[color:var(--color-brand-cyan)] hover:underline"
+                        >
+                          Print
+                        </Link>
                       </td>
                     </tr>
                   );
