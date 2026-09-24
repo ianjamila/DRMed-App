@@ -10,6 +10,10 @@ import {
   seniorPwdDiscount,
   seniorPwdPrice,
 } from "@/lib/pricing/senior";
+import {
+  coveredByPickedPackage,
+  type PackageIncludedTest,
+} from "@/lib/staff/quote-packages";
 import { updateMessageStatusAction } from "../messages/actions";
 
 export interface QuoteService {
@@ -23,6 +27,12 @@ export interface QuoteService {
   kind: string;
   section: string | null;
   is_send_out: boolean;
+  /** A package's tests, in package order; empty for anything else. */
+  includes: PackageIncludedTest[];
+}
+
+function includesText(s: QuoteService): string {
+  return s.includes.map((t) => t.name).join(", ");
 }
 
 /** Senior/PWD price for a service line, or null when the service is ineligible. */
@@ -110,6 +120,10 @@ export function QuoteWorkbench({ services, messageContext = null }: Props) {
     [services, picked],
   );
 
+  // A test ticked on its own that a ticked package already includes would be
+  // charged twice — flag it so reception can untick it before copying.
+  const coveredBy = useMemo(() => coveredByPickedPackage(pickedList), [pickedList]);
+
   const builderTotals = useMemo(() => {
     let cash = 0;
     let hmo = 0;
@@ -157,7 +171,7 @@ export function QuoteWorkbench({ services, messageContext = null }: Props) {
   function builderSummary(): string {
     if (pickedList.length === 0) return "";
     const greeting = messageContext ? `Hi ${messageContext.firstName},\n\n` : "";
-    const lines = pickedList.map((s) => {
+    const priceLine = (s: QuoteService): string => {
       if (seniorMode) {
         const sp = seniorPriceOf(s);
         const price = sp ?? s.price_php;
@@ -166,7 +180,13 @@ export function QuoteWorkbench({ services, messageContext = null }: Props) {
       const parts = [`${formatPhp(s.price_php)} cash`];
       if (s.hmo_price_php != null) parts.push(`${formatPhp(s.hmo_price_php)} HMO`);
       return `• ${s.name} — ${parts.join(" · ")}`;
-    });
+    };
+    // Patients ask what a package covers; answer it in the same message.
+    const lines = pickedList.map((s) =>
+      s.includes.length > 0
+        ? `${priceLine(s)}\n   Includes: ${includesText(s)}`
+        : priceLine(s),
+    );
     const out = [...lines, ""];
     if (seniorMode) {
       out.push(`Total (Senior/PWD): ${formatPhp(builderTotals.senior)}`);
@@ -308,6 +328,11 @@ export function QuoteWorkbench({ services, messageContext = null }: Props) {
                           Send-out
                         </span>
                       ) : null}
+                      {s.includes.length > 0 ? (
+                        <p className="mt-0.5 text-xs font-normal text-[color:var(--color-brand-text-soft)]">
+                          Includes: {includesText(s)}
+                        </p>
+                      ) : null}
                     </td>
                     <td className="px-4 py-3 text-right font-bold text-[color:var(--color-brand-navy)]">
                       {formatPhp(s.price_php)}
@@ -392,9 +417,19 @@ export function QuoteWorkbench({ services, messageContext = null }: Props) {
                   >
                     <span className="text-[color:var(--color-brand-text-mid)]">
                       {s.name}
+                      {coveredBy.has(s.id) ? (
+                        <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-900">
+                          Already in {coveredBy.get(s.id)}
+                        </span>
+                      ) : null}
                       {seniorMode && sp == null ? (
                         <span className="ml-2 rounded bg-[color:var(--color-brand-bg-mid)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                           No senior disc.
+                        </span>
+                      ) : null}
+                      {s.includes.length > 0 ? (
+                        <span className="mt-0.5 block text-xs text-[color:var(--color-brand-text-soft)]">
+                          Includes: {includesText(s)}
                         </span>
                       ) : null}
                     </span>
@@ -430,6 +465,13 @@ export function QuoteWorkbench({ services, messageContext = null }: Props) {
                     No HMO rate on file for the selected items.
                   </p>
                 )}
+                {coveredBy.size > 0 ? (
+                  <p className="mt-1 text-xs font-semibold text-amber-700">
+                    {coveredBy.size} selected {coveredBy.size === 1 ? "test is" : "tests are"} already
+                    in a selected package — untick {coveredBy.size === 1 ? "it" : "them"} to avoid
+                    charging twice.
+                  </p>
+                ) : null}
               </div>
               <div className="flex gap-2">
                 <button

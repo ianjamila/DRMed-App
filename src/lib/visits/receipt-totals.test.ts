@@ -147,8 +147,25 @@ describe("arrangeReceiptRows", () => {
       row("xray", { base: 550, final: 550 }),
     ]);
     expect(rows).toEqual([
-      { line: expect.objectContaining({ id: "orphan" }), includedInPackage: false, showAmounts: true },
-      { line: expect.objectContaining({ id: "xray" }), includedInPackage: false, showAmounts: true },
+      { line: expect.objectContaining({ id: "orphan" }), includedInPackage: false, showAmounts: true, includedCount: 0 },
+      { line: expect.objectContaining({ id: "xray" }), includedInPackage: false, showAmounts: true, includedCount: 0 },
+    ]);
+  });
+
+  it("counts the tests a package line includes, for its \"Includes\" caption", () => {
+    const rows = arrangeReceiptRows([
+      row("pkg", { isPackageHeader: true, base: 5888, final: 5888 }),
+      row("cbc", { parentId: "pkg" }),
+      row("fbs", { parentId: "pkg" }),
+      row("empty", { isPackageHeader: true, base: 100, final: 100 }),
+      row("xray", { base: 550, final: 550 }),
+    ]);
+    expect(rows.map((r) => [r.line.id, r.includedCount])).toEqual([
+      ["pkg", 2],
+      ["cbc", 0],
+      ["fbs", 0],
+      ["empty", 0],
+      ["xray", 0],
     ]);
   });
 

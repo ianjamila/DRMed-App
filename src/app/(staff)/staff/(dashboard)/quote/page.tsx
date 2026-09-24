@@ -4,6 +4,7 @@ import { canUseQuickQuote } from "@/lib/staff/quote-access";
 import { createClient } from "@/lib/supabase/server";
 import { loadMessageForBooking } from "@/lib/contact-messages/booking-link";
 import { firstNameOf } from "@/lib/contact-messages/first-name";
+import { packageContents } from "@/lib/staff/quote-packages";
 import { QuoteWorkbench, type QuoteService, type QuoteMessageContext } from "./quote-workbench";
 
 export const metadata = {
@@ -35,13 +36,27 @@ export default async function QuotePage({ searchParams }: Props) {
     }
   }
 
-  const { data } = await supabase
-    .from("services")
-    .select(
-      "id, code, name, price_php, hmo_price_php, senior_pwd_eligible, turnaround_hours, kind, section, is_send_out",
-    )
-    .eq("is_active", true)
-    .order("name", { ascending: true });
+  const [{ data }, { data: componentRows, error: componentErr }] = await Promise.all([
+    supabase
+      .from("services")
+      .select(
+        "id, code, name, price_php, hmo_price_php, senior_pwd_eligible, turnaround_hours, kind, section, is_send_out",
+      )
+      .eq("is_active", true)
+      .order("name", { ascending: true }),
+    // What each package includes, so the quote can say so. A failed read only
+    // costs the "Includes" lines — log it and quote without them.
+    supabase
+      .from("package_components")
+      .select(
+        `package_service_id, sort_order,
+         component:services!package_components_component_service_id_fkey ( id, name )`,
+      ),
+  ]);
+  if (componentErr) {
+    console.error("quote: package components lookup failed", componentErr.message);
+  }
+  const includesByPackage = packageContents(componentRows ?? []);
 
   const services: QuoteService[] = (data ?? []).map((s) => ({
     id: s.id,
@@ -54,6 +69,7 @@ export default async function QuotePage({ searchParams }: Props) {
     kind: s.kind,
     section: s.section,
     is_send_out: s.is_send_out,
+    includes: s.kind === "lab_package" ? (includesByPackage.get(s.id) ?? []) : [],
   }));
 
   return (

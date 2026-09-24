@@ -392,6 +392,21 @@
 }
 
 /* ---------------------------------------------------------------------------
+ * Every printed table: totals print once, at the end.
+ *
+ * Browsers repeat a <tfoot> at the foot of EVERY printed page, so a list that
+ * runs onto a second sheet showed its grand total under a partial list on
+ * page 1 (receipts, the PF payout slip, any report printed with Ctrl+P).
+ * Printed as an ordinary row group it appears once, after the last row.
+ * <thead> keeps repeating — column headings on a continuation page help.
+ * ------------------------------------------------------------------------- */
+@media print {
+  tfoot {
+    display: table-row-group;
+  }
+}
+
+/* ---------------------------------------------------------------------------
  * Billing receipts — A5 paper (partner request, 2026-06-13).
  *
  * A named `@page` scoped via the `page` property keeps A5 on the visit/group

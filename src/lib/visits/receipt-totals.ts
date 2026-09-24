@@ -130,6 +130,8 @@ export interface ReceiptRow<T> {
   includedInPackage: boolean;
   /** False only for an included test that carries no money of its own. */
   showAmounts: boolean;
+  /** On a package line: how many of its tests are listed under it (else 0). */
+  includedCount: number;
 }
 
 /**
@@ -164,11 +166,22 @@ export function arrangeReceiptRows<T extends PackageAwareReceiptLine>(
   const rows: ReceiptRow<T>[] = [];
   for (const l of lines) {
     if (l.parentId && headerIds.has(l.parentId)) continue;
-    rows.push({ line: l, includedInPackage: false, showAmounts: true });
-    for (const c of includedByHeader.get(l.id) ?? []) {
+    const included = includedByHeader.get(l.id) ?? [];
+    rows.push({
+      line: l,
+      includedInPackage: false,
+      showAmounts: true,
+      includedCount: included.length,
+    });
+    for (const c of included) {
       const carriesMoney =
         Number(c.base) !== 0 || Number(c.discount) !== 0 || Number(c.final) !== 0;
-      rows.push({ line: c, includedInPackage: true, showAmounts: carriesMoney });
+      rows.push({
+        line: c,
+        includedInPackage: true,
+        showAmounts: carriesMoney,
+        includedCount: 0,
+      });
     }
   }
   return rows;

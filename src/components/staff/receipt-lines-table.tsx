@@ -26,8 +26,14 @@ interface Props {
  * and sized to their content, so without it adjacent headings run together
  * ("PRICEDISCOUNT") and so do "Total Due" and its amount.
  */
-const CELL = "px-2 py-3 first:pl-0 last:pr-0 print:py-1.5";
-const MONEY = `${CELL} whitespace-nowrap text-right tabular-nums`;
+const PAD_X = "px-2 first:pl-0 last:pr-0";
+const CELL = `${PAD_X} py-3 print:py-1.5`;
+const MONEY_X = "whitespace-nowrap text-right tabular-nums";
+const MONEY = `${CELL} ${MONEY_X}`;
+// A package's included tests are a list, not charges: tighter rows so a
+// full package still fits one A5 sheet with its totals.
+const INCLUDED = `${PAD_X} py-1.5 print:py-0.5`;
+const INCLUDED_MONEY = `${INCLUDED} ${MONEY_X}`;
 
 // Service codes are single long tokens (EXECUTIVE_PACKAGE_STANDARD). Offer a
 // line break after each underscore so the code column can wrap on A5 instead
@@ -67,18 +73,25 @@ export function ReceiptLinesTable({
         </tr>
       </thead>
       <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
-        {rows.map(({ line: l, includedInPackage, showAmounts }) => (
+        {rows.map(({ line: l, includedInPackage, showAmounts, includedCount }) => (
           <tr
             key={l.id}
             className={
               includedInPackage ? "text-[color:var(--color-brand-text-soft)]" : undefined
             }
           >
-            <td className={`${CELL} font-mono [overflow-wrap:anywhere]`}>
+            <td
+              className={`${includedInPackage ? INCLUDED : CELL} font-mono [overflow-wrap:anywhere]`}
+            >
               {breakableCode(l.svc?.code)}
             </td>
-            <td className={`${CELL} ${includedInPackage ? "pl-5 print:pl-4" : ""}`}>
+            <td className={includedInPackage ? `${INCLUDED} pl-5 print:pl-4` : CELL}>
               {l.svc?.name}
+              {includedCount > 0 ? (
+                <span className="mt-0.5 block text-[10px] font-semibold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+                  Includes {includedCount} {includedCount === 1 ? "test" : "tests"}:
+                </span>
+              ) : null}
             </td>
             {showAmounts ? (
               <>
@@ -92,19 +105,16 @@ export function ReceiptLinesTable({
               // Included in the package above: billed on the package line,
               // so no amounts of its own (not "₱0", which reads as a charge).
               <>
-                <td className={MONEY} />
-                <td className={MONEY} />
-                <td className={MONEY} />
+                <td className={INCLUDED_MONEY} />
+                <td className={INCLUDED_MONEY} />
+                <td className={INCLUDED_MONEY} />
               </>
             )}
           </tr>
         ))}
       </tbody>
-      {/* A printed <tfoot> repeats at the foot of EVERY page, so a bill that
-          runs onto a second sheet would show the grand total under a
-          partial list. Print it as an ordinary row group: once, at the end.
-          (<thead> keeps repeating — column headings on page 2 help.) */}
-      <tfoot className="text-sm print:table-row-group">
+      {/* Prints once, at the end — see the tfoot rule in globals.css. */}
+      <tfoot className="text-sm">
         <tr>
           <td colSpan={4} className="pr-2 pt-4 text-right text-[color:var(--color-brand-text-soft)]">
             Subtotal
