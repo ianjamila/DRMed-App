@@ -15,17 +15,16 @@ interface Props {
 
 export default async function QuotePage({ searchParams }: Props) {
   const session = await requireActiveStaff();
-  if (!["reception", "medtech", "admin"].includes(session.role)) {
+  if (!["reception", "admin"].includes(session.role)) {
     redirect("/staff");
   }
 
   const supabase = await createClient();
 
   // `?message=<id>` prefills the quote for a website-message sender. Only
-  // reception/admin can read contact_messages (0154 RLS) — a medtech opening
-  // this link (e.g. forwarded by reception) gets the plain quote page
-  // instead of an auth error, since the param is just a convenience, not a
-  // requirement to use this page.
+  // reception/admin can read contact_messages (0154 RLS), which is also who
+  // can open this page (medtech lost access 2026-09-24); the role check below
+  // stays so the prefill never outruns the page gate if that list grows.
   const sp = await searchParams;
   let messageContext: QuoteMessageContext | null = null;
   if (sp.message && (session.role === "reception" || session.role === "admin")) {

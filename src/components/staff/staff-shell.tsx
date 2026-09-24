@@ -9,7 +9,6 @@ import { StaffMobileNavTrigger } from "./staff-mobile-nav-trigger";
 
 const QUOTE_ROLES: ReadonlyArray<StaffSession["role"]> = [
   "reception",
-  "medtech",
   "admin",
 ];
 

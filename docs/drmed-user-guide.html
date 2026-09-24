@@ -422,14 +422,14 @@
       <tbody>
         <tr><td colspan="6"><b>Overview</b></td></tr>
         <tr><td>Dashboard</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-        <tr><td colspan="6"><b>Front Desk</b> (collapsible subgroup: Messages &amp; Bookings)</td></tr>
+        <tr><td colspan="6"><b>Messages &amp; Bookings</b></td></tr>
+        <tr><td>Appointments</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
+        <tr><td>Website Messages — the sidebar badge counts messages nobody has replied to yet</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
+        <tr><td colspan="6"><b>Front Desk</b></td></tr>
         <tr><td>Reception Queue</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
         <tr><td>Patients</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
-        <tr><td>Appointments (under Messages &amp; Bookings)</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
-        <tr><td>Website Messages (under Messages &amp; Bookings) — the sidebar badge counts messages nobody has replied to yet</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
-        <tr><td colspan="6"><b>Billing</b></td></tr>
         <tr><td>Visit Records (with New Visit tab)</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
-        <tr><td>Quick Quote</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
+        <tr><td>Quick Quote</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
         <tr><td>Cash Drawer (Cash In &amp; Out, Petty Cash and End of Day tabs)</td><td class="yes">✓</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="yes">✓</td></tr>
         <tr><td colspan="6"><b>Lab &amp; Imaging</b></td></tr>
         <tr><td>Queue</td><td class="no">·</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
@@ -467,7 +467,7 @@
 <section class="chapter" id="rec" data-role="reception">
   <div class="chapter-num">Chapter 3</div>
   <h2>Reception</h2>
-  <div class="strip"><span class="pill reception">Reception</span><span class="pill admin">Admin</span><span><b>Where:</b> the <b>Front Desk</b> and <b>Billing</b> groups of the sidebar</span></div>
+  <div class="strip"><span class="pill reception">Reception</span><span class="pill admin">Admin</span><span><b>Where:</b> the <b>Messages &amp; Bookings</b> and <b>Front Desk</b> groups of the sidebar</span></div>
   <p class="intro">Reception is the front door and the cashier. Almost every patient touches your screens twice: on arrival, to register and pay, and again when they come back for their result. The centre of your day is the <b>Reception Queue</b>; the screen you will use most carefully is <b>New Visit</b>. Results themselves are released by the lab team, not by reception (3.8).</p>
 
   <!-- 3.1 -->
@@ -476,7 +476,7 @@
     <p>Patients can book and even register themselves online. Nothing requires them to. A pure walk-in with no online step must always work, and it does.</p>
 
     <h4>Appointments</h4>
-    <div class="screen"><div class="where">Sidebar › Front Desk › Messages &amp; Bookings › <kbd class="ui">Appointments</kbd> · <code class="route">/staff/appointments</code></div>
+    <div class="screen"><div class="where">Sidebar › Messages &amp; Bookings › <kbd class="ui">Appointments</kbd> · <code class="route">/staff/appointments</code></div>
       <dl><dt>Tabs</dt><dd><span class="tab">All</span> · <span class="tab">Consultations</span> · <span class="tab">Home service</span></dd>
       <dt>Sections</dt><dd><span class="tab">Pending callback</span> · <span class="tab">Walk-ins waiting</span> · <span class="tab">Today</span> · <span class="tab">Next 30 days</span></dd>
       <dt>Row actions</dt><dd><kbd class="ui">Mark arrived</kbd> · <kbd class="ui">No-show</kbd> · <kbd class="ui">Cancel</kbd> · <kbd class="ui">↶ Revert</kbd> · <kbd class="ui">+ Start visit</kbd></dd></dl></div>
@@ -628,7 +628,7 @@
       <dt>Completed</dt><dd>Paid and every lab and imaging line released. <kbd class="ui">Print billing</kbd> reprints the receipt (without the PIN).</dd>
     </dl>
     <div class="note why"><span class="k">What reception sees on a visit page, and what it doesn't</span><div><p>Reception sees the <b>bill</b>: every test line with its name, code, price, discount and status chip, plus the doctor's clinic fee and professional fee exactly as they were typed in at intake, the internal notes, and the deleted-entries panel. That is the same information reception enters and collects on, so withholding it only made the counter guess.</p><p>What reception does <b>not</b> get is the <b>result</b>: no result PDFs, no Release, Undo or Mark-done buttons, no bulk actions, and no link through to the lab bench. Releasing and printing results stays the lab's job, and the lab queue and results archive remain closed to reception. (Changed September 2026; before that reception saw no test lines at all.)</p></div></div>
-    <p>The related <kbd class="ui">Visit Records</kbd> item in the Billing group has two tabs: <span class="tab">New Visit</span> and <span class="tab">Visit Records</span>. (The Reception Queue is not one of them — reach it from the sidebar, under Front Desk.) The archive filters by <span class="tab">Lab Tests</span> / <span class="tab">Doctor Consults</span> / <span class="tab">Doctor Procedures</span>, shows <span class="tab">Active</span> or <span class="tab">Deleted</span> entries, and searches by patient name, DRM-ID or visit number. Search updates as you type; names can be entered in either order, and <q>37</q> or <q>#37</q> finds visit <q>0037</q>. Changing the search returns to page 1 and keeps your sorting and page size. The revenue overview still covers every patient in the selected date range. Click <b>Date</b>, <b>Visit #</b>, <b>Patient</b>, <b>Total</b>, <b>Paid</b> or <b>Status</b> to sort by that column — <b>Tests</b>, <b>Classification</b> and <b>Method</b> are worked out on the fly and don't sort. A rows-per-page picker (5/10/25/50/100) sits at the bottom. Admin can <kbd class="ui">Export CSV</kbd> from it, using the same search and filters as the list.</p>
+    <p>The related <kbd class="ui">Visit Records</kbd> item in the Front Desk group has two tabs: <span class="tab">New Visit</span> and <span class="tab">Visit Records</span>. (The Reception Queue is not one of them — reach it from the sidebar, under Front Desk.) The archive filters by <span class="tab">Lab Tests</span> / <span class="tab">Doctor Consults</span> / <span class="tab">Doctor Procedures</span>, shows <span class="tab">Active</span> or <span class="tab">Deleted</span> entries, and searches by patient name, DRM-ID or visit number. Search updates as you type; names can be entered in either order, and <q>37</q> or <q>#37</q> finds visit <q>0037</q>. Changing the search returns to page 1 and keeps your sorting and page size. The revenue overview still covers every patient in the selected date range. Click <b>Date</b>, <b>Visit #</b>, <b>Patient</b>, <b>Total</b>, <b>Paid</b> or <b>Status</b> to sort by that column — <b>Tests</b>, <b>Classification</b> and <b>Method</b> are worked out on the fly and don't sort. A rows-per-page picker (5/10/25/50/100) sits at the bottom. Admin can <kbd class="ui">Export CSV</kbd> from it, using the same search and filters as the list.</p>
   </section>
 
   <!-- 3.8 -->
@@ -663,7 +663,7 @@
   <!-- 3.10 -->
   <section class="sub" id="rec-cash">
     <h3>3.10 Cash Drawer, Petty Cash and End of Day</h3>
-    <div class="screen"><div class="where">Sidebar › Billing › <kbd class="ui">Cash Drawer</kbd> · <code class="route">/staff/payments/cash-drawer</code> · tabs <span class="tab">Cash In &amp; Out</span> | <span class="tab">Petty Cash</span> | <span class="tab">End of Day</span> — the End of Day tab = <code class="route">/staff/payments/eod</code></div>
+    <div class="screen"><div class="where">Sidebar › Front Desk › <kbd class="ui">Cash Drawer</kbd> · <code class="route">/staff/payments/cash-drawer</code> · tabs <span class="tab">Cash In &amp; Out</span> | <span class="tab">Petty Cash</span> | <span class="tab">End of Day</span> — the End of Day tab = <code class="route">/staff/payments/eod</code></div>
       <dl><dt>Cash In &amp; Out shows</dt><dd><b>Starting cash</b> · <b>Cash received today</b> · <b>Cash paid out</b> · <b>Cash you should have now</b></dd>
       <dt>Cash In &amp; Out buttons</dt><dd><kbd class="ui">+ Pay out cash</kbd> · <kbd class="ui">+ Add cash to drawer</kbd> · <kbd class="ui">+ Remove cash from drawer</kbd> · <kbd class="ui">Count &amp; close day →</kbd></dd></dl></div>
     <h4>During the day</h4>
@@ -682,7 +682,7 @@
     </ol>
     <div class="note why"><span class="k">&ldquo;Supplier bill paid&rdquo; rows you did not record</span><div><p>If Admin pays a supplier bill in cash, that money comes out of this same drawer, so the entry appears here as <b>Supplier bill paid</b> and <b>Cash paid out</b> shows an <i>of which supplier bills paid in cash</i> line beneath it. Nobody at reception recorded it, and that is expected &mdash; it is there so the drawer still ties at closing time. There is no <kbd class="ui">Void</kbd> on those rows: undoing one has to happen on the payment itself (Admin &rsaquo; <b>Expenses</b> &rsaquo; <span class="tab">Bill Payments</span>), which puts the money back in the drawer and reverses the accounting together.</p></div></div>
     <h4>Petty Cash</h4>
-    <p>Sidebar › Billing › <kbd class="ui">Cash Drawer</kbd> › tab <span class="tab">Petty Cash</span>. Record a small purchase: <b>Date</b>, <b>What was it for?</b> (Office Supplies, Lab Supplies, Maintenance &amp; Repair, Travel, Permits, Utilities, Telecommunication/Internet, Marketing), <b>Amount (₱)</b>, <b>Paid to</b>, <b>Note</b>, then <kbd class="ui">Record petty cash</kbd>. Keep the paper receipt for Admin.</p>
+    <p>Sidebar › Front Desk › <kbd class="ui">Cash Drawer</kbd> › tab <span class="tab">Petty Cash</span>. Record a small purchase: <b>Date</b>, <b>What was it for?</b> (Office Supplies, Lab Supplies, Maintenance &amp; Repair, Travel, Permits, Utilities, Telecommunication/Internet, Marketing), <b>Amount (₱)</b>, <b>Paid to</b>, <b>Note</b>, then <kbd class="ui">Record petty cash</kbd>. Keep the paper receipt for Admin.</p>
     <p>The page opens on today by default, but it is not today-only: a date picker beside the heading lets you look at any past day's petty cash, with a <kbd class="ui">Back to today</kbd> link to return once you're done.</p>
     <p><b>This money comes straight out of the drawer.</b> The day's expected cash drops by the amount you enter, so the count at closing still ties — you should <em>not</em> come up short because of a petty cash entry. <b>Today's petty cash</b> below the form lists every till payout for the day, including ones made from the <kbd class="ui">Cash Drawer</kbd> screen and any Clinic Cash expense Admin recorded, so the two screens always agree. <kbd class="ui">Void</kbd> puts the money back and needs a short reason.</p>
     <p>The date can't be in the future, and once a day has been closed you can't add to it — you'll see <i>"End of Day is already closed for <b>[that day's date]</b>, so nothing more can be recorded on that day. Ask an admin to reopen it first."</i> Ask Admin to reopen the close, then record it.</p>
@@ -691,7 +691,7 @@
   <!-- 3.11 -->
   <section class="sub" id="rec-messages">
     <h3>3.11 Website Messages</h3>
-    <div class="screen"><div class="where">Sidebar › Front Desk › Messages &amp; Bookings › <kbd class="ui">Website Messages</kbd> · <code class="route">/staff/messages</code></div>
+    <div class="screen"><div class="where">Sidebar › Messages &amp; Bookings › <kbd class="ui">Website Messages</kbd> · <code class="route">/staff/messages</code></div>
       <dl><dt>Tabs</dt><dd><span class="tab">New</span> · <span class="tab">Replied</span> · <span class="tab">Booked</span> · <span class="tab">Closed</span> · <span class="tab">All</span>, each showing a count</dd>
       <dt>Search</dt><dd>Name, email, phone or subject — a real search over every message, not just the rows on screen</dd>
       <dt>Filter chip</dt><dd><kbd class="ui">Corporate / HMO only</kbd></dd>
@@ -723,7 +723,7 @@
   <section class="sub" id="rec-other">
     <h3>3.12 Quick Quote and gift codes</h3>
     <dl class="defs">
-      <dt>Quick Quote</dt><dd>Billing › <kbd class="ui">Quick Quote</kbd>. A searchable price list you can read out or copy into a chat reply. Nothing is saved. Press <kbd class="ui">Cmd/Ctrl + K</kbd> to jump to the search box. Opened from a Website Message's <kbd class="ui">Send a quote</kbd> button (3.11) it shows <q>Quoting for &lt;first name&gt; — from a website message.</q> with a <kbd class="ui">Back to message</kbd> link, greets the sender by first name at the top of the copied summary, and once you've copied it offers <kbd class="ui">Mark message as replied</kbd> right there.</dd>
+      <dt>Quick Quote</dt><dd>Front Desk › <kbd class="ui">Quick Quote</kbd>. A searchable price list you can read out or copy into a chat reply. Nothing is saved. Press <kbd class="ui">Cmd/Ctrl + K</kbd> to jump to the search box. Opened from a Website Message's <kbd class="ui">Send a quote</kbd> button (3.11) it shows <q>Quoting for &lt;first name&gt; — from a website message.</q> with a <kbd class="ui">Back to message</kbd> link, greets the sender by first name at the top of the copied summary, and once you've copied it offers <kbd class="ui">Mark message as replied</kbd> right there.</dd>
       <dt>Sell a gift code</dt><dd>Type <code class="route">/staff/gift-codes/sell</code> (the sidebar item is parked). Enter buyer name and contact, payment method and reference, the code you are handing over, then <kbd class="ui">Record sale</kbd>. The recipient redeems it later as a payment method (3.6).</dd>
       <dt>Refund a gift code sale</dt><dd>Type <code class="route">/staff/gift-codes/refund</code> (also parked; linked from the Sell page). Look up the code, type a reason, then <kbd class="ui">Refund this sale</kbd>. Use this for a mis-keyed sale — wrong buyer, wrong tender, customer changed their mind — <b>before the code has been redeemed</b>. It takes the money back out of today&apos;s drawer count and puts the code back on sale. Trying to <b>Void</b> the sale from the Cash Drawer (3.10) now points here instead of Admin. If the code has already been redeemed on a visit, void that payment instead (3.6) — the code returns to Purchased and can then be refunded. Admin can also do this from a code&apos;s detail page (<b>Gift Codes</b> in Operations), where <b>Cancel this code</b> stays for the rare case a code should never be sellable again — cancelling is permanent, refunding is not.</dd>
     </dl>
@@ -1101,7 +1101,7 @@
   <h2>Common questions</h2>
   <dl class="defs">
     <dt>I can't find a patient.</dt><dd>Search by phone number or DRM-ID rather than name. Try one word at a time. Patients who booked online may be listed with their online spelling; check the <b>Pre-registered · verify</b> rows.</dd>
-    <dt>Someone messaged through the website. Where do I see it?</dt><dd>Front Desk › Messages &amp; Bookings › <b>Website Messages</b> (3.11) — never by SMS, and never in your dashboard's Appointments card. The sidebar badge counts unanswered ones. Reply right there in the message's <b>Reply</b> panel (email or text) — sending marks it Replied for you — or call using the links on the message and click <kbd class="ui">Mark replied</kbd> yourself.</dd>
+    <dt>Someone messaged through the website. Where do I see it?</dt><dd>Messages &amp; Bookings › <b>Website Messages</b> (3.11) — never by SMS, and never in your dashboard's Appointments card. The sidebar badge counts unanswered ones. Reply right there in the message's <b>Reply</b> panel (email or text) — sending marks it Replied for you — or call using the links on the message and click <kbd class="ui">Mark replied</kbd> yourself.</dd>
     <dt>The test isn't on the lab queue.</dt><dd>The visit is <b>Waiting for payment</b>. Record the payment and it appears at once. If the visit is HMO-billed it should already be there — check the HMO was actually picked on the visit, not just written on the form.</dd>
     <dt>I'm reception and the visit page shows no tests.</dt><dd>By policy. Reception sees payments, receipts, PIN and physician on a visit, never the test lines or PDFs. Read progress from the Reception Queue row; the lab releases.</dd>
     <dt>The Release button is greyed out.</dt><dd>Hover it: it says either <q>Visit must be paid, waived, or HMO-covered before release</q> or <q>Patient consent not on file — capture consent first</q>. Reception fixes that, then you release. If the message mentions an attending physician, reception assigns one on the visit. An HMO visit is never blocked for money.</dd>

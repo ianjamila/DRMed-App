@@ -134,14 +134,13 @@ function ariaCurrentHrefs(html: string): string[] {
     .map((m) => m[0].match(/href="([^"]*)"/)![1]);
 }
 
-describe("Messages & Bookings subgroup (sidebar cleanup)", () => {
-  it("renders inside Front Desk as a <details> collapsed by default", () => {
+describe("Messages & Bookings section (above Front Desk, 2026-09-24)", () => {
+  it("renders as a plain, always-open section before Front Desk", () => {
     const html = render("reception", "/staff");
     expect(html).toContain("Messages &amp; Bookings");
-    const tag = detailsTagContaining(html, "/staff/appointments");
-    expect(tag).not.toBeNull();
-    expect(isOpen(tag)).toBe(false);
-    expect(detailsTagContaining(html, "/staff/messages")).toBe(tag);
+    expect(detailsTagContaining(html, "/staff/appointments")).toBeNull();
+    expect(detailsTagContaining(html, "/staff/messages")).toBeNull();
+    expect(html.indexOf("Messages &amp; Bookings")).toBeLessThan(html.indexOf("Front Desk"));
   });
 
   it("lists Appointments before Website Messages", () => {
@@ -151,22 +150,30 @@ describe("Messages & Bookings subgroup (sidebar cleanup)", () => {
     );
   });
 
-  it("auto-expands on Appointments and on a nested Messages route", () => {
-    expect(
-      isOpen(detailsTagContaining(render("reception", "/staff/appointments"), "/staff/appointments")),
-    ).toBe(true);
-    expect(
-      isOpen(detailsTagContaining(render("admin", "/staff/messages/abc-123"), "/staff/messages")),
-    ).toBe(true);
+  it("marks Appointments and a nested Messages route as the current page", () => {
+    expect(ariaCurrentHrefs(render("reception", "/staff/appointments"))).toEqual(["/staff/appointments"]);
+    expect(ariaCurrentHrefs(render("admin", "/staff/messages/abc-123"))).toEqual(["/staff/messages"]);
   });
 
-  it("keeps Reception Queue and Patients as flat links above it", () => {
+  it("puts Reception Queue and Patients below it, flat, followed by the old Billing items", () => {
     const html = render("reception", "/staff");
     expect(detailsTagContaining(html, "/staff/visits/queue")).toBeNull();
     expect(detailsTagContaining(html, "/staff/patients")).toBeNull();
-    expect(html.indexOf('href="/staff/patients"')).toBeLessThan(
-      html.indexOf("Messages &amp; Bookings"),
-    );
+    const order = ['href="/staff/messages"', 'href="/staff/visits/queue"', 'href="/staff/patients"', 'href="/staff/visits"', 'href="/staff/quote"', 'href="/staff/payments/cash-drawer"'].map((h) => html.indexOf(h));
+    expect(order.every((pos) => pos > -1)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(html).not.toMatch(/>Billing</);
+  });
+});
+
+describe("Front Desk divider", () => {
+  it("draws one hidden rule between Patients and Visit Records", () => {
+    const html = render("reception", "/staff");
+    const dividers = [...html.matchAll(/data-nav-divider=""/g)].map((m) => m.index!);
+    expect(dividers).toHaveLength(1);
+    expect(html.indexOf('href="/staff/patients"')).toBeLessThan(dividers[0]);
+    expect(dividers[0]).toBeLessThan(html.indexOf('href="/staff/visits"'));
+    expect(html).toMatch(/<li aria-hidden="true" data-nav-divider=""/);
   });
 });
 
@@ -189,15 +196,10 @@ describe("nav count badges", () => {
     expect(html).toMatch(/<span aria-hidden="true">99\+<\/span>/);
   });
 
-  it("also shows the total on the collapsed subgroup's summary line", () => {
+  it("shows the Website Messages count once, on the always-visible link", () => {
     const html = render("reception", "/staff", { "/staff/messages": 5 });
-    const tag = detailsTagContaining(html, "/staff/messages");
-    expect(tag).not.toBeNull();
-    expect(isOpen(tag)).toBe(false);
-    // The summary (before the details body) carries its own copy of the badge.
-    const summaryEnd = html.indexOf("</summary>", html.indexOf("Messages &amp; Bookings"));
-    const summaryHtml = html.slice(html.indexOf("Messages &amp; Bookings"), summaryEnd);
-    expect(summaryHtml).toContain("5 new");
+    expect(detailsTagContaining(html, "/staff/messages")).toBeNull();
+    expect(html.match(/5 new/g)).toHaveLength(1);
   });
 });
 
@@ -218,11 +220,12 @@ describe("visible labels (sidebar cleanup)", () => {
     }
   });
 
-  it("medtech sees Lab & Imaging and Quick Quote but no Front Desk", () => {
+  it("medtech sees Lab & Imaging but no Quick Quote, Front Desk or Messages & Bookings", () => {
     const html = render("medtech", "/staff");
     expect(html).toContain("Lab &amp; Imaging");
-    expect(html).toContain('href="/staff/quote"');
+    expect(html).not.toContain('href="/staff/quote"');
     expect(html).not.toContain("Front Desk");
+    expect(html).not.toContain("Messages &amp; Bookings");
   });
 });
 

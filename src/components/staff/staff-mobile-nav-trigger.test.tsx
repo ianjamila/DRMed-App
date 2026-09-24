@@ -107,21 +107,29 @@ function ariaCurrentHrefs(html: string): string[] {
     .map((m) => m[0].match(/href="([^"]*)"/)![1]);
 }
 
-describe("mobile drawer — Messages & Bookings subgroup", () => {
-  it("is a collapsed <details> under Front Desk for reception", () => {
+describe("mobile drawer — Messages & Bookings section", () => {
+  it("is a plain section above Front Desk for reception", () => {
     const html = render("reception", "/staff");
-    expect(html).toContain("Messages &amp; Bookings");
-    const tag = detailsTagContaining(html, "/staff/appointments");
-    expect(tag).not.toBeNull();
-    expect(isOpen(tag)).toBe(false);
+    expect(html.indexOf("Messages &amp; Bookings")).toBeGreaterThan(-1);
+    expect(html.indexOf("Messages &amp; Bookings")).toBeLessThan(html.indexOf("Front Desk"));
+    expect(detailsTagContaining(html, "/staff/appointments")).toBeNull();
+    expect(detailsTagContaining(html, "/staff/messages")).toBeNull();
     expect(html.indexOf('href="/staff/appointments"')).toBeLessThan(
       html.indexOf('href="/staff/messages"'),
     );
+    expect(html.indexOf('href="/staff/messages"')).toBeLessThan(
+      html.indexOf('href="/staff/visits/queue"'),
+    );
   });
+});
 
-  it("auto-expands when reception is on Messages", () => {
-    const html = render("reception", "/staff/messages");
-    expect(isOpen(detailsTagContaining(html, "/staff/messages"))).toBe(true);
+describe("mobile drawer — Front Desk divider", () => {
+  it("draws the same single rule between Patients and Visit Records", () => {
+    const html = render("reception", "/staff");
+    const dividers = [...html.matchAll(/data-nav-divider=""/g)].map((m) => m.index!);
+    expect(dividers).toHaveLength(1);
+    expect(html.indexOf('href="/staff/patients"')).toBeLessThan(dividers[0]);
+    expect(dividers[0]).toBeLessThan(html.indexOf('href="/staff/visits"'));
   });
 });
 

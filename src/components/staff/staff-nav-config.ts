@@ -40,6 +40,11 @@ export interface StaffNavItem {
   // /staff/visits/new (the New visit form, which no sidebar item owns — it is
   // reached from the Reception Queue's + New visit button).
   excludePrefixes?: string[];
+  // Draw a thin unlabeled rule above this item to split a section into two
+  // visual groups without adding another heading (Front Desk: the daily-flow
+  // items above, the money items below). Skipped when the item is the first
+  // one a role can see, so a filtered list never opens with a stray line.
+  dividerBefore?: boolean;
   roles: readonly StaffRole[];
 }
 
@@ -82,23 +87,46 @@ export const STAFF_NAV: StaffNavSection[] = [
     ],
   },
   {
+    // Sits above Front Desk (owner request, 2026-09-24): the two "someone is
+    // asking" pages are the first thing reception checks, so they get their
+    // own always-open section at the top instead of a collapsed subgroup.
+    heading: "Messages & Bookings",
+    items: [
+      {
+        href: "/staff/appointments",
+        quicklink: {"reception":{"order":0,"group":"Messages & Bookings"}},
+        label: ROUTE_NAME["/staff/appointments"],
+        description: "Today's scheduled patients and walk-in slots, filterable by Consultations / Home service. Mark patients arrived to start their visit, or reschedule no-shows. View other days using the date picker.",
+        roles: ["reception", "admin"],
+      },
+      {
+        href: "/staff/messages",
+        quicklink: {"reception":{"order":1,"group":"Messages & Bookings"}},
+        label: ROUTE_NAME["/staff/messages"],
+        description: "Messages people send through the Contact page on drmed.ph. Reply to them, book them an appointment, or close them. The number next to it counts the messages nobody has replied to yet.",
+        roles: ["reception", "admin"],
+      },
+    ],
+  },
+  {
     // Ordered by the daily flow (sidebar cleanup, 2026-09-15): the queue is
-    // where reception lives, Patients is the second-most-used page, and the
-    // two "someone is asking" pages sit together in a subgroup below them.
+    // where reception lives, Patients is the second-most-used page. The old
+    // Billing section's items follow (merged in 2026-09-24, owner request):
+    // Visit Records, Quick Quote, Cash Drawer.
     heading: "Front Desk",
     items: [
       {
         href: "/staff/visits/queue",
-        quicklink: {"reception":{"order":0,"group":"Front Desk"}},
+        quicklink: {"reception":{"order":2,"group":"Front Desk"}},
         label: ROUTE_NAME["/staff/visits/queue"],
         description: "Today's live front-desk worklist in three stages: Waiting for payment (record the payment), Processing (lab/imaging still working on results) and Completed (paid, nothing outstanding — print the patient's billing). Updates on its own as payments come in and tests finish.",
         roles: ["reception", "admin"],
       },
       {
         href: "/staff/patients",
-        quicklink: {"reception":{"order":1,"group":"Front Desk"}},
+        quicklink: {"reception":{"order":3,"group":"Front Desk"}},
         // Dashboard action/view owned here without adding a sidebar row.
-        shortcuts: [{ href: "/staff/patients/new", label: ROUTE_NAME["/staff/patients/new"], roles: ["reception","admin"], quicklink: {"reception":{"order":2,"group":"Front Desk"}} }],
+        shortcuts: [{ href: "/staff/patients/new", label: ROUTE_NAME["/staff/patients/new"], roles: ["reception","admin"], quicklink: {"reception":{"order":4,"group":"Front Desk"}} }],
         label: ROUTE_NAME["/staff/patients"],
         // The default prefix match also covers /staff/patients/new — the
         // "New patient registration" sidebar item was removed in the 2026-09-15
@@ -106,35 +134,10 @@ export const STAFF_NAV: StaffNavSection[] = [
         description: "Search the patient database by name, contact number, or DRM ID. Open a patient to see their full visit history, attached IDs, contact info, and previous test results. Use the + New patient button at the top to register a brand-new patient.",
         roles: ["reception", "admin"],
       },
-    ],
-    subgroups: [
-      {
-        heading: "Messages & Bookings",
-        items: [
-          {
-            href: "/staff/appointments",
-            quicklink: {"reception":{"order":3,"group":"Front Desk"}},
-            label: ROUTE_NAME["/staff/appointments"],
-            description: "Today's scheduled patients and walk-in slots, filterable by Consultations / Home service. Mark patients arrived to start their visit, or reschedule no-shows. View other days using the date picker.",
-            roles: ["reception", "admin"],
-          },
-          {
-            href: "/staff/messages",
-            quicklink: {"reception":{"order":4,"group":"Front Desk"}},
-            label: ROUTE_NAME["/staff/messages"],
-            description: "Messages people send through the Contact page on drmed.ph. Reply to them, book them an appointment, or close them. The number next to it counts the messages nobody has replied to yet.",
-            roles: ["reception", "admin"],
-          },
-        ],
-      },
-    ],
-  },
-  {
-    heading: "Billing",
-    items: [
       {
         href: "/staff/visits",
-        quicklink: {"reception":{"order":6,"group":"Billing"}},
+        quicklink: {"reception":{"order":5,"group":"Front Desk"}},
+        dividerBefore: true,
         label: ROUTE_NAME["/staff/visits"],
         // /staff/visits is the visit records page (every visit ever); each
         // visit opens to its printable A5 billing. "Visit Records" is the one
@@ -149,19 +152,20 @@ export const STAFF_NAV: StaffNavSection[] = [
         roles: ["reception", "admin"],
       },
       {
-        // Stays a flat Billing item (not in a Front Desk subgroup): medtech
-        // reaches it from the lab dashboard and Cmd+K, and has no Front Desk.
+        // Reception + admin only (owner decision 2026-09-24): medtech lost the
+        // sidebar item, the lab dashboard shortcut, Cmd+K and the page itself.
+        // Admin keeps the lab-dashboard shortcut.
         href: "/staff/quote",
-        quicklink: {"reception":{"order":7,"group":"Billing"},"lab":{"order":1,"roles":["medtech","admin"]}},
+        quicklink: {"reception":{"order":6,"group":"Front Desk"},"lab":{"order":1,"roles":["admin"]}},
         label: ROUTE_NAME["/staff/quote"],
         description: "Build a price quote without creating a visit. Useful for phone inquiries: 'How much for a CBC + Urinalysis + Lipid panel?' Generates a shareable quote with HMO or cash pricing.",
-        roles: ["reception", "medtech", "admin"],
+        roles: ["reception", "admin"],
       },
       {
         href: "/staff/payments/cash-drawer",
-        quicklink: {"reception":{"order":8,"group":"Billing"}},
+        quicklink: {"reception":{"order":7,"group":"Front Desk"}},
         // Dashboard action/view owned here without adding a sidebar row.
-        shortcuts: [{ href: "/staff/payments/petty-cash", label: ROUTE_NAME["/staff/payments/petty-cash"], roles: ["reception","admin"], quicklink: {"reception":{"order":9,"group":"Billing"}} }],
+        shortcuts: [{ href: "/staff/payments/petty-cash", label: ROUTE_NAME["/staff/payments/petty-cash"], roles: ["reception","admin"], quicklink: {"reception":{"order":8,"group":"Front Desk"}} }],
         // An umbrella: "Cash Drawer" names the whole till, while the landing tab
         // is "Cash In & Out" (the running balance and movement log) — naming the
         // item after that one tab would hide Petty Cash and End of Day.
@@ -614,7 +618,7 @@ export const STAFF_NAV: StaffNavSection[] = [
     items: [
       {
         href: "/staff/gift-codes/sell",
-        quicklink: {"reception":{"order":5,"group":"Front Desk"}},
+        quicklink: {"reception":{"order":9,"group":"Front Desk"}},
         label: ROUTE_NAME["/staff/gift-codes/sell"],
         description: "Sell a prepaid gift code to a customer — they pay now, the recipient redeems later for services. Generates a printable code with QR + expiration date. Parked here for now; reception sells these rarely.",
         roles: ["reception", "admin"],

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Tooltip } from "@/components/ui/tooltip";
 import { usePathname } from "next/navigation";
-import { useId, useState } from "react";
+import { Fragment, useId, useState } from "react";
 import { signOutStaff } from "@/app/(staff)/staff/login/actions";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,6 +12,7 @@ import {
   MobileDrawer,
 } from "@/components/ui/mobile-drawer";
 import { NavBadge } from "./nav-badge";
+import { NavDivider } from "./nav-divider";
 import {
   isItemActive,
   isSectionActive,
@@ -149,14 +150,16 @@ function MobileSectionBody({
     <>
       {section.items && section.items.length > 0 ? (
         <ul className="flex flex-col gap-0.5">
-          {section.items.map((item) => (
-            <MobileNavLink
-              key={item.href}
-              item={item}
-              active={isItemActive(item, pathname)}
-              onClick={onClick}
-              badgeCount={itemBadgeCount(item, badges)}
-            />
+          {section.items.map((item, i) => (
+            <Fragment key={item.href}>
+              {item.dividerBefore && i > 0 ? <NavDivider /> : null}
+              <MobileNavLink
+                item={item}
+                active={isItemActive(item, pathname)}
+                onClick={onClick}
+                badgeCount={itemBadgeCount(item, badges)}
+              />
+            </Fragment>
           ))}
         </ul>
       ) : null}

@@ -7,7 +7,6 @@ import {
   quickLinkGroupsFor,
   isItemActive,
   isSectionActive,
-  isSubgroupActive,
   visibleNavFor,
   STAFF_NAV,
   type StaffNavItem,
@@ -128,19 +127,25 @@ describe("Hidden Tabs is admin-only", () => {
 // ---------------------------------------------------------------------------
 
 describe("Front Desk is ordered by the daily flow", () => {
-  it("lists Reception Queue, then Patients, then the Messages & Bookings subgroup", () => {
+  it("lists Reception Queue, Patients, then the former Billing items, with no subgroups", () => {
     const front = section(visibleNavFor("reception"), "Front Desk");
     expect(front?.items?.map((i) => i.href)).toEqual([
       "/staff/visits/queue",
       "/staff/patients",
+      "/staff/visits",
+      "/staff/quote",
+      "/staff/payments/cash-drawer",
     ]);
-    expect(front?.subgroups?.map((g) => g.heading)).toEqual([
-      "Messages & Bookings",
-    ]);
-    expect(front?.subgroups?.[0].items.map((i) => i.href)).toEqual([
-      "/staff/appointments",
-      "/staff/messages",
-    ]);
+    expect(front?.subgroups).toBeUndefined();
+  });
+
+  it("splits the daily-flow items from the money items with one divider, above Visit Records", () => {
+    const flagged = allItems(STAFF_NAV).filter((i) => i.dividerBefore).map((i) => i.href);
+    expect(flagged).toEqual(["/staff/visits"]);
+  });
+
+  it("has no Billing section any more (folded into Front Desk 2026-09-24)", () => {
+    expect(STAFF_NAV.map((s) => s.heading)).not.toContain("Billing");
   });
 
   it("has no New patient registration item — the form is reached from Patients", () => {
@@ -151,12 +156,29 @@ describe("Front Desk is ordered by the daily flow", () => {
     expect(itemByHref("/staff/patients").description).toMatch(/\+ New patient/);
   });
 
-  it("opens the Messages & Bookings subgroup on either of its pages", () => {
-    const group = section(visibleNavFor("reception"), "Front Desk")!
-      .subgroups![0];
-    expect(isSubgroupActive(group, "/staff/appointments")).toBe(true);
-    expect(isSubgroupActive(group, "/staff/messages/abc")).toBe(true);
-    expect(isSubgroupActive(group, "/staff/patients")).toBe(false);
+});
+
+describe("Messages & Bookings sits above Front Desk", () => {
+  it("is its own plain section directly before Front Desk", () => {
+    const headings = visibleNavFor("reception").map((s) => s.heading);
+    expect(headings.indexOf("Messages & Bookings")).toBe(headings.indexOf("Front Desk") - 1);
+    const group = section(visibleNavFor("reception"), "Messages & Bookings");
+    expect(group?.collapsible).toBeFalsy();
+    expect(group?.subgroups).toBeUndefined();
+    expect(hrefsIn(group)).toEqual(["/staff/appointments", "/staff/messages"]);
+  });
+
+  it("is active on either of its pages", () => {
+    const group = section(visibleNavFor("reception"), "Messages & Bookings")!;
+    expect(isSectionActive(group, "/staff/appointments")).toBe(true);
+    expect(isSectionActive(group, "/staff/messages/abc")).toBe(true);
+    expect(isSectionActive(group, "/staff/patients")).toBe(false);
+  });
+
+  it("is not shown to lab roles", () => {
+    for (const role of ["medtech", "xray_technician", "pathologist"] as const) {
+      expect(section(visibleNavFor(role), "Messages & Bookings")).toBeUndefined();
+    }
   });
 });
 
@@ -169,10 +191,10 @@ describe("Patients highlighting", () => {
 });
 
 describe("Cash Drawer owns all three cash routes", () => {
-  it("is one Billing item landing on the drawer tab, with no Petty Cash sibling", () => {
-    const billing = section(visibleNavFor("reception"), "Billing");
-    expect(hrefsIn(billing)).toContain("/staff/payments/cash-drawer");
-    expect(hrefsIn(billing)).not.toContain("/staff/payments/petty-cash");
+  it("is one Front Desk item landing on the drawer tab, with no Petty Cash sibling", () => {
+    const front = section(visibleNavFor("reception"), "Front Desk");
+    expect(hrefsIn(front)).toContain("/staff/payments/cash-drawer");
+    expect(hrefsIn(front)).not.toContain("/staff/payments/petty-cash");
     expect(itemByHref("/staff/payments/cash-drawer").label).toBe("Cash Drawer");
   });
 
@@ -290,8 +312,8 @@ describe("Title Case labels", () => {
     expect(itemByHref("/staff/admin/seo").label).toBe("Search Engines (IndexNow)");
     expect(STAFF_NAV.map((s) => s.heading)).toEqual([
       "Overview",
+      "Messages & Bookings",
       "Front Desk",
-      "Billing",
       "Lab & Imaging",
       "Admin",
       "Personal",
@@ -304,10 +326,10 @@ describe("visible hrefs per role", () => {
   it("reception", () => {
     expect(allHrefs(visibleNavFor("reception"))).toEqual([
       "/staff",
-      "/staff/visits/queue",
-      "/staff/patients",
       "/staff/appointments",
       "/staff/messages",
+      "/staff/visits/queue",
+      "/staff/patients",
       "/staff/visits",
       "/staff/quote",
       "/staff/payments/cash-drawer",
@@ -316,10 +338,9 @@ describe("visible hrefs per role", () => {
     ]);
   });
 
-  it("medtech still sees Quick Quote (lab dashboard + Cmd+K rely on it)", () => {
+  it("medtech no longer sees Quick Quote (owner decision 2026-09-24)", () => {
     expect(allHrefs(visibleNavFor("medtech"))).toEqual([
       "/staff",
-      "/staff/quote",
       "/staff/queue",
       "/staff/results",
       "/staff/admin/inventory",
@@ -356,12 +377,16 @@ describe("visible hrefs per role", () => {
     expect(new Set(hrefs).size).toBe(hrefs.length);
   });
 
-  it("medtech and xray see Lab & Imaging but no Front Desk or Billing beyond Quick Quote", () => {
+  it("medtech and xray see Lab & Imaging but no Front Desk", () => {
     for (const role of ["medtech", "xray_technician"] as const) {
       const headings = visibleNavFor(role).map((s) => s.heading);
       expect(headings).toContain("Lab & Imaging");
       expect(headings).not.toContain("Front Desk");
     }
+  });
+
+  it("Quick Quote is reception + admin only", () => {
+    expect(itemByHref("/staff/quote").roles).toEqual(["reception", "admin"]);
   });
 });
 
@@ -646,11 +671,11 @@ describe("PageHeader section ownership", () => {
 describe("derived dashboard shortcuts preserve the visible set", () => {
   it("preserves reception groups, labels and order, including parked/action links", () => {
     expect(quickLinkGroupsFor("reception", "reception").map((g) => [g.label, g.items.map((i) => i.label)])).toEqual([
-      ["Front Desk", ["Reception Queue", "Patients", "New Patient", "Appointments", "Website Messages", "Sell Gift Code"]],
-      ["Billing", ["Visit Records", "Quick Quote", "Cash Drawer", "Petty Cash"]],
+      ["Messages & Bookings", ["Appointments", "Website Messages"]],
+      ["Front Desk", ["Reception Queue", "Patients", "New Patient", "Visit Records", "Quick Quote", "Cash Drawer", "Petty Cash", "Sell Gift Code"]],
     ]);
     expect(quickLinksFor("reception", "reception").map((i) => i.href)).toEqual([
-      "/staff/visits/queue", "/staff/patients", "/staff/patients/new", "/staff/appointments", "/staff/messages", "/staff/gift-codes/sell", "/staff/visits", "/staff/quote", "/staff/payments/cash-drawer", "/staff/payments/petty-cash",
+      "/staff/appointments", "/staff/messages", "/staff/visits/queue", "/staff/patients", "/staff/patients/new", "/staff/visits", "/staff/quote", "/staff/payments/cash-drawer", "/staff/payments/petty-cash", "/staff/gift-codes/sell",
     ]);
   });
   it("preserves all ten admin shortcuts", () => {
@@ -668,7 +693,7 @@ describe("derived dashboard shortcuts preserve the visible set", () => {
     ]);
   });
   it.each([
-    ["medtech", ["Queue", "Quick Quote"]],
+    ["medtech", ["Queue"]],
     ["xray_technician", ["Queue"]],
     ["pathologist", ["Queue"]],
     ["admin", ["Queue", "Quick Quote", "Result Templates"]],

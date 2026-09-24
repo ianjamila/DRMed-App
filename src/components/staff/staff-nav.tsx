@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useId } from "react";
+import { Fragment, useId } from "react";
 import { Tooltip } from "@/components/ui/tooltip";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { NavBadge } from "./nav-badge";
+import { NavDivider } from "./nav-divider";
 import {
   isItemActive,
   isSectionActive,
@@ -138,14 +139,17 @@ function SectionBody({
     <>
       {section.items && section.items.length > 0 ? (
         <ul className="flex flex-col gap-0.5">
-          {section.items.map((item) => (
-            <li key={item.href}>
-              <NavLink
-                item={item}
-                active={isItemActive(item, pathname)}
-                badgeCount={itemBadgeCount(item, badges)}
-              />
-            </li>
+          {section.items.map((item, i) => (
+            <Fragment key={item.href}>
+              {item.dividerBefore && i > 0 ? <NavDivider /> : null}
+              <li>
+                <NavLink
+                  item={item}
+                  active={isItemActive(item, pathname)}
+                  badgeCount={itemBadgeCount(item, badges)}
+                />
+              </li>
+            </Fragment>
           ))}
         </ul>
       ) : null}
