@@ -21,14 +21,14 @@ import { translatePgError } from "./pg-errors";
  * Both refusals are correct — a closed day has been counted and its variance
  * posted, so changing what left the till on it would falsify a count someone
  * already signed off, and the petty-cash sibling (`voidTillCashExpense`) has
- * behaved this way since 0043. But the generic P0015 string talks about
- * "recording further activity" on a page that has nothing to do with the cash
- * drawer, and it reads as nonsense on a void. Say the specific thing, and name
+ * behaved this way since 0043. But the generic P0015 wording
+ * ("nothing more can be recorded on that day") is written for the cash drawer,
+ * and it reads as nonsense on a void. Say the specific thing, and name
  * the way out.
  *
  * Only the AP payment write paths use this; every other caller of
- * `translatePgError` still gets the cash-drawer wording, which is right for
- * them.
+ * `translatePgError` gets the reception wording (`eodClosedMessage`), which
+ * is right for them.
  */
 export function translateBillPaymentError(
   err: { code?: string; message?: string; details?: string },
