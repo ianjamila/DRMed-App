@@ -22,7 +22,7 @@ supabase/migrations/
 ├── 0044_payroll.sql                     ← payroll + employee_leave_balance (authz fixed in 0123)
 ├── 0048/0049                            ← AP subledger schema + behaviour
 ├── 0053_chemistry_seed.sql              ← ONE consolidated CHEMISTRY group template (per-service chemistry templates deactivated)
-├── 0064_pf_cogs_schema.sql              ← doctor PF accrual / disbursement, COGS send-out
+├── 0064_pf_cogs_schema.sql              ← doctor PF accrual / disbursement, COGS send-out (accrual retired by 0159)
 ├── 0086–0089                            ← patient_consents ledger, consent_settings, enforce_consent_before_release
 ├── 0090_split_visit_and_consult_anchor  ← visit_group_id (split encounters), CONSULT anchor service row
 ├── 0109_package_release_lifecycle       ← current bridge_test_request_released body (P0034 attending-physician guard)

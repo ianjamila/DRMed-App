@@ -45,7 +45,7 @@ eod_close_records       counted_cash_php + counted_denominations jsonb (0132: bi
 | `enforce_payment_before_release()` → `trg_test_requests_payment_gate` | 0001, **0133** | BEFORE UPDATE on `test_requests`; raises when `NEW.status='released'` and the visit is neither in `('paid','waived')` NOR HMO-billed. 0133 added the `hmo_provider_id is not null` carve-out so the release gate matches `labQueueGate` — one definition of "money is settled". Fires for **mark consultation/procedure done** too: `markDoctorLineDoneAction` writes `status='released'` directly. |
 | `recalc_visit_payment()` → `trg_payments_recalc` (+ `_on_void`, 0111) | 0001/0111 | Sums non-voided payments → `paid_php`, sets `payment_status` paid/partial/unpaid; **preserves `'waived'`**. |
 | `advance_test_on_result_upload()` | 0001/0059 | On result link (and on `results.finalised_at` NULL→set) flips `in_progress` → `result_uploaded` (if `requires_signoff`) else `ready_for_release`. |
-| `bridge_test_request_released()` | 0030 … 0109, 0131 | Release → revenue JE (HMO splits, discount lines) + `doctor_pf_entries` accrual. **P0034** (attending physician required) fires only when `coalesce(doctor_pf_php,0) > 0` (0131) — a ₱0-PF procedure with no physician releases fine. |
+| `bridge_test_request_released()` | 0030 … 0109, 0131, 0140, 0159 | Release → revenue JE (HMO splits, discount lines) + `doctor_pf_entries` accrual. **Books no send-out cost since 0159** — partner labs are paid on the spot and recorded as a "Send Out" expense (6420), so the old 6420/2150 accrual + `cogs_send_out_entries` row would have counted it twice. The Outside-Lab Costs/Performance pages and the service form's unit-cost/vendor fields went with it. **P0034** (attending physician required) fires only when `coalesce(doctor_pf_php,0) > 0` (0131) — a ₱0-PF procedure with no physician releases fine. |
 | `enforce_consent_before_release()` | 0086/0088 | Same transition; blocks when the consent gate is ON and the patient has no current consent. |
 | 0125 deletion guards | 0125 | P0042 visit not unpaid · P0043 line released · P0044 deleting a package component directly · P0045 payment against a deleted visit · P0046 payment_status change on a deleted visit. `fn_queue_delete_cascade` cascades header↔components on delete and restore; per-line delete recalcs `total_php` by the snapshotted `final_price_php` delta. |
 | `guard_statutory_discount()` | 0128 | P0047 on any rate/code/active change or delete of the statutory Senior/PWD row; `discount_types_one_statutory_idx` caps it at one row. |
@@ -112,7 +112,7 @@ Admin-managed `discount_types` catalog. Kinds `percent` / `fixed` / `custom` (cu
 ## Accounting GL bridge (0028–0033, 0048/0049, 0064)
 
 - Payment insert → JE (DR cash account per `payment_method_account_map` / CR AR-Patient or AR-HMO).
-- Test release → revenue JE with HMO splits + discount lines + doctor PF accrual (`bridge_test_request_released`).
+- Test release → revenue JE with HMO splits + discount lines + doctor PF accrual (`bridge_test_request_released`). No send-out cost accrual (removed in 0159; send-out cost is the "Send Out" expense).
 - Void / undo-release → reversal JE.
 - Everything routes through service-role RPCs (`ap_*` incl. `ap_reverse_je_for_source`, …) that take `p_actor_id` from `requireAdminStaff()` — that is NOT a spoofing hole (0118 revoked JWT callers; investigated and closed).
 

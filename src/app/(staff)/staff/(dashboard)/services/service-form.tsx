@@ -17,11 +17,6 @@ import {
   type ServiceResult,
 } from "./actions";
 
-export interface VendorLite {
-  id: string;
-  name: string;
-}
-
 const KIND_OPTIONS: { value: string; label: string }[] = [
   { value: "lab_test", label: "Lab test" },
   { value: "lab_package", label: "Lab package" },
@@ -65,13 +60,10 @@ interface ServiceDefaults {
   image_url: string | null;
   is_active: boolean;
   requires_signoff: boolean;
-  send_out_unit_cost_php?: number | null;
-  send_out_vendor_id?: string | null;
 }
 
 interface Props {
   initial?: ServiceDefaults;
-  vendors?: VendorLite[];
 }
 
 function n(v: number | string | null | undefined): number | null {
@@ -80,7 +72,7 @@ function n(v: number | string | null | undefined): number | null {
   return Number.isFinite(x) ? x : null;
 }
 
-export function ServiceForm({ initial, vendors = [] }: Props) {
+export function ServiceForm({ initial }: Props) {
   const router = useRouter();
   const isEdit = Boolean(initial?.id);
 
@@ -95,12 +87,6 @@ export function ServiceForm({ initial, vendors = [] }: Props) {
 
   const formRef = useRef<HTMLFormElement>(null);
   const skipConfirmRef = useRef(false);
-  // Gate the cost/vendor fieldset on the LIVE checkbox value, not the
-  // server-rendered initial value — otherwise ticking "Send-out test" on
-  // edit never reveals the fields (save then fails: "unit cost is
-  // required" with no way to enter it), and ticking it on create silently
-  // lands the service on the "Unconfigured send-outs" list.
-  const [isSendOut, setIsSendOut] = useState(initial?.is_send_out ?? false);
   const [imageUrl, setImageUrl] = useState(initial?.image_url ?? "");
   const showImagePreview = /^(https?:\/\/|\/)/.test(imageUrl.trim());
   const [confirming, setConfirming] = useState<{
@@ -307,7 +293,6 @@ export function ServiceForm({ initial, vendors = [] }: Props) {
               type="checkbox"
               name="is_send_out"
               defaultChecked={initial?.is_send_out ?? false}
-              onChange={(e) => setIsSendOut(e.target.checked)}
             />
             <span>Send-out test</span>
           </label>
@@ -322,47 +307,6 @@ export function ServiceForm({ initial, vendors = [] }: Props) {
             />
           </div>
         </div>
-
-        {isSendOut ? (
-          <fieldset className="grid gap-4 rounded-lg border border-amber-200 bg-amber-50/50 p-4 sm:grid-cols-2">
-            <legend className="px-2 text-xs font-bold uppercase tracking-wider text-amber-700">
-              Send-out COGS config
-            </legend>
-            <div className="grid gap-1.5">
-              <Label htmlFor="send_out_unit_cost_php">Unit cost (PHP)</Label>
-              <StableInput
-                id="send_out_unit_cost_php"
-                name="send_out_unit_cost_php"
-                type="number"
-                step="0.01"
-                min="0"
-                required
-                defaultValue={initial?.send_out_unit_cost_php?.toString() ?? ""}
-                placeholder="e.g. 350.00"
-              />
-              <p className="text-xs text-[color:var(--color-brand-text-soft)]">
-                Cost charged by the external lab (e.g., Hi Precision).
-              </p>
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="send_out_vendor_id">Vendor</Label>
-              <StableSelect
-                id="send_out_vendor_id"
-                name="send_out_vendor_id"
-                defaultValue={initial?.send_out_vendor_id ?? ""}
-                required
-                className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
-              >
-                <option value="">— Select vendor —</option>
-                {vendors.map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.name}
-                  </option>
-                ))}
-              </StableSelect>
-            </div>
-          </fieldset>
-        ) : null}
 
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="flex items-center gap-2 text-sm">

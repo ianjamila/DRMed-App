@@ -13,8 +13,6 @@ export const ROUTE_NAME: Record<string, string> = {
   "/staff/results": "Results",
   "/staff/admin/accounting/hmo-claims": "HMO Claims",
   "/staff/admin/accounting/ap": "Expenses Overview",
-  "/staff/admin/accounting/cogs/send-outs": "Outside-Lab Costs",
-  "/staff/admin/accounting/cogs/send-outs/vendor-performance": "Outside-Lab Performance",
   "/staff/admin/accounting/pf-payouts": "Pay Doctors",
   "/staff/admin/accounting/pf-ytd-summary": "Doctor Pay (This Year)",
   "/staff/admin/payroll/runs": "Run Payroll",

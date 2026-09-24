@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { formatPhp } from "@/lib/marketing/format";
-import { ServiceForm, type VendorLite } from "../../service-form";
+import { ServiceForm } from "../../service-form";
 import { Panel } from "@/components/ui/panel";
 
 export const metadata = {
@@ -30,24 +30,17 @@ export default async function EditServicePage({ params }: Props) {
   const { data: service } = await supabase
     .from("services")
     .select(
-      "id, code, name, description, price_php, hmo_price_php, senior_pwd_eligible, turnaround_hours, kind, section, is_send_out, send_out_lab, image_url, is_active, requires_signoff, send_out_unit_cost_php, send_out_vendor_id",
+      "id, code, name, description, price_php, hmo_price_php, senior_pwd_eligible, turnaround_hours, kind, section, is_send_out, send_out_lab, image_url, is_active, requires_signoff",
     )
     .eq("id", id)
     .maybeSingle();
 
   if (!service) notFound();
 
-  // Service-role client for vendor lookup + price history (auth.users join).
+  // Service-role client for price history (auth.users join).
   // Read-only here; the page is admin-gated.
   const admin = createAdminClient();
 
-  // Fetch active vendors for the send-out vendor dropdown.
-  const { data: vendors } = await admin
-    .from("vendors")
-    .select("id, name")
-    .eq("is_active", true)
-    .order("name");
-  const vendorList: VendorLite[] = (vendors ?? []).map((v) => ({ id: v.id, name: v.name }));
   const { data: history } = await admin
     .from("service_price_history")
     .select(
@@ -90,7 +83,7 @@ export default async function EditServicePage({ params }: Props) {
       </p>
 
       <Panel className="mt-6 p-6">
-        <ServiceForm initial={service} vendors={vendorList} />
+        <ServiceForm initial={service} />
       </Panel>
 
       <section className="mt-8">

@@ -4,7 +4,6 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { ServiceSchema, type ServiceInput } from "@/lib/validations/service";
@@ -45,21 +44,6 @@ function withSignoffFloor(data: ServiceInput): ServiceInput {
   return { ...data, requires_signoff: false };
 }
 
-/** Parse send-out config fields; returns null when not a send-out service. */
-function parseSendOutConfig(formData: FormData, isSendOut: boolean) {
-  if (!isSendOut) return null;
-  const costRaw = (formData.get("send_out_unit_cost_php") as string | null) ?? "";
-  const vendorId = ((formData.get("send_out_vendor_id") as string | null) ?? "").trim();
-  const costNum = costRaw === "" ? null : Number(costRaw);
-  if (costRaw === "" || costNum === null || !Number.isFinite(costNum) || costNum < 0) {
-    return { ok: false as const, error: "Send-out unit cost is required for send-out services." };
-  }
-  if (!vendorId) {
-    return { ok: false as const, error: "Send-out vendor is required for send-out services." };
-  }
-  return { ok: true as const, cost: costNum, vendorId };
-}
-
 export async function createServiceAction(
   _prev: ServiceResult | null,
   formData: FormData,
@@ -73,15 +57,6 @@ export async function createServiceAction(
     };
   }
 
-  // Validate send-out config when is_send_out is true — same check as
-  // update. Without this, ticking "Send-out test" on create silently landed
-  // the service on the "Unconfigured send-outs" list: ServiceSchema doesn't
-  // carry cost/vendor, so nothing was ever persisted or rejected.
-  const sendOutResult = parseSendOutConfig(formData, parsed.data.is_send_out);
-  if (sendOutResult && !sendOutResult.ok) {
-    return { ok: false, error: sendOutResult.error };
-  }
-
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("services")
@@ -91,28 +66,6 @@ export async function createServiceAction(
 
   if (error || !data) {
     return { ok: false, error: error?.message ?? "Could not create service." };
-  }
-
-  // Persist send-out config via admin client, same choke point as update
-  // (services cost/vendor columns are service_role-only).
-  if (sendOutResult?.ok) {
-    const admin = createAdminClient();
-    const { error: soErr } = await admin
-      .from("services")
-      .update({
-        send_out_unit_cost_php: sendOutResult.cost,
-        send_out_vendor_id: sendOutResult.vendorId,
-      })
-      .eq("id", data.id);
-    if (soErr) return { ok: false, error: soErr.message };
-    await audit({
-      actor_id: session.user_id,
-      actor_type: "staff",
-      action: "service.send_out_config_updated",
-      resource_type: "services",
-      resource_id: data.id,
-      metadata: { cost: sendOutResult.cost, vendor_id: sendOutResult.vendorId },
-    });
   }
 
   const h = await headers();
@@ -154,12 +107,6 @@ export async function updateServiceAction(
     };
   }
 
-  // Validate send-out config when is_send_out is true.
-  const sendOutResult = parseSendOutConfig(formData, parsed.data.is_send_out);
-  if (sendOutResult && !sendOutResult.ok) {
-    return { ok: false, error: sendOutResult.error };
-  }
-
   const supabase = await createClient();
   // Pre-read so audit metadata can record before/after for any price column.
   const { data: prior } = await supabase
@@ -174,27 +121,6 @@ export async function updateServiceAction(
     .eq("id", serviceId);
 
   if (error) return { ok: false, error: error.message };
-
-  // Persist send-out config via admin client (bypasses RLS for services).
-  if (sendOutResult?.ok) {
-    const admin = createAdminClient();
-    const { error: soErr } = await admin
-      .from("services")
-      .update({
-        send_out_unit_cost_php: sendOutResult.cost,
-        send_out_vendor_id: sendOutResult.vendorId,
-      })
-      .eq("id", serviceId);
-    if (soErr) return { ok: false, error: soErr.message };
-    await audit({
-      actor_id: session.user_id,
-      actor_type: "staff",
-      action: "service.send_out_config_updated",
-      resource_type: "services",
-      resource_id: serviceId,
-      metadata: { cost: sendOutResult.cost, vendor_id: sendOutResult.vendorId },
-    });
-  }
 
   const priceChanged =
     !!prior &&

@@ -15,10 +15,6 @@ const cases: {
   { name: "petty cash across shifts", file: "payments/petty-cash/page.tsx", index: 0,
     table: "eod_cash_adjustments", bindings: { business_date: "2026-09-16" },
     filters: { business_date: "eq.2026-09-16", kind: "eq.petty_cash" } },
-  { name: "all trueups", file: "admin/accounting/cogs/send-outs/page.tsx", index: 1,
-    table: "cogs_send_out_trueups", filters: {} },
-  { name: "annual nonvoid trueups", file: "admin/accounting/cogs/send-outs/vendor-performance/page.tsx", index: 1,
-    table: "cogs_send_out_trueups", filters: { voided_at: "is.null" } },
   { name: "active inventory sections", file: "admin/inventory/page.tsx", index: 0,
     table: "v_inventory_balances", filters: { is_active: "eq.true", order: "item_id.asc" } },
   { name: "annual nonvoid PF payouts", file: "admin/accounting/pf-ytd-summary/page.tsx", index: 1,
@@ -48,9 +44,6 @@ describe.each(cases)("dormant query: $name", ({ name, file, index, table, bindin
     for (const url of requests) {
       expect(url.pathname).toBe(`/rest/v1/${table}`);
       for (const [key, value] of Object.entries(filters)) expect(url.searchParams.get(key)).toBe(value);
-      if (file.includes("vendor-performance")) expect(url.searchParams.getAll("matched_at")).toEqual([
-        "gte.2025-12-31T16:00:00Z", "lt.2026-12-31T16:00:00Z",
-      ]);
       if (table === "doctor_pf_disbursements") expect(url.searchParams.getAll("posted_date")).toEqual([
         "gte.2026-01-01", "lte.2026-12-31",
       ]);

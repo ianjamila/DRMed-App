@@ -728,24 +728,9 @@ export const PfBulkPayoutSchema = z.object({
   ).min(1),
 });
 
-export const SendOutTrueupCreateSchema = z.object({
-  vendor_id: z.string().uuid(),
-  bill_id: z.string().uuid().optional(),  // null for manual writeoff
-  period_start_date: z.string().refine((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)),
-  period_end_date: z.string().refine((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)),
-  billed_total_php: phpAmountSchema,
-  notes: z.string().max(500).optional(),
-});
-
 export const CompensationArrangementSchema = z.object({
   physician_id: z.string().uuid(),
   compensation_arrangement: z.enum(["pf_split", "rent_paying", "shareholder"]),
-});
-
-export const SendOutConfigSchema = z.object({
-  service_id: z.string().uuid(),
-  send_out_unit_cost_php: phpAmountSchema,
-  send_out_vendor_id: z.string().uuid(),
 });
 
 export const VisitAttendingSchema = z.object({
@@ -755,7 +740,5 @@ export const VisitAttendingSchema = z.object({
 
 export type PfDisbursementCreate = z.infer<typeof PfDisbursementCreateSchema>;
 export type PfBulkPayout = z.infer<typeof PfBulkPayoutSchema>;
-export type SendOutTrueupCreate = z.infer<typeof SendOutTrueupCreateSchema>;
 export type CompensationArrangement = z.infer<typeof CompensationArrangementSchema>;
-export type SendOutConfig = z.infer<typeof SendOutConfigSchema>;
 export type VisitAttending = z.infer<typeof VisitAttendingSchema>;
