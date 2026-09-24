@@ -11,7 +11,8 @@ export type EmailType =
   | "newsletter"
   | "registration_new"
   | "registration_existing"
-  | "contact_alert";
+  | "contact_alert"
+  | "booking_alert";
 
 export interface EmailLogEntry {
   id: number;
@@ -63,4 +64,5 @@ export const EMAIL_ACTIONS = [
   "patient.self_registered",
   "patient.self_register.matched",
   "contact_message.alert_sent",
+  "appointment.booked.staff_alert_sent",
 ] as const;

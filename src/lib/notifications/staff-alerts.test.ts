@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import {
   STAFF_ALERT_KEYS,
@@ -9,16 +9,23 @@ import {
   type AlertStaffMember,
 } from "@/lib/notifications/staff-alerts";
 
-const MIGRATION = readFileSync(
-  join(__dirname, "../../../supabase/migrations/0155_staff_alert_recipients.sql"),
-  "utf8",
-);
+// Every migration from 0155 on, in order: the key CHECK is re-created when an
+// alert is added (0157 added online_booking), so the LAST definition wins, and
+// seed rows accumulate across files.
+const MIGRATIONS_DIR = join(__dirname, "../../../supabase/migrations");
+const MIGRATION = readdirSync(MIGRATIONS_DIR)
+  .filter((f) => f.endsWith(".sql") && Number(f.slice(0, 4)) >= 155)
+  .sort()
+  .map((f) => readFileSync(join(MIGRATIONS_DIR, f), "utf8"))
+  .join("\n");
 
 describe("0155 pins the alert keys", () => {
   it("CHECK list matches STAFF_ALERT_KEYS", () => {
-    const m = /constraint\s+staff_alert_settings_key_check\s+check\s*\(alert_key\s+in\s*\(([^)]*)\)/i.exec(MIGRATION);
-    expect(m).not.toBeNull();
-    expect([...m![1].matchAll(/'([^']+)'/g)].map((x) => x[1])).toEqual([...STAFF_ALERT_KEYS]);
+    const all = [...MIGRATION.matchAll(/constraint\s+staff_alert_settings_key_check\s+check\s*\(alert_key\s+in\s*\(([^)]*)\)/gi)];
+    expect(all.length).toBeGreaterThan(0);
+    const latest = all[all.length - 1]![1];
+    const keys = [...latest.matchAll(/'([^']+)'/g)].map((x) => x[1]);
+    expect([...keys].sort()).toEqual([...STAFF_ALERT_KEYS].sort());
   });
 
   it("every key is seeded", () => {

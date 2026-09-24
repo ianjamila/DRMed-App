@@ -42,6 +42,7 @@ const TYPE_OPTIONS: { value: EmailType; label: string }[] = [
   { value: "registration_new", label: "Registration welcome" },
   { value: "registration_existing", label: "Registration (existing)" },
   { value: "contact_alert", label: "Website message alert" },
+  { value: "booking_alert", label: "Online booking alert" },
 ];
 
 const STATUS_OPTIONS: { value: EmailStatus; label: string }[] = [

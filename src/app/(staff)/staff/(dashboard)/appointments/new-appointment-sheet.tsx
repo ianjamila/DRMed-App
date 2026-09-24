@@ -19,6 +19,7 @@ import {
 import { QrCode } from "@/components/ui/qr-code";
 import { KINDS_PER_BRANCH, BOOKING_BRANCHES, type BookingBranch } from "@/lib/validations/booking";
 import { STAFF_BOOKING_NOTES_MAX, type StaffBookingInput } from "@/lib/validations/staff-booking";
+import { BOOKING_BRANCH_LABEL } from "@/lib/appointments/labels";
 import type { BookingConflict } from "@/lib/appointments/timing";
 import { STAFF_SELECTABLE_SOURCES, APPOINTMENT_SOURCE_LABEL } from "@/lib/appointments/source";
 import {
@@ -45,12 +46,7 @@ export interface PhysicianOption {
   full_name: string;
 }
 
-const BRANCH_LABELS: Record<BookingBranch, string> = {
-  diagnostic_package: "Diagnostic package",
-  lab_request: "Lab request",
-  doctor_appointment: "Doctor appointment",
-  home_service: "Home service",
-};
+const BRANCH_LABELS = BOOKING_BRANCH_LABEL;
 
 type PatientMode = "existing" | "new" | "walk_in";
 

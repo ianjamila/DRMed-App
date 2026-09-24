@@ -15,6 +15,7 @@ const TYPE_LABEL: Record<EmailType, string> = {
   registration_new: "Registration welcome",
   registration_existing: "Registration (existing)",
   contact_alert: "Website message alert",
+  booking_alert: "Online booking alert",
 };
 
 const STATUS_LABEL: Record<EmailStatus, string> = {
@@ -41,6 +42,8 @@ function typeForAction(action: string): EmailType {
       return "registration_existing";
     case "contact_message.alert_sent":
       return "contact_alert";
+    case "appointment.booked.staff_alert_sent":
+      return "booking_alert";
     default:
       return "result"; // unreachable: callers filter to EMAIL_ACTIONS
   }
@@ -65,7 +68,7 @@ export function parseEmailLogRow(
   const type = typeForAction(row.action);
 
   let status: EmailStatus;
-  if (type === "newsletter" || type === "contact_alert") {
+  if (type === "newsletter" || type === "contact_alert" || type === "booking_alert") {
     // Both are "sent to N recipients" rows rather than a single addressee —
     // contact_message.alert_sent's metadata carries counts only (recipients/
     // sent/failed), never addresses (RA 10173), so it reuses newsletter's
@@ -94,7 +97,7 @@ export function parseEmailLogRow(
       (meta.bulk === true ? `${asNumber(meta.count) || "?"} results ready` : null);
   } else if (type === "newsletter") {
     detail = asString(meta.subject);
-  } else if (type === "contact_alert") {
+  } else if (type === "contact_alert" || type === "booking_alert") {
     detail = asString(meta.skipped) ?? `${asString(meta.source) ?? "staff"} recipients`;
   } else if (status === "failed") {
     detail = asString(email.error) ?? asString(meta.error);
@@ -112,7 +115,7 @@ export function parseEmailLogRow(
       delivered: asNumber(meta.delivered),
       failed: asNumber(meta.failed),
     };
-  } else if (type === "contact_alert") {
+  } else if (type === "contact_alert" || type === "booking_alert") {
     bulk = {
       attempted: asNumber(meta.recipients),
       delivered: asNumber(meta.sent),

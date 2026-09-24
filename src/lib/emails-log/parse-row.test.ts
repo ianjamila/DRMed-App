@@ -146,6 +146,24 @@ describe("parseEmailLogRow", () => {
     expect(e.recipientEmail).toBeNull();
   });
 
+  it("appointment.booked.staff_alert_sent — the online booking alert, bulk counts, no addresses", () => {
+    const e = parseEmailLogRow(
+      row({
+        action: "appointment.booked.staff_alert_sent",
+        patient_id: null,
+        resource_type: "appointment_group",
+        resource_id: "g1",
+        metadata: { recipients: 3, sent: 2, failed: 1, via: "website", pending_callback: true },
+      }),
+      null,
+    );
+    expect(e.type).toBe("booking_alert");
+    expect(e.typeLabel).toBe("Online booking alert");
+    expect(e.status).toBe("bulk");
+    expect(e.bulk).toEqual({ attempted: 3, delivered: 2, failed: 1 });
+    expect(e.recipientEmail).toBeNull();
+  });
+
   it("contact_message.alert_sent — skipped reason surfaces as detail", () => {
     const e = parseEmailLogRow(
       row({

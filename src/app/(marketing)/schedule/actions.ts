@@ -13,6 +13,8 @@ import {
   type ExistingPatientBookingInput,
 } from "@/lib/validations/booking";
 import { notifyAppointmentBooked } from "@/lib/notifications/notify-appointment-booked";
+import { sendNewBookingAlert } from "@/lib/appointments/booking-alert";
+import { after } from "next/server";
 import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit/check";
 import { resolvePatient } from "@/lib/patients/resolve";
 import { createAppointmentGroup, createLabRequestOnlyBooking, type PatientResolution } from "@/lib/appointments/create";
@@ -488,6 +490,27 @@ export async function submitBookingAction(_prev: BookingResult | null, formData:
   } catch (err) {
     console.error("notifyAppointmentBooked threw", err);
   }
+
+  // Staff "new online booking" alert (Admin Tools › Email Alerts, 0157). Runs
+  // after the response so it can never slow or fail the patient's booking;
+  // sendNewBookingAlert never throws.
+  const bookingGroupId = result.bookingGroupId;
+  const alertPatientId = result.patient.patientId;
+  const alertFirstName = data.mode === "new" ? data.first_name : null;
+  const alertServiceCount = resultServices.length;
+  const alertPending = result.pendingCallback;
+  after(() =>
+    sendNewBookingAlert({
+      bookingGroupId,
+      patientId: alertPatientId,
+      firstName: alertFirstName,
+      branch: data.branch,
+      scheduledAtIso,
+      pendingCallback: alertPending,
+      serviceCount: alertServiceCount,
+      via: isPortalSource ? "portal" : "website",
+    }),
+  );
 
   return {
     ok: true,

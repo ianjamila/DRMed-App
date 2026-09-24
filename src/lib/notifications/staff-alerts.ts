@@ -10,7 +10,7 @@ import type { StaffSession } from "@/lib/auth/require-staff";
 
 type StaffRole = StaffSession["role"];
 
-export const STAFF_ALERT_KEYS = ["website_message", "template_health", "dedup_digest"] as const;
+export const STAFF_ALERT_KEYS = ["website_message", "online_booking", "template_health", "dedup_digest"] as const;
 export type StaffAlertKey = (typeof STAFF_ALERT_KEYS)[number];
 
 export interface StaffAlertDef {
@@ -32,6 +32,14 @@ export const STAFF_ALERTS: Record<StaffAlertKey, StaffAlertDef> = {
       "Sent the moment someone writes in through the Contact page on drmed.ph. It shows the sender's first name and subject only — staff sign in to read the message.",
     defaultRoles: ["reception", "admin"],
     sentAction: "contact_message.alert_sent",
+  },
+  online_booking: {
+    key: "online_booking",
+    label: "New online booking",
+    description:
+      "Sent when a patient books through the website's Schedule page or the patient portal. It shows the patient's first name, the booking type, the requested time or that they need a call back, and how many services — never contact details or which tests. Nothing is sent while online booking is paused.",
+    defaultRoles: ["reception", "admin"],
+    sentAction: "appointment.booked.staff_alert_sent",
   },
   template_health: {
     key: "template_health",
