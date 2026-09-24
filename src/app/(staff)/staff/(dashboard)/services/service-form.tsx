@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  StableCheckbox,
   StableInput,
   StableSelect,
   StableTextarea,
@@ -232,8 +233,7 @@ export function ServiceForm({ initial, vendors = [] }: Props) {
             </p>
           </div>
           <label className="flex items-start gap-2 text-sm sm:col-span-3">
-            <input
-              type="checkbox"
+            <StableCheckbox
               name="senior_pwd_eligible"
               defaultChecked={initial?.senior_pwd_eligible ?? true}
               className="mt-0.5"
@@ -299,11 +299,10 @@ export function ServiceForm({ initial, vendors = [] }: Props) {
 
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
+            <StableCheckbox
               name="is_send_out"
               defaultChecked={initial?.is_send_out ?? false}
-              onChange={(e) => setIsSendOut(e.target.checked)}
+              onCheckedChange={setIsSendOut}
             />
             <span>Send-out test</span>
           </label>
@@ -362,8 +361,7 @@ export function ServiceForm({ initial, vendors = [] }: Props) {
 
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
+            <StableCheckbox
               name="is_active"
               defaultChecked={initial?.is_active ?? true}
             />
@@ -373,8 +371,7 @@ export function ServiceForm({ initial, vendors = [] }: Props) {
             {/* Locked: the sign-off queue doesn't exist yet, so flipping this
                 on would strand results at "awaiting sign-off". The hidden
                 input preserves the current value so edits don't clear it. */}
-            <input
-              type="checkbox"
+            <StableCheckbox
               disabled
               defaultChecked={initial?.requires_signoff ?? false}
             />

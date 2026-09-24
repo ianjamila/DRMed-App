@@ -13,6 +13,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  ResetSafeCheckbox,
+  ResetSafeSelect,
   StableInput,
   StableTextarea,
 } from "@/components/forms/stable-fields";
@@ -562,7 +564,7 @@ export function VisitForm({
               <Label htmlFor="attending_physician_id" className="text-sm">
                 Physician (default for all consult / procedure lines)
               </Label>
-              <select
+              <ResetSafeSelect
                 id="attending_physician_id"
                 value={attendingPhysicianId}
                 onChange={(e) => setAttendingPhysicianId(e.target.value)}
@@ -575,7 +577,7 @@ export function VisitForm({
                     {p.specialty ? ` — ${p.specialty}` : ""}
                   </option>
                 ))}
-              </select>
+              </ResetSafeSelect>
               <p className="text-xs text-[color:var(--color-brand-text-soft)]">
                 Always required to add a consultation. For a procedure,
                 only needed if the doctor gets a fee share above ₱0.
@@ -641,8 +643,7 @@ export function VisitForm({
                       : "hover:bg-[color:var(--color-brand-bg)]"
                   }`}
                 >
-                  <input
-                    type="checkbox"
+                  <ResetSafeCheckbox
                     value={s.id}
                     checked={checked}
                     onChange={() => toggle(s.id)}
@@ -769,7 +770,7 @@ export function VisitForm({
                       </p>
                     </div>
                     <div className="col-span-6 sm:col-span-3">
-                      <select
+                      <ResetSafeSelect
                         name={`discount_kind__${s.id}`}
                         value={ls.discountKind}
                         onChange={(e) =>
@@ -785,7 +786,7 @@ export function VisitForm({
                             {o.label}
                           </option>
                         ))}
-                      </select>
+                      </ResetSafeSelect>
                       {discountByCode.get(ls.discountKind)?.kind === "custom" ? (
                         <input
                           name={`custom_discount__${s.id}`}
@@ -1117,7 +1118,7 @@ function HmoSection({
       <div className="grid gap-3 sm:grid-cols-3">
         <div className="grid gap-1 sm:col-span-3">
           <Label htmlFor={`${prefix}_hmo_provider_id`}>Provider</Label>
-          <select
+          <ResetSafeSelect
             id={`${prefix}_hmo_provider_id`}
             name={`${prefix}_hmo_provider_id`}
             value={value}
@@ -1130,7 +1131,7 @@ function HmoSection({
                 {h.name}
               </option>
             ))}
-          </select>
+          </ResetSafeSelect>
         </div>
         {selected ? (
           <>

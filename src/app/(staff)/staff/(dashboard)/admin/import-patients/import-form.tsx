@@ -3,7 +3,10 @@
 import { useActionState } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { StableTextarea } from "@/components/forms/stable-fields";
+import {
+  StableCheckbox,
+  StableTextarea,
+} from "@/components/forms/stable-fields";
 import { importPatientsAction, type ImportResult } from "./actions";
 
 const SAMPLE = `first_name,last_name,middle_name,birthdate,sex,phone,email,address
@@ -38,8 +41,7 @@ export function ImportPatientsForm() {
       </div>
 
       <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
+        <StableCheckbox
           name="pre_registered"
           defaultChecked
         />

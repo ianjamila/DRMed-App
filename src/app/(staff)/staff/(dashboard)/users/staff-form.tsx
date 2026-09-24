@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {
+  StableCheckbox,
   StableInput,
   StableSelect,
 } from "@/components/forms/stable-fields";
@@ -155,8 +156,7 @@ export function StaffForm({ initial, isSelf = false }: Props) {
             </>
           ) : (
             <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
+              <StableCheckbox
                 name="is_active"
                 defaultChecked={initial?.is_active ?? true}
               />

@@ -14,6 +14,11 @@ import { cn } from "@/lib/utils";
 // so the rendered DOM is controlled and React preserves the value across
 // the action's re-render. Drop-in replacements: keep the same name + form
 // data shape, just swap the JSX tag.
+//
+// A form that already holds a select, tick-box or radio in its OWN state
+// (`value={x}` / `checked={x}`) is still not safe — see useResetSafeSelect
+// below. Swap `<select value=…>` for <ResetSafeSelect> and a controlled
+// checkbox or radio for <ResetSafeCheckbox>; props are otherwise unchanged.
 
 type InputBase = Omit<
   React.ComponentProps<typeof Input>,
@@ -113,6 +118,44 @@ export function StableCheckbox({ defaultChecked = false, onCheckedChange, ...res
       }}
     />
   );
+}
+
+// A `<select value={x}>` the parent already controls, made reset-safe. Use it
+// where the form needs the value in its own state (a choice that drives other
+// fields, a per-row select) and StableSelect would not fit.
+export function ResetSafeSelect({
+  value,
+  ...rest
+}: Omit<React.ComponentProps<"select">, "value" | "ref"> & { value: string }) {
+  const ref = useResetSafeSelect(value);
+  return <select {...rest} ref={ref} value={value} />;
+}
+
+// The tick-box / radio counterpart: the form reset puts a box back to its DOM
+// defaultChecked, which React sets only on mount for a controlled box. Keep
+// defaultChecked in step with `checked` after every render, and put `checked`
+// back if a reset has already moved it.
+export function useResetSafeChecked(checked: boolean) {
+  const ref = React.useRef<HTMLInputElement>(null);
+  React.useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.defaultChecked = checked;
+    if (el.checked !== checked) el.checked = checked;
+  });
+  return ref;
+}
+
+export function ResetSafeCheckbox({
+  checked,
+  type = "checkbox",
+  ...rest
+}: Omit<React.ComponentProps<"input">, "checked" | "type" | "ref"> & {
+  checked: boolean;
+  type?: "checkbox" | "radio";
+}) {
+  const ref = useResetSafeChecked(checked);
+  return <input {...rest} ref={ref} type={type} checked={checked} />;
 }
 
 interface StableFieldProps extends InputBase {
