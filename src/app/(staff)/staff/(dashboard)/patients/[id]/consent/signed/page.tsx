@@ -118,31 +118,54 @@ function markFor(method: string | null): string {
   }
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const CONSENT_COLUMNS =
+  "id, event_type, method, created_at, notice_version, signatory, signatory_name, signatory_relationship, artifact_path, source_form, accepted_statement, consent_scope, recorded_by:staff_profiles!patient_consents_created_by_fkey(full_name)";
+
 export default async function SignedConsentPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  // ?event=<patient_consents.id> opens one record from the consent history;
+  // without it the page shows the latest event.
+  searchParams: Promise<{ event?: string }>;
 }) {
   const session = await requireActiveStaff();
   const { id } = await params;
+  const { event } = await searchParams;
+  const eventId = event && UUID_RE.test(event) ? event : null;
   const { data: patient } = await loadDetail(id);
   if (!patient) notFound();
 
-  // Same ordering as the sync trigger (LATEST_CONSENT_EVENT_ORDER): the form
-  // shown is the one behind the consent currently on file, never an older
-  // grant superseded by a withdrawal.
+  // Latest event in the sync trigger's order (LATEST_CONSENT_EVENT_ORDER),
+  // so the default view is the record behind today's status. A history link
+  // asks for one event by id, scoped to THIS patient so an id from another
+  // patient's record shows nothing.
   const admin = createAdminClient();
-  const { data: consent } = await admin
+  const { data: latest } = await admin
     .from("patient_consents")
-    .select(
-      "id, event_type, method, created_at, notice_version, signatory, signatory_name, signatory_relationship, artifact_path, source_form, accepted_statement, consent_scope, recorded_by:staff_profiles!patient_consents_created_by_fkey(full_name)",
-    )
+    .select(CONSENT_COLUMNS)
     .eq("patient_id", patient.id)
     .order(LATEST_CONSENT_EVENT_ORDER.column, {
       ascending: LATEST_CONSENT_EVENT_ORDER.ascending,
     })
     .limit(1)
     .maybeSingle();
+  let consent = latest;
+  if (event !== undefined && latest?.id !== eventId) {
+    const { data: requested } = eventId
+      ? await admin
+          .from("patient_consents")
+          .select(CONSENT_COLUMNS)
+          .eq("id", eventId)
+          .eq("patient_id", patient.id)
+          .maybeSingle()
+      : { data: null };
+    consent = requested;
+  }
+  const isPastRecord = !!consent && consent.id !== latest?.id;
 
   const back = (
     <Link
@@ -158,8 +181,11 @@ export default async function SignedConsentPage({
       <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6 lg:px-8">
         {back}
         <p className="mt-4 text-sm">
-          There is no data privacy consent on file for this patient
-          {consent ? " — it was withdrawn" : ""}.
+          {event !== undefined && !consent
+            ? "That consent record is not on file for this patient."
+            : isPastRecord
+              ? "That record is a withdrawal — there is no form to show."
+              : `There is no data privacy consent on file for this patient${consent ? " — it was withdrawn" : ""}.`}
         </p>
       </div>
     );
@@ -235,6 +261,13 @@ export default async function SignedConsentPage({
         {back}
         <PrintButton />
       </div>
+      {isPastRecord && (
+        <p className="mb-4 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+          Past record — this is not the consent event that decides the
+          patient&apos;s status today. See the consent history on the patient
+          page.
+        </p>
+      )}
       <ConsentFormSheet
         patient={{
           drm_id: patient.drm_id,

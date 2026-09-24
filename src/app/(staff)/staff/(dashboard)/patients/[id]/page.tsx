@@ -9,8 +9,10 @@ import { formatPhoneLocal } from "@/lib/format/phone";
 import { ReissuePinButton } from "@/components/staff/reissue-pin-button";
 import { VerifyIdentityButton } from "./verify-identity-button";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
-import { getPatientConsentState, hasBookingOnlyConsent } from "@/lib/consent/gate";
+import { getConsentHistory, getPatientConsentState } from "@/lib/consent/gate";
+import { latestIsBookingOnly } from "@/lib/consent/history";
 import { ConsentPanel } from "./consent/consent-panel";
+import { ConsentHistory } from "./consent/consent-history";
 import { paymentStatusLabel } from "@/lib/ui/payment-status";
 import { formatPatientName } from "@/lib/patients/format-name";
 import { referralSourceLabel } from "@/lib/patients/referral-sources";
@@ -71,10 +73,11 @@ export default async function PatientDetailPage({ params }: Props) {
 
   if (!patient) notFound();
 
-  const [consent, bookingOnlyConsent] = await Promise.all([
+  const [consent, consentHistory] = await Promise.all([
     getPatientConsentState(id),
-    hasBookingOnlyConsent(id),
+    getConsentHistory(id),
   ]);
+  const bookingOnlyConsent = latestIsBookingOnly(consentHistory);
 
   const { data: visits } = await supabase
     .from("visits")
@@ -206,6 +209,7 @@ export default async function PatientDetailPage({ params }: Props) {
           bookingOnlyConsent={bookingOnlyConsent}
           isAdmin={isAdmin}
         />
+        <ConsentHistory patientId={id} events={consentHistory} />
       </div>
 
       <section className="mt-8">

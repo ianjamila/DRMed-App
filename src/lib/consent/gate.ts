@@ -1,6 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { LATEST_CONSENT_EVENT_ORDER } from "@/lib/consent/latest-event";
+import type { ConsentHistoryEvent } from "@/lib/consent/history";
 
 export async function isConsentGateRequired(): Promise<boolean> {
   const admin = createAdminClient();
@@ -44,23 +45,20 @@ export async function getPatientConsentState(
 }
 
 /**
- * Whether the patient's latest consent event is a booking-only grant (0162):
- * the old online-booking checkbox, which covered contact details for the
- * booking only. It is recorded but does not count as consent on file, so the
- * patient page tells reception to have the patient sign. Read only there —
- * getPatientConsentState stays a single patients read for the many pages
- * that call it.
+ * Every consent event for a patient, newest first in the sync trigger's order
+ * (seq desc), with the recording staff member's name. A patient has a handful
+ * of events at most, well under PostgREST's row cap.
  */
-export async function hasBookingOnlyConsent(patientId: string): Promise<boolean> {
+export async function getConsentHistory(patientId: string): Promise<ConsentHistoryEvent[]> {
   const admin = createAdminClient();
   const { data } = await admin
     .from("patient_consents")
-    .select("event_type, consent_scope")
+    .select(
+      "id, event_type, method, created_at, signatory, signatory_name, signatory_relationship, artifact_path, reason, source_form, consent_scope, actor_kind, recorded_by:staff_profiles!patient_consents_created_by_fkey(full_name)",
+    )
     .eq("patient_id", patientId)
     .order(LATEST_CONSENT_EVENT_ORDER.column, {
       ascending: LATEST_CONSENT_EVENT_ORDER.ascending,
-    })
-    .limit(1)
-    .maybeSingle();
-  return data?.event_type === "granted" && data.consent_scope === "booking_contact_only";
+    });
+  return (data ?? []) as ConsentHistoryEvent[];
 }
