@@ -5464,6 +5464,75 @@ export type Database = {
           },
         ]
       }
+      staff_alert_recipients: {
+        Row: {
+          alert_key: string
+          created_at: string
+          created_by: string | null
+          email: string | null
+          id: string
+          staff_id: string | null
+          subscribed: boolean
+          updated_at: string
+        }
+        Insert: {
+          alert_key: string
+          created_at?: string
+          created_by?: string | null
+          email?: string | null
+          id?: string
+          staff_id?: string | null
+          subscribed?: boolean
+          updated_at?: string
+        }
+        Update: {
+          alert_key?: string
+          created_at?: string
+          created_by?: string | null
+          email?: string | null
+          id?: string
+          staff_id?: string | null
+          subscribed?: boolean
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "staff_alert_recipients_alert_key_fkey"
+            columns: ["alert_key"]
+            isOneToOne: false
+            referencedRelation: "staff_alert_settings"
+            referencedColumns: ["alert_key"]
+          },
+          {
+            foreignKeyName: "staff_alert_recipients_staff_id_fkey"
+            columns: ["staff_id"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      staff_alert_settings: {
+        Row: {
+          alert_key: string
+          enabled: boolean
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          alert_key: string
+          enabled?: boolean
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          alert_key?: string
+          enabled?: boolean
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       staff_profiles: {
         Row: {
           created_at: string

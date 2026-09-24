@@ -247,7 +247,7 @@
 <div class="layout">
 <nav class="toc" aria-label="Contents">
   <p class="toc-brand">drmed<span>.</span>ph</p>
-  <p class="toc-tag">User guide · v2.10</p>
+  <p class="toc-tag">User guide · v2.11</p>
   <div class="filter" role="group" aria-label="Show chapters for">
     <button type="button" data-filter="all" aria-pressed="true">All roles</button>
     <button type="button" data-filter="reception">Reception</button>
@@ -296,6 +296,7 @@
     <li data-role="admin"><a href="#adm"><span class="toc-role-dot" style="background:var(--r-admin)"></span>5 · Admin</a>
       <ol>
         <li><a href="#adm-setup">Setting up the clinic</a></li>
+        <li><a href="#adm-alerts">Email Alerts</a></li>
         <li><a href="#adm-daily">Daily &amp; weekly</a></li>
         <li><a href="#adm-doctors">Paying doctors</a></li>
         <li><a href="#adm-people">People &amp; access</a></li>
@@ -322,7 +323,7 @@
   <div class="meta">
     <div><strong>Audience</strong>Reception · Medtech · X-ray · Pathologist · Admin · Patients</div>
     <div><strong>Covers</strong>Everything live in production as of the September 2026 release</div>
-    <div><strong>Version</strong>2.9 · 24 September 2026</div>
+    <div><strong>Version</strong>2.11 · 24 September 2026</div>
     <div><strong>Replaces</strong>Staff User Guide v1.0 (22 May 2026)</div>
   </div>
 </header>
@@ -715,7 +716,7 @@
     <h4>Corporate leads and staff notes</h4>
     <p>The contact form's <q>Corporate / HMO</q> subject tags a message <span class="tab">Corporate / HMO lead</span> automatically. If someone picked the wrong subject, or a General message turns out to be a corporate enquiry, fix it with <kbd class="ui">Mark as corporate lead</kbd> / <kbd class="ui">Not a corporate lead</kbd> on the message page. <b>Staff notes</b> (up to 2,000 characters, private to the team — the sender never sees them) is where you log what was agreed on the phone.</p>
     <div class="note tip"><span class="k">Dashboard</span><div><p>Reception's dashboard shows a <b>Website messages</b> card and a <q>Website messages waiting (N)</q> strip listing the newest unanswered ones, with a corporate-count hint when any are corporate leads — both link straight into this inbox. Admin's dashboard carries the same <b>Website messages</b> card.</p></div></div>
-    <div class="note why"><span class="k">Sign in to read it</span><div><p>The email that alerts reception and admin to a new message (see <b>Emails Sent</b>, 5.2) never contains the sender's message, phone or email — RA 10173. It carries only their first name, the subject, whether it's a corporate lead, which page it was sent from, when it arrived, and a button to open the message here, which is why signing in is the only way to actually read what they wrote.</p></div></div>
+    <div class="note why"><span class="k">Sign in to read it</span><div><p>The email that goes out for a new message (see <b>Emails Sent</b>, 5.3) never contains the sender's message, phone or email — RA 10173. It carries only their first name, the subject, whether it's a corporate lead, which page it was sent from, when it arrived, and a button to open the message here, which is why signing in is the only way to actually read what they wrote. Who receives it — and every other clinic alert — is set under Admin Tools › <b>Email Alerts</b> (5.2), not fixed in the code; an admin can add, drop or pause anyone at any time.</p></div></div>
   </section>
 
   <!-- 3.12 -->
@@ -915,21 +916,44 @@
         <ul><li><b>Closures</b> (Operations): add a date and reason; the public booking page hides that day. If bookings already exist, <kbd class="ui">Move to callback</kbd> first.</li>
         <li><b>Online Booking</b> (Admin Tools): <q>Pause online booking</q>. Switching it on asks you to confirm, then replaces the booking form on <code class="route">drmed.ph/schedule</code> and in the patient portal with a notice asking patients to call, text, message or email reception, with the clinic hours and address. While paused, a thin navy strip across the top of every website page reads <q>Online booking is paused for now.</q> with the mobile number and a Messenger link; every <q>Book</q> button is relabelled <q>Contact us to book</q> (<q>Contact to book</q> in the top menu) and still lands on that notice; the cancel-appointment page tells patients to call reception to reschedule instead of cancelling and re-booking online; and the website stops advertising online booking to Google. Bookings already made are untouched, and reception keeps booking from Appointments. Add an optional <b>Note for patients</b> (up to 400 characters, e.g. when booking will be back) and <kbd class="ui">Save note</kbd>; the preview under it shows exactly what patients see. Switching it off takes effect straight away. Every change is recorded in the audit log.</li>
         <li><b>Consent Gate</b> (Admin Tools): <q>Require consent before result release</q>. Turn it on only after reception is capturing consent at every visit; today only a handful of patients have consent on file, so switching it on cold would block most releases.</li>
-        <li><b>Dashboard Settings</b>: per role, tick which cards show. Cards marked <b>Sensitive</b> reveal money.</li></ul></li>
+        <li><b>Dashboard Settings</b>: per role, tick which cards show. Cards marked <b>Sensitive</b> reveal money.</li>
+        <li><b>Email Alerts</b> (Admin Tools): choose who gets the clinic's alert emails — see 5.2.</li></ul></li>
       <li><p class="step-title">Gift Codes and Inventory (Operations)</p><p><b>Gift Codes</b> › <kbd class="ui">+ Generate batch</kbd> (how many, face value, label) creates codes for reception to sell; the <kbd class="ui">Sales report</kbd> shows who bought what. <b>Inventory</b> › <kbd class="ui">+ New item</kbd> then record movements (Receive · Issue · Adjust · Expire · Count); the list flags <b>Low / out</b> and <b>Expiring ≤ 60d</b>. Medtechs and x-ray techs can see and post inventory too.</p></li>
     </ol>
   </section>
 
   <!-- 5.2 -->
+  <section class="sub" id="adm-alerts">
+    <h3>5.2 Email Alerts</h3>
+    <div class="screen"><div class="where">Admin › Admin Tools › <kbd class="ui">Email Alerts</kbd> · <code class="route">/staff/admin/settings/alerts</code> · Admin only</div></div>
+    <p class="intro">Choose who gets the clinic's alert emails — new website messages, result-template problems and possible duplicate patients. Switch each alert on or off, pick staff one by one, or add a shared inbox. Every change here is recorded in the audit log.</p>
+    <p>One card per alert:</p>
+    <dl class="defs">
+      <dt>New website message</dt><dd>Sent the moment someone writes in through the Contact page on drmed.ph. It shows the sender's first name and subject only — staff sign in to read the message. Goes by default to <b>Reception</b> and <b>Admin</b>.</dd>
+      <dt>Result template problems</dt><dd>The daily and weekly check of lab result templates. Sent only when it finds a problem (a broken or missing template, or the daily check itself stopped running). Goes by default to <b>Admin</b>.</dd>
+      <dt>Possible duplicate patients</dt><dd>A daily digest of patient records that look like the same person, with a link to review and merge them. Sent only on days when there is something to review. Goes by default to <b>Admin</b>.</dd>
+    </dl>
+    <ol class="steps">
+      <li><p class="step-title">Turn a whole alert on or off with the switch at the top of its card.</p><p>Off means nobody is emailed, no matter what the individual switches below say — the card shows <q>Off — nobody is emailed</q>.</p></li>
+      <li><p class="step-title">Switch individual staff on or off under <b>Who gets it</b>.</p><p>Every active staff member is listed with their role and sign-in email. Someone you haven't touched shows <q>Default for &lt;role&gt;</q> under their email and just follows the alert's default roles; flip their switch and it becomes a personal override instead, shown without that note. Someone with no sign-in email shows <q>No email on file</q> and, if switched on, is counted in the warning below rather than actually receiving anything.</p></li>
+      <li><p class="step-title">Click <kbd class="ui">Reset to defaults</kbd> to clear every personal override on that alert.</p><p>It asks first: <q>This removes every individual switch below and goes back to the role default. Extra addresses are not affected.</q> Confirm with <kbd class="ui">Yes, reset</kbd> or back out with <kbd class="ui">Cancel</kbd>.</p></li>
+      <li><p class="step-title">Add a shared inbox or any other address under <b>Extra addresses</b>.</p><p>Type it into the box and click <kbd class="ui">Add address</kbd>. Each address you've added gets its own switch to pause it without deleting it, and a <kbd class="ui">Remove</kbd> link to take it off the alert for good. With none added, the card reads <q>None yet — add a shared inbox or an address outside the staff list.</q></p></li>
+    </ol>
+    <p>Under the on/off switch, a summary line always shows where the alert actually stands: <q>N people will get this</q> (or <q>1 person</q>) in green once it's live, or <q>Off — nobody is emailed</q> in grey when it's switched off. If the alert is on but the switched-on staff and extra addresses add up to nobody, the line turns red instead: <q>On, but nobody will get this — switch on a staff member or add an address below.</q> A separate amber line appears whenever a switched-on staff member has no sign-in email on file: <q>N switched-on staff member(s) have no email on file and won't actually receive this.</q></p>
+    <p><b>Last sent</b>, near the bottom of the card, shows the date and time of the most recent send and how many of that alert's recipients actually got it — for example <q>sent to 3 of 4, 1 failed</q> — or <q>Never sent yet.</q> if it hasn't gone out.</p>
+    <p><kbd class="ui">Send a test</kbd> emails the alert's current recipients a copy clearly marked <q>[Test]</q>, naming who sent it and that no real event happened. It only works while the alert is switched on — while it's off the button is greyed out and hovering it explains why: <q>Turn this alert on to send a test</q>. If the alert is on but nobody would actually receive it, sending a test refuses with <q>Nobody would receive this alert right now — switch on a staff member or add an address first.</q></p>
+  </section>
+
+  <!-- 5.3 -->
   <section class="sub" id="adm-daily">
-    <h3>5.2 Daily and weekly checks</h3>
+    <h3>5.3 Daily and weekly checks</h3>
     <p>Your dashboard is titled <q>Clinic command centre</q>. The Money row shows <b>Net Income (Books)</b> (posted accrual revenue less contra revenue and expenses) beside <b>Gross Profit (Ops)</b> (released lab and consult revenue after discounts, before expenses). Both cover this month and open their corresponding report with those dates. Its <b>Operations</b> row (revenue today, visits, queue, released today, possible duplicates) and <b>What needs attention</b> strip are the morning glance. Then:</p>
     <div class="tbl-wrap"><table>
       <thead><tr><th>Check</th><th>Where (Admin ›)</th><th>What you are looking for</th></tr></thead>
       <tbody>
         <tr><td>Yesterday's cash</td><td>Books &amp; Reports › <b>Daily Monitoring</b>, tab <span class="tab">Cash &amp; Cards</span></td><td>Each shift's counted cash, the denomination breakdown, and any <b>Difference</b> with its reason. <kbd class="ui">Export CSV</kbd> for the accountant.</td></tr>
         <tr><td>Revenue</td><td>Daily Monitoring › <span class="tab">Daily Revenue</span></td><td>Day-by-day totals by service and kind, from released work. Pick From / To, <kbd class="ui">Apply</kbd>, then <kbd class="ui">Export CSV</kbd>: <i>Date, Service code, Service, Kind, Releases, Revenue PHP</i>.</td></tr>
-        <tr><td>Doctors to pay</td><td>Pay Doctors › <b>Pay Doctors</b></td><td>See 5.3.</td></tr>
+        <tr><td>Doctors to pay</td><td>Pay Doctors › <b>Pay Doctors</b></td><td>See 5.4.</td></tr>
         <tr><td>Staff advances outstanding</td><td>Payroll › <b>Staff Cash Advances</b></td><td>Two tables: <b>Outstanding by staff</b> (who still owes, largest balance first) and the <b>Recent advances</b> ledger beneath it (newest first, with a rows-per-page picker). Each sorts on its own without disturbing the other. <kbd class="ui">Export CSV</kbd>.</td></tr>
         <tr><td>Lab turnaround</td><td>Books &amp; Reports › <b>Lab Turnaround Time</b></td><td>The page is headed <q>Lab TAT analytics</q>. Median, P95 and worst hours from request to release per section, plus the twenty worst SLA breaches. Samples over 60 days old are dropped as outliers; the SLA comes from each service's turnaround hours. Consultations and procedures are left out: reception releases them over the counter, so they have no turnaround to measure and used to sit in the table as a section-less block of nought-hour rows. A small <q>(unset)</q> row can still appear: it holds the old <q>Legacy lab test</q> code carried over from the pre-app records, which stands in for whatever the paper result said and so belongs to no one section. <kbd class="ui">Export CSV</kbd> gives one row per released test, not the section averages.</td></tr>
         <tr><td>Things that got stuck</td><td>Books &amp; Reports › <b>Stuck Tests</b></td><td>Packages with no tests, visits with no lines, package headers that never auto-released, and lab tests older than N days (the <b>days</b> box, 3 by default). Usually a reception slip that needs a delete or a call. Consultations and procedures are left out — they never go to the bench, so one left open would sit here for ever; chase those on <b>Visits</b> under the <q>Doctor Consults</q> chip. <kbd class="ui">Export CSV</kbd> merges all four lists into one file with a <i>List</i> column.</td></tr>
@@ -943,9 +967,9 @@
     <div class="note why"><span class="k">About those exports</span><div><p>Every <kbd class="ui">Export CSV</kbd> on these pages downloads exactly what the filters above it select, and every download is written to the audit log with your name, the filters used and the row count — never the contents. Only Admin can open them.</p><p>An export stops at 20,000 rows and adds a last line reading <q>TRUNCATED — more rows matched than the 20000 exported. Narrow the filters.</q> The pages themselves show fewer rows than the export does (most stop at 500) and say so above the table, so a page that looks short is not a short export.</p></div></div>
   </section>
 
-  <!-- 5.3 -->
+  <!-- 5.4 -->
   <section class="sub" id="adm-doctors">
-    <h3>5.3 Paying doctors (professional fees)</h3>
+    <h3>5.4 Paying doctors (professional fees)</h3>
     <div class="screen"><div class="where">Admin › Pay Doctors › <kbd class="ui">Pay Doctors</kbd> · <code class="route">/staff/admin/accounting/pf-payouts</code></div>
       <dl><dt>Tabs</dt><dd><span class="tab">Ready to pay</span> · <span class="tab">Waiting on insurance</span> · <span class="tab">Already paid</span></dd>
       <dt>Buttons</dt><dd><kbd class="ui">Pay this doctor</kbd> · <kbd class="ui">Pay everyone (cash only)</kbd> · <kbd class="ui">Print slip</kbd> · <kbd class="ui">Void disbursement</kbd> · <kbd class="ui">Print quick guide →</kbd></dd></dl></div>
@@ -960,9 +984,9 @@
     <div class="note warn"><span class="k">Before go-live</span><div><p>All twenty active physicians still have no <b>Default consultation fee</b>. Until you enter one, reception must type the fee on every consultation. Set it once under Physicians.</p></div></div>
   </section>
 
-  <!-- 5.4 -->
+  <!-- 5.5 -->
   <section class="sub" id="adm-people">
-    <h3>5.4 People and access</h3>
+    <h3>5.5 People and access</h3>
     <dl class="defs">
       <dt>Change someone's sign-in email</dt><dd>Staff Users › open the user › <b>Sign-in email</b> › <kbd class="ui">Change email</kbd>. This is the Google account they sign in with, so keep it current. Takes effect immediately; no confirmation email is sent.</dd>
       <dt>Reset a password</dt><dd>Staff Users › open the user › <b>New password</b> › <kbd class="ui">Reset password</kbd>. Tell them in person; there is no email.</dd>
@@ -974,9 +998,9 @@
     </dl>
   </section>
 
-  <!-- 5.5 -->
+  <!-- 5.6 -->
   <section class="sub" id="adm-patients">
-    <h3>5.5 Patient tools</h3>
+    <h3>5.6 Patient tools</h3>
     <dl class="defs">
       <dt>Import Patients</dt><dd>Paste CSV rows with <code class="id">first_name, last_name, birthdate</code> (plus optional middle name, sex, phone, email, address), up to 2,000 at a time. Tick <b>Mark imported rows as pre-registered</b> so reception verifies them at the counter.</dd>
       <dt>Merge Duplicate Patients</dt><dd><b>Possible duplicate patients</b> lists likely pairs (<span class="tab">Probable+</span> or <span class="tab">Include weak</span>); <kbd class="ui">Merge into DRM-…</kbd> moves every visit and result to the surviving record and can be <kbd class="ui">Undo</kbd>ne within 30 days. For a pair the detector missed, the manual <b>Merge patient profiles</b> page takes <b>Keep this patient</b> and <b>Merge in this patient</b> and asks you to type <code class="id">MERGE</code>.</dd>
@@ -984,9 +1008,9 @@
     </dl>
   </section>
 
-  <!-- 5.6 -->
+  <!-- 5.7 -->
   <section class="sub" id="adm-books">
-    <h3>5.6 Books, payroll and marketing (orientation)</h3>
+    <h3>5.7 Books, payroll and marketing (orientation)</h3>
     <p>These modules are used by the bookkeeper and keep their accounting vocabulary on purpose. Each has plain hints on screen. What you need to know to find things:</p>
     <h4>Books &amp; Reports</h4>
     <dl class="defs">
@@ -1109,7 +1133,7 @@
     <dt>SMS</dt><dd>No text messages are sent to patients. Booking confirmations, reminders and result-ready notices are email only. Patients with no email get no automatic notice.</dd>
     <dt>A lost authenticator cannot be cleared in the app</dt><dd>Nothing in the app can remove an enrolled authenticator, and Google sign-in does not bypass the code once you're enrolled — there is no self-service reset, no Admin reset, and no recovery codes. Clearing a lost factor needs direct access to the Supabase project. Treat enrolment as a decision, not an experiment.</dd>
     <dt>Doctor procedures</dt><dd>The catalog has no <q>Doctor procedure</q> services yet, so that path is untested in daily use. Add them under Services before billing procedures.</dd>
-    <dt>Report exports are capped</dt><dd>Every report CSV stops at 20,000 rows and marks itself TRUNCATED at the end; most report pages show only the first 500 rows on screen. Narrow the date range rather than assuming that is everything (5.2).</dd>
+    <dt>Report exports are capped</dt><dd>Every report CSV stops at 20,000 rows and marks itself TRUNCATED at the end; most report pages show only the first 500 rows on screen. Narrow the date range rather than assuming that is everything (5.3).</dd>
     <dt>Marketing trackers</dt><dd>Stored in the browser that entered them. They don't sync between computers.</dd>
     <dt>Parked pages</dt><dd><b>Sell Gift Code</b>, <b>Refund Gift Code Sale</b>, <b>Registration Link</b>, <b>Sign-off</b> and <b>Patient Receivables (Aging)</b> are under <b>Hidden Tabs</b> (Admin only in the sidebar). Reception can still open Sell Gift Code, Refund Gift Code Sale and Registration Link by typing the address.</dd>
   </dl>
@@ -1142,6 +1166,7 @@
     <dt>Audit Log</dt><dd>The tamper-evident record of every action, view, print and download. Required by RA 10173.</dd>
     <dt>Online Booking pause</dt><dd>An admin switch that replaces the online booking form with a <q>contact reception</q> notice. Staff booking is unaffected.</dd>
     <dt>Consent Gate</dt><dd>An admin switch that blocks release for patients without consent on file. Off today.</dd>
+    <dt>Email Alerts</dt><dd>The Admin Tools page (5.2) that controls who gets the new-website-message, result-template-problem and possible-duplicate-patients alert emails — on/off per alert, staff switched in or out, and extra addresses.</dd>
     <dt>Website message</dt><dd>A message sent through the site's Contact form, tracked in the Website Messages inbox (3.11) until it's replied to, booked or closed.</dd>
     <dt>Reply (website message)</dt><dd>An email or text sent from inside a website message's Reply panel (3.11), to the sender's own address or number only. Kept in that message's Reply history; sending one moves a New message to Replied automatically.</dd>
     <dt>Source (How did they reach us?)</dt><dd>How a patient reached the clinic for an appointment: online booking, the patient portal, a website message, phone, text, Messenger, walk-in, referral or other. Shown as <q>via …</q> on an appointment card and as a Source column and filter on Appointments (3.1).</dd>
@@ -1149,7 +1174,7 @@
 </section>
 
 <footer class="end">
-  <p>drmed.ph User Guide · v2.10 · 24 September 2026 · Matches the production release at migration 0156. Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
+  <p>drmed.ph User Guide · v2.11 · 24 September 2026 · Matches the production release at migration 0156 (0155 applied after it). Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
 </footer>
 </main>
 </div>

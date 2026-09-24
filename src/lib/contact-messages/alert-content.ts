@@ -20,25 +20,6 @@ import { firstNameOf } from "./first-name";
 import { contactFormLocationLabel, oneLine } from "./labels";
 import type { ContactFormLocation, ContactMessageKind } from "./labels";
 
-/** Parse `CONTACT_ALERT_EMAILS` — comma-separated, each trimmed and validated
- * as a plausible email address; invalid entries are dropped rather than
- * failing the whole list, and duplicates (case-insensitive) are collapsed. */
-export function parseAlertEmailsEnv(raw: string | null | undefined): string[] {
-  if (!raw) return [];
-  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const part of raw.split(",")) {
-    const email = part.trim();
-    if (!email || !EMAIL_RE.test(email)) continue;
-    const key = email.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(email);
-  }
-  return out;
-}
-
 export interface AlertEmailInput {
   name: string;
   subject: string | null;
@@ -89,7 +70,8 @@ export function buildAlertEmail(input: AlertEmailInput): AlertEmailContent {
         { label: "Received", value: received },
       ]) +
       emailButton("Open the message", input.messageUrl, "cyan"),
-    receivedNote: "You're receiving this because you're on the Website Messages alert list.",
+    receivedNote:
+      "You're receiving this because you're switched on for the \"New website message\" alert. An admin can change who gets it under Admin Tools › Email Alerts.",
   });
 
   return { subject: emailSubject, text, html };
