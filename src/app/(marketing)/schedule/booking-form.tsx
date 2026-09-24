@@ -816,6 +816,7 @@ export function BookingForm({
                         </label>
                         <select
                           id="wiz-referral"
+                          aria-invalid={currentErrors.referral_source ? true : undefined}
                           value={referralSource}
                           onChange={(e) => setReferralSource(e.target.value)}
                           className={`h-[46px] rounded-[12px] border-[1.5px] bg-white px-[13px] text-[15px] text-[color:var(--color-ink)] outline-none transition focus:border-[color:var(--color-brand-cyan)] ${
@@ -832,7 +833,7 @@ export function BookingForm({
                           ))}
                         </select>
                         {currentErrors.referral_source ? (
-                          <p className="text-[12.5px] text-[color:var(--color-danger)]">
+                          <p className="text-[12.5px] text-[color:var(--color-danger)]" role="alert">
                             {currentErrors.referral_source}
                           </p>
                         ) : null}
