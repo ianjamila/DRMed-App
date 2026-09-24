@@ -5743,6 +5743,7 @@ export type Database = {
           link_key: string
           method: string
           patient_id: string | null
+          run_id: string | null
         }
         Insert: {
           decided_at?: string
@@ -5751,6 +5752,7 @@ export type Database = {
           link_key: string
           method: string
           patient_id?: string | null
+          run_id?: string | null
         }
         Update: {
           decided_at?: string
@@ -5759,6 +5761,7 @@ export type Database = {
           link_key?: string
           method?: string
           patient_id?: string | null
+          run_id?: string | null
         }
         Relationships: [
           {
@@ -5780,6 +5783,13 @@ export type Database = {
             columns: ["patient_id"]
             isOneToOne: false
             referencedRelation: "v_patients_without_consent"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sheet_patient_links_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "sheet_sync_runs"
             referencedColumns: ["id"]
           },
         ]
@@ -7047,7 +7057,10 @@ export type Database = {
       }
     }
     Functions: {
-      _sheet_sync_fence: { Args: { p_lease_token: string }; Returns: string }
+      _sheet_sync_fence: {
+        Args: { p_lease_token: string; p_write?: boolean }
+        Returns: string
+      }
       _sheet_sync_record_changes: {
         Args: { p_new: Json; p_old: Json; p_run: string }
         Returns: number
@@ -7230,7 +7243,7 @@ export type Database = {
         Returns: number
       }
       sheet_mirror_commit: {
-        Args: { p_lease_token: string; p_tab: string }
+        Args: { p_expected: number; p_lease_token: string; p_tab: string }
         Returns: number
       }
       sheet_mirror_stage: {
