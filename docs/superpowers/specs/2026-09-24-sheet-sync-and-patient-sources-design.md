@@ -1,6 +1,6 @@
-# Sheet Sync + Patient Sources — design (v2)
+# Sheet Sync + Patient Sources — design (v3)
 
-**Date:** 2026-09-24 · **Branch:** `feat/sheet-sync` · **Status:** v2, revised after Fable + Codex (astra/high) review — see §12 for the finding-by-finding log.
+**Date:** 2026-09-24 · **Branch:** `feat/sheet-sync` · **Status:** v3 — revised after two rounds of Fable + Codex (astra/high) review; see §12. **PRs 1–3 are specified for implementation. PRs 4–5 (conversion, Books) are an outline plus a binding requirements list: each gets its own spec and review round before any code.**
 
 ## 1. Why
 
@@ -29,7 +29,9 @@ The owner wants:
 | Cross-section ideas | all accepted: cost per new patient, channel revenue, top referring doctors, dashboard tile, front-desk "how did you hear" prompt |
 
 **Accepted trade-off:** until switch-over, the existing revenue/operations dashboards stay
-at May; only Patient Sources (incl. channel revenue) reflects sheet activity since.
+at May; only Patient Sources (incl. channel revenue) reflects sheet activity since. At
+conversion those dashboards (`v_ops_daily_*`, `v_daily_revenue_by_service`,
+`visits_classification_summary`, patient directory, repeat-patient flag) **catch up by design**.
 
 ## 2. What exists (verified 2026-09-24 by two independent reviews)
 
@@ -41,13 +43,18 @@ at May; only Patient Sources (incl. channel revenue) reflects sheet activity sin
   (938 blank timestamps overall). Junk values exist (`GCASH`, `0`, `June 28`,
   `Feb 10,20255`, `APRIL 23,20-25`, `#N/A`). 94 names occur more than once; 3 exact
   duplicate rows (same name, phone, DOB).
-- `LAB SERVICE`: 21,504 named rows, last today, 2,943 dated ≥ 2026-05-26. **TEST NO is not
+- `LAB SERVICE`: 21,504 named rows, last today, ~2,971 dated 2026-05-26..today (counts
+  vary slightly by parser; re-measured by the CLI dry-run). **TEST NO is not
   unique** (one number spans 4 lines; descends 29 times). Payment method col 14
   (CASH 1,602 · HMO 497 · GCASH 364 · CARD PAY 350 · BPI 86 · BDO 32 · blank 12 since
   cutover), split payments as free text in col 15, release medium col 16, DATE RELEASED
-  col 17 (blank on 1,769 of 2,943). No ₱0 rows since cutover.
-- `DOCTOR CONSULTATION`: 9,047 named rows to 2026-09-19 (lags lab); 960 ≥ cutover; only 6
-  rows carry a control number, none a test number; one row dated `Aug 30, 3034`.
+  col 17 (blank on ~1,770). No ₱0 **lab** rows since cutover.
+- `DOCTOR CONSULTATION`: 9,047 named rows to 2026-09-19 (lags lab); ~960 ≥ cutover; only 6
+  rows carry a control number, none a test number; 5 rows dated `Aug 30, 3034`. Col 11
+  FINAL PRICE is the doctor's whole fee, col 12 CLINIC FEE the clinic's share (the app's
+  consult `final_price_php` is the clinic fee). 204 consult lines since cutover are blank/₱0.
+  The payment column also holds non-methods (`PRE EMPLOYMENT` 39, `OK` 17). Consults are
+  typed mostly **without middle names** (494 of 562 names) while Customers and lab rows carry them.
 - Small tabs: `DOCTOR PROCEDURE HMO` 79, `HOME SERVICE REQUESTS` 43, `GC Codes` 49 (codes
   already match `^GC-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$`), `FLYERS` (code grid, few dispatched).
 
@@ -81,11 +88,11 @@ Google Sheet ─(ONE values.batchGet, all tabs, UNFORMATTED_VALUE + SERIAL_NUMBE
      ▼
 tabs/*.ts  parse + validate → typed rows (+ issues)            [pure, unit-tested]
      ▼
-runSheetSync(): lease → per tab: snapshot-replace mirror (one RPC, one transaction)
+runSheetSync(): lease → per tab: snapshot-replace mirror (staged chunks, one swap transaction)
                                → Customers: link/create patients (strict rules, §5.3)
                                → review items   → run summary → release lease
      ▼
-Reporting: v_patient_acquisition / RPCs read  visits (≤ 2026-05-25 + app-native) ∪ mirror (≥ 2026-05-26)
+Reporting: patient_sources_series reads visits (≤ 2026-05-25 + app-native) ∪ mirror (≥ 2026-05-26); converted mode after PR 4
 Switch-over (PR 4): frozen mirror → real visits/test_requests/payments, atomically per encounter
 Books (PR 5): converted records → journal entries, DB-enforced posting identity
 ```
@@ -141,19 +148,30 @@ collapse spaces, typo folds) → (1) `referral_source_aliases` exact lookup
 rules → (3) blank → NULL → (4) else `other` + `unmapped_source` review item.
 
 **Field ownership.** New `patients.referral_source_origin text` check in
-`('staff','sheet','legacy_import')`. A `BEFORE UPDATE` trigger sets it to `'staff'` whenever
-`referral_source` changes **unless** the transaction-local setting `drmed.sheet_sync = 'on'`
-(set only inside sync RPCs). Staff New-Patient inserts default to `'staff'`. The sync may
-change `referral_source` only when it is NULL, or when origin is `'sheet'`/`'legacy_import'`
-(never `'staff'`) — checked in the same conditional `UPDATE … WHERE` (atomic, no
-check-then-write race). This also makes alias re-application safe.
+`('staff','patient','sheet')` and `patients.row_version bigint not null default 0`.
+A `BEFORE INSERT OR UPDATE` trigger on `patients` (no GUCs — they cannot be set through
+PostgREST, which the CLI uses):
+- always increments `row_version` on UPDATE;
+- when the caller is **not** `service_role` (`auth.role()`/`current_user`), any change to
+  `referral_source` forces origin `'staff'` and any attempt to set `referral_source_origin`
+  directly is ignored (`NEW.origin := OLD.origin` unless the source changed) — so a staff
+  member cannot relabel ownership through the API;
+- when the caller is `service_role`, a change to `referral_source` without an explicit
+  origin change in the same statement also becomes `'staff'`; the sync, the re-sort
+  approval and `/register` (`'patient'`) always set origin explicitly.
 
-**Re-sort of existing patients** — a separate CLI step (`scripts/sheet-sync-resort.ts`,
-dry-run → `--commit --confirm`), not part of the nightly sync: for patients with
-`legacy_intake.raw` and `merged_into_id IS NULL`, if `referral_source = oldMapper(raw)` set
-origin `'legacy_import'` and apply `newMapper(raw)`; otherwise mark origin `'staff'`
-(conservative: provenance unknown ⇒ treat as staff-owned). Before-images go to
-`sheet_sync_changes` (§4.2) so the batch is reversible.
+The sync may change `referral_source` only when it is NULL or origin is `'sheet'` — checked
+in the same conditional `UPDATE … WHERE` (atomic). **All existing non-NULL values start as
+`'staff'`** (unproven provenance ⇒ staff-owned; a staff-confirmed value that happens to equal
+the old mapper's output is indistinguishable, so nothing is re-sorted silently).
+
+**Re-sort of existing patients = reviewed proposal, not a script.** The admin page shows a
+"Re-sort sources" panel grouped by original answer → proposed channel (e.g. *"FAMILY /
+FRIENDS" — 280 patients now Customer referral → Family / friends*; *blank — 784 patients now
+Other → Not recorded*), computed from `legacy_intake.raw` for live (`merged_into_id IS NULL`)
+patients whose current value equals the old mapper's output. The admin approves per group;
+approval writes the new value with origin `'sheet'`, before-images to `sheet_sync_changes`
+and one audit row per group (counts only).
 
 ### 4.2 Control tables (all RLS on; SELECT policy `has_role(array['admin'])`; no write policies)
 
@@ -180,12 +198,17 @@ origin `'legacy_import'` and apply `newMapper(raw)`; otherwise mark origin `'sta
   `resolved_by`, `resolved_at`. Payloads hold names ⇒ admin-only; audit metadata carries ids and
   kinds only, never names.
 - **`sheet_sync_changes`** (before-images): `run_id`, `patient_id`, `column_name`, `old_value`,
-  `new_value`, `changed_at`. Written in the same statement as every sync patient update.
-  A per-run **revert** restores `old_value` only where the current value still equals
-  `new_value` (a later staff edit wins). Patients created by a run are soft-reverted by the
-  existing batch path only if nothing references them.
-- **`sheet_patient_links`**: durable identity decisions — `source_key` (see §5.3), `patient_id`,
-  `method` (`auto_exact|admin`), `decided_by`, `decided_at`. Survives mirror refreshes.
+  `new_value`, `row_version_after`, `changed_at`. Written in the same transaction as every
+  sync/re-sort patient update. A **revert** restores `old_value` only where the patient's
+  `row_version` still equals `row_version_after` (any later write, even one that changed a
+  value away and back, blocks the revert and is reported). Patients created by a run are
+  removed by revert only if nothing references them.
+- **`sheet_patient_links`**: durable identity decisions keyed by **`name_norm ‖ dob`**
+  (phone and registration date excluded so a phone edit does not orphan a decision),
+  `patient_id`, `method` (`auto_exact|auto_loose|admin`), `decided_by`, `decided_at`.
+- **`patient_acquisition_facts`** (durable, never purged): `patient_id pk`, `registered_on`,
+  `sheet_new_repeat`, `source_ref`, `updated_at` — the Customers-tab facts reporting needs,
+  maintained by the Customers sync so they survive the mirror purge after conversion.
 
 ### 4.3 Mirror tables (reporting only)
 
@@ -195,17 +218,23 @@ origin `'legacy_import'` and apply `newMapper(raw)`; otherwise mark origin `'sta
   `release_medium_raw`, `patient_id` (nullable), `link_state`
   (`linked|ambiguous|conflict|unlinked`), `row_hash`, `run_id`.
 - **`sheet_encounter_lines`**: `tab` (`lab|consult|procedure_hmo|home_service`), `sheet_row`,
-  `service_date date`, `name_norm`, `name_raw`, `patient_id` (nullable), `identity_key`
-  (`patient:<uuid>` or `name:<name_norm>`), `service_raw`, `doctor_raw`, `hmo_raw`,
-  `base_php`, `final_php`, `payment_method_raw`, `payment_detail_raw`, `release_medium_raw`,
-  `released_on date`, `control_no`, `test_no`, `row_hash`, `run_id`. Only rows with
+  `service_date date`, `name_norm`, `loose_key` (surname ‖ first given token), `name_raw`,
+  `patient_id` (nullable), `identity_key` (`patient:<uuid>` or `name:<loose_key>`),
+  `service_raw`, `doctor_raw`, `hmo_raw`, `base_php`, `final_php`, `clinic_fee_php`
+  (consults), `revenue_php` (the app-comparable basis: lab = final, consult = clinic fee),
+  `payment_method_raw`, `payment_detail_raw`, `release_medium_raw`, `released_on date`,
+  `control_no`, `test_no`, **`raw jsonb` (every column of the row, verbatim — the complete
+  source record conversion and Books will need)**, `row_hash`, `run_id`. Only rows with
   `service_date >= mirror_window_start` and `≤ today (Manila)`.
 - **`sheet_small_rows`** (PR 3): gift codes / flyers as typed jsonb rows keyed by natural key.
 
-Refresh = `sheet_mirror_replace(p_lease_token, p_tab, p_rows jsonb)` — one transaction:
-fence check → `delete … where tab = p_tab` → insert all rows. Readers never see a half-written
-tab. Retention: mirror tables are purged 30 days after `converted_at` (PR 4); resolved review
-items after 90 days — both added to the data-retention cron in the PR that creates them.
+Refresh = staged swap: the runner sends rows in chunks of ≤ 2,000 to
+`sheet_mirror_stage(p_lease_token, p_tab, p_chunk jsonb)` (staging table keyed by run), then
+`sheet_mirror_commit(p_lease_token, p_tab)` swaps them in one transaction (fence check →
+delete live rows for the tab → insert from staging → clear staging). Readers never see a
+half-written tab and the payload size stays bounded as the window grows. Retention: resolved
+review items purge after 90 days (data-retention cron, PR 1); the mirror purge rule is part of
+the conversion spec (PR 4) and requires the metric-equality check in §6.
 
 ## 5. PR 1 — foundation, channels, Customers sync, clinical mirror, admin page
 
@@ -223,9 +252,17 @@ items after 90 days — both added to the data-retention cron in the PR that cre
 ### 5.2 Clinical mirror
 
 Lab and consult rows (window ≥ 2026-05-26) are parsed and snapshot-replaced. Each line gets
-`identity_key`: `patient:<id>` when its name resolves to exactly one patient via
-`sheet_patient_links` or an exact full-name match with no conflict (§5.3); otherwise
-`name:<name_norm>`. Nothing else is written. Consult rows lagging lab (last consult
+`identity_key`, in order:
+1. `sheet_patient_links` decision for `name_norm ‖ dob` (lab/consult rows carry no DOB, so
+   `name_norm ‖ ''` plus any admin decision for that name);
+2. exact full-name match to exactly one live patient ⇒ `patient:<id>`;
+3. **loose fallback** (consults are typed without middle names): exactly one live patient with
+   the same `loose_key` **whose name tokens are a superset of the line's** ⇒ `patient:<id>`
+   (`method auto_loose`; measured on today's data this recovers ~76 consult and ~34 lab
+   identities);
+4. otherwise `name:<loose_key>` — keyed on the loose key so the lab and consult spellings of
+   one unlinked person collapse into one identity.
+Nothing else is written; the mirror never creates patients. Consult rows lagging lab (last consult
 2026-09-19 vs lab 2026-09-24) are shown per tab on the admin page as "sheet last updated".
 
 ### 5.3 Customers sync — identity rules
@@ -242,15 +279,25 @@ Lab and consult rows (window ≥ 2026-05-26) are parsed and snapshot-replaced. E
   loose (surname + first token) candidate — the loose matcher from
   `scripts/clinical-backfill/lib/names.ts` is used **only to find suggestions**, never to link.
 - **Review (`identity_conflict`)**: sole candidate with a hard conflict.
-- **Create patient**: zero full-name and zero loose candidates. `legacy_intake.source =
-  'sheet_sync:CUSTOMER LIST2'`, `raw`, `registered_on`; origin `'sheet'`.
+- **Corroboration guard before creating** (covers a corrected surname, which defeats both
+  name keys): if any live patient shares the row's normalised phone, or its DOB plus either
+  surname or first given name, or if a Customers row that was linked on the previous run
+  vanished this run and shares the phone or DOB ⇒ review item `possible_existing_patient`
+  (treated as an edit), never a new patient.
+- **Create patient**: zero full-name candidates, zero loose candidates and no corroboration hit.
+  `legacy_intake.source = 'sheet_sync:CUSTOMER LIST2'`, `raw`, `registered_on`; origin
+  `'sheet'`; `patient_acquisition_facts` row written.
+- **Expected volumes (replayed on today's data by the reviewer):** 4,866 distinct rows →
+  ~4,187 auto-link (86%), ~540 create, ~44 ambiguous, ~93 loose-only review, 2 DOB conflicts.
+  The first dry-run must land within ±5% of these or stop for investigation.
 - **Fill blanks** on linked patients via `sheet_sync_fill_patient(p_lease_token, …)`: one
   conditional `UPDATE … SET col = coalesce(col, new) … WHERE id = … RETURNING` per patient,
   before-images to `sheet_sync_changes`, `referral_source` governed by §4.1 ownership.
 - A row whose key changed (edited in the sheet) is re-matched; the full-name rule usually
   finds the same patient; a changed name with no full-name match goes to review — never a
-  silent duplicate. `sheet_patient_links` decisions by admins persist across edits for the
-  same `name_norm ‖ dob` pair.
+  silent duplicate. `sheet_patient_links` decisions persist across edits for the same
+  `name_norm ‖ dob` pair. Fixtures: surname corrected, phone corrected, middle name added,
+  exact duplicate rows, merged patient.
 
 ### 5.4 Pause, cron, admin page
 
@@ -286,20 +333,35 @@ Direct-access tests (local DB) for anon, portal-patient JWT, reception, inactive
 p_grain text, p_mode text)` (`security definer`, `grant execute to authenticated`, body starts
 with `if not has_role(array['admin']) then raise exception using errcode = '42501'`):
 
-- **Encounter stream** = (a) live visits (`deleted_at is null`) with `visit_date <
-  mirror_window_start`, or app-native (`legacy_import_run_id is null`) on any date; ∪
-  (b) `sheet_encounter_lines` (≥ window start). Identity = `patient:<id>` / `name:<norm>`.
-  Legacy visits end 2026-05-25 and the mirror starts 2026-05-26, so they are disjoint by
-  construction; app-native + mirror on the same day for the same linked patient count once.
-  After conversion (PR 4) the mirror is gone and (a) covers everything.
+- **Encounter stream**, two explicit modes keyed on `sheet_sync_settings.converted_at`:
+  - *Mirror mode* (`converted_at is null`): (a) live visits (`deleted_at is null`) with
+    `visit_date < mirror_window_start` **or** `legacy_import_run_id is null` (app-native, any
+    date) ∪ (b) `sheet_encounter_lines`. Legacy visits end 2026-05-25 and the mirror starts
+    2026-05-26, so (a)-legacy and (b) are disjoint by construction.
+  - *Converted mode*: (a) all live visits, including those whose `legacy_import_run_id`
+    belongs to the conversion run; (b) is not read. Deferred (held) encounters from the
+    conversion stay in a durable `sheet_deferred_rows` table and are read as (b) in this mode.
+  - The mode switch happens in the same transaction that sets `converted_at`; PR 4 must prove
+    `patient_sources_series` returns identical results before conversion, after conversion
+    and after the mirror purge, over the whole window.
+- **Identity** = `patient:<id>` or `name:<loose_key>` (§5.2). Name identities are
+  **unconfirmed**: charts draw them as a separate hatched band per channel and tables show
+  "confirmed + unconfirmed", never one merged exact number.
 - **New customers on D** = identities whose first encounter since **1 Dec 2023** is D,
-  **excluding** those whose Customers-tab row says REPEAT/OLD (counted separately as
-  "Returning, first time in our records"). Labelled on screen: *"first visit recorded since
-  Dec 2023"*. Customers-tab rows with `registered_on` but no encounter count on
-  `registered_on`. Undated identities are a footnote count, never on a day.
-- **All customers served on D** = distinct identities with an encounter on D.
-- **Channel** = patient's `referral_source` (or the customer row's mapped source for
-  `name:` identities that match a customer row by `name_norm`); else Not recorded.
+  **excluding** those whose `patient_acquisition_facts.sheet_new_repeat` = REPEAT/OLD (shown
+  as "Returning, first time in our records"). Labelled *"first visit recorded since Dec
+  2023"*. A registration with no encounter counts on `registered_on`, **unless** a `name:`
+  identity with the same loose key already has an encounter (same person, not yet linked).
+  Undated identities are a footnote count, never on a day.
+- **All customers served on D** = distinct identities with an encounter on D; a linked
+  patient with both an app-native visit and mirror lines on D counts once.
+- **Channel** = patient's `referral_source`; for `name:` identities, the mapped source of the
+  Customers row only when exactly one Customers row has that loose key; otherwise Not recorded.
+- **Revenue basis** = app-comparable: `test_requests.final_price_php` for (a) (live rows,
+  both deleted filters; consult lines there are the clinic fee) and `revenue_php` for (b)
+  (lab final, consult **clinic fee**). Mirror lines for a (patient, date) that also has an
+  app-native visit are excluded from revenue and listed in a reconciliation panel
+  ("possible double entry"), so nothing is summed twice.
 - `created_at` fallbacks use `(created_at at time zone 'Asia/Manila')::date`.
 
 **UI** `/staff/marketing/patients` "Patient Sources" (admin, like all Marketing): presets
@@ -310,9 +372,8 @@ patient list (linked identities) or a name list (admin, audited `patient_sources
 CSV via the report-CSV pattern (RLS-scoped server client, admin gate, row ceiling, audit row).
 
 **Cross-section (accepted):**
-- **Channel revenue** — billed amount on the service date: `test_requests.final_price_php`
-  (live rows, both deleted filters) for (a), `final_php` for mirror lines; excludes voided/
-  deleted; labelled "billed", not "collected".
+- **Channel revenue** — the revenue basis above on the service date; labelled "billed
+  (clinic share)", not "collected".
 - **Top referring doctors** — normalised `referred_by` (Customers tab + `patients.referred_by_doctor`).
 - **Admin dashboard tile** "New today: 3 Facebook · 1 Google · 5 walk-in" via Dashboard Cards.
 - **Front-desk prompt** — reception visit flow asks "How did you hear about us?" when
@@ -332,55 +393,57 @@ Home service, Doctor Procedure HMO → `sheet_encounter_lines` (`tab` values abo
 gains gift-code and flyer counts. No writes to `gift_codes`, `historic_hmo_claims` or any
 money table before conversion.
 
-## 8. PR 4 — switch-over conversion (from the frozen sheet)
+## 8. PR 4 — switch-over conversion (OUTLINE — own spec + review before code)
 
-Prerequisites merged **and deployed first** (own small PR 4a):
-- `src/lib/accounting/sync.ts`: all three fetchers and their watermark advance exclude
-  `legacy_import_run_id is not null` (visits and test_requests); mutation-checked test per fetcher.
-- `cash_drawer_state` and EOD collections exclude payments with `legacy_import_run_id`.
-- HMO claim builders (`hmo-claims/actions.ts`) and `v_hmo_unbilled` exclude legacy lines —
-  **owner of historical HMO receivables = `historic_hmo_claims` via Books (PR 5)**.
-- `historic_hmo_claims`: `source_tab` check gains `DOCTOR PROCEDURE HMO`; new
-  `source_key text` + unique `(source_tab, source_key)`; existing integer `source_row` kept.
+Shape (unchanged in intent): *Final sync, then pause* freezes the mirror; the frozen mirror
+(complete `raw` rows) becomes real visits/test_requests/payments once, atomically per
+encounter; history dashboards catch up; the mirror is purged only after metric equality.
 
-Conversion (PR 4b), only when `paused` and the last run `succeeded`:
-1. **Final sync, then pause**: a full run; completes only if every tab `succeeded` and there
-   are no open `ambiguous_patient`/`identity_conflict` items — or the admin explicitly defers
-   named items, whose encounters are then held (listed on the page) instead of converted.
-   Sets `final_synced_at`, `paused = true`.
-2. **Encounter = (tab, service_date, patient_id)**; lines of the same encounter across rows
-   form one visit. Lines without a linked patient create the patient first under §5.3 rules.
-3. **Lifecycle rules (from real columns):** payment method present and not `HMO` ⇒ one
-   payment per method (split text parsed; unparseable ⇒ review) with `received_at` = service
-   date; `HMO` ⇒ visit `hmo_provider_id` from `hmo_raw`, no payment; blank method ⇒
-   `unpaid`, line status `ready_for_release`, never `released`. Lines are `released` only
-   when paid/HMO **and** (`released_on` or release medium present); otherwise
-   `ready_for_release`. ₱0 lines are kept as ₱0 lines.
-4. **Atomic per encounter:** `sheet_convert_encounter(p_lease_token, p_payload jsonb)` inserts
-   visit + lines + payments + a `sheet_conversion_map(tab, sheet_row_hash, visit_id,
-   test_request_id, payment_id)` row in one transaction; `legacy_import_run_id` = the
-   conversion's `legacy_import_runs` row; `legacy_source_ref = 'sheet:<tab>:<row_hash>'`.
-   Retrying skips encounters already in the map (idempotent); an injected failure between
-   inserts leaves nothing behind (tested).
-5. Duplicate guard: an app-native live visit for the same patient/date ⇒ encounter held for
-   review, not converted.
-6. Gift codes → `gift_codes` (redeemed only when the redeeming visit converted; else held).
-7. Rollback: delete-by-run for rows nothing references; otherwise reported, never forced.
-8. Verification report: per-day counts and billed totals, sheet vs converted, must match
-   before the mirror is purged.
+**Binding requirements for the PR 4 spec** (from both review rounds):
+- **R1 Prerequisite PR 4a, deployed first:** exclude conversion-run rows from
+  `src/lib/accounting/sync.ts` (all three fetchers + watermark advance, per-fetcher mutation
+  tests); `cash_drawer_state` / EOD collections; the HMO claim builders
+  (`hmo-claims/actions.ts`), `v_hmo_unbilled` **and the independent unbilled branch of
+  `v_hmo_ar_aging`** plus the aging-snapshot writer and their exports; **Patient AR** (or an
+  explicit owner decision to show sheet-era balances there). Fix the historical HMO `kind`
+  classification so `DOCTOR PROCEDURE HMO` is not read as lab. Grep + catalog sweep of every
+  view/function reading payments/visits/test_requests recorded in the spec with a
+  decision per surface (exclude / catch up by design / silent by construction).
+- **R2 Final sync completion:** every tab `succeeded`; open identity items resolved or
+  explicitly deferred (deferred encounters → durable `sheet_deferred_rows`, still reported).
+- **R3 Keys:** separate immutable keys for encounter `(tab, service_date, patient)`, source
+  occurrence (row hash + occurrence index for identical lines) and **payment allocation**
+  (one row can pay by two methods); one-to-many `sheet_conversion_map`; `legacy_source_ref`
+  unique per allocation, not per row.
+- **R4 Lifecycle from real columns:** payment methods allow-listed via `mopToMethod`
+  (CASH, GCASH, CARD PAY, BPI, BDO, HMO); anything else (`PRE EMPLOYMENT`, `OK`, blank) →
+  review, never a payment; split-payment text parsed or reviewed; ₱0 encounters → `waived`;
+  consult `final_price_php` = clinic fee, doctor PF from the fee columns; release only when
+  paid/HMO and released_on/medium present; the payment-method/release semantics validated
+  with reception before the spec is approved.
+- **R5 Ownership after conversion:** converted records are **historical and immutable** —
+  guarded writes (payments, releases, voids, deletes) on conversion-run visits are blocked
+  with a P-code; still-outstanding balances are handed over explicitly (listed for
+  reception, settled through a dedicated "settle sheet-era balance" path that Books knows
+  about). Sheet-era doctor PF is settled outside the app or accrued by Books — stated, not implied.
+- **R6 Atomicity + fencing:** one RPC per encounter inserting visit + lines + payments + map
+  rows in one transaction under the §4.2 lease; injected-failure and retry tests.
+- **R7 Reporting continuity:** the §6 mode switch; pre/post-conversion and post-purge
+  equality of `patient_sources_series`; reconciliation distinguishing converted,
+  matched-native, deferred and rejected rows; collections and outstanding balances
+  reconciled, not only billed totals.
+- **R8 HMO:** `historic_hmo_claims` gains `DOCTOR PROCEDURE HMO` + `source_key text`
+  (unique per tab); claim status/dates/OR refs from the raw row so paid claims are not
+  rebuilt as unpaid; gift codes redeemed only against a converted visit, else held.
 
-## 9. PR 5 — Books
+## 9. PR 5 — Books (OUTLINE — own spec + review before code)
 
-From converted records only (frozen — no later corrections to chase):
-- `sheet_books_postings (business_date, tab, source_version text, journal_entry_id,
-  status)` with **unique `(business_date, tab) where status = 'posted'`**.
-- `sheet_post_books_day(p_date, p_tab)` (security definer, service_role; admin action):
-  one transaction — eligibility checks (not already posted; no overlap with the May history
-  import's `xlsx <TAB> r<N>` rows, which reach 2026-05-26..30; not an EOD-closed day), JE +
-  lines + posted status + posting row. An interrupted attempt leaves nothing.
-- Screen: per day, "ready to post" totals and the lab/consult lag; **Post day** / **Post
-  range**; a posted day is reversed only by an explicit **Reverse** that posts a reversing JE.
-- HMO receivables for converted HMO lines are booked here into `historic_hmo_claims`.
+Binding requirements: DB-unique posting identity `(business_date, tab)` for posted rows;
+posting in one transaction (eligibility → JE + lines → posted state); explicit **Reverse**
+only; per-row overlap check with the May history import (`xlsx <TAB> r<N>` reaches
+2026-05-26..30); inputs are the immutable converted records **plus** R5's settlement path,
+so later sheet-era settlements post as their own entries rather than silently diverging;
+HMO receivables booked via `historic_hmo_claims`; doctor PF accrual decision from R5.
 
 ## 10. PR 6 — cut-over hygiene
 
@@ -431,6 +494,27 @@ verification, final guide pass.
 | F-P2-3 | ACLs, exports, retention | In-body `has_role` admin check; report-CSV pattern; retention work in the PR creating each table. |
 | F-P2-4 | Manila dates | Integer serial math; `at time zone 'Asia/Manila'`. |
 | F-P3 | YAGNI | Dropped `enabled_tabs` and DB sheet id; kept ad spend (owner accepted) but in PR 2 scope only. |
+
+
+### Round 2 (recheck of v2)
+
+| # | Finding | Resolution in v3 |
+|---|---|---|
+| C2-1 | Corrected surname can still create a duplicate | Corroboration guard (phone / DOB+name / vanished-linked row) → `possible_existing_patient` (§5.3); fixtures. |
+| C2-2 / F-N5 | Ownership init treats matching values as provenance; GUC unusable via PostgREST; origin column writable | All existing values start `staff`; re-sort is an admin-approved proposal; trigger by caller role, origin not directly writable; `row_version` for reverts (§4.1, §4.2). |
+| C2-3 | Mirror drops financial columns | Mirror keeps `raw jsonb` of every column + clinic fee / revenue basis (§4.3); PR 4 R4/R8. |
+| C2-4 / F-N1 | Stats lose converted visits after purge | Explicit mirror/converted modes, durable `patient_acquisition_facts` and `sheet_deferred_rows`, equality proof (§6, R7). |
+| C2-5 | Split payments share one ref | R3 allocation keys, one-to-many map. |
+| C2-6 / F-N7 | `v_hmo_ar_aging`, snapshots, Patient AR, HMO kind | R1 (PR 4a scope + per-surface decision catalog). |
+| C2-7 | Converted records writable via live money flows | R5 immutable historical records + explicit handover path; PF stated. |
+| C2-8 / F-N2 | Name identities collapse/duplicate; revenue double-sum | Loose fallback + `name:<loose_key>`, unconfirmed band, single-row attribution, native-overlap excluded from revenue (§5.2, §6). |
+| F-N3 | Non-method payment values, ₱0 consults, Patient AR | R4 allow-list, ₱0 → waived, Patient AR in R1. |
+| F-N4 | Consult revenue basis | `revenue_php` = clinic fee for consults (§4.3, §6). |
+| F-N6 | Link key mismatch | `name_norm ‖ dob` everywhere (§4.2). |
+| F-N8 | Count drift, payload ceiling | §2 counts re-measured by dry-run; staged ≤2,000-row chunks (§4.3). |
+
+PRs 4–5 are intentionally left as outlines: both reviewers flagged their open questions as
+needing a focused review round of their own (Codex: astra high on conversion-to-Books ownership).
 
 ## 13. Open questions for the owner
 
