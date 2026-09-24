@@ -34,7 +34,7 @@ export const PaymentRecordSchema = z.object({
 
 export type PaymentRecordInput = z.infer<typeof PaymentRecordSchema>;
 
-// Edit payment (0160). Only the counter methods — a gift code is redeemed,
+// Edit payment (0161). Only the counter methods — a gift code is redeemed,
 // never keyed in, and HMO settlements come from the claims screens.
 export const PaymentEditSchema = z.object({
   payment_id: z.string().uuid(),

@@ -169,7 +169,7 @@ export function translatePgError(err: PgError): string {
     // rewrite it.
     case "P0053":
       return "A website message cannot be edited. You can only change its status, type or notes.";
-    // Edit payment (0160): correct_payment refuses a stale, already-voided,
+    // Edit payment (0161): correct_payment refuses a stale, already-voided,
     // gift-code, HMO or imported payment, or an input it cannot record. The
     // DB message names which one and is written for reception.
     case "P0054":

@@ -1,4 +1,4 @@
-// Edit payment (migration 0160, `correct_payment`). The SQL function is the
+// Edit payment (migration 0161, `correct_payment`). The SQL function is the
 // source of truth; this module mirrors its rules so the visit page can hide
 // the Edit button on a payment the database would refuse, and so the edit
 // dialog can say what will happen before anyone presses Save.
@@ -33,21 +33,25 @@ export type PaymentEditability =
  * Whether Edit is offered for a payment. Mirrors correct_payment's refusals:
  * voided rows, gift-code redemptions and HMO settlements, and rows from the
  * legacy history import. Every one of them can still be deleted (voided).
+ * Move (a correction onto another visit) refuses exactly the same rows.
  */
-export function paymentEditability(p: EditablePaymentRow): PaymentEditability {
+export function paymentEditability(
+  p: EditablePaymentRow,
+  verb: "edited" | "moved" = "edited",
+): PaymentEditability {
   if (p.voided_at) {
     return { editable: false, reason: "This payment was already deleted or edited." };
   }
   if (p.method === "gift_code" || p.method === "hmo") {
     return {
       editable: false,
-      reason: "Gift code and HMO payments cannot be edited. Delete it and record it again.",
+      reason: `Gift code and HMO payments cannot be ${verb}. Delete it and record it again.`,
     };
   }
   if (p.legacy_import_run_id) {
     return {
       editable: false,
-      reason: "Payments from the imported history cannot be edited. Delete it and record it again.",
+      reason: `Payments from the imported history cannot be ${verb}. Delete it and record it again.`,
     };
   }
   return { editable: true };

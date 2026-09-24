@@ -6568,6 +6568,7 @@ export type Database = {
           p_payment_id: string
           p_reason: string
           p_reference_number: string
+          p_visit_id?: string
         }
         Returns: string
       }

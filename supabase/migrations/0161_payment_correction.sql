@@ -1,8 +1,9 @@
 -- =============================================================================
--- 0160_payment_correction.sql
+-- 0161_payment_correction.sql
 -- =============================================================================
--- "Edit payment" on the visit page. Reception records a payment with the wrong
--- method (GCash keyed as Cash) or the wrong amount, and until now the only fix
+-- "Edit payment" and "Move payment" on the visit page. Reception records a
+-- payment with the wrong method (GCash keyed as Cash), the wrong amount, or on
+-- the wrong visit, and until now the only fix
 -- was Void + Record payment again — two steps, two chances to stop halfway and
 -- leave the visit reading "Unpaid", and nothing linking the two rows.
 --
@@ -24,6 +25,12 @@
 -- Either both land or neither does: the closed-day lock (P0015), the
 -- deleted-visit guard (P0045) or a stale row all abort the whole edit.
 --
+-- MOVE (p_visit_id set to another visit) is the same re-create-then-void with
+-- the corrected row on the target visit: the money arrived when it arrived, it
+-- was only filed against the wrong visit. The original's void_reason starts
+-- 'Moved: ' instead of 'Edited: '. The target must exist and be live — P0045
+-- would refuse a deleted one on insert, but with a raw message.
+--
 -- A change to reference/notes ONLY is not a money change (P0004 does not guard
 -- those columns) and is updated in place — no reversal churn in the books.
 --
@@ -42,7 +49,7 @@ alter table public.payments
   add column corrects_payment_id uuid references public.payments(id);
 
 comment on column public.payments.corrects_payment_id is
-  'Set on a payment created by "Edit payment" (correct_payment, 0160): the voided original it replaces.';
+  'Set on a payment created by "Edit payment" (correct_payment, 0161): the voided original it replaces.';
 
 -- One correction per original: a second concurrent edit of the same payment
 -- fails here even if it slipped past the row lock's voided_at re-check.
@@ -57,7 +64,8 @@ create or replace function public.correct_payment(
   p_reference_number text,
   p_notes            text,
   p_reason           text,
-  p_actor_id         uuid
+  p_actor_id         uuid,
+  p_visit_id         uuid default null
 )
 returns uuid
 language plpgsql
@@ -67,6 +75,8 @@ as $$
 declare
   v_old    public.payments%rowtype;
   v_new_id uuid;
+  v_target uuid;
+  v_moving boolean;
   v_ref    text := nullif(btrim(coalesce(p_reference_number, '')), '');
   v_notes  text := nullif(btrim(coalesce(p_notes, '')), '');
 begin
@@ -110,8 +120,20 @@ begin
     raise exception 'Amount can have at most two decimal places.' using errcode = 'P0054';
   end if;
 
+  v_target := coalesce(p_visit_id, v_old.visit_id);
+  v_moving := v_target <> v_old.visit_id;
+  if v_moving then
+    if not exists (select 1 from public.visits where id = v_target) then
+      raise exception 'Visit not found.' using errcode = 'P0054';
+    end if;
+    if exists (select 1 from public.visits where id = v_target and deleted_at is not null) then
+      raise exception 'That visit was deleted from the queue. Restore it before moving a payment onto it.'
+        using errcode = 'P0054';
+    end if;
+  end if;
+
   -- Reference / notes only: not a money change, edit in place.
-  if p_amount_php = v_old.amount_php and p_method = v_old.method then
+  if not v_moving and p_amount_php = v_old.amount_php and p_method = v_old.method then
     if v_ref is not distinct from v_old.reference_number
        and v_notes is not distinct from v_old.notes then
       raise exception 'Nothing changed.' using errcode = 'P0054';
@@ -123,12 +145,12 @@ begin
     return p_payment_id;
   end if;
 
-  -- Money change: re-create, then void. See the header for the order.
+  -- Money change or move: re-create, then void. See the header for the order.
   insert into public.payments (
     visit_id, amount_php, method, reference_number, notes,
     received_by, received_at, corrects_payment_id
   ) values (
-    v_old.visit_id, p_amount_php, p_method, v_ref, v_notes,
+    v_target, p_amount_php, p_method, v_ref, v_notes,
     v_old.received_by, v_old.received_at, v_old.id
   )
   returning id into v_new_id;
@@ -136,14 +158,14 @@ begin
   update public.payments
      set voided_at   = now(),
          voided_by   = p_actor_id,
-         void_reason = 'Edited: ' || btrim(p_reason)
+         void_reason = case when v_moving then 'Moved: ' else 'Edited: ' end || btrim(p_reason)
    where id = p_payment_id;
 
   return v_new_id;
 end;
 $$;
 
-revoke execute on function public.correct_payment(uuid, numeric, text, text, text, text, uuid)
+revoke execute on function public.correct_payment(uuid, numeric, text, text, text, text, uuid, uuid)
   from public, anon, authenticated;
-grant  execute on function public.correct_payment(uuid, numeric, text, text, text, text, uuid)
+grant  execute on function public.correct_payment(uuid, numeric, text, text, text, text, uuid, uuid)
   to service_role;

@@ -11,7 +11,7 @@ import {
 import { PaymentEditSchema } from "@/lib/validations/payment";
 
 const MIGRATION = readFileSync(
-  join(process.cwd(), "supabase/migrations/0160_payment_correction.sql"),
+  join(process.cwd(), "supabase/migrations/0161_payment_correction.sql"),
   "utf8",
 );
 

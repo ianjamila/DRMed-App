@@ -413,7 +413,13 @@ export const STAFF_NAV: StaffNavSection[] = [
           {
             href: "/staff/admin/reports/deleted-entries",
             label: ROUTE_NAME["/staff/admin/reports/deleted-entries"],
-            description: "Every visit or test deleted from the queues — who deleted it, why, what it was worth, and whether it was restored. Only unpaid entries can be deleted; paid ones need a payment void first.",
+            description: "Every visit or test deleted from the queues — who deleted it, why, what it was worth, and whether it was restored. Only unpaid entries can be deleted; paid ones need a payment deleted first.",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/reports/payment-changes",
+            label: ROUTE_NAME["/staff/admin/reports/payment-changes"],
+            description: "Every payment that was deleted, edited (wrong method or amount) or moved to another visit — who changed it, when, why, and what it became. Use it to spot patterns, like one cashier fixing methods often.",
             roles: ["admin"],
           },
           {

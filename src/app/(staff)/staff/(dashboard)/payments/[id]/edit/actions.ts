@@ -53,7 +53,7 @@ export async function editPaymentAction(input: {
   // this read and the RPC is still refused there.
   const { data: before, error: readErr } = await admin
     .from("payments")
-    .select("id, visit_id, amount_php, method, reference_number, notes, voided_at, legacy_import_run_id")
+    .select("id, visit_id, amount_php, method, reference_number, notes, voided_at, legacy_import_run_id, visits ( patient_id )")
     .eq("id", d.payment_id)
     .maybeSingle();
   if (readErr) return { ok: false, error: translatePgError(readErr) };
@@ -109,5 +109,7 @@ export async function editPaymentAction(input: {
   });
 
   revalidatePath(`/staff/visits/${before.visit_id}`);
+  const visit = Array.isArray(before.visits) ? before.visits[0] : before.visits;
+  if (visit?.patient_id) revalidatePath(`/staff/patients/${visit.patient_id}`);
   return { ok: true };
 }
