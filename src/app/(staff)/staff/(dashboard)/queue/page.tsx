@@ -1,9 +1,23 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
-import { queueTitleForRole, sectionsForRole } from "@/lib/auth/role-sections";
+import {
+  canClaimSection,
+  claimOwnerLabel,
+  claimOwnerRole,
+  queueTitleForRole,
+  sectionsForRole,
+} from "@/lib/auth/role-sections";
 import { RealtimeRefresher, type Subscription } from "@/components/staff/realtime-refresher";
 import { ClaimButton } from "./claim-button";
+import { QueueUnclaimButton } from "./queue-unclaim-button";
+import {
+  claimRemarks,
+  MAX_REMARKS_SHOWN,
+  type ClaimEvent,
+} from "@/lib/queue/claim-remarks";
+import { fetchClaimEvents } from "@/lib/queue/fetch-claim-events";
+import { ClaimRemarksList } from "@/components/staff/claim-remarks-list";
 import { sectionTabClass, sectionTabsNavClass } from "@/components/staff/section-tabs-style";
 import { PageHeader } from "@/components/staff/page-header";
 import {
@@ -50,6 +64,8 @@ type QueueCardSingle = {
   releasedAt: string | null;
   label: string;
   code: string;
+  // Decides whether the list offers Claim — x-ray is x-ray-technician only.
+  section: string | null;
   visitNumber: string;
   patientName: string;
   patientDrmId: string;
@@ -96,7 +112,7 @@ const TEST_STATUS_STYLE: Record<string, string> = {
   in_progress: "bg-sky-100 text-sky-900",
 };
 
-type QueueFilter = "mine" | "all" | "pending_release" | "released_today";
+type QueueFilter = "mine" | "all" | "unclaimed" | "pending_release" | "released_today";
 
 // Rows per page. The queue is a live worklist that rarely fills one page, so
 // the pager stays hidden day to day — but the date filter can reach back into a
@@ -259,7 +275,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   // visits only. Applied in the query so paging counts stay honest. "Pending
   // release" and "Released today" are records of completed work, not claimable
   // work, so they stay ungated (release itself is trigger-enforced on payment).
-  const worklistTab = filter === "all" || filter === "mine";
+  const worklistTab = filter === "all" || filter === "mine" || filter === "unclaimed";
   if (worklistTab) {
     query = query.or(LAB_QUEUE_GATE_VISITS_OR, { foreignTable: "visits" });
   }
@@ -294,6 +310,13 @@ export default async function QueuePage({ searchParams }: SearchProps) {
 
   if (filter === "mine" && user) {
     query = query.eq("assigned_to", user.id);
+  }
+
+  // Waiting for someone to pick up — the same predicate as the dashboards'
+  // "Unclaimed" cards (requested/in_progress with nobody holding it), so a
+  // card's number and the tab it opens agree.
+  if (filter === "unclaimed") {
+    query = query.is("assigned_to", null);
   }
 
   // Same predicate as the Mine tab, applied on top of ANY tab. Harmless to
@@ -406,6 +429,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         releasedAt: r.released_at,
         label: svc.name,
         code: svc.code,
+        section: svc.section,
         visitNumber: visit.visit_number,
         patientName,
         patientDrmId: patient.drm_id,
@@ -426,7 +450,8 @@ export default async function QueuePage({ searchParams }: SearchProps) {
     : cards;
 
   // Admins see who holds each in-progress claim so stuck claims are visible
-  // straight from the list (unclaim/reassign lives on the detail page).
+  // straight from the list (Unclaim is on the row; reassign lives on the
+  // detail page).
   const claimerNames = new Map<string, string>();
   if (session.role === "admin") {
     const claimerIds = Array.from(
@@ -440,6 +465,28 @@ export default async function QueuePage({ searchParams }: SearchProps) {
       for (const p of claimers ?? []) claimerNames.set(p.id, p.full_name);
     }
   }
+  // Remarks column: each test's claim history (claimed / unclaimed / reassigned)
+  // from the audit log, via the queue_claim_remarks reader (0160) — audit_log
+  // itself is admin-only, and the technicians are who need to see it. One call
+  // for the whole page (≤ 100 rows; the function caps at 200).
+  const pageTestIds = (rows ?? []).map((r) => r.id);
+  const remarksByTest = await fetchClaimEvents(supabase, pageTestIds);
+  const cardRemarks = (card: QueueCard) =>
+    claimRemarks(
+      (card.kind === "grouped" ? card.memberIds : [card.testRequestId]).flatMap(
+        (id): ClaimEvent[] => remarksByTest.get(id) ?? [],
+      ),
+    );
+
+  // Unclaim from the list: the holder may hand back their own claim, an admin
+  // anyone's (the detail page's ReassignPanel power). A result already
+  // uploaded moves the status on, so "in_progress" is the whole window. The
+  // server action re-proves every part of this.
+  const canUnclaim = (card: QueueCard) =>
+    card.status === "in_progress" &&
+    card.claimedBy !== null &&
+    (session.role === "admin" || card.claimedBy === user?.id);
+
   // `q` is applied after the fetch, so it can only narrow the page in hand —
   // everything else is a real DB filter and counts against the whole table.
   const hasServerFilters = hasDateRange || Boolean(visit);
@@ -540,6 +587,11 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           active={filter === "all"}
         />
         <FilterTab
+          href={buildHref({ filter: "unclaimed", page: null })}
+          label="Unclaimed"
+          active={filter === "unclaimed"}
+        />
+        <FilterTab
           href={buildHref({ filter: "pending_release", page: null })}
           label="Pending release"
           active={filter === "pending_release"}
@@ -560,8 +612,9 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           for the same reason the tabs are not in the header's actions slot —
           this page's subtitle changes length on every tab, so anything sharing
           that row visibly jumps. The Mine tab already IS mine, so the toggle
-          would be a no-op there. */}
-      {filter !== "mine" ? (
+          would be a no-op there — and on Unclaimed it could only ever empty
+          the list. */}
+      {filter !== "mine" && filter !== "unclaimed" ? (
         <div className="mb-4">
           <Link
             href={buildHref({ mine: mineOnly ? null : "1", page: null })}
@@ -727,18 +780,21 @@ export default async function QueuePage({ searchParams }: SearchProps) {
               <PlainTh label="Test" />
               {th("status", "Status")}
               <PlainTh label="Action" align="right" />
+              <PlainTh label="Remarks" />
             </tr>
           </thead>
           <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
             {matched.length === 0 ? (
               <tr>
                 <td
-                  colSpan={6}
+                  colSpan={7}
                   className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]"
                 >
                   {hasFilters
                     ? "No queued tests match these filters."
-                    : "Queue is empty."}
+                    : filter === "unclaimed"
+                      ? "Nothing is waiting to be picked up."
+                      : "Queue is empty."}
                 </td>
               </tr>
             ) : (
@@ -794,19 +850,33 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                         ) : null}
                       </td>
                       <td className="px-4 py-3 text-right">
-                        {card.status === "requested" ? (
+                        {card.status === "requested" &&
+                        canClaimSection(session.role, card.section) ? (
                           <ClaimButton
                             testRequestId={card.testRequestId}
                             navigateOnClaim
                           />
                         ) : (
-                          <Link
-                            href={card.href}
-                            className="text-xs font-bold text-[color:var(--color-brand-cyan)] hover:underline"
-                          >
-                            Open →
-                          </Link>
+                          <>
+                            <Link
+                              href={card.href}
+                              className="text-xs font-bold text-[color:var(--color-brand-cyan)] hover:underline"
+                            >
+                              Open →
+                            </Link>
+                            {card.status === "requested" ? (
+                              <ClaimOwnerHint section={card.section} />
+                            ) : null}
+                          </>
                         )}
+                        {canUnclaim(card) ? (
+                          <div className="mt-1 flex justify-end">
+                            <QueueUnclaimButton
+                              testRequestIds={[card.testRequestId]}
+                              entryLabel={card.label}
+                            />
+                          </div>
+                        ) : null}
                         {card.canDelete ? (
                           <div className="mt-1.5 flex justify-end">
                             <QueueDeleteDialog
@@ -818,6 +888,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                           </div>
                         ) : null}
                       </td>
+                      <RemarksCell remarks={cardRemarks(card)} />
                     </tr>
                   );
                 }
@@ -882,6 +953,14 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                       >
                         Open →
                       </Link>
+                      {canUnclaim(card) ? (
+                        <div className="mt-1 flex justify-end">
+                          <QueueUnclaimButton
+                            testRequestIds={card.memberIds}
+                            entryLabel={card.label}
+                          />
+                        </div>
+                      ) : null}
                       {card.canDelete ? (
                         <div className="mt-1.5 flex justify-end">
                           <QueueDeleteDialog
@@ -893,6 +972,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                         </div>
                       ) : null}
                     </td>
+                    <RemarksCell remarks={cardRemarks(card)} />
                   </tr>
                 );
               })
@@ -925,6 +1005,33 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         noun="test"
       />
     </div>
+  );
+}
+
+// Where a Claim button would be, for a test only another role may claim
+// (x-ray → X-ray technician). Says why instead of silently offering nothing.
+function ClaimOwnerHint({ section }: { section: string | null }) {
+  const owner = claimOwnerRole(section);
+  if (!owner) return null;
+  return (
+    <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
+      {claimOwnerLabel(owner)} only
+    </p>
+  );
+}
+
+function RemarksCell({ remarks }: { remarks: ReturnType<typeof claimRemarks> }) {
+  if (remarks.length === 0) {
+    return (
+      <td className="px-4 py-3 text-xs text-[color:var(--color-brand-text-soft)]">
+        —
+      </td>
+    );
+  }
+  return (
+    <td className="min-w-48 max-w-xs px-4 py-3 text-xs">
+      <ClaimRemarksList remarks={remarks} max={MAX_REMARKS_SHOWN} />
+    </td>
   );
 }
 

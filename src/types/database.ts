@@ -6559,6 +6559,18 @@ export type Database = {
         Returns: number
       }
       period_status_for: { Args: { p_date: string }; Returns: string }
+      queue_claim_remarks: {
+        Args: { p_test_request_ids: string[] }
+        Returns: {
+          action: string
+          actor_name: string
+          created_at: string
+          new_holder_name: string
+          previous_holder_name: string
+          reason: string
+          test_request_id: string
+        }[]
+      }
       recompute_clinic_fee_for_unreleased: { Args: never; Returns: Json }
       recompute_hmo_batch_status: {
         Args: { p_batch_id: string }

@@ -79,8 +79,8 @@ export function ReassignPanel({
       ) : (
         <div className="space-y-2 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white p-2">
           <p className="text-[color:var(--color-brand-text-mid)]">
-            Unclaiming puts this test back in the queue for anyone to claim.
-            The action is audit-logged.
+            Unclaiming puts this test back in the queue for anyone to claim. The
+            action is audit-logged.
           </p>
           <textarea
             rows={2}
@@ -113,29 +113,36 @@ export function ReassignPanel({
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-2 border-t border-[color:var(--color-brand-bg-mid)] pt-2">
-        <select
-          value={newAssignee}
-          onChange={(e) => setNewAssignee(e.target.value)}
-          disabled={pending}
-          className="min-h-[44px] rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 text-xs"
-        >
-          <option value="">Reassign to…</option>
-          {labStaff.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.full_name} ({s.role.replace(/_/g, " ")})
-            </option>
-          ))}
-        </select>
-        <button
-          type="button"
-          onClick={onReassign}
-          disabled={pending || !newAssignee}
-          className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-3 text-xs font-bold uppercase tracking-wider text-white disabled:opacity-50"
-        >
-          {pending ? "Reassigning…" : "Reassign"}
-        </button>
-      </div>
+      {labStaff.length === 0 ? (
+        <p className="border-t border-[color:var(--color-brand-bg-mid)] pt-2 text-[color:var(--color-brand-text-soft)]">
+          No one else can take this test right now — only active staff who could
+          claim it themselves are listed.
+        </p>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2 border-t border-[color:var(--color-brand-bg-mid)] pt-2">
+          <select
+            value={newAssignee}
+            onChange={(e) => setNewAssignee(e.target.value)}
+            disabled={pending}
+            className="min-h-[44px] rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 text-xs"
+          >
+            <option value="">Reassign to…</option>
+            {labStaff.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.full_name} ({s.role.replace(/_/g, " ")})
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={onReassign}
+            disabled={pending || !newAssignee}
+            className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-3 text-xs font-bold uppercase tracking-wider text-white disabled:opacity-50"
+          >
+            {pending ? "Reassigning…" : "Reassign"}
+          </button>
+        </div>
+      )}
 
       {err ? <p className="text-red-600">{err}</p> : null}
     </div>
