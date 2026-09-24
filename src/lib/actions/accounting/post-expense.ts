@@ -28,7 +28,7 @@ export type PostExpenseResult =
  * **This function must never credit 1010 Cash on Hand.** A till expense has to
  * be written as an `eod_cash_adjustments` row via `postTillCashExpense()`, or
  * the drawer never learns the money left — see `TILL_CASH_MOP` for the full
- * consequence. Both the reception Petty cash page and Quick expense on
+ * consequence. Both the reception Petty Cash tab and Quick expense on
  * "Clinic Cash" used to come through here; the refusal below is what keeps a
  * future caller from quietly restoring that.
  *
@@ -58,7 +58,7 @@ export async function postExpenseJournalEntry(args: {
     return {
       ok: false,
       error:
-        "Cash paid from the till has to go through the cash drawer so the day's count stays right. Record it on the Petty cash page.",
+        "Cash paid from the till has to go through the cash drawer so the day's count stays right. Record it under Cash Drawer › Petty Cash.",
     };
   }
 

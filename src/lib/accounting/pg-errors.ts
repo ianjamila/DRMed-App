@@ -145,7 +145,7 @@ export function translatePgError(err: PgError): string {
     // this: both doors now write eod_cash_adjustments. It fires only if some
     // future code path tries to post a petty-cash journal entry directly.
     case "P0049":
-      return "Cash paid from the till has to go through the cash drawer so the day's count stays right. Record it on the Petty cash page.";
+      return "Cash paid from the till has to go through the cash drawer so the day's count stays right. Record it under Cash Drawer › Petty Cash.";
     // 0147 — the entry is already billed to an HMO. Deleting it would drop a
     // real receivable out of the HMO reports (which skip deleted rows since
     // 0146), so the claim has to be withdrawn first.

@@ -31,7 +31,7 @@ export type QuickExpenseInput = z.infer<typeof QuickExpenseSchema>;
  *
  * **"Clinic Cash" is not a journal entry.** Physical cash out of the till is
  * written as an `eod_cash_adjustments` row (`kind='petty_cash'`) by
- * `postTillCashExpense`, exactly as the reception Petty cash page does, so the
+ * `postTillCashExpense`, exactly as the reception Petty Cash tab does, so the
  * cash drawer sees the outflow and the day-close lock applies. Every other MOP
  * still posts a plain journal entry through `postExpenseJournalEntry`.
  *

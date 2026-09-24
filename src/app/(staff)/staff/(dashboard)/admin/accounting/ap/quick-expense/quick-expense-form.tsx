@@ -74,7 +74,7 @@ export function QuickExpenseForm({ defaultDate }: Props) {
       const posted = r.data.entry_number ? `Posted ${r.data.entry_number}.` : "Posted.";
       setOk(
         isTillCashMop(mop as Mop)
-          ? `${posted} Recorded as a cash-drawer payout — it also shows on the Petty cash page.`
+          ? `${posted} Recorded as a cash-drawer payout — it also shows under Cash Drawer › Petty Cash.`
           : posted,
       );
       reset();
