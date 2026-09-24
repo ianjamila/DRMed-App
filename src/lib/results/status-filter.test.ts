@@ -3,7 +3,9 @@ import {
   RESULT_STATUSES,
   RESULT_STATUS_LABEL,
   RESULT_STATUS_SPEC,
+  TEST_STATUS_LABEL,
   parseResultStatusFilter,
+  testStatusLabel,
   resultStatusSpec,
   type ResultStatusFilter,
 } from "./status-filter";
@@ -106,5 +108,25 @@ describe("tab metadata", () => {
     expect(seen.get("cancelled")).toBe(1);
     expect(seen.get("requested")).toBe(2);
     expect(seen.get("in_progress")).toBe(2);
+  });
+});
+
+describe("testStatusLabel", () => {
+  it("labels every status a results tab can show, in words", () => {
+    const shown = new Set(Object.values(RESULT_STATUS_SPEC).flatMap((spec) => spec.statuses));
+    for (const status of shown) {
+      expect(TEST_STATUS_LABEL[status], status).toBeDefined();
+      expect(testStatusLabel(status)).not.toContain("_");
+    }
+  });
+
+  it("uses the same words as the visit page for the sign-off step", () => {
+    expect(testStatusLabel("result_uploaded")).toBe("Awaiting sign-off");
+    expect(testStatusLabel("ready_for_release")).toBe("Ready for release");
+    expect(testStatusLabel("in_progress")).toBe("In progress");
+  });
+
+  it("never prints a raw code for a status it does not know", () => {
+    expect(testStatusLabel("on_hold_for_review")).toBe("On hold for review");
   });
 });

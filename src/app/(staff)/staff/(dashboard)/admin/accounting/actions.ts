@@ -28,6 +28,12 @@ const RewindSchema = z.object({
       /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/,
       "Pick a valid date and time.",
     ),
+  // The confirm dialog asks why — a rewind duplicates rows in the sheet, so
+  // the reason is kept in the audit row and on the tab's watermark note.
+  reason: z
+    .string()
+    .trim()
+    .min(3, "Give a reason for the rewind (3+ characters)."),
 });
 
 // Runs the sync for one tab or all three. Does not rewind the watermark.
@@ -78,6 +84,7 @@ export async function rewindAndSyncAction(
   const parsed = RewindSchema.safeParse({
     scope: formData.get("scope"),
     from: formData.get("from"),
+    reason: formData.get("reason") ?? "",
   });
   if (!parsed.success) {
     return {
@@ -97,7 +104,12 @@ export async function rewindAndSyncAction(
     actor_id: session.user_id,
     actor_type: "staff",
     action: "accounting.resync.requested",
-    metadata: { scope, from_manila: parsed.data.from, from_utc: manilaIso },
+    metadata: {
+      scope,
+      from_manila: parsed.data.from,
+      from_utc: manilaIso,
+      reason: parsed.data.reason,
+    },
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),
   });
@@ -106,7 +118,7 @@ export async function rewindAndSyncAction(
     await rewindWatermark(
       onlyKey ?? "all",
       manilaIso,
-      `manual rewind by ${session.user_id} from ${parsed.data.from} (Manila)`,
+      `manual rewind by ${session.user_id} from ${parsed.data.from} (Manila): ${parsed.data.reason}`,
     );
     const result = await runAccountingSync({
       trigger: "manual",

@@ -84,3 +84,21 @@ describe("deriveCronStatus", () => {
     expect(deriveCronStatus("2026-09-01T00:00:00Z", now, maxAge, "2026-09-22")).toBe("stale");
   });
 });
+
+describe("Cron Health names each task in plain words", () => {
+  it("gives every scheduled task its own label and description, never a route", () => {
+    const labels = CRON_HEARTBEATS.map((cron) => cron.label);
+    expect(new Set(labels).size).toBe(CRON_HEARTBEATS.length);
+    for (const cron of CRON_HEARTBEATS) {
+      expect(cron.label, cron.key).toMatch(/^[A-Z]/);
+      expect(cron.label, cron.key).not.toMatch(/[/_?=]|api|cron/i);
+      expect(cron.description.length, cron.key).toBeGreaterThan(20);
+      expect(cron.description, cron.key).not.toMatch(/[/_?=]/);
+    }
+  });
+
+  it("tells the daily and weekly template checks apart", () => {
+    const byKey = new Map<string, string>(CRON_HEARTBEATS.map((cron) => [cron.key, cron.label]));
+    expect(byKey.get("template-health")).not.toBe(byKey.get("template-health-weekly"));
+  });
+});

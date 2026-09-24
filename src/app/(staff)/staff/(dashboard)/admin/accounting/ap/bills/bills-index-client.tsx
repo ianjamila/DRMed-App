@@ -7,6 +7,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { TriangleAlert } from "lucide-react";
 import { StatusBadge } from "@/lib/ui/status-badge";
+import { BILL_STATUSES, billStatusLabel } from "@/lib/accounting/ap-labels";
 import {
   ariaSortFor,
   buildListHref,
@@ -54,8 +55,6 @@ type Filter = {
   has_wt: boolean;
   q: string;
 };
-
-const STATUSES = ["draft", "posted", "partially_paid", "paid", "voided"] as const;
 
 const NOW_MS = Date.now();
 
@@ -257,9 +256,9 @@ export function BillsIndexClient({
           className="min-h-[44px] rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
         >
           <option value="">All statuses</option>
-          {STATUSES.map((s) => (
+          {BILL_STATUSES.map((s) => (
             <option key={s} value={s}>
-              {s}
+              {billStatusLabel(s)}
             </option>
           ))}
         </select>

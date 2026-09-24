@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/card";
 import { CircleAlert } from "lucide-react";
 import { StatusBadge } from "@/lib/ui/status-badge";
+import { billPaymentMethodLabel } from "@/lib/accounting/ap-labels";
 import { pluckOne } from "@/lib/reports/format";
 import { manilaDate } from "@/lib/dates/manila";
 
@@ -352,7 +353,7 @@ export function BillDetailClient({
                     )}
                     {payment && (
                       <span className="ml-2 text-xs text-[color:var(--color-brand-text-soft)]">
-                        {payment.method} · {manilaDate(payment.payment_date)}
+                        {billPaymentMethodLabel(payment.method)} · {manilaDate(payment.payment_date)}
                       </span>
                     )}
                     {isVoided && (

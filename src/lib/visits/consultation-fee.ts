@@ -21,6 +21,29 @@ export function defaultClinicFee(
   return 100; // pf_split (and unknown) → clinic keeps ₱100
 }
 
+/**
+ * Reception-facing reason the clinic fee defaulted to ₱0, finishing the
+ * sentence "Clinic fee starts at ₱0 — …". Follows `defaultClinicFee`'s own
+ * precedence: a per-doctor clinic cut of ₱0 is the reason whenever it is set
+ * (it is the only way a standard-arrangement doctor gets there), otherwise the
+ * arrangement is. Plain words only — reception never sees "PF split".
+ */
+export function zeroClinicFeeReason(
+  arrangement: string | undefined | null,
+  clinicCutPhp?: number | null,
+): string {
+  if (clinicCutPhp === 0) {
+    return "this doctor's profile sets the clinic's share to ₱0";
+  }
+  if (arrangement === "rent_paying") {
+    return "this doctor rents space at the clinic and keeps the whole consult fee";
+  }
+  if (arrangement === "shareholder") {
+    return "this doctor is a clinic shareholder and keeps the whole consult fee";
+  }
+  return "this doctor keeps the whole consult fee";
+}
+
 interface DoctorLineBaseInput {
   kind: string;
   /** Raw counter-typed fee (`consult_fee__…` / `procedure_fee__…`). */

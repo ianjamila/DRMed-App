@@ -1,5 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import type { ComponentProps } from "react";
+import { BILL_STATUS_LABEL } from "@/lib/accounting/ap-labels";
+import { humaniseCode } from "@/lib/format/humanise-code";
 
 // Status colors for AP subledger entities. Maps status → tailwind palette.
 // Posted is "brand-tinted" via brand-cyan/navy; other statuses use semantic
@@ -18,6 +20,19 @@ const STATUS_CLASS: Record<string, string> = {
   reversed: "bg-amber-100 text-amber-800 hover:bg-amber-100",
 };
 
+// The words on the badge. The keys above are stored codes; the badge text
+// must never be one (a bookkeeper reading "partially_paid").
+const STATUS_LABEL: Record<string, string> = {
+  ...BILL_STATUS_LABEL,
+  active: "Active",
+  inactive: "Inactive",
+  reversed: "Reversed",
+};
+
+export function statusBadgeLabel(status: string): string {
+  return STATUS_LABEL[status] ?? humaniseCode(status);
+}
+
 export function StatusBadge({
   status,
   className,
@@ -30,7 +45,7 @@ export function StatusBadge({
       className={`border-transparent ${palette} ${className ?? ""}`}
       {...rest}
     >
-      {status}
+      {statusBadgeLabel(status)}
     </Badge>
   );
 }

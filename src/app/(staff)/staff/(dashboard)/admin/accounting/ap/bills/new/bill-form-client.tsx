@@ -27,6 +27,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CircleAlert } from "lucide-react";
 import {
+  BILL_PAYMENT_METHODS,
+  billPaymentMethodLabel,
+  type BillPaymentMethod,
+} from "@/lib/accounting/ap-labels";
+import {
   tillPaymentBlockedByClose,
   TILL_CLOSE_WARNING,
 } from "@/lib/accounting/till-close-warning";
@@ -80,9 +85,9 @@ type FormLine = {
   account_id: string;
 };
 
-type PaymentMethod = "cash" | "bank_transfer" | "gcash" | "cheque";
+type PaymentMethod = BillPaymentMethod;
 
-const METHODS: readonly PaymentMethod[] = ["cash", "bank_transfer", "gcash", "cheque"];
+const METHODS = BILL_PAYMENT_METHODS;
 
 const PHP = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
 
@@ -622,7 +627,7 @@ export function BillFormClient(props: Props) {
                 >
                   {METHODS.map((m) => (
                     <option key={m} value={m}>
-                      {m}
+                      {billPaymentMethodLabel(m)}
                     </option>
                   ))}
                 </select>

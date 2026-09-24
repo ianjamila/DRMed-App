@@ -4,7 +4,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createClient } from "@/lib/supabase/server";
 import { manilaDateTime } from "@/lib/dates/manila";
 import { CRON_HEARTBEATS, deriveCronStatus } from "@/lib/ops/cron-heartbeats";
-import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 
 export const metadata = { title: ROUTE_NAME["/staff/admin/operations/cron-health"] };
 export const dynamic = "force-dynamic";
@@ -35,10 +35,11 @@ export default async function CronHealthPage() {
   const checkedAt = new Date();
   const now = checkedAt.getTime();
 
+  // Not a Daily Monitoring view: this page sits beside the (daily-monitoring)
+  // route group, so it gets no period tab bar and owns its own padding.
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
       <PageHeader
-        eyebrow={SECTION_NAME["/staff/admin/operations"]}
         title={ROUTE_NAME["/staff/admin/operations/cron-health"]}
         subtitle="Latest recorded runs of the clinic’s scheduled tasks. All timestamps are in Manila time."
       />
@@ -73,7 +74,10 @@ export default async function CronHealthPage() {
               const status = failed ? "unavailable" : deriveCronStatus(lastSeen, now, cron.maxAge, cron.activeFrom);
               return (
                 <tr key={cron.key} className="hover:bg-[color:var(--color-brand-bg)]">
-                  <td className="px-4 py-3 font-mono text-xs">{cron.path.replace("/api/cron/", "")}</td>
+                  <td className="px-4 py-3">
+                    <div className="font-semibold text-[color:var(--color-brand-navy)]">{cron.label}</div>
+                    <div className="mt-0.5 text-xs text-[color:var(--color-brand-text-soft)]">{cron.description}</div>
+                  </td>
                   <td className="px-4 py-3">
                     <span className={`rounded-md px-2 py-0.5 text-xs font-semibold uppercase ${STATUS_STYLE[status]}`}>{status}</span>
                   </td>

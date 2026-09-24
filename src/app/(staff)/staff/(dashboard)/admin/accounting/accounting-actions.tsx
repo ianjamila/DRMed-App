@@ -1,20 +1,30 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { manilaDateTime } from "@/lib/dates/manila";
 import {
   rewindAndSyncAction,
   runSyncAction,
   type AccountingActionResult,
 } from "./actions";
 
+// `target` names the scope inside the rewind confirm sentence.
 const SCOPE_OPTIONS = [
-  { value: "all", label: "All three tabs" },
-  { value: "lab_services", label: "Lab Services only" },
-  { value: "doctor_consultations", label: "Doctor Consultations only" },
-  { value: "doctor_procedures", label: "Doctor Procedures HMO only" },
+  { value: "all", label: "All three tabs", target: "all three tabs" },
+  { value: "lab_services", label: "Lab Services only", target: "the Lab Services tab" },
+  { value: "doctor_consultations", label: "Doctor Consultations only", target: "the Doctor Consultations tab" },
+  { value: "doctor_procedures", label: "Doctor Procedures HMO only", target: "the Doctor Procedures HMO tab" },
 ] as const;
 
 export function AccountingActions() {
@@ -70,11 +80,51 @@ function RunNowSection() {
   );
 }
 
+// What the confirm dialog restates before a rewind: which tabs, from when.
+type RewindRequest = { target: string; fromLabel: string };
+
 function RewindSection() {
   const [state, formAction, pending] = useActionState<
     AccountingActionResult | null,
     FormData
   >(rewindAndSyncAction, null);
+  const formRef = useRef<HTMLFormElement>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  // Kept after the dialog closes so its text doesn't blank out mid-fade.
+  const [request, setRequest] = useState<RewindRequest | null>(null);
+  const [reason, setReason] = useState("");
+
+  // Rewinding re-appends rows the sheet already has (Sheets has no upsert),
+  // so the button only opens a confirm step — like voiding a bill, which is
+  // less destructive and still asks for a reason. The form submits from the
+  // dialog; the reason rides along in a hidden input and is audited.
+  function askToConfirm() {
+    const form = formRef.current;
+    if (!form || !form.reportValidity()) return;
+    const data = new FormData(form);
+    const scope = String(data.get("scope") ?? "all");
+    const from = String(data.get("from") ?? "");
+    setRequest({
+      target: SCOPE_OPTIONS.find((o) => o.value === scope)?.target ?? scope,
+      // The input is Manila wall-clock time with no offset; pin it so the
+      // formatter shows the same moment the admin picked.
+      fromLabel: manilaDateTime(`${from}:00+08:00`),
+    });
+    setConfirmOpen(true);
+  }
+
+  function cancel() {
+    setConfirmOpen(false);
+    setReason("");
+  }
+
+  function confirm() {
+    setConfirmOpen(false);
+    // requestSubmit reads the form synchronously, so the hidden reason is
+    // captured before the state below clears it for the next rewind.
+    formRef.current?.requestSubmit();
+    setReason("");
+  }
 
   return (
     <section className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
@@ -87,9 +137,11 @@ function RewindSection() {
         re-append rows that were already exported, since Sheets has no upsert.
       </p>
       <form
+        ref={formRef}
         action={formAction}
         className="mt-4 grid gap-4 sm:grid-cols-[1fr_1fr_auto] sm:items-end"
       >
+        <input type="hidden" name="reason" value={reason} />
         <div className="grid gap-1.5">
           <Label htmlFor="rewind-scope">Scope</Label>
           <select
@@ -110,7 +162,8 @@ function RewindSection() {
           <Input id="rewind-from" name="from" type="datetime-local" required />
         </div>
         <Button
-          type="submit"
+          type="button"
+          onClick={askToConfirm}
           disabled={pending}
           className="bg-[color:var(--color-brand-navy)] text-white hover:bg-[color:var(--color-brand-cyan)]"
         >
@@ -118,6 +171,53 @@ function RewindSection() {
         </Button>
       </form>
       <ActionResult state={state} />
+
+      <Dialog
+        open={confirmOpen}
+        onOpenChange={(open) => {
+          if (!open) cancel();
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Rewind and re-sync?</DialogTitle>
+            <DialogDescription>
+              Every row from {request?.fromLabel} (Manila time) onward will be
+              sent to {request?.target} of the Google Sheet again. Rows already
+              in the sheet are not replaced — they will appear twice until
+              someone deletes the copies by hand.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-2">
+            <Label htmlFor="rewind-reason">Reason *</Label>
+            <Textarea
+              id="rewind-reason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              rows={3}
+              placeholder="3+ characters required"
+              autoFocus
+            />
+          </div>
+
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button type="button" variant="outline" size="touch" onClick={cancel}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              size="touch"
+              onClick={confirm}
+              disabled={pending || reason.trim().length < 3}
+              className="bg-red-700 text-white hover:bg-red-800"
+            >
+              Rewind &amp; sync
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

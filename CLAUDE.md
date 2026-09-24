@@ -18,7 +18,7 @@ Key reference artifacts:
 - `IMPLEMENTATION_PLAN.md` — original phase plan (historical; cross-check before relying on it)
 - `README.md` — operational setup
 - `.env.example` — env-var inventory
-- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.13, 24 Sep 2026): every
+- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.14, 24 Sep 2026): every
   screen, label and blocked-message the app shows, checked against the code. Update it in the
   PR that changes a flow it describes.
 - `docs/superpowers/specs/` and `docs/superpowers/audits/` — design specs and audits for
@@ -223,9 +223,10 @@ All Server Actions return `{ ok: true, data } | { ok: false, error }`. User-faci
 | Which `test_requests` surfaces mean "lab" vs "the whole bill" (`SURFACES`), and which `visits`/`test_requests` reads mean LIVE rows vs deleted ones (`LIFECYCLES`) — the canonical answer to both | `src/lib/visits/query-surfaces.test.ts` |
 | Discount arithmetic (form preview AND server recompute) | `src/lib/pricing/discounts.ts` |
 | Shared visit actions (queue delete/restore, PIN re-issue) | `src/lib/actions/visits/{queue-deletion,reissue-pin}.ts` |
-| Cash denominations, amount-in-words, PF labels | `src/lib/accounting/{cash-denominations,amount-in-words,pf-labels}.ts` |
+| Cash denominations, amount-in-words, PF labels, Expenses (AP) bill-status + payment-method labels, chart-of-accounts grouping + same-type parent rule | `src/lib/accounting/{cash-denominations,amount-in-words,pf-labels,ap-labels,account-groups}.ts` |
+| Words for a stored snake_case code with no label yet (`humaniseCode`) — label maps fall back to it so a raw code never reaches a staff screen | `src/lib/format/humanise-code.ts` |
 | CSV escaping (one copy) | `src/lib/csv/escape.ts` |
-| Results-archive tab config, template drift checks | `src/lib/results/{status-filter,template-health}.ts` |
+| Results-archive tab config and per-test status words (`testStatusLabel`, shared with the portal), template drift checks | `src/lib/results/{status-filter,template-health}.ts` |
 | Shared staff components (page header, section tabs, nav config, delete dialog, no-receipt notice, PIN re-issue button) | `src/components/staff/` |
 | Migrations (sequential numbering) | `supabase/migrations/` |
 | Script env guard (local by default, `--prod` opt-in, `--confirm=<target>`) | `scripts/lib/{load-env,env-guard}.ts` |
