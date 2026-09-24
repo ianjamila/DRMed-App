@@ -4,6 +4,7 @@ import { reportError } from "@/lib/observability/report-error";
 import { audit } from "@/lib/audit/log";
 import { loadCandidatePairs } from "@/lib/patients/find-duplicates";
 import { sendEmail } from "@/lib/notifications/email";
+import { resolveStaffAlertRecipients } from "@/lib/notifications/staff-alert-recipients";
 import { renderEmailShell, emailParagraph, emailButton } from "@/lib/notifications/branded-email";
 
 export const dynamic = "force-dynamic";
@@ -34,21 +35,11 @@ export async function GET(request: Request) {
         return Response.json({ candidates: 0, emailed: 0 });
       }
 
-      // Active admins. staff_profiles has no email column — addresses live in
-      // auth.users, resolved by id (same pattern as the staff users page).
-      const { data: adminProfiles } = await admin
-        .from("staff_profiles")
-        .select("id")
-        .eq("role", "admin")
-        .eq("is_active", true);
-      const { data: usersResp } = await admin.auth.admin.listUsers({ page: 1, perPage: 200 });
-      const emailById = new Map<string, string>();
-      for (const u of usersResp?.users ?? []) {
-        if (u.id && u.email) emailById.set(u.id, u.email);
-      }
-      const recipients = (adminProfiles ?? [])
-        .map((p) => emailById.get(p.id))
-        .filter((e): e is string => !!e);
+      // Who gets it is managed in Admin Tools › Email Alerts (0155): by
+      // default every active admin, plus any extra addresses; an admin can
+      // switch people on/off or turn the digest off entirely.
+      const alert = await resolveStaffAlertRecipients("dedup_digest", admin);
+      const recipients = alert.emails;
 
       const base = process.env.NEXT_PUBLIC_SITE_URL ?? "https://drmed.ph";
       const reviewUrl = `${base}/staff/admin/patient-merge/candidates`;
@@ -75,7 +66,13 @@ export async function GET(request: Request) {
         actor_id: null,
         actor_type: "system",
         action: "system.dedup_digest.sent",
-        metadata: { candidates: pairs.length, by_tier: byTier, recipients: recipients.length, emailed },
+        metadata: {
+          candidates: pairs.length,
+          by_tier: byTier,
+          recipients: recipients.length,
+          emailed,
+          ...(alert.enabled ? {} : { skipped: "turned off in Email Alerts" }),
+        },
       });
       await audit({
         actor_id: null,

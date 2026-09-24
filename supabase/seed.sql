@@ -112,3 +112,12 @@ grant select, update on public.contact_messages to authenticated;
 revoke all on public.contact_message_replies from anon;
 revoke all on public.contact_message_replies from authenticated;
 grant select, insert on public.contact_message_replies to authenticated;
+-- 0155: Email Alerts settings are admin-only (RLS) and never reachable by anon.
+-- Settings rows are seeded by the migration — staff may update, never insert
+-- or delete them; recipient rows are fully managed by admins.
+revoke all on public.staff_alert_settings from anon;
+revoke all on public.staff_alert_settings from authenticated;
+grant select, update on public.staff_alert_settings to authenticated;
+revoke all on public.staff_alert_recipients from anon;
+revoke all on public.staff_alert_recipients from authenticated;
+grant select, insert, update, delete on public.staff_alert_recipients to authenticated;

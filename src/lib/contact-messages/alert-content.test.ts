@@ -1,32 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseAlertEmailsEnv, buildAlertEmail } from "./alert-content";
-
-describe("parseAlertEmailsEnv", () => {
-  it("returns [] for unset/blank input", () => {
-    expect(parseAlertEmailsEnv(undefined)).toEqual([]);
-    expect(parseAlertEmailsEnv(null)).toEqual([]);
-    expect(parseAlertEmailsEnv("")).toEqual([]);
-    expect(parseAlertEmailsEnv("   ")).toEqual([]);
-  });
-
-  it("splits, trims and keeps valid addresses", () => {
-    expect(parseAlertEmailsEnv(" a@drmed.ph , b@drmed.ph ")).toEqual([
-      "a@drmed.ph",
-      "b@drmed.ph",
-    ]);
-  });
-
-  it("drops invalid entries without failing the whole list", () => {
-    expect(parseAlertEmailsEnv("a@drmed.ph, not-an-email, b@drmed.ph")).toEqual([
-      "a@drmed.ph",
-      "b@drmed.ph",
-    ]);
-  });
-
-  it("dedupes case-insensitively, keeping the first spelling", () => {
-    expect(parseAlertEmailsEnv("A@drmed.ph, a@drmed.ph")).toEqual(["A@drmed.ph"]);
-  });
-});
+import { buildAlertEmail } from "./alert-content";
 
 describe("buildAlertEmail", () => {
   const base = {

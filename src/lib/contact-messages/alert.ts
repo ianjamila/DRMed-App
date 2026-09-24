@@ -4,24 +4,25 @@ import "server-only";
 // server action after a successful insert — wrapped there so a failure here
 // can never fail the visitor's submission (see the call site).
 //
-// Recipients: CONTACT_ALERT_EMAILS (comma list) when set, else every ACTIVE
-// reception + admin staff account's Supabase Auth email — same
-// staff_profiles + auth.admin.listUsers pattern as
-// src/app/api/cron/template-health/route.ts. Sends only in production (or
+// Recipients: whoever Admin Tools › Email Alerts has switched on for the
+// "website_message" alert (0155) — by default every ACTIVE reception + admin
+// account, plus any extra addresses an admin added — resolved by
+// resolveStaffAlertRecipients(). An admin can also turn the alert off there.
+// Sends only in production (or
 // NOTIFICATIONS_LIVE=true), via the shared sendEmail() — that gate lives in
 // sendEmail itself, so this module doesn't duplicate it.
 //
 // Audited once per message, regardless of outcome, as
 // contact_message.alert_sent — recipient COUNTS only, never addresses.
 
-import { createAdminClient } from "@/lib/supabase/admin";
+import { resolveStaffAlertRecipients } from "@/lib/notifications/staff-alert-recipients";
 import { sendEmail } from "@/lib/notifications/email";
 import { audit } from "@/lib/audit/log";
 import { reportError } from "@/lib/observability/report-error";
 import { SITE } from "@/lib/marketing/site";
 import type { Json } from "@/types/database";
 import type { ContactMessageKind } from "./labels";
-import { parseAlertEmailsEnv, buildAlertEmail } from "./alert-content";
+import { buildAlertEmail } from "./alert-content";
 
 export interface NewMessageAlertInput {
   id: string;
@@ -31,39 +32,12 @@ export interface NewMessageAlertInput {
   createdAt: string; // ISO timestamptz
 }
 
-type RecipientSource = "env" | "staff";
-
-async function resolveRecipients(): Promise<{ emails: string[]; source: RecipientSource }> {
-  const envEmails = parseAlertEmailsEnv(process.env.CONTACT_ALERT_EMAILS);
-  if (envEmails.length > 0) {
-    return { emails: envEmails, source: "env" };
-  }
-
-  const admin = createAdminClient();
-  const { data: profiles } = await admin
-    .from("staff_profiles")
-    .select("id")
-    .in("role", ["reception", "admin"])
-    .eq("is_active", true)
-    .is("deleted_at", null);
-  const staffIds = new Set((profiles ?? []).map((p) => p.id));
-  if (staffIds.size === 0) {
-    return { emails: [], source: "staff" };
-  }
-
-  const { data: usersResp } = await admin.auth.admin.listUsers({ page: 1, perPage: 200 });
-  const emails: string[] = [];
-  for (const u of usersResp?.users ?? []) {
-    if (u.id && u.email && staffIds.has(u.id)) emails.push(u.email);
-  }
-  return { emails, source: "staff" };
-}
-
 /** Send the new-message alert and audit-log the outcome. Never throws — a
  * notification failure must not surface as a form-submission failure. */
 export async function sendNewMessageAlert(input: NewMessageAlertInput): Promise<void> {
   try {
-    const { emails, source } = await resolveRecipients();
+    const recipients = await resolveStaffAlertRecipients("website_message");
+    const { emails } = recipients;
     const messageUrl = `${SITE.url.replace(/\/$/, "")}/staff/messages/${input.id}`;
     const content = buildAlertEmail({
       name: input.name,
@@ -78,7 +52,9 @@ export async function sendNewMessageAlert(input: NewMessageAlertInput): Promise<
     let skipped: string | null = null;
 
     if (emails.length === 0) {
-      skipped = source === "env" ? "CONTACT_ALERT_EMAILS set but no valid addresses" : "no active reception/admin staff with an email";
+      skipped = recipients.enabled
+        ? "nobody is switched on for this alert in Email Alerts"
+        : "turned off in Email Alerts";
     } else {
       for (const to of emails) {
         const result = await sendEmail({ to, subject: content.subject, text: content.text, html: content.html });
@@ -104,7 +80,6 @@ export async function sendNewMessageAlert(input: NewMessageAlertInput): Promise<
         recipients: emails.length,
         sent,
         failed,
-        source,
         ...(skipped ? { skipped } : {}),
       } as unknown as Json,
     });

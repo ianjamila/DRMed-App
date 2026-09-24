@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { reportError } from "@/lib/observability/report-error";
 import { audit } from "@/lib/audit/log";
 import { sendEmail } from "@/lib/notifications/email";
+import { resolveStaffAlertRecipients } from "@/lib/notifications/staff-alert-recipients";
 import { renderEmailShell, emailParagraph, emailButton, escapeHtml } from "@/lib/notifications/branded-email";
 import { isTemplateHealthStale, shouldEmailTemplateHealth } from "@/lib/results/template-health";
 import { collectTemplateHealthFindings, getLastTemplateHealthDailyRun } from "@/lib/results/collect-template-health";
@@ -78,22 +79,11 @@ export async function GET(request: Request) {
         });
       }
 
-      // Same notification mechanism as dedup-digest: active admins, resolved
-      // via staff_profiles + auth.users emails, sendEmail with the shared
-      // branded shell. No new notification channel.
-      const { data: adminProfiles } = await admin
-        .from("staff_profiles")
-        .select("id")
-        .eq("role", "admin")
-        .eq("is_active", true);
-      const { data: usersResp } = await admin.auth.admin.listUsers({ page: 1, perPage: 200 });
-      const emailById = new Map<string, string>();
-      for (const u of usersResp?.users ?? []) {
-        if (u.id && u.email) emailById.set(u.id, u.email);
-      }
-      const recipients = (adminProfiles ?? [])
-        .map((p) => emailById.get(p.id))
-        .filter((e): e is string => !!e);
+      // Who gets it is managed in Admin Tools › Email Alerts (0155): by
+      // default every active admin, plus any extra addresses; an admin can
+      // switch people on/off or turn the alert off entirely.
+      const alert = await resolveStaffAlertRecipients("template_health", admin);
+      const recipients = alert.emails;
 
       const base = process.env.NEXT_PUBLIC_SITE_URL ?? "https://drmed.ph";
       const reviewUrl = `${base}/staff/admin/result-templates/health`;
@@ -129,6 +119,21 @@ export async function GET(request: Request) {
         if (r.ok) emailed += 1;
         else markFailed();
       }
+
+      // Read back by Email Alerts' "Last sent" line (the dedup digest and the
+      // website-message alert already audit theirs). Counts only.
+      await audit({
+        actor_id: null,
+        actor_type: "system",
+        action: "system.template_health.alert_sent",
+        metadata: {
+          mode,
+          findings: findings.length,
+          recipients: recipients.length,
+          emailed,
+          ...(alert.enabled ? {} : { skipped: "turned off in Email Alerts" }),
+        },
+      });
 
       return NextResponse.json({
         ok: true,
