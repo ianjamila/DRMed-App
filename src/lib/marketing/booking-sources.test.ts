@@ -24,6 +24,7 @@ function msgRow(overrides: Partial<ContactMessageSourceRow> = {}): ContactMessag
   return {
     id: "m1",
     kind: "general",
+    form_location: null,
     status: "new",
     attribution: null,
     created_at: "2026-09-01T00:00:00Z",
@@ -209,6 +210,20 @@ describe("summarizeMessages", () => {
     expect(corporate?.count).toBe(0);
     const booked = stats.byStatus.find((s) => s.status === "booked");
     expect(booked?.count).toBe(0);
+  });
+
+  it("counts messages by the page whose form sent them, keeping zero rows and Not recorded", () => {
+    const stats = summarizeMessages([
+      msgRow({ id: "m1", form_location: "home" }),
+      msgRow({ id: "m2", form_location: "home" }),
+      msgRow({ id: "m3", form_location: null }),
+      msgRow({ id: "m4", form_location: "somewhere-else" }),
+    ]);
+    expect(stats.byFormLocation).toEqual([
+      { location: "home", label: "Home page", count: 2 },
+      { location: "contact", label: "Contact page", count: 0 },
+      { location: null, label: "Not recorded", count: 2 },
+    ]);
   });
 
   it("treats an unrecognised kind/status as the safe default rather than dropping the row", () => {

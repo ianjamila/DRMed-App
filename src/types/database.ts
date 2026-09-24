@@ -1356,6 +1356,7 @@ export type Database = {
           attribution: Json | null
           created_at: string
           email: string | null
+          form_location: string | null
           handled_at: string | null
           handled_by: string | null
           id: string
@@ -1375,6 +1376,7 @@ export type Database = {
           attribution?: Json | null
           created_at?: string
           email?: string | null
+          form_location?: string | null
           handled_at?: string | null
           handled_by?: string | null
           id?: string
@@ -1394,6 +1396,7 @@ export type Database = {
           attribution?: Json | null
           created_at?: string
           email?: string | null
+          form_location?: string | null
           handled_at?: string | null
           handled_by?: string | null
           id?: string

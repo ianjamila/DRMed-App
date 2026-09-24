@@ -6,7 +6,9 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { APPOINTMENT_SOURCES } from "@/lib/appointments/source";
+import { ContactSchema } from "@/lib/validations/contact";
 import {
+  CONTACT_FORM_LOCATIONS,
   CONTACT_MESSAGE_KINDS,
   CONTACT_MESSAGE_STATUSES,
   CORPORATE_SUBJECT,
@@ -21,14 +23,19 @@ const MIGRATION = readFileSync(
   "utf8",
 );
 
+const MIGRATION_0156 = readFileSync(
+  join(__dirname, "../../../supabase/migrations/0156_contact_message_form_location.sql"),
+  "utf8",
+);
+
 // The quoted literals inside `check (<column> in (...))` for a named constraint.
-function checkList(constraint: string, column: string): string[] {
+function checkList(constraint: string, column: string, sql: string = MIGRATION): string[] {
   const re = new RegExp(
     `constraint\\s+${constraint}\\s+check\\s*\\((?:${column}\\s+is\\s+null\\s+or\\s+)?${column}\\s+in\\s*\\(([^)]*)\\)`,
     "i",
   );
-  const m = re.exec(MIGRATION);
-  if (!m) throw new Error(`constraint ${constraint} not found in 0154`);
+  const m = re.exec(sql);
+  if (!m) throw new Error(`constraint ${constraint} not found`);
   return [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
 }
 
@@ -72,5 +79,37 @@ describe("0154 CHECK constraints match the TypeScript vocabularies", () => {
     expect(checkList("appointments_source_check", "source")).not.toEqual(
       APPOINTMENT_SOURCES.filter((s) => s !== "referral"),
     );
+  });
+});
+
+describe("0156 contact_messages.form_location", () => {
+  it("CHECK list matches CONTACT_FORM_LOCATIONS", () => {
+    expect(checkList("contact_messages_form_location_check", "form_location", MIGRATION_0156)).toEqual([
+      ...CONTACT_FORM_LOCATIONS,
+    ]);
+  });
+
+  it("is part of the P0053 immutable set", () => {
+    expect(MIGRATION_0156).toMatch(/new\.form_location is distinct from old\.form_location/);
+    // The re-created guard must still cover everything 0154 locked.
+    for (const col of ["name", "email", "phone", "subject", "message", "ip_address", "user_agent", "attribution", "created_at"]) {
+      expect(MIGRATION_0156).toContain(`new.${col} is distinct from old.${col}`);
+    }
+  });
+});
+
+describe("ContactSchema form location", () => {
+  const base = { name: "Juan", email: "", phone: "", subject: "", message: "Hello there, a question." };
+
+  it("keeps a location the form sends", () => {
+    for (const l of CONTACT_FORM_LOCATIONS) {
+      expect(ContactSchema.parse({ ...base, formLocation: l }).formLocation).toBe(l);
+    }
+  });
+
+  it("stores anything else, or nothing, as not recorded instead of rejecting the message", () => {
+    expect(ContactSchema.parse({ ...base, formLocation: "<script>" }).formLocation).toBeNull();
+    expect(ContactSchema.parse({ ...base, formLocation: null }).formLocation).toBeNull();
+    expect(ContactSchema.parse(base).formLocation).toBeNull();
   });
 });

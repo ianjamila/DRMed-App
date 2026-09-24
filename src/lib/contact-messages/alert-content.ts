@@ -17,8 +17,8 @@ import {
   escapeHtml,
 } from "@/lib/notifications/branded-email";
 import { firstNameOf } from "./first-name";
-import { oneLine } from "./labels";
-import type { ContactMessageKind } from "./labels";
+import { contactFormLocationLabel, oneLine } from "./labels";
+import type { ContactFormLocation, ContactMessageKind } from "./labels";
 
 /** Parse `CONTACT_ALERT_EMAILS` — comma-separated, each trimmed and validated
  * as a plausible email address; invalid entries are dropped rather than
@@ -43,6 +43,8 @@ export interface AlertEmailInput {
   name: string;
   subject: string | null;
   kind: ContactMessageKind;
+  // Which page's form sent it (0156); null = not recorded.
+  formLocation: ContactFormLocation | null;
   createdAt: string; // ISO timestamptz
   messageUrl: string;
 }
@@ -60,6 +62,7 @@ export function buildAlertEmail(input: AlertEmailInput): AlertEmailContent {
   const subjectLabel = oneLine(input.subject, 80) || "General";
   const isCorporate = input.kind === "corporate";
   const received = manilaDateTime(input.createdAt);
+  const sentFrom = contactFormLocationLabel(input.formLocation);
 
   const emailSubject = `${isCorporate ? "[Corporate lead] " : ""}New website message: ${subjectLabel}`;
 
@@ -67,6 +70,7 @@ export function buildAlertEmail(input: AlertEmailInput): AlertEmailContent {
     `A new website message came in from ${first}.`,
     `Subject: ${subjectLabel}`,
     isCorporate ? "This is a Corporate / HMO lead." : null,
+    `Sent from: ${sentFrom}`,
     `Received: ${received}`,
     "",
     `Open it: ${input.messageUrl}`,
@@ -81,6 +85,7 @@ export function buildAlertEmail(input: AlertEmailInput): AlertEmailContent {
       emailDetailBox([
         { label: "Subject", value: subjectLabel },
         ...(isCorporate ? [{ label: "Type", value: "Corporate / HMO lead" }] : []),
+        { label: "Sent from", value: sentFrom },
         { label: "Received", value: received },
       ]) +
       emailButton("Open the message", input.messageUrl, "cyan"),

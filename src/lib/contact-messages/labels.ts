@@ -61,6 +61,28 @@ export function isContactMessageKind(value: unknown): value is ContactMessageKin
   return typeof value === "string" && (CONTACT_MESSAGE_KINDS as ReadonlyArray<string>).includes(value);
 }
 
+// Which copy of the public contact form a message was sent from —
+// `contact_messages.form_location` (migration 0156). The form is on the
+// Contact page and in the home page's "Send us a message" section; messages
+// received before 0156 are NULL and read "Not recorded".
+export const CONTACT_FORM_LOCATIONS = ["home", "contact"] as const;
+export type ContactFormLocation = (typeof CONTACT_FORM_LOCATIONS)[number];
+
+export const CONTACT_FORM_LOCATION_LABEL: Record<ContactFormLocation, string> = {
+  home: "Home page",
+  contact: "Contact page",
+};
+
+export const FORM_LOCATION_NOT_RECORDED_LABEL = "Not recorded";
+
+export function isContactFormLocation(value: unknown): value is ContactFormLocation {
+  return typeof value === "string" && (CONTACT_FORM_LOCATIONS as ReadonlyArray<string>).includes(value);
+}
+
+export function contactFormLocationLabel(value: string | null | undefined): string {
+  return isContactFormLocation(value) ? CONTACT_FORM_LOCATION_LABEL[value] : FORM_LOCATION_NOT_RECORDED_LABEL;
+}
+
 export function contactMessageStatusLabel(status: string | null | undefined): string {
   return isContactMessageStatus(status) ? CONTACT_MESSAGE_STATUS_LABEL[status] : "Unknown";
 }
