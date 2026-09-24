@@ -34,12 +34,16 @@ function readFileAsDataUrl(file: File): Promise<string> {
 
 export function ConsentPanel({
   patientId,
+  patientName,
+  drmId,
   current,
   signedAt,
   noticeVersion,
   isAdmin,
 }: {
   patientId: string;
+  patientName: string;
+  drmId: string;
   current: boolean;
   signedAt: string | null;
   noticeVersion: string | null;
@@ -199,6 +203,19 @@ export function ConsentPanel({
               wording the signed form will later show around the signature. */}
           {mode === "pad" && (
             <div className="rounded-lg border border-[color:var(--color-brand-bg-mid)] bg-white p-3">
+              {/* Same header the paper form carries, so the patient can check
+                  it is their own consent before signing. */}
+              <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2 border-b border-[color:var(--color-brand-bg-mid)] pb-2">
+                <p className="text-sm">
+                  <span className="font-extrabold text-[color:var(--color-brand-navy)]">
+                    Data Privacy Consent
+                  </span>{" "}
+                  — Patient: <b>{patientName || "(no name on file)"}</b>
+                </p>
+                <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+                  DRM-ID: <b>{drmId}</b>
+                </p>
+              </div>
               <p className="mb-2 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)]">
                 Have the patient read this before signing
               </p>

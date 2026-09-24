@@ -195,6 +195,8 @@ export default async function PatientDetailPage({ params }: Props) {
       <div id="consent" className="mt-3 scroll-mt-24">
         <ConsentPanel
           patientId={id}
+          patientName={[patient.last_name, patient.first_name].filter(Boolean).join(", ")}
+          drmId={patient.drm_id}
           current={consent.current}
           signedAt={consent.signedAt}
           noticeVersion={consent.noticeVersion}
