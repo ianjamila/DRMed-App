@@ -410,6 +410,7 @@ export async function submitBookingAction(_prev: BookingResult | null, formData:
       },
       {
         patientId: result.patient.patientId,
+        sourceForm: "schedule",
         ip: requestIp,
         userAgent,
         metadata: { booking_group_id: result.bookingGroupId },

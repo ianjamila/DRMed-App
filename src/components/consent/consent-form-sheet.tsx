@@ -34,6 +34,10 @@ export interface ConsentFormSigned {
   // The notice version this consent was agreed to — the sheet renders that
   // version's archived wording rather than today's.
   noticeVersion: string | null;
+  // Set for a consent ticked on a public website form (/register, /schedule).
+  // Those forms never showed the clinic notice, so the sheet shows the
+  // statement the patient actually ticked in its place.
+  publicForm: { label: string; statement: string | null } | null;
   // The provenance line under the form: how, when and by whom it was recorded.
   record: string;
 }
@@ -108,12 +112,39 @@ export function ConsentFormSheet({
       </p>
 
       <div className="mt-4">
-        <ConsentNotice version={signed?.noticeVersion} />
+        {signed?.publicForm ? (
+          <div className="rounded-lg border border-[color:var(--color-brand-bg-mid)] p-4 text-sm leading-relaxed">
+            <p className="text-[color:var(--color-brand-text-mid)]">
+              Accepted online by ticking this statement on the {signed.publicForm.label}:
+            </p>
+            {signed.publicForm.statement ? (
+              <p className="mt-3 rounded-r-lg border-l-4 border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-bg)] px-4 py-3 text-[color:var(--color-brand-text)]">
+                “{signed.publicForm.statement}”
+              </p>
+            ) : (
+              <p className="mt-3 italic text-[color:var(--color-brand-text-mid)]">
+                The exact wording shown was not recorded.
+              </p>
+            )}
+            <p className="mt-3 text-xs text-[color:var(--color-brand-text-soft)]">
+              The statement linked to the Privacy Notice on the DRMed website. The
+              clinic&apos;s full data privacy consent notice was not shown on that
+              form — capture a signature at the counter for a full consent.
+            </p>
+          </div>
+        ) : (
+          <ConsentNotice version={signed?.noticeVersion} />
+        )}
       </div>
 
       <div className="mt-10 flex items-end gap-8">
         <div className="flex-1">
-          {selfSigned && <SignatureSlot signed={selfSigned} name={patientName} />}
+          {selfSigned && (
+            <SignatureSlot
+              signed={selfSigned}
+              name={selfSigned.signatoryName ?? patientName}
+            />
+          )}
           <div className="border-t border-[color:var(--color-brand-navy)] pt-1 text-[10px] uppercase text-[color:var(--color-brand-text-soft)]">
             Signature over printed name
           </div>
