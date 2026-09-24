@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {
@@ -15,21 +15,30 @@ Juan,dela Cruz,Reyes,1972-11-08,male,,,Sampaloc Manila
 Ana,Lim,,1990/06/22,F,0917 555 0102,,`;
 
 export function ImportPatientsForm() {
+  // A successful import empties the box. The CSV field keeps its text across
+  // the form reset (so a failed import never loses a pasted file), which also
+  // meant a second click re-imported the same rows. Bumping the key remounts
+  // the fields empty once rows have gone in.
+  const [imports, setImports] = useState(0);
   const [state, formAction, pending] = useActionState<
     ImportResult | null,
     FormData
-  >(importPatientsAction, null);
+  >(async (prev, formData) => {
+    const result = await importPatientsAction(prev, formData);
+    if (result.ok && result.imported > 0) setImports((n) => n + 1);
+    return result;
+  }, null);
 
   return (
     <form action={formAction} className="grid gap-4">
-      <div className="grid gap-1.5">
+      <div key={`csv-${imports}`} className="grid gap-1.5">
         <Label htmlFor="csv">CSV</Label>
         <StableTextarea
           id="csv"
           name="csv"
           rows={14}
           required
-          defaultValue={SAMPLE}
+          defaultValue={imports === 0 ? SAMPLE : ""}
           className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 font-mono text-xs focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
         />
         <p className="text-xs text-[color:var(--color-brand-text-soft)]">
@@ -40,7 +49,7 @@ export function ImportPatientsForm() {
         </p>
       </div>
 
-      <label className="flex items-center gap-2 text-sm">
+      <label key={`pre-${imports}`} className="flex items-center gap-2 text-sm">
         <StableCheckbox
           name="pre_registered"
           defaultChecked
