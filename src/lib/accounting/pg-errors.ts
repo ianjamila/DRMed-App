@@ -169,6 +169,13 @@ export function translatePgError(err: PgError): string {
     // rewrite it.
     case "P0053":
       return "A website message cannot be edited. You can only change its status, type or notes.";
+    // Sheet Sync (0170): the lease-fenced sync RPCs.
+    case "P0062":
+      return "Another sheet sync is running. Try again in a few minutes.";
+    case "P0063":
+      return "This sheet sync stopped because a newer run took over. Check the run history.";
+    case "P0064":
+      return "Someone already handled this review item. Refresh the page.";
     default:
       return err.message ?? "Database error. Please try again.";
   }

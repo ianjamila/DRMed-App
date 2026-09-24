@@ -7,6 +7,8 @@
  * ("WALK IN/ WOMEN'S UTZ" is a partner, "OLD PATIENT/WALK IN" is returning).
  */
 
+import type { ReferralSourceId } from "../patients/referral-sources";
+
 const TOKEN_FOLDS: ReadonlyArray<[RegExp, string]> = [
   [/^REF+ER+AL$/, "REFERRAL"],
   [/^(FAMIL|FAMILY|FAMLIY|DAMILY)$/, "FAMILY"],
@@ -39,7 +41,7 @@ export function normalizeAnswer(raw: unknown): string {
     .join(" ");
 }
 
-const RULES: ReadonlyArray<[id: string, test: RegExp]> = [
+const RULES: ReadonlyArray<[ReferralSourceId, RegExp]> = [
   ["prefer_not_to_say", /\bPREFER NOT\b/],
   ["walk_in_signage", /\bWALK IN\b.*\b(POSTER|SIGNAGE|SIGN)\b/],
   ["returning_patient", /\b(RETURNING|OLD|REGULAR|REPEAT) PATIENT\b/],
@@ -60,7 +62,7 @@ const RULES: ReadonlyArray<[id: string, test: RegExp]> = [
 ];
 
 export interface MappedAnswer {
-  id: string | null;
+  id: ReferralSourceId | null;
   norm: string;
   unmapped: boolean;
 }
@@ -69,7 +71,9 @@ export function mapAnswer(raw: unknown, aliases: ReadonlyMap<string, string>): M
   const norm = normalizeAnswer(raw);
   if (!norm) return { id: null, norm, unmapped: false };
   const alias = aliases.get(norm);
-  if (alias) return { id: alias, norm, unmapped: false };
+  // Alias values are the referral_source_id an admin picked via
+  // sheet_alias_apply, FK-constrained to referral_sources — always a real id.
+  if (alias) return { id: alias as ReferralSourceId, norm, unmapped: false };
   for (const [id, re] of RULES) if (re.test(norm)) return { id, norm, unmapped: false };
   return { id: "other", norm, unmapped: true };
 }

@@ -34,7 +34,7 @@ describe("referral source ids", () => {
   const rows = seededRows();
 
   it("finds the lookup's seed (guards the parser against matching nothing)", () => {
-    expect(rows.length).toBe(12);
+    expect(rows.length).toBe(18);
   });
 
   it("lists exactly the seeded ids, in the lookup's sort order", () => {
