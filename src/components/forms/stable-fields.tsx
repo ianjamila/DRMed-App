@@ -63,6 +63,32 @@ export function StableTextarea({ defaultValue = "", ...rest }: TextareaBase) {
   );
 }
 
+type CheckboxBase = Omit<
+  React.ComponentProps<"input">,
+  "type" | "checked" | "defaultChecked" | "onChange"
+> & { defaultChecked?: boolean; onCheckedChange?: (checked: boolean) => void };
+
+// A tick-box cannot use the controlled trick above. The form reset puts a box
+// back to its DOM defaultChecked, and React sets that only once, on mount, for
+// a controlled box — so a failed save unticked whatever the user had ticked
+// while React state still said "ticked". Left uncontrolled with defaultChecked
+// following local state instead, React keeps defaultChecked current and the
+// reset lands on the user's choice.
+export function StableCheckbox({ defaultChecked = false, onCheckedChange, ...rest }: CheckboxBase) {
+  const [checked, setChecked] = React.useState(defaultChecked);
+  return (
+    <input
+      {...rest}
+      type="checkbox"
+      defaultChecked={checked}
+      onChange={(e) => {
+        setChecked(e.target.checked);
+        onCheckedChange?.(e.target.checked);
+      }}
+    />
+  );
+}
+
 interface StableFieldProps extends InputBase {
   label: string;
   // When the form needs an htmlFor target distinct from the input name.
