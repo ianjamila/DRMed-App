@@ -78,8 +78,20 @@ export async function updatePatientAction(
   // requireActiveStaff above still gates the action.
   const supabase = await createClient();
 
-  // Check whether the patient already has current consent. If they do, skip
-  // recording a new grant to avoid duplicates. The DB trigger owns
+  const { error } = await supabase
+    .from("patients")
+    .update({
+      ...rest,
+      ...(birthdate_confirmed !== undefined ? { birthdate_confirmed } : {}),
+    })
+    .eq("id", patientId);
+
+  if (error) return { ok: false, error: error.message };
+
+  // Consent is recorded AFTER the details are saved: the grant snapshots the
+  // signer's name from the patient row (0162), so a name corrected in this
+  // same submission must already be on the row. Skip the grant when consent
+  // is already current, to avoid duplicates. The DB trigger owns
   // consent_signed_at and consent_current — do NOT write those columns here.
   let consentSignedNow = false;
   if (consentGivenToday) {
@@ -90,26 +102,16 @@ export async function updatePatientAction(
       .maybeSingle();
 
     if (!existing?.consent_current) {
-      await recordConsentGrantAction({
+      const granted = await recordConsentGrantAction({
         patientId,
         method: "paper_wet_signature",
         signatory: consentSignatory,
         signatoryName: consentSignatoryName,
         signatoryRelationship: consentSignatoryRelationship,
       });
-      consentSignedNow = true;
+      consentSignedNow = granted.ok;
     }
   }
-
-  const { error } = await supabase
-    .from("patients")
-    .update({
-      ...rest,
-      ...(birthdate_confirmed !== undefined ? { birthdate_confirmed } : {}),
-    })
-    .eq("id", patientId);
-
-  if (error) return { ok: false, error: error.message };
 
   const h = await headers();
   await audit({

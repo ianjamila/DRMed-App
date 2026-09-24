@@ -5,6 +5,7 @@ import { track } from "@vercel/analytics";
 import { metaTrack } from "@/lib/analytics/meta-pixel";
 import { googleAdsConversion } from "@/lib/analytics/google-ads";
 import { newEventId } from "@/lib/analytics/event-id";
+import { PUBLIC_FORM_CONSENT, PUBLIC_FORM_PRIVACY_HREF } from "@/lib/consent/public-form-consent";
 import Link from "next/link";
 import { AnimatePresence, motion, MotionConfig } from "motion/react";
 import {
@@ -1479,12 +1480,10 @@ function ReviewStep(props: {
             />
             <span className="text-[color:var(--color-ink-mid)]">
               <span className="font-semibold text-[color:var(--color-brand-navy)]">
-                Service agreement (required).
+                {PUBLIC_FORM_CONSENT.schedule.lead}
               </span>{" "}
-              I consent to drmed.ph processing my contact details to fulfil this
-              booking under the Philippine Data Privacy Act (RA 10173). Lab
-              results are released only after payment. See the{" "}
-              <Link href="/privacy" className="text-[color:var(--color-brand-cyan-text)] underline underline-offset-2">
+              {PUBLIC_FORM_CONSENT.schedule.body} See the{" "}
+              <Link href={PUBLIC_FORM_PRIVACY_HREF} className="text-[color:var(--color-brand-cyan-text)] underline underline-offset-2">
                 Privacy Notice
               </Link>
               .

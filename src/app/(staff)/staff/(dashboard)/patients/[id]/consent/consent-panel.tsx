@@ -34,15 +34,23 @@ function readFileAsDataUrl(file: File): Promise<string> {
 
 export function ConsentPanel({
   patientId,
+  patientName,
+  drmId,
   current,
   signedAt,
   noticeVersion,
+  bookingOnlyConsent,
   isAdmin,
 }: {
   patientId: string;
+  patientName: string;
+  drmId: string;
   current: boolean;
   signedAt: string | null;
   noticeVersion: string | null;
+  // Latest event is the old online-booking tick (contact details only): on
+  // record, but not consent on file — the patient still needs to sign.
+  bookingOnlyConsent: boolean;
   isAdmin: boolean;
 }) {
   const [pending, start] = useTransition();
@@ -131,7 +139,12 @@ export function ConsentPanel({
             {noticeVersion ? ` (notice ${noticeVersion})` : ""}
           </span>
         ) : (
-          <span className="text-amber-700">Not on file</span>
+          <span className="text-amber-700">
+            Not on file
+            {bookingOnlyConsent
+              ? " — the online booking checkbox covered contact details only. Have the patient sign."
+              : ""}
+          </span>
         )}
       </p>
 
@@ -169,13 +182,13 @@ export function ConsentPanel({
         )}
         {/* The full form with the signature on it (or the paper scan) —
             also for consents accepted online, which carry no file at all. */}
-        {current && (
+        {(current || bookingOnlyConsent) && (
           <Link
             href={`/staff/patients/${patientId}/consent/signed`}
             target="_blank"
           >
             <Button type="button" variant="outline" size="sm">
-              View signed form
+              {current ? "View signed form" : "View booking consent"}
             </Button>
           </Link>
         )}
@@ -199,6 +212,19 @@ export function ConsentPanel({
               wording the signed form will later show around the signature. */}
           {mode === "pad" && (
             <div className="rounded-lg border border-[color:var(--color-brand-bg-mid)] bg-white p-3">
+              {/* Same header the paper form carries, so the patient can check
+                  it is their own consent before signing. */}
+              <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2 border-b border-[color:var(--color-brand-bg-mid)] pb-2">
+                <p className="text-sm">
+                  <span className="font-extrabold text-[color:var(--color-brand-navy)]">
+                    Data Privacy Consent
+                  </span>{" "}
+                  — Patient: <b>{patientName || "(no name on file)"}</b>
+                </p>
+                <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+                  DRM-ID: <b>{drmId}</b>
+                </p>
+              </div>
               <p className="mb-2 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)]">
                 Have the patient read this before signing
               </p>

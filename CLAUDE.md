@@ -33,12 +33,21 @@ pushed by Claude before merge and verified by object 2026-09-24). **0159** (`ret
 first from a parallel branch) and verified by object 2026-09-24; **0154** (#198) and **0153**
 (#196) are applied and verified. **0151** (`rls_initplan_and_policy_consolidation`,
 #192) is also applied and verified: 159 public policies, zero unwrapped helper calls, and no
-unexpected policyless tables.
-**Next unused number: 0161**, subject to checking open branches again.
-`ls supabase/migrations | tail -3` is NOT enough to pick the next number — it only sees your
-own worktree, and on 2026-09-15 two branches claimed 0147 (and P0050) the same afternoon.
-Check the open branches too:
-`for b in $(git branch -r --format='%(refname:short)'); do git ls-tree --name-only $b supabase/migrations/ | tail -1; done`.
+unexpected policyless tables. Prod also has **0163** (`drm_id_width`) out of order, so 0161/0162
+land later with `db push --include-all`.
+
+**Rule — claim a number before you use it: `npm run claim -- migration` / `npm run claim -- pcode <n>`.**
+Several sessions work here at once, each in its own worktree, and picking "the next number" by
+looking around is a race: on 2026-09-15 two branches took 0147 and P0050; on 2026-09-24 two took
+0160, two took 0165, and two sessions swapped P-code ranges into each other twice. The script
+(`scripts/claim-number.mjs`) scans every local/remote branch, every worktree's uncommitted files
+and all existing claims, then claims the next number atomically (an O_EXCL file in the main
+checkout's gitignored `.claims/` — eight parallel claimers get eight different numbers). Claim
+BEFORE writing the file; `npm run claim -- list` shows who holds what, `peek` shows the next free
+number without claiming. Never renumber into a number you did not claim, never fill a gap, and
+never rename another session's migration file from outside its worktree — message that session
+(SendMessage) or comment on its PR. Claims only coordinate this machine: still confirm against prod
+(`list_migrations`) right before `db push`.
 A duplicate number makes `db push` report success and apply nothing. There is ONE
 Supabase project (= prod, ref `qhptbmafrosgibooelpp`); there is no staging project — the
 local stack is staging.
@@ -166,7 +175,7 @@ Other DB-side automation to be aware of (details and P-codes in the `drmed-migra
 - **Soft delete (0125):** `visits` and `test_requests` carry `deleted_at/by/reason`; guard triggers P0042–P0046 decide deletability (only `unpaid`) and block payments/status changes on deleted visits. **Every read of those tables filters `deleted_at is null`.** **0147 adds P0050** to both delete guards: an entry carrying a non-voided `hmo_claim_item` is money already billed to an HMO, and since 0146 the HMO reports skip deleted rows, so deleting it would drop a real receivable out of AR. Reachable via undo-release — a claimed line goes back to `ready_for_release`, 0110 does not void its claim, and 0133 keeps an HMO visit `unpaid` forever, so neither P0042 nor P0043 fires. `src/lib/visits/deletion.ts` mirrors it for the UI (`hasOpenHmoClaim`, reason `hmo_claimed`) and `deletion.test.ts` pins the migration's SQL text so the two can't drift.
 - Package headers (0040) auto-promote to `ready_for_release`; components are ₱0 rows with `parent_id`. Multi-row inserts list headers before components.
 - The statutory Senior/PWD discount row is locked at 20% (P0047, 0128); the EOD denomination breakdown must tie to the counted total (P0048, 0132).
-- Every `raise exception` with a `P00NN` code needs a translation in `src/lib/accounting/pg-errors.ts` (in use: P0001–P0034, P0040–P0053; next free P0054).
+- Every `raise exception` with a `P00NN` code needs a translation in `src/lib/accounting/pg-errors.ts` (in use on main: P0001–P0034, P0040–P0053; open branches hold more — claim with `npm run claim -- pcode <n>`, never pick by hand).
 - **And every RUNTIME `raise exception` needs an errcode at all.** A bare raise is untranslatable by construction — `translatePgError` has no key to match, so the `default:` branch shows the user the raw Postgres string. Use a `P00NN` (and register it above) or a standard SQLSTATE like `check_violation` where that is genuinely what it is. Post-condition asserts inside a `do $ … $` block are exempt — they abort a deploy, never a user. `pg-error-coverage.test.ts` enforces both rules and freezes the three pre-existing bare raises — all internal-consistency guards — so the set can only shrink.
 
 ### Three Supabase clients with strict separation
@@ -273,7 +282,7 @@ All Server Actions return `{ ok: true, data } | { ok: false, error }`. User-faci
 
 ## Schema changes — order of operations
 
-1. Create the migration locally: `npm run db:diff -- <name>` (or hand-write it for function/trigger/policy changes — the diff is noisy for those). Next number = last file + 1; `git fetch` first, parallel sessions have taken numbers before.
+1. Create the migration locally: `npm run db:diff -- <name>` (or hand-write it for function/trigger/policy changes — the diff is noisy for those). Get the number from `npm run claim -- migration` (after `git fetch`) — never "last file + 1"; parallel sessions have taken the same number within minutes.
 2. Replay on a fresh local stack: `supabase start && npm run db:reset` — the full history must apply to an empty DB (data migrations guard, never `raise`, on missing rows).
 3. `npm test && npm run typecheck && npm run lint`; add a `pg-errors.ts` translation for every new P-code; restate function ACLs explicitly (see `drmed-migrations`).
 4. Open the PR. The Vercel preview build fails if the migration hasn't been applied to the linked project.
