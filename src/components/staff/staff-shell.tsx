@@ -4,14 +4,9 @@ import { signOutStaff } from "@/app/(staff)/staff/login/actions";
 import type { StaffSession } from "@/lib/auth/require-staff";
 import { StaffNav } from "./staff-nav";
 import { StaffQuoteShortcut } from "./staff-quote-shortcut";
+import { canUseQuickQuote } from "@/lib/staff/quote-access";
 import { NotificationBell } from "./notification-bell";
 import { StaffMobileNavTrigger } from "./staff-mobile-nav-trigger";
-
-const QUOTE_ROLES: ReadonlyArray<StaffSession["role"]> = [
-  "reception",
-  "medtech",
-  "admin",
-];
 
 interface Props {
   session: StaffSession;
@@ -32,7 +27,7 @@ export function StaffShell({ session, children, badges }: Props) {
   return (
     <div className="flex min-h-screen bg-[color:var(--color-brand-bg)] print:bg-white">
       <StaffQuoteShortcut
-        enabledForRole={QUOTE_ROLES.includes(session.role)}
+        enabledForRole={canUseQuickQuote(session.role)}
       />
       {/* Sidebar */}
       <aside className="hidden w-64 shrink-0 flex-col border-r border-[color:var(--color-brand-bg-mid)] bg-white md:flex print:hidden">

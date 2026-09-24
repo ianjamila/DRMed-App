@@ -23,7 +23,7 @@ const RECEPTION_SUBSCRIPTIONS = [
   { table: "payments", event: "INSERT" },
 ] as const satisfies readonly Subscription[];
 
-// Quicklinks mirror the sidebar groups (Front Desk / Billing) and use the
+// Quicklinks mirror the sidebar groups (Messages & Bookings / Front Desk) and use the
 // sidebar's exact labels (Title Case, sidebar cleanup 2026-09-15). There is no
 // "start a visit" quicklink: the Reception Queue's + New visit button is the
 // one doorway to /staff/visits/new, so the dashboard points at the queue
@@ -31,7 +31,8 @@ const RECEPTION_SUBSCRIPTIONS = [
 // item of their own any more (the form is the Patients page's + New patient
 // button; petty cash is a Cash Drawer tab) — both stay here as shortcuts
 // because reception reaches for them many times a day. Cash Drawer sits under
-// Billing, where the sidebar keeps it.
+// Front Desk, where the sidebar keeps it (Billing was folded into Front Desk
+// 2026-09-24).
 //
 // There is deliberately no Personal group: owner decision 5 (2026-09-15) took
 // My Payslips and My Profile off the dashboards. Both stay reachable from the

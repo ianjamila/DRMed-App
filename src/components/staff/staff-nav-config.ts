@@ -1,4 +1,5 @@
 import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
+import { QUICK_QUOTE_ROLES } from "@/lib/staff/quote-access";
 // Sidebar nav items and which roles can see each.
 // Used by StaffShell to render a role-filtered list.
 
@@ -40,6 +41,14 @@ export interface StaffNavItem {
   // /staff/visits/new (the New visit form, which no sidebar item owns — it is
   // reached from the Reception Queue's + New visit button).
   excludePrefixes?: string[];
+  // Draw a thin unlabeled rule above this item to split a long list into
+  // visual groups without adding another heading (Front Desk: daily flow |
+  // money; Books & Reports: books | reports; Catalog & Setup: catalog |
+  // accounting setup; Admin Tools: people & logs | settings | patient data;
+  // Operations: clinic ops | sales & marketing; Payroll: pay cycle | staff
+  // records | setup). Works in sections and subgroups alike. Skipped when the item is the first one a role can see,
+  // so a filtered list never opens with a stray line.
+  dividerBefore?: boolean;
   roles: readonly StaffRole[];
 }
 
@@ -82,23 +91,46 @@ export const STAFF_NAV: StaffNavSection[] = [
     ],
   },
   {
+    // Sits above Front Desk (owner request, 2026-09-24): the two "someone is
+    // asking" pages are the first thing reception checks, so they get their
+    // own always-open section at the top instead of a collapsed subgroup.
+    heading: "Messages & Bookings",
+    items: [
+      {
+        href: "/staff/appointments",
+        quicklink: {"reception":{"order":0,"group":"Messages & Bookings"}},
+        label: ROUTE_NAME["/staff/appointments"],
+        description: "Today's scheduled patients and walk-in slots, filterable by Consultations / Home service. Mark patients arrived to start their visit, or reschedule no-shows. View other days using the date picker.",
+        roles: ["reception", "admin"],
+      },
+      {
+        href: "/staff/messages",
+        quicklink: {"reception":{"order":1,"group":"Messages & Bookings"}},
+        label: ROUTE_NAME["/staff/messages"],
+        description: "Messages people send through the Contact page on drmed.ph. Reply to them, book them an appointment, or close them. The number next to it counts the messages nobody has replied to yet.",
+        roles: ["reception", "admin"],
+      },
+    ],
+  },
+  {
     // Ordered by the daily flow (sidebar cleanup, 2026-09-15): the queue is
-    // where reception lives, Patients is the second-most-used page, and the
-    // two "someone is asking" pages sit together in a subgroup below them.
+    // where reception lives, Patients is the second-most-used page. The old
+    // Billing section's items follow (merged in 2026-09-24, owner request):
+    // Visit Records, Quick Quote, Cash Drawer.
     heading: "Front Desk",
     items: [
       {
         href: "/staff/visits/queue",
-        quicklink: {"reception":{"order":0,"group":"Front Desk"}},
+        quicklink: {"reception":{"order":2,"group":"Front Desk"}},
         label: ROUTE_NAME["/staff/visits/queue"],
         description: "Today's live front-desk worklist in three stages: Waiting for payment (record the payment), Processing (lab/imaging still working on results) and Completed (paid, nothing outstanding — print the patient's billing). Updates on its own as payments come in and tests finish.",
         roles: ["reception", "admin"],
       },
       {
         href: "/staff/patients",
-        quicklink: {"reception":{"order":1,"group":"Front Desk"}},
+        quicklink: {"reception":{"order":3,"group":"Front Desk"}},
         // Dashboard action/view owned here without adding a sidebar row.
-        shortcuts: [{ href: "/staff/patients/new", label: ROUTE_NAME["/staff/patients/new"], roles: ["reception","admin"], quicklink: {"reception":{"order":2,"group":"Front Desk"}} }],
+        shortcuts: [{ href: "/staff/patients/new", label: ROUTE_NAME["/staff/patients/new"], roles: ["reception","admin"], quicklink: {"reception":{"order":4,"group":"Front Desk"}} }],
         label: ROUTE_NAME["/staff/patients"],
         // The default prefix match also covers /staff/patients/new — the
         // "New patient registration" sidebar item was removed in the 2026-09-15
@@ -106,35 +138,10 @@ export const STAFF_NAV: StaffNavSection[] = [
         description: "Search the patient database by name, contact number, or DRM ID. Open a patient to see their full visit history, attached IDs, contact info, and previous test results. Use the + New patient button at the top to register a brand-new patient.",
         roles: ["reception", "admin"],
       },
-    ],
-    subgroups: [
-      {
-        heading: "Messages & Bookings",
-        items: [
-          {
-            href: "/staff/appointments",
-            quicklink: {"reception":{"order":3,"group":"Front Desk"}},
-            label: ROUTE_NAME["/staff/appointments"],
-            description: "Today's scheduled patients and walk-in slots, filterable by Consultations / Home service. Mark patients arrived to start their visit, or reschedule no-shows. View other days using the date picker.",
-            roles: ["reception", "admin"],
-          },
-          {
-            href: "/staff/messages",
-            quicklink: {"reception":{"order":4,"group":"Front Desk"}},
-            label: ROUTE_NAME["/staff/messages"],
-            description: "Messages people send through the Contact page on drmed.ph. Reply to them, book them an appointment, or close them. The number next to it counts the messages nobody has replied to yet.",
-            roles: ["reception", "admin"],
-          },
-        ],
-      },
-    ],
-  },
-  {
-    heading: "Billing",
-    items: [
       {
         href: "/staff/visits",
-        quicklink: {"reception":{"order":6,"group":"Billing"}},
+        quicklink: {"reception":{"order":5,"group":"Front Desk"}},
+        dividerBefore: true,
         label: ROUTE_NAME["/staff/visits"],
         // /staff/visits is the visit records page (every visit ever); each
         // visit opens to its printable A5 billing. "Visit Records" is the one
@@ -149,19 +156,21 @@ export const STAFF_NAV: StaffNavSection[] = [
         roles: ["reception", "admin"],
       },
       {
-        // Stays a flat Billing item (not in a Front Desk subgroup): medtech
-        // reaches it from the lab dashboard and Cmd+K, and has no Front Desk.
+        // Reception + admin only (owner decision 2026-09-24): medtech lost the
+        // sidebar item, the lab dashboard shortcut, Cmd+K and the page itself.
+        // Admin keeps the lab-dashboard shortcut. Roles come from
+        // QUICK_QUOTE_ROLES, the one list every doorway to /staff/quote uses.
         href: "/staff/quote",
-        quicklink: {"reception":{"order":7,"group":"Billing"},"lab":{"order":1,"roles":["medtech","admin"]}},
+        quicklink: {"reception":{"order":6,"group":"Front Desk"},"lab":{"order":1,"roles":["admin"]}},
         label: ROUTE_NAME["/staff/quote"],
         description: "Build a price quote without creating a visit. Useful for phone inquiries: 'How much for a CBC + Urinalysis + Lipid panel?' Generates a shareable quote with HMO or cash pricing.",
-        roles: ["reception", "medtech", "admin"],
+        roles: QUICK_QUOTE_ROLES,
       },
       {
         href: "/staff/payments/cash-drawer",
-        quicklink: {"reception":{"order":8,"group":"Billing"}},
+        quicklink: {"reception":{"order":7,"group":"Front Desk"}},
         // Dashboard action/view owned here without adding a sidebar row.
-        shortcuts: [{ href: "/staff/payments/petty-cash", label: ROUTE_NAME["/staff/payments/petty-cash"], roles: ["reception","admin"], quicklink: {"reception":{"order":9,"group":"Billing"}} }],
+        shortcuts: [{ href: "/staff/payments/petty-cash", label: ROUTE_NAME["/staff/payments/petty-cash"], roles: ["reception","admin"], quicklink: {"reception":{"order":8,"group":"Front Desk"}} }],
         // An umbrella: "Cash Drawer" names the whole till, while the landing tab
         // is "Cash In & Out" (the running balance and movement log) — naming the
         // item after that one tab would hide Petty Cash and End of Day.
@@ -256,6 +265,9 @@ export const STAFF_NAV: StaffNavSection[] = [
         ],
       },
       {
+        // Three groups split by dividers (2026-09-24): the pay cycle (Run
+        // Payroll, Pay Periods) | staff records (Employees, Overtime, Leaves,
+        // Cash Advances) | setup (Holidays, Government Rates, Settings).
         heading: "Payroll",
         items: [
           {
@@ -273,6 +285,7 @@ export const STAFF_NAV: StaffNavSection[] = [
           },
           {
             href: "/staff/admin/payroll/employees",
+            dividerBefore: true,
             label: ROUTE_NAME["/staff/admin/payroll/employees"],
             description: "Every paid employee (receptionists, medtechs, etc. — NOT the PF-paid doctors). Each profile has base salary, SSS/PhilHealth/Pag-IBIG ID numbers, tax info, and benefits. Add a new hire here before their first payroll.",
             roles: ["admin"],
@@ -290,7 +303,14 @@ export const STAFF_NAV: StaffNavSection[] = [
             roles: ["admin"],
           },
           {
+            href: "/staff/admin/reports/staff-advances",
+            label: ROUTE_NAME["/staff/admin/reports/staff-advances"],
+            description: "When staff borrow against future salary (cash advances, loans), the unpaid balance shows here. The next payroll auto-deducts toward repayment. Use to see who still owes what.",
+            roles: ["admin"],
+          },
+          {
             href: "/staff/admin/payroll/holidays",
+            dividerBefore: true,
             label: ROUTE_NAME["/staff/admin/payroll/holidays"],
             description: "Mark which Philippine holidays apply this year, and whether each is a regular holiday (200% pay if worked) or special non-working (130% pay if worked). The payroll engine uses this to compute holiday pay automatically.",
             roles: ["admin"],
@@ -305,12 +325,6 @@ export const STAFF_NAV: StaffNavSection[] = [
             href: "/staff/admin/payroll/settings",
             label: ROUTE_NAME["/staff/admin/payroll/settings"],
             description: "Global payroll configuration — pay cycle dates (e.g., pay on the 5th and 20th), minimum wage compliance threshold, default tax status, and 13th-month bonus settings.",
-            roles: ["admin"],
-          },
-          {
-            href: "/staff/admin/reports/staff-advances",
-            label: ROUTE_NAME["/staff/admin/reports/staff-advances"],
-            description: "When staff borrow against future salary (cash advances, loans), the unpaid balance shows here. The next payroll auto-deducts toward repayment. Use to see who still owes what.",
             roles: ["admin"],
           },
         ],
@@ -364,6 +378,7 @@ export const STAFF_NAV: StaffNavSection[] = [
           },
           {
             href: "/staff/admin/operations",
+            dividerBefore: true,
             excludePrefixes: ["/staff/admin/operations/cron-health"],
             quicklink: {"admin":{"order":2}},
             // Dashboard action/view owned here without adding a sidebar row.
@@ -437,6 +452,7 @@ export const STAFF_NAV: StaffNavSection[] = [
           },
           {
             href: "/staff/admin/gift-codes",
+            dividerBefore: true,
             label: ROUTE_NAME["/staff/admin/gift-codes"],
             description: "Every prepaid gift code ever sold (active, redeemed, expired), with the buyer and recipient details. Use to look up a specific code if a customer can't find theirs, or to track total outstanding gift-code liability.",
             roles: ["admin"],
@@ -499,6 +515,7 @@ export const STAFF_NAV: StaffNavSection[] = [
           },
           {
             href: "/staff/admin/accounting/chart-of-accounts",
+            dividerBefore: true,
             label: ROUTE_NAME["/staff/admin/accounting/chart-of-accounts"],
             description: "Master list of every 'bucket' your money lives in: Cash on Hand, BPI, BDO, GCash, Accounts Receivable, Revenue, Rent expense, etc. Each bucket has a 4-digit code. Add a new account when you open a new bank, start using a new wallet (Maya), or need to track a new kind of expense.",
             roles: ["admin"],
@@ -534,6 +551,7 @@ export const STAFF_NAV: StaffNavSection[] = [
           },
           {
             href: "/staff/admin/settings/dashboard-cards",
+            dividerBefore: true,
             label: ROUTE_NAME["/staff/admin/settings/dashboard-cards"],
             description: "Pick which summary cards (today's revenue, pending releases, low inventory, etc.) appear on each role's home dashboard. Different roles see different cards by default.",
             roles: ["admin"],
@@ -564,6 +582,7 @@ export const STAFF_NAV: StaffNavSection[] = [
           },
           {
             href: "/staff/admin/import-patients",
+            dividerBefore: true,
             label: ROUTE_NAME["/staff/admin/import-patients"],
             description: "Bulk-import patients from a CSV file — used during initial setup or when migrating from another system. Reads name, DOB, phone, email columns and creates one patient record per row.",
             roles: ["admin"],
@@ -614,7 +633,7 @@ export const STAFF_NAV: StaffNavSection[] = [
     items: [
       {
         href: "/staff/gift-codes/sell",
-        quicklink: {"reception":{"order":5,"group":"Front Desk"}},
+        quicklink: {"reception":{"order":9,"group":"Front Desk"}},
         label: ROUTE_NAME["/staff/gift-codes/sell"],
         description: "Sell a prepaid gift code to a customer — they pay now, the recipient redeems later for services. Generates a printable code with QR + expiration date. Parked here for now; reception sells these rarely.",
         roles: ["reception", "admin"],
