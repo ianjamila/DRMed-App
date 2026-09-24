@@ -1,5 +1,5 @@
 import { manilaDateTime } from "@/lib/dates/manila";
-import type { ClaimRemark } from "@/lib/queue/claim-remarks";
+import type { ClaimRemark, HandedBack } from "@/lib/queue/claim-remarks";
 
 // One test's claim history as a short list: claimed, unclaimed (with the
 // reason), reassigned — oldest first. Shared by the lab queue's Remarks column,
@@ -63,6 +63,25 @@ export function ClaimHistory({
           <ClaimRemarksList remarks={remarks} />
         </div>
       )}
+    </div>
+  );
+}
+
+// The Visit page's chip for a test that was put back in the queue at least
+// once. The newest unclaim (who, and the reason) rides along as the tooltip
+// and the accessible name; the test page's Claim history has the full story.
+export function HandedBackBadge({ info }: { info: HandedBack | null }) {
+  if (!info) return null;
+  const label = `${info.count > 1 ? `Handed back ${info.count} times. Latest: ` : ""}${info.latest.text}, ${manilaDateTime(info.latest.at)}`;
+  return (
+    <div className="mt-1">
+      <span
+        title={label}
+        aria-label={label}
+        className="inline-block rounded-md border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800"
+      >
+        handed back{info.count > 1 ? ` ×${info.count}` : ""}
+      </span>
     </div>
   );
 }

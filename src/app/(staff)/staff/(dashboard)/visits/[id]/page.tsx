@@ -43,6 +43,9 @@ import { moneySettled } from "@/lib/visits/money-settled";
 import { canManuallyReleasePackageHeader } from "@/lib/visits/package-header-release";
 import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
 import { ReissuePinButton } from "@/components/staff/reissue-pin-button";
+import { handedBack } from "@/lib/queue/claim-remarks";
+import { fetchClaimEvents } from "@/lib/queue/fetch-claim-events";
+import { HandedBackBadge } from "@/components/staff/claim-remarks-list";
 
 // Share the existing header lookup with metadata within this request.
 const loadDetail = cache(async (id: string) => {
@@ -220,6 +223,13 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
       }
     }
   }
+
+  // "handed back" chip: tests that were unclaimed at least once. Read through
+  // queue_claim_remarks (0160) on the signed-in client — it answers only a
+  // lab role (admin/pathologist/medtech/xray); reception gets nothing, and
+  // reception sees no test rows on this page anyway.
+  const claimEvents = await fetchClaimEvents(supabase, allTestIds);
+  const handedBackFor = (id: string) => handedBack(claimEvents.get(id) ?? []);
 
   // Admin-only: fetch PF entries to render status badges per test_request.
   const testIds = (tests ?? []).map((t) => t.id);
@@ -882,6 +892,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                                     >
                                       {c.status.replace(/_/g, " ")}
                                     </span>
+                                    <HandedBackBadge info={handedBackFor(c.id)} />
                                   </td>
                                   <td className="px-4 py-3 text-right">
                                     <TestAction
@@ -1087,6 +1098,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                       >
                         {t.status.replace(/_/g, " ")}
                       </span>
+                      <HandedBackBadge info={handedBackFor(t.id)} />
                     </td>
                     <td className="px-4 py-3 text-right">
                       <TestAction

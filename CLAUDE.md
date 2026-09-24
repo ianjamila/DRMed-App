@@ -25,16 +25,16 @@ Key reference artifacts:
   every post-1.0 programme (partner revisions, release lifecycle, group templates, EOD
   denomination count…). Read the spec before re-deriving a design decision.
 
-Migration ledger: **prod head = 0157** (`online_booking_staff_alert` — the "New online booking" Email
-Alert, pushed by Claude right before its PR merged, 2026-09-24). **0156** (`contact_message_form_location`,
-#200) is applied. **0155**
+Migration ledger: **prod head = 0160** (`queue_claim_remarks` — the lab queue Remarks reader, #214,
+pushed by Claude before merge and verified by object 2026-09-24). **0159** (`retire_send_out_accrual`,
+#211) and **0158** (`resolve_patient_referral_source`, #206) are applied. **0157**
+(`online_booking_staff_alert`) and **0156** (`contact_message_form_location`, #200) are applied. **0155**
 (`staff_alert_recipients`, #203) was pushed AFTER 0156 with `db push --include-all` (0156 landed
 first from a parallel branch) and verified by object 2026-09-24; **0154** (#198) and **0153**
 (#196) are applied and verified. **0151** (`rls_initplan_and_policy_consolidation`,
 #192) is also applied and verified: 159 public policies, zero unwrapped helper calls, and no
-unexpected policyless tables. **0158** (`resolve_patient_referral_source`) is in flight on
-`feat/booking-referral-source` and must be pushed before its PR merges.
-**0159** (`retire_send_out_accrual`, #211) is on prod. **0160** (`queue_claim_remarks`) is on `feat/xray-claim-gate`. **Next unused number: 0161**, subject to checking open branches again.
+unexpected policyless tables.
+**Next unused number: 0161**, subject to checking open branches again.
 `ls supabase/migrations | tail -3` is NOT enough to pick the next number — it only sees your
 own worktree, and on 2026-09-15 two branches claimed 0147 (and P0050) the same afternoon.
 Check the open branches too:
