@@ -23,21 +23,17 @@
  * ADDING A KIND
  * -------------
  * Widen the CHECK, put it in exactly one of the three CTEs, and give it a
- * KIND_LABEL. This test fails until all three are done.
+ * CASH_KIND_LABEL (src/lib/accounting/money-routing.ts, shared by the Cash Drawer
+ * and Money Routing). This test fails until all three are done.
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { CASH_KIND_LABEL } from "./money-routing";
 
 const MIGRATION = fileURLToPath(
   new URL(
     "../../../supabase/migrations/0149_ap_cash_bill_payment_drawer_link.sql",
-    import.meta.url,
-  ),
-);
-const DRAWER_CLIENT = fileURLToPath(
-  new URL(
-    "../../app/(staff)/staff/(dashboard)/payments/cash-drawer/cash-drawer-client.tsx",
     import.meta.url,
   ),
 );
@@ -70,10 +66,7 @@ function cteBody(name: string): string {
 }
 
 function labelledKinds(): string[] {
-  const text = readFileSync(DRAWER_CLIENT, "utf8");
-  const m = text.match(/const KIND_LABEL: Record<string, string> = \{([\s\S]*?)\n\};/);
-  if (!m) throw new Error("could not locate KIND_LABEL in cash-drawer-client.tsx");
-  return [...m[1].matchAll(/^\s*([a-z_]+)\s*:/gm)].map((x) => x[1]);
+  return Object.keys(CASH_KIND_LABEL);
 }
 
 function zodKinds(): string[] {
