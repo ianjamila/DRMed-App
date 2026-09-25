@@ -230,3 +230,34 @@ export function effectiveCashAccountCode(
   if (!rule || rule.requires_user_choice) return SUSPENSE_CODE;
   return accounts.find((a) => a.id === rule.account_id)?.code;
 }
+
+/** A chart row as the SERVER sees it — including switched-off accounts, which
+ *  the Cash Drawer page never sends to the browser. */
+export type CashAccountRow = { id: string; code: string; is_active: boolean };
+
+/** Shown when the Money Routing default for a kind points at a switched-off
+ *  account. Reception has no picker to route around it, so the fix is an admin's. */
+export const INACTIVE_ROUTED_ACCOUNT_ERROR =
+  "This payout is set to post to an account that has been switched off. Ask an admin to fix it in Money Routing, then try again.";
+
+/**
+ * Server-side twin of `effectiveCashAccountCode`: the same resolution, but over
+ * rows that may be inactive, so it can also say whether the effective account
+ * is switched off. The browser only receives ACTIVE accounts, so for an
+ * inactive routed default it resolves nothing and shows no "Which lab?"
+ * picker — the server must then answer with `INACTIVE_ROUTED_ACCOUNT_ERROR`,
+ * not "Pick which lab you paid", which reception has no way to do.
+ */
+export function resolveCashAdjustmentAccount(
+  contraAccountId: string | null | undefined,
+  rule: CashRule | undefined,
+  rows: readonly CashAccountRow[],
+): { code: string | undefined; inactive: boolean } {
+  const pick = (id: string) => {
+    const row = rows.find((a) => a.id === id);
+    return { code: row?.code, inactive: row ? !row.is_active : false };
+  };
+  if (contraAccountId) return pick(contraAccountId);
+  if (!rule || rule.requires_user_choice) return { code: SUSPENSE_CODE, inactive: false };
+  return pick(rule.account_id);
+}

@@ -23,7 +23,12 @@ import {
   ReopenEodSchema,
   type RecordCashAdjustmentInput,
 } from "@/lib/validations/accounting";
-import { SUSPENSE_CODE } from "@/lib/accounting/money-routing";
+import {
+  INACTIVE_ROUTED_ACCOUNT_ERROR,
+  resolveCashAdjustmentAccount,
+  type CashAccountRow,
+  type CashRule,
+} from "@/lib/accounting/money-routing";
 import { SEND_OUT_ACCOUNT_CODE, sendOutLabRule } from "@/lib/accounting/partner-labs";
 import { verifyPartnerLab } from "@/lib/accounting/partner-labs.server";
 import type { Database } from "@/types/database";
@@ -91,32 +96,31 @@ export async function recordCashAdjustmentAction(
   // admin point straight at 6420 Send Out. Checking only the account the
   // client happened to send would let that default silently bypass the
   // lab requirement below.
-  let contraCode: string | null = null;
-  if (parsed.data.contra_account_id) {
-    const { data: contra } = await admin
-      .from("chart_of_accounts")
-      .select("code")
-      .eq("id", parsed.data.contra_account_id)
-      .maybeSingle();
-    contraCode = contra?.code ?? null;
-  } else if (parsed.data.kind === "petty_cash") {
+  const contraId = parsed.data.contra_account_id || null;
+  let rule: CashRule | undefined;
+  if (!contraId && parsed.data.kind === "petty_cash") {
     const { data: map } = await admin
       .from("cash_adjustment_account_map")
       .select("account_id, requires_user_choice")
       .eq("kind", "petty_cash")
       .maybeSingle();
-    if (!map || map.requires_user_choice) {
-      contraCode = SUSPENSE_CODE;
-    } else {
-      const { data: mapped } = await admin
-        .from("chart_of_accounts")
-        .select("code")
-        .eq("id", map.account_id)
-        .maybeSingle();
-      contraCode = mapped?.code ?? null;
-    }
+    rule = map ?? undefined;
   }
-  const isSendOut = parsed.data.kind === "petty_cash" && contraCode === SEND_OUT_ACCOUNT_CODE;
+  const lookupId = contraId ?? (rule && !rule.requires_user_choice ? rule.account_id : null);
+  const { data: accountRows } = lookupId
+    ? await admin.from("chart_of_accounts").select("id, code, is_active").eq("id", lookupId)
+    : { data: [] as CashAccountRow[] };
+  const effective =
+    contraId || parsed.data.kind === "petty_cash"
+      ? resolveCashAdjustmentAccount(contraId, rule, accountRows ?? [])
+      : { code: undefined, inactive: false };
+  // The browser never lists a switched-off account, so an inactive routed
+  // default leaves reception with no lab picker and nothing to choose — say
+  // what actually needs fixing instead of "Pick which lab you paid". (An
+  // explicit inactive pick can only come from a crafted POST; the DB's
+  // inactive-account guard answers that one.)
+  if (!contraId && effective.inactive) return { ok: false, error: INACTIVE_ROUTED_ACCOUNT_ERROR };
+  const isSendOut = parsed.data.kind === "petty_cash" && effective.code === SEND_OUT_ACCOUNT_CODE;
   const labError = sendOutLabRule(isSendOut, parsed.data.vendor_id);
   if (labError) return { ok: false, error: labError };
 
