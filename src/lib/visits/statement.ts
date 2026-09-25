@@ -63,6 +63,32 @@ export function statementSummary(
   return { charges, paid, waived: 0, balance, balanceLabel };
 }
 
+/** The money columns a list page already reads off each `visits` row. */
+export interface VisitMoneyRow {
+  payment_status: string;
+  total_php: number | string;
+  paid_php: number | string;
+  hmo_provider_id: string | null;
+}
+
+/**
+ * The statement's summary from the visit row alone, for list pages (Reception
+ * Queue, the patient page's Visits, the portal's "Your visits") that don't
+ * load payments. `paid_php` is the live-payment sum the payments trigger keeps
+ * (0111), so this agrees with the statement without a payments read.
+ */
+export function visitMoneySummary(v: VisitMoneyRow): StatementSummary {
+  return statementSummary(Number(v.total_php), [{ amount_php: v.paid_php, voided_at: null }], {
+    hmoBilled: v.hmo_provider_id != null,
+    waived: v.payment_status === "waived",
+  });
+}
+
+/** How much of a visit's bill the clinic waived; 0 unless it is `waived`. */
+export function waivedAmount(v: Omit<VisitMoneyRow, "hmo_provider_id">): number {
+  return visitMoneySummary({ ...v, hmo_provider_id: null }).waived;
+}
+
 /**
  * Who may open, print or email a statement: the money paper's audience — the
  * same roles that see the visit page's payments section.

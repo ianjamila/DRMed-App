@@ -18,7 +18,7 @@ Key reference artifacts:
 - `IMPLEMENTATION_PLAN.md` — original phase plan (historical; cross-check before relying on it)
 - `README.md` — operational setup
 - `.env.example` — env-var inventory
-- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.24, 25 Sep 2026): every
+- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.25, 25 Sep 2026): every
   screen, label and blocked-message the app shows, checked against the code. Update it in the
   PR that changes a flow it describes.
 - `docs/superpowers/specs/` and `docs/superpowers/audits/` — design specs and audits for
@@ -98,7 +98,7 @@ Compliance target: **Philippine Data Privacy Act (RA 10173)**. Locale: en-PH, As
 | `supabase start` | Run a local Supabase stack (needs Docker) — the only "staging" |
 | `npm run seed:test` / `seed:services` / `seed:physicians` / `seed:hmo` / `seed:templates` / `seed:signatures` / etc. | Idempotent seed scripts — target the **local** stack by default (see below) |
 | `npm run smoke:results` / `smoke:chemistry` / `smoke:dashboards` | Render-pipeline / consolidated-chemistry / dashboard smoke tests |
-| `npm run smoke:print` | Every staff print surface in real Chrome with scrollbars on (local stack; needs a dev server — `APP_BASE=http://localhost:3007 npm run smoke:print`). Seeds and deletes its own data; checks clip, repeating `<tfoot>`, required text and PDF page count, plus the statement's Email-to-patient, Patient AR link and the patient's own portal statement (start the dev server with `SUPABASE_JWT_SECRET` from `supabase status -o env`) |
+| `npm run smoke:print` | Every staff print surface in real Chrome with scrollbars on (local stack; needs a dev server — `APP_BASE=http://localhost:3007 npm run smoke:print`). Seeds and deletes its own data; checks clip, repeating `<tfoot>`, required text and PDF page count, plus the statement's Email-to-patient, Patient AR link, the patient's own portal statement, the waived amount on the Queue / patient Visits / Visit Records (+ CSV), the portal's Your visits list, and a mid-session consent withdrawal (client navigation, stale-tab email, data export and the page payload must all refuse) (start the dev server with `SUPABASE_JWT_SECRET` from `supabase status -o env`) |
 
 There is **no PR-triggered CI** — `.github/workflows/` holds only scheduled jobs:
 `db-backup.yml` and `cron-watchdog.yml` (independent jobs for Vercel cron heartbeats
