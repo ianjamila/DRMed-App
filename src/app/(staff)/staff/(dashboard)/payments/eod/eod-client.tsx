@@ -3,11 +3,14 @@
 import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
 import { PageHeader } from "@/components/staff/page-header";
 
+import Link from "next/link";
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { ResetSafeSelect } from "@/components/forms/stable-fields";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { closeEodAction, reopenEodCloseAction } from "../cash-drawer/actions";
 import { PaymentsTabs } from "../_components/payments-tabs";
+import { UnclosedDaysNotice } from "@/components/staff/unclosed-days-notice";
 import {
   BILL_DENOMINATIONS,
   COIN_DENOMINATIONS,
@@ -158,7 +161,10 @@ function ClosedBreakdown({ counts }: { counts: DenominationCounts | null }) {
 export function EodClient(props: {
   isAdmin: boolean;
   businessDate: string;
+  today: string;
   shiftId: string;
+  shifts: { id: string; code: string; label: string }[];
+  unclosedDays: string[];
   state: Record<string, unknown>;
 }) {
   const router = useRouter();
@@ -184,6 +190,14 @@ export function EodClient(props: {
   const [pending, start] = useTransition();
   const [err, setErr] = useState<string | null>(null);
   const closed = s.closed;
+  const isToday = props.businessDate === props.today;
+
+  // Same date-input + router.push picker as Cash Drawer and Petty Cash, so a
+  // missed day can be opened and closed here without hand-editing the URL.
+  const navigate = (nextDate: string, nextShiftId: string) => {
+    if (!nextDate) return; // the native input emits "" when cleared
+    router.push(`/staff/payments/eod?date=${nextDate}&shift=${nextShiftId}`);
+  };
 
   const counts = useMemo(() => draftsToCounts(drafts), [drafts]);
   // Display only — the action re-derives the total from the same module, and
@@ -247,7 +261,51 @@ export function EodClient(props: {
         eyebrow={SECTION_NAME["/staff/payments/cash-drawer"]}
         title={<>{ROUTE_NAME["/staff/payments/eod"]} · {formatBusinessDate(props.businessDate)}</>}
         subtitle="Close and count the cash drawer."
+        actions={
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <input
+              type="date"
+              value={props.businessDate}
+              max={props.today}
+              onChange={(e) => navigate(e.target.value, props.shiftId)}
+              aria-label="Day to close"
+              className="min-h-[44px] rounded border border-[color:var(--color-brand-bg-mid)] px-2 py-1"
+            />
+            {props.shifts.length > 1 && (
+              <ResetSafeSelect
+                value={props.shiftId}
+                onChange={(e) => navigate(props.businessDate, e.target.value)}
+                aria-label="Shift"
+                className="min-h-[44px] rounded border border-[color:var(--color-brand-bg-mid)] px-2 py-1"
+              >
+                {props.shifts.map((sh) => (
+                  <option key={sh.id} value={sh.id}>{sh.label}</option>
+                ))}
+              </ResetSafeSelect>
+            )}
+            {!isToday && (
+              <Link
+                href={`/staff/payments/eod?shift=${props.shiftId}`}
+                className="flex min-h-[44px] items-center rounded border border-[color:var(--color-brand-navy)] px-3 py-1 font-semibold text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-navy)] hover:text-white"
+              >
+                Back to today
+              </Link>
+            )}
+          </div>
+        }
       />
+
+      <UnclosedDaysNotice days={props.unclosedDays} shiftId={props.shiftId} className="mt-5" />
+
+      {!isToday && !closed && (
+        <Alert variant="warning" className="mt-5">
+          <AlertTitle>This is a past day</AlertTitle>
+          <AlertDescription>
+            You are closing {formatBusinessDate(props.businessDate)}, not today. Only count
+            this if that day&apos;s drawer was never closed.
+          </AlertDescription>
+        </Alert>
+      )}
 
       {closed ? (
         <Alert variant="success" className="mt-5">

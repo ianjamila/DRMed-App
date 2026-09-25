@@ -22,7 +22,8 @@ import {
 import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 import { ROUTE_NAME } from "@/lib/staff/route-names";
-import { loadReleasedResultCounts } from "@/lib/visits/released-results";
+import { loadCompletedWorkCounts } from "@/lib/visits/released-results";
+import { buildArRows } from "@/lib/reports/patient-ar-rows";
 
 export const metadata = { title: ROUTE_NAME["/staff/admin/accounting/patient-ar"] };
 export const dynamic = "force-dynamic";
@@ -140,8 +141,8 @@ interface ArRow {
   outstanding: number;
   bucket: keyof BucketTotals;
   days: number;
-  /** Results already released on this (non-HMO) visit — 0 for an HMO visit. */
-  released: number;
+  /** Completed work on this (non-HMO) visit — released results + done doctor lines; 0 for an HMO visit. */
+  completed: number;
 }
 
 function compareText(a: string, b: string, dir: SortDir): number {
@@ -205,7 +206,7 @@ function compareArRows(a: ArRow, b: ArRow, sort: SortSpec<SortColumn>): number {
 }
 
 const SCOPE_LABEL: Record<Scope, string> = {
-  non_hmo: "Non-HMO (patient pays)",
+  non_hmo: "Exceptions (non-HMO)",
   hmo: "HMO co-pay residue",
   all: "All outstanding",
 };
@@ -217,10 +218,11 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
   const sp = await searchParams;
   const scope: Scope =
     sp.scope === "hmo" || sp.scope === "all" ? sp.scope : "non_hmo";
-  // "Results released" — visits whose results went out while they were paid
-  // and which owe money again (a payment deleted or moved, or a line added
-  // after the release). HMO visits release unpaid by design (0133), so they
-  // are never badged and this filter leaves them out.
+  // "Completed work" — visits with work already completed (results released,
+  // or a doctor consult / procedure marked done) while they were paid, which
+  // owe money again because a payment was deleted, edited down or moved
+  // since. HMO visits release unpaid by design (0133), so they are never
+  // badged and this filter leaves them out. The URL key stays `released=1`.
   const releasedOnly = sp.released === "1" && scope !== "hmo";
   const sort = parseSort(sp.sort, sp.dir, SORTABLE_COLUMNS, DEFAULT_SORT);
   const size = parsePageSize(sp.size, DEFAULT_PAGE_SIZE);
@@ -273,30 +275,22 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
     return { v, outstanding, bucket, days };
   });
 
-  // Released results per owing non-HMO visit — a handful on prod, so one
+  // Completed work per owing non-HMO visit — a handful on prod, so one
   // chunked read (released-results.ts) rather than an embed on every row.
-  const releasedByVisit = await loadReleasedResultCounts(
+  const completedByVisit = await loadCompletedWorkCounts(
     admin,
     enriched.filter((r) => r.outstanding > 0 && r.v.hmo_provider_id === null).map((r) => r.v.id),
   );
 
-  // Only rows that actually owe something belong in the table. The bucket
-  // cards above have always skipped non-positive balances (`outstanding > 0`
-  // when totalling), but the row list did not — so a visit marked unpaid with
-  // nothing left to collect sat in the table, and in the pager's "of N". On
-  // prod that was 4,147 of 4,153 rows: six visits genuinely owed money and
-  // the rest were zero-balance noise. Filter once, here, so the table, the
-  // pager and the cards all describe the same set.
-  const owingAll: ArRow[] = enriched
-    .filter((r) => r.outstanding > 0)
-    .map((r) => ({
-      ...r,
-      released: r.v.hmo_provider_id === null ? (releasedByVisit.get(r.v.id) ?? 0) : 0,
-    }));
-  const releasedCount = owingAll.filter((r) => r.released > 0).length;
-  // The released filter narrows the cards too, so cards, table and pager
-  // keep describing one set.
-  const owing = releasedOnly ? owingAll.filter((r) => r.released > 0) : owingAll;
+  // Only rows that actually owe something belong in the table (on prod the
+  // zero-balance rows were 4,147 of 4,153); each carries its completed-work
+  // count, and the filter narrows the cards too — buildArRows (tested) is the
+  // one place that decides all three.
+  const { owing, completedCount }: { owing: ArRow[]; completedCount: number } = buildArRows({
+    candidates: enriched,
+    completedByVisit,
+    completedOnly: releasedOnly,
+  });
   for (const r of owing) {
     totals[r.bucket].count += 1;
     totals[r.bucket].amount += r.outstanding;
@@ -367,8 +361,14 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
         </h1>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
           Outstanding balances on unpaid / partially-paid visits, bucketed by
-          age of service date. Showing {SCOPE_LABEL[scope].toLowerCase()}.
+          age of service date. Showing {SCOPE_LABEL[scope]}.
         </p>
+        {scope === "non_hmo" ? (
+          <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]" data-testid="pay-first-note">
+            Non-HMO patients pay before they are tested, so these rows are
+            corrections in flight or refunds, not receivables.
+          </p>
+        ) : null}
       </header>
 
       <nav className={sectionTabsNavClass} aria-label="Receivables scope">
@@ -401,12 +401,13 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
                 : "border-[color:var(--color-brand-bg-mid)] bg-white text-[color:var(--color-brand-text-mid)] hover:border-amber-400"
             }`}
           >
-            {releasedOnly ? "✓ " : ""}Results already released ({releasedCount})
+            {releasedOnly ? "✓ " : ""}Completed work ({completedCount})
           </Link>
           <span className="text-[color:var(--color-brand-text-soft)]">
-            Visits whose results went out while they were paid and which owe
-            money again — a payment deleted or moved, or a test added later.
-            HMO visits are not counted: they release before the HMO pays.
+            Visits with work already completed — results released, or a doctor
+            consult done — while they were paid, which owe money again because
+            a payment was deleted, edited down or moved. HMO visits are not
+            counted: they release before the HMO pays.
           </span>
         </div>
       )}
@@ -433,7 +434,7 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
         {owing.length === 0 ? (
           <p className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]">
             {releasedOnly
-              ? "No visit in this scope owes money after its results went out."
+              ? "No visit in this scope owes money after work on it was completed."
               : "No outstanding visits in this scope."}
           </p>
         ) : (
@@ -456,7 +457,7 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
-                {pageRows.map(({ v, outstanding, days, released }) => {
+                {pageRows.map(({ v, outstanding, days, completed }) => {
                   const p = pluckPatient(v.patients);
                   const providerName = pluckProviderName(v.hmo_providers);
                   return (
@@ -512,12 +513,12 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
                         >
                           {paymentStatusLabel(v.payment_status)}
                         </span>
-                        {released > 0 ? (
+                        {completed > 0 ? (
                           <span
                             className="ml-1.5 inline-block rounded-md border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800"
-                            title="Results went out while this visit was paid; it owes money again. Released results stay released."
+                            title="Work on this visit was completed (results released, or a doctor consult done) while it was paid; it owes money again. Released results stay released."
                           >
-                            Results released · {released}
+                            Completed work · {completed}
                           </span>
                         ) : null}
                       </td>

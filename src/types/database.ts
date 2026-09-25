@@ -5866,6 +5866,7 @@ export type Database = {
           hmo_authorization_no: string | null
           hmo_provider_id: string | null
           id: string
+          is_sample: boolean
           legacy_import_run_id: string | null
           legacy_source_ref: string | null
           notes: string | null
@@ -5890,6 +5891,7 @@ export type Database = {
           hmo_authorization_no?: string | null
           hmo_provider_id?: string | null
           id?: string
+          is_sample?: boolean
           legacy_import_run_id?: string | null
           legacy_source_ref?: string | null
           notes?: string | null
@@ -5914,6 +5916,7 @@ export type Database = {
           hmo_authorization_no?: string | null
           hmo_provider_id?: string | null
           id?: string
+          is_sample?: boolean
           legacy_import_run_id?: string | null
           legacy_source_ref?: string | null
           notes?: string | null
@@ -6519,6 +6522,10 @@ export type Database = {
       eod_lock_check: {
         Args: { p_business_date: string; p_shift_id: string }
         Returns: undefined
+      }
+      eod_unclosed_days: {
+        Args: { p_from: string | null; p_shift_id: string; p_to: string | null }
+        Returns: string[]
       }
       generate_drm_id: { Args: never; Returns: string }
       generate_visit_number: { Args: never; Returns: string }

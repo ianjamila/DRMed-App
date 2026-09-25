@@ -10,6 +10,7 @@ import { sendSms } from "./sms";
 import {
   renderEmailShell, emailParagraph, emailDetailBox, emailButton, emailFinePrint, escapeHtml, emailReviewCta,
 } from "./branded-email";
+import { SAMPLE_SKIP_REASON } from "@/lib/visits/sample";
 import { patientAlreadyAskedForReview } from "./review-cta";
 import { checkPatientRecipient } from "./active-patient-recipient";
 import { auditSkippedInactiveRecipient } from "./inactive-recipient-audit";
@@ -43,7 +44,7 @@ export async function notifyResultsReleasedBulk({
     .from("visits")
     .select(
       `
-        id,
+        id, is_sample,
         patients!inner ( id, drm_id, first_name, phone, email )
       `,
     )
@@ -60,12 +61,18 @@ export async function notifyResultsReleasedBulk({
   const count = testNames.length;
 
   // M7: physical hand-off (printouts collected in person) — record the notified
-  // audit row as skipped on both channels and send nothing.
-  if (releaseMedium === "physical" || releaseMedium === "pickup") {
+  // audit row as skipped on both channels and send nothing. A sample visit
+  // (0181) is skipped the same way: the patient is never contacted about it.
+  const skipReason = visit.is_sample
+    ? SAMPLE_SKIP_REASON
+    : releaseMedium === "physical" || releaseMedium === "pickup"
+      ? "physical hand-off — no message sent"
+      : null;
+  if (skipReason) {
     const skipped = {
       ok: false as const,
       skipped: true as const,
-      reason: "physical hand-off — no message sent",
+      reason: skipReason,
     };
     await audit({
       actor_id: null,

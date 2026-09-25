@@ -3,6 +3,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { fetchCompleteRows } from "@/lib/reports/paging";
 import { PageHeader } from "@/components/staff/page-header";
 import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { EOD_REMINDERS_START_KEY } from "@/lib/accounting/eod-reminders";
 import { MoneyRoutingClient, type LastChange } from "./money-routing-client";
 
 export const metadata = { title: "Money Routing" };
@@ -24,19 +25,20 @@ type ChangeRow = {
   created_at: string;
 };
 
-/** Which row an audit entry belongs to: `payment:<map id>`, `cash:<kind>` or `fund`. */
+/** Which row an audit entry belongs to: `payment:<map id>`, `cash:<kind>`, `fund` or `eodStart`. */
 function changeKey(row: ChangeRow): string | null {
   const meta = (row.metadata ?? {}) as { kind?: unknown; key?: unknown };
   if (row.action === "payment_method_map.updated") return row.resource_id ? `payment:${row.resource_id}` : null;
   if (row.action === "cash_routing.updated") return typeof meta.kind === "string" ? `cash:${meta.kind}` : null;
-  return meta.key === "default_change_fund_php" ? "fund" : null;
+  if (meta.key === "default_change_fund_php") return "fund";
+  return meta.key === EOD_REMINDERS_START_KEY ? "eodStart" : null;
 }
 
 export default async function MoneyRoutingPage() {
   await requireAdminStaff();
   const admin = createAdminClient();
 
-  const [payments, cash, accounts, fund, drawerUse, changes] = await Promise.all([
+  const [payments, cash, accounts, fund, eodStart, drawerUse, changes] = await Promise.all([
     admin
       .from("payment_method_account_map")
       .select("id, payment_method, account_id, notes")
@@ -55,6 +57,11 @@ export default async function MoneyRoutingPage() {
       .select("value_php")
       .eq("key", "default_change_fund_php")
       .maybeSingle(),
+    admin
+      .from("accounting_settings")
+      .select("value_text")
+      .eq("key", EOD_REMINDERS_START_KEY)
+      .maybeSingle(),
     // Has reception ever recorded a cash-drawer entry? Until then the cash
     // rules below have never been applied, so they start folded away.
     admin.from("eod_cash_adjustments").select("id", { count: "exact", head: true }),
@@ -70,7 +77,7 @@ export default async function MoneyRoutingPage() {
         .range(from, to),
     ),
   ]);
-  for (const r of [payments, cash, accounts, fund]) if (r.error) throw new Error(r.error.message);
+  for (const r of [payments, cash, accounts, fund, eodStart]) if (r.error) throw new Error(r.error.message);
   if (changes.error) throw new Error(changes.error.message);
 
   const latest = new Map<string, ChangeRow>();
@@ -99,6 +106,7 @@ export default async function MoneyRoutingPage() {
         cash={cash.data ?? []}
         accounts={accounts.data ?? []}
         defaultChangeFund={Number(fund.data?.value_php ?? 0)}
+        eodRemindersStart={eodStart.data?.value_text ?? null}
         // A failed count must not hide rules that may be in use.
         cashDrawerInUse={!!drawerUse.error || (drawerUse.count ?? 0) > 0}
         lastChanges={lastChanges}

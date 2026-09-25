@@ -9,6 +9,7 @@ import { translatePgError } from "@/lib/accounting/pg-errors";
 import {
   UpdateCashAdjustmentRoutingSchema,
   UpdateDefaultChangeFundSchema,
+  UpdateEodRemindersStartSchema,
   UpdatePaymentMethodMapSchema,
 } from "@/lib/validations/accounting";
 import {
@@ -17,6 +18,7 @@ import {
   isFixedPaymentMethod,
   type RoutingAccount,
 } from "@/lib/accounting/money-routing";
+import { EOD_REMINDERS_START_KEY } from "@/lib/accounting/eod-reminders";
 
 type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -170,5 +172,52 @@ export async function updateDefaultChangeFundAction(amount_php: number): Promise
   // Starting cash on the Cash Drawer and End of Day comes from this figure.
   revalidatePath("/staff/payments/cash-drawer");
   revalidatePath("/staff/payments/eod");
+  return { ok: true };
+}
+
+/**
+ * When the End of Day reminders start counting (0185). null turns them off.
+ * Any date is allowed, a future one included: the owner may schedule the start.
+ */
+export async function updateEodRemindersStartAction(start_date: string | null): Promise<ActionResult> {
+  const session = await requireAdminStaff();
+
+  const parsed = UpdateEodRemindersStartSchema.safeParse({ start_date });
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid date." };
+
+  const admin = createAdminClient();
+  const { data: before } = await admin
+    .from("accounting_settings")
+    .select("value_text")
+    .eq("key", EOD_REMINDERS_START_KEY)
+    .maybeSingle();
+
+  const { error } = await admin
+    .from("accounting_settings")
+    .update({ value_text: parsed.data.start_date, updated_by: session.user_id })
+    .eq("key", EOD_REMINDERS_START_KEY);
+  if (error) return { ok: false, error: translatePgError(error) };
+
+  const { ip, ua } = await ipAndAgent();
+  await audit({
+    actor_id: session.user_id,
+    actor_type: "staff",
+    action: "accounting_settings.updated",
+    resource_type: "accounting_settings",
+    resource_id: null,
+    metadata: {
+      key: EOD_REMINDERS_START_KEY,
+      before: before?.value_text ?? null,
+      after: parsed.data.start_date,
+    },
+    ip_address: ip,
+    user_agent: ua,
+  });
+
+  revalidatePath(PAGE);
+  // Every screen that shows a "not closed" reminder reads this date.
+  revalidatePath("/staff/payments/cash-drawer");
+  revalidatePath("/staff/payments/eod");
+  revalidatePath("/staff/admin/operations/cash");
   return { ok: true };
 }

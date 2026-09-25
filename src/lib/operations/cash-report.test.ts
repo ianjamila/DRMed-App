@@ -78,6 +78,21 @@ describe("buildCreditCardPanel", () => {
 });
 
 describe("buildCashReconRows", () => {
+  it("flags never-closed days from the reminders map, and nothing without it", () => {
+    const eod: EodCloseRow[] = [
+      { business_date: "2026-05-23", expected_cash_php: "1000", counted_cash_php: "1000", variance_php: "0" },
+    ];
+    const days = ["2026-05-21", "2026-05-22", "2026-05-23"];
+    const flagged = buildCashReconRows(eod, days, new Map([["2026-05-22", ["shift-1"]]]));
+    expect(flagged.map((r) => [r.day, r.reconciled, r.notClosedShiftIds])).toEqual([
+      ["2026-05-21", false, []],
+      ["2026-05-22", false, ["shift-1"]],
+      ["2026-05-23", true, []],
+    ]);
+    // Reminders off (no map): an unreconciled day is simply not flagged.
+    expect(buildCashReconRows(eod, days).every((r) => r.notClosedShiftIds.length === 0)).toBe(true);
+  });
+
   it("maps closed rows to expected/counted/variance and flags unreconciled days", () => {
     const eod: EodCloseRow[] = [
       { business_date: "2026-05-23", expected_cash_php: "5000.00", counted_cash_php: "4990.00", variance_php: "-10.00" },
