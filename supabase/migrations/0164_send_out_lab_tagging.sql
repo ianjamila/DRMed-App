@@ -8,9 +8,8 @@
 --
 --   1. vendors.is_partner_lab — which vendors appear in the "Which lab?" picker
 --      (Hi Precision and Micromedic flagged here; admins tick others in Vendors).
---      Reception must read that short list, so vendors' single admin-ALL policy
---      is split into a read policy (admin, or reception for active partner labs)
---      and admin-only writes.
+--      Reception reads that short list through partner_labs() (id + name only);
+--      the vendors table itself stays admin-only.
 --   2. eod_cash_adjustments.vendor_id — the lab a petty-cash payout paid (the
 --      Petty Cash tab, the drawer's Cash In & Out payout and Quick expense on
 --      Clinic Cash all write this table).
@@ -45,27 +44,32 @@ update public.vendors
    set is_partner_lab = true
  where lower(trim(name)) in ('hi precision', 'micromedic');
 
-drop policy if exists "vendors_admin_all" on public.vendors;
+-- The vendors table stays admin-only (vendors_admin_all is untouched): a row
+-- policy cannot hide columns, and a vendor row carries TIN, contacts,
+-- withholding settings and notes. Reception needs only the picker list, so it
+-- gets exactly that — id and name of active partner labs — from a narrow
+-- SECURITY DEFINER reader that checks the caller's role itself.
+create or replace function public.partner_labs()
+returns table (id uuid, name text)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select v.id, v.name
+    from public.vendors v
+   where v.is_partner_lab
+     and v.is_active
+     and (select public.has_role(array['admin', 'reception']))
+   order by v.name, v.id;
+$$;
 
-create policy "vendors: read"
-  on public.vendors for select to authenticated
-  using (
-    (select public.has_role(array['admin']))
-    or (is_partner_lab and is_active and (select public.has_role(array['reception'])))
-  );
+comment on function public.partner_labs() is
+  'The "Which lab?" picker list: id + name of active partner labs, for admin '
+  'and reception only (returns nothing for any other role). 0164.';
 
-create policy "vendors: admin insert"
-  on public.vendors for insert to authenticated
-  with check ((select public.has_role(array['admin'])));
-
-create policy "vendors: admin update"
-  on public.vendors for update to authenticated
-  using ((select public.has_role(array['admin'])))
-  with check ((select public.has_role(array['admin'])));
-
-create policy "vendors: admin delete"
-  on public.vendors for delete to authenticated
-  using ((select public.has_role(array['admin'])));
+revoke execute on function public.partner_labs() from public, anon;
+grant  execute on function public.partner_labs() to authenticated, service_role;
 
 -- ---------------------------------------------------------------------------
 -- 2. Lab on a cash-drawer payout
@@ -205,7 +209,8 @@ as $$
     count(distinct l.entry_id)                as entries
   from lines l
   left join public.vendors v on v.id = l.vendor_id
-  group by 1, 2, 3;
+  group by 1, 2, 3
+  order by 1 desc, 3 nulls last, 2;
 $$;
 
 comment on function public.send_out_spend_by_lab(date, date) is
@@ -259,7 +264,8 @@ as $$
     coalesce(s.spend_php, 0)::numeric(14, 2)                             as spend_php,
     (coalesce(r.revenue_php, 0) - coalesce(s.spend_php, 0))::numeric(14, 2) as margin_php
   from revenue r
-  full join spend s on s.month = r.month;
+  full join spend s on s.month = r.month
+  order by 1 desc;
 $$;
 
 comment on function public.send_out_monthly_margin(date, date) is
@@ -290,7 +296,7 @@ as $$
   with t as (
     select
       s.send_out_vendor_id                                                 as vendor_id,
-      coalesce(vn.name, nullif(trim(s.send_out_lab), ''), 'Not set')        as lab_name,
+      coalesce(vn.name, 'Not linked to a partner lab')                    as lab_name,
       extract(epoch from (tr.released_at - tr.requested_at)) / 3600.0       as hours,
       s.turnaround_hours                                                   as promise
     from public.test_requests tr
@@ -317,7 +323,8 @@ as $$
     count(*) filter (where promise is not null)                          as with_promise,
     count(*) filter (where promise is not null and hours <= promise)     as within_promise
   from t
-  group by vendor_id, lab_name;
+  group by vendor_id, lab_name
+  order by (vendor_id is null), lab_name;
 $$;
 
 comment on function public.send_out_turnaround_by_lab(date, date) is
@@ -340,9 +347,10 @@ begin
      and exists (select 1 from public.vendors where lower(trim(name)) in ('hi precision', 'micromedic')) then
     raise exception '0164: partner labs were not flagged';
   end if;
+  -- Reception must not gain a read path onto vendor rows.
   if exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'vendors'
-              and policyname = 'vendors_admin_all') then
-    raise exception '0164: vendors_admin_all still present';
+              and policyname <> 'vendors_admin_all') then
+    raise exception '0164: unexpected policy on vendors';
   end if;
 end;
 $$;

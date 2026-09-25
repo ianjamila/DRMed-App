@@ -7,9 +7,11 @@ import {
   FIXED_CASH_KINDS,
   FIXED_PAYMENT_METHODS,
   PAYMENT_METHOD_LABEL,
+  SUSPENSE_CODE,
   accountChoicesFor,
   cashKindLabel,
   cashRoutingGroup,
+  effectiveCashAccountCode,
   groupAccounts,
   isAllowedAccount,
   paymentMethodLabel,
@@ -175,5 +177,26 @@ describe("the Cash Drawer picker", () => {
     expect(startingPick({ account_id: "id-1020", requires_user_choice: false }, CHART)).toBe("");
     expect(startingPick(undefined, CHART)).toBe("");
     expect(startingPick({ account_id: "id-gone", requires_user_choice: true }, CHART)).toBe("");
+  });
+});
+
+describe("effectiveCashAccountCode", () => {
+  // Mirrors resolve_cash_adjustment_account (0043): the account the DB will
+  // actually post to, whether or not a picker is showing.
+  it("an explicit contra pick always wins", () => {
+    expect(effectiveCashAccountCode("id-6400", { account_id: "id-6320", requires_user_choice: false }, CHART)).toBe("6400");
+  });
+
+  it("no contra, no staff pick required: falls back to the routing row's account", () => {
+    expect(effectiveCashAccountCode(null, { account_id: "id-6320", requires_user_choice: false }, CHART)).toBe("6320");
+  });
+
+  it("no contra, staff pick required and skipped: the DB posts to 9999 Suspense, not the mapped default", () => {
+    expect(effectiveCashAccountCode(null, { account_id: "id-6400", requires_user_choice: true }, CHART)).toBe(SUSPENSE_CODE);
+  });
+
+  it("no contra and no routing row at all: also Suspense", () => {
+    expect(effectiveCashAccountCode(null, undefined, CHART)).toBe(SUSPENSE_CODE);
+    expect(effectiveCashAccountCode("", undefined, CHART)).toBe(SUSPENSE_CODE);
   });
 });

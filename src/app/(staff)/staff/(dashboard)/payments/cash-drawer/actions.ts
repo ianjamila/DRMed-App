@@ -23,6 +23,7 @@ import {
   ReopenEodSchema,
   type RecordCashAdjustmentInput,
 } from "@/lib/validations/accounting";
+import { SUSPENSE_CODE } from "@/lib/accounting/money-routing";
 import { SEND_OUT_ACCOUNT_CODE, sendOutLabRule } from "@/lib/accounting/partner-labs";
 import { verifyPartnerLab } from "@/lib/accounting/partner-labs.server";
 import type { Database } from "@/types/database";
@@ -80,6 +81,16 @@ export async function recordCashAdjustmentAction(
   // points at — look up its code so we can tell whether this is a Send Out
   // (6420) petty-cash payout, which is the only case a lab is required (or
   // allowed).
+  //
+  // An explicit pick always wins. Without one, DON'T assume "no account" —
+  // `resolve_cash_adjustment_account` (0043) still resolves the EFFECTIVE
+  // account from `cash_adjustment_account_map`, and posts there even though
+  // no picker showed (see money-routing.ts's `staffPicksAccount`): the row
+  // requiring a staff pick falls back to 9999 Suspense, but one that
+  // doesn't uses its mapped default outright — which Money Routing lets an
+  // admin point straight at 6420 Send Out. Checking only the account the
+  // client happened to send would let that default silently bypass the
+  // lab requirement below.
   let contraCode: string | null = null;
   if (parsed.data.contra_account_id) {
     const { data: contra } = await admin
@@ -88,14 +99,41 @@ export async function recordCashAdjustmentAction(
       .eq("id", parsed.data.contra_account_id)
       .maybeSingle();
     contraCode = contra?.code ?? null;
+  } else if (parsed.data.kind === "petty_cash") {
+    const { data: map } = await admin
+      .from("cash_adjustment_account_map")
+      .select("account_id, requires_user_choice")
+      .eq("kind", "petty_cash")
+      .maybeSingle();
+    if (!map || map.requires_user_choice) {
+      contraCode = SUSPENSE_CODE;
+    } else {
+      const { data: mapped } = await admin
+        .from("chart_of_accounts")
+        .select("code")
+        .eq("id", map.account_id)
+        .maybeSingle();
+      contraCode = mapped?.code ?? null;
+    }
   }
   const isSendOut = parsed.data.kind === "petty_cash" && contraCode === SEND_OUT_ACCOUNT_CODE;
   const labError = sendOutLabRule(isSendOut, parsed.data.vendor_id);
   if (labError) return { ok: false, error: labError };
+
+  // If reception left "Paid to" blank, default it to the lab's name — same
+  // parity as the Petty Cash tab / Quick expense (postTillCashExpense).
+  let labName: string | null = null;
   if (parsed.data.vendor_id) {
     const verifyError = await verifyPartnerLab(parsed.data.vendor_id);
     if (verifyError) return { ok: false, error: verifyError };
+    const { data: lab } = await admin
+      .from("vendors")
+      .select("name")
+      .eq("id", parsed.data.vendor_id)
+      .maybeSingle();
+    labName = lab?.name ?? null;
   }
+  const payee = parsed.data.payee?.trim() || labName || null;
 
   const { data, error } = await admin
     .from("eod_cash_adjustments")
@@ -104,7 +142,7 @@ export async function recordCashAdjustmentAction(
       shift_id: parsed.data.shift_id,
       kind: parsed.data.kind,
       amount_php: parsed.data.amount_php,
-      payee: parsed.data.payee ?? null,
+      payee,
       payee_staff_id: parsed.data.payee_staff_id ?? null,
       contra_account_id: parsed.data.contra_account_id ?? null,
       vendor_id: parsed.data.vendor_id ?? null,

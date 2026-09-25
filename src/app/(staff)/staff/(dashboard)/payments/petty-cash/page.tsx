@@ -51,7 +51,7 @@ export default async function PettyCashPage({
   const { data: entries, error: completeError } = await fetchCompleteRows((from, to) => admin
     .from("eod_cash_adjustments")
     .select(
-      "id, amount_php, payee, notes, recorded_at, voided_at, contra_account_id, chart_of_accounts:contra_account_id(code, name)",
+      "id, amount_php, payee, notes, recorded_at, voided_at, contra_account_id, chart_of_accounts:contra_account_id(code, name), vendors:vendor_id(name)",
     )
     .eq("kind", "petty_cash")
     .eq("business_date", business_date)
@@ -85,6 +85,9 @@ export default async function PettyCashPage({
       label,
       uncategorised,
       payee: e.payee,
+      // 0164: the partner lab this Send Out payout paid, so reception can
+      // spot a mis-tagged one right on this list.
+      labName: e.vendors?.name ?? null,
       note: e.notes,
       amount_php: Number(e.amount_php) || 0,
       voided: e.voided_at !== null,

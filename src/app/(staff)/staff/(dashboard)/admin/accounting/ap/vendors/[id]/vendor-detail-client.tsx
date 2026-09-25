@@ -35,6 +35,9 @@ type VendorRow = {
   email: string | null;
   phone: string | null;
   is_active: boolean;
+  // 0164: whether this vendor appears in every "Which lab?" picker and the
+  // service form's Partner lab choices.
+  is_partner_lab: boolean;
   notes: string | null;
   default_account_id: string | null;
   default_wt_classification: string | null;
@@ -86,6 +89,16 @@ export function VendorDetailClient({ vendor, bills, payments }: Props) {
 
   const toggleActive = () => {
     setError(null);
+    // Deactivating a partner lab removes it from every "Which lab?" picker
+    // (Cash Drawer, Petty Cash, Quick expense) and the service form's Partner
+    // lab choices — say so before it disappears, same as any other
+    // destructive confirm in this app.
+    if (vendor.is_active && vendor.is_partner_lab) {
+      const warned = window.confirm(
+        `Deactivate ${vendor.name}? It's a partner lab — it will disappear from every "Which lab?" list and from the service form's Partner lab choices.`,
+      );
+      if (!warned) return;
+    }
     startTransition(async () => {
       const r = vendor.is_active
         ? await deactivateVendorAction(vendor.id)

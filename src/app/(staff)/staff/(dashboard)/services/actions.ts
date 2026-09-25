@@ -86,10 +86,19 @@ export async function createServiceAction(
   );
   if (!sendOutVendor.ok) return { ok: false, error: sendOutVendor.error };
 
+  // The RLS-scoped client's "services: admin all" policy covers every column
+  // (no column-level grants restrict send_out_vendor_id/send_out_lab), so the
+  // vendor/lab pair goes into the SAME insert as the rest of the row — one
+  // write, atomically committed or not at all, instead of a second write that
+  // could fail and leave the service saved but untagged.
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("services")
-    .insert(withSignoffFloor(parsed.data))
+    .insert({
+      ...withSignoffFloor(parsed.data),
+      send_out_vendor_id: sendOutVendor.data.vendorId,
+      send_out_lab: sendOutVendor.data.labName,
+    })
     .select("id, code")
     .single();
 
@@ -97,34 +106,26 @@ export async function createServiceAction(
     return { ok: false, error: error?.message ?? "Could not create service." };
   }
 
-  // Persist the send-out vendor/lab pair via the admin client, same choke
-  // point as the main write above uses the RLS-scoped client — kept separate
-  // and audited on its own so the config change is traceable independently
-  // of the rest of the row. Skipped when there's nothing to write (a new
-  // non-send-out service already has null/null by column default).
+  const h = await headers();
+
+  // Skipped when there's nothing to record (a new non-send-out service
+  // already has null/null by column default).
   if (sendOutVendor.data.vendorId !== null || sendOutVendor.data.labName !== null) {
-    const { error: soErr } = await admin
-      .from("services")
-      .update({
-        send_out_vendor_id: sendOutVendor.data.vendorId,
-        send_out_lab: sendOutVendor.data.labName,
-      })
-      .eq("id", data.id);
-    if (soErr) return { ok: false, error: soErr.message };
     await audit({
       actor_id: session.user_id,
       actor_type: "staff",
       action: "service.send_out_config_updated",
-      resource_type: "services",
+      resource_type: "service",
       resource_id: data.id,
       metadata: {
         vendor_id: sendOutVendor.data.vendorId,
         lab_name: sendOutVendor.data.labName,
       },
+      ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+      user_agent: h.get("user-agent"),
     });
   }
 
-  const h = await headers();
   await audit({
     actor_id: session.user_id,
     actor_type: "staff",
@@ -165,58 +166,67 @@ export async function updateServiceAction(
 
   const admin = createAdminClient();
   const partnerLabs = await loadActivePartnerLabs(admin);
-  const sendOutVendor = resolveSendOutVendorSelection(
-    parsed.data.is_send_out,
-    formData.get("send_out_vendor_id") as string | null,
-    partnerLabs,
-  );
-  if (!sendOutVendor.ok) return { ok: false, error: sendOutVendor.error };
 
   const supabase = await createClient();
-  // Pre-read so audit metadata can record before/after for any price column
-  // (and for the send-out vendor/lab pair below).
+  // Pre-read so audit metadata can record before/after for any price column,
+  // and so the resolver can tell an unrelated edit ("— Not set —" left alone,
+  // or the row's own current lab re-submitted) from a deliberate change to
+  // the lab — active-partner validation should only guard a NEW pick.
   const { data: prior } = await supabase
     .from("services")
     .select("code, price_php, hmo_price_php, send_out_vendor_id, send_out_lab")
     .eq("id", serviceId)
     .maybeSingle();
 
+  const sendOutVendor = resolveSendOutVendorSelection(
+    parsed.data.is_send_out,
+    formData.get("send_out_vendor_id") as string | null,
+    partnerLabs,
+    prior ? { vendorId: prior.send_out_vendor_id, labName: prior.send_out_lab } : null,
+  );
+  if (!sendOutVendor.ok) return { ok: false, error: sendOutVendor.error };
+
+  // The RLS-scoped client's "services: admin all" policy covers every column
+  // (no column-level grants restrict send_out_vendor_id/send_out_lab), so the
+  // vendor/lab pair goes into the SAME update as the rest of the row — one
+  // write, atomically committed or not at all, instead of a second write that
+  // could fail and leave the rest of the edit saved but the lab stale.
   const { error } = await supabase
     .from("services")
-    .update(withSignoffFloor(parsed.data))
+    .update({
+      ...withSignoffFloor(parsed.data),
+      send_out_vendor_id: sendOutVendor.data.vendorId,
+      send_out_lab: sendOutVendor.data.labName,
+    })
     .eq("id", serviceId);
 
   if (error) return { ok: false, error: error.message };
 
-  // Only write + audit the send-out config when it actually changes. This is
-  // also what makes unticking "Send-out test" (or never having ticked it)
-  // clear a stale vendor/lab pair — resolveSendOutVendorSelection always
-  // forces null/null when is_send_out is false, so an untick that had a
-  // vendor set differs from the null prior read here and triggers the clear.
+  const h = await headers();
+
+  // Only audit the send-out config when it actually changes. This is also
+  // what makes unticking "Send-out test" (or never having ticked it) clear a
+  // stale vendor/lab pair — resolveSendOutVendorSelection always forces
+  // null/null when is_send_out is false, so an untick that had a vendor set
+  // differs from the prior read here and triggers the clear.
   const priorVendorId = prior?.send_out_vendor_id ?? null;
   const priorLabName = prior?.send_out_lab ?? null;
   if (
     sendOutVendor.data.vendorId !== priorVendorId ||
     sendOutVendor.data.labName !== priorLabName
   ) {
-    const { error: soErr } = await admin
-      .from("services")
-      .update({
-        send_out_vendor_id: sendOutVendor.data.vendorId,
-        send_out_lab: sendOutVendor.data.labName,
-      })
-      .eq("id", serviceId);
-    if (soErr) return { ok: false, error: soErr.message };
     await audit({
       actor_id: session.user_id,
       actor_type: "staff",
       action: "service.send_out_config_updated",
-      resource_type: "services",
+      resource_type: "service",
       resource_id: serviceId,
       metadata: {
         before: { vendor_id: priorVendorId, lab_name: priorLabName },
         after: { vendor_id: sendOutVendor.data.vendorId, lab_name: sendOutVendor.data.labName },
       },
+      ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+      user_agent: h.get("user-agent"),
     });
   }
 
@@ -225,7 +235,6 @@ export async function updateServiceAction(
     (Number(prior.price_php) !== parsed.data.price_php ||
       (prior.hmo_price_php ?? null) !== parsed.data.hmo_price_php);
 
-  const h = await headers();
   await audit({
     actor_id: session.user_id,
     actor_type: "staff",

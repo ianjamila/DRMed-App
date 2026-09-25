@@ -516,7 +516,7 @@ end $$;
 -- ============================================================================
 -- ASSERTION 5 (rewritten for 0159)
 -- Send-out test with NULL unit cost → revenue JE, no 6420 lines, no
--- cogs_send_out_entries row and no send_out.unit_cost_missing audit row
+-- send-out subledger row and no unit-cost-missing audit row
 -- (a missing unit cost is no longer a problem to flag).
 -- ============================================================================
 do $$

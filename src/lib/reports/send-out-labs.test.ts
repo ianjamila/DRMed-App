@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   buildSpendMatrix,
   buildSummary,
@@ -7,6 +9,7 @@ import {
   fillMonthlyMargin,
   formatTurnaroundHours,
   marginPct,
+  NOT_LINKED_LABEL,
   NOT_TAGGED_LABEL,
   sortTurnaroundRows,
   withinPromisePct,
@@ -14,6 +17,9 @@ import {
   type SpendByLabRow,
   type TurnaroundRow,
 } from "./send-out-labs";
+
+const migration = (name: string) =>
+  readFileSync(fileURLToPath(new URL(`../../../supabase/migrations/${name}`, import.meta.url)), "utf8");
 
 describe("enumerateMonths", () => {
   it("lists every month between start and end, newest first, inclusive", () => {
@@ -163,14 +169,30 @@ describe("marginPct", () => {
   });
 });
 
+describe("NOT_LINKED_LABEL", () => {
+  it("matches send_out_turnaround_by_lab's fallback text for a send-out service with no partner lab", () => {
+    expect(migration("0164_send_out_lab_tagging.sql")).toContain(
+      `coalesce(vn.name, '${NOT_LINKED_LABEL}')`,
+    );
+  });
+});
+
 describe("sortTurnaroundRows", () => {
   it("orders by most tests first, tie-broken by lab name", () => {
     const rows: TurnaroundRow[] = [
       { vendor_id: "mm", lab_name: "Micromedic", tests: 4, avg_hours: 10, median_hours: 10, p90_hours: 20, with_promise: 4, within_promise: 4 },
       { vendor_id: "hp", lab_name: "Hi Precision", tests: 10, avg_hours: 10, median_hours: 10, p90_hours: 20, with_promise: 10, within_promise: 8 },
-      { vendor_id: null, lab_name: "Not set", tests: 4, avg_hours: 10, median_hours: 10, p90_hours: 20, with_promise: 0, within_promise: 0 },
+      { vendor_id: null, lab_name: NOT_LINKED_LABEL, tests: 4, avg_hours: 10, median_hours: 10, p90_hours: 20, with_promise: 0, within_promise: 0 },
     ];
-    expect(sortTurnaroundRows(rows).map((r) => r.lab_name)).toEqual(["Hi Precision", "Micromedic", "Not set"]);
+    expect(sortTurnaroundRows(rows).map((r) => r.lab_name)).toEqual(["Hi Precision", "Micromedic", NOT_LINKED_LABEL]);
+  });
+
+  it("sorts the 'no partner lab' row last even when it has more tests than every real lab", () => {
+    const rows: TurnaroundRow[] = [
+      { vendor_id: null, lab_name: NOT_LINKED_LABEL, tests: 50, avg_hours: 10, median_hours: 10, p90_hours: 20, with_promise: 0, within_promise: 0 },
+      { vendor_id: "hp", lab_name: "Hi Precision", tests: 10, avg_hours: 10, median_hours: 10, p90_hours: 20, with_promise: 10, within_promise: 8 },
+    ];
+    expect(sortTurnaroundRows(rows).map((r) => r.lab_name)).toEqual(["Hi Precision", NOT_LINKED_LABEL]);
   });
 });
 

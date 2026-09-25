@@ -112,30 +112,56 @@ export interface SendOutVendorSelection {
   labName: string | null;
 }
 
+/** The row's send-out lab columns before this save, so the resolver can tell
+ *  an unrelated edit from a deliberate change to the lab. */
+export interface ExistingSendOutLab {
+  vendorId: string | null;
+  labName: string | null;
+}
+
 export type SendOutVendorResult =
   | { ok: true; data: SendOutVendorSelection }
   | { ok: false; error: string };
 
 /**
  * Resolves the form's raw `send_out_vendor_id` selection into the pair of
- * columns actually persisted. Pure — takes the candidate partner-lab list as
- * a parameter instead of querying, so it's unit-testable without a DB.
+ * columns actually persisted. Pure — takes the candidate partner-lab list (and
+ * the row's current lab, for an update) as parameters instead of querying, so
+ * it's unit-testable without a DB.
  *
  * - Not a send-out service → always null/null, regardless of what was
  *   submitted (a direct POST can't smuggle a vendor onto a non-send-out row).
- * - Send-out with no lab picked ("— Not set —") → null/null.
- * - Send-out with a lab picked → the vendor must be in the active
+ * - Send-out with no lab picked ("— Not set —"):
+ *   - if the row already had a proper vendor link, this is a deliberate
+ *     clear → null/null.
+ *   - if the row only ever had unmatched legacy free text (no
+ *     `send_out_vendor_id`), "— Not set —" is just the select's default and
+ *     doesn't mean the admin touched the lab — keep the legacy text rather
+ *     than erasing it under an unrelated save.
+ * - Send-out, re-selecting the row's OWN current lab → kept as-is, even if
+ *   that vendor has since gone inactive or lost its partner-lab flag —
+ *   active-partner validation only guards a NEW pick, not leaving an old one
+ *   alone.
+ * - Send-out with a different lab picked → the vendor must be in the active
  *   partner-lab list, or this returns an error.
  */
 export function resolveSendOutVendorSelection(
   isSendOut: boolean,
   selectedVendorId: string | null | undefined,
   activePartnerLabs: PartnerLabOption[],
+  existing?: ExistingSendOutLab | null,
 ): SendOutVendorResult {
   if (!isSendOut) return { ok: true, data: { vendorId: null, labName: null } };
 
   const trimmed = (selectedVendorId ?? "").trim();
-  if (trimmed === "") return { ok: true, data: { vendorId: null, labName: null } };
+  if (trimmed === "") {
+    const keepLegacyText = !existing?.vendorId && !!existing?.labName;
+    return { ok: true, data: { vendorId: null, labName: keepLegacyText ? existing!.labName : null } };
+  }
+
+  if (existing?.vendorId && trimmed === existing.vendorId) {
+    return { ok: true, data: { vendorId: existing.vendorId, labName: existing.labName } };
+  }
 
   const match = activePartnerLabs.find((v) => v.id === trimmed);
   if (!match) {

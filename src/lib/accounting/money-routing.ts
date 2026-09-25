@@ -207,3 +207,26 @@ export function startingPick(
   if (!account || account.code === SUSPENSE_CODE) return "";
   return account.id;
 }
+
+/**
+ * Mirrors `resolve_cash_adjustment_account` (0043): the account code an
+ * `eod_cash_adjustments` row will actually post to, whether or not the
+ * account picker is even shown. An explicit contra pick always wins;
+ * otherwise the routing row decides — unless it requires a staff pick (and
+ * `startingPick` above never pre-fills one), in which case the DB posts to
+ * 9999 Suspense rather than the mapped default.
+ *
+ * Lets a caller (e.g. "is this a Send Out payout?") test the account the
+ * database will actually use, not just whatever a hidden picker happens to
+ * hold — `staffPicksAccount(kind, rule) === false` means no picker renders
+ * at all, so `contraAccountId` is always empty for that kind.
+ */
+export function effectiveCashAccountCode(
+  contraAccountId: string | null | undefined,
+  rule: CashRule | undefined,
+  accounts: readonly RoutingAccount[],
+): string | undefined {
+  if (contraAccountId) return accounts.find((a) => a.id === contraAccountId)?.code;
+  if (!rule || rule.requires_user_choice) return SUSPENSE_CODE;
+  return accounts.find((a) => a.id === rule.account_id)?.code;
+}

@@ -6461,6 +6461,13 @@ export type Database = {
         Args: { p_service_kind: string }
         Returns: string
       }
+      partner_labs: {
+        Args: never
+        Returns: {
+          id: string
+          name: string
+        }[]
+      }
       send_out_monthly_margin: {
         Args: { p_end?: string; p_start?: string }
         Returns: {

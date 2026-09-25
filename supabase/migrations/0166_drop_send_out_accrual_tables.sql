@@ -20,9 +20,11 @@
 --   * services.send_out_vendor_id — now the service's partner lab (0164).
 --   * audit_log rows that mention send-out cost — history.
 --
--- DEPLOY ORDER: push this right before PR #211 merges. The app still on main
--- reads services.send_out_unit_cost_php (service edit form) and both tables
--- (Outside-Lab pages), so those break between push and merge.
+-- DEPLOY ORDER: push this AFTER PR #211 has merged AND its production deploy
+-- is live. The app on main before #211 reads services.send_out_unit_cost_php
+-- (service edit form) and both tables (Outside-Lab pages); the #211 code reads
+-- none of them and works with or without them, so dropping last is the only
+-- order with no broken window.
 
 create or replace function public.bridge_test_request_cancelled()
 returns trigger

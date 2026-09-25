@@ -12,6 +12,7 @@ import { friendlyManilaDate, manilaTime } from "@/lib/dates/manila";
 import {
   accountChoicesFor,
   cashKindLabel as kindLabel,
+  effectiveCashAccountCode,
   groupAccounts,
   pettyCashChoices,
   staffPicksAccount,
@@ -322,8 +323,13 @@ function AdjustmentModal(props: {
   const showPicker = staffPicksAccount(kind, rules.get(kind));
   const pettyHint = petty.find((c) => c.account.id === contraId)?.hint;
   // 0164: a Send Out (6420) petty-cash payout must say which partner lab it
-  // paid — the same rule `sendOutLabRule` enforces server-side.
-  const selectedAccountCode = props.accounts.find((a) => a.id === contraId)?.code;
+  // paid — the same rule `sendOutLabRule` enforces server-side. Use the
+  // EFFECTIVE account (mirroring `resolve_cash_adjustment_account`), not just
+  // whatever the (possibly hidden) picker currently holds — when Money
+  // Routing has petty cash defaulting straight to 6420 with no staff pick,
+  // `contraId` stays empty and the category picker never even renders, but
+  // the database still posts to 6420.
+  const selectedAccountCode = effectiveCashAccountCode(contraId || null, rules.get(kind), props.accounts);
   const isSendOut = kind === "petty_cash" && selectedAccountCode === SEND_OUT_ACCOUNT_CODE;
 
   // The "contra" account means different things per action; label it plainly.

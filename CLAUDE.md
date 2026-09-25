@@ -35,7 +35,7 @@ first from a parallel branch) and verified by object 2026-09-24; **0154** (#198)
 #192) is also applied and verified: 159 public policies, zero unwrapped helper calls, and no
 unexpected policyless tables. Prod also has **0163** (`drm_id_width`) out of order, so 0161/0162
 land later with `db push --include-all`.
-**0159** (`retire_send_out_accrual`) is applied. **0164** (`send_out_lab_tagging`) and **0166** (`drop_send_out_accrual_tables`) are in flight on `fix/retire-send-out-accrual` — 0166 must be pushed right before that PR merges (the app on main still reads the dropped column).
+**0159** (`retire_send_out_accrual`) is applied. **0164** (`send_out_lab_tagging`) and **0166** (`drop_send_out_accrual_tables`) are in flight on `fix/retire-send-out-accrual` — 0166 is pushed AFTER that PR merges and deploys (the pre-merge app reads the dropped column; the new code works either way).
 
 **Rule — claim a number before you use it: `npm run claim -- migration` / `npm run claim -- pcode <n>`.**
 Several sessions work here at once, each in its own worktree, and picking "the next number" by

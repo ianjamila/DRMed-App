@@ -14,6 +14,8 @@ export interface PettyCashRow {
   /** No expense account was chosen — the entry is parked in 9999 Suspense. */
   uncategorised: boolean;
   payee: string | null;
+  /** 0164: the partner lab a Send Out payout paid, when it has one. */
+  labName: string | null;
   note: string | null;
   amount_php: number;
   voided: boolean;
@@ -109,6 +111,11 @@ function PettyCashItem({ row }: { row: PettyCashRow }) {
             {manilaTime(row.recorded_at)}
             {voided ? " · voided" : ""}
           </p>
+          {row.labName && (
+            <p className="mt-0.5 text-xs font-semibold text-[color:var(--color-brand-navy)]">
+              Lab: {row.labName}
+            </p>
+          )}
           {row.uncategorised && !voided && (
             <p className="mt-1 text-xs font-semibold text-amber-800">
               No expense account picked — ask Admin to file this properly.

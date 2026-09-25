@@ -41,10 +41,44 @@ describe("resolveSendOutVendorSelection", () => {
     if (!r.ok) expect(r.error).toMatch(/partner lab/i);
   });
 
-  it("rejects a deactivated/unflagged vendor even if it was previously selected", () => {
-    // Simulates a vendor that lost is_partner_lab or is_active after being
-    // chosen — the active list passed in no longer contains it.
-    const r = resolveSendOutVendorSelection(true, LABS[0]!.id, []);
+  it("rejects a NEW pick of a vendor that isn't in the active partner-lab list", () => {
+    // Simulates a vendor that lost is_partner_lab or is_active — the active
+    // list passed in no longer contains it — and the row's existing lab was
+    // something else, so this is a genuinely new selection.
+    const r = resolveSendOutVendorSelection(true, LABS[0]!.id, [], {
+      vendorId: LABS[1]!.id,
+      labName: "Micromedic",
+    });
     expect(r.ok).toBe(false);
+  });
+
+  it("keeps the row's OWN current lab even if it has since gone inactive/unflagged", () => {
+    // Same vendor id the row already had — re-saving an unrelated field must
+    // not be blocked just because that lab dropped out of the active list.
+    const r = resolveSendOutVendorSelection(true, LABS[0]!.id, [], {
+      vendorId: LABS[0]!.id,
+      labName: "Hi Precision",
+    });
+    expect(r).toEqual({ ok: true, data: { vendorId: LABS[0]!.id, labName: "Hi Precision" } });
+  });
+
+  it("keeps unmatched legacy free text when left at '— Not set —' on an unrelated save", () => {
+    // send_out_vendor_id was already null (legacy free text only) — leaving
+    // the select at its default must not erase send_out_lab.
+    const r = resolveSendOutVendorSelection(true, "", LABS, {
+      vendorId: null,
+      labName: "Some Old Lab Inc.",
+    });
+    expect(r).toEqual({ ok: true, data: { vendorId: null, labName: "Some Old Lab Inc." } });
+  });
+
+  it("clears both when a service that HAD a proper vendor link is reset to '— Not set —'", () => {
+    // This is a deliberate clear, not an untouched default — the vendor
+    // link existed, so resetting the select must actually clear it.
+    const r = resolveSendOutVendorSelection(true, "", LABS, {
+      vendorId: LABS[0]!.id,
+      labName: "Hi Precision",
+    });
+    expect(r).toEqual({ ok: true, data: { vendorId: null, labName: null } });
   });
 });

@@ -13,6 +13,10 @@ export const NOT_TAGGED_LABEL = "Not tagged";
 /** Stable map key standing in for `vendor_id === null` ("Not tagged"). */
 const NOT_TAGGED_KEY = "__not_tagged__";
 
+/** `send_out_turnaround_by_lab`'s (0164) fallback `lab_name` for a send-out
+ *  service with no partner lab linked. */
+export const NOT_LINKED_LABEL = "Not linked to a partner lab";
+
 export interface SpendByLabRow {
   month: string; // YYYY-MM-DD, first of the Manila month (send_out_spend_by_lab)
   vendor_id: string | null;
@@ -251,9 +255,19 @@ export function marginPct(revenuePhp: number, marginPhp: number): number | null 
   return (marginPhp / revenuePhp) * 100;
 }
 
-/** Most-tested lab first, tie-broken by name so the order is stable. */
+/**
+ * Most-tested lab first, tie-broken by name; a row with no partner lab
+ * linked (`vendor_id === null`, "Not linked to a partner lab") always sorts
+ * last, however many tests it has — same rule as "Not tagged" in the spend
+ * matrix above.
+ */
 export function sortTurnaroundRows(rows: readonly TurnaroundRow[]): TurnaroundRow[] {
-  return [...rows].sort((a, b) => b.tests - a.tests || a.lab_name.localeCompare(b.lab_name));
+  return [...rows].sort((a, b) => {
+    const aUnlinked = a.vendor_id === null;
+    const bUnlinked = b.vendor_id === null;
+    if (aUnlinked !== bUnlinked) return aUnlinked ? 1 : -1;
+    return b.tests - a.tests || a.lab_name.localeCompare(b.lab_name);
+  });
 }
 
 /**

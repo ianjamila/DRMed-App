@@ -104,7 +104,7 @@ export default async function SendOutLabsPage({ searchParams }: SearchProps) {
               turnaround, for <strong>{start}</strong> → <strong>{end}</strong>.
             </>
           }
-          actions={<ExportCsvLink href={csvHref} />}
+          actions={<ExportCsvLink href={csvHref} label="Export spend by lab (CSV)" />}
         />
       </div>
 
@@ -202,8 +202,8 @@ export default async function SendOutLabsPage({ searchParams }: SearchProps) {
             Spend by lab
           </h2>
           <p className="text-[10px] text-[color:var(--color-brand-text-soft)]">
-            &quot;{NOT_TAGGED_LABEL}&quot; = older entries whose description doesn&apos;t name a lab; every new Send Out
-            expense now asks which lab.
+            &quot;{NOT_TAGGED_LABEL}&quot; = entries whose description doesn&apos;t name a lab (mostly the imported
+            history), or journal entries posted without a lab — every new Send Out expense asks which lab.
           </p>
         </div>
         <div className="overflow-x-auto">

@@ -7,20 +7,17 @@ import type { PartnerLab } from "./partner-labs";
 
 /**
  * Active partner labs for the "Which lab?" picker. Takes whatever client the
- * caller already has — reception pages read this with the RLS-scoped server
- * client (`createClient()` from `@/lib/supabase/server`), since migration
- * 0164 lets reception SELECT active partner-lab vendors directly; admin
- * surfaces may pass the admin client instead.
+ * caller already has — reception pages pass the RLS-scoped server client
+ * (`createClient()` from `@/lib/supabase/server`); the `partner_labs()` RPC
+ * (0164) checks the caller is admin or reception and returns id + name only.
  */
 export async function loadPartnerLabs(
   client: SupabaseClient<Database>,
 ): Promise<PartnerLab[]> {
-  const { data, error } = await client
-    .from("vendors")
-    .select("id, name")
-    .eq("is_partner_lab", true)
-    .eq("is_active", true)
-    .order("name");
+  // partner_labs() (0164) returns only id + name, and only to admin and
+  // reception — the vendors table itself stays admin-only, because a row
+  // policy cannot hide its TIN / contact / withholding columns.
+  const { data, error } = await client.rpc("partner_labs");
   if (error) throw new Error(error.message);
   return data ?? [];
 }
