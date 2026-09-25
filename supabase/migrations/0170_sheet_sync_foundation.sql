@@ -81,7 +81,20 @@ alter table public.patients
   add column row_version bigint not null default 0;
 
 -- Backfill without touching updated_at (it feeds "recently updated" surfaces).
+-- Also disable 0167's lifecycle guard for this one-time administrative
+-- backfill: it refuses any UPDATE to a non-bookkeeping column
+-- (referral_source_origin is not one — see its own k_bookkeeping list) on an
+-- already soft-deleted patient (P0058), and by the time this migration runs
+-- some patients may already be deleted. Decision: a deleted patient gets the
+-- SAME origin as everyone else (staff default, or 'patient' for the same
+-- post-0158 pre_registered exception) — not NULL. NULL is not actually legal
+-- here: patients_referral_source_origin_pairs below requires
+-- referral_source_origin to be set whenever referral_source is, and 0167
+-- keeps a deleted patient's referral_source on file (nothing about the
+-- person's record is erased), so a deleted row with a referral_source still
+-- needs a real origin value to satisfy that constraint.
 alter table public.patients disable trigger trg_patients_updated_at;
+alter table public.patients disable trigger trg_patients_lifecycle_guard;
 update public.patients set referral_source_origin = 'staff' where referral_source is not null;
 -- 0158 (live 2026-09-24) lets /schedule and /register write the patient's own
 -- answer through resolve_patient_guarded, which only ever creates
@@ -89,6 +102,7 @@ update public.patients set referral_source_origin = 'staff' where referral_sourc
 update public.patients set referral_source_origin = 'patient'
  where pre_registered and referral_source is not null
    and created_at >= timestamptz '2026-09-24 00:00+08';
+alter table public.patients enable trigger trg_patients_lifecycle_guard;
 alter table public.patients enable trigger trg_patients_updated_at;
 
 alter table public.patients
@@ -147,6 +161,7 @@ begin
   select p.id, p.drm_id into v
     from public.patients p
    where p.email = lower(p_email) and p.last_name = p_last_name and p.birthdate = p_birthdate
+     and p.deleted_at is null and p.merged_into_id is null
    limit 1;
   if found then
     return query select v.id, v.drm_id, true;
@@ -652,6 +667,12 @@ end $$;
 -- create / link / hold stamp sheet_patient_links.run_id with this run. A
 -- stale or skipped-existing op is simply dropped: the next run re-plans it
 -- from a fresh read.
+-- TODO(patient-lifecycle PR 3, off main): once that PR's writer contract
+-- lands, every patient-touching branch below should take
+-- pg_advisory_xact_lock_shared(hashtext('patient_lifecycle'),
+-- hashtext(<patient_id>::text)) FIRST, before its own row lock/update — not
+-- needed yet (this migration's own row_version/deleted_at/merged_into_id
+-- checks are enough for now); confirm with that session before this PR merges.
 create or replace function public.sheet_sync_apply_customer_ops(p_lease_token uuid, p_ops jsonb)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
@@ -723,10 +744,13 @@ begin
       -- on `birthdate` alone — a plain seq scan over merged_into_id is null
       -- rows, proven fast enough at 10k patients by the Timing check below)
       -- or phone_normalized (indexed: idx_patients_phone_normalized), plus
-      -- merged_into_id is null, and only THEN compare the normalized name
-      -- inline against that small candidate set — never scanning the whole
-      -- table by name. The name-norm expression below is byte-identical to
-      -- names.ts's nameNormOf (see its own comment).
+      -- deleted_at is null and merged_into_id is null (0167's active-patient
+      -- rule: a deleted or merged record is not "someone else already holds
+      -- this identity" — it does not block the create), and only THEN
+      -- compare the normalized name inline against that small candidate set
+      -- — never scanning the whole table by name. The name-norm expression
+      -- below is byte-identical to names.ts's nameNormOf (see its own
+      -- comment).
       v_dupe_id := null;
       if v_op->>'method' <> 'admin' then
         v_op_phone_digits := regexp_replace(coalesce(v_f->>'phone', ''), '[^0-9]', '', 'g');
@@ -737,7 +761,7 @@ begin
           trim(regexp_replace(regexp_replace(lower(replace(coalesce(v_f->>'first_name', '') || ' ' || coalesce(v_f->>'middle_name', ''), '''', '')), '[^a-z0-9\s]', ' ', 'g'), '\s+', ' ', 'g'));
         if nullif(v_f->>'birthdate', '') is not null then
           select p.id into v_dupe_id from public.patients p
-           where p.merged_into_id is null
+           where p.deleted_at is null and p.merged_into_id is null
              and p.birthdate = (v_f->>'birthdate')::date
              and trim(regexp_replace(regexp_replace(lower(replace(coalesce(p.last_name, ''), '''', '')), '[^a-z0-9\s]', ' ', 'g'), '\s+', ' ', 'g'))
                  || '|' ||
@@ -746,7 +770,7 @@ begin
            limit 1;
         elsif v_op_phone is not null then
           select p.id into v_dupe_id from public.patients p
-           where p.merged_into_id is null
+           where p.deleted_at is null and p.merged_into_id is null
              and p.phone_normalized = v_op_phone
              and trim(regexp_replace(regexp_replace(lower(replace(coalesce(p.last_name, ''), '''', '')), '[^a-z0-9\s]', ' ', 'g'), '\s+', ' ', 'g'))
                  || '|' ||
@@ -803,6 +827,17 @@ begin
       if coalesce(v_op->>'method', '') not in ('auto_exact','auto_loose') then
         raise exception 'Bad link op: method must be auto_exact or auto_loose.' using errcode = '22023';
       end if;
+      -- 0167 active-patient rule: never auto-link to a deleted or merged
+      -- patient. Treated as the same race the row_version check below
+      -- handles — the planner's candidate is no longer what it read — so a
+      -- deleted/merged target counts as `stale`, not a raised error: the
+      -- next run re-plans the sheet row from a fresh read (and may hold it
+      -- for review instead, once the planner sees the target is gone).
+      if not exists (select 1 from public.patients p where p.id = (v_op->>'patient_id')::uuid
+                       and p.deleted_at is null and p.merged_into_id is null) then
+        n_stale := n_stale + 1;
+        continue;
+      end if;
       -- Stale-read guard: the planner's candidate may have changed (or gone)
       -- since it read patients. A vanished patient counts as stale too.
       if v_op ? 'expected_row_version' then
@@ -837,8 +872,12 @@ begin
 
     elsif v_op->>'op' = 'fill' then
       v_f := v_op->'fields';
+      -- 0167 active-patient rule: never write to a deleted or merged patient
+      -- (the lifecycle guard would raise P0058 on the UPDATE below anyway —
+      -- excluding them here means a fill on an inactive target reads as an
+      -- ordinary "not found" skip, not a hard failure of the whole chunk).
       select * into v_old from public.patients p
-       where p.id = (v_op->>'patient_id')::uuid and p.merged_into_id is null
+       where p.id = (v_op->>'patient_id')::uuid and p.deleted_at is null and p.merged_into_id is null
        for update;
       if not found then n_skipped := n_skipped + 1; continue; end if;
       -- Stale-read guard: staff may have changed the patient since the
@@ -1098,6 +1137,7 @@ end $$;
 
 -- Re-sort only ever moves patients the May import created (the same set
 -- sheet_resort_candidates lists); a stray id is skipped, never re-sorted.
+-- TODO(patient-lifecycle PR 3): see sheet_sync_apply_customer_ops's note above.
 create or replace function public.sheet_resort_apply(
   p_lease_token uuid, p_patient_ids uuid[], p_expected_old text, p_new text
 ) returns integer language plpgsql security definer set search_path = '' as $$
@@ -1114,7 +1154,7 @@ begin
   if p_new is not distinct from p_expected_old then return 0; end if;
   foreach v_id in array coalesce(p_patient_ids, '{}'::uuid[]) loop
     select * into v_old from public.patients p
-     where p.id = v_id and p.merged_into_id is null
+     where p.id = v_id and p.deleted_at is null and p.merged_into_id is null
        and p.legacy_intake->>'source' = 'google_sheet_CUSTOMER_LIST2'
        and p.referral_source is not distinct from p_expected_old
        and p.referral_source_origin is distinct from 'patient'
@@ -1147,6 +1187,7 @@ end $$;
 -- caller now gets P0064 instead of silently overwriting the first's choice.
 -- Default null keeps every existing caller (this migration's own proof
 -- script) working unchanged; the app always passes it.
+-- TODO(patient-lifecycle PR 3): see sheet_sync_apply_customer_ops's note above.
 drop function if exists public.sheet_alias_apply(uuid, text, text, uuid);
 create or replace function public.sheet_alias_apply(
   p_lease_token uuid, p_raw_normalized text, p_source_id text, p_actor uuid, p_item_id uuid default null
@@ -1193,7 +1234,7 @@ begin
      order by e.patient_id
   loop
     select * into v_old from public.patients p
-     where p.id = v_id and p.merged_into_id is null
+     where p.id = v_id and p.deleted_at is null and p.merged_into_id is null
        and (p.referral_source is null or p.referral_source_origin = 'sheet')
      for update;
     if not found or v_old.referral_source is not distinct from p_source_id then continue; end if;
@@ -1240,6 +1281,7 @@ end $$;
 -- under the same lease, or a later one if the worker died. Only the call
 -- that finds nothing left holds the run's own links, takes back its alias
 -- and stamps the run undone; it returns done = true. Counts are per call.
+-- TODO(patient-lifecycle PR 3): see sheet_sync_apply_customer_ops's note above.
 create or replace function public.sheet_sync_revert_run(p_lease_token uuid, p_target_run uuid, p_limit integer default null)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
@@ -1250,6 +1292,7 @@ declare
   v_done boolean;
   v_pid uuid;
   v_ver bigint;
+  v_del_at timestamptz;
   v_map jsonb;
   v_cur public.patients%rowtype;
   v_new public.patients%rowtype;
@@ -1293,7 +1336,18 @@ begin
   loop
     v_left := v_left - 1;
     select * into v_cur from public.patients p where p.id = v_pid for update;
-    if not found or v_cur.row_version <> v_ver then
+    -- 0167 active-patient rule: a patient staff has since soft-deleted or
+    -- merged must never receive this UPDATE (the lifecycle guard would raise
+    -- P0058 on a deleted target). In practice the delete/merge write itself
+    -- already bumps row_version (trg_patients_referral_origin fires on every
+    -- UPDATE, deletion included), so `v_cur.row_version <> v_ver` alone
+    -- already catches this — the explicit checks below are the direct,
+    -- self-documenting guarantee, independent of that incidental side
+    -- effect. Either way this is `blocked`, never a raised error, and (same
+    -- as every other `blocked` row here) its links are left exactly as the
+    -- blocked rule already leaves them — nothing below touches links for a
+    -- row that continues here.
+    if not found or v_cur.row_version <> v_ver or v_cur.deleted_at is not null or v_cur.merged_into_id is not null then
       update public.sheet_sync_changes set undo_outcome = 'blocked', undo_run_id = v_run
        where run_id = p_target_run and patient_id = v_pid and change_kind = 'update' and undo_outcome is null;
       n_blocked := n_blocked + 1;
@@ -1338,9 +1392,23 @@ begin
                   where c.run_id = p_target_run and c.change_kind = 'create' and c.undo_outcome is null
                   order by c.patient_id
                   limit v_left loop
-      select p.row_version into v_ver from public.patients p where p.id = v_pid for update;
+      select p.row_version, p.deleted_at into v_ver, v_del_at from public.patients p where p.id = v_pid for update;
       if not found then
         -- removed by staff since: nothing left to undo
+        update public.sheet_sync_changes set undo_outcome = 'gone', undo_run_id = v_run
+         where run_id = p_target_run and patient_id = v_pid and change_kind = 'create';
+        n_gone := n_gone + 1;
+        continue;
+      end if;
+      if v_del_at is not null then
+        -- 0167: an admin has since soft-deleted this created patient. 0167's
+        -- active-patient rule treats a deleted record the same as one that
+        -- vanished — nothing left here for THIS undo to act on (never a hard
+        -- DELETE against a deleted row: the lifecycle guard would raise
+        -- P0058, and there is no reason to fight that decision). `gone`, not
+        -- `kept`: unlike `kept` below (a real edit worth preserving), this
+        -- patient is already administratively removed from the active set —
+        -- restoring it is Admin Tools › Deleted Patients' job, not undo's.
         update public.sheet_sync_changes set undo_outcome = 'gone', undo_run_id = v_run
          where run_id = p_target_run and patient_id = v_pid and change_kind = 'create';
         n_gone := n_gone + 1;
@@ -1548,15 +1616,16 @@ begin
   return jsonb_build_object('done', v_done, 'released', n_released, 'items_resolved', n_items);
 end $$;
 
--- Re-sort candidates: May-imported live patients and their original answer
--- (the key holds spaces and a "?", which a PostgREST select path cannot address).
+-- Re-sort candidates: May-imported live (active — 0167: not deleted, not
+-- merged) patients and their original answer (the key holds spaces and a
+-- "?", which a PostgREST select path cannot address).
 create or replace function public.sheet_resort_candidates()
 returns table (id uuid, answer text, referral_source text, referral_source_origin text)
 language sql stable security definer set search_path = '' as $$
   select p.id, coalesce(p.legacy_intake->'raw'->>'How did you know about DR Med?', ''),
          p.referral_source, p.referral_source_origin
     from public.patients p
-   where p.merged_into_id is null
+   where p.deleted_at is null and p.merged_into_id is null
      and p.legacy_intake->>'source' = 'google_sheet_CUSTOMER_LIST2'
    order by p.id;
 $$;
@@ -1581,6 +1650,7 @@ $$;
 --   * any other (evidence-based) hold -> refused (22023): that hold is only
 --     ever replaced by an admin link or create, and hiding it would park the
 --     key unseen.
+-- TODO(patient-lifecycle PR 3): see sheet_sync_apply_customer_ops's note above.
 create or replace function public.sheet_review_resolve(
   p_item_id uuid, p_actor uuid, p_action text, p_patient_id uuid
 ) returns void language plpgsql security definer set search_path = '' as $$
@@ -1640,8 +1710,13 @@ begin
      or v_item.kind not in ('ambiguous_patient','identity_conflict','possible_existing_patient') then
     raise exception 'That action does not fit this item.' using errcode = '22023';
   end if;
-  if p_action = 'link' and not exists (select 1 from public.patients p where p.id = p_patient_id and p.merged_into_id is null) then
-    raise exception 'Pick a current (not merged) patient.' using errcode = '22023';
+  -- 0167 active-patient rule: an admin resolve is a deliberate, one-shot
+  -- decision (unlike the automated link op above, which quietly re-plans a
+  -- stale target) — refuse it outright rather than silently no-op.
+  if p_action = 'link' and not exists (
+       select 1 from public.patients p where p.id = p_patient_id and p.deleted_at is null and p.merged_into_id is null
+     ) then
+    raise exception 'Pick a current (not deleted or merged) patient.' using errcode = '22023';
   end if;
   -- Overwrites any saved decision for the key, holds included.
   insert into public.sheet_patient_links (link_key, patient_id, decision, method, decided_by, run_id)
