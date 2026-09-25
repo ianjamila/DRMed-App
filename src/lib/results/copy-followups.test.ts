@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  cappedCountLabel,
   copyKindLabel,
   followUpStatusLabel,
+  isOutdatedCopiesCapped,
   outdatedCopyChip,
   shouldOfferNotify,
   type CopyState,
@@ -64,6 +66,25 @@ describe("followUpStatusLabel", () => {
   it("nothing yet", () => {
     expect(followUpStatusLabel({ contacted_at: null, notified_at: null, notify_failed: false, notified_channels: null }))
       .toBe("Not contacted");
+  });
+});
+
+describe("isOutdatedCopiesCapped", () => {
+  it("is false below the PostgREST cap", () => {
+    expect(isOutdatedCopiesCapped(999)).toBe(false);
+  });
+  it("is true at and past the cap", () => {
+    expect(isOutdatedCopiesCapped(1000)).toBe(true);
+    expect(isOutdatedCopiesCapped(1001)).toBe(true);
+  });
+});
+
+describe("cappedCountLabel", () => {
+  it("is the exact count when not capped", () => {
+    expect(cappedCountLabel(42, false)).toBe(42);
+  });
+  it("is '1000+' when capped, regardless of the counted length", () => {
+    expect(cappedCountLabel(1000, true)).toBe("1000+");
   });
 });
 

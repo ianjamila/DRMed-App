@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { DOCTOR_KINDS_PG_LIST } from "@/lib/visits/classification";
 import { manilaDate, manilaDateTime, manilaRangeUtc, todayManilaISODate } from "@/lib/dates/manila";
 import { fetchOutdatedCopies } from "@/lib/results/copy-followups.server";
+import { cappedCountLabel } from "@/lib/results/copy-followups";
 import { loadHiddenCardIds } from "@/lib/dashboards/card-prefs";
 import { fetchAllRows, REPORT_EXPORT_MAX_ROWS, type PageFetcher } from "@/lib/reports/paging";
 import { reportError } from "@/lib/observability/report-error";
@@ -229,7 +230,7 @@ async function loadReceptionStats(userId: string, show: (id: string) => boolean)
 
   const resultFollowupsPromise = show("reception.result_followups")
     ? fetchOutdatedCopies(supabase, false)
-    : Promise.resolve({ ok: true as const, rows: [] });
+    : Promise.resolve({ ok: true as const, rows: [], capped: false });
 
   const cashDrawerStatePromise =
     show("reception.cash_drawer") && activeShift
@@ -438,6 +439,7 @@ async function loadReceptionStats(userId: string, show: (id: string) => boolean)
   const isClosed = cashState?.closed != null;
 
   const resultFollowupsCount = resultFollowups.ok ? resultFollowups.rows.length : 0;
+  const resultFollowupsCapped = resultFollowups.ok && resultFollowups.capped;
   const resultFollowupsError = !resultFollowups.ok;
 
   // These queries used to fail silently — `.count ?? 0` / `.data ?? []`
@@ -521,6 +523,7 @@ async function loadReceptionStats(userId: string, show: (id: string) => boolean)
     orderBreakdownError: !!todayOrders.error,
 
     resultFollowupsCount,
+    resultFollowupsCapped,
     resultFollowupsError,
   };
 }
@@ -765,7 +768,7 @@ export async function ReceptionDashboard({
             {showResultFollowupsCard && (
               <StatCard
                 label="Patients with an out-of-date copy"
-                value={stats.resultFollowupsCount}
+                value={cappedCountLabel(stats.resultFollowupsCount, stats.resultFollowupsCapped)}
                 hint="Downloaded or handed a result before it was corrected"
                 href="/staff/result-follow-ups"
                 accent="warn"

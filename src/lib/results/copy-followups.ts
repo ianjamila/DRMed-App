@@ -62,6 +62,21 @@ export function outdatedCopyChip(s: CopyState | undefined): string | null {
   return "Patient has an older copy (portal download)";
 }
 
+/** PostgREST's max_rows (supabase/config.toml). result_outdated_copies is a bare
+ * RPC select, so a row count at (or past) this ceiling means rows may be
+ * silently missing rather than "that's everyone". */
+export const OUTDATED_COPIES_MAX_ROWS = 1000;
+
+/** Whether a fetched row count could be hiding rows behind the PostgREST cap. */
+export function isOutdatedCopiesCapped(rowCount: number): boolean {
+  return rowCount >= OUTDATED_COPIES_MAX_ROWS;
+}
+
+/** Dashboard-card count: the exact number, or "1000+" once the cap may be hiding the true count. */
+export function cappedCountLabel(count: number, capped: boolean): string | number {
+  return capped ? `${OUTDATED_COPIES_MAX_ROWS}+` : count;
+}
+
 export const PATIENT_CONTACTED_ACTION = "result.patient_contacted";
 
 /** What an edit form's notify outcome ("sent" | "failed" | "already" | "not_offered") reads as. */

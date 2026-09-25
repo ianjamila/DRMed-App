@@ -1,7 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
-import type { CopyState } from "./copy-followups";
+import { isOutdatedCopiesCapped, type CopyState } from "./copy-followups";
 
 type Db = SupabaseClient<Database>;
 
@@ -35,8 +35,13 @@ export async function fetchCopyStateAdmin(resultId: string): Promise<CopyState |
 
 export type OutdatedCopyRow = Database["public"]["Functions"]["result_outdated_copies"]["Returns"][number];
 
-/** The follow-up list (signed-in client; reception/admin, else the RPC raises 42501). */
+/** The follow-up list (signed-in client; reception/admin, else the RPC raises 42501).
+ * `capped` is true when the row count hit PostgREST's max_rows (1000,
+ * supabase/config.toml) — the RPC's rows may be a truncated view of the
+ * real list, not the whole thing. */
 export async function fetchOutdatedCopies(db: Db, includeFollowedUp: boolean) {
   const { data, error } = await db.rpc("result_outdated_copies", { p_include_followed_up: includeFollowedUp });
-  return error ? { ok: false as const, error } : { ok: true as const, rows: (data ?? []) as OutdatedCopyRow[] };
+  if (error) return { ok: false as const, error };
+  const rows = (data ?? []) as OutdatedCopyRow[];
+  return { ok: true as const, rows, capped: isOutdatedCopiesCapped(rows.length) };
 }

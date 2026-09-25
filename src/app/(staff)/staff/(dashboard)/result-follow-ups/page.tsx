@@ -69,6 +69,11 @@ export default async function ResultFollowUpsPage({ searchParams }: SearchProps)
         <Panel className="p-6 text-sm text-amber-700">Couldn&apos;t load follow-ups.</Panel>
       ) : (
         <Panel className="overflow-x-auto">
+          {result.capped ? (
+            <p role="status" className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-800">
+              Showing the first 1000 — mark some as contacted to see the rest.
+            </p>
+          ) : null}
           <table className="w-full text-sm">
             <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
               <tr>

@@ -10,6 +10,7 @@ import { todayManilaISODate } from "@/lib/dates/manila";
 import { loadHiddenCardIds } from "@/lib/dashboards/card-prefs";
 import { loadCandidatePairsWithStatus } from "@/lib/patients/find-duplicates";
 import { fetchOutdatedCopies } from "@/lib/results/copy-followups.server";
+import { cappedCountLabel } from "@/lib/results/copy-followups";
 import {
   fetchAllRows,
   REPORT_EXPORT_MAX_ROWS,
@@ -450,7 +451,7 @@ async function loadAdminStats(show: (id: string) => boolean) {
       : SKIP_COUNT,
     show("admin.result_followups")
       ? fetchOutdatedCopies(supabase, false)
-      : Promise.resolve({ ok: true as const, rows: [] }),
+      : Promise.resolve({ ok: true as const, rows: [], capped: false }),
   ]);
 
   // "Unclaimed": lab lines nobody holds yet, on the same money gate as the
@@ -699,6 +700,7 @@ async function loadAdminStats(show: (id: string) => boolean) {
     newMessages: newMessagesCount.count ?? 0,
     newMessagesError: Boolean(newMessagesCount.error),
     resultFollowupsCount: resultFollowups.ok ? resultFollowups.rows.length : 0,
+    resultFollowupsCapped: resultFollowups.ok && resultFollowups.capped,
     resultFollowupsError: !resultFollowups.ok,
     currentFiscalYear,
     today,
@@ -1018,7 +1020,7 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
             {showResultFollowupsCard && (
               <StatCard
                 label="Patients with an out-of-date copy"
-                value={stats.resultFollowupsCount}
+                value={cappedCountLabel(stats.resultFollowupsCount, stats.resultFollowupsCapped)}
                 hint="Downloaded or handed a result before it was corrected"
                 href="/staff/result-follow-ups"
                 accent="warn"
