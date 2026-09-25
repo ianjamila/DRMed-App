@@ -99,16 +99,29 @@ export function createSupabaseStore(client: Client): SheetSyncStore {
       return { paused: data.paused, mirrorWindowStart: data.mirror_window_start };
     },
     async lastGoodRowsRead() {
-      const { data, error } = await client.from("sheet_sync_runs").select("per_tab")
-        .eq("dry_run", false).in("status", ["succeeded", "partial"])
-        .order("started_at", { ascending: false }).order("id", { ascending: true }).limit(30);
-      if (error) raise(error);
+      // A "succeeded"/"partial" run can still have ONE tab that failed (e.g. lab
+      // keeps hitting a header change while customers/consult are fine) — a flat
+      // `.limit(30)` over the whole run history can then run out before it ever
+      // finds a run where THAT tab succeeded, silently disabling its snapshot gate.
+      // Page through run history instead, stopping once all three tabs are found
+      // (the common case: one or two pages) or a generous cap is hit.
+      const PAGE = 30;
+      const MAX_PAGES = 20; // 600 runs — far more than a nightly cron could fail through before someone notices
       const out: Partial<Record<TabKey, number>> = {};
-      for (const row of data ?? []) {
-        const per = (row.per_tab ?? {}) as Record<string, { status?: string; rows_read?: number }>;
-        for (const k of ["customers", "lab", "consult"] as TabKey[]) {
-          if (out[k] === undefined && per[k]?.status === "succeeded" && typeof per[k]?.rows_read === "number") out[k] = per[k]!.rows_read;
+      for (let page = 0; page < MAX_PAGES; page++) {
+        const { data, error } = await client.from("sheet_sync_runs").select("per_tab")
+          .eq("dry_run", false).in("status", ["succeeded", "partial"])
+          .order("started_at", { ascending: false }).order("id", { ascending: true })
+          .range(page * PAGE, page * PAGE + PAGE - 1);
+        if (error) raise(error);
+        const rows = data ?? [];
+        for (const row of rows) {
+          const per = (row.per_tab ?? {}) as Record<string, { status?: string; rows_read?: number }>;
+          for (const k of ["customers", "lab", "consult"] as TabKey[]) {
+            if (out[k] === undefined && per[k]?.status === "succeeded" && typeof per[k]?.rows_read === "number") out[k] = per[k]!.rows_read;
+          }
         }
+        if (Object.keys(out).length === 3 || rows.length < PAGE) break;
       }
       return out;
     },
