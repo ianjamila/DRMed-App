@@ -4,6 +4,8 @@ import { requirePatientProfile } from "@/lib/auth/require-patient";
 import { createPatientClient } from "@/lib/supabase/patient";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
+import { notePatientDownload, type ServedResultFile } from "@/lib/results/patient-download";
+import { patientSafeAuditRows } from "@/lib/portal/export-audit";
 import { chunk, fetchAllRows, IN_CHUNK, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 import { isResultDownloadEligible } from "@/lib/results/release-eligibility";
 
@@ -210,7 +212,9 @@ export async function GET() {
   const testRequests = testRequestsResult.rows;
   const payments = paymentsResult.rows;
   const appointments = appointmentsResult.rows;
-  const auditEntries = auditResult.data ?? [];
+  // Clinic-only free text (edit / undo / delete reasons, staff notes) is
+  // stripped — the event stays, the clinic's wording does not (export-audit.ts).
+  const auditEntries = patientSafeAuditRows(auditResult.data ?? []);
   const releasedResults = releasedResultsResult.rows;
   const truncated =
     visitsTruncated ||
@@ -276,6 +280,9 @@ export async function GET() {
   let bundleTruncated = false;
   const seenPaths = new Set<string>();
   const eligibilityCache = new Map<string, boolean>();
+  // Every result file the ZIP carries is a download of it for the portal's
+  // "Result updated" marker (0176).
+  const served: ServedResultFile[] = [];
   for (const jRow of releasedResults) {
     const result = Array.isArray(jRow.results) ? jRow.results[0] : jRow.results;
     const tr = Array.isArray(jRow.test_requests) ? jRow.test_requests[0] : jRow.test_requests;
@@ -304,6 +311,7 @@ export async function GET() {
     const trId = tr?.id ?? jRow.test_request_id;
     const filename = `${svc.code}-${trId.slice(0, 8)}.pdf`;
     zip.file(`results/${filename}`, ab);
+    served.push({ resultId: jRow.result_id, storagePath: result.storage_path });
   }
   if (bundleTruncated) {
     zip.file(
@@ -331,10 +339,13 @@ export async function GET() {
       visit_count: visits.length,
       test_request_count: testRequests.length,
       released_result_count: releasedResults.length,
+      // Which result files the ZIP carried.
+      result_ids: [...new Set(served.map((f) => f.resultId))],
     },
     ip_address: ip,
     user_agent: ua,
   });
+  await notePatientDownload(admin, served);
 
   const filename = `drmed-${patient.drm_id}-export-${todayManila()}.zip`;
   // Wrap the Uint8Array in a Blob — Response's BodyInit isn't typed to

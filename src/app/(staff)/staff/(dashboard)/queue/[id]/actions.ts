@@ -19,7 +19,12 @@ import {
   type ResultLayout,
   type TemplateParam,
 } from "@/lib/results/types";
-import { loadTemplateParams } from "@/lib/results/loaders";
+import { membersWithinSections, resultMemberSections } from "@/lib/results/report-section-gate";
+import {
+  isTemplateParamsLoadError,
+  loadTemplateParams,
+  TEMPLATE_PARAMS_LOAD_FAILED,
+} from "@/lib/results/loaders";
 import {
   buildValueRows,
   detectCrossings,
@@ -161,13 +166,21 @@ async function prepareStructured(
     };
   }
 
+  // Active templates only. An inactive per-service template is history — 0053
+  // deactivated the 12 per-service chemistry templates when the consolidated
+  // one replaced them, and entering values against one would write a result
+  // no current template renders. (Prod 2026-09-25: the only other inactive
+  // single-service template is the NA send-out placeholder, which the
+  // send-out check above already refuses.) amendStructuredResultAction has the
+  // same filter.
   const { data: tpl } = await supabase
     .from("result_templates")
     .select("id")
     .eq("service_id", tr.service_id)
+    .eq("is_active", true)
     .maybeSingle();
   if (!tpl) {
-    return { ok: false, error: "No template configured for this service." };
+    return { ok: false, error: "No active template is configured for this service." };
   }
 
   // Restrict the payload to params that actually belong to this template.
@@ -277,13 +290,20 @@ async function saveDraftValues(
 async function loadParamsAndPatient(
   ctx: PreparedContext,
   ageAsOf: Date = new Date(),
-): Promise<{
-  params: TemplateParam[];
-  patientSex: PatientSex;
-  patientAgeMonths: number | null;
-}> {
+): Promise<
+  | { ok: true; params: TemplateParam[]; patientSex: PatientSex; patientAgeMonths: number | null }
+  | { ok: false; error: string }
+> {
   const admin = createAdminClient();
-  const params = await loadTemplateParams(admin, ctx.templateId);
+  // Strict: flags and critical alerts are computed from these ranges — a
+  // failed read must abort, never save values with no flags (loaders.ts).
+  let params: TemplateParam[];
+  try {
+    params = await loadTemplateParams(admin, ctx.templateId, { strict: true });
+  } catch (e) {
+    if (isTemplateParamsLoadError(e)) return { ok: false, error: TEMPLATE_PARAMS_LOAD_FAILED };
+    throw e;
+  }
   const { data: pat } = await admin
     .from("patients")
     .select("sex, birthdate")
@@ -291,7 +311,7 @@ async function loadParamsAndPatient(
     .single();
   const patientSex = normalisePatientSex(pat?.sex ?? null);
   const patientAgeMonths = calculateAgeMonths(pat?.birthdate ?? null, ageAsOf);
-  return { params, patientSex, patientAgeMonths };
+  return { ok: true, params, patientSex, patientAgeMonths };
 }
 
 export async function saveDraftAction(
@@ -301,9 +321,9 @@ export async function saveDraftAction(
   const prep = await prepareStructured(testRequestId, payload);
   if (!prep.ok) return prep;
 
-  const { params, patientSex, patientAgeMonths } = await loadParamsAndPatient(
-    prep.ctx,
-  );
+  const loaded = await loadParamsAndPatient(prep.ctx);
+  if (!loaded.ok) return loaded;
+  const { params, patientSex, patientAgeMonths } = loaded;
   const ups = await saveDraftValues(
     prep.ctx.resultId,
     buildValueRows(payload.values, new Map(params.map((p) => [p.id, p])), {
@@ -370,10 +390,9 @@ export async function finaliseStructuredAction(
 
   // 1) Params + patient. Age is taken at the instant printed on the PDF.
   const finalisedNow = new Date();
-  const { params, patientSex, patientAgeMonths } = await loadParamsAndPatient(
-    ctx,
-    finalisedNow,
-  );
+  const loaded = await loadParamsAndPatient(ctx, finalisedNow);
+  if (!loaded.ok) return loaded;
+  const { params, patientSex, patientAgeMonths } = loaded;
   const patientForRanges = { sex: patientSex, ageMonths: patientAgeMonths };
   const paramsById = new Map(params.map((p) => [p.id, p]));
   const newRows = buildValueRows(payload.values, paramsById, patientForRanges);
@@ -1122,9 +1141,15 @@ export async function amendStructuredResultAction(
     .eq("is_active", true)
     .maybeSingle();
   if (!tpl) {
-    return { ok: false, error: "No template configured for this service." };
+    return { ok: false, error: "No active template is configured for this service." };
   }
-  const params = await loadTemplateParams(admin, tpl.id);
+  let params: Awaited<ReturnType<typeof loadTemplateParams>>;
+  try {
+    params = await loadTemplateParams(admin, tpl.id, { strict: true });
+  } catch (e) {
+    if (isTemplateParamsLoadError(e)) return { ok: false, error: TEMPLATE_PARAMS_LOAD_FAILED };
+    throw e;
+  }
   const paramsById = new Map(params.map((p) => [p.id, p]));
   for (const k of Object.keys(payload.values)) {
     if (!paramsById.has(k)) {
@@ -1380,6 +1405,15 @@ export async function getResultDownloadUrl(
   if (!result) return { ok: false, error: "No result file." };
   if (!result.storage_path) {
     return { ok: false, error: "Result is still a draft — no PDF yet." };
+  }
+
+  // A shared (chemistry) report is one file carrying every member's values,
+  // so the gate above — THIS test's section — is not enough: every linked
+  // test, deleted ones included, must be in the caller's sections too. Same
+  // rule as the staff PDF route (report-section-gate.ts). A failed read denies.
+  const memberSections = await resultMemberSections(admin, result.id);
+  if (!membersWithinSections(sectionsForRole(session.role), memberSections ?? [])) {
+    return { ok: false, error: "This report includes tests outside your sections." };
   }
 
   const { data: signed, error } = await admin.storage

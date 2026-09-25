@@ -20,20 +20,45 @@ const PARAM_COLS =
 const RANGE_COLS =
   "id, parameter_id, age_min_months, age_max_months, gender, band_label, ref_low_si, ref_high_si, ref_low_conv, ref_high_conv, critical_low_si, critical_high_si, critical_low_conv, critical_high_conv, sort_order";
 
+export const TEMPLATE_PARAMS_LOAD_FAILED =
+  "The result template couldn't be loaded, so nothing was saved. Reload the page and try again.";
+
+/** Thrown by loadTemplateParams({ strict: true }) when a read fails. */
+export class TemplateParamsLoadError extends Error {
+  constructor(detail: string) {
+    super(`loadTemplateParams: ${detail}`);
+    this.name = "TemplateParamsLoadError";
+  }
+}
+
+export function isTemplateParamsLoadError(e: unknown): e is TemplateParamsLoadError {
+  return e instanceof Error && e.name === "TemplateParamsLoadError";
+}
+
+/**
+ * `strict`: throw TemplateParamsLoadError when either read fails instead of
+ * degrading to fewer params / no age bands. EVERY path that writes a result or
+ * renders its PDF must pass it: a failed range read would otherwise compute no
+ * flags and no critical thresholds — an edit then withdraws a still-valid
+ * critical alert, and the stored PDF prints without reference ranges (Codex,
+ * 2026-09-25). Display-only callers keep the lenient default.
+ */
 export async function loadTemplateParams(
   client: AnyClient,
   templateId: string,
+  { strict = false }: { strict?: boolean } = {},
 ): Promise<TemplateParam[]> {
-  const { data: paramRows } = await client
+  const { data: paramRows, error: paramErr } = await client
     .from("result_template_params")
     .select(PARAM_COLS)
     .eq("template_id", templateId)
     .order("sort_order", { ascending: true });
+  if (strict && paramErr) throw new TemplateParamsLoadError(paramErr.message);
 
   const params = paramRows ?? [];
   if (params.length === 0) return [];
 
-  const { data: rangeRows } = await client
+  const { data: rangeRows, error: rangeErr } = await client
     .from("result_template_param_ranges")
     .select(RANGE_COLS)
     .in(
@@ -41,6 +66,7 @@ export async function loadTemplateParams(
       params.map((p) => p.id),
     )
     .order("sort_order", { ascending: true });
+  if (strict && rangeErr) throw new TemplateParamsLoadError(rangeErr.message);
 
   const rangesByParam = new Map<string, ParamRange[]>();
   for (const r of rangeRows ?? []) {
@@ -239,14 +265,18 @@ export async function loadResultDocumentInput(
   }
   const template = templateRaw as TemplateRow;
 
-  const templateParams = await loadTemplateParams(admin, template.id);
+  const templateParams = await loadTemplateParams(admin, template.id, { strict: true });
 
-  const { data: valueRows } = options?.valuesOverride
-    ? { data: [] }
+  const { data: valueRows, error: vErr } = options?.valuesOverride
+    ? { data: [], error: null }
     : await admin
         .from("result_values")
         .select("parameter_id, numeric_value_si, numeric_value_conv, text_value, select_value, flag, is_blank")
         .eq("result_id", resultId);
+  // A failed read must not render (and store) a PDF with blank values.
+  if (vErr) {
+    throw new Error(`loadResultDocumentInput: values for results ${resultId} failed to load`);
+  }
 
   const values: ResultDocumentInput["values"] = { ...(options?.valuesOverride ?? {}) };
   for (const v of valueRows ?? []) {

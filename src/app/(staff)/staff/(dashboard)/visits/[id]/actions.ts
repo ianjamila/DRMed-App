@@ -21,6 +21,7 @@ import { countResultViews } from "@/lib/results/viewed-count";
 import { canManuallyReleasePackageHeader } from "@/lib/visits/package-header-release";
 import {
   expandUndoReleaseScope,
+  undoUpdateIds,
   type UndoScopeMemberRow,
   type UndoScopeRejectionReason,
 } from "@/lib/visits/undo-release-scope";
@@ -689,9 +690,7 @@ export async function undoReleaseSelectedAction(
   // of its report is undone. The expansion above already proved every such
   // member is in the caller's sections, on this visit and not a header; the
   // status filter decides which rows actually revert.
-  const updateIds = Array.from(
-    new Set([...scopedIds, ...reportResultIdByTestRequestId.keys()]),
-  );
+  const updateIds = undoUpdateIds(scopedIds, reportResultIdByTestRequestId.keys());
   const { data: undone, error } = await supabase
     .from("test_requests")
     .update({

@@ -3,6 +3,8 @@ import Link from "next/link";
 import { manilaDateTime } from "@/lib/dates/manila";
 import { testStatusLabel } from "@/lib/results/status-filter";
 import { codeDuplicatesName, reportHeadlineStatus } from "@/lib/results/consolidated-reports";
+import type { ClaimRemark } from "@/lib/queue/claim-remarks";
+import { ClaimHistory } from "@/components/staff/claim-remarks-list";
 
 export interface ReportCardData {
   resultId: string;
@@ -23,6 +25,8 @@ export interface ReportCardData {
   history: { seq: number; at: string; reason: string; by: string | null }[];
   /** Set when the viewer may edit this report (staff_can_read_finished_result). */
   editHref: string | null;
+  /** Claims and edits across every member, oldest first (fetchClaimEvents). */
+  remarks: ClaimRemark[];
 }
 
 const BADGE: Record<string, string> = {
@@ -109,9 +113,9 @@ export function ReportCards({
             {rep.lastAmendment ? (
               <p className="mt-3 rounded-lg border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-900">
                 <span className="font-semibold">
-                  Edited {manilaDateTime(rep.lastAmendment.at)}
+                  Updated {manilaDateTime(rep.lastAmendment.at)}
                   {rep.lastAmendment.by ? ` by ${rep.lastAmendment.by}` : ""}
-                  {rep.amendmentCount > 1 ? ` (edited ${rep.amendmentCount} times)` : ""}
+                  {rep.amendmentCount > 1 ? ` (updated ${rep.amendmentCount} times)` : ""}
                 </span>{" "}
                 — {rep.lastAmendment.reason}
               </p>
@@ -156,6 +160,8 @@ export function ReportCards({
             </div>
 
             {editForm?.resultId === rep.resultId ? editForm.node : null}
+
+            <ClaimHistory remarks={rep.remarks} className="mt-5" />
 
             {rep.history.length > 0 ? (
               <div className="mt-5 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] p-3">

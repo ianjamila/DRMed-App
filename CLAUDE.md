@@ -18,24 +18,23 @@ Key reference artifacts:
 - `IMPLEMENTATION_PLAN.md` — original phase plan (historical; cross-check before relying on it)
 - `README.md` — operational setup
 - `.env.example` — env-var inventory
-- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.22, 25 Sep 2026): every
+- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.23, 25 Sep 2026): every
   screen, label and blocked-message the app shows, checked against the code. Update it in the
   PR that changes a flow it describes.
 - `docs/superpowers/specs/` and `docs/superpowers/audits/` — design specs and audits for
   every post-1.0 programme (partner revisions, release lifecycle, group templates, EOD
   denomination count…). Read the spec before re-deriving a design decision.
 
-Migration ledger: **0175** (`patient_billed_catalog_read`) and **0177** (`statement_email_claim`), #212, pushed by Claude and verified by object 2026-09-25 (0174/0176 are claimed by other branches, not on prod). Earlier: **prod head = 0160** (`queue_claim_remarks` — the lab queue Remarks reader, #214,
-pushed by Claude before merge and verified by object 2026-09-24). **0159** (`retire_send_out_accrual`,
-#211) and **0158** (`resolve_patient_referral_source`, #206) are applied. **0157**
-(`online_booking_staff_alert`) and **0156** (`contact_message_form_location`, #200) are applied. **0155**
-(`staff_alert_recipients`, #203) was pushed AFTER 0156 with `db push --include-all` (0156 landed
-first from a parallel branch) and verified by object 2026-09-24; **0154** (#198) and **0153**
-(#196) are applied and verified. **0151** (`rls_initplan_and_policy_consolidation`,
-#192) is also applied and verified: 159 public policies, zero unwrapped helper calls, and no
-unexpected policyless tables. Prod also has **0163** (`drm_id_width`) out of order, so 0161/0162
-land later with `db push --include-all`.
-**0159** (`retire_send_out_accrual`) and **0164** (`send_out_lab_tagging`) are applied; **0173** (`ledger_reversal_pairs`, #222) is applied. **0166** (`drop_send_out_accrual_tables`, #211) is pushed AFTER #211 merges and deploys (the pre-merge app reads the dropped column; the new code works either way).
+Migration ledger: **prod head = 0177** (`statement_email_claim`, #212) as of 2026-09-25, plus
+**0176** (`result_patient_download_and_remarks`, #226) once pushed — it lands OUT OF ORDER after 0177,
+so it needs `db push --include-all`. The prod ledger is not contiguous (no 0165, 0167–0170, 0176 yet):
+**0175** (`patient_billed_catalog_read`) and **0177** (#212), **0174** (`correct_payment_stale_guard`,
+#224), **0173** (`ledger_reversal_pairs`, #222), **0172** (`result_edit_commit`, #223 — applied
+after 0173 with `--include-all`), **0171**, **0166** (`drop_send_out_accrual_tables`, #211, pushed
+after #211 deployed), **0164**, **0163** and **0159**–**0162** are all applied and verified by object.
+Numbers 0165 (retired), 0167 and 0170 are held by open branches — `npm run claim -- list`. Earlier
+history: **0160** (`queue_claim_remarks`, #214) and **0151** (`rls_initplan_and_policy_consolidation`,
+#192: 159 public policies, zero unwrapped helper calls) are applied and verified.
 
 **Rule — claim a number before you use it: `npm run claim -- migration` / `npm run claim -- pcode <n>`.**
 Several sessions work here at once, each in its own worktree, and picking "the next number" by

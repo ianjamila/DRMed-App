@@ -54,3 +54,18 @@ export function foldPrintEvents(
   }
   return out;
 }
+
+/**
+ * The amendment_count a print/view audit row stamps: that of the file the
+ * request actually SERVED. Version N (1 = the original) is the file that
+ * amendment_count = N - 1 describes; with no `?version=N` the current file
+ * (version amendment_count + 1) went out. Stamping the current count on a
+ * print of a replaced version would mark the correction as handed over
+ * (review of #223, 2026-09-25).
+ */
+export function servedAmendmentCount(
+  requestedVersion: number | null,
+  currentVersion: number,
+): number {
+  return (requestedVersion ?? currentVersion) - 1;
+}

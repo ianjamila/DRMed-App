@@ -10,17 +10,23 @@ import { translatePgError } from "@/lib/accounting/pg-errors";
 import { sectionsForRole } from "@/lib/auth/role-sections";
 import { isSectionAllowed } from "@/lib/auth/section-access";
 import { renderResultPdf } from "@/lib/results/render-pdf";
-import { loadResultDocumentInput, loadTemplateParams } from "@/lib/results/loaders";
+import {
+  isTemplateParamsLoadError,
+  loadResultDocumentInput,
+  loadTemplateParams,
+} from "@/lib/results/loaders";
 import { calculateAgeMonths, normalisePatientSex } from "@/lib/results/types";
 import { countValueChanges, isEditableStatus, validateEditReason } from "@/lib/results/result-edit";
 import { buildValueRows, detectCrossings, valueRowsToDocValues } from "@/lib/results/value-rows";
 import { auditAlertChanges, commitResultEdit } from "@/lib/actions/results/result-edit-core";
+import { REPORT_VALUES_LOAD_FAILED, reportEditLoadState } from "@/lib/results/consolidated-reports";
 
 // Editing a FINISHED combined report (chemistry): one results row + one PDF
 // shared by every member test. Owner decisions 2026-09-24: any medtech in the
 // report's section may edit (no claim needed), the new PDF signs as the
-// editor, and there is no patient-facing "amended" marker — the PDF is
-// replaced and staff see the history.
+// editor, and the PDF is replaced while staff see the history. A patient sees
+// only "Result updated" in the portal, and only if they had downloaded the
+// old file (owner decision 2026-09-25, 0176) — never the reason.
 
 export interface AmendConsolidatedInput {
   resultId: string;
@@ -137,30 +143,47 @@ export async function amendConsolidatedReport(
   // 3) Template + which fields this report may hold: the parameters the live
   //    members' services enable, plus any parameter already holding a value
   //    (a mapping edited since finalise must not strand a printed value).
-  const { data: template } = await admin
+  const { data: template, error: templateErr } = await admin
     .from("result_templates")
     .select("id")
     .eq("report_group_id", result.report_group_id)
     .eq("is_active", true)
     .maybeSingle();
-  if (!template) {
-    return { ok: false, error: "No active template is configured for this report group." };
+  let templateParams: Awaited<ReturnType<typeof loadTemplateParams>> = [];
+  try {
+    templateParams = template ? await loadTemplateParams(admin, template.id, { strict: true }) : [];
+  } catch (e) {
+    if (isTemplateParamsLoadError(e)) return { ok: false, error: REPORT_VALUES_LOAD_FAILED };
+    throw e;
   }
-  const templateParams = await loadTemplateParams(admin, template.id);
   const paramsById = new Map(templateParams.map((p) => [p.id, p]));
   const liveServiceIds = live.map((t) => one(t.services)?.id ?? "");
-  const { data: mapRows } =
+  const { data: mapRows, error: mapErr } =
     templateParams.length > 0
       ? await admin
           .from("report_group_service_params")
           .select("service_id, parameter_id")
           .in("parameter_id", templateParams.map((p) => p.id))
           .in("service_id", liveServiceIds)
-      : { data: [] };
-  const { data: storedRows } = await admin
+      : { data: [], error: null };
+  const { data: storedRows, error: storedErr } = await admin
     .from("result_values")
     .select("parameter_id, numeric_value_si, numeric_value_conv, text_value, select_value, is_blank")
     .eq("result_id", result.id);
+  // Same rule as the page that rendered the form: never accept a save built on
+  // reads that failed — `allowed` below would be missing the stored values.
+  const loadState = reportEditLoadState({
+    templateError: templateErr,
+    valuesError: storedErr,
+    mappingError: mapErr,
+    hasTemplate: Boolean(template),
+  });
+  if (loadState === "load_failed") {
+    return { ok: false, error: REPORT_VALUES_LOAD_FAILED };
+  }
+  if (loadState === "no_template") {
+    return { ok: false, error: "No active template is configured for this report group." };
+  }
   const allowed = new Set<string>([
     ...(mapRows ?? []).map((m) => m.parameter_id),
     ...(storedRows ?? []).map((r) => r.parameter_id),

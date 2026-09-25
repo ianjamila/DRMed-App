@@ -5,6 +5,8 @@ import { createClient } from "@/lib/supabase/server";
 import { audit } from "@/lib/audit/log";
 import { canViewResultPdf } from "@/lib/visits/line-visibility";
 import { isResultDownloadEligible } from "@/lib/results/release-eligibility";
+import { resultMemberSections } from "@/lib/results/report-section-gate";
+import { servedAmendmentCount } from "@/lib/results/print-summary";
 
 /**
  * Streams a result PDF for a test_request to the requesting staff.
@@ -34,8 +36,15 @@ import { isResultDownloadEligible } from "@/lib/results/release-eligibility";
  * client — the same rule the chemistry edit path gates on: every linked test
  * (deleted ones included) inside the caller's sections, and every LIVE linked
  * test finished. That keeps a medtech from reading edit history for a report
- * outside their bench even though the current-PDF path above only checks the
- * single test's section.
+ * outside their bench.
+ *
+ * The CURRENT PDF of a shared report (a chemistry panel is one file linked to
+ * every test) gets the section half of that rule too, at every status: a lab
+ * role must cover EVERY linked test (deleted ones included), not only the one
+ * in the URL, because the file prints every member's values
+ * (report-section-gate.ts, passed to canViewResultPdf as `memberSections`).
+ * Reception is unaffected: its access is canViewResultPdf's released-only
+ * branch (#221).
  *
  * Logs every view to audit_log so a later access review can surface who
  * looked at what. `?print=1` (the Print buttons) logs `result.printed_staff`
@@ -132,12 +141,24 @@ export async function GET(
   // carries its values — the portal refuses it for that reason
   // (release-eligibility.ts), and reception must too. Lab roles pass
   // regardless: they review their own unreleased work here.
-  const reportReleased = await isResultDownloadEligible(admin, resolved.id);
-  if (!canViewResultPdf(staff.role, { ...line, reportReleased })) {
+  const [reportReleased, memberSections] = await Promise.all([
+    isResultDownloadEligible(admin, resolved.id),
+    resultMemberSections(admin, resolved.id),
+  ]);
+  if (
+    !canViewResultPdf(staff.role, {
+      ...line,
+      reportReleased,
+      // A failed read proves nothing: [] denies a restricted lab role.
+      memberSections: memberSections ?? [],
+    })
+  ) {
     return NextResponse.json(
       {
         error:
-          "Part of this report isn't released yet — ask the lab to release the rest before printing.",
+          staff.role === "reception"
+            ? "Part of this report isn't released yet — ask the lab to release the rest before printing."
+            : "This report includes tests outside your sections.",
       },
       { status: 403 },
     );
@@ -216,12 +237,14 @@ export async function GET(
     action: printing ? "result.printed_staff" : "result.viewed_staff",
     resource_type: "test_request",
     resource_id: testRequestId,
-    // amendment_count: which version of the file went out, so the
-    // "Printed …" note resets when an amended PDF replaces it. version /
-    // is_current: which version THIS request served (?version=N, 0172).
+    // amendment_count: which version of the file THIS request served (not
+    // the current one), so the "Printed …" note resets when an amended PDF
+    // replaces it, and printing a replaced version (?version=N) never counts
+    // as handing over the correction. version / is_current: the same fact in
+    // version terms (?version=N, 0172).
     metadata: {
       result_id: resolved.id,
-      amendment_count: resolved.amendment_count,
+      amendment_count: servedAmendmentCount(requestedVersion, currentVersion),
       role: staff.role,
       version: requestedVersion ?? currentVersion,
       is_current: isCurrent,

@@ -1,12 +1,12 @@
 /**
- * The visit page's per-row "Edited <date/time> — <reason>" note (0172, PR 2
+ * The visit page's per-row "Updated <date/time> — <reason>" note (0172, PR 2
  * §6.1).
  *
  * A single-test report needs no special handling — one row, one note. A
  * COMBINED report (chemistry) shares one `results` row across several
  * `test_requests`, but the visit page still renders one table row PER member
  * test (unlike the results archive, which folds a report into one row). If
- * every member printed the same "Edited … — reason" line it would read as N
+ * every member printed the same "Updated … — reason" line it would read as N
  * separate edits instead of one. So only the FIRST member (in the page's own
  * render order) gets the full note; later members point at it instead.
  *
@@ -31,9 +31,9 @@ export interface EditNoteTestRow {
 
 /**
  * One note per amended test id, ready to render as-is:
- *  - the first member of an amended result: "Edited <date> — <reason>",
+ *  - the first member of an amended result: "Updated <date> — <reason>",
  *    with a " (×N)" suffix when `amendmentCount > 1`;
- *  - a later member of the SAME amended result: "Edited — see <first test>";
+ *  - a later member of the SAME amended result: "Updated — see <first test>";
  *  - an unamended test, or one whose result carries no reason on record: no
  *    entry (the caller shows nothing, which is correct for reception, who
  *    never receives a reason for a result RLS keeps them from reading).
@@ -56,10 +56,10 @@ export function foldEditNotes(
       const suffix = r.amendmentCount > 1 ? ` (×${r.amendmentCount})` : "";
       noteByTestId.set(
         r.id,
-        `Edited ${manilaDateTime(r.amendedAt)}${suffix} — ${reason}`,
+        `Updated ${manilaDateTime(r.amendedAt)}${suffix} — ${reason}`,
       );
     } else {
-      noteByTestId.set(r.id, `Edited — see ${firstName}`);
+      noteByTestId.set(r.id, `Updated — see ${firstName}`);
     }
   }
 

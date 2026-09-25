@@ -31,7 +31,7 @@ describe("foldEditNotes", () => {
   it("full note on a single-test result", () => {
     const got = foldEditNotes([row()], new Map([["r1", "Corrected transcription error"]]));
     expect(got.get("t1")).toBe(
-      "Edited Sep 24, 2026, 1:00 PM — Corrected transcription error",
+      "Updated Sep 24, 2026, 1:00 PM — Corrected transcription error",
     );
   });
 
@@ -41,7 +41,7 @@ describe("foldEditNotes", () => {
       new Map([["r1", "Re-keyed after QC flag"]]),
     );
     expect(got.get("t1")).toBe(
-      "Edited Sep 24, 2026, 1:00 PM (×3) — Re-keyed after QC flag",
+      "Updated Sep 24, 2026, 1:00 PM (×3) — Re-keyed after QC flag",
     );
   });
 
@@ -53,10 +53,10 @@ describe("foldEditNotes", () => {
     ];
     const got = foldEditNotes(rows, new Map([["r1", "Re-keyed after QC flag"]]));
     expect(got.get("t1")).toBe(
-      "Edited Sep 24, 2026, 1:00 PM — Re-keyed after QC flag",
+      "Updated Sep 24, 2026, 1:00 PM — Re-keyed after QC flag",
     );
-    expect(got.get("t2")).toBe("Edited — see GLUCOSE");
-    expect(got.get("t3")).toBe("Edited — see GLUCOSE");
+    expect(got.get("t2")).toBe("Updated — see GLUCOSE");
+    expect(got.get("t3")).toBe("Updated — see GLUCOSE");
   });
 
   it("first-member assignment follows the given row order, not the array's insertion order of results", () => {
@@ -65,8 +65,8 @@ describe("foldEditNotes", () => {
       row({ id: "t1", name: "GLUCOSE", resultId: "r1" }),
     ];
     const got = foldEditNotes(rows, new Map([["r1", "reason"]]));
-    expect(got.get("t2")).toContain("Edited Sep");
-    expect(got.get("t1")).toBe("Edited — see CREATININE");
+    expect(got.get("t2")).toContain("Updated Sep");
+    expect(got.get("t1")).toBe("Updated — see CREATININE");
   });
 
   it("keeps two different amended reports independent", () => {
@@ -83,7 +83,7 @@ describe("foldEditNotes", () => {
       ]),
     );
     expect(got.get("t1")).toContain("reason one");
-    expect(got.get("t2")).toBe("Edited — see GLUCOSE");
+    expect(got.get("t2")).toBe("Updated — see GLUCOSE");
     expect(got.get("t3")).toContain("reason two");
   });
 

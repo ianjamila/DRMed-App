@@ -6,7 +6,12 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { renderResultPdf } from "@/lib/results/render-pdf";
-import { loadResultDocumentInput, loadTemplateParams } from "@/lib/results/loaders";
+import {
+  isTemplateParamsLoadError,
+  loadResultDocumentInput,
+  loadTemplateParams,
+  TEMPLATE_PARAMS_LOAD_FAILED,
+} from "@/lib/results/loaders";
 import { deriveEnabledParamIds } from "@/lib/results/enabled-params";
 import { sectionsForRole } from "@/lib/auth/role-sections";
 import { scopeToAllowedSections } from "@/lib/visits/bulk-selection";
@@ -139,7 +144,13 @@ export async function finaliseConsolidatedReport(
       error: "No active template is configured for this report group.",
     };
   }
-  const templateParams = await loadTemplateParams(admin, template.id);
+  let templateParams: Awaited<ReturnType<typeof loadTemplateParams>>;
+  try {
+    templateParams = await loadTemplateParams(admin, template.id, { strict: true });
+  } catch (e) {
+    if (isTemplateParamsLoadError(e)) return { ok: false, error: TEMPLATE_PARAMS_LOAD_FAILED };
+    throw e;
+  }
   const paramsById = new Map(templateParams.map((p) => [p.id, p]));
   const templateParamIds = templateParams.map((p) => p.id);
 
