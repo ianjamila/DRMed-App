@@ -7161,6 +7161,10 @@ export type Database = {
           name: string
         }[]
       }
+      patients_name_norm: {
+        Args: { p_first: string; p_last: string; p_middle: string }
+        Returns: string
+      }
       result_edit_commit: {
         Args: {
           p_alerts: Json
@@ -7250,6 +7254,7 @@ export type Database = {
       sheet_alias_apply: {
         Args: {
           p_actor: string
+          p_item_id?: string
           p_lease_token: string
           p_raw_normalized: string
           p_source_id: string

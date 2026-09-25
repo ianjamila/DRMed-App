@@ -122,6 +122,12 @@ export interface PatientRecord {
   referral_source: string | null;
   referral_source_origin: "staff" | "patient" | "sheet" | null;
   merged_into_id: string | null;
+  /**
+   * 0170's patients.row_version (bumped by trg_patients_referral_origin on
+   * every UPDATE). Optional so existing fixtures/tests that don't care about
+   * the stale-read guard need no changes; the real loader always sends it.
+   */
+  row_version?: number;
 }
 
 /**
@@ -171,8 +177,15 @@ export type CustomerOp =
       fields: FillFields & { first_name: string; last_name: string; middle_name: string | null };
       legacy_intake: Record<string, unknown>;
       facts: { registered_on: string | null; new_repeat: "new" | "repeat" | null; source_ref: string } }
-  | { op: "link"; link_key: string; patient_id: string; method: "auto_exact" | "auto_loose" }
-  | { op: "fill"; patient_id: string; fields: FillFields }
+  /**
+   * `expected_row_version` (Codex P1, stale-read guard): the patient's
+   * row_version as the planner read it. 0170 skips the op (counted `stale`)
+   * when the patient's row_version has since moved — the next run re-plans
+   * from a fresh read. Optional: a caller that omits it gets no protection
+   * (every real op the planner emits sets it).
+   */
+  | { op: "link"; link_key: string; patient_id: string; method: "auto_exact" | "auto_loose"; expected_row_version?: number }
+  | { op: "fill"; patient_id: string; fields: FillFields; expected_row_version?: number }
   | { op: "facts"; patient_id: string; registered_on: string | null; new_repeat: "new" | "repeat" | null; source_ref: string }
   /** Persist a review: upsert (link_key, patient_id null, decision "review"), never over an admin row. */
   | { op: "hold"; link_key: string; reason: string };

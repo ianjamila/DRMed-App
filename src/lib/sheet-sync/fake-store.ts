@@ -165,8 +165,8 @@ export class FakeStore implements SheetSyncStore {
     return patientIds.length;
   }
 
-  async aliasApply(_lease: string, answerNorm: string, sourceId: string, actorId: string) {
-    this.calls.push(["aliasApply", answerNorm, sourceId, actorId]);
+  async aliasApply(_lease: string, answerNorm: string, sourceId: string, actorId: string, itemId: string) {
+    this.calls.push(["aliasApply", answerNorm, sourceId, actorId, itemId]);
     this.fence();
     return 1;
   }

@@ -80,7 +80,13 @@ export interface SheetSyncStore {
   commit(lease: string, tab: TabKey, expected: number): Promise<number>;
   upsertReview(lease: string, tab: TabKey, items: ReviewItemInput[], clearAbsent: boolean): Promise<Record<string, number>>;
   resortApply(lease: string, patientIds: string[], expectedOld: string | null, next: string | null): Promise<number>;
-  aliasApply(lease: string, answerNorm: string, sourceId: string, actorId: string): Promise<number>;
+  /**
+   * `itemId` (0170's p_item_id, map-answer race, Codex P2): fences this call
+   * to that exact review item, atomically with the lease/write this already
+   * holds. A second admin racing to map the same answer gets P0064 instead
+   * of silently overwriting the first admin's channel choice.
+   */
+  aliasApply(lease: string, answerNorm: string, sourceId: string, actorId: string, itemId: string): Promise<number>;
   /** `limit` bounds patients handled THIS call (0170's p_limit); omit it to undo everything in one call. */
   revertRun(lease: string, targetRunId: string, limit?: number): Promise<RevertPageResult>;
   /** `limit` bounds holds released THIS call (0170's p_limit); omit it to release them all in one call. */
@@ -103,7 +109,7 @@ function raise(error: { code?: string; message: string }): never {
 
 const PATIENT_COLUMNS = "id, drm_id, first_name, middle_name, last_name, birthdate, phone, phone_normalized, email, sex, " +
   "address, referred_by_doctor, preferred_release_medium, senior_pwd_id_kind, senior_pwd_id_number, referral_source, " +
-  "referral_source_origin, merged_into_id";
+  "referral_source_origin, merged_into_id, row_version";
 
 /** Review items per sheet_sync_upsert_review call (see upsertReview below). */
 export const REVIEW_CHUNK = 1000;
@@ -214,8 +220,8 @@ export function createSupabaseStore(client: Client): SheetSyncStore {
     },
     resortApply: (lease, ids, expectedOld, next) =>
       rpc("sheet_resort_apply", { p_lease_token: lease, p_patient_ids: ids, p_expected_old: expectedOld, p_new: next }),
-    aliasApply: (lease, answerNorm, sourceId, actorId) =>
-      rpc("sheet_alias_apply", { p_lease_token: lease, p_raw_normalized: answerNorm, p_source_id: sourceId, p_actor: actorId }),
+    aliasApply: (lease, answerNorm, sourceId, actorId, itemId) =>
+      rpc("sheet_alias_apply", { p_lease_token: lease, p_raw_normalized: answerNorm, p_source_id: sourceId, p_actor: actorId, p_item_id: itemId }),
     revertRun: (lease, target, limit) =>
       rpc("sheet_sync_revert_run", { p_lease_token: lease, p_target_run: target, p_limit: limit ?? null }),
     releaseUndo: (lease, undoRun, limit) =>

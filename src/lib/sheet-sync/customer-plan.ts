@@ -514,7 +514,8 @@ export function planCustomers(input: Input): CustomerPlan {
     rowsByPatient.set(g.res.patientId, [...(rowsByPatient.get(g.res.patientId) ?? []), ...g.rows]);
     const existing = links.get(g.key);
     if (g.res.linkOp && (!existing || existing.patient_id !== g.res.patientId)) {
-      ops.push({ op: "link", link_key: g.key, patient_id: g.res.patientId, method: g.res.linkOp });
+      ops.push({ op: "link", link_key: g.key, patient_id: g.res.patientId, method: g.res.linkOp,
+        expected_row_version: index.byId.get(g.res.patientId)!.row_version });
     }
   }
 
@@ -547,7 +548,7 @@ export function planCustomers(input: Input): CustomerPlan {
   for (const [pid, rows] of rowsByPatient) {
     const p = index.byId.get(pid)!;
     const diff = fillDiff(p, aggregate(rows));
-    if (Object.keys(diff).length) { ops.push({ op: "fill", patient_id: pid, fields: diff }); fills++; }
+    if (Object.keys(diff).length) { ops.push({ op: "fill", patient_id: pid, fields: diff, expected_row_version: p.row_version }); fills++; }
     const sorted = [...rows].sort(byEarliest);
     const want = { registered_on: sorted[0].registeredOn, new_repeat: sorted.find((r) => r.newRepeat)?.newRepeat ?? null,
       source_ref: `CUSTOMER LIST2 r${sorted[0].sheetRow}` };

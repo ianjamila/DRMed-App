@@ -594,6 +594,54 @@ describe("planCustomers — round 2 (order-independent run-2 check, per-key trus
     expect(() => applyOps([create(["h"], [])], w0)).toThrow(/hold/);
     expect(applyOps([create(["c"], ["c"])], w0).links.get("c")).toMatchObject({ decision: "link", method: "admin", patient_id: "new:c" });
   });
+  it("applyOps mirrors the SQL: a stale link/fill (row_version moved since the planner read) is skipped", () => {
+    const p = patient({ email: null, row_version: 0 });
+    const stale = applyOps([
+      { op: "link", link_key: "k", patient_id: p.id, method: "auto_exact", expected_row_version: 1 },
+      { op: "fill", patient_id: p.id, fields: { email: "stale@example.test" }, expected_row_version: 1 },
+    ], world([p]));
+    expect(stale.links.has("k")).toBe(false);
+    expect(stale.patients.find((x) => x.id === p.id)!.email).toBeNull();
+    // A vanished patient (not in the world at all) is stale too, not a throw.
+    const gone = applyOps([{ op: "link", link_key: "k2", patient_id: "not-there", method: "auto_exact", expected_row_version: 0 }], world([p]));
+    expect(gone.links.has("k2")).toBe(false);
+    // The matching row_version applies normally.
+    const fresh = applyOps([
+      { op: "link", link_key: "k", patient_id: p.id, method: "auto_exact", expected_row_version: 0 },
+      { op: "fill", patient_id: p.id, fields: { email: "fresh@example.test" }, expected_row_version: 0 },
+    ], world([p]));
+    expect(fresh.links.get("k")).toMatchObject({ decision: "link", patient_id: p.id });
+    expect(fresh.patients.find((x) => x.id === p.id)!.email).toBe("fresh@example.test");
+    // No expected_row_version at all -> no protection, applies as before.
+    const unguarded = applyOps([{ op: "link", link_key: "k3", patient_id: p.id, method: "auto_exact" }], world([p]));
+    expect(unguarded.links.get("k3")).toMatchObject({ decision: "link", patient_id: p.id });
+  });
+  it("applyOps mirrors the SQL: create skips a concurrent registration (same name + DOB, or same name + phone with no DOB)", () => {
+    const existing = patient({ first_name: "Wilfredo", last_name: "Concurrent", middle_name: null, birthdate: "1988-03-03", phone: null });
+    const create = (key: string, over: Record<string, unknown> = {}): Extract<CustomerOp, { op: "create" }> => ({
+      op: "create", create_key: key, method: "auto_exact", link_keys: [key], admin_link_keys: [],
+      fields: { first_name: "Wilfredo", last_name: "Concurrent", middle_name: null, birthdate: "1988-03-03", ...over },
+      legacy_intake: {}, facts: { registered_on: null, new_repeat: null, source_ref: key } });
+    // Same normalized name + same DOB: skipped, no patient, no link.
+    const dupe = applyOps([create("d1")], world([existing]));
+    expect(dupe.patients).toHaveLength(1);
+    expect(dupe.links.has("d1")).toBe(false);
+    // Same normalized name, no DOB on the op, same normalized phone.
+    const withPhone = { ...existing, phone: "+639171234567" };
+    const dupePhone = applyOps([create("d2", { birthdate: null, phone: "09171234567" })], world([withPhone]));
+    expect(dupePhone.patients).toHaveLength(1);
+    expect(dupePhone.links.has("d2")).toBe(false);
+    // A genuinely different person (different DOB, different/no phone) with
+    // the same name is still created normally.
+    const notDupe = applyOps([create("d3", { birthdate: "1999-09-09" })], world([existing]));
+    expect(notDupe.patients).toHaveLength(2);
+    expect(notDupe.links.get("d3")).toMatchObject({ decision: "link", patient_id: "new:d3" });
+    // An ADMIN create is exempt: never second-guessed, even against the
+    // exact same duplicate.
+    const adminCreate = applyOps([{ ...create("d4"), method: "admin", admin_link_keys: ["d4"] }], world([existing]));
+    expect(adminCreate.patients).toHaveLength(2);
+    expect(adminCreate.links.get("d4")).toMatchObject({ decision: "link", method: "admin", patient_id: "new:d4" });
+  });
   it("an undo sticks: the keys an undo held never re-link or re-fill the patient it restored", () => {
     // Run 1 links the key (auto) and fills the patient's phone + email.
     const p = patient({ phone: null, email: null });
