@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { CONS_H0, CONS_H1, CUST_HEADER, LAB_H0, LAB_H1 } from "./__fixtures__/tab-headers";
 import { FakeStore } from "./fake-store";
-import { revertRunPaged, runSheetSync, withAdminLease } from "./run";
+import { releaseUndoPaged, revertRunPaged, runSheetSync, withAdminLease } from "./run";
 import { LeaseLostError, SyncBusyError, type RevertPageResult } from "./store";
 import type { Cell, CustomerOp, LinkRecord, PatientRecord, RawTabs, TabKey } from "./types";
 import type { Json } from "../../types/database";
@@ -349,5 +349,24 @@ describe("revertRunPaged — paged, resumable undo (migration round 5)", () => {
     const store = new FakeStore({ leaseLostAfter: 2, revertPages: [page({ restored: 1 }), page({ done: true })] });
     await expect(revertRunPaged(store, "staff-1", "target-run")).rejects.toBeInstanceOf(LeaseLostError);
     expect(store.calls.some((c) => c[0] === "finish")).toBe(false);
+  });
+});
+
+describe("releaseUndoPaged — Let the sync decide again (0170 sheet_sync_release_undo)", () => {
+  const rel = (over: Partial<{ done: boolean; released: number; items_resolved: number }> = {}) =>
+    ({ done: false, released: 0, items_resolved: 0, ...over });
+  it("runs under its own 'release' lease, sums pages, heartbeats between them and records the total", async () => {
+    const store = new FakeStore({ paused: true, releasePages: [rel({ released: 2000, items_resolved: 1990 }), rel({ done: true, released: 5, items_resolved: 5 })] });
+    const { result } = await releaseUndoPaged(store, "staff-1", "undo-run", { pageSize: 2000 });
+    expect(result).toEqual({ released: 2005, items_resolved: 1995 });
+    expect(store.calls.find((c) => c[0] === "acquire")).toEqual(["acquire", "release", false]); // never paused
+    expect(store.calls.filter((c) => c[0] === "releaseUndo" || c[0] === "heartbeat").map((c) => c[0]))
+      .toEqual(["releaseUndo", "heartbeat", "releaseUndo"]);
+    expect(store.calls.find((c) => c[0] === "releaseUndo")).toEqual(["releaseUndo", "undo-run", 2000]);
+    expect(store.finishes).toEqual([{ status: "succeeded", error: null, summary: { result: { released: 2005, items_resolved: 1995 } } }]);
+  });
+  it("throws instead of looping forever when a page releases nothing and isn't done", async () => {
+    const store = new FakeStore({ releasePages: [rel({ released: 3 }), rel()] });
+    await expect(releaseUndoPaged(store, "staff-1", "undo-run")).rejects.toThrow(/made no progress/);
   });
 });

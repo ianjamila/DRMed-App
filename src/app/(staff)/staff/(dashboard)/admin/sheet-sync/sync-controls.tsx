@@ -13,8 +13,8 @@ import {
 import { friendlyManilaDate } from "@/lib/dates/manila";
 import type { TabKey } from "@/lib/sheet-sync/types";
 import type { RunOutcome } from "@/lib/sheet-sync/run";
-import { runSheetSyncNowAction, setSheetSyncPausedAction, revertRunAction, type RunOutcomeSummary } from "./actions";
-import { KIND_LABEL, STATUS_LABEL, TAB_LABEL, revertSummaryLine, tabErrorLabel } from "./format";
+import { runSheetSyncNowAction, setSheetSyncPausedAction, revertRunAction, releaseUndoAction, type RunOutcomeSummary } from "./actions";
+import { KIND_LABEL, STATUS_LABEL, TAB_LABEL, releaseSummaryLine, revertSummaryLine, tabErrorLabel } from "./format";
 import { pauseConfirmArgs, resumeArgs, syncSwitchIntent } from "./sync-switch-logic";
 
 // ---------------------------------------------------------------------------
@@ -354,6 +354,96 @@ export function UndoRunButton({ runId, runLabel }: { runId: string; runLabel: st
               className="min-h-9 rounded-md bg-red-700 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-60"
             >
               {pending ? "Undoing…" : "Undo this run"}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Let the sync decide again — confirm dialog, on an undo run's row in Run
+// history. Hands the rows that undo held back to the sync (0170's
+// sheet_sync_release_undo, paged by releaseUndoPaged): the next sync links or
+// creates them again. Like the undo button, the result line here is a flash
+// before revalidatePath re-renders the row; the durable copy is the release
+// run's own row (`releaseSummaryLine` in run-history.tsx).
+// ---------------------------------------------------------------------------
+
+export function ReleaseUndoButton({ undoRunId, runLabel }: { undoRunId: string; runLabel: string }) {
+  const [open, setOpen] = useState(false);
+  const [pending, startTransition] = useTransition();
+  const [err, setErr] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  function confirm() {
+    setErr(null);
+    startTransition(async () => {
+      try {
+        const res = await releaseUndoAction({ undoRunId });
+        if (!res.ok) {
+          setErr(res.error);
+          return;
+        }
+        setDone(releaseSummaryLine(res.data));
+        setOpen(false);
+      } catch (e) {
+        console.error("sheet sync release failed", e);
+        setErr("Could not reach the server. Check your connection and try again.");
+      }
+    });
+  }
+
+  if (done) {
+    return (
+      <p className="text-xs text-[color:var(--color-brand-text-soft)]" role="status">
+        {done}
+      </p>
+    );
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        aria-label={`Let the sync decide again for ${runLabel}`}
+        className="text-xs font-semibold text-cyan-700 hover:underline"
+      >
+        Let the sync decide again
+      </button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Let the sync decide these rows again?</DialogTitle>
+            <DialogDescription>
+              This undo held its sheet rows back so the nightly sync would not put them back. Use this once whatever
+              made that run wrong is fixed: the next sync will link or create these rows again, as if they were new.
+              Their &ldquo;Kept undone&rdquo; review items are closed. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          {err && (
+            <p className="text-sm text-red-600" role="alert">
+              {err}
+            </p>
+          )}
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              disabled={pending}
+              className="min-h-9 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-1.5 text-sm"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={confirm}
+              disabled={pending}
+              className="min-h-9 rounded-md bg-cyan-700 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-60"
+            >
+              {pending ? "Handing back…" : "Let the sync decide again"}
             </button>
           </DialogFooter>
         </DialogContent>

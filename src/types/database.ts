@@ -5788,6 +5788,7 @@ export type Database = {
           lease_token: string | null
           legacy_import_run_id: string | null
           per_tab: Json
+          released_by_run_id: string | null
           reverted_by_run_id: string | null
           started_at: string
           status: string
@@ -5804,6 +5805,7 @@ export type Database = {
           lease_token?: string | null
           legacy_import_run_id?: string | null
           per_tab?: Json
+          released_by_run_id?: string | null
           reverted_by_run_id?: string | null
           started_at?: string
           status: string
@@ -5820,6 +5822,7 @@ export type Database = {
           lease_token?: string | null
           legacy_import_run_id?: string | null
           per_tab?: Json
+          released_by_run_id?: string | null
           reverted_by_run_id?: string | null
           started_at?: string
           status?: string
@@ -5832,6 +5835,13 @@ export type Database = {
             columns: ["legacy_import_run_id"]
             isOneToOne: false
             referencedRelation: "legacy_import_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sheet_sync_runs_released_by_run_id_fkey"
+            columns: ["released_by_run_id"]
+            isOneToOne: false
+            referencedRelation: "sheet_sync_runs"
             referencedColumns: ["id"]
           },
           {
@@ -7302,6 +7312,10 @@ export type Database = {
       sheet_sync_heartbeat: {
         Args: { p_lease_token: string }
         Returns: undefined
+      }
+      sheet_sync_release_undo: {
+        Args: { p_lease_token: string; p_limit?: number; p_undo_run: string }
+        Returns: Json
       }
       sheet_sync_revert_run: {
         Args: { p_lease_token: string; p_limit?: number; p_target_run: string }

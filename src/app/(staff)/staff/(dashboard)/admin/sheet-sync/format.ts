@@ -2,7 +2,7 @@
 // "Plain language by audience" still applies: no raw enum values on screen.
 // Pinned to migration 0170's CHECK lists by format.test.ts.
 import type { ReviewKind, TabKey } from "@/lib/sheet-sync/types";
-import type { RevertSummary } from "@/lib/sheet-sync/run";
+import type { ReleaseSummary, RevertSummary } from "@/lib/sheet-sync/run";
 import { REFERRAL_SOURCE_LABEL, isReferralSource } from "@/lib/patients/referral-sources";
 
 export const TAB_LABEL: Record<TabKey, string> = {
@@ -28,6 +28,7 @@ export const TRIGGER_LABEL: Record<string, string> = {
   resort: "Re-sort approval",
   alias: "Answer mapped",
   revert: "Undo",
+  release: "Sync decides again",
 };
 
 export const STATUS_LABEL: Record<string, string> = {
@@ -68,6 +69,24 @@ export function revertSummaryLine(r: RevertSummary): string {
   return parts.join(" · ");
 }
 
+// "Let the sync decide again" belongs on an undo run that held rows back
+// (its result counts held > 0) and has not been released yet — refused in
+// SQL (22023) otherwise. An undo that never finished its bookkeeping has no
+// result; its holds are released from the undo run that finished the job.
+export function canRelease(run: {
+  trigger: string; status: string; released_by_run_id: string | null; summary: { result?: unknown } | null;
+}): boolean {
+  if (run.trigger !== "revert" || run.released_by_run_id || run.status === "running") return false;
+  const result = run.summary?.result as Partial<RevertSummary> | undefined;
+  return !!result && typeof result === "object" && (result.held ?? 0) > 0;
+}
+
+/** Plain words for a "Let the sync decide again" run's result (Run history + the dialog). */
+export function releaseSummaryLine(r: ReleaseSummary): string {
+  const rows = `${r.released} row${r.released === 1 ? "" : "s"} handed back to the sync`;
+  return r.items_resolved > 0 ? `${rows} · ${r.items_resolved} review item${r.items_resolved === 1 ? "" : "s"} closed` : rows;
+}
+
 // The only per-tab error string run.ts writes in a machine-shaped format —
 // everything else that reaches here is already safe to show as-is: run.ts's
 // errText() only lets our own hand-authored P00NN/22023 messages through
@@ -92,6 +111,7 @@ export const RESOLUTION_ACTION_LABEL: Record<string, string> = {
   create: "Created a new patient",
   dismiss: "Dismissed",
   alias: "Answer mapped to a channel",
+  released: "Released — the sync decides again",
 };
 
 /**
@@ -120,7 +140,11 @@ export function resolutionSummary(resolution: Record<string, unknown> | null | u
   if (!resolution) return "—";
   if (isAutoResolution(resolution)) return "Cleared — no longer in the sheet";
   const action = typeof resolution.action === "string" ? resolution.action : undefined;
-  if (action === "dismiss" && resolution.keep_undone === true) return "Kept undone";
+  if (action === "dismiss" && resolution.keep_undone === true) {
+    // Raised straight into this state by the sync after an undo (0170's
+    // sheet_sync_upsert_review, auto_from_undo): the undo was the decision.
+    return resolution.auto_from_undo === true ? "Kept undone (by the undo)" : "Kept undone";
+  }
   if (action === "alias") {
     const id = resolution.referral_source_id;
     if (typeof id === "string" && isReferralSource(id)) return `Mapped to ${REFERRAL_SOURCE_LABEL[id]}`;

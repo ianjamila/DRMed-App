@@ -40,6 +40,10 @@
 --     holds, so an undo sticks instead of the next nightly run re-deriving
 --     the same link or fill. Undoing a map-answer run also takes back the
 --     alias it wrote.
+--     The review items of an undo's held rows are raised already "kept
+--     undone" (the undo was the decision), and "Let the sync decide again"
+--     (sheet_sync_release_undo, trigger 'release') hands one undo's held rows
+--     back to the sync once the admin has fixed what made the run wrong.
 -- Nothing here creates visits, payments or journal entries.
 -- =============================================================================
 
@@ -188,7 +192,7 @@ on conflict (id) do nothing;
 
 create table public.sheet_sync_runs (
   id                    uuid primary key default gen_random_uuid(),
-  trigger               text not null check (trigger in ('cron','manual','cli','resort','alias','revert')),
+  trigger               text not null check (trigger in ('cron','manual','cli','resort','alias','revert','release')),
   actor_id              uuid references auth.users(id),
   dry_run               boolean not null default false,
   status                text not null check (status in ('running','succeeded','partial','failed','skipped_paused')),
@@ -200,7 +204,9 @@ create table public.sheet_sync_runs (
   summary               jsonb not null default '{}'::jsonb,
   error                 text,
   legacy_import_run_id  uuid references public.legacy_import_runs(id),
-  reverted_by_run_id    uuid references public.sheet_sync_runs(id)
+  reverted_by_run_id    uuid references public.sheet_sync_runs(id),
+  -- an undo run whose holds "Let the sync decide again" took back (sheet_sync_release_undo)
+  released_by_run_id    uuid references public.sheet_sync_runs(id) on delete set null
 );
 create unique index sheet_sync_runs_one_running on public.sheet_sync_runs ((status)) where status = 'running';
 create index sheet_sync_runs_started on public.sheet_sync_runs (started_at desc, id);
@@ -483,7 +489,7 @@ declare
   v_busy boolean := false;
   v_token uuid := gen_random_uuid();
 begin
-  if p_trigger is null or p_trigger not in ('cron','manual','cli','resort','alias','revert') then
+  if p_trigger is null or p_trigger not in ('cron','manual','cli','resort','alias','revert','release') then
     raise exception 'Unknown sheet sync trigger.' using errcode = '22023';
   end if;
   perform pg_advisory_xact_lock(hashtext('sheet_sync_lease'));
@@ -848,7 +854,9 @@ declare
   v_identity boolean;
   v_open public.sheet_sync_review_items%rowtype;
   v_dis public.sheet_sync_review_items%rowtype;
-  n_opened int := 0; n_updated int := 0; n_cleared int := 0; n_kept int := 0;
+  v_undo_run uuid;
+  v_undo_actor uuid;
+  n_opened int := 0; n_updated int := 0; n_cleared int := 0; n_kept int := 0; n_auto int := 0;
 begin
   if p_tab not in ('customers','lab','consult') or jsonb_typeof(p_items) is distinct from 'array' then
     raise exception 'Bad review batch.' using errcode = '22023';
@@ -906,7 +914,35 @@ begin
       continue;
     end if;
 
-    -- 3. a new open item
+    -- 3a. a key the sync has never had dismissed, whose keys are ALL held by
+    --     an undo: the undo was the admin's decision, so the item is raised
+    --     already kept undone (dismissed, auto_from_undo) instead of flooding
+    --     the open queue. It re-opens by the Keep-undone rules above (new
+    --     candidates, or a different hold) and goes away with "Let the sync
+    --     decide again" (sheet_sync_release_undo).
+    if v_identity and jsonb_array_length(v_keys) > 0
+       and not exists (select 1 from public.sheet_sync_review_items i
+                        where i.item_key = v_key and i.status = 'dismissed'
+                          and i.kind in ('ambiguous_patient','identity_conflict','possible_existing_patient'))
+       and not exists (select 1 from jsonb_array_elements_text(v_keys) k
+                        where not exists (select 1 from public.sheet_patient_links l
+                                           where l.link_key = k and l.decision = 'review'
+                                             and l.hold_reason = 'undone by an admin')) then
+      select l.run_id, r.actor_id into v_undo_run, v_undo_actor
+        from public.sheet_patient_links l left join public.sheet_sync_runs r on r.id = l.run_id
+       where l.link_key in (select jsonb_array_elements_text(v_keys))
+       order by r.started_at desc nulls last
+       limit 1;
+      insert into public.sheet_sync_review_items (run_id, tab, item_key, kind, payload, status, resolution, resolved_by, resolved_at)
+      values (v_run, p_tab, v_key, v_kind, v_payload, 'dismissed',
+              jsonb_build_object('action', 'dismiss', 'keep_undone', true, 'candidate_ids', v_ids,
+                                 'auto_from_undo', true, 'undo_run_id', v_undo_run),
+              v_undo_actor, now());
+      n_auto := n_auto + 1;
+      continue;
+    end if;
+
+    -- 3b. a new open item
     insert into public.sheet_sync_review_items (run_id, tab, item_key, kind, payload, first_seen_at)
     values (v_run, p_tab, v_key, v_kind, v_payload,
             coalesce((select min(i.first_seen_at) from public.sheet_sync_review_items i
@@ -927,7 +963,7 @@ begin
                                    and i.kind in ('ambiguous_patient','identity_conflict','possible_existing_patient'))));
     get diagnostics n_cleared = row_count;
   end if;
-  return jsonb_build_object('opened', n_opened, 'updated', n_updated, 'cleared', n_cleared, 'kept_dismissed', n_kept);
+  return jsonb_build_object('opened', n_opened, 'updated', n_updated, 'cleared', n_cleared, 'kept_dismissed', n_kept, 'kept_undone', n_auto);
 end $$;
 
 -- Re-sort only ever moves patients the May import created (the same set
@@ -1088,6 +1124,9 @@ begin
   if v_target.trigger = 'revert' then
     raise exception 'An undo cannot itself be undone.' using errcode = '22023';
   end if;
+  if v_target.trigger = 'release' then
+    raise exception 'Letting the sync decide again cannot be undone.' using errcode = '22023';
+  end if;
   if v_target.status = 'running' then
     raise exception 'That run has not finished.' using errcode = '22023';
   end if;
@@ -1240,6 +1279,82 @@ begin
                             'alias_removed', n_alias_removed, 'alias_restored', n_alias_restored);
 end $$;
 
+-- "Let the sync decide again": takes back the holds an UNDO placed, so the
+-- next sync decides those sheet rows afresh (links or creates them again) —
+-- for when the admin has fixed whatever made the undone run wrong. p_undo_run
+-- is an undo run (trigger 'revert'); every undo run that worked on the same
+-- target run counts as the same undo (a paged undo may span several when a
+-- worker died). Only holds that undo placed and nothing has replaced since
+-- (still decision 'review', hold_reason 'undone by an admin', run_id = one of
+-- those undo runs) are deleted; the review items of those keys (kept undone,
+-- or re-opened) are resolved as released. PAGED like the undo: p_limit caps
+-- the holds released per call (NULL = all); the call that finds none left
+-- marks every one of those undo runs released and returns done = true.
+-- Runs as its own fenced run (trigger 'release'), which cannot be undone.
+create or replace function public.sheet_sync_release_undo(p_lease_token uuid, p_undo_run uuid, p_limit integer default null)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  v_run uuid := public._sheet_sync_fence(p_lease_token, true);
+  v_actor uuid;
+  v_undo public.sheet_sync_runs%rowtype;
+  v_target uuid;
+  v_undo_runs uuid[];
+  v_keys text[];
+  v_done boolean;
+  n_released int := 0;
+  n_items int := 0;
+begin
+  if p_limit is not null and p_limit < 1 then
+    raise exception 'The page size must be at least 1.' using errcode = '22023';
+  end if;
+  select * into v_undo from public.sheet_sync_runs r where r.id = p_undo_run for update;
+  if not found or v_undo.trigger <> 'revert' then
+    raise exception 'That run is not an undo.' using errcode = '22023';
+  end if;
+  if v_undo.status = 'running' then
+    raise exception 'That undo has not finished.' using errcode = '22023';
+  end if;
+  if v_undo.released_by_run_id is not null then
+    raise exception 'The sync already decides these rows again.' using errcode = '22023';
+  end if;
+  select r.actor_id into v_actor from public.sheet_sync_runs r where r.id = v_run;
+  v_target := coalesce((select r.id from public.sheet_sync_runs r where r.reverted_by_run_id = p_undo_run limit 1),
+                       (select c.run_id from public.sheet_sync_changes c where c.undo_run_id = p_undo_run limit 1));
+  v_undo_runs := array(
+    select p_undo_run
+    union select c.undo_run_id from public.sheet_sync_changes c
+           where v_target is not null and c.run_id = v_target and c.undo_run_id is not null
+    union select r.reverted_by_run_id from public.sheet_sync_runs r
+           where r.id = v_target and r.reverted_by_run_id is not null);
+
+  with picked as (
+    select l.link_key from public.sheet_patient_links l
+     where l.decision = 'review' and l.hold_reason = 'undone by an admin' and l.run_id = any (v_undo_runs)
+     order by l.link_key
+     limit coalesce(p_limit, 2147483647)
+     for update),
+  gone as (
+    delete from public.sheet_patient_links l using picked p where l.link_key = p.link_key returning l.link_key)
+  select coalesce(array_agg(g.link_key), '{}'::text[]) into v_keys from gone g;
+  n_released := cardinality(v_keys);
+
+  update public.sheet_sync_review_items i
+     set status = 'resolved', resolved_by = v_actor, resolved_at = now(),
+         resolution = jsonb_build_object('action', 'released', 'undo_run_id', p_undo_run, 'release_run_id', v_run)
+   where i.item_key = any (v_keys)
+     and i.kind in ('ambiguous_patient','identity_conflict','possible_existing_patient')
+     and i.status in ('open','dismissed');
+  get diagnostics n_items = row_count;
+
+  v_done := not exists (select 1 from public.sheet_patient_links l
+                         where l.decision = 'review' and l.hold_reason = 'undone by an admin'
+                           and l.run_id = any (v_undo_runs));
+  if v_done then
+    update public.sheet_sync_runs set released_by_run_id = v_run where id = any (v_undo_runs);
+  end if;
+  return jsonb_build_object('done', v_done, 'released', n_released, 'items_resolved', n_items);
+end $$;
+
 -- Re-sort candidates: May-imported live patients and their original answer
 -- (the key holds spaces and a "?", which a PostgREST select path cannot address).
 create or replace function public.sheet_resort_candidates()
@@ -1356,6 +1471,7 @@ begin
     'public.sheet_resort_apply(uuid, uuid[], text, text)',
     'public.sheet_alias_apply(uuid, text, text, uuid)',
     'public.sheet_sync_revert_run(uuid, uuid, integer)',
+    'public.sheet_sync_release_undo(uuid, uuid, integer)',
     'public.sheet_review_resolve(uuid, uuid, text, uuid)',
     'public.sheet_resort_candidates()'] loop
     execute format('revoke all on function %s from public', f);
@@ -1375,6 +1491,7 @@ grant execute on function public.sheet_sync_upsert_review(uuid, text, jsonb, boo
 grant execute on function public.sheet_resort_apply(uuid, uuid[], text, text) to service_role;
 grant execute on function public.sheet_alias_apply(uuid, text, text, uuid) to service_role;
 grant execute on function public.sheet_sync_revert_run(uuid, uuid, integer) to service_role;
+grant execute on function public.sheet_sync_release_undo(uuid, uuid, integer) to service_role;
 grant execute on function public.sheet_review_resolve(uuid, uuid, text, uuid) to service_role;
 grant execute on function public.sheet_resort_candidates() to service_role;
 
@@ -1418,8 +1535,8 @@ begin
     end if;
   end loop;
   if (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-       where n.nspname = 'public' and (p.proname like 'sheet\_%' or p.proname like '\_sheet\_sync\_%')) <> 15 then
-    raise exception '0170: expected exactly 15 sheet sync routines (a stale overload survived?)';
+       where n.nspname = 'public' and (p.proname like 'sheet\_%' or p.proname like '\_sheet\_sync\_%')) <> 16 then
+    raise exception '0170: expected exactly 16 sheet sync routines (a stale overload survived?)';
   end if;
 
   -- Tables: anon gets nothing; authenticated may only read, and never the staging table.

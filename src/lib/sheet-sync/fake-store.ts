@@ -6,7 +6,7 @@
  */
 import type { Json } from "../../types/database";
 import { applyOps } from "./__fixtures__/customer-world";
-import { LeaseLostError, SyncBusyError, type AcquireResult, type AuditRow, type RevertPageResult, type SheetSyncStore } from "./store";
+import { LeaseLostError, SyncBusyError, type AcquireResult, type AuditRow, type ReleasePageResult, type RevertPageResult, type SheetSyncStore } from "./store";
 import type { CustomerOp, FactsRecord, LinkRecord, PatientRecord, PrevCustomerRow, ReviewItemInput, TabKey } from "./types";
 
 let runCounter = 0;
@@ -27,6 +27,8 @@ export interface FakeStoreOptions {
   /** Scripted per-call `revertRun` results, consumed in call order (paged-undo tests). Past the
    * end of the array, the last entry repeats. Defaults to a single `done` page with zero counts. */
   revertPages?: RevertPageResult[];
+  /** Scripted per-call `releaseUndo` results, like `revertPages`. Defaults to one `done` page with zero counts. */
+  releasePages?: ReleasePageResult[];
 }
 
 const ZERO_REVERT_PAGE: RevertPageResult = {
@@ -53,6 +55,8 @@ export class FakeStore implements SheetSyncStore {
   private mirrorWindowStart: string;
   private revertPages: RevertPageResult[];
   private revertCallIndex = 0;
+  private releasePages: ReleasePageResult[];
+  private releaseCallIndex = 0;
 
   constructor(opts: FakeStoreOptions = {}) {
     this.paused = opts.paused ?? false;
@@ -67,6 +71,7 @@ export class FakeStore implements SheetSyncStore {
     this.acceptedSuspect = new Set(opts.acceptedSuspect ?? []);
     this.mirrorWindowStart = opts.mirrorWindowStart ?? "2024-01-01";
     this.revertPages = opts.revertPages ?? [ZERO_REVERT_PAGE];
+    this.releasePages = opts.releasePages ?? [{ done: true, released: 0, items_resolved: 0 }];
   }
 
   private fence(): void {
@@ -78,7 +83,7 @@ export class FakeStore implements SheetSyncStore {
     this.calls.push(["acquire", trigger, dryRun]);
     if (this.busy) throw new SyncBusyError();
     const runId = `run-${++runCounter}`;
-    if (this.paused && trigger !== "resort" && trigger !== "alias" && trigger !== "revert" && !dryRun) return { status: "skipped_paused", runId };
+    if (this.paused && trigger !== "resort" && trigger !== "alias" && trigger !== "revert" && trigger !== "release" && !dryRun) return { status: "skipped_paused", runId };
     return { status: "running", runId, leaseToken: `lease-${runId}` };
   }
 
@@ -171,6 +176,14 @@ export class FakeStore implements SheetSyncStore {
     this.fence();
     const page = this.revertPages[Math.min(this.revertCallIndex, this.revertPages.length - 1)];
     this.revertCallIndex++;
+    return page;
+  }
+
+  async releaseUndo(_lease: string, undoRunId: string, limit?: number): Promise<ReleasePageResult> {
+    this.calls.push(["releaseUndo", undoRunId, limit]);
+    this.fence();
+    const page = this.releasePages[Math.min(this.releaseCallIndex, this.releasePages.length - 1)];
+    this.releaseCallIndex++;
     return page;
   }
 

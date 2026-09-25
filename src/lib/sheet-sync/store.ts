@@ -49,8 +49,22 @@ export interface RevertPageResult {
   gone: number;
 }
 
+/**
+ * One page of `sheet_sync_release_undo` ("Let the sync decide again", 0170):
+ * PER CALL counts — holds released and review items resolved as released.
+ * `done` is true only on the call that found none of that undo's holds left
+ * (it also marks the undo run(s) released).
+ */
+export interface ReleasePageResult {
+  done: boolean;
+  released: number;
+  items_resolved: number;
+}
+
+export type SyncTrigger = "cron" | "manual" | "cli" | "resort" | "alias" | "revert" | "release";
+
 export interface SheetSyncStore {
-  acquire(trigger: "cron" | "manual" | "cli" | "resort" | "alias" | "revert", actorId: string | null, dryRun: boolean): Promise<AcquireResult>;
+  acquire(trigger: SyncTrigger, actorId: string | null, dryRun: boolean): Promise<AcquireResult>;
   heartbeat(lease: string): Promise<void>;
   finish(lease: string, status: "succeeded" | "partial" | "failed", perTab: Json, summary: Json, error: string | null): Promise<void>;
   readSettings(): Promise<{ paused: boolean; mirrorWindowStart: string }>;
@@ -69,6 +83,8 @@ export interface SheetSyncStore {
   aliasApply(lease: string, answerNorm: string, sourceId: string, actorId: string): Promise<number>;
   /** `limit` bounds patients handled THIS call (0170's p_limit); omit it to undo everything in one call. */
   revertRun(lease: string, targetRunId: string, limit?: number): Promise<RevertPageResult>;
+  /** `limit` bounds holds released THIS call (0170's p_limit); omit it to release them all in one call. */
+  releaseUndo(lease: string, undoRunId: string, limit?: number): Promise<ReleasePageResult>;
   reviewResolve(itemId: string, actorId: string, action: "link" | "create" | "dismiss", patientId: string | null): Promise<void>;
   resortCandidates(): Promise<Array<{ id: string; answer: string; referral_source: string | null; referral_source_origin: "staff" | "patient" | "sheet" | null }>>;
   audit(row: AuditRow): Promise<void>;
@@ -183,6 +199,8 @@ export function createSupabaseStore(client: Client): SheetSyncStore {
       rpc("sheet_alias_apply", { p_lease_token: lease, p_raw_normalized: answerNorm, p_source_id: sourceId, p_actor: actorId }),
     revertRun: (lease, target, limit) =>
       rpc("sheet_sync_revert_run", { p_lease_token: lease, p_target_run: target, p_limit: limit ?? null }),
+    releaseUndo: (lease, undoRun, limit) =>
+      rpc("sheet_sync_release_undo", { p_lease_token: lease, p_undo_run: undoRun, p_limit: limit ?? null }),
     async reviewResolve(itemId, actorId, action, patientId) {
       await rpc("sheet_review_resolve", { p_item_id: itemId, p_actor: actorId, p_action: action, p_patient_id: patientId });
     },

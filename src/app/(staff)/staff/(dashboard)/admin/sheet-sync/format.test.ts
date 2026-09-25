@@ -19,6 +19,8 @@ import {
   isAutoResolution,
   isDoneKind,
   resolutionSummary,
+  releaseSummaryLine,
+  canRelease,
   revertSummaryLine,
   tabErrorLabel,
 } from "./format";
@@ -199,8 +201,8 @@ describe("RESOLUTION_ACTION_LABEL", () => {
     expect(LINK_CREATE_ACTIONS).toEqual(["link", "create"]);
   });
 
-  it("has a label for every resolution action 0170 can write — all four: link, create, dismiss, alias", () => {
-    expect(RESOLUTION_ACTIONS).toHaveLength(4);
+  it("has a label for every resolution action 0170 can write — all five: link, create, dismiss, alias, released", () => {
+    expect([...RESOLUTION_ACTIONS].sort()).toEqual(["alias", "create", "dismiss", "link", "released"]);
     for (const a of RESOLUTION_ACTIONS) expect(RESOLUTION_ACTION_LABEL[a]).toBeTruthy();
   });
 });
@@ -222,6 +224,15 @@ describe("resolutionSummary", () => {
 
   it("a dismiss with keep_undone reads Kept undone, not Dismissed", () => {
     expect(resolutionSummary({ action: "dismiss", keep_undone: true })).toBe("Kept undone");
+  });
+
+  it("an item the sync raised already kept undone after an undo says so", () => {
+    expect(resolutionSummary({ action: "dismiss", keep_undone: true, auto_from_undo: true, candidate_ids: [] }))
+      .toBe("Kept undone (by the undo)");
+  });
+
+  it("a released item reads as handed back to the sync", () => {
+    expect(resolutionSummary({ action: "released", undo_run_id: "u", release_run_id: "r" })).toBe("Released — the sync decides again");
   });
 
   it("names the channel an alias was mapped to", () => {
@@ -284,5 +295,29 @@ describe("isDoneKind / doneBannerMessage (the ?done=&n= success banner)", () => 
 
   it("pluralises on zero too", () => {
     expect(doneBannerMessage("alias", 0)).toContain("0 patients updated");
+  });
+});
+
+describe("releaseSummaryLine", () => {
+  it("counts the rows handed back and the review items closed", () => {
+    expect(releaseSummaryLine({ released: 4521, items_resolved: 4509 })).toBe("4521 rows handed back to the sync · 4509 review items closed");
+    expect(releaseSummaryLine({ released: 1, items_resolved: 0 })).toBe("1 row handed back to the sync");
+  });
+});
+
+describe("canRelease — Let the sync decide again", () => {
+  const undo = (over: Partial<Parameters<typeof canRelease>[0]> = {}) =>
+    ({ trigger: "revert", status: "succeeded", released_by_run_id: null, summary: { result: { held: 4521 } }, ...over });
+  it("offers it on a finished undo that held rows back", () => {
+    expect(canRelease(undo())).toBe(true);
+  });
+  it("not on an undo that held nothing, is still running, was already released, or has no result", () => {
+    expect(canRelease(undo({ summary: { result: { held: 0 } } }))).toBe(false);
+    expect(canRelease(undo({ status: "running" }))).toBe(false);
+    expect(canRelease(undo({ released_by_run_id: "r" }))).toBe(false);
+    expect(canRelease(undo({ summary: null }))).toBe(false);
+  });
+  it("never on a run that is not an undo", () => {
+    for (const trigger of ["cron", "manual", "cli", "resort", "alias", "release"]) expect(canRelease(undo({ trigger }))).toBe(false);
   });
 });

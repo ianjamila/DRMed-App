@@ -12,10 +12,12 @@ import { sheetReaderFromEnv } from "@/lib/sheet-sync/config";
 import { computeResortGroups } from "@/lib/sheet-sync/resort";
 import {
   LeaseLostError,
+  releaseUndoPaged,
   revertRunPaged,
   runSheetSync,
   SyncBusyError,
   withAdminLease,
+  type ReleaseSummary,
   type RevertSummary,
   type RunOutcome,
 } from "@/lib/sheet-sync/run";
@@ -336,6 +338,44 @@ export async function revertRunAction(
       resource_type: "sheet_sync_run",
       resource_id: parsed.data.runId,
       metadata: { undo_run_id: runId, ...result },
+      ip_address: ip,
+      user_agent: ua,
+    });
+    revalidatePath(PATH);
+    return { ok: true, data: result };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 7. Let the sync decide again (release an undo's holds)
+// ---------------------------------------------------------------------------
+
+const ReleaseSchema = z.object({ undoRunId: z.string().uuid() });
+
+export async function releaseUndoAction(
+  input: z.infer<typeof ReleaseSchema>,
+): Promise<ActionDataResult<ReleaseSummary>> {
+  const session = await requireAdminStaff();
+  const parsed = ReleaseSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: firstIssue(parsed.error) };
+
+  const store = createSupabaseStore(createAdminClient());
+  try {
+    // PAGED like the undo — releaseUndoPaged pages sheet_sync_release_undo
+    // under one "release" lease and sums the per-call counts. Refused in SQL
+    // (22023) for a run that is not an undo, one still running, or one
+    // already released; run history hides the button for those.
+    const { runId, result } = await releaseUndoPaged(store, session.user_id, parsed.data.undoRunId);
+    const { ip, ua } = await ipAndAgent();
+    await audit({
+      actor_id: session.user_id,
+      actor_type: "staff",
+      action: "sheet_sync.released",
+      resource_type: "sheet_sync_run",
+      resource_id: parsed.data.undoRunId,
+      metadata: { release_run_id: runId, ...result },
       ip_address: ip,
       user_agent: ua,
     });

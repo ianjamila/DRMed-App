@@ -10,10 +10,10 @@ import {
   parsePageSize,
   rangeFor,
 } from "@/lib/ui/table-params";
-import type { RevertSummary } from "@/lib/sheet-sync/run";
+import type { ReleaseSummary, RevertSummary } from "@/lib/sheet-sync/run";
 import type { TabKey } from "@/lib/sheet-sync/types";
-import { UndoRunButton } from "./sync-controls";
-import { durationLabel, revertSummaryLine, STATUS_LABEL, tabErrorLabel, TAB_LABEL, TRIGGER_LABEL } from "./format";
+import { ReleaseUndoButton, UndoRunButton } from "./sync-controls";
+import { canRelease, durationLabel, releaseSummaryLine, revertSummaryLine, STATUS_LABEL, tabErrorLabel, TAB_LABEL, TRIGGER_LABEL } from "./format";
 
 const BASE_PATH = "/staff/admin/sheet-sync";
 
@@ -35,6 +35,7 @@ interface RunRow {
   summary: { duration_ms?: number; result?: unknown } | null;
   error: string | null;
   reverted_by_run_id: string | null;
+  released_by_run_id: string | null;
   undo_run: { started_at: string } | null;
 }
 
@@ -74,10 +75,13 @@ function canUndo(run: RunRow): boolean {
 }
 
 function whatChanged(run: RunRow): string {
-  if (run.trigger === "resort" || run.trigger === "alias" || run.trigger === "revert") {
+  if (run.trigger === "resort" || run.trigger === "alias" || run.trigger === "revert" || run.trigger === "release") {
     const result = run.summary?.result;
     if (run.trigger === "revert" && result && typeof result === "object") {
       return revertSummaryLine(result as RevertSummary);
+    }
+    if (run.trigger === "release" && result && typeof result === "object") {
+      return releaseSummaryLine(result as ReleaseSummary);
     }
     if (typeof result === "number") return `${result} patient${result === 1 ? "" : "s"} updated`;
     return "—";
@@ -119,7 +123,7 @@ export async function RunHistory({ searchParams }: { searchParams: Record<string
   const { data, count, error } = await supabase
     .from("sheet_sync_runs")
     .select(
-      "id, trigger, dry_run, status, started_at, ended_at, per_tab, summary, error, reverted_by_run_id, " +
+      "id, trigger, dry_run, status, started_at, ended_at, per_tab, summary, error, reverted_by_run_id, released_by_run_id, " +
         // Self-referencing FK: PostgREST's embed hint here must be the COLUMN
         // name, not the constraint name — sheet_sync_runs!<constraint> returns
         // PGRST200 ("Could not find a relationship between 'sheet_sync_runs'
@@ -193,6 +197,13 @@ export async function RunHistory({ searchParams }: { searchParams: Record<string
                       <UndoRunButton
                         runId={run.id}
                         runLabel={`the ${TRIGGER_LABEL[run.trigger] ?? run.trigger} sync run from ${manilaDateTime(run.started_at)}`}
+                      />
+                    ) : run.released_by_run_id ? (
+                      <span className="text-xs text-[color:var(--color-brand-text-soft)]">Sync decides again</span>
+                    ) : canRelease(run) ? (
+                      <ReleaseUndoButton
+                        undoRunId={run.id}
+                        runLabel={`the undo from ${manilaDateTime(run.started_at)}`}
                       />
                     ) : null}
                   </td>

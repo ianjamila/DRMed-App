@@ -4,7 +4,7 @@ import { planCustomers } from "./customer-plan";
 import { assignIdentities, type IdentifiedLine } from "./encounter-identity";
 import { buildPatientIndex, type PatientIndex } from "./patient-index";
 import { checkSnapshot } from "./snapshot";
-import { LeaseLostError, SyncBusyError, type RevertPageResult, type SheetSyncStore } from "./store";
+import { LeaseLostError, SyncBusyError, type ReleasePageResult, type RevertPageResult, type SheetSyncStore } from "./store";
 import { parseCustomersTab } from "./tabs/customers";
 import { parseConsultTab, parseLabTab } from "./tabs/encounters";
 import type { CustomerMirrorRow, CustomerOp, LinkRecord, RawTabs, TabKey, TabParse } from "./types";
@@ -240,7 +240,7 @@ function summarize(perTab: Partial<Record<TabKey, TabOutcome>>) {
 /** Re-sort / alias / revert: one fenced run row per admin action (plan D3). Never subject to pause. */
 export async function withAdminLease<T>(
   store: SheetSyncStore,
-  trigger: "resort" | "alias" | "revert",
+  trigger: "resort" | "alias" | "revert" | "release",
   actorId: string,
   fn: (lease: string) => Promise<T>,
 ): Promise<{ runId: string; result: T }> {
@@ -308,6 +308,40 @@ export async function revertRunPaged(
       await store.heartbeat(lease);
     }
     throw new Error(`sheet sync: revert of run ${targetRunId} did not finish within ${REVERT_MAX_PAGES} pages`);
+  });
+}
+
+export type ReleaseSummary = Omit<ReleasePageResult, "done">;
+
+/**
+ * "Let the sync decide again" for one undo run: releases the holds that undo
+ * placed (and every undo run that worked on the same run), one bounded page
+ * at a time under ONE admin lease (trigger "release") — 0170's
+ * `sheet_sync_release_undo`, paged like the undo so thousands of holds fit
+ * the 8 s statement_timeout. Counts are per call and summed here. The next
+ * sync then links or creates those rows again. Not undoable.
+ */
+export async function releaseUndoPaged(
+  store: SheetSyncStore,
+  actorId: string,
+  undoRunId: string,
+  opts: { pageSize?: number } = {},
+): Promise<{ runId: string; result: ReleaseSummary }> {
+  const pageSize = opts.pageSize ?? 2000;
+  return withAdminLease(store, "release", actorId, async (lease) => {
+    const summary: ReleaseSummary = { released: 0, items_resolved: 0 };
+    for (let page = 0; page < REVERT_MAX_PAGES; page++) {
+      const res = await store.releaseUndo(lease, undoRunId, pageSize);
+      summary.released += res.released;
+      summary.items_resolved += res.items_resolved;
+      if (res.done) return summary;
+      // A page short of the last one always releases at least one hold.
+      if (res.released === 0) {
+        throw new Error(`sheet sync: release of undo ${undoRunId} made no progress and did not finish — stopping instead of looping forever`);
+      }
+      await store.heartbeat(lease);
+    }
+    throw new Error(`sheet sync: release of undo ${undoRunId} did not finish within ${REVERT_MAX_PAGES} pages`);
   });
 }
 

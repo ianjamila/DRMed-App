@@ -111,7 +111,11 @@
 //   # M9 — undated rows sort FIRST. Expect: FAIL Map answer moves only
 //   # patients whose earliest answered row carries it (Zeta5 moves).
 //   mutate sheet_alias_apply "c.registered_on asc nulls last" "c.registered_on asc nulls first"
-//   npm run sheet-sync:db-proof          # expect exactly those four FAILs
+//   # M15 — undo-held rows are raised as OPEN items (the flood). Expect: FAIL
+//   # Undo-held items are raised kept undone … (… expected 4 raised kept undone
+//   # and none open …).
+//   mutate sheet_sync_upsert_review "if v_identity and jsonb_array_length(v_keys) > 0" "if false and jsonb_array_length(v_keys) > 0"
+//   npm run sheet-sync:db-proof          # expect exactly those five FAILs
 //   /opt/homebrew/bin/supabase db reset  # undo round B
 //
 //   ## Round C ##
@@ -126,7 +130,11 @@
 //   # Dismiss: refused on an evidence hold … (a keep-undone item re-opens
 //   # under another identity kind).
 //   mutate sheet_sync_upsert_review "or (v_identity and i.kind in (" "or (false and i.kind in ("
-//   npm run sheet-sync:db-proof          # expect exactly those four FAILs
+//   # M16 — "Let the sync decide again" releases EVERY undo hold, not just
+//   # that undo's. Expect: FAIL Undo-held items are raised kept undone …
+//   # (… release page 1/2 counts, or the other undo's hold is gone).
+//   mutate sheet_sync_release_undo "and l.hold_reason = 'undone by an admin' and l.run_id = any (v_undo_runs)" "and l.hold_reason = 'undone by an admin'"
+//   npm run sheet-sync:db-proof          # expect exactly those five FAILs
 //   /opt/homebrew/bin/supabase db reset  # undo round C
 //
 //   ## Round D ##
@@ -530,6 +538,10 @@ async function main() {
         {
           name: "sheet_resort_candidates",
           sql: `select * from public.sheet_resort_candidates()`,
+        },
+        {
+          name: "sheet_sync_release_undo",
+          sql: `select public.sheet_sync_release_undo('${NIL}'::uuid, '${NIL}'::uuid)`,
         },
         {
           name: "_sheet_sync_fence",
@@ -2555,7 +2567,86 @@ async function main() {
       assert(o4.opened === 1 && o4.cleared >= 1, `non-identity kinds do not share: expected a new item and the old one cleared, got ${JSON.stringify(o4)}`);
     });
 
-    // 33. Timing (M9) ---------------------------------------------------------
+    // 33. An undo's items are raised kept undone; "Let the sync decide again"
+    //     releases exactly that undo's holds (e2e finding, round 8) ----------
+    await check("Undo-held items are raised kept undone; Let the sync decide again releases that undo's holds (paged)", async () => {
+      await setRole("service_role", null);
+      const apply = (token: string, ops: unknown[]) =>
+        q<{ j: Json }>(`select public.sheet_sync_apply_customer_ops($1::uuid, $2::jsonb) as j`, [token, JSON.stringify(ops)]);
+      const create = (key: string) => ({ op: "create", create_key: key, method: "auto_exact",
+        fields: { first_name: key, last_name: "Released", middle_name: null }, link_keys: [key], admin_link_keys: [],
+        legacy_intake: {}, facts: { registered_on: null, new_repeat: null, source_ref: key } });
+      const undo = async (runId: string) => {
+        const l = await acquire("revert", false);
+        await q(`select public.sheet_sync_revert_run($1::uuid, $2::uuid)`, [l.token, runId]);
+        await finish(l.token);
+        return l.runId;
+      };
+      // Run R creates three rows; run S creates one. Both are undone.
+      const r = await acquire("manual", false);
+      await apply(r.token, ["rl:0", "rl:1", "rl:2"].map(create));
+      await finish(r.token);
+      const s = await acquire("manual", false);
+      await apply(s.token, [create("rl:other")]);
+      await finish(s.token);
+      const undoR = await undo(r.runId);
+      await undo(s.runId);
+
+      // The next sync reports those rows: raised kept undone, not open.
+      const report = (keys: string[]) => JSON.stringify(keys.map((k) => ({ kind: "ambiguous_patient", item_key: k,
+        payload: { link_keys: [k], candidates: [], reason: "held for an admin decision", held_because: "undone by an admin" } })));
+      const l1 = await acquire("manual", false);
+      const up1 = (await q<{ j: Json }>(`select public.sheet_sync_upsert_review($1::uuid, 'customers', $2::jsonb, false) as j`, [
+        l1.token, report(["rl:0", "rl:1", "rl:2", "rl:other"])])).rows[0].j;
+      await finish(l1.token);
+      assert(up1.opened === 0 && up1.kept_undone === 4, `undo-held rows: expected 4 raised kept undone and none open, got ${JSON.stringify(up1)}`);
+      const auto = await q<{ n: string }>(
+        `select count(*)::text as n from public.sheet_sync_review_items
+          where item_key like 'rl:%' and status = 'dismissed' and (resolution->>'auto_from_undo')::boolean
+            and (resolution->>'keep_undone')::boolean and resolution->'candidate_ids' = '[]'::jsonb`);
+      assert(auto.rows[0].n === "4", `expected 4 auto kept-undone items, got ${auto.rows[0].n}`);
+
+      // Release run R's undo, two holds a page.
+      const rel = await acquire("release", false);
+      const page = async () => (await q<{ j: Json }>(`select public.sheet_sync_release_undo($1::uuid, $2::uuid, 2) as j`, [
+        rel.token, undoR])).rows[0].j;
+      const p1 = await page();
+      assert(p1.done === false && p1.released === 2 && p1.items_resolved === 2, `release page 1: got ${JSON.stringify(p1)}`);
+      const p2 = await page();
+      assert(p2.done === true && p2.released === 1 && p2.items_resolved === 1, `release page 2: got ${JSON.stringify(p2)}`);
+      await finish(rel.token);
+      const links = await q<{ link_key: string }>(`select link_key from public.sheet_patient_links where link_key like 'rl:%' order by 1`);
+      assert(JSON.stringify(links.rows.map((x) => x.link_key)) === JSON.stringify(["rl:other"]),
+        `release: only run R's undo holds go (the other undo's hold stays), got ${JSON.stringify(links.rows)}`);
+      const items = await q<{ status: string; action: string | null; n: string }>(
+        `select status, resolution->>'action' as action, count(*)::text as n from public.sheet_sync_review_items
+          where item_key like 'rl:%' group by 1, 2 order by 1, 2`);
+      assert(JSON.stringify(items.rows.map((x) => [x.status, x.action, x.n])) === JSON.stringify([["dismissed", "dismiss", "1"], ["resolved", "released", "3"]]),
+        `release: expected 3 items resolved as released and the other undo's item still kept undone, got ${JSON.stringify(items.rows)}`);
+      const stamped = await q<{ by: string | null }>(`select released_by_run_id::text as by from public.sheet_sync_runs where id = $1`, [undoR]);
+      assert(stamped.rows[0].by === rel.runId, `release: the undo run must be marked released by this run, got ${stamped.rows[0].by}`);
+
+      // Refusals: again, a non-undo run, and undoing the release itself.
+      const again = await acquire("release", false);
+      await expectPgError("release the same undo twice", "22023", () =>
+        q(`select public.sheet_sync_release_undo($1::uuid, $2::uuid)`, [again.token, undoR]));
+      await expectPgError("release a run that is not an undo", "22023", () =>
+        q(`select public.sheet_sync_release_undo($1::uuid, $2::uuid)`, [again.token, r.runId]));
+      await finish(again.token);
+      const rv = await acquire("revert", false);
+      await expectPgError("undo a release", "22023", () =>
+        q(`select public.sheet_sync_revert_run($1::uuid, $2::uuid)`, [rv.token, rel.runId]));
+      await finish(rv.token);
+
+      // The next report of a released row opens a normal item (nothing holds it).
+      const l2 = await acquire("manual", false);
+      const up2 = (await q<{ j: Json }>(`select public.sheet_sync_upsert_review($1::uuid, 'customers', $2::jsonb, false) as j`, [
+        l2.token, report(["rl:0"])])).rows[0].j;
+      await finish(l2.token);
+      assert(up2.opened === 1 && up2.kept_undone === 0, `after release: expected a normal open item, got ${JSON.stringify(up2)}`);
+    });
+
+    // 34. Timing (M9) ---------------------------------------------------------
     await check("Timing: 5,000-row commit, 500-op create chunk, undo (each < 8,000 ms)", async () => {
       await setRole("service_role", null);
       const LIMIT_MS = 8000;
