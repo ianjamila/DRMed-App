@@ -88,8 +88,8 @@ describe("servedAmendmentCount — the version a print row stamps", () => {
 });
 
 describe("foldStalePrints", () => {
-  const row = (result_id: string, amendment_count: string | null) =>
-    ({ result_id, amendment_count, created_at: "2026-09-25T01:00:00Z", actor_id: "u" });
+  const row = (result_id: string, amendment_count: string | null, role: string | null = "reception") =>
+    ({ result_id, amendment_count, created_at: "2026-09-25T01:00:00Z", actor_id: "u", role });
   it("flags a result whose newest print is an older version", () => {
     const m = foldStalePrints([row("r1", "0")], new Map([["r1", 1]]));
     expect(m.get("r1")).toEqual({ printedVersion: 1, currentVersion: 2 });
@@ -103,5 +103,26 @@ describe("foldStalePrints", () => {
   it("reports the newest stale version", () => {
     expect(foldStalePrints([row("r1", "0"), row("r1", "1")], new Map([["r1", 2]])).get("r1"))
       .toEqual({ printedVersion: 2, currentVersion: 3 });
+  });
+
+  // Only prints stamped role reception/admin count — those are the roles
+  // that hand paper to a patient; lab prints are internal (spec refinement).
+  it("a lab-role print of the CURRENT version does not clear staleness", () => {
+    const rows = [row("r1", "0"), row("r1", "1", "medtech")];
+    expect(foldStalePrints(rows, new Map([["r1", 1]])).get("r1")).toEqual({ printedVersion: 1, currentVersion: 2 });
+  });
+  it("a lab-role print of an OLD version does not raise staleness", () => {
+    expect(foldStalePrints([row("r1", "0", "pathologist")], new Map([["r1", 1]])).size).toBe(0);
+  });
+  it("a reception print of an old version does raise staleness", () => {
+    const m = foldStalePrints([row("r1", "0", "reception")], new Map([["r1", 1]]));
+    expect(m.get("r1")).toEqual({ printedVersion: 1, currentVersion: 2 });
+  });
+  it("an admin print of the current version clears staleness", () => {
+    const rows = [row("r1", "0", "admin"), row("r1", "1", "admin")];
+    expect(foldStalePrints(rows, new Map([["r1", 1]])).has("r1")).toBe(false);
+  });
+  it("a row with no role stamp never counts", () => {
+    expect(foldStalePrints([row("r1", "0", null)], new Map([["r1", 1]])).size).toBe(0);
   });
 });

@@ -1347,6 +1347,11 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                         {t.status.replace(/_/g, " ")}
                       </span>
                       <HandedBackBadge info={handedBackFor(t.id)} />
+                      {/* OutdatedCopyChip (patient's portal/printed copy is behind
+                          the current version) and TestAction's StalePrintWarning
+                          (the newest PRINT on file is behind it) are deliberately
+                          separate signals — one about the patient's copy, one
+                          about the paper reception/admin last handed over. */}
                       <OutdatedCopyChip chip={outdatedChipFor(t.id)} />
                     </td>
                     <td className="px-4 py-3 text-right">

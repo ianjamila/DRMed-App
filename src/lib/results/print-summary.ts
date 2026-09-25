@@ -23,7 +23,17 @@ export type PrintEventRow = {
   amendment_count: string | null;
   created_at: string;
   actor_id: string | null;
+  // metadata->>role: the printing staff's role, when the caller selected it
+  // (print-history.ts does; other callers may omit it). Only used by
+  // foldStalePrints — foldPrintEvents counts every print regardless of role.
+  role?: string | null;
 };
+
+// The roles that hand paper to a patient (spec's printed-copy rule, same as
+// SQL result_copy_states_internal). A lab-role print never counts as the
+// clinic having handed over a printout, so it must not clear or raise the
+// stale-print warning.
+const PRINTED_COPY_ROLES = new Set(["reception", "admin"]);
 
 /**
  * Pure: audit rows → per-file count and latest print, counting only prints
@@ -79,7 +89,9 @@ export interface StalePrint {
  * Results whose newest print is an OLDER file than the current one (and no
  * print of the current file) — the "reprint before handing over" warning.
  * Versions are 1-based (`amendment_count + 1`), matching what staff see
- * ("v1", "v2", …).
+ * ("v1", "v2", …). Only counts prints stamped `role` reception or admin —
+ * the roles that hand paper to a patient. A lab-role print never clears or
+ * raises this warning.
  */
 export function foldStalePrints(
   rows: readonly PrintEventRow[],
@@ -88,6 +100,7 @@ export function foldStalePrints(
   const newest = new Map<string, number>();
   for (const r of rows) {
     if (!r.result_id) continue;
+    if (!r.role || !PRINTED_COPY_ROLES.has(r.role)) continue;
     const cur = currentVersions.get(r.result_id);
     if (cur === undefined || r.amendment_count == null || !/^\d+$/.test(r.amendment_count)) continue;
     const n = Number(r.amendment_count);

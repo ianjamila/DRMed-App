@@ -57,7 +57,7 @@ export async function fetchPrintState(
       let q = admin
         .from("audit_log")
         .select(
-          "id, result_id:metadata->>result_id, amendment_count:metadata->>amendment_count, created_at, actor_id",
+          "id, result_id:metadata->>result_id, amendment_count:metadata->>amendment_count, created_at, actor_id, role:metadata->>role",
         )
         .eq("action", "result.printed_staff")
         .in("metadata->>result_id", slice);
