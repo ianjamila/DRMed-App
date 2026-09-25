@@ -1285,6 +1285,29 @@ async function main() {
       ]);
       assert(f2.rows[0].j.counts.filled === 1, `matching row_version: expected filled=1, got ${JSON.stringify(f2.rows[0].j.counts)}`);
       await finish(r6.token);
+
+      // (f) accented name: the dupe check folds common Latin-1 accents (Codex
+      // review) so "José Peña" (typed with accents, e.g. by an admin) and
+      // "Jose Pena" (the sheet's plain-ASCII spelling of the same person)
+      // still count as the same identity — invented name, never a real patient.
+      await setRole("postgres", null);
+      await q(
+        `insert into public.patients (first_name, last_name, birthdate) values ('José', 'Peña', '1982-02-02')`,
+      );
+      await setRole("service_role", null);
+      const r7 = await acquire("manual", false);
+      const c7 = await apply(r7.token, [
+        create("accent:1", { first_name: "Jose", last_name: "Pena", birthdate: "1982-02-02" }),
+      ]);
+      assert(
+        c7.rows[0].j.counts.created === 0 && c7.rows[0].j.counts.skipped_existing === 1,
+        `accented dupe (José Peña vs Jose Pena): expected created=0 skipped_existing=1, got ${JSON.stringify(c7.rows[0].j.counts)}`,
+      );
+      await finish(r7.token);
+      const accentCount = await q<{ n: string }>(
+        `select count(*)::text as n from public.patients where last_name in ('Peña', 'Pena')`,
+      );
+      assert(accentCount.rows[0].n === "1", `accented dupe: expected exactly 1 patient, got ${accentCount.rows[0].n}`);
     });
 
     // 10. Revert --------------------------------------------------------

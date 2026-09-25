@@ -93,16 +93,33 @@ alter table public.patients
 -- keeps a deleted patient's referral_source on file (nothing about the
 -- person's record is erased), so a deleted row with a referral_source still
 -- needs a real origin value to satisfy that constraint.
+-- Scoped to referral_source_origin is null (in addition to each backfill's
+-- own condition) so this stays a true one-time backfill: only rows the
+-- column has never touched yet, never a row a later admin or sheet write
+-- already gave a real origin.
 alter table public.patients disable trigger trg_patients_updated_at;
 alter table public.patients disable trigger trg_patients_lifecycle_guard;
-update public.patients set referral_source_origin = 'staff' where referral_source is not null;
+update public.patients set referral_source_origin = 'staff'
+ where referral_source is not null and referral_source_origin is null;
 -- 0158 (live 2026-09-24) lets /schedule and /register write the patient's own
 -- answer through resolve_patient_guarded, which only ever creates
 -- pre_registered rows. Those answers are patient-owned, not staff-owned.
 update public.patients set referral_source_origin = 'patient'
- where pre_registered and referral_source is not null
+ where pre_registered and referral_source is not null and referral_source_origin is null
    and created_at >= timestamptz '2026-09-24 00:00+08';
 alter table public.patients enable trigger trg_patients_lifecycle_guard;
+-- Abort the deploy (never a user) if the guard did not actually come back on
+-- — the backfill above depends on it being disabled ONLY for its own
+-- duration; a trigger that silently stayed off would leave every later
+-- write to patients unguarded.
+do $$
+begin
+  if (select tgenabled from pg_trigger
+       where tgrelid = 'public.patients'::regclass and tgname = 'trg_patients_lifecycle_guard') is distinct from 'O' then
+    raise exception '0170: trg_patients_lifecycle_guard did not re-enable after the referral_source_origin backfill'
+      using errcode = '22023';
+  end if;
+end $$;
 alter table public.patients enable trigger trg_patients_updated_at;
 
 alter table public.patients
@@ -694,6 +711,14 @@ declare
   v_op_phone_digits text;
   v_op_phone text;
   v_op_name_norm text;
+  -- Accent fold for the concurrent-registration recheck below — matches
+  -- names.ts's normalizeName (NFD + combining-mark strip), pinned char by
+  -- char against it by accent-fold.test.ts. Deliberately NOT unaccent() (no
+  -- extension): a mark outside this list is left as-is, which can only make
+  -- two names that are really the same look different (under-match), never
+  -- the reverse — the safe direction for a backstop check.
+  v_accent_from constant text := 'áàâäãåéèêëíìîïóòôöõúùûüñçý';
+  v_accent_to   constant text := 'aaaaaaeeeeiiiiooooouuuuncy';
   v_dupe_id uuid;
   n_created int := 0; n_linked int := 0; n_filled int := 0; n_facts int := 0; n_held int := 0; n_skipped int := 0;
   n_stale int := 0; n_skipped_existing int := 0;
@@ -721,11 +746,14 @@ begin
       -- Concurrent-registration guard (Codex P2): the planner read patients
       -- once; front desk may have registered this exact person since. Same
       -- normalization as the planner's (names.ts nameNormOf/normalizeName —
-      -- lower, drop apostrophes, other punctuation -> space, collapse
-      -- whitespace; diacritics are not folded here, a gap this backstop
-      -- accepts since the planner's own full-name index is the primary
-      -- match). A LIVE, non-merged patient with the same normalized name
-      -- plus the same birthdate (both present) — or, when this op has no
+      -- lower, drop apostrophes, fold the common Latin-1 accents (translate,
+      -- v_accent_from/v_accent_to below — no unaccent extension), other
+      -- punctuation -> space, collapse whitespace; a mark outside that list
+      -- is left as-is, which can only under-match (two spellings of the same
+      -- name read as different), never the reverse — the safe direction for
+      -- a backstop this narrow, and the planner's own full-name index stays
+      -- the primary match anyway). A LIVE, non-merged patient with the same
+      -- normalized name plus the same birthdate (both present) — or, when this op has no
       -- birthdate, the same normalized phone — means someone else already
       -- holds this identity: skip the create (counted `skipped_existing`,
       -- no link written), leaving the row for the next run to link or review.
@@ -756,25 +784,25 @@ begin
         v_op_phone_digits := regexp_replace(coalesce(v_f->>'phone', ''), '[^0-9]', '', 'g');
         v_op_phone := case when length(v_op_phone_digits) between 10 and 12 then right(v_op_phone_digits, 10) else null end;
         v_op_name_norm :=
-          trim(regexp_replace(regexp_replace(lower(replace(coalesce(v_f->>'last_name', ''), '''', '')), '[^a-z0-9\s]', ' ', 'g'), '\s+', ' ', 'g'))
+          trim(regexp_replace(regexp_replace(translate(lower(replace(coalesce(v_f->>'last_name', ''), '''', '')), v_accent_from, v_accent_to), '[^a-z0-9\s]', ' ', 'g'), '\s+', ' ', 'g'))
           || '|' ||
-          trim(regexp_replace(regexp_replace(lower(replace(coalesce(v_f->>'first_name', '') || ' ' || coalesce(v_f->>'middle_name', ''), '''', '')), '[^a-z0-9\s]', ' ', 'g'), '\s+', ' ', 'g'));
+          trim(regexp_replace(regexp_replace(translate(lower(replace(coalesce(v_f->>'first_name', '') || ' ' || coalesce(v_f->>'middle_name', ''), '''', '')), v_accent_from, v_accent_to), '[^a-z0-9\s]', ' ', 'g'), '\s+', ' ', 'g'));
         if nullif(v_f->>'birthdate', '') is not null then
           select p.id into v_dupe_id from public.patients p
            where p.deleted_at is null and p.merged_into_id is null
              and p.birthdate = (v_f->>'birthdate')::date
-             and trim(regexp_replace(regexp_replace(lower(replace(coalesce(p.last_name, ''), '''', '')), '[^a-z0-9\s]', ' ', 'g'), '\s+', ' ', 'g'))
+             and trim(regexp_replace(regexp_replace(translate(lower(replace(coalesce(p.last_name, ''), '''', '')), v_accent_from, v_accent_to), '[^a-z0-9\s]', ' ', 'g'), '\s+', ' ', 'g'))
                  || '|' ||
-                 trim(regexp_replace(regexp_replace(lower(replace(coalesce(p.first_name, '') || ' ' || coalesce(p.middle_name, ''), '''', '')), '[^a-z0-9\s]', ' ', 'g'), '\s+', ' ', 'g'))
+                 trim(regexp_replace(regexp_replace(translate(lower(replace(coalesce(p.first_name, '') || ' ' || coalesce(p.middle_name, ''), '''', '')), v_accent_from, v_accent_to), '[^a-z0-9\s]', ' ', 'g'), '\s+', ' ', 'g'))
                  = v_op_name_norm
            limit 1;
         elsif v_op_phone is not null then
           select p.id into v_dupe_id from public.patients p
            where p.deleted_at is null and p.merged_into_id is null
              and p.phone_normalized = v_op_phone
-             and trim(regexp_replace(regexp_replace(lower(replace(coalesce(p.last_name, ''), '''', '')), '[^a-z0-9\s]', ' ', 'g'), '\s+', ' ', 'g'))
+             and trim(regexp_replace(regexp_replace(translate(lower(replace(coalesce(p.last_name, ''), '''', '')), v_accent_from, v_accent_to), '[^a-z0-9\s]', ' ', 'g'), '\s+', ' ', 'g'))
                  || '|' ||
-                 trim(regexp_replace(regexp_replace(lower(replace(coalesce(p.first_name, '') || ' ' || coalesce(p.middle_name, ''), '''', '')), '[^a-z0-9\s]', ' ', 'g'), '\s+', ' ', 'g'))
+                 trim(regexp_replace(regexp_replace(translate(lower(replace(coalesce(p.first_name, '') || ' ' || coalesce(p.middle_name, ''), '''', '')), v_accent_from, v_accent_to), '[^a-z0-9\s]', ' ', 'g'), '\s+', ' ', 'g'))
                  = v_op_name_norm
            limit 1;
         end if;
@@ -1850,10 +1878,15 @@ begin
     raise exception '0170: authenticated can read sheet_mirror_staging';
   end if;
 
-  -- The backfill's disable/enable window closed, and the ownership trigger is live.
+  -- The backfill's disable/enable window closed (both triggers it touches),
+  -- and the ownership trigger is live.
   if not exists (select 1 from pg_trigger where tgrelid = 'public.patients'::regclass
                   and tgname = 'trg_patients_updated_at' and tgenabled = 'O') then
     raise exception '0170: trg_patients_updated_at is not enabled';
+  end if;
+  if not exists (select 1 from pg_trigger where tgrelid = 'public.patients'::regclass
+                  and tgname = 'trg_patients_lifecycle_guard' and tgenabled = 'O') then
+    raise exception '0170: trg_patients_lifecycle_guard is not enabled (0167)';
   end if;
   if not exists (select 1 from pg_trigger where tgrelid = 'public.patients'::regclass
                   and tgname = 'trg_patients_referral_origin' and tgenabled = 'O') then
