@@ -6997,6 +6997,8 @@ export type Database = {
       }
       v_patients_directory: {
         Row: {
+          consent_current: boolean | null
+          consent_signed_at: string | null
           created_at: string | null
           drm_id: string | null
           email: string | null
