@@ -376,7 +376,7 @@ security definer
 set search_path = public
 as $$
   with r as (
-    select res.id, res.test_request_id, res.amendment_count, res.amended_at,
+    select res.id, res.amendment_count, res.amended_at,
            res.patient_last_downloaded_at
       from public.results res
      where case when p_result_ids is null then res.amendment_count > 0
@@ -420,14 +420,12 @@ as $$
     from r
     left join lateral (
       select tr.id as test_request_id, tr.visit_id
-        from public.test_requests tr
-       where tr.id = coalesce(
-               (select rtr.test_request_id
-                  from public.result_test_requests rtr
-                 where rtr.result_id = r.id
-                 order by rtr.test_request_id
-                 limit 1),
-               r.test_request_id)
+        from public.result_test_requests rtr
+        join public.test_requests tr on tr.id = rtr.test_request_id
+       where rtr.result_id = r.id
+         and tr.deleted_at is null
+       order by rtr.test_request_id
+       limit 1
     ) anchor on true
     left join public.visits v    on v.id = anchor.visit_id
     left join public.patients pt on pt.id = v.patient_id
