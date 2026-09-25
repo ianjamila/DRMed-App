@@ -13,7 +13,7 @@ import {
 import type { ReleaseSummary, RevertSummary } from "@/lib/sheet-sync/run";
 import type { TabKey } from "@/lib/sheet-sync/types";
 import { ReleaseUndoButton, UndoRunButton } from "./sync-controls";
-import { canRelease, durationLabel, releaseSummaryLine, revertSummaryLine, STATUS_LABEL, tabErrorLabel, TAB_LABEL, TRIGGER_LABEL } from "./format";
+import { canRelease, canUndo, durationLabel, releaseSummaryLine, revertSummaryLine, STATUS_LABEL, tabErrorLabel, TAB_LABEL, TRIGGER_LABEL } from "./format";
 
 const BASE_PATH = "/staff/admin/sheet-sync";
 
@@ -37,41 +37,6 @@ interface RunRow {
   reverted_by_run_id: string | null;
   released_by_run_id: string | null;
   undo_run: { started_at: string } | null;
-}
-
-// Sync runs (cron/manual/cli) are the only ones whose failure can still have
-// committed patient writes: applyCustomerOps runs in 500-op chunks (run.ts's
-// OPS_CHUNK), so a run that later fails — even one whose OWN bookkeeping row
-// never got to "finished" and was reclaimed as failed — can have written
-// real changes before the failure. The SQL guard (0170) itself allows
-// undoing any non-running, non-revert, not-already-undone run regardless of
-// status; this only widens the UI to match it.
-const SYNC_TRIGGERS = new Set(["cron", "manual", "cli"]);
-
-// Cheap heuristic from data already on the row (no extra query): only a
-// customers op — create/link/fill/facts/hold — writes to sheet_sync_changes;
-// lab/consult are mirror-only and never touch a patient. If per_tab lacks
-// applied counts (an old row, or the customers tab itself failed before any
-// op ran) we can't be sure there's nothing to undo — default to TRUE so an
-// unmeasured change is never hidden from Undo. Chosen over an extra
-// `sheet_sync_changes` count query: this reuses the row already fetched.
-function hasCommittedChanges(run: RunRow): boolean {
-  const applied = run.per_tab?.customers?.applied;
-  if (!applied) return true;
-  return Object.values(applied).some((n) => n > 0);
-}
-
-// The Undo action is refused in SQL (22023) for a run that is itself an
-// undo, a still-running run, or an already-undone run — hide the button for
-// those instead of letting an admin hit a wall.
-// Re-sort and answer-mapping runs are undoable too (plan D3), once they
-// succeeded; a sync run may also have written before it failed.
-function canUndo(run: RunRow): boolean {
-  if (run.dry_run || run.reverted_by_run_id) return false;
-  if (SYNC_TRIGGERS.has(run.trigger)) {
-    return (run.status === "succeeded" || run.status === "partial" || run.status === "failed") && hasCommittedChanges(run);
-  }
-  return (run.trigger === "resort" || run.trigger === "alias") && run.status === "succeeded";
 }
 
 function whatChanged(run: RunRow): string {

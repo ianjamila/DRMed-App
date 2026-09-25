@@ -21,6 +21,8 @@ import {
   resolutionSummary,
   releaseSummaryLine,
   canRelease,
+  canUndo,
+  hasCommittedChanges,
   isKeptUndoneActionable,
   revertSummaryLine,
   tabErrorLabel,
@@ -303,6 +305,50 @@ describe("releaseSummaryLine", () => {
   it("counts the rows handed back and the review items closed", () => {
     expect(releaseSummaryLine({ released: 4521, items_resolved: 4509 })).toBe("4521 rows handed back to the sync · 4509 review items closed");
     expect(releaseSummaryLine({ released: 1, items_resolved: 0 })).toBe("1 row handed back to the sync");
+  });
+});
+
+describe("canUndo (review fix #3 — a re-sort/alias run that committed then failed its own bookkeeping)", () => {
+  const run = (over: Partial<Parameters<typeof canUndo>[0]> = {}) =>
+    ({ trigger: "manual", status: "succeeded", dry_run: false, reverted_by_run_id: null, per_tab: null, ...over });
+
+  it.each(["resort", "alias"] as const)("%s: undoable once succeeded", (trigger) => {
+    expect(canUndo(run({ trigger, status: "succeeded" }))).toBe(true);
+  });
+
+  it.each(["resort", "alias"] as const)("%s: still undoable when the run's own bookkeeping failed after it committed", (trigger) => {
+    expect(canUndo(run({ trigger, status: "failed" }))).toBe(true);
+  });
+
+  it.each(["resort", "alias"] as const)("%s: never undoable while still running, dry, or already undone", (trigger) => {
+    expect(canUndo(run({ trigger, status: "running" }))).toBe(false);
+    expect(canUndo(run({ trigger, status: "succeeded", dry_run: true }))).toBe(false);
+    expect(canUndo(run({ trigger, status: "succeeded", reverted_by_run_id: "run-undo" }))).toBe(false);
+  });
+
+  it.each(["revert", "release"] as const)("%s: never undoable, whatever its status", (trigger) => {
+    expect(canUndo(run({ trigger, status: "succeeded" }))).toBe(false);
+    expect(canUndo(run({ trigger, status: "failed" }))).toBe(false);
+  });
+
+  it.each(["succeeded", "partial", "failed"] as const)("cron/manual/cli: undoable on %s status with committed changes", (status) => {
+    expect(canUndo(run({ trigger: "cron", status, per_tab: { customers: { applied: { created: 1 } } } }))).toBe(true);
+  });
+
+  it("cron/manual/cli: not undoable when per_tab shows nothing was applied", () => {
+    expect(canUndo(run({ trigger: "manual", status: "succeeded", per_tab: { customers: { applied: { created: 0, linked: 0 } } } }))).toBe(false);
+  });
+});
+
+describe("hasCommittedChanges", () => {
+  it("defaults to true (never hides Undo) when per_tab carries no applied counts", () => {
+    expect(hasCommittedChanges({ per_tab: null })).toBe(true);
+    expect(hasCommittedChanges({ per_tab: { customers: {} } })).toBe(true);
+  });
+
+  it("is false only when every applied count is zero", () => {
+    expect(hasCommittedChanges({ per_tab: { customers: { applied: { created: 0, linked: 0, filled: 0 } } } })).toBe(false);
+    expect(hasCommittedChanges({ per_tab: { customers: { applied: { created: 0, linked: 1 } } } })).toBe(true);
   });
 });
 
