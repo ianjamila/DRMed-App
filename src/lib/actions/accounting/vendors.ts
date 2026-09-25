@@ -27,14 +27,14 @@ export async function listVendorsAction(filter?: {
   active?: boolean;
   search?: string;
 }): Promise<ActionResult<Array<{
-  id: string; name: string; tin: string | null; is_active: boolean;
+  id: string; name: string; tin: string | null; is_active: boolean; is_partner_lab: boolean;
   outstanding_php: number; ytd_spend_php: number; last_bill_date: string | null;
 }>>> {
   await requireAdminStaff();
   const admin = createAdminClient();
 
   let q = admin.from("vendors").select(`
-    id, name, tin, is_active,
+    id, name, tin, is_active, is_partner_lab,
     bills:bills!vendor_id (
       outstanding_amount, gross_amount, bill_date, status
     )
@@ -55,7 +55,7 @@ export async function listVendorsAction(filter?: {
   const yearStart = firstOfMonthISO(isoDateParts(todayManilaISODate()).year, 1);
 
   type BillAgg = { outstanding_amount: number | null; gross_amount: number | null; bill_date: string; status: string };
-  type VendorRow = { id: string; name: string; tin: string | null; is_active: boolean; bills: BillAgg[] | null };
+  type VendorRow = { id: string; name: string; tin: string | null; is_active: boolean; is_partner_lab: boolean; bills: BillAgg[] | null };
 
   const rows = ((data ?? []) as VendorRow[]).map((v) => {
     const liveBills = (v.bills ?? []).filter((b) => b.status !== "voided");
@@ -64,6 +64,7 @@ export async function listVendorsAction(filter?: {
       name: v.name,
       tin: v.tin,
       is_active: v.is_active,
+      is_partner_lab: v.is_partner_lab,
       outstanding_php: liveBills.reduce((s, b) => s + Number(b.outstanding_amount ?? 0), 0),
       ytd_spend_php: liveBills.filter((b) => b.bill_date >= yearStart)
         .reduce((s, b) => s + Number(b.gross_amount ?? 0), 0),

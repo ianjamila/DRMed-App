@@ -14,6 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { formatPhp } from "@/lib/marketing/format";
 import { manilaDate } from "@/lib/dates/manila";
+import { visitBalanceAfter } from "@/lib/visits/payment-edit";
 import { findVisitForMoveAction, movePaymentAction, type MoveTarget } from "./actions";
 
 const SELECT_CLASS =
@@ -35,6 +36,9 @@ export function MovePaymentDialog({
   patientName,
   patientDrmId,
   otherVisits,
+  currentVisitTotal,
+  currentVisitPaid,
+  currentVisitReleasedCount,
 }: {
   paymentId: string;
   amount: number;
@@ -44,6 +48,10 @@ export function MovePaymentDialog({
   patientDrmId: string;
   /** This patient's other live visits, newest first. */
   otherVisits: SamePatientVisit[];
+  /** The visit the payment is on now: its bill, what it has paid, and how many lines are already released. */
+  currentVisitTotal: number;
+  currentVisitPaid: number;
+  currentVisitReleasedCount: number;
 }) {
   const [open, setOpen] = useState(false);
   const [picked, setPicked] = useState<string>("");
@@ -69,7 +77,10 @@ export function MovePaymentDialog({
       ? found
       : null;
   const otherPatient = target !== null && target.drmId !== patientDrmId;
-  const targetBalanceAfter = target ? target.totalPhp - target.paidPhp - amount : null;
+  const targetBalanceAfter = target ? visitBalanceAfter(target.totalPhp, target.paidPhp, amount) : null;
+  // What the visit the payment LEAVES will still owe. Released results stay
+  // released (the payment gate only guards the release itself), so say so.
+  const sourceBalanceAfter = visitBalanceAfter(currentVisitTotal, currentVisitPaid, -amount);
 
   function onFind() {
     startFind(async () => {
@@ -203,6 +214,18 @@ export function MovePaymentDialog({
                 <p className="mt-1">
                   {`The ${formatPhp(amount)} ${methodLabel} payment leaves visit #${currentVisitNumber} and is recorded on #${target.visitNumber} with the same date and cashier. Both visits’ balances update, and the books follow.`}
                 </p>
+                {sourceBalanceAfter > 0 ? (
+                  <p
+                    className={
+                      currentVisitReleasedCount > 0 ? "mt-1 font-semibold text-amber-800" : "mt-1"
+                    }
+                  >
+                    Visit #{currentVisitNumber} will then have {formatPhp(sourceBalanceAfter)} left to pay
+                    {currentVisitReleasedCount > 0
+                      ? `, and ${currentVisitReleasedCount === 1 ? "1 result" : `${currentVisitReleasedCount} results`} on it ${currentVisitReleasedCount === 1 ? "is" : "are"} already released. Released results stay released.`
+                      : "."}
+                  </p>
+                ) : null}
                 {targetBalanceAfter !== null && targetBalanceAfter < 0 ? (
                   <p className="mt-1 font-semibold text-amber-800">
                     That is {formatPhp(-targetBalanceAfter)} more than visit #{target.visitNumber} still owes.

@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { formatPhp } from "@/lib/marketing/format";
-import { manilaDate, manilaDateTime } from "@/lib/dates/manila";
+import { manilaDate, manilaDateTime, manilaISODate, todayManilaISODate } from "@/lib/dates/manila";
 import {
   canActOnResult,
   canSeeLine,
@@ -398,6 +398,9 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
     hmo_provider_id: visit.hmo_provider_id,
   });
   const balance = Number(visit.total_php) - Number(visit.paid_php);
+  // Waiving writes no payment row, so paid_php stays short of the total: the
+  // remainder is waived, not owed (same rule as the statement of account).
+  const waivedBalance = visit.payment_status === "waived" && balance > 0 ? balance : 0;
   const activePayments = (payments ?? []).filter((p) => !p.voided_at);
   const voidedPayments = (payments ?? []).filter((p) => p.voided_at);
   // Edit / Move (0161) link a corrected row to the original it voided. A move
@@ -676,6 +679,16 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
               />
             ) : null}
             {canSeePayments ? (
+              // Charges, payments and balance with no PIN — for reimbursement
+              // claims, consult-only visits (no receipt) and the file copy.
+              <Link
+                href={`/staff/visits/${visit.id}/statement`}
+                className="rounded-md border border-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-navy)] hover:text-white"
+              >
+                Statement
+              </Link>
+            ) : null}
+            {canSeePayments ? (
               session.role === "reception" && visit.hmo_provider_id != null ? (
                 // An HMO patient never pays at the counter — the claim is
                 // booked as a receivable when the tests release, then settled
@@ -761,11 +774,15 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
         <section className="mt-6 grid gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5 sm:grid-cols-4">
           <Field label="Total" value={formatPhp(visit.total_php)} />
           <Field label="Paid" value={formatPhp(visit.paid_php)} />
-          <Field
-            label="Balance"
-            value={formatPhp(balance > 0 ? balance : 0)}
-            highlight={balance > 0}
-          />
+          {waivedBalance > 0 ? (
+            <Field label="Balance waived" value={formatPhp(waivedBalance)} />
+          ) : (
+            <Field
+              label="Balance"
+              value={formatPhp(balance > 0 ? balance : 0)}
+              highlight={balance > 0}
+            />
+          )}
           <div>
             <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
               Status
@@ -1525,6 +1542,9 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                             patientName={`${patient.last_name}, ${patient.first_name}`}
                             patientDrmId={patient.drm_id}
                             otherVisits={otherVisits}
+                            currentVisitTotal={Number(visit.total_php)}
+                            currentVisitPaid={Number(visit.paid_php)}
+                            currentVisitReleasedCount={releasedRowIds.length}
                           />
                         ) : null}
                         {paymentEditability(p).editable ? (
@@ -1536,6 +1556,11 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                             referenceNumber={p.reference_number}
                             notes={p.notes}
                             receivedLabel={manilaDateTime(p.received_at)}
+                            receivedOnOtherDay={
+                              manilaISODate(p.received_at) === todayManilaISODate()
+                                ? null
+                                : manilaDate(p.received_at)
+                            }
                             visitTotal={Number(visit.total_php)}
                             visitPaid={Number(visit.paid_php)}
                           />

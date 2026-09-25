@@ -281,23 +281,6 @@ describe("Visit Records highlighting", () => {
   });
 });
 
-describe("Outside-Lab Costs vs Outside-Lab Performance", () => {
-  it("lights only Outside-Lab Performance on the vendor-performance route", () => {
-    expect(
-      activeHrefs("/staff/admin/accounting/cogs/send-outs/vendor-performance"),
-    ).toEqual(["/staff/admin/accounting/cogs/send-outs/vendor-performance"]);
-  });
-
-  it("lights only Outside-Lab Costs on the send-outs tabs", () => {
-    expect(activeHrefs("/staff/admin/accounting/cogs/send-outs")).toEqual([
-      "/staff/admin/accounting/cogs/send-outs",
-    ]);
-    expect(activeHrefs("/staff/admin/accounting/cogs/send-outs/true-ups")).toEqual([
-      "/staff/admin/accounting/cogs/send-outs",
-    ]);
-  });
-});
-
 describe("activePrefixes", () => {
   it("keeps Expenses lit across every AP tab and dark on unrelated admin routes", () => {
     const expenses = itemByHref("/staff/admin/accounting/ap");

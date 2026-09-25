@@ -9,7 +9,7 @@ import {
 } from "./payment-history";
 
 const MIGRATION = readFileSync(
-  join(process.cwd(), "supabase/migrations/0161_payment_correction.sql"),
+  join(process.cwd(), "supabase/migrations/0174_correct_payment_stale_guard.sql"),
   "utf8",
 );
 

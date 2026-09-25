@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_PAYMENT_PHP } from "@/lib/visits/payment-edit";
 
 export const PaymentMethodEnum = z.enum([
   "cash",
@@ -14,7 +15,12 @@ export const PaymentRecordSchema = z.object({
   amount_php: z
     .string()
     .transform((v) => Number(v))
-    .pipe(z.number().positive("Amount must be greater than zero.")),
+    .pipe(
+      z
+        .number()
+        .positive("Amount must be greater than zero.")
+        .max(MAX_PAYMENT_PHP, "Amount is too large."),
+    ),
   method: PaymentMethodEnum,
   reference_number: z
     .string()
@@ -45,13 +51,25 @@ export const PaymentEditSchema = z.object({
     .trim()
     .regex(/^\d+(\.\d{1,2})?$/, "Enter an amount like 1500 or 1500.50.")
     .transform((v) => Number(v))
-    .pipe(z.number().positive("Amount must be greater than zero.")),
+    .pipe(
+      z
+        .number()
+        .positive("Amount must be greater than zero.")
+        .max(MAX_PAYMENT_PHP, "Amount is too large."),
+    ),
   method: z.enum(["cash", "gcash", "maya", "card", "bank_transfer"], {
     message: "Choose Cash, GCash, Maya, Card or Bank transfer.",
   }),
   reference_number: z.string().trim().max(80),
   notes: z.string().trim().max(2000),
   reason: z.string().trim().min(1, "Reason is required to edit a payment.").max(500),
+  // The payment as the dialog showed it (0174 stale-state guard).
+  expected: z.object({
+    amount_php: z.number(),
+    method: z.string().nullable(),
+    reference_number: z.string().nullable(),
+    notes: z.string().nullable(),
+  }),
 });
 
 export type PaymentEditInput = z.infer<typeof PaymentEditSchema>;

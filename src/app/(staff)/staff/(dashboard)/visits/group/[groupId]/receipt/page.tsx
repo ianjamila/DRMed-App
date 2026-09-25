@@ -10,7 +10,6 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { audit } from "@/lib/audit/log";
 import { hasRecentAudit } from "@/lib/server/action-helpers";
 import { peekVisitGroupPinFlash } from "@/lib/auth/visit-pin-flash";
-import { formatPhp } from "@/lib/marketing/format";
 import { manilaDate } from "@/lib/dates/manila";
 import { CONTACT, SITE } from "@/lib/marketing/site";
 import { getPatientConsentState } from "@/lib/consent/gate";
@@ -24,6 +23,7 @@ import {
 } from "@/lib/visits/receipt-totals";
 import type { GroupPrintSnapshot } from "@/lib/visits/receipt-print-snapshot";
 import { NoReceiptNotice } from "@/components/staff/no-receipt-notice";
+import { ReceiptLinesTable } from "@/components/staff/receipt-lines-table";
 import { PrintButton } from "./print-button";
 import { logGroupReceiptPrintAction } from "./log-print-action";
 
@@ -39,7 +39,7 @@ const loadGroupVisits = cache(async (groupId: string) => {
           senior_pwd_id_kind, senior_pwd_id_number
         ),
         test_requests (
-          id, deleted_at, base_price_php, discount_kind, discount_amount_php, final_price_php,
+          id, deleted_at, parent_id, is_package_header, base_price_php, discount_kind, discount_amount_php, final_price_php,
           services ( code, name, price_php, kind )
         )
       `,
@@ -247,59 +247,19 @@ export default async function GroupReceiptPage({ params }: Props) {
               </div>
             </div>
 
-            <table className="w-full text-sm print:text-xs">
-              <thead className="text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-                <tr>
-                  <th className="py-3 print:py-1.5">Code</th>
-                  <th className="py-3 print:py-1.5">Service</th>
-                  <th className="py-3 text-right print:py-1.5">Price</th>
-                  <th className="py-3 text-right print:py-1.5">Discount</th>
-                  <th className="py-3 text-right print:py-1.5">Net</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
-                {slip.lines.map((l) => (
-                  <tr key={l.id}>
-                    <td className="py-3 font-mono print:py-1.5">{l.svc?.code}</td>
-                    <td className="py-3 print:py-1.5">{l.svc?.name}</td>
-                    <td className="py-3 text-right print:py-1.5">{formatPhp(l.base)}</td>
-                    <td className="py-3 text-right print:py-1.5">
-                      {l.discount > 0 ? `− ${formatPhp(l.discount)}` : "—"}
-                    </td>
-                    <td className="py-3 text-right print:py-1.5">{formatPhp(l.final)}</td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot className="text-sm">
-                <tr>
-                  <td colSpan={4} className="pt-4 text-right text-[color:var(--color-brand-text-soft)]">
-                    Subtotal
-                  </td>
-                  <td className="pt-4 text-right">{formatPhp(subtotal)}</td>
-                </tr>
-                {totalDiscount > 0 && (
-                  <tr>
-                    <td colSpan={4} className="pt-1 text-right text-[color:var(--color-brand-text-soft)]">
-                      Discount
-                      {hasSeniorPwdLine && patient.senior_pwd_id_number && (
-                        <span className="ml-2 text-xs">
-                          (Senior/PWD ID: {patient.senior_pwd_id_number})
-                        </span>
-                      )}
-                    </td>
-                    <td className="pt-1 text-right">− {formatPhp(totalDiscount)}</td>
-                  </tr>
-                )}
-                <tr className="border-t-2 border-[color:var(--color-brand-navy)]">
-                  <td colSpan={4} className="py-3 text-right font-bold">
-                    Total Due
-                  </td>
-                  <td className="py-3 text-right font-heading text-xl font-extrabold">
-                    {formatPhp(total)}
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
+            <ReceiptLinesTable
+              lines={slip.lines}
+              subtotal={subtotal}
+              totalDiscount={totalDiscount}
+              total={total}
+              discountNote={
+                hasSeniorPwdLine && patient.senior_pwd_id_number ? (
+                  <span className="ml-2 text-xs">
+                    (Senior/PWD ID: {patient.senior_pwd_id_number})
+                  </span>
+                ) : null
+              }
+            />
           </article>
         );
       })}

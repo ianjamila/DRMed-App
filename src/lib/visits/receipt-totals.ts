@@ -69,6 +69,11 @@ export interface RawReceiptLine<S> {
   discount_kind?: string | null;
   discount_amount_php: number | null;
   final_price_php: number | null;
+  // Package decomposition (0040). Optional so a caller that never selects
+  // them (the group print action only needs the money) still type-checks —
+  // such a line maps as a standalone one.
+  parent_id?: string | null;
+  is_package_header?: boolean | null;
   services: S | S[] | null;
 }
 
@@ -78,6 +83,8 @@ export interface MappedReceiptLine<S>
   id: string;
   svc: S | undefined;
   discountKind: string | null;
+  parentId: string | null;
+  isPackageHeader: boolean;
 }
 
 /**
@@ -105,6 +112,77 @@ export function toReceiptLine<S extends { price_php?: number | null }>(
     discount,
     final,
     discountKind: tr.discount_kind ?? null,
+    parentId: tr.parent_id ?? null,
+    isPackageHeader: tr.is_package_header ?? false,
     deleted: tr.deleted_at !== null,
   };
+}
+
+export interface PackageAwareReceiptLine extends PricedReceiptLine {
+  id: string;
+  parentId: string | null;
+  isPackageHeader: boolean;
+}
+
+export interface ReceiptRow<T> {
+  line: T;
+  /** A test that comes with a package printed on this same receipt. */
+  includedInPackage: boolean;
+  /** False only for an included test that carries no money of its own. */
+  showAmounts: boolean;
+  /** On a package line: how many of its tests are listed under it (else 0). */
+  includedCount: number;
+}
+
+/**
+ * The order and presentation of a receipt's lines.
+ *
+ * A package (0040) is billed on its header line; the tests it includes are
+ * ₱0 rows pointing at it through `parent_id`. Printed flat they read as a
+ * column of "₱0" charges scattered around the bill, so each included test is
+ * moved directly under its package and its amounts are left blank.
+ *
+ * Everything else keeps the order it was fetched in (a Map iterates in
+ * insertion order, so the fold never re-sorts). Two guards keep the paper
+ * honest: an included test whose package line is not on this receipt prints
+ * as an ordinary line, and an included test that DOES carry money shows it —
+ * the printed amounts must always add up to the printed total.
+ */
+export function arrangeReceiptRows<T extends PackageAwareReceiptLine>(
+  lines: readonly T[],
+): ReceiptRow<T>[] {
+  const headerIds = new Set(
+    lines.filter((l) => l.isPackageHeader).map((l) => l.id),
+  );
+  const includedByHeader = new Map<string, T[]>();
+  for (const l of lines) {
+    if (l.parentId && headerIds.has(l.parentId)) {
+      const arr = includedByHeader.get(l.parentId) ?? [];
+      arr.push(l);
+      includedByHeader.set(l.parentId, arr);
+    }
+  }
+
+  const rows: ReceiptRow<T>[] = [];
+  for (const l of lines) {
+    if (l.parentId && headerIds.has(l.parentId)) continue;
+    const included = includedByHeader.get(l.id) ?? [];
+    rows.push({
+      line: l,
+      includedInPackage: false,
+      showAmounts: true,
+      includedCount: included.length,
+    });
+    for (const c of included) {
+      const carriesMoney =
+        Number(c.base) !== 0 || Number(c.discount) !== 0 || Number(c.final) !== 0;
+      rows.push({
+        line: c,
+        includedInPackage: true,
+        showAmounts: carriesMoney,
+        includedCount: 0,
+      });
+    }
+  }
+  return rows;
 }

@@ -118,10 +118,12 @@ export default async function PaymentChangesPage({ searchParams }: SearchProps) 
           Payment Changes
         </h1>
         <p className="mt-1 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
-          Every payment that was deleted, edited (wrong method or amount) or
-          moved to another visit — who changed it, when, why, and what it
-          became. Nothing is ever erased: the original stays on its visit
-          under <b>Deleted, edited &amp; moved payments</b>.
+          Every payment that was deleted, edited (wrong method, amount or
+          reference) or moved to another visit — who changed it, when, why, and
+          what it became. Nothing is ever erased: a deleted, re-keyed or moved
+          payment stays on its visit under <b>Deleted, edited &amp; moved
+          payments</b>, and a reference or notes fix keeps its before and after
+          here.
         </p>
       </header>
 
@@ -247,7 +249,7 @@ export default async function PaymentChangesPage({ searchParams }: SearchProps) 
                 {rows.map((e) => (
                   <tr key={e.id}>
                     <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-[color:var(--color-brand-text-soft)]">
-                      {manilaDateTime(e.voidedAt)}
+                      {manilaDateTime(e.changedAt)}
                     </td>
                     <td className="px-4 py-3">
                       <span className={`rounded-md px-2 py-0.5 text-xs font-semibold ${FATE_STYLE[e.fate] ?? ""}`}>

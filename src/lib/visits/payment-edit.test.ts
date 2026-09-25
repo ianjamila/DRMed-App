@@ -6,12 +6,15 @@ import {
   balanceAfterEdit,
   isEditablePaymentMethod,
   isMoneyChange,
+  MAX_PAYMENT_PHP,
   paymentEditability,
+  paymentSnapshot,
+  visitBalanceAfter,
 } from "./payment-edit";
-import { PaymentEditSchema } from "@/lib/validations/payment";
+import { PaymentEditSchema, PaymentRecordSchema } from "@/lib/validations/payment";
 
 const MIGRATION = readFileSync(
-  join(process.cwd(), "supabase/migrations/0161_payment_correction.sql"),
+  join(process.cwd(), "supabase/migrations/0174_correct_payment_stale_guard.sql"),
   "utf8",
 );
 
@@ -95,6 +98,7 @@ describe("PaymentEditSchema", () => {
     reference_number: "",
     notes: "",
     reason: "Keyed as cash",
+    expected: { amount_php: 5888, method: "cash", reference_number: null, notes: null },
   };
 
   it("accepts two decimal places a float centavo check would refuse", () => {
@@ -111,6 +115,8 @@ describe("PaymentEditSchema", () => {
     ["gift code target", { method: "gift_code" }],
     ["hmo target", { method: "hmo" }],
     ["blank reason", { reason: "   " }],
+    ["an amount past numeric(10,2)", { amount_php: "100000000" }],
+    ["no snapshot of what the dialog showed", { expected: undefined }],
   ])("refuses %s", (_label, patch) => {
     expect(PaymentEditSchema.safeParse({ ...ok, ...patch }).success).toBe(false);
   });
@@ -119,5 +125,52 @@ describe("PaymentEditSchema", () => {
     expect([...PaymentEditSchema.shape.method.options].sort()).toEqual(
       EDITABLE_PAYMENT_METHODS.map((m) => m.value).sort(),
     );
+  });
+});
+
+describe("amount ceiling", () => {
+  it("matches payments.amount_php numeric(10,2) and correct_payment's refusal", () => {
+    expect(MAX_PAYMENT_PHP).toBe(99_999_999.99);
+    expect(MIGRATION).toContain("p_amount_php > 99999999.99");
+  });
+  it("is enforced on Record payment too", () => {
+    const base = { visit_id: "6fc15e0b-e3e3-4fd4-ba2c-4a8b504b6394", method: "cash", reference_number: "", notes: "" };
+    expect(PaymentRecordSchema.safeParse({ ...base, amount_php: "99999999.99" }).success).toBe(true);
+    expect(PaymentRecordSchema.safeParse({ ...base, amount_php: "100000000" }).success).toBe(false);
+  });
+});
+
+describe("paymentSnapshot (0174 stale-state guard)", () => {
+  it("normalises text the way the SQL compares it (trimmed, blank = null)", () => {
+    expect(
+      paymentSnapshot({ amount_php: "500.00", method: "bpi", reference_number: "  ", notes: " n " }),
+    ).toEqual({ amount_php: 500, method: "bpi", reference_number: null, notes: "n" });
+  });
+  it("carries the visit only when given", () => {
+    expect(
+      paymentSnapshot({ amount_php: 1, method: "cash", reference_number: null, notes: null, visit_id: "v" }).visit_id,
+    ).toBe("v");
+  });
+  it("is checked by correct_payment for every key the snapshot can carry", () => {
+    for (const key of ["amount_php", "method", "visit_id", "reference_number", "notes"]) {
+      expect(MIGRATION).toContain(`p_expected ? '${key}'`);
+    }
+    // …under the row lock, i.e. after the FOR UPDATE read.
+    expect(MIGRATION.indexOf("for update")).toBeLessThan(MIGRATION.indexOf("p_expected ? 'amount_php'"));
+  });
+  it("refuses any payment a gift code was redeemed against, not only method gift_code", () => {
+    expect(MIGRATION).toMatch(/exists \(select 1 from public\.gift_codes where redeemed_payment_id = v_old\.id\)/);
+  });
+});
+
+describe("visitBalanceAfter", () => {
+  it("is what a visit still owes after a payment leaves it", () => {
+    expect(visitBalanceAfter(1500, 1500, -500)).toBe(500);
+  });
+  it("goes negative when a payment lands on a visit that owes less", () => {
+    expect(visitBalanceAfter(1000, 800, 500)).toBe(-300);
+  });
+  it("counts centavos exactly", () => {
+    expect(visitBalanceAfter(0.3, 0.1, 0.2)).toBe(0);
   });
 });

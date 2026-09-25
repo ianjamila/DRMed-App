@@ -8,7 +8,12 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
-import { ServiceSchema, type ServiceInput } from "@/lib/validations/service";
+import {
+  resolveSendOutVendorSelection,
+  ServiceSchema,
+  type PartnerLabOption,
+  type ServiceInput,
+} from "@/lib/validations/service";
 import { SITE } from "@/lib/marketing/site";
 import { submitToIndexNow } from "@/lib/seo/indexnow";
 import { servicePageUrls } from "@/lib/seo/indexnow-core";
@@ -26,12 +31,24 @@ function parseForm(formData: FormData) {
     kind: formData.get("kind"),
     section: formData.get("section") ?? "",
     is_send_out: formData.get("is_send_out"),
-    send_out_lab: formData.get("send_out_lab") ?? "",
     image_url: formData.get("image_url") ?? "",
     is_active: formData.get("is_active"),
     requires_signoff: formData.get("requires_signoff"),
     senior_pwd_eligible: formData.get("senior_pwd_eligible"),
   });
+}
+
+/** The short list a service's "Partner lab" select is allowed to resolve to. */
+async function loadActivePartnerLabs(
+  admin: ReturnType<typeof createAdminClient>,
+): Promise<PartnerLabOption[]> {
+  const { data } = await admin
+    .from("vendors")
+    .select("id, name")
+    .eq("is_partner_lab", true)
+    .eq("is_active", true)
+    .order("name");
+  return data ?? [];
 }
 
 /**
@@ -44,21 +61,6 @@ function parseForm(formData: FormData) {
  */
 function withSignoffFloor(data: ServiceInput): ServiceInput {
   return { ...data, requires_signoff: false };
-}
-
-/** Parse send-out config fields; returns null when not a send-out service. */
-function parseSendOutConfig(formData: FormData, isSendOut: boolean) {
-  if (!isSendOut) return null;
-  const costRaw = (formData.get("send_out_unit_cost_php") as string | null) ?? "";
-  const vendorId = ((formData.get("send_out_vendor_id") as string | null) ?? "").trim();
-  const costNum = costRaw === "" ? null : Number(costRaw);
-  if (costRaw === "" || costNum === null || !Number.isFinite(costNum) || costNum < 0) {
-    return { ok: false as const, error: "Send-out unit cost is required for send-out services." };
-  }
-  if (!vendorId) {
-    return { ok: false as const, error: "Send-out vendor is required for send-out services." };
-  }
-  return { ok: true as const, cost: costNum, vendorId };
 }
 
 export async function createServiceAction(
@@ -74,19 +76,30 @@ export async function createServiceAction(
     };
   }
 
-  // Validate send-out config when is_send_out is true — same check as
-  // update. Without this, ticking "Send-out test" on create silently landed
-  // the service on the "Unconfigured send-outs" list: ServiceSchema doesn't
-  // carry cost/vendor, so nothing was ever persisted or rejected.
-  const sendOutResult = parseSendOutConfig(formData, parsed.data.is_send_out);
-  if (sendOutResult && !sendOutResult.ok) {
-    return { ok: false, error: sendOutResult.error };
-  }
+  // Resolve the "Partner lab" select before writing anything, so an invalid
+  // vendor never creates a half-saved service.
+  const admin = createAdminClient();
+  const partnerLabs = await loadActivePartnerLabs(admin);
+  const sendOutVendor = resolveSendOutVendorSelection(
+    parsed.data.is_send_out,
+    formData.get("send_out_vendor_id") as string | null,
+    partnerLabs,
+  );
+  if (!sendOutVendor.ok) return { ok: false, error: sendOutVendor.error };
 
+  // The RLS-scoped client's "services: admin all" policy covers every column
+  // (no column-level grants restrict send_out_vendor_id/send_out_lab), so the
+  // vendor/lab pair goes into the SAME insert as the rest of the row — one
+  // write, atomically committed or not at all, instead of a second write that
+  // could fail and leave the service saved but untagged.
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("services")
-    .insert(withSignoffFloor(parsed.data))
+    .insert({
+      ...withSignoffFloor(parsed.data),
+      send_out_vendor_id: sendOutVendor.data.vendorId,
+      send_out_lab: sendOutVendor.data.labName,
+    })
     .select("id, code")
     .single();
 
@@ -97,29 +110,26 @@ export async function createServiceAction(
     };
   }
 
-  // Persist send-out config via admin client, same choke point as update
-  // (services cost/vendor columns are service_role-only).
-  if (sendOutResult?.ok) {
-    const admin = createAdminClient();
-    const { error: soErr } = await admin
-      .from("services")
-      .update({
-        send_out_unit_cost_php: sendOutResult.cost,
-        send_out_vendor_id: sendOutResult.vendorId,
-      })
-      .eq("id", data.id);
-    if (soErr) return { ok: false, error: translatePgError(soErr) };
+  const h = await headers();
+
+  // Skipped when there's nothing to record (a new non-send-out service
+  // already has null/null by column default).
+  if (sendOutVendor.data.vendorId !== null || sendOutVendor.data.labName !== null) {
     await audit({
       actor_id: session.user_id,
       actor_type: "staff",
       action: "service.send_out_config_updated",
-      resource_type: "services",
+      resource_type: "service",
       resource_id: data.id,
-      metadata: { cost: sendOutResult.cost, vendor_id: sendOutResult.vendorId },
+      metadata: {
+        vendor_id: sendOutVendor.data.vendorId,
+        lab_name: sendOutVendor.data.labName,
+      },
+      ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+      user_agent: h.get("user-agent"),
     });
   }
 
-  const h = await headers();
   await audit({
     actor_id: session.user_id,
     actor_type: "staff",
@@ -158,45 +168,69 @@ export async function updateServiceAction(
     };
   }
 
-  // Validate send-out config when is_send_out is true.
-  const sendOutResult = parseSendOutConfig(formData, parsed.data.is_send_out);
-  if (sendOutResult && !sendOutResult.ok) {
-    return { ok: false, error: sendOutResult.error };
-  }
+  const admin = createAdminClient();
+  const partnerLabs = await loadActivePartnerLabs(admin);
 
   const supabase = await createClient();
-  // Pre-read so audit metadata can record before/after for any price column.
+  // Pre-read so audit metadata can record before/after for any price column,
+  // and so the resolver can tell an unrelated edit ("— Not set —" left alone,
+  // or the row's own current lab re-submitted) from a deliberate change to
+  // the lab — active-partner validation should only guard a NEW pick.
   const { data: prior } = await supabase
     .from("services")
-    .select("code, price_php, hmo_price_php")
+    .select("code, price_php, hmo_price_php, send_out_vendor_id, send_out_lab")
     .eq("id", serviceId)
     .maybeSingle();
 
+  const sendOutVendor = resolveSendOutVendorSelection(
+    parsed.data.is_send_out,
+    formData.get("send_out_vendor_id") as string | null,
+    partnerLabs,
+    prior ? { vendorId: prior.send_out_vendor_id, labName: prior.send_out_lab } : null,
+  );
+  if (!sendOutVendor.ok) return { ok: false, error: sendOutVendor.error };
+
+  // The RLS-scoped client's "services: admin all" policy covers every column
+  // (no column-level grants restrict send_out_vendor_id/send_out_lab), so the
+  // vendor/lab pair goes into the SAME update as the rest of the row — one
+  // write, atomically committed or not at all, instead of a second write that
+  // could fail and leave the rest of the edit saved but the lab stale.
   const { error } = await supabase
     .from("services")
-    .update(withSignoffFloor(parsed.data))
+    .update({
+      ...withSignoffFloor(parsed.data),
+      send_out_vendor_id: sendOutVendor.data.vendorId,
+      send_out_lab: sendOutVendor.data.labName,
+    })
     .eq("id", serviceId);
 
   if (error) return { ok: false, error: translatePgError(error) };
 
-  // Persist send-out config via admin client (bypasses RLS for services).
-  if (sendOutResult?.ok) {
-    const admin = createAdminClient();
-    const { error: soErr } = await admin
-      .from("services")
-      .update({
-        send_out_unit_cost_php: sendOutResult.cost,
-        send_out_vendor_id: sendOutResult.vendorId,
-      })
-      .eq("id", serviceId);
-    if (soErr) return { ok: false, error: translatePgError(soErr) };
+  const h = await headers();
+
+  // Only audit the send-out config when it actually changes. This is also
+  // what makes unticking "Send-out test" (or never having ticked it) clear a
+  // stale vendor/lab pair — resolveSendOutVendorSelection always forces
+  // null/null when is_send_out is false, so an untick that had a vendor set
+  // differs from the prior read here and triggers the clear.
+  const priorVendorId = prior?.send_out_vendor_id ?? null;
+  const priorLabName = prior?.send_out_lab ?? null;
+  if (
+    sendOutVendor.data.vendorId !== priorVendorId ||
+    sendOutVendor.data.labName !== priorLabName
+  ) {
     await audit({
       actor_id: session.user_id,
       actor_type: "staff",
       action: "service.send_out_config_updated",
-      resource_type: "services",
+      resource_type: "service",
       resource_id: serviceId,
-      metadata: { cost: sendOutResult.cost, vendor_id: sendOutResult.vendorId },
+      metadata: {
+        before: { vendor_id: priorVendorId, lab_name: priorLabName },
+        after: { vendor_id: sendOutVendor.data.vendorId, lab_name: sendOutVendor.data.labName },
+      },
+      ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+      user_agent: h.get("user-agent"),
     });
   }
 
@@ -205,7 +239,6 @@ export async function updateServiceAction(
     (Number(prior.price_php) !== parsed.data.price_php ||
       (prior.hmo_price_php ?? null) !== parsed.data.hmo_price_php);
 
-  const h = await headers();
   await audit({
     actor_id: session.user_id,
     actor_type: "staff",

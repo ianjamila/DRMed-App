@@ -14,7 +14,8 @@
 --   1. Inserts a self-contained fixture (auth user, staff profile, physicians,
 --      services, vendor, HMO provider, patient, visits, test_requests, etc.)
 --      — all tagged SMOKE-12.5 for targeted cleanup.
---   2. Runs 16 assertions in do $$ ... $$ blocks. Each raises a NOTICE on PASS
+--   2. Runs 14 assertions in do $$ ... $$ blocks (A4/A5 rewritten and A11/A12
+--      retired by 0159 — send-out cost is no longer booked at release). Each raises a NOTICE on PASS
 --      and an EXCEPTION on FAIL (which aborts the run cleanly inside the outer
 --      BEGIN/ROLLBACK so no smoke residue leaks into the DB).
 --   3. Cleans up explicitly using the draft-flip pattern from
@@ -138,14 +139,14 @@ begin
   values ('SMOKE125-SHARE', 'SMOKE-12.5 Consult (shareholder)', 'doctor_consultation', 700, true, false)
   returning id into v_svc_shareholder;
 
-  -- Send-out with cost configured
+  -- Send-out linked to a partner lab (per-service unit cost dropped by 0166)
   insert into public.services (code, name, kind, price_php, is_active, is_send_out,
-                               send_out_unit_cost_php, send_out_vendor_id)
-  values ('SMOKE125-SO1', 'SMOKE-12.5 Sendout (cost=500)', 'lab_test', 1200, true, true,
-          500.00, v_vendor_id)
+                               send_out_vendor_id)
+  values ('SMOKE125-SO1', 'SMOKE-12.5 Sendout (partner lab)', 'lab_test', 1200, true, true,
+          v_vendor_id)
   returning id into v_svc_sendout_cost;
 
-  -- Send-out with NULL cost (D10 path)
+  -- Send-out with no partner lab
   insert into public.services (code, name, kind, price_php, is_active, is_send_out)
   values ('SMOKE125-SO2', 'SMOKE-12.5 Sendout (no cost)', 'lab_test', 800, true, true)
   returning id into v_svc_sendout_null;
@@ -454,24 +455,22 @@ end $$;
 
 
 -- ============================================================================
--- ASSERTION 4
--- Send-out test with unit_cost=500 → release JE has DR 6420 500 / CR 2150 500;
--- cogs_send_out_entries row exists with unit_cost_php=500, journal_entry_id set.
+-- ASSERTION 4 (rewritten for 0159)
+-- Send-out test → release JE books revenue only: NO 6420 / 2150 lines, and
+-- the cogs_send_out_entries subledger no longer exists (dropped by 0166). Partner labs are paid on the
+-- spot and recorded as a "Send Out" expense, so booking cost here would count
+-- it twice.
 -- ============================================================================
 do $$
 declare
   v_tr_id      uuid;
   v_je_id      uuid;
-  v_acct_6420  uuid;
-  v_acct_2150  uuid;
-  v_dr_6420    numeric(12,2);
-  v_cr_2150    numeric(12,2);
-  v_cogs_id    uuid;
-  v_cogs_cost  numeric(10,2);
-  v_cogs_je    uuid;
   v_visit_id   uuid;
   v_svc_id     uuid;
   v_auth_id    uuid;
+  v_cost_lines int;
+  v_rev_lines  int;
+  v_cogs_cnt   int;
 begin
   select val into v_visit_id from smoke_125_ids where key='visit_cash_id';
   select val into v_svc_id   from smoke_125_ids where key='svc_sendout_cost';
@@ -495,57 +494,41 @@ begin
 
   assert v_je_id is not null, 'A4: no posted JE for send-out release';
 
-  -- Check DR 6420 = 500, CR 2150 = 500
-  select id into v_acct_6420 from public.chart_of_accounts where code='6420';
-  select id into v_acct_2150 from public.chart_of_accounts where code='2150';
+  select count(*) into v_cost_lines from public.journal_lines
+    where entry_id = v_je_id
+      and account_id in (select id from public.chart_of_accounts where code in ('6420','2150'));
+  assert v_cost_lines = 0,
+    format('A4: expected no 6420/2150 lines since 0159, got %s', v_cost_lines);
 
-  select debit_php into v_dr_6420 from public.journal_lines
-    where entry_id = v_je_id and account_id = v_acct_6420;
-  select credit_php into v_cr_2150 from public.journal_lines
-    where entry_id = v_je_id and account_id = v_acct_2150;
+  select count(*) into v_rev_lines from public.journal_lines where entry_id = v_je_id;
+  assert v_rev_lines = 2,
+    format('A4: expected 2 revenue-side lines (receivable + revenue), got %s', v_rev_lines);
 
-  assert coalesce(v_dr_6420, 0) = 500.00,
-    format('A4: expected DR 6420=500, got %s', coalesce(v_dr_6420, 0));
-  assert coalesce(v_cr_2150, 0) = 500.00,
-    format('A4: expected CR 2150=500, got %s', coalesce(v_cr_2150, 0));
+  v_cogs_cnt := case when to_regclass('public.cogs_send_out_entries') is null then 0 else 1 end;
+  assert v_cogs_cnt = 0, 'A4: cogs_send_out_entries should be dropped (0166)';
 
-  -- Check cogs_send_out_entries
-  select id, unit_cost_php, journal_entry_id
-    into v_cogs_id, v_cogs_cost, v_cogs_je
-    from public.cogs_send_out_entries
-    where test_request_id = v_tr_id and voided_at is null;
-
-  assert v_cogs_id is not null, 'A4: cogs_send_out_entries row not found';
-  assert v_cogs_cost = 500.00,
-    format('A4: expected unit_cost_php=500, got %s', v_cogs_cost);
-  assert v_cogs_je is not null,
-    'A4: journal_entry_id is null on cogs_send_out_entries (should be set for cost>0)';
-
-  -- Store for assertions 11+12
   insert into smoke_125_ids values ('tr_sendout_cost', v_tr_id);
 
-  raise notice 'ASSERTION 4 PASS: Send-out (cost=500) → DR 6420/CR 2150=500, cogs_entries row set';
+  raise notice 'ASSERTION 4 PASS: Send-out (cost=500) → revenue only, no 6420/2150, no cogs row';
 end $$;
 
 
 -- ============================================================================
--- ASSERTION 5
--- Send-out with NULL unit_cost → release JE has NO COGS lines;
--- cogs_send_out_entries row with unit_cost_php=0, journal_entry_id=null;
--- audit_log has send_out.unit_cost_missing row.
+-- ASSERTION 5 (rewritten for 0159)
+-- Send-out test with NULL unit cost → revenue JE, no 6420 lines, no
+-- send-out subledger row and no unit-cost-missing audit row
+-- (a missing unit cost is no longer a problem to flag).
 -- ============================================================================
 do $$
 declare
   v_tr_id      uuid;
   v_je_id      uuid;
-  v_acct_6420  uuid;
-  v_line_count int;
-  v_cogs_cost  numeric(10,2);
-  v_cogs_je    uuid;
-  v_audit_cnt  int;
   v_visit_id   uuid;
   v_svc_id     uuid;
   v_auth_id    uuid;
+  v_line_count int;
+  v_cogs_cnt   int;
+  v_audit_cnt  int;
 begin
   select val into v_visit_id from smoke_125_ids where key='visit_cash_id';
   select val into v_svc_id   from smoke_125_ids where key='svc_sendout_null';
@@ -566,38 +549,26 @@ begin
   select id into v_je_id from public.journal_entries
     where source_kind = 'test_request' and source_id = v_tr_id and status = 'posted';
 
-  -- JE should still exist (revenue lines still fire)
   assert v_je_id is not null, 'A5: no posted JE for send-out (null cost) release';
 
-  -- No 6420 lines on the JE
-  select id into v_acct_6420 from public.chart_of_accounts where code='6420';
   select count(*) into v_line_count from public.journal_lines
-    where entry_id = v_je_id and account_id = v_acct_6420;
+    where entry_id = v_je_id
+      and account_id in (select id from public.chart_of_accounts where code in ('6420','2150'));
   assert v_line_count = 0,
-    format('A5: expected 0 lines for 6420 (no cost), got %s', v_line_count);
+    format('A5: expected 0 lines for 6420/2150, got %s', v_line_count);
 
-  -- cogs_send_out_entries: unit_cost_php=0, journal_entry_id null
-  select unit_cost_php, journal_entry_id
-    into v_cogs_cost, v_cogs_je
-    from public.cogs_send_out_entries
-    where test_request_id = v_tr_id and voided_at is null;
+  v_cogs_cnt := case when to_regclass('public.cogs_send_out_trueups') is null then 0 else 1 end;
+  assert v_cogs_cnt = 0, 'A5: cogs_send_out_trueups should be dropped (0166)';
 
-  assert v_cogs_cost = 0,
-    format('A5: expected unit_cost_php=0 for null-cost send-out, got %s', v_cogs_cost);
-  assert v_cogs_je is null,
-    'A5: journal_entry_id should be null for unit_cost=0 (D10 path)';
-
-  -- audit_log row
   select count(*) into v_audit_cnt
     from public.audit_log
     where action = 'send_out.unit_cost_missing' and resource_id = v_tr_id;
-  assert v_audit_cnt >= 1,
-    format('A5: expected audit_log send_out.unit_cost_missing, got %s rows', v_audit_cnt);
+  assert v_audit_cnt = 0,
+    format('A5: expected no send_out.unit_cost_missing audit since 0159, got %s rows', v_audit_cnt);
 
-  -- Store tr for trueup assertions 11+12
   insert into smoke_125_ids values ('tr_sendout_null', v_tr_id);
 
-  raise notice 'ASSERTION 5 PASS: Send-out (null cost) → no COGS JE lines, cogs_entries unit_cost=0, audit written';
+  raise notice 'ASSERTION 5 PASS: Send-out (null cost) → revenue only, no cogs row, no audit';
 end $$;
 
 
@@ -974,32 +945,30 @@ begin
       set disbursement_id = v_disb_id
       where id = v_pfe_id;
 
-    -- Void the payment → triggers trg_bridge_payment_void_pf_cascade
-    -- visit payment_status must flip to 'unpaid' first (simulate void cascading)
-    -- Step 1: update visit to unpaid (so trigger fires the clawback path)
+    -- Void the payment. Since 0174 a payment void never takes a doctor fee
+    -- back (owner decision): the 0064 cascade that inserted a clawback here is
+    -- dropped. Worst case first — the visit reads unpaid — and still nothing.
     update public.visits set payment_status = 'unpaid' where id = v_new_visit_id;
     -- Step 2: set voided_at on the payment
     update public.payments
       set voided_at = now(), voided_by = v_staff_id, void_reason = 'SMOKE-12.5 A9 void'
       where id = v_new_pay_id;
 
-    -- Clawback row should exist with negative pf_php
-    select count(*), sum(pf_php) into v_clawback_cnt, v_clawback_pf
+    -- No clawback row, no alert, and the disbursed PF entry is untouched.
+    select count(*) into v_clawback_cnt
       from public.doctor_pf_entries
       where test_request_id = v_tr_id
         and recognition_basis = 'clawback';
+    assert v_clawback_cnt = 0,
+      format('A9: a payment void inserted %s clawback row(s) — 0174 removed that', v_clawback_cnt);
 
-    assert v_clawback_cnt >= 1,
-      'A9: no clawback row inserted after payment void with disbursed PF';
-    assert v_clawback_pf < 0,
-      format('A9: clawback pf_php should be negative, got %s', v_clawback_pf);
-
-    -- Audit row pf_clawback.alert
     select count(*) into v_audit_cnt
       from public.audit_log
       where action = 'pf_clawback.alert' and resource_id = v_pfe_id;
-    assert v_audit_cnt >= 1,
-      'A9: no pf_clawback.alert audit row found';
+    assert v_audit_cnt = 0, 'A9: a pf_clawback.alert audit row was written';
+
+    assert exists (select 1 from public.doctor_pf_entries where id = v_pfe_id and voided_at is null),
+      'A9: the disbursed PF entry was voided by a payment void';
 
     -- Store for cleanup
     insert into smoke_125_ids values ('tr_clawback_consult', v_tr_id);
@@ -1008,7 +977,7 @@ begin
     insert into smoke_125_ids values ('payment_a9_id',       v_new_pay_id);
   end;
 
-  raise notice 'ASSERTION 9 PASS: Payment void with disbursed PF → clawback row inserted, pf_clawback.alert written';
+  raise notice 'ASSERTION 9 PASS: Payment void with disbursed PF → no clawback, PF entry untouched (0174)';
 end $$;
 
 
@@ -1069,128 +1038,13 @@ end $$;
 
 
 -- ============================================================================
--- ASSERTION 11
--- INSERT cogs_send_out_trueups with billed=600, accrued=500 → variance JE fires
--- DR 6420 100 / CR 2150 100; entries' trueup_id populated.
+-- ASSERTIONS 11 + 12 — RETIRED by 0159.
+-- They matched a vendor bill against release-time send-out accruals
+-- (cogs_send_out_trueups → variance JE on 6420/2150). Release no longer
+-- accrues send-out cost and nothing in the app writes a true-up any more, so
+-- there is nothing to reconcile. The table and its trigger are kept only for
+-- history; the cleanup block below still tolerates their absence of rows.
 -- ============================================================================
-do $$
-declare
-  v_trueup_id  uuid;
-  v_je_id      uuid;
-  v_acct_6420  uuid;
-  v_acct_2150  uuid;
-  v_dr_6420    numeric(12,2);
-  v_cr_2150    numeric(12,2);
-  v_trued_cnt  int;
-  v_vendor_id  uuid;
-  v_staff_id   uuid;
-  v_tr_id      uuid;
-begin
-  select val into v_vendor_id from smoke_125_ids where key='vendor_id';
-  select val into v_staff_id  from smoke_125_ids where key='staff_id';
-  select val into v_tr_id     from smoke_125_ids where key='tr_sendout_cost';
-
-  -- Insert trueup: billed=600, accrued=500 → variance = +100 (under-accrued)
-  insert into public.cogs_send_out_trueups (
-    vendor_id, period_start_date, period_end_date,
-    accrued_total_php, billed_total_php, variance_php,
-    matched_by
-  ) values (
-    v_vendor_id, current_date - 30, current_date,
-    500.00, 600.00, 100.00,
-    v_staff_id
-  ) returning id into v_trueup_id;
-
-  -- journal_entry_id should be set
-  select journal_entry_id into v_je_id
-    from public.cogs_send_out_trueups where id = v_trueup_id;
-
-  assert v_je_id is not null,
-    'A11: journal_entry_id not set on cogs_send_out_trueups after INSERT';
-
-  -- Verify variance JE: DR 6420 100 / CR 2150 100
-  select id into v_acct_6420 from public.chart_of_accounts where code='6420';
-  select id into v_acct_2150 from public.chart_of_accounts where code='2150';
-
-  select debit_php into v_dr_6420 from public.journal_lines
-    where entry_id = v_je_id and account_id = v_acct_6420;
-  select credit_php into v_cr_2150 from public.journal_lines
-    where entry_id = v_je_id and account_id = v_acct_2150;
-
-  assert coalesce(v_dr_6420, 0) = 100.00,
-    format('A11: expected DR 6420=100, got %s', coalesce(v_dr_6420, 0));
-  assert coalesce(v_cr_2150, 0) = 100.00,
-    format('A11: expected CR 2150=100, got %s', coalesce(v_cr_2150, 0));
-
-  -- cogs_send_out_entries trueup_id populated for matching entries
-  select count(*) into v_trued_cnt
-    from public.cogs_send_out_entries
-    where trueup_id = v_trueup_id and voided_at is null;
-  assert v_trued_cnt >= 1,
-    format('A11: expected >=1 cogs_send_out_entries with trueup_id set, got %s', v_trued_cnt);
-
-  insert into smoke_125_ids values ('trueup_a11_id', v_trueup_id);
-
-  raise notice 'ASSERTION 11 PASS: Trueup (billed=600,accrued=500) → DR6420/CR2150=100, entries.trueup_id set';
-end $$;
-
-
--- ============================================================================
--- ASSERTION 12
--- INSERT cogs_send_out_trueups with billed=500, accrued=0 → variance JE fires
--- DR 6420 500 / CR 2150 500.
--- ============================================================================
-do $$
-declare
-  v_trueup_id  uuid;
-  v_je_id      uuid;
-  v_acct_6420  uuid;
-  v_acct_2150  uuid;
-  v_dr_6420    numeric(12,2);
-  v_cr_2150    numeric(12,2);
-  v_vendor_id  uuid;
-  v_staff_id   uuid;
-  v_tr_id      uuid;
-begin
-  select val into v_vendor_id from smoke_125_ids where key='vendor_id';
-  select val into v_staff_id  from smoke_125_ids where key='staff_id';
-  select val into v_tr_id     from smoke_125_ids where key='tr_sendout_null';
-
-  -- Insert trueup: billed=500, accrued=0 → variance=+500 (all billed, none accrued)
-  -- We extend the date range slightly so no collision with A11's trueup entries
-  insert into public.cogs_send_out_trueups (
-    vendor_id, period_start_date, period_end_date,
-    accrued_total_php, billed_total_php, variance_php,
-    matched_by
-  ) values (
-    v_vendor_id, current_date - 60, current_date - 31,
-    0.00, 500.00, 500.00,
-    v_staff_id
-  ) returning id into v_trueup_id;
-
-  select journal_entry_id into v_je_id
-    from public.cogs_send_out_trueups where id = v_trueup_id;
-
-  assert v_je_id is not null,
-    'A12: journal_entry_id not set for billed=500/accrued=0 trueup';
-
-  select id into v_acct_6420 from public.chart_of_accounts where code='6420';
-  select id into v_acct_2150 from public.chart_of_accounts where code='2150';
-
-  select debit_php into v_dr_6420 from public.journal_lines
-    where entry_id = v_je_id and account_id = v_acct_6420;
-  select credit_php into v_cr_2150 from public.journal_lines
-    where entry_id = v_je_id and account_id = v_acct_2150;
-
-  assert coalesce(v_dr_6420, 0) = 500.00,
-    format('A12: expected DR 6420=500, got %s', coalesce(v_dr_6420, 0));
-  assert coalesce(v_cr_2150, 0) = 500.00,
-    format('A12: expected CR 2150=500, got %s', coalesce(v_cr_2150, 0));
-
-  insert into smoke_125_ids values ('trueup_a12_id', v_trueup_id);
-
-  raise notice 'ASSERTION 12 PASS: Trueup (billed=500,accrued=0) → DR6420/CR2150=500';
-end $$;
 
 
 -- ============================================================================
@@ -1398,14 +1252,13 @@ end $$;
 
 -- ============================================================================
 -- ASSERTION 16
--- HMO payment void cascade uses HMO-correct accounts (2160 and 1110),
--- not the cash-path defaults (2110 and 1100).
+-- Voiding a co-pay on an HMO visit leaves the doctor's pending HMO fee alone.
 --
--- Setup: HMO visit + consult release (PF → 2160). Then void the payment
--- (visit becomes un-paid). bridge_payment_void_pf_cascade should emit:
---   DR 2160  (reverse the HMO PF holding credit)
---   CR 1110  (reverse the HMO AR debit)
--- NOT DR 2110 / CR 1100 (which would be wrong).
+-- Setup: HMO visit + consult release (PF → 2160, hmo_at_settlement). Then void
+-- the payment. Before 0174, bridge_payment_void_pf_cascade voided the pending
+-- entry and posted DR 2160 / CR 1110 — on EVERY HMO visit, because 0133
+-- releases them unpaid. 0174 dropped it (owner decision: a payment void never
+-- takes a doctor fee back).
 -- ============================================================================
 do $$
 declare
@@ -1474,62 +1327,25 @@ begin
 
   assert v_pfe_id is not null, 'A16: expected hmo_at_settlement PF entry after HMO consult release';
 
-  -- Void the payment → cascade fires.
-  -- Note: recalc_visit_payment only fires on INSERT, not UPDATE (void). So the visit's
-  -- payment_status doesn't auto-flip to 'unpaid' when a payment is voided. The cascade
-  -- guard checks v_visit.payment_status, so we must set it manually first (same pattern
-  -- as A9). In production this would be set by the calling Server Action.
+  -- Void the payment (worst case: the visit reads unpaid, as an HMO visit does).
   update public.visits set payment_status = 'unpaid' where id = v_visit_id;
   update public.payments
     set voided_at = now(), voided_by = v_auth_id, void_reason = 'A16 smoke test'
     where id = v_payment_id;
 
-  -- After void, visit payment_status should be 'unpaid'.
-  -- The cascade bridge emits a partial-reversal JE for the HMO pending PF entry.
-  -- For hmo_at_settlement entries, the original PF entry's journal_entry_id is NULL
-  -- (PF was deferred to settlement), so the cascade JE has reverses=NULL.
-  -- The trigger runs SECURITY DEFINER, so auth.uid() is NULL → created_by=NULL.
-  -- Search by: source_kind='reversal', status='posted', has a DR 2160 line, and
-  -- description matches the HMO pending reversal pattern (the trigger embeds that text).
-  select id into v_cascade_je_id from public.journal_entries je
-    where je.source_kind = 'reversal'
-      and je.status = 'posted'
-      and je.description like 'PF pending reversal:%'
-      and exists (
-        select 1 from public.journal_lines jl
-        join public.chart_of_accounts c on c.id = jl.account_id
-        where jl.entry_id = je.id and c.code = '2160' and jl.debit_php > 0
-      )
-    order by je.created_at desc
-    limit 1;
-
-  assert v_cascade_je_id is not null, 'A16: no cascade reversal JE with DR 2160 after HMO payment void';
-
-  -- The cascade JE should use 2160 (HMO PF holding) and 1110 (AR HMO).
-  select id into v_acct_2160 from public.chart_of_accounts where code = '2160';
-  select id into v_acct_1110 from public.chart_of_accounts where code = '1110';
-  select id into v_acct_2110 from public.chart_of_accounts where code = '2110';
-  select id into v_acct_1100 from public.chart_of_accounts where code = '1100';
-
-  select sum(debit_php)  into v_dr_2160 from public.journal_lines where entry_id = v_cascade_je_id and account_id = v_acct_2160;
-  select sum(credit_php) into v_cr_1110 from public.journal_lines where entry_id = v_cascade_je_id and account_id = v_acct_1110;
-  select sum(debit_php)  into v_dr_2110 from public.journal_lines where entry_id = v_cascade_je_id and account_id = v_acct_2110;
-  select sum(credit_php) into v_cr_1100 from public.journal_lines where entry_id = v_cascade_je_id and account_id = v_acct_1100;
-
-  assert coalesce(v_dr_2160, 0) = 700.00,
-    format('A16: expected DR 2160=700 (HMO PF account), got %s', coalesce(v_dr_2160, 0));
-  assert coalesce(v_cr_1110, 0) = 700.00,
-    format('A16: expected CR 1110=700 (HMO AR account), got %s', coalesce(v_cr_1110, 0));
-  assert coalesce(v_dr_2110, 0) = 0.00,
-    format('A16: cascade should NOT touch 2110 (cash PF account), but DR 2110=%s', coalesce(v_dr_2110, 0));
-  assert coalesce(v_cr_1100, 0) = 0.00,
-    format('A16: cascade should NOT touch 1100 (cash AR account), but CR 1100=%s', coalesce(v_cr_1100, 0));
+  assert exists (select 1 from public.doctor_pf_entries where id = v_pfe_id and voided_at is null),
+    'A16: a payment void voided the pending HMO doctor fee';
+  assert not exists (
+    select 1 from public.journal_entries je
+     where je.description like 'PF pending reversal:%'
+       and je.created_at >= now() - interval '1 minute'
+  ), 'A16: a payment void posted a PF pending reversal';
 
   -- Store for cleanup.
   insert into smoke_125_ids values ('visit_a16_id', v_visit_id);
   insert into smoke_125_ids values ('tr_a16_hmo_void', v_tr_id);
 
-  raise notice 'ASSERTION 16 PASS: HMO payment void cascade uses 2160/1110 (not 2110/1100)';
+  raise notice 'ASSERTION 16 PASS: HMO co-pay void leaves the pending doctor fee alone (0174)';
 end $$;
 
 
@@ -1572,10 +1388,6 @@ begin
     where journal_entry_id = any(v_je_ids);
   update public.doctor_pf_disbursements set journal_entry_id = null
     where journal_entry_id = any(v_je_ids);
-  update public.cogs_send_out_entries set journal_entry_id = null
-    where journal_entry_id = any(v_je_ids);
-  update public.cogs_send_out_trueups set journal_entry_id = null
-    where journal_entry_id = any(v_je_ids);
 
   -- Step 4: delete lines
   delete from public.journal_lines where entry_id = any(v_je_ids);
@@ -1591,21 +1403,7 @@ end $$;
 
 do $$
 begin
-  -- Subledger tables: doctor_pf_entries, cogs_send_out_entries, cogs_send_out_trueups
-  -- Entries reference trueups (FK), so clear trueup_id references first.
-  update public.cogs_send_out_entries set trueup_id = null, trued_up_at = null
-    where test_request_id in (
-      select val from smoke_125_ids
-      where key in ('tr_sendout_cost','tr_sendout_null'));
-
-  delete from public.cogs_send_out_trueups
-    where id in (select val from smoke_125_ids where key in ('trueup_a11_id','trueup_a12_id'));
-
-  delete from public.cogs_send_out_entries
-    where test_request_id in (
-      select val from smoke_125_ids
-      where key in ('tr_sendout_cost','tr_sendout_null'));
-
+  -- Subledger tables: doctor_pf_entries (the send-out subledger was dropped by 0166).
   -- doctor_pf_entries: clear disbursement_id FK before deleting disbursements
   update public.doctor_pf_entries set disbursement_id = null
     where disbursement_id in (

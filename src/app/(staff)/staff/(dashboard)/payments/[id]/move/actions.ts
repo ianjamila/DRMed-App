@@ -8,7 +8,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { translatePgError } from "@/lib/accounting/pg-errors";
-import { paymentEditability } from "@/lib/visits/payment-edit";
+import { CLOSED_MONTH_MESSAGE, paymentEditability, paymentSnapshot } from "@/lib/visits/payment-edit";
 
 // Same role pair as Edit and Delete (payments/[id]/{edit,void}/actions.ts).
 function canMovePayment(role: string): boolean {
@@ -125,8 +125,16 @@ export async function movePaymentAction(input: {
     p_reason: d.reason,
     p_actor_id: session.user_id,
     p_visit_id: d.target_visit_id,
+    // Refused under the row lock if anything changed since the read above, so
+    // a reference fix saved in between is never copied over (0174).
+    p_expected: paymentSnapshot(before),
   });
-  if (rpcErr) return { ok: false, error: translatePgError(rpcErr) };
+  if (rpcErr) {
+    return {
+      ok: false,
+      error: rpcErr.code === "P0002" ? CLOSED_MONTH_MESSAGE : translatePgError(rpcErr),
+    };
+  }
 
   const fromVisit = Array.isArray(before.visits) ? before.visits[0] : before.visits;
   const h = await headers();

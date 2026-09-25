@@ -9,6 +9,11 @@ import { VoidPaymentSchema } from "@/lib/validations/accounting";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { reverseJournalEntryBySource } from "@/lib/accounting/journal-entry";
 
+// "Voided" is not a word staff see (the button says Delete), and the row may
+// equally have been edited or moved (both void it) by someone else. Not
+// exported: a "use server" module may only export async functions.
+const ALREADY_CHANGED = "Someone else already deleted, edited or moved this payment. Refresh the visit.";
+
 export type VoidResult = { ok: true } | { ok: false; error: string };
 
 // A6 (go-live): reception + admin only, by owner decision. RLS already
@@ -48,7 +53,7 @@ export async function voidPaymentAction(
     .maybeSingle();
   if (readErr) return { ok: false, error: translatePgError(readErr) };
   if (!payment) return { ok: false, error: "Payment not found." };
-  if (payment.voided_at) return { ok: false, error: "Payment is already voided." };
+  if (payment.voided_at) return { ok: false, error: ALREADY_CHANGED };
 
   // 2. Flip voided_at FIRST — bridge trigger emits the reversal JE. This is
   // the write that can be refused: `trg_payments_block_after_close_iu`
@@ -60,7 +65,7 @@ export async function voidPaymentAction(
   // update failed — leaving the two accounts reversed while the payment
   // still stood, with the admin seeing only "day is closed". Voiding first
   // means nothing downstream is mutated until this write has succeeded.
-  const { error: voidErr } = await admin
+  const { data: voidedRows, error: voidErr } = await admin
     .from("payments")
     .update({
       voided_at: new Date().toISOString(),
@@ -68,8 +73,19 @@ export async function voidPaymentAction(
       void_reason: parsed.data.reason,
     })
     .eq("id", paymentId)
-    .is("voided_at", null);  // idempotency: second concurrent void is a no-op
+    .is("voided_at", null) // a second concurrent void matches no row…
+    .select("id");
   if (voidErr) return { ok: false, error: translatePgError(voidErr) };
+  // …and neither does one racing an Edit or Move (correct_payment voided the
+  // row between the read above and this update). Nothing was deleted here, so
+  // report that instead of success, and write no `payment.voided` audit row
+  // for a delete that did not happen.
+  if (!voidedRows || voidedRows.length === 0) {
+    return {
+      ok: false,
+      error: ALREADY_CHANGED,
+    };
+  }
 
   // 3. Reset any gift code that was redeemed against this payment.
   // NOTE: This reset and the void above are two separate DB writes — not

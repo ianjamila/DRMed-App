@@ -30,7 +30,8 @@ src/lib/
 ├── storage/
 │   └── signed-url.ts               ← createStorageSignedUrl — the single service-role choke point for patient downloads
 ├── portal/
-│   └── portal-scoping.test.ts      ← guard test: portal files may import admin.ts only if allowlisted (with a reason)
+│   ├── portal-scoping.test.ts      ← guard test: portal files may import admin.ts only if allowlisted (with a reason)
+│   └── statement-audit.ts          ← auditPatientStatement — statement.viewed (5-min dedupe via audit_log) / statement.printed, actor_type patient
 ├── audit/
 │   └── log.ts                      ← audit() — append-only audit_log writer
 ├── server/
@@ -74,6 +75,8 @@ Patients aren't postgres-authenticated, so there is no Postgres role for them. S
 `set_patient_context()` still exists in the schema but **no app code calls it any more** — don't reintroduce the admin-client-plus-GUC pattern.
 
 **The admin client is allowed in the portal only where RLS cannot help:** Storage signed-URL minting/downloads (`src/lib/storage/signed-url.ts`), `audit_log` reads/writes, pre-auth login, the `appointment_attachments` delete, and recording the patient's download time (`result_note_patient_download`, 0176, service_role only — the download actions pass their admin client to `notePatientDownload`; the portal READS `results.patient_last_downloaded_at` / `amended_at` through the patient client for the "Result updated" chip). `src/lib/portal/portal-scoping.test.ts` fails the build-time test suite if any other portal file imports `admin.ts` — add to its `ADMIN_ALLOWLIST` with a justifying comment only when RLS genuinely can't express the access.
+
+**Portal statement of account** (`/portal/visits/[id]/statement`): `fetchStatement(createPatientClient(...), id)` — the SAME loader the staff page uses, run under the patient client, so `visits` / `test_requests` / `payments: patient self select` RLS scopes it (another patient's visit id → null → 404; the page also compares `data.patient.id` as defense in depth). It renders the shared `StatementSheet` (no PIN). **Email it to me** (`…/statement/email-action.ts`, in REQUIRE_PATIENT_CLIENT) loads through the patient client and calls `sendStatementEmail` (lib, service-role for the 0177 claim + audit) with a patient actor — only ever to the patient's own on-file email; audit `statement.emailed` actor_type patient. **0175** adds SELECT-only anon policies (`services` / `hmo_providers` / `discount_types`: "patient billed") matching only rows the caller's OWN visits reference — without them a retired service printed blank on the patient's copy (anon sees only `is_active` catalog rows) and `discount_types` was staff-only. No claim → nothing new visible; `smoke:print`'s `portal-rls-direct` proves both halves against PostgREST. Audits go through `src/lib/portal/statement-audit.ts`, the one service-role use: the view dedupe reads `audit_log`, which patients cannot read. Both portal files are in the scoping test's `REQUIRE_PATIENT_CLIENT`; `smoke:print` signs in as a seeded patient (DRM-ID + bcrypt PIN + a `patient_consents` grant) and asserts another patient's visit 404s. **Local dev needs `SUPABASE_JWT_SECRET`** (neither env file sets it): start the dev server with it exported from `supabase status -o env` (`JWT_SECRET`) or every portal page throws.
 
 Portal policies worth knowing (0114): `test_requests: patient own visits` (own-visit rows, including in-progress — so "still in progress" cards render), `results` / `result_test_requests: patient released only` (result *content* stays release-gated), `appointments: patient self`, `report_groups: public read active`.
 
