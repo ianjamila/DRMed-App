@@ -58,7 +58,10 @@ import { handedBack } from "@/lib/queue/claim-remarks";
 import { fetchClaimEvents } from "@/lib/queue/fetch-claim-events";
 import { HandedBackBadge } from "@/components/staff/claim-remarks-list";
 import { PrintResultButton } from "@/components/staff/print-result-button";
-import { resultPdfStates } from "@/lib/results/pdf-availability";
+import { printAllFiles, resultPdfStates } from "@/lib/results/pdf-availability";
+import { fetchPrintSummaries } from "@/lib/results/print-history";
+import type { PrintSummary } from "@/lib/results/print-summary";
+import { PrintedNote } from "@/components/staff/printed-note";
 
 // Share the existing header lookup with metadata within this request.
 const loadDetail = cache(async (id: string) => {
@@ -210,11 +213,39 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
   // result" / "View PDF" without each row firing its own join.
   const allTestIds = (tests ?? []).map((t) => t.id);
   const pdfStates = await resultPdfStates(supabase, allTestIds);
+  // "Printed … by …" under each Print button — per FILE (a shared chemistry
+  // PDF printed from any member counts for all of them), read off the audit
+  // log as a derived fact only.
+  const printSummaries = await fetchPrintSummaries(
+    [...pdfStates.values()].map((s) => ({ resultId: s.resultId, version: s.version })),
+    { patientId: patient.id },
+  );
+  const printedFor = (testId: string) => {
+    const state = pdfStates.get(testId);
+    return state ? printSummaries.get(state.resultId) : undefined;
+  };
+  // "Print all released results": the distinct released reports this role
+  // may print, combined by visits/[id]/results-pdf. Offered from two up —
+  // one report is just its line's own Print button.
+  const printAllCount = printAllFiles(
+    session.role,
+    (tests ?? []).map((t) => {
+      const svc = Array.isArray(t.services) ? t.services[0] : t.services;
+      return {
+        id: t.id,
+        status: t.status,
+        section: svc?.section ?? null,
+        kind: svc?.kind ?? null,
+        deleted: t.deleted_at !== null,
+      };
+    }),
+    pdfStates,
+  ).length;
 
   // "handed back" chip: tests that were unclaimed at least once. Read through
   // queue_claim_remarks (0160) on the signed-in client — it answers only a
   // lab role (admin/pathologist/medtech/xray); reception gets nothing, and
-  // reception sees no test rows on this page anyway.
+  // the chip is a bench detail reception has no use for.
   const claimEvents = await fetchClaimEvents(supabase, allTestIds);
   const handedBackFor = (id: string) => handedBack(claimEvents.get(id) ?? []);
 
@@ -702,9 +733,17 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
 
       <SelectionProvider>
       <section className="mt-8">
-        <h2 className="mb-3 font-heading text-xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Tests
-        </h2>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="font-heading text-xl font-extrabold text-[color:var(--color-brand-navy)]">
+            Tests
+          </h2>
+          {!visitDeleted && printAllCount >= 2 ? (
+            <PrintResultButton
+              src={`/staff/visits/${visit.id}/results-pdf`}
+              label={`Print all released results (${printAllCount} reports)`}
+            />
+          ) : null}
+        </div>
 
         {packageHeaders.length > 0 ? (
           <>
@@ -919,6 +958,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                                       consentOnFile={consent.current}
                                       gateRequired={gateRequired}
                                       hasPdf={pdfStates.has(c.id)}
+                                      printed={printedFor(c.id)}
                                       canViewPdf={canViewResultPdf(session.role, {
                                         section: rowSection(c),
                                         status: c.status,
@@ -1131,6 +1171,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                         consentOnFile={consent.current}
                         gateRequired={gateRequired}
                         hasPdf={pdfStates.has(t.id)}
+                        printed={printedFor(t.id)}
                         canViewPdf={canViewResultPdf(session.role, {
                           section: rowSection(t),
                           status: t.status,
@@ -1493,6 +1534,9 @@ interface TestActionProps {
   consentOnFile: boolean;
   gateRequired: boolean;
   hasPdf?: boolean;
+  // Staff prints of this line's file (result.printed_staff), for the
+  // "Printed …" note.
+  printed?: PrintSummary;
   // May this role open the result PDF (canViewResultPdf)? True wherever
   // canAct is, and ALSO for reception on a released lab line — the one door
   // into a result reception has, so the counter can print the patient's copy.
@@ -1520,6 +1564,7 @@ function TestAction({
   consentOnFile,
   gateRequired,
   hasPdf,
+  printed,
   canViewPdf,
   kind,
   viewedCount,
@@ -1557,6 +1602,7 @@ function TestAction({
           testRequestId={testRequestId}
           sizeCls={sizeCls}
           size={size}
+          printed={printed}
         />
       );
     }
@@ -1680,6 +1726,7 @@ function TestAction({
             testRequestId={testRequestId}
             sizeCls={sizeCls}
             size={size}
+            printed={printed}
           />
         ) : (
           <span className={`${sizeCls} font-semibold text-emerald-700`}>
@@ -1711,17 +1758,20 @@ function TestAction({
 }
 
 // A released line with a file on record: the status word, then the two ways to
-// hand it over — Print (the counter's paper copy, audited as a print) and
-// View PDF (on screen, and the fallback where a browser won't print from a
-// frame). Shared by the lab's released cell and reception's read-only one.
+// hand it over — Print (the counter's paper copy, audited as a print; it
+// opens in a tab to print from the viewer) and View PDF (on screen only) —
+// then who last printed it. Shared by the lab's released cell and
+// reception's read-only one.
 function ReleasedPdfActions({
   testRequestId,
   sizeCls,
   size,
+  printed,
 }: {
   testRequestId: string;
   sizeCls: string;
   size: "default" | "compact";
+  printed: PrintSummary | undefined;
 }) {
   return (
     <div className="flex flex-col items-end gap-1">
@@ -1737,6 +1787,7 @@ function ReleasedPdfActions({
       >
         View PDF →
       </a>
+      <PrintedNote summary={printed} size={size} />
     </div>
   );
 }

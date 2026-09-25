@@ -49,6 +49,9 @@ import { LAB_QUEUE_GATE_VISITS_OR } from "@/lib/visits/lab-gate";
 import { DOCTOR_KINDS_PG_LIST } from "@/lib/visits/classification";
 import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
 import { PrintResultButton } from "@/components/staff/print-result-button";
+import { PrintedNote } from "@/components/staff/printed-note";
+import { fetchPrintSummaries } from "@/lib/results/print-history";
+import type { PrintSummary } from "@/lib/results/print-summary";
 import {
   reportCardKey,
   resultPdfStates,
@@ -384,6 +387,16 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   const pdfStates = releasedTab
     ? await resultPdfStates(supabase, pageTestIds)
     : new Map<string, PdfState>();
+  // "Printed … by …" under each Print button, so the counter can see a copy
+  // already went out — per FILE, which is what a card prints (on this tab a
+  // card never spans two files: reportCardKey).
+  const printSummaries = releasedTab
+    ? await fetchPrintSummaries([...pdfStates.values()].map((s) => ({ resultId: s.resultId, version: s.version })))
+    : new Map<string, PrintSummary>();
+  const printedFor = (testId: string | null) => {
+    const state = testId ? pdfStates.get(testId) : undefined;
+    return state ? printSummaries.get(state.resultId) : undefined;
+  };
 
   // -------------------------------------------------------------------------
   // Fold chemistry rows by (visit_id, report_group_id) — and, on Released
@@ -937,6 +950,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                             printTestId={card.printTestId}
                             hasFile={card.hasFile}
                             explain={receptionView}
+                            printed={printedFor(card.testRequestId)}
                           />
                         ) : null}
                         {receptionView ? null : card.status === "requested" &&
@@ -1043,6 +1057,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                           printTestId={card.printTestId}
                           hasFile={card.hasFile}
                           explain={receptionView}
+                          printed={printedFor(card.printTestId)}
                         />
                       ) : null}
                       {receptionView ? null : (
@@ -1169,10 +1184,12 @@ function ReleasedPrintActions({
   printTestId,
   hasFile,
   explain,
+  printed,
 }: {
   printTestId: string | null;
   hasFile: boolean;
   explain: boolean;
+  printed: PrintSummary | undefined;
 }) {
   if (!printTestId) {
     if (!explain) return null;
@@ -1197,6 +1214,7 @@ function ReleasedPrintActions({
       >
         View PDF →
       </a>
+      <PrintedNote summary={printed} />
     </div>
   );
 }

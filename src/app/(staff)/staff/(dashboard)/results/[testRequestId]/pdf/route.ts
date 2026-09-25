@@ -143,7 +143,9 @@ export async function GET(
     action: printing ? "result.printed_staff" : "result.viewed_staff",
     resource_type: "test_request",
     resource_id: testRequestId,
-    metadata: { result_id: resolved.id, role: staff.role },
+    // amendment_count: which version of the file went out, so the
+    // "Printed …" note resets when an amended PDF replaces it.
+    metadata: { result_id: resolved.id, amendment_count: resolved.amendment_count, role: staff.role },
   });
 
   const bytes = new Uint8Array(await blob.arrayBuffer());

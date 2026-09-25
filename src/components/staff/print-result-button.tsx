@@ -1,13 +1,26 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 
-interface Props {
-  // Any test_request on the result. A consolidated chemistry report is one
-  // PDF shared by every test in the panel, so one member's id prints it all.
-  testRequestId: string;
+type Props = (
+  | {
+      // Any test_request on the result. A consolidated chemistry report is
+      // one PDF shared by every test in the panel, so one member's id prints
+      // it all.
+      testRequestId: string;
+      src?: never;
+    }
+  | {
+      // Another staff PDF route that audits `?print=1` the same way — the
+      // visit's combined "Print all released results" file.
+      src: string;
+      testRequestId?: never;
+    }
+) & {
+  label?: string;
   size?: "default" | "compact";
-}
+};
 
 /**
  * Prints a released result PDF straight from the list or the visit page. It
@@ -30,7 +43,13 @@ interface Props {
  * a tab. If the tab is blocked anyway, the button offers an "Open the PDF to
  * print" link — a fresh click, which no blocker refuses.
  */
-export function PrintResultButton({ testRequestId, size = "default" }: Props) {
+export function PrintResultButton({
+  testRequestId,
+  src,
+  label = "Print result",
+  size = "default",
+}: Props) {
+  const router = useRouter();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The fallback link's target, when the reserved tab was blocked.
@@ -43,7 +62,8 @@ export function PrintResultButton({ testRequestId, size = "default" }: Props) {
     // Must happen before the first await — see the component comment.
     const tab = window.open("", "_blank");
     try {
-      const res = await fetch(`/staff/results/${testRequestId}/pdf?print=1`, {
+      const pdfUrl = src ?? `/staff/results/${testRequestId}/pdf`;
+      const res = await fetch(`${pdfUrl}?print=1`, {
         credentials: "same-origin",
         cache: "no-store",
       });
@@ -63,6 +83,9 @@ export function PrintResultButton({ testRequestId, size = "default" }: Props) {
         // The blocker ate the reserved tab: hand over a real link instead.
         setOpenUrl(url);
       }
+      // The print is audited by now: re-read the page so its "Printed …"
+      // note shows this one.
+      router.refresh();
     } catch {
       tab?.close();
       setError("Couldn't load the result. Check the connection and try again.");
@@ -94,7 +117,7 @@ export function PrintResultButton({ testRequestId, size = "default" }: Props) {
           <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
           <path d="M6 14h12v8H6z" />
         </svg>
-        {pending ? "Preparing…" : "Print result"}
+        {pending ? "Preparing…" : label}
       </button>
       {openUrl ? (
         <a

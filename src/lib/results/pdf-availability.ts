@@ -1,16 +1,20 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
+import type { StaffSession } from "@/lib/auth/require-staff";
+import { canViewResultPdf } from "@/lib/visits/line-visibility";
 import { allLinksReleased } from "./release-eligibility";
 
 // PostgREST caps an `in (…)` list only by URL length; 200 uuids stay well
 // inside it, the same chunk the claim-remarks reader uses.
 const CHUNK = 200;
 
+type LinkResult = { storage_path: string | null; amendment_count?: number | null };
+
 type LinkRow = {
   test_request_id: string;
   result_id: string;
   created_at: string;
-  results: { storage_path: string | null } | { storage_path: string | null }[] | null;
+  results: LinkResult | LinkResult[] | null;
 };
 
 type SiblingRow = {
@@ -24,6 +28,10 @@ export type PdfState = {
   // also end up split over several files (legacy per-test results, or a test
   // finalised after the first report) — see reportCardKey.
   resultId: string;
+  // results.amendment_count of that file. Both amend actions bump it when
+  // they swap in a corrected PDF (same result id, new file), so it tells a
+  // print of THIS version from a print of the one it replaced.
+  version: number;
   // Every test linked to this PDF is released. A consolidated chemistry
   // report is ONE file shared by the whole panel and release is per line, so
   // this is what decides whether reception may print it (canViewResultPdf's
@@ -60,7 +68,7 @@ export async function resultPdfStates(
   for (let i = 0; i < ids.length; i += CHUNK) {
     const { data } = await supabase
       .from("result_test_requests")
-      .select("test_request_id, result_id, created_at, results!inner ( storage_path )")
+      .select("test_request_id, result_id, created_at, results!inner ( storage_path, amendment_count )")
       .in("test_request_id", ids.slice(i, i + CHUNK));
     if (data) links.push(...(data as LinkRow[]));
   }
@@ -75,7 +83,12 @@ export async function resultPdfStates(
       .in("result_id", resultIds.slice(i, i + CHUNK));
     if (data) siblings.push(...(data as SiblingRow[]));
   }
-  return pdfStates(newest, siblings);
+  const versions = new Map<string, number>();
+  for (const row of links) {
+    const r = Array.isArray(row.results) ? row.results[0] : row.results;
+    versions.set(row.result_id, r?.amendment_count ?? 0);
+  }
+  return pdfStates(newest, siblings, versions);
 }
 
 /**
@@ -102,6 +115,7 @@ export function newestLinkWithPdf(rows: readonly LinkRow[]): Map<string, string>
 export function pdfStates(
   newest: ReadonlyMap<string, string>,
   siblings: readonly SiblingRow[],
+  versions: ReadonlyMap<string, number> = new Map(),
 ): Map<string, PdfState> {
   const statusesByResult = new Map<string, string[]>();
   for (const row of siblings) {
@@ -115,6 +129,7 @@ export function pdfStates(
     // No sibling rows read back → allLinksReleased([]) is false: fail closed.
     out.set(testId, {
       resultId,
+      version: versions.get(resultId) ?? 0,
       reportReleased: allLinksReleased(statusesByResult.get(resultId) ?? []),
     });
   }
@@ -138,4 +153,45 @@ export function reportCardKey(
 ): string {
   const base = `${visitId}|${reportGroupId}`;
   return splitByFile ? `${base}|${resultId ?? "no-file"}` : base;
+}
+
+export type PrintAllLine = {
+  id: string;
+  section: string | null;
+  status: string;
+  kind: string | null;
+  // Queue-deleted lines (0125) never print.
+  deleted: boolean;
+};
+
+export type PrintAllFile = {
+  resultId: string;
+  // This visit's lines on that file, in line order — named in the file's
+  // print audit row (metadata.test_request_ids).
+  testIds: string[];
+};
+
+/**
+ * Pure: the distinct files "Print all released results" combines for a
+ * visit, in the order their first line appears. A file qualifies only when
+ * the line is released, the WHOLE file is released (a shared chemistry PDF
+ * with an unreleased or withdrawn member stays out), and the role may open
+ * it (canViewResultPdf). Released-only for every role, lab roles included:
+ * this is the patient's handout, never a bench review.
+ */
+export function printAllFiles(
+  role: StaffSession["role"],
+  lines: readonly PrintAllLine[],
+  states: ReadonlyMap<string, PdfState>,
+): PrintAllFile[] {
+  const files = new Map<string, PrintAllFile>();
+  for (const line of lines) {
+    const state = states.get(line.id);
+    if (line.deleted || line.status !== "released" || !state?.reportReleased) continue;
+    if (!canViewResultPdf(role, { ...line, reportReleased: true })) continue;
+    const file = files.get(state.resultId);
+    if (file) file.testIds.push(line.id);
+    else files.set(state.resultId, { resultId: state.resultId, testIds: [line.id] });
+  }
+  return [...files.values()];
 }

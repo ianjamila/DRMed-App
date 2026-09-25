@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { newestLinkWithPdf, pdfStates, reportCardKey } from "./pdf-availability";
+import {
+  newestLinkWithPdf,
+  pdfStates,
+  printAllFiles,
+  reportCardKey,
+  type PdfState,
+} from "./pdf-availability";
 
 const link = (id: string, result: string, at: string, path: string | null) => ({
   test_request_id: id,
@@ -53,6 +59,7 @@ describe("pdfStates", () => {
   it("marks a single-test result released when its one line is", () => {
     expect(pdfStates(new Map([["a", "r1"]]), [sib("r1", "released")]).get("a")).toEqual({
       resultId: "r1",
+      version: 0,
       reportReleased: true,
     });
   });
@@ -65,6 +72,12 @@ describe("pdfStates", () => {
     ]);
     expect(states.get("fbs")?.reportReleased).toBe(false);
     expect(states.get("crea")?.reportReleased).toBe(false);
+  });
+
+  it("carries the file's amendment version, 0 when unknown", () => {
+    const states = pdfStates(new Map([["a", "r1"], ["b", "r2"]]), [sib("r1", "released"), sib("r2", "released")], new Map([["r1", 2]]));
+    expect(states.get("a")?.version).toBe(2);
+    expect(states.get("b")?.version).toBe(0);
   });
 
   it("fails closed when no sibling statuses were read", () => {
@@ -85,5 +98,55 @@ describe("reportCardKey", () => {
   it("keeps tests with no file together, apart from any file", () => {
     expect(reportCardKey("v1", "chem", undefined, true)).toBe(reportCardKey("v1", "chem", undefined, true));
     expect(reportCardKey("v1", "chem", undefined, true)).not.toBe(reportCardKey("v1", "chem", "r1", true));
+  });
+});
+
+describe("printAllFiles", () => {
+  const line = (id: string, over: Partial<{ section: string | null; status: string; kind: string | null; deleted: boolean }> = {}) => ({
+    id,
+    section: "chemistry",
+    status: "released",
+    kind: "lab_test",
+    deleted: false,
+    ...over,
+  });
+  const state = (resultId: string, reportReleased = true): PdfState => ({ resultId, version: 0, reportReleased });
+
+  it("combines each released file once, in line order, with its lines", () => {
+    const files = printAllFiles(
+      "reception",
+      [line("fbs"), line("cbc", { section: "hematology" }), line("crea")],
+      new Map([["fbs", state("chem")], ["cbc", state("cbc")], ["crea", state("chem")]]),
+    );
+    expect(files).toEqual([
+      { resultId: "chem", testIds: ["fbs", "crea"] },
+      { resultId: "cbc", testIds: ["cbc"] },
+    ]);
+  });
+
+  it("leaves out a shared file with an unreleased member, for lab roles too", () => {
+    const states = new Map([["fbs", state("chem", false)]]);
+    expect(printAllFiles("reception", [line("fbs")], states)).toEqual([]);
+    expect(printAllFiles("admin", [line("fbs")], states)).toEqual([]);
+  });
+
+  it("skips unreleased, deleted, fileless and doctor lines", () => {
+    const files = printAllFiles(
+      "reception",
+      [
+        line("bench", { status: "ready_for_release" }),
+        line("gone", { deleted: true }),
+        line("nofile"),
+        line("consult", { section: null, kind: "doctor_consultation" }),
+      ],
+      new Map([["bench", state("r1")], ["gone", state("r2")], ["consult", state("r3")]]),
+    );
+    expect(files).toEqual([]);
+  });
+
+  it("keeps a medtech to the sections it may open", () => {
+    const states = new Map([["xr", state("r1")]]);
+    expect(printAllFiles("medtech", [line("xr", { section: "imaging_xray" })], states)).toEqual([]);
+    expect(printAllFiles("admin", [line("xr", { section: "imaging_xray" })], states)).toHaveLength(1);
   });
 });
