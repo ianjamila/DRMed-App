@@ -8,7 +8,7 @@
 
 **Tech Stack:** Postgres (plpgsql, Supabase migrations), Next.js 16 server actions, vitest, `supabase/tests/*.sql` smokes (local stack only; the race smoke runs as `supabase_admin` with `dblink`), real-Chrome `smoke:print`.
 
-**Spec:** `docs/superpowers/specs/2026-09-25-waived-balance-gl-design.md` (rules 1–7). Codex plan review 2026-09-25 (session 01a0d7f8-e53e-7742-8bcf-79c2ea654cca) — 11 findings, all folded in and marked `[CR-n]`. Claimed numbers: migration **0183** (0182 = `feat/staff-view-as-role`, another session), P-codes **P0069** (visits guard), **P0070** (money or lines on a waived visit), **P0071** (`waive_visit_balance` refusals, message passed through).
+**Spec:** `docs/superpowers/specs/2026-09-25-waived-balance-gl-design.md` (rules 1–7). Codex plan review 2026-09-25 (session 01a0d7f8-e53e-7742-8bcf-79c2ea654cca) — 11 findings, all folded in and marked `[CR-n]`; the one recheck (same session) retained six, folded in as `[CR-12]` provenance frozen on lines and payments, `[CR-13]` no reactivating a cancelled line, `[CR-14]` `paid_php` frozen + reconciled at waive, `[CR-15]` P0004 sorts before P0070 on a posted payment, `[CR-16]` strict replay gate, `[CR-17]` race-smoke cleanup + package-cascade deadlock case, plus `correct_payment` locking both visits in uuid order. Claimed numbers: migration **0183** (0182 = `feat/staff-view-as-role`, another session), P-codes **P0069** (visits guard), **P0070** (money or lines on a waived visit), **P0071** (`waive_visit_balance` refusals, message passed through).
 
 **Worktree:** `~/Claude/DRMed/.worktrees/waived-balance-gl`, branch `feat/waived-balance-gl` off `origin/main` 175f53ee (#233 merged). `.env.local`, `.env.development.local` and `supabase/.temp/{project-ref,linked-project.json,pooler-url}` are copied in.
 
@@ -22,10 +22,10 @@ Every path that can change a waived visit's books takes row locks in this order,
 
 1. `waive_visit_balance`: the `visits` row `FOR UPDATE`, then **every live `test_requests` row of the visit `FOR UPDATE` in `id` order**, then reads payments (no payment lock). Only after both locks does it read line statuses, so a concurrent undo/cancel/release that already holds a line lock finishes first and the waiver sees the final status.
 2. Undo-release, cancel and release are `UPDATE test_requests … WHERE id = …` statements: they hold that line's row lock for the transaction; their AFTER triggers read/write the allocation for that same line, which the waiver only touches while holding the line lock. The package cascade inside `fn_undo_release_bridge` additionally locks the header row.
-3. Payments: `guard_payment_on_waived_visit` locks the `visits` row (old and new visit, in uuid order) before deciding; `recalc_visit_payment` locks the visit row; `correct_payment` locks payment → visit. The waiver never locks a payment, so there is no cycle on that side.
-4. The one cycle that remains possible is waiver (visit → lines in id order) against an undo cascade (component row → header row) when the header's id sorts below the component's. Postgres detects it and aborts one side with SQLSTATE `40P01`; `translatePgError` renders it "Something else changed this visit at the same moment. Try again." and the aborted side writes nothing. Accepted: rare, detected, safe.
+3. Payments: `guard_payment_on_waived_visit` locks the `visits` row (old and new visit, in uuid order) before deciding; `recalc_visit_payment` locks the visit row; `correct_payment` locks payment → then BOTH visits (source and target) in uuid order, the same order as the guard, so two opposite-direction moves cannot cycle. The waiver never locks a payment, so there is no cycle on that side.
+4. The one cycle that remains possible is waiver (visit → lines in id order) against an undo cascade (component row → header row) when the header's id sorts below the component's. Postgres detects it and aborts one side with SQLSTATE `40P01`; `translatePgError` renders it "Something else changed this visit at the same moment. Try again." and the aborted side writes nothing. Accepted: rare, detected, safe — and PROVEN by Task 7 scenario 5, which forces the cycle with explicit ids and checks that exactly one side aborts and the survivor's books are consistent.  `[CR-17]`
 
-Task 7 proves four orders: payment-then-waive, waive-then-payment, undo-then-waive, waive-then-undo.
+Task 7 proves five orders: payment-then-waive, waive-then-payment, undo-then-waive, waive-then-undo, and the forced package-cascade deadlock.
 
 ## File map
 
@@ -313,9 +313,13 @@ create policy "visit_waiver_allocations: reception/admin read"
 -- ---- P0069: the visits guard --------------------------------------------------
 -- INSERT is guarded too: "visits: staff full" (0151) is FOR ALL, so a staff JWT
 -- could insert a row already 'waived'.  [CR-2]  Once waived, the fields the
--- waiver was computed from (total, provenance, HMO) and the waiver's own
--- record are frozen; recalc_visit_payment only writes paid_php /
--- payment_status (preserving 'waived'), so it is unaffected.  [CR-4]
+-- waiver was computed from (total, paid, provenance, HMO) and the waiver's own
+-- record are frozen.  [CR-4]  paid_php is the cached live-payment sum that
+-- visitMoneySummary derives the displayed waiver from (statement.ts), so a
+-- direct write would make the lists disagree with the allocation; it may only
+-- move inside the RPC (which reconciles it to the real payment sum) or during
+-- correct_payment's equal-amount replacement (recalc_visit_payment goes up by
+-- the replacement and back down by the void, under app.waived_visit_edit).  [CR-14]
 create or replace function public.guard_visit_waived_transition()
 returns trigger
 language plpgsql
@@ -324,6 +328,7 @@ set search_path = public
 as $$
 declare
   v_inside boolean := coalesce(current_setting('app.waive_visit', true), '') = 'on';
+  v_edit   boolean := coalesce(current_setting('app.waived_visit_edit', true), '') = 'on';
 begin
   if tg_op = 'INSERT' then
     if new.payment_status = 'waived' and not v_inside then
@@ -352,13 +357,19 @@ begin
     raise exception 'This visit''s balance was waived, so its total, billing and waiver record are fixed.'
       using errcode = 'P0069';
   end if;
+  -- [CR-14] paid_php: only the RPC (reconcile) or the equal-amount edit may move it.
+  if old.payment_status = 'waived' and not v_inside and not v_edit
+     and new.paid_php is distinct from old.paid_php then
+    raise exception 'This visit''s balance was waived, so its paid amount is fixed.'
+      using errcode = 'P0069';
+  end if;
   return new;
 end;
 $$;
 
 drop trigger if exists trg_visits_waived_transition_guard on public.visits;
 create trigger trg_visits_waived_transition_guard
-  before insert or update of payment_status, total_php, hmo_provider_id, legacy_import_run_id,
+  before insert or update of payment_status, total_php, paid_php, hmo_provider_id, legacy_import_run_id,
                             waived_php, waived_at, waived_by, waive_reason
   on public.visits
   for each row execute function public.guard_visit_waived_transition();
@@ -368,7 +379,14 @@ create trigger trg_visits_waived_transition_guard
 -- — payments_block_post_je_edits only covers rows WITH a posted JE; imported
 -- rows have none) and a hard DELETE (bridge_payment_delete reverses the JE)
 -- all move money. Both the old and the new visit are checked, locked in uuid
--- order.  [CR-3]
+-- order.  [CR-3]  Provenance is frozen too: flipping legacy_import_run_id on a
+-- payment changes what the waiver's provenance rule saw.  [CR-12]
+-- Trigger order (alphabetical among BEFORE triggers): on a payment WITH a
+-- posted JE, trg_payments_block_post_je_edits raises P0004 first for
+-- amount/method/visit/received_at — that is still a refusal; P0070 is what
+-- an imported (JE-less) payment gets. On DELETE, trg_bridge_payment_delete
+-- runs first and reverses the JE, then this guard raises and the whole
+-- statement rolls back — the reversal never commits.  [CR-15]
 create or replace function public.guard_payment_on_waived_visit()
 returns trigger
 language plpgsql
@@ -388,6 +406,7 @@ begin
       or new.method      is distinct from old.method
       or new.visit_id    is distinct from old.visit_id
       or new.received_at is distinct from old.received_at
+      or new.legacy_import_run_id is distinct from old.legacy_import_run_id
     ) then
       return new;
     end if;
@@ -421,8 +440,14 @@ create trigger trg_payments_waived_visit_guard
 -- restored line (the 0125 cascade also raises total_php), a reprice, a
 -- reparent or a move to another visit would leave a line with no share that
 -- still releases at full AR.  [CR-4]  Status changes (release / undo / cancel)
--- stay allowed — the bridges handle the share. Soft-delete is already
--- impossible on a non-unpaid visit (P0042).
+-- of a line the allocation saw stay allowed — the bridges handle the share —
+-- but a line that was CANCELLED at waive time was excluded from the split, so
+-- bringing it back (cancelled → anything else) would release at full AR with
+-- no share: refused.  [CR-13]  Provenance is frozen: marking a live line
+-- imported would skip its release JE (0159's legacy early return) and strand
+-- the allocation; clearing an imported line's provenance would post full AR
+-- with no allocation.  [CR-12]  Soft-delete is already impossible on a
+-- non-unpaid visit (P0042).
 create or replace function public.guard_test_request_on_waived_visit()
 returns trigger
 language plpgsql
@@ -438,6 +463,8 @@ begin
   if tg_op = 'UPDATE' then
     if not (
          (old.deleted_at is not null and new.deleted_at is null)   -- restore
+      or (old.status = 'cancelled' and new.status is distinct from 'cancelled')  -- reactivate [CR-13]
+      or new.legacy_import_run_id is distinct from old.legacy_import_run_id       -- provenance [CR-12]
       or new.final_price_php     is distinct from old.final_price_php
       or new.base_price_php      is distinct from old.base_price_php
       or new.discount_amount_php is distinct from old.discount_amount_php
@@ -458,7 +485,7 @@ begin
   foreach v_id in array v_ids loop
     select payment_status into v_status from public.visits where id = v_id for update;
     if v_status = 'waived' and not v_inside then
-      raise exception 'This visit''s balance was waived, so its lines are fixed: nothing can be added, restored, repriced or moved.'
+      raise exception 'This visit''s balance was waived, so its lines are fixed: nothing can be added, restored, reactivated, repriced or moved.'
         using errcode = 'P0070';
     end if;
   end loop;
@@ -468,8 +495,9 @@ $$;
 
 drop trigger if exists trg_test_requests_waived_visit_guard on public.test_requests;
 create trigger trg_test_requests_waived_visit_guard
-  before insert or update of deleted_at, final_price_php, base_price_php, discount_amount_php,
-                            clinic_fee_php, doctor_pf_php, parent_id, service_id, visit_id, is_package_header
+  before insert or update of deleted_at, status, legacy_import_run_id, final_price_php, base_price_php,
+                            discount_amount_php, clinic_fee_php, doctor_pf_php, parent_id, service_id,
+                            visit_id, is_package_header
   on public.test_requests
   for each row execute function public.guard_test_request_on_waived_visit();
 
@@ -760,6 +788,7 @@ begin
   perform set_config('app.waive_visit', 'on', true);
   update public.visits
      set payment_status = 'waived',
+         paid_php       = v_paid_c / 100.0,   -- [CR-14] reconcile the cached sum to the real payments
          waived_php     = v_rem_c / 100.0,
          waived_at      = now(),
          waived_by      = p_actor_id,
@@ -870,16 +899,23 @@ grant  execute on function public.bridge_test_request_cancelled() to service_rol
 -- declare block:
 --         v_src_status text;
 --         v_tgt_status text;
+--         r_v          record;
 -- Add this block immediately BEFORE the comment
 -- `-- Reference / notes only: not a money change, edit in place.`:
---         -- 0183: a waived visit's money is fixed. Lock order payment → visit,
---         -- the same as the insert path (guard_payment_on_waived_visit).
---         select payment_status into v_src_status from public.visits where id = v_old.visit_id for update;
---         if v_moving then
---           select payment_status into v_tgt_status from public.visits where id = v_target for update;
---           if v_tgt_status = 'waived' then
---             raise exception 'That visit''s balance was waived, so no payment can be moved onto it.' using errcode = 'P0070';
---           end if;
+--         -- 0183: a waived visit's money is fixed. Lock order payment → visits
+--         -- in uuid order (source and target both), the same order as
+--         -- guard_payment_on_waived_visit, so two opposite-direction moves
+--         -- cannot cycle.
+--         for r_v in
+--           select id, payment_status from public.visits
+--            where id in (v_old.visit_id, coalesce(v_target, v_old.visit_id))
+--            order by id for update
+--         loop
+--           if r_v.id = v_old.visit_id then v_src_status := r_v.payment_status; end if;
+--           if v_moving and r_v.id = v_target then v_tgt_status := r_v.payment_status; end if;
+--         end loop;
+--         if v_moving and v_tgt_status = 'waived' then
+--           raise exception 'That visit''s balance was waived, so no payment can be moved onto it.' using errcode = 'P0070';
 --         end if;
 --         if v_src_status = 'waived' then
 --           if v_moving then
@@ -998,12 +1034,16 @@ describe("migration 0183 — waived balance GL bridge", () => {
     expect(g).toMatch(/current_setting\('app\.waive_visit', true\)/);
     expect(g).toMatch(/cannot be un-waived/);
     expect(g).toMatch(/new\.total_php\s+is distinct from old\.total_php/);
-    expect(sql).toMatch(/before insert or update of payment_status, total_php, hmo_provider_id, legacy_import_run_id,\s*waived_php, waived_at, waived_by, waive_reason\s*on public\.visits/);
+    // [CR-14] paid_php moves only inside the RPC or the equal-amount edit.
+    expect(g).toMatch(/not v_inside and not v_edit\s+and new\.paid_php is distinct from old\.paid_php/);
+    expect(g).toMatch(/current_setting\('app\.waived_visit_edit', true\)/);
+    expect(sql).toMatch(/before insert or update of payment_status, total_php, paid_php, hmo_provider_id, legacy_import_run_id,\s*waived_php, waived_at, waived_by, waive_reason\s*on public\.visits/);
   });
 
-  it("the payment guard covers insert, void, money-bearing update and hard delete, both visits, visit lock first", () => {
+  it("the payment guard covers insert, void, money-bearing update, provenance and hard delete, both visits, visit lock first", () => {
     const g = fn("guard_payment_on_waived_visit");
     expect(g).toMatch(/new\.amount_php\s+is distinct from old\.amount_php/);
+    expect(g).toMatch(/new\.legacy_import_run_id is distinct from old\.legacy_import_run_id/);
     expect(g).toMatch(/unnest\(array\[old\.visit_id, new\.visit_id\]\)/);
     expect(g).toMatch(/tg_op = 'DELETE'/);
     expect(g).toMatch(/from public\.visits where id = v_id for update/);
@@ -1012,12 +1052,14 @@ describe("migration 0183 — waived balance GL bridge", () => {
     expect(sql).toMatch(/before insert or update or delete on public\.payments/);
   });
 
-  it("the line guard freezes inserts, restores, reprices, reparents and moves on a waived visit", () => {
+  it("the line guard freezes inserts, restores, reactivations, provenance, reprices, reparents and moves on a waived visit", () => {
     const g = fn("guard_test_request_on_waived_visit");
     expect(g).toMatch(/old\.deleted_at is not null and new\.deleted_at is null/);
+    expect(g).toMatch(/old\.status = 'cancelled' and new\.status is distinct from 'cancelled'/); // [CR-13]
+    expect(g).toMatch(/new\.legacy_import_run_id is distinct from old\.legacy_import_run_id/); // [CR-12]
     expect(g).toMatch(/new\.final_price_php\s+is distinct from old\.final_price_php/);
     expect(g).toMatch(/errcode = 'P0070'/);
-    expect(sql).toMatch(/before insert or update of deleted_at, final_price_php, base_price_php, discount_amount_php,\s*clinic_fee_php, doctor_pf_php, parent_id, service_id, visit_id, is_package_header\s*on public\.test_requests/);
+    expect(sql).toMatch(/before insert or update of deleted_at, status, legacy_import_run_id, final_price_php, base_price_php,\s*discount_amount_php, clinic_fee_php, doctor_pf_php, parent_id, service_id,\s*visit_id, is_package_header\s*on public\.test_requests/);
   });
 
   it("waive_visit_balance: visit lock then line locks, admin only, provenance, exact reconciliation, gift codes in flight", () => {
@@ -1035,6 +1077,7 @@ describe("migration 0183 — waived balance GL bridge", () => {
     expect(w).toMatch(/when s\.kind in \('doctor_consultation', 'doctor_procedure'\) then '4920' else '4910'/);
     expect(w).toMatch(/where t\.status = 'released'[\s\S]*?perform public\.waiver_post_allocation\(r\.id, p_actor_id\)/);
     expect(w).toMatch(/set_config\('app\.waive_visit', 'on', true\)/);
+    expect(w).toMatch(/paid_php\s+= v_paid_c \/ 100\.0/); // [CR-14]
     expect(w).toMatch(/'headers_pending'/);
     expect(w).toMatch(/errcode = 'P0071'/);
   });
@@ -1070,7 +1113,7 @@ describe("migration 0183 — waived balance GL bridge", () => {
 
   it("correct_payment: equal-amount edit only on a waived visit, no move on or off, flag scoped to the replacement", () => {
     const c = fn("correct_payment");
-    expect(c).toMatch(/where id = v_old\.visit_id for update/);
+    expect(c).toMatch(/where id in \(v_old\.visit_id, coalesce\(v_target, v_old\.visit_id\)\)\s+order by id for update/);
     expect(c).toMatch(/cannot be moved\.' using errcode = 'P0070'/);
     expect(c).toMatch(/moved onto it\.' using errcode = 'P0070'/);
     expect(c).toMatch(/amount is fixed[\s\S]*?errcode = 'P0070'/);
@@ -1173,9 +1216,10 @@ A  Guards vs a NON-ADMIN staff JWT [CR-2]:
      set local role authenticated;
      select set_config('request.jwt.claims', '{"sub":"<medtech uuid>","role":"authenticated"}', true);
    — insert a visit with payment_status='waived' → P0069; update an unpaid visit to 'waived' → P0069;
-   update a waived visit to 'unpaid' → P0069; update total_php on a waived visit → P0069.  `reset role;`
+   update a waived visit to 'unpaid' → P0069; update total_php on a waived visit → P0069;
+   update paid_php on a waived visit → P0069 [CR-14].  `reset role;`
 B  Live visit, lab 500 + consult 800 (total 1300), paid 300, nothing released: waive → 'waived',
-   waived_php 1000, allocations 384.62 (4910) + 615.38 (4920) summing to 1000, recognised_at null,
+   waived_php 1000, paid_php 300 (reconciled) [CR-14], allocations 384.62 (4910) + 615.38 (4920) summing to 1000, recognised_at null,
    no visit_waiver JE. Release lab → JE: DR 1100 115.38, DR 4910 384.62, CR 4100 500; allocation
    recognised, journal_entry_id = JE. Release consult → DR 1100 184.62, DR 4920 615.38, CR 4200 300,
    CR 2110 500. 1100 net over the visit's entries (status in ('posted','reversed')) = 0.
@@ -1187,13 +1231,20 @@ D  Already-released line at waive time: lab 500 released while paid 500, payment
    not yet waived), waive → visit_waiver JE DR 4910 500 / CR 1100 500 posted, allocation recognised.
    Undo-release → that JE reversed (pair), allocation unrecognised. A second such visit: cancel instead
    of undo → same outcome.
-E  P0070 on visit B: insert a payment; void the 300 payment; `delete from payments` (hard delete);
-   `update payments set amount_php = 250`; `update payments set visit_id = <other>`; correct_payment
-   with a different amount; correct_payment moving B's payment off; moving an unpaid visit's payment
-   onto B — all P0070. correct_payment same amount, method gcash → OK: replacement row exists,
-   original 'Edited: …', visit still 'waived', paid_php 300.
+E  P0070 on visit B: insert a payment; void the 300 payment; `delete from payments` (hard delete —
+   trg_bridge_payment_delete runs first and reverses the JE, then the guard raises: assert the
+   payment row AND its release-of-payment JE are still there afterwards, i.e. nothing committed);
+   correct_payment with a different amount; correct_payment moving B's payment off; moving an
+   unpaid visit's payment onto B — all P0070. `update payments set amount_php = 250` and
+   `update payments set visit_id = <other>` on B's POSTED payment → **P0004** (0030's
+   trg_payments_block_post_je_edits sorts before the new guard; still refused) [CR-15] — the
+   P0070 proof for a JE-less payment is in case F. correct_payment same amount, method gcash →
+   OK: replacement row exists, original 'Edited: …', visit still 'waived', paid_php 300.
 F  Provenance: all-imported visit (visit, line and payment carry legacy_import_run_id) waives with
-   waived_php set, 0 allocations, 0 JEs; a mixed visit (imported visit, live line) → P0071.
+   waived_php set, 0 allocations, 0 JEs; then on that waived imported visit: `update payments set
+   amount_php = …` → P0070 (no JE, so this is the path P0004 never covered) [CR-15];
+   `update payments set legacy_import_run_id = null` → P0070; `update test_requests set
+   legacy_import_run_id = null` → P0070 [CR-12]. A mixed visit (imported visit, live line) → P0071.
 G  Refusals: HMO visit → P0071; paid visit → P0071; non-admin actor → P0071; blank reason → P0071;
    already waived → P0071.
 H  Largest remainder [CR-9]: three ₱500 lab lines (total 1500), paid 500 → remainder 1000 →
@@ -1212,7 +1263,11 @@ K  Ordinary never-waived visit [CR-1]: release, undo, re-release, cancel all sti
    before (no allocation rows are touched, no error).
 L  Line freeze on a waived visit [CR-4]: insert a new line → P0070; restore a line deleted BEFORE the
    waive → P0070; `update test_requests set final_price_php = …` → P0070; `set parent_id` and
-   `set visit_id` → P0070; release / undo of an existing line still allowed.
+   `set visit_id` → P0070; `set legacy_import_run_id = <run>` on a live line → P0070 [CR-12];
+   a visit with a line CANCELLED before the waive (total reconciled to the live lines): waive, then
+   `update test_requests set status = 'requested'` on the cancelled line → P0070, and
+   `set status = 'released'` → P0070 [CR-13]; release / undo / cancel of an existing live line
+   still allowed (no visit lock is taken for those status changes — assert by running them).
 M  Reconciliation [CR-6]: total_php 500 with a ₱1,000 line → P0071 (message names ₱500.00 and
    ₱1,000.00); total 1500 with ₱1,000 of lines → P0071; a released live line with no posted JE
    (delete its JE rows under session_replication_role = replica) → P0071.
@@ -1236,8 +1291,8 @@ Mechanics:
 - `create extension if not exists dblink;` then `dblink_connect('s0', c)`, `('s1', c)`, `('s2', c)` with `c := 'dbname=postgres user=supabase_admin password=postgres host=localhost port=5432'`.
 - Seed through `dblink_exec('s0', …)` in FK order (auth.users → staff_profiles → patients → services → visits → test_requests) so the rows are COMMITTED and visible to the workers; capture ids as literals built with `format(%L)`.
 - Row-returning statements go through `dblink(conn, sql) as t(x text)`; `dblink_exec` is only for `begin`/`commit`/`rollback`/DML without RETURNING.
-- Async: `dblink_send_query(w, sql)`; then a bounded lock-wait check — read the worker's pid once at connect time (`select x from dblink(w, 'select pg_backend_pid()') as t(x int)`) and loop up to 20 × 0.25 s until `exists (select 1 from pg_stat_activity where pid = <pid> and wait_event_type = 'Lock')`, else `raise exception 'FAIL n: worker never waited on the lock'`. After releasing the blocker, drain with `perform * from dblink_get_result(w) as t(x text)` (twice: result then end-of-results), catching the remote error's SQLSTATE where a refusal is expected (`exception when others then if sqlstate <> 'P0070' then raise; end if;`).
-- Teardown (at the end AND inside `exception when others then … raise;`): for each worker `perform dblink_cancel_query(w)`, `perform dblink_exec(w, 'rollback')` inside its own `begin … exception when others then null; end`, `perform dblink_disconnect(w)`; then via `s0`: `set session_replication_role = replica` and delete journal_lines → journal_entries (by allocation ids and payment ids of the seeded visits) → visit_waiver_allocations → payments → test_requests → visits → patients → staff_profiles → auth.users; `dblink_disconnect('s0')`.
+- Async: `dblink_send_query(w, sql)`; then a bounded lock-wait check — read the worker's pid once at connect time (`select x from dblink(w, 'select pg_backend_pid()') as t(x int)`) and loop up to 20 × 0.25 s until `exists (select 1 from pg_stat_activity where pid = <pid> and wait_event_type = 'Lock')`, else `raise exception 'FAIL n: worker never waited on the lock'`. **Call `perform pg_stat_clear_snapshot();` at the top of every loop iteration** — inside one transaction `pg_stat_activity` is a cached snapshot and would never change otherwise `[CR-17]`. After releasing the blocker, drain with `perform * from dblink_get_result(w) as t(x text)` (twice: result then end-of-results), catching the remote error's SQLSTATE where a refusal is expected (`exception when others then if sqlstate <> 'P0070' then raise; end if;`).
+- Teardown (at the end AND inside `exception when others then … raise;`): for each worker `perform dblink_cancel_query(w)`, `perform dblink_exec(w, 'rollback')` inside its own `begin … exception when others then null; end`, `perform dblink_disconnect(w)`; then via `s0`, one `dblink_exec` batch: `set session_replication_role = replica;` then collect **every** fixture journal entry id with a recursive CTE — seeds: `source_kind = 'payment' and source_id in (<fixture payment ids>)`, `source_kind = 'test_request' and source_id in (<fixture line ids>)`, `source_kind = 'visit_waiver' and source_id in (select id from visit_waiver_allocations where visit_id in (<fixture visit ids>))`; recursive step: `je.reverses in (set)` (reversal entries carry `source_id = null` and link only through `reverses`, 0166) — delete `journal_lines` for that set, then `journal_entries` for that set in ONE delete (RI triggers are off under replica, so `reversed_by` ordering does not matter), then visit_waiver_allocations → payments → test_requests → visits → patients → **services** (the seeded lab service and package) → staff_profiles → auth.users; finally, still in teardown, count the fixture rows left in each of those tables and in `journal_entries where description like '%0183-race%'` (tag every seeded description) and `raise exception 'FAIL teardown: …'` on any non-zero. `[CR-17]` `dblink_disconnect('s0')`. After the run: `select count(*) from visit_waiver_allocations` and `from journal_entries` both equal their pre-run counts.
 
 Scenarios (fresh ₱1,000 `lab_test` visit each, `total_php = 1000`, unpaid; actor = the seeded admin):
 ```
@@ -1255,9 +1310,27 @@ Scenarios (fresh ₱1,000 `lab_test` visit each, `total_php = 1000`, unpaid; act
 4 waive-then-undo: same preparation on a fresh visit; s1 `begin` + waive (standalone JE posted,
   uncommitted) → s2 send the same undo UPDATE → lock wait seen → s1 `commit` → s2 succeeds: the
   visit_waiver JE is 'reversed' with a mirrored 'posted' reversal, allocation unrecognised.
+5 forced package-cascade deadlock [CR-17]: a package visit (header ₱5,888 + 2 ₱0 components,
+  total 5888) inserted with EXPLICIT ids so the header sorts first —
+  header '00000000-0000-4000-8000-000000000001', components '…-0002' and '…-0003' (drop any
+  leftover rows with those ids first). Prepare: pay 5888 → release both components → the header
+  auto-releases (0109) → void the payment (visit unpaid, JEs posted). s1 `begin` +
+  `select 1 from test_requests where id = '…-0002' for update` (holds the component lock) →
+  s2 send waive (locks the visit, then header '…-0001', then waits on '…-0002' → lock wait seen)
+  → s1 send the undo UPDATE on '…-0002' (`status = 'ready_for_release', released_at = null, …`;
+  fn_undo_release_bridge's cascade then locks the header, held by s2 → cycle). Drain BOTH: exactly
+  one of them must raise SQLSTATE '40P01' (assert `one_failed = 1`, and that the failure code is
+  40P01, not anything else); commit the survivor. Then run the aborted side's operation again on
+  its own (s1 `rollback` first if it was the loser) and assert the end state is the same either
+  way: the visit is 'waived', waived_php 5888, the header's allocation exists and — because the
+  component undo also undid the header (0109 cascade) — the header is ready_for_release with
+  recognised_at null and the header's release JE is 'reversed'; 1100 nets to 0 over the visit's
+  entries with status in ('posted','reversed'). (If the waiver was the survivor it posted the
+  standalone header JE first; the later undo reversed it through waiver_unrecognise_line — assert
+  that visit_waiver entry is 'reversed' with a mirrored reversal.)
 ```
 
-- [ ] **Step 2: Run** `psql "$ADMIN" -v ON_ERROR_STOP=1 -f supabase/tests/0183_waiver_race_smoke.sql 2>&1 | grep -E "PASS|FAIL|ERROR"` — expected `PASS 1` … `PASS 4`; afterwards `select count(*) from visit_waiver_allocations` equals the count before the run.
+- [ ] **Step 2: Run** `psql "$ADMIN" -v ON_ERROR_STOP=1 -f supabase/tests/0183_waiver_race_smoke.sql 2>&1 | grep -E "PASS|FAIL|ERROR"` — expected `PASS 1` … `PASS 5`; afterwards `select count(*) from visit_waiver_allocations` and `select count(*) from journal_entries` both equal their counts before the run.
 - [ ] **Step 3: Commit** `git add supabase/tests/0183_waiver_race_smoke.sql && git commit -m "test(sql): 0183 two-session waiver races (dblink, local only)"`
 
 ---
@@ -1268,15 +1341,31 @@ Scenarios (fresh ₱1,000 `lab_test` visit each, `total_php = 1000`, unpaid; act
 - [ ] **Step 2: Apply 0183 the same way.** Expected `COMMIT`. If the zero-waiver assertion fires, the shared stack holds leftover waived test rows — find them (`select id, visit_number from visits where payment_status = 'waived'`), delete them with `session_replication_role = replica` in FK order, and re-run. Verify: `select proname from pg_proc where proname in ('waive_visit_balance','waiver_post_allocation','waiver_unrecognise_line','guard_visit_waived_transition','guard_payment_on_waived_visit','guard_test_request_on_waived_visit')` → 6 rows; `select tgname from pg_trigger where tgname in ('trg_visits_waived_transition_guard','trg_payments_waived_visit_guard','trg_test_requests_waived_visit_guard')` → 3.
 - [ ] **Step 3: Fresh-replay gate without resetting the shared stack** (Codex validation gap). Create a scratch database from the stack's template and replay the whole migration set plus `seed.sql` into it:
   ```bash
-  psql "$ADMIN" -c "create database replay_0183 template template0"
+  # scripts/replay-0183.sh — strict: any stage failing fails the whole run; REPLAY OK only after
+  # every stage; the scratch db is dropped either way and the failure status survives cleanup. [CR-16]
+  set -u
+  PSQL=/opt/homebrew/opt/libpq/bin/psql; PGDUMP=/opt/homebrew/opt/libpq/bin/pg_dump
+  ADMIN="postgresql://supabase_admin:postgres@127.0.0.1:54322/postgres"
   R="postgresql://supabase_admin:postgres@127.0.0.1:54322/replay_0183"
-  # the Supabase image's auth/extensions/storage schemas are not in template0; take them from the live db:
-  /opt/homebrew/opt/libpq/bin/pg_dump "$ADMIN" --schema-only --schema=auth --schema=extensions --schema=storage --schema=supabase_migrations --no-owner | psql "$R" -q
-  for f in supabase/migrations/*.sql; do psql "$R" -v ON_ERROR_STOP=1 -q -f "$f" > /dev/null || { echo "REPLAY FAILED at $f"; break; }; done
-  psql "$R" -v ON_ERROR_STOP=1 -q -f supabase/seed.sql && echo "REPLAY OK"
-  psql "$ADMIN" -c "drop database replay_0183"
+  LOG="$TMPDIR/replay_0183.log"; : > "$LOG"
+  status=1
+  cleanup() { "$PSQL" "$ADMIN" -q -c "drop database if exists replay_0183" >/dev/null 2>&1; exit "$status"; }
+  trap cleanup EXIT
+  "$PSQL" "$ADMIN" -v ON_ERROR_STOP=1 -q -c "drop database if exists replay_0183" -c "create database replay_0183 template template0" >>"$LOG" 2>&1 || { echo "REPLAY FAILED: create db"; exit 1; }
+  # the Supabase image's auth/extensions/storage schemas are not in template0; take them from the live db
+  "$PGDUMP" "$ADMIN" --schema-only --schema=auth --schema=extensions --schema=storage --schema=supabase_migrations --no-owner > "$TMPDIR/replay_bootstrap.sql" || { echo "REPLAY FAILED: dump"; exit 1; }
+  "$PSQL" "$R" -v ON_ERROR_STOP=1 -q -f "$TMPDIR/replay_bootstrap.sql" >>"$LOG" 2>&1 || { echo "REPLAY FAILED: bootstrap (see $LOG)"; exit 1; }
+  for f in supabase/migrations/*.sql; do
+    # -1: one transaction per file, the same boundary the Supabase CLI uses
+    "$PSQL" "$R" -1 -v ON_ERROR_STOP=1 -q -f "$f" >>"$LOG" 2>&1 || { echo "REPLAY FAILED at $f (see $LOG)"; exit 1; }
+  done
+  "$PSQL" "$R" -1 -v ON_ERROR_STOP=1 -q -f supabase/seed.sql >>"$LOG" 2>&1 || { echo "REPLAY FAILED: seed.sql (see $LOG)"; exit 1; }
+  # post-condition: the 0183 objects exist in the replayed db
+  n=$("$PSQL" "$R" -Atc "select count(*) from pg_proc where proname in ('waive_visit_balance','waiver_post_allocation','waiver_unrecognise_line','guard_visit_waived_transition','guard_payment_on_waived_visit','guard_test_request_on_waived_visit')")
+  [ "$n" = "6" ] || { echo "REPLAY FAILED: expected 6 waiver functions, got $n"; exit 1; }
+  status=0; echo "REPLAY OK"
   ```
-  Expected `REPLAY OK`. If the auth-schema dump is not enough for the earliest migrations, fall back to asking the owner for one `supabase db reset` from this worktree (wait until `pgrep -f "supabase db reset"` is quiet; it wipes the shared local data) and record in the PR body which path proved the replay.
+  Write it to the session scratchpad (NOT under `scripts/` — it is a one-off gate, not a repo runner) and run it from the worktree as `bash "$SCRATCH/replay-0183.sh"; echo "exit=$?"` (never through a pipe) — expected `REPLAY OK` and `exit=0`. Record the exact two output lines in the PR body. If the auth-schema dump is not enough for the earliest migrations, fall back to asking the owner for one `supabase db reset` from this worktree (wait until `pgrep -f "supabase db reset"` is quiet; it wipes the shared local data) and record in the PR body which path proved the replay.
 - [ ] **Step 4: Run Tasks 6 and 7's smokes.** Both must pass before continuing.
 - [ ] **Step 5: Regenerate types** `npm run db:types`; `git diff --stat src/types/database.ts`. Keep the hunks for `visit_waiver_allocations`, the four `visits` columns and `waive_visit_balance`; revert hunks that belong to other sessions' local-only migrations (`git add -p`).
 - [ ] **Step 6:** `npm run typecheck` — clean. **Commit** `git add src/types/database.ts && git commit -m "chore(types): 0183 waiver objects"`.
