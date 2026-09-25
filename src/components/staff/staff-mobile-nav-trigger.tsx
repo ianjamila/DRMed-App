@@ -26,6 +26,7 @@ import {
   type StaffNavSubgroup,
   type StaffRole,
 } from "./staff-nav-config";
+import { ROLE_LABEL } from "@/lib/staff/role-labels";
 
 interface Props {
   role: StaffRole;
@@ -35,14 +36,6 @@ interface Props {
   // Optional and additive — an item with no entry renders no badge.
   badges?: Record<string, number>;
 }
-
-const ROLE_LABEL: Record<StaffRole, string> = {
-  reception: "Reception",
-  medtech: "Medical Tech",
-  xray_technician: "X-ray Technician",
-  pathologist: "Pathologist",
-  admin: "Admin",
-};
 
 function MobileNavLink({
   item,

@@ -7,6 +7,7 @@ import { StaffQuoteShortcut } from "./staff-quote-shortcut";
 import { canUseQuickQuote } from "@/lib/staff/quote-access";
 import { NotificationBell } from "./notification-bell";
 import { StaffMobileNavTrigger } from "./staff-mobile-nav-trigger";
+import { ROLE_LABEL } from "@/lib/staff/role-labels";
 
 interface Props {
   session: StaffSession;
@@ -14,14 +15,6 @@ interface Props {
   // Sidebar nav count badges keyed by item href (see StaffNav/StaffMobileNavTrigger).
   badges?: Record<string, number>;
 }
-
-const ROLE_LABEL: Record<StaffSession["role"], string> = {
-  reception: "Reception",
-  medtech: "Medical Tech",
-  xray_technician: "X-ray Technician",
-  pathologist: "Pathologist",
-  admin: "Admin",
-};
 
 export function StaffShell({ session, children, badges }: Props) {
   return (
