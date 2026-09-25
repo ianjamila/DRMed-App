@@ -2,39 +2,50 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** When an admin waives a visit balance, book the waived remainder as a discount (4910 lab / 4920 doctor) per bill line and clear 1100 AR Patients, with every later money path on the visit either folded in or refused at the database.
+**Goal:** When an admin waives a visit balance, book the waived remainder as a discount (4910 lab / 4920 doctor) per bill line and clear 1100 AR Patients, and freeze the visit's money and bill lines at the database so the fixed waiver can never drift from the books.
 
-**Architecture:** One migration (**0183**) adds `visit_waiver_allocations` (one row per priced line, largest-remainder split, fixed at waive time), a service-role RPC `waive_visit_balance()` that computes the split under the visit row lock and posts a standalone discount JE for lines already released, a fold into `bridge_test_request_released()` for lines released later, reversal hooks in the undo-release and cancel bridges, and two guard triggers (P0069 on entering/leaving `'waived'`, P0070 on any payment insert/void/move on a waived visit, with `correct_payment` allowed an equal-amount replacement). App side: the waive action calls the RPC; the Record payment page refuses a waived visit; the payment dialogs stop offering what the DB now refuses.
+**Architecture:** One migration (**0183**) adds `visit_waiver_allocations` (one row per priced line, largest-remainder split, fixed at waive time), a service-role RPC `waive_visit_balance()` that computes the split under the visit + line row locks and posts a standalone discount JE for lines already released, a fold into `bridge_test_request_released()` for lines released later, reversal hooks in the undo-release and cancel bridges (latest bodies = **0166**), and three guard triggers: **P0069** on `visits` (entering `'waived'` only inside the RPC — insert or update — never leaving it, and no change to the visit's money/provenance fields once waived), **P0070** on `payments` (insert, void, money-bearing update, hard delete — old and new visit) and on `test_requests` (insert, restore, reprice, reparent, move) for a waived visit. `correct_payment` keeps its equal-amount replacement under a transaction-scoped flag. App side: the waive action calls the RPC; the Record payment page refuses a waived visit; the payment dialogs stop offering what the DB now refuses.
 
-**Tech Stack:** Postgres (plpgsql, Supabase migrations), Next.js 16 server actions, vitest, `supabase/tests/*.sql` smokes (local stack only, `dblink` for the race test), real-Chrome `smoke:print`.
+**Tech Stack:** Postgres (plpgsql, Supabase migrations), Next.js 16 server actions, vitest, `supabase/tests/*.sql` smokes (local stack only; the race smoke runs as `supabase_admin` with `dblink`), real-Chrome `smoke:print`.
 
-**Spec:** `docs/superpowers/specs/2026-09-25-waived-balance-gl-design.md` (rules 1–7). Claimed numbers: migration **0183**, P-codes **P0069** (waived transition guard), **P0070** (money on a waived visit), **P0071** (waive_visit_balance refusals, message passed through).
+**Spec:** `docs/superpowers/specs/2026-09-25-waived-balance-gl-design.md` (rules 1–7). Codex plan review 2026-09-25 (session 01a0d7f8-e53e-7742-8bcf-79c2ea654cca) — 11 findings, all folded in and marked `[CR-n]`. Claimed numbers: migration **0183** (0182 = `feat/staff-view-as-role`, another session), P-codes **P0069** (visits guard), **P0070** (money or lines on a waived visit), **P0071** (`waive_visit_balance` refusals, message passed through).
 
-**Worktree:** `~/Claude/DRMed/.worktrees/waived-balance-gl`, branch `feat/waived-balance-gl` off `origin/main` 175f53ee (#233 merged). `.env.local`, `.env.development.local` and `supabase/.temp/{project-ref,linked-project.json,pooler-url}` are already copied in.
+**Worktree:** `~/Claude/DRMed/.worktrees/waived-balance-gl`, branch `feat/waived-balance-gl` off `origin/main` 175f53ee (#233 merged). `.env.local`, `.env.development.local` and `supabase/.temp/{project-ref,linked-project.json,pooler-url}` are copied in.
 
-**Local-stack trap (memory):** other sessions `db reset` the shared local stack from checkouts behind main; `supabase migration up --local` refuses because of a stray ledger row. Apply migration files by hand in one transaction with a hand-written ledger row (Task 8), never run `migration repair`. Re-check `select max(version) from supabase_migrations.schema_migrations` before every smoke.
+**Local-stack facts:** other sessions `db reset` the shared local stack from checkouts behind main; `supabase migration up --local` refuses because of a stray ledger row. Apply migration files by hand in one transaction with a hand-written ledger row (Task 8), never `migration repair`. Re-check `select max(version) from supabase_migrations.schema_migrations` before every smoke. `psql` = `/opt/homebrew/opt/libpq/bin/psql`; app-role connection `APP="postgresql://postgres:postgres@127.0.0.1:54322/postgres"`; `postgres` is NOT a superuser on the Supabase image (`dblink_connect` refuses it), so the race smoke runs as `ADMIN="postgresql://supabase_admin:postgres@127.0.0.1:54322/postgres"` — verified 2026-09-25 that `dblink_connect('t1','dbname=postgres user=supabase_admin password=postgres host=localhost port=5432')` works from inside the container.
 
 ---
+
+## Serialization protocol (referenced by every task) `[CR-5]`
+
+Every path that can change a waived visit's books takes row locks in this order, so the waiver and the line lifecycle serialize on the same rows:
+
+1. `waive_visit_balance`: the `visits` row `FOR UPDATE`, then **every live `test_requests` row of the visit `FOR UPDATE` in `id` order**, then reads payments (no payment lock). Only after both locks does it read line statuses, so a concurrent undo/cancel/release that already holds a line lock finishes first and the waiver sees the final status.
+2. Undo-release, cancel and release are `UPDATE test_requests … WHERE id = …` statements: they hold that line's row lock for the transaction; their AFTER triggers read/write the allocation for that same line, which the waiver only touches while holding the line lock. The package cascade inside `fn_undo_release_bridge` additionally locks the header row.
+3. Payments: `guard_payment_on_waived_visit` locks the `visits` row (old and new visit, in uuid order) before deciding; `recalc_visit_payment` locks the visit row; `correct_payment` locks payment → visit. The waiver never locks a payment, so there is no cycle on that side.
+4. The one cycle that remains possible is waiver (visit → lines in id order) against an undo cascade (component row → header row) when the header's id sorts below the component's. Postgres detects it and aborts one side with SQLSTATE `40P01`; `translatePgError` renders it "Something else changed this visit at the same moment. Try again." and the aborted side writes nothing. Accepted: rare, detected, safe.
+
+Task 7 proves four orders: payment-then-waive, waive-then-payment, undo-then-waive, waive-then-undo.
 
 ## File map
 
 | File | Responsibility |
 |---|---|
-| `supabase/migrations/0183_waived_balance_gl.sql` | Enum value, `visits` waiver columns, `visit_waiver_allocations`, guards, `waive_visit_balance`, `waiver_post_allocation`, `waiver_unrecognise_line`, fold in the release bridge, hooks in undo/cancel bridges, `correct_payment` re-created, ACLs, comments |
-| `supabase/seed.sql` | Mirror the new table's revoke/grant (seed-grant-parity) |
-| `supabase/tests/0183_waived_balance_gl_smoke.sql` | GL cases A–J, single session |
-| `supabase/tests/0183_waiver_race_smoke.sql` | Two-session race, dblink, local only |
-| `src/lib/accounting/waiver-allocation.ts` (+ `.test.ts`) | Pure largest-remainder mirror for the waive dialog preview |
-| `src/lib/accounting/waived-balance-gl.test.ts` | Pins the migration SQL (signatures, accounts, GUCs, lock order, ACLs) |
-| `src/lib/accounting/pg-errors.ts` | P0069–P0071 translations |
-| `src/lib/accounting/ledger-status-sql.test.ts` | `SQL_LOOKUPS` entries for the two new posted-only readers |
-| `src/lib/visits/payment-edit.ts` (+ `payment-leaves.test.ts`) | `waivedVisitPaymentRules` — what the dialogs may offer on a waived visit; `WAIVE_CLOSED_MONTH_MESSAGE` |
+| `supabase/migrations/0183_waived_balance_gl.sql` | Zero-waiver assertion, enum value, `visits` waiver columns, `visit_waiver_allocations`, three guards, `waive_visit_balance`, `waiver_post_allocation`, `waiver_unrecognise_line`, fold in the release bridge (0159 body), hooks in undo/cancel bridges (0166 bodies), `correct_payment` re-created (0174 body), ACLs, comments |
+| `supabase/seed.sql` | Mirror the new table's revoke/grant |
+| `supabase/tests/0183_waived_balance_gl_smoke.sql` | GL cases A–N, single session |
+| `supabase/tests/0183_waiver_race_smoke.sql` | Four two-session orders, dblink, `supabase_admin`, local only |
+| `src/lib/accounting/waiver-allocation.ts` (+ `.test.ts`) | Pure largest-remainder mirror for the dialog preview |
+| `src/lib/accounting/waived-balance-gl.test.ts` | Pins the migration SQL |
+| `src/lib/accounting/pg-errors.ts` | P0069–P0071 + `40P01` |
+| `src/lib/accounting/ledger-status-sql.test.ts` | `SQL_LOOKUPS` for the two new posted-only readers |
+| `src/lib/visits/payment-edit.ts` (+ `payment-leaves.test.ts`) | `waivedVisitPaymentRules`, `WAIVE_CLOSED_MONTH_MESSAGE` |
 | `src/app/(staff)/staff/(dashboard)/visits/[id]/actions.ts` | `waiveVisitBalanceAction` → RPC |
-| `src/app/(staff)/staff/(dashboard)/visits/[id]/waive-balance-dialog.tsx` + `page.tsx` | Preview of the split; hide Delete/Move and lock the Edit amount on waived visits |
-| `src/app/(staff)/staff/(dashboard)/payments/[id]/edit/edit-payment-dialog.tsx` | `amountLocked` prop |
-| `src/app/(staff)/staff/(dashboard)/payments/new/page.tsx` + `actions.ts` | Waived visit: say so, no form; action refuses |
-| `src/types/database.ts` | Regenerated from the local stack after Task 8 |
-| `scripts/smoke-print.ts`, `scripts/smoke-14-d1.sql`, `supabase/tests/0167_patient_soft_delete_smoke.sql` | Stop writing `'waived'` directly (the guard now refuses it) |
+| `src/app/(staff)/staff/(dashboard)/visits/[id]/waive-balance-dialog.tsx` + `page.tsx` | Preview of the split; hide Delete/Move; lock the Edit amount |
+| `src/app/(staff)/staff/(dashboard)/payments/[id]/edit/edit-payment-dialog.tsx` | `amountLocked` |
+| `src/app/(staff)/staff/(dashboard)/payments/new/page.tsx` + `actions.ts` | Waived visit: say so, no form; both actions refuse |
+| `src/types/database.ts` | Regenerated from the local stack |
+| `scripts/smoke-print.ts`, `scripts/smoke-14-d1.sql`, `supabase/tests/0167_patient_soft_delete_smoke.sql` | Stop writing `'waived'` directly |
 | `docs/drmed-user-guide.html`, `.claude/skills/drmed-payments/SKILL.md`, `.claude/skills/drmed-migrations/SKILL.md`, `CLAUDE.md` | Docs |
 
 ---
@@ -45,10 +56,9 @@
 - Create: `src/lib/accounting/waiver-allocation.ts`
 - Test: `src/lib/accounting/waiver-allocation.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing test** `[CR-9: fixtures fit the rule]`
 
 ```ts
-// src/lib/accounting/waiver-allocation.test.ts
 import { describe, expect, it } from "vitest";
 import { allocateWaiver, waiverPreview, type WaiverLine } from "./waiver-allocation";
 
@@ -69,20 +79,20 @@ describe("allocateWaiver (mirror of waive_visit_balance's split, 0183)", () => {
     ]);
   });
   it("largest remainder: the centavos add up exactly, biggest fraction first, id as tie-break", () => {
-    // 1000 over 3 equal lines: 333.33 ×3 = 999.99; the leftover centavo goes to the lowest id.
-    const out = allocateWaiver(1000, [line("c", 100), line("a", 100), line("b", 100)]);
-    expect(out.map((o) => o.amountPhp)).toEqual([333.34, 333.33, 333.33]);
+    // ₱1,000 over three ₱500 lines (₱1,500 billed, ₱500 paid): 333.33 × 3 = 999.99;
+    // every fraction ties, so the leftover centavo goes to the lowest id.
+    const out = allocateWaiver(1000, [line("c", 500), line("a", 500), line("b", 500)]);
     expect(out.map((o) => o.id)).toEqual(["a", "b", "c"]);
+    expect(out.map((o) => o.amountPhp)).toEqual([333.34, 333.33, 333.33]);
     expect(out.reduce((s, o) => s + o.amountPhp, 0)).toBeCloseTo(1000, 2);
   });
   it("never exceeds a line's own price and never goes negative", () => {
-    const out = allocateWaiver(0.03, [line("a", 0.01), line("b", 0.02)]);
-    expect(out).toEqual([
+    expect(allocateWaiver(0.03, [line("a", 0.01), line("b", 0.02)])).toEqual([
       { id: "a", amountPhp: 0.01, account: "4910" },
       { id: "b", amountPhp: 0.02, account: "4910" },
     ]);
   });
-  it("skips ₱0 package components, cancelled and deleted lines, and drops ₱0 shares", () => {
+  it("skips ₱0 package components, cancelled lines, and drops ₱0 shares", () => {
     const out = allocateWaiver(1, [
       line("header", 5888, "lab_package"),
       line("comp", 0, "lab_test", { isComponent: true }),
@@ -105,10 +115,7 @@ describe("allocateWaiver (mirror of waive_visit_balance's split, 0183)", () => {
 });
 ```
 
-- [ ] **Step 2: Run it to see it fail**
-
-Run: `npx vitest run src/lib/accounting/waiver-allocation.test.ts`
-Expected: FAIL — cannot find module `./waiver-allocation`.
+- [ ] **Step 2: Run** `npx vitest run src/lib/accounting/waiver-allocation.test.ts` — expected FAIL: cannot find module `./waiver-allocation`.
 
 - [ ] **Step 3: Implement**
 
@@ -117,9 +124,9 @@ Expected: FAIL — cannot find module `./waiver-allocation`.
 // Mirror of the split waive_visit_balance() (migration 0183) makes when an
 // admin waives a visit balance: the remainder is spread over the visit's
 // priced live lines by the LARGEST-REMAINDER method in centavos, so the
-// pieces add up to the remainder exactly and no line carries more than its
-// own price. The SQL is the source of truth (0183's smoke proves the same
-// fixtures); this feeds the waive dialog's preview and nothing else.
+// pieces add up exactly and no line carries more than its own price. The SQL
+// is the source of truth (0183's smoke case H uses the same fixture); this
+// feeds the waive dialog's preview and nothing else.
 import { classifyKind } from "@/lib/visits/classification";
 
 export interface WaiverLine {
@@ -181,22 +188,14 @@ export function waiverPreview(
   lines: readonly WaiverLine[],
 ): { labPhp: number; doctorPhp: number; lines: number } {
   const out = allocateWaiver(remainderPhp, lines);
-  const sum = (acct: "4910" | "4920") => out.filter((o) => o.account === acct).reduce((s, o) => s + toC(o.amountPhp), 0) / 100;
+  const sum = (acct: "4910" | "4920") =>
+    out.filter((o) => o.account === acct).reduce((s, o) => s + toC(o.amountPhp), 0) / 100;
   return { labPhp: sum("4910"), doctorPhp: sum("4920"), lines: out.length };
 }
 ```
 
-- [ ] **Step 4: Run the test**
-
-Run: `npx vitest run src/lib/accounting/waiver-allocation.test.ts`
-Expected: 6 passed.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add src/lib/accounting/waiver-allocation.ts src/lib/accounting/waiver-allocation.test.ts
-git commit -m "feat(accounting): largest-remainder waiver allocation (mirror of 0183)"
-```
+- [ ] **Step 4: Run** — expected 6 passed.
+- [ ] **Step 5: Commit** `git add src/lib/accounting/waiver-allocation.ts src/lib/accounting/waiver-allocation.test.ts && git commit -m "feat(accounting): largest-remainder waiver allocation (mirror of 0183)"`
 
 ---
 
@@ -206,12 +205,12 @@ git commit -m "feat(accounting): largest-remainder waiver allocation (mirror of 
 - Create: `supabase/migrations/0183_waived_balance_gl.sql`
 - Modify: `supabase/seed.sql` (tail)
 
-- [ ] **Step 1: Write the migration.** The three re-created bridge bodies are COPIED from their latest definitions (grep confirms: `bridge_test_request_released` = 0159, `fn_undo_release_bridge` = 0140 lines 591–668, `bridge_test_request_cancelled` = 0141, `correct_payment` = 0174 lines 48–187) and edited only where marked `-- 0183:`. Never retype a body from memory.
+- [ ] **Step 1: Write the migration.** Four function bodies are COPIED from their latest definitions and edited only where marked `-- 0183:`. Latest definitions (grep-confirmed): `bridge_test_request_released` = **0159**; `fn_undo_release_bridge` = **0166** line 140 and `bridge_test_request_cancelled` = **0166** line 29 (the 0140/0141 bodies still update the dropped `cogs_send_out_entries` table — copying them would break every undo and cancel) `[CR-1]`; `correct_payment` = **0174** lines 48–187. Never retype a body from memory.
 
 ```sql
 -- =============================================================================
 -- 0183_waived_balance_gl.sql — a waived balance is booked as a discount and
--- clears 1100 AR Patients.
+-- clears 1100 AR Patients; a waived visit's money and lines are frozen.
 -- =============================================================================
 -- Before this, waiveVisitBalanceAction only flipped visits.payment_status to
 -- 'waived'. The release bridge then debited 1100 for every line at full price
@@ -230,27 +229,48 @@ git commit -m "feat(accounting): largest-remainder waiver allocation (mirror of 
 --      share goes with the release JE's mirror reversal; a standalone waiver
 --      JE is reversed by waiver_unrecognise_line(); either way the allocation
 --      is marked unrecognised so a re-release folds it again.
---   3. Money on a waived visit is refused at the DB (P0070): insert, void,
---      move on or off. The one exception is correct_payment keeping the
---      amount (method/reference/notes) — it inserts the replacement before
---      voiding the original, under app.waived_visit_edit = 'on'.
---   4. payment_status may enter 'waived' only inside waive_visit_balance()
---      (app.waive_visit = 'on') and may never leave it (P0069). RLS "visits:
---      staff full" lets every staff role update the column directly.
---   5. Lock order: visits row FOR UPDATE first, payments only read. The
---      payment guard locks the visits row before deciding; recalc_visit_payment
---      already does. correct_payment locks payment → visit; the waiver never
---      locks a payment, so there is no cycle.
+--   3. Money on a waived visit is refused at the DB (P0070): payment insert,
+--      void, money-bearing update, hard delete, move on or off; bill lines
+--      cannot be added, restored, repriced, reparented or moved. The one
+--      exception is correct_payment keeping the amount (method/reference/
+--      notes) — it inserts the replacement before voiding the original, under
+--      app.waived_visit_edit = 'on' scoped to exactly those two writes.
+--   4. payment_status may become 'waived' (insert or update) only inside
+--      waive_visit_balance() (app.waive_visit = 'on') and may never leave it;
+--      a waived visit's total, HMO, provenance and waiver record are frozen
+--      (P0069). RLS "visits: staff full" is FOR ALL for every staff role.
+--   5. Lock order: visits row FOR UPDATE, then the visit's live test_requests
+--      rows FOR UPDATE in id order, payments only read. The payment guard and
+--      recalc_visit_payment lock the visits row; correct_payment locks
+--      payment → visit; undo/cancel/release hold their line's row lock. The
+--      waiver never locks a payment. The one possible cycle (waiver vs. an
+--      undo cascade component → header) is detected by Postgres (40P01).
 --   6. Provenance per row: all live → allocate + post; all imported (visit,
 --      every live line, every non-voided payment) → 'waived' with NO
 --      allocation and no JE; mixed → P0071.
 --   7. Reversals: original → 'reversed', mirrored 'posted' entry (0173).
 --      Posting date Manila. A closed month raises P0002 from
---      je_period_lock_check and the whole waive rolls back.
+--      je_period_lock_check for the waiver's own standalone entries and the
+--      whole waive rolls back; a package header auto-released by the waive
+--      (0109 Leg B) catches its own errors by design and stays
+--      ready_for_release with an audit row.
 --
--- P-codes: P0069 waived transition guard · P0070 money on a waived visit ·
+-- P-codes: P0069 visits guard · P0070 money or bill lines on a waived visit ·
 -- P0071 waive_visit_balance refusals (several messages, passed through).
 -- =============================================================================
+
+-- ---- Precondition: no waived visit may exist (nothing is backfilled) ---------
+-- Held under a table lock so a waiver committed between the preflight count
+-- and this transaction cannot slip through without an allocation.  [CR-11]
+do $$
+declare v_n int;
+begin
+  lock table public.visits in share row exclusive mode;
+  select count(*) into v_n from public.visits where payment_status = 'waived';
+  if v_n > 0 then
+    raise exception 'STOP 0183: % waived visit(s) exist and would carry no allocation. Reconcile them before applying.', v_n;
+  end if;
+end $$;
 
 alter type public.je_source_kind add value if not exists 'visit_waiver';
 
@@ -290,21 +310,47 @@ create policy "visit_waiver_allocations: reception/admin read"
   using ((select public.has_role(array['reception', 'admin'])));
 -- Writes: waive_visit_balance() and the bridges only (service_role / triggers).
 
--- ---- P0069: entering / leaving 'waived' -------------------------------------
+-- ---- P0069: the visits guard --------------------------------------------------
+-- INSERT is guarded too: "visits: staff full" (0151) is FOR ALL, so a staff JWT
+-- could insert a row already 'waived'.  [CR-2]  Once waived, the fields the
+-- waiver was computed from (total, provenance, HMO) and the waiver's own
+-- record are frozen; recalc_visit_payment only writes paid_php /
+-- payment_status (preserving 'waived'), so it is unaffected.  [CR-4]
 create or replace function public.guard_visit_waived_transition()
 returns trigger
 language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  v_inside boolean := coalesce(current_setting('app.waive_visit', true), '') = 'on';
 begin
-  if new.payment_status = 'waived' and old.payment_status is distinct from 'waived' then
-    if coalesce(current_setting('app.waive_visit', true), '') <> 'on' then
+  if tg_op = 'INSERT' then
+    if new.payment_status = 'waived' and not v_inside then
       raise exception 'A balance can only be waived with Waive balance on the visit page.'
         using errcode = 'P0069';
     end if;
-  elsif old.payment_status = 'waived' and new.payment_status is distinct from 'waived' then
+    return new;
+  end if;
+
+  if new.payment_status = 'waived' and old.payment_status is distinct from 'waived' and not v_inside then
+    raise exception 'A balance can only be waived with Waive balance on the visit page.'
+      using errcode = 'P0069';
+  end if;
+  if old.payment_status = 'waived' and new.payment_status is distinct from 'waived' then
     raise exception 'A waived balance cannot be un-waived.' using errcode = 'P0069';
+  end if;
+  if old.payment_status = 'waived' and not v_inside and (
+       new.total_php             is distinct from old.total_php
+    or new.hmo_provider_id       is distinct from old.hmo_provider_id
+    or new.legacy_import_run_id  is distinct from old.legacy_import_run_id
+    or new.waived_php            is distinct from old.waived_php
+    or new.waived_at             is distinct from old.waived_at
+    or new.waived_by             is distinct from old.waived_by
+    or new.waive_reason          is distinct from old.waive_reason
+  ) then
+    raise exception 'This visit''s balance was waived, so its total, billing and waiver record are fixed.'
+      using errcode = 'P0069';
   end if;
   return new;
 end;
@@ -312,10 +358,17 @@ $$;
 
 drop trigger if exists trg_visits_waived_transition_guard on public.visits;
 create trigger trg_visits_waived_transition_guard
-  before update of payment_status on public.visits
+  before insert or update of payment_status, total_php, hmo_provider_id, legacy_import_run_id,
+                            waived_php, waived_at, waived_by, waive_reason
+  on public.visits
   for each row execute function public.guard_visit_waived_transition();
 
--- ---- P0070: money on a waived visit ------------------------------------------
+-- ---- P0070: payments on a waived visit ---------------------------------------
+-- Insert, void, any money-bearing update (amount / method / visit / received_at
+-- — payments_block_post_je_edits only covers rows WITH a posted JE; imported
+-- rows have none) and a hard DELETE (bridge_payment_delete reverses the JE)
+-- all move money. Both the old and the new visit are checked, locked in uuid
+-- order.  [CR-3]
 create or replace function public.guard_payment_on_waived_visit()
 returns trigger
 language plpgsql
@@ -323,30 +376,102 @@ security definer
 set search_path = public
 as $$
 declare
+  v_ids    uuid[];
+  v_id     uuid;
   v_status text;
+  v_inside boolean := coalesce(current_setting('app.waived_visit_edit', true), '') = 'on';
 begin
-  -- Only an insert, or a void (voided_at NULL → set), can move money.
-  if tg_op = 'UPDATE' and not (old.voided_at is null and new.voided_at is not null) then
-    return new;
+  if tg_op = 'UPDATE' then
+    if not (
+         (old.voided_at is null and new.voided_at is not null)
+      or new.amount_php  is distinct from old.amount_php
+      or new.method      is distinct from old.method
+      or new.visit_id    is distinct from old.visit_id
+      or new.received_at is distinct from old.received_at
+    ) then
+      return new;
+    end if;
+    v_ids := array(select distinct x from unnest(array[old.visit_id, new.visit_id]) x order by x);
+  elsif tg_op = 'DELETE' then
+    v_ids := array[old.visit_id];
+  else
+    v_ids := array[new.visit_id];
   end if;
-  -- Lock the visit row first — the one order every money path uses (0183 §5).
-  select payment_status into v_status
-    from public.visits
-   where id = new.visit_id
-   for update;
-  if v_status = 'waived'
-     and coalesce(current_setting('app.waived_visit_edit', true), '') <> 'on' then
-    raise exception 'This visit''s balance was waived, so its payments are fixed: nothing can be recorded, deleted or moved on it.'
-      using errcode = 'P0070';
-  end if;
-  return new;
+
+  foreach v_id in array v_ids loop
+    -- Visit row lock first — the one order every money path uses (spec §5).
+    select payment_status into v_status from public.visits where id = v_id for update;
+    if v_status = 'waived' and not v_inside then
+      raise exception 'This visit''s balance was waived, so its payments are fixed: nothing can be recorded, changed, deleted or moved on it.'
+        using errcode = 'P0070';
+    end if;
+  end loop;
+
+  return case when tg_op = 'DELETE' then old else new end;
 end;
 $$;
 
 drop trigger if exists trg_payments_waived_visit_guard on public.payments;
 create trigger trg_payments_waived_visit_guard
-  before insert or update of voided_at on public.payments
+  before insert or update or delete on public.payments
   for each row execute function public.guard_payment_on_waived_visit();
+
+-- ---- P0070: bill lines on a waived visit --------------------------------------
+-- The allocation was computed over the lines as they stood. A new line, a
+-- restored line (the 0125 cascade also raises total_php), a reprice, a
+-- reparent or a move to another visit would leave a line with no share that
+-- still releases at full AR.  [CR-4]  Status changes (release / undo / cancel)
+-- stay allowed — the bridges handle the share. Soft-delete is already
+-- impossible on a non-unpaid visit (P0042).
+create or replace function public.guard_test_request_on_waived_visit()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_ids    uuid[];
+  v_id     uuid;
+  v_status text;
+  v_inside boolean := coalesce(current_setting('app.waive_visit', true), '') = 'on';
+begin
+  if tg_op = 'UPDATE' then
+    if not (
+         (old.deleted_at is not null and new.deleted_at is null)   -- restore
+      or new.final_price_php     is distinct from old.final_price_php
+      or new.base_price_php      is distinct from old.base_price_php
+      or new.discount_amount_php is distinct from old.discount_amount_php
+      or new.clinic_fee_php      is distinct from old.clinic_fee_php
+      or new.doctor_pf_php       is distinct from old.doctor_pf_php
+      or new.parent_id           is distinct from old.parent_id
+      or new.service_id          is distinct from old.service_id
+      or new.visit_id            is distinct from old.visit_id
+      or new.is_package_header   is distinct from old.is_package_header
+    ) then
+      return new;
+    end if;
+    v_ids := array(select distinct x from unnest(array[old.visit_id, new.visit_id]) x order by x);
+  else
+    v_ids := array[new.visit_id];
+  end if;
+
+  foreach v_id in array v_ids loop
+    select payment_status into v_status from public.visits where id = v_id for update;
+    if v_status = 'waived' and not v_inside then
+      raise exception 'This visit''s balance was waived, so its lines are fixed: nothing can be added, restored, repriced or moved.'
+        using errcode = 'P0070';
+    end if;
+  end loop;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_test_requests_waived_visit_guard on public.test_requests;
+create trigger trg_test_requests_waived_visit_guard
+  before insert or update of deleted_at, final_price_php, base_price_php, discount_amount_php,
+                            clinic_fee_php, doctor_pf_php, parent_id, service_id, visit_id, is_package_header
+  on public.test_requests
+  for each row execute function public.guard_test_request_on_waived_visit();
 
 -- ---- Post one allocation's standalone JE (line already released) ------------
 create or replace function public.waiver_post_allocation(p_allocation_id uuid, p_actor_id uuid)
@@ -504,11 +629,15 @@ begin
     raise exception 'Only an admin can waive a balance.' using errcode = 'P0071';
   end if;
 
-  -- The visit row lock is the ONE lock; payments are only read (0183 §5).
+  -- Lock order (spec §5): the visit row, then every live line in id order.
+  -- A concurrent release / undo / cancel holds its line's row lock, so the
+  -- statuses read below are final for this transaction.  [CR-5]
   select * into v_visit from public.visits where id = p_visit_id for update;
   if not found then
     raise exception 'Visit not found.' using errcode = 'P0071';
   end if;
+  perform 1 from public.test_requests where visit_id = p_visit_id and deleted_at is null order by id for update;
+
   if v_visit.deleted_at is not null then
     raise exception 'This visit was deleted from the queue. Restore it before waiving.' using errcode = 'P0071';
   end if;
@@ -523,7 +652,19 @@ begin
     raise exception 'This visit is already fully paid — nothing to waive.' using errcode = 'P0071';
   end if;
 
-  -- Provenance, per row (§6).
+  -- A gift-code redemption in flight: the payment row exists but the voucher
+  -- has not been marked redeemed yet; if that update fails the app voids the
+  -- payment, which a waive in between would refuse (P0070).  [CR-7]
+  if exists (
+    select 1 from public.payments p
+     where p.visit_id = p_visit_id and p.voided_at is null and p.method = 'gift_code'
+       and not exists (select 1 from public.gift_codes g where g.redeemed_payment_id = p.id)
+  ) then
+    raise exception 'A gift code is being redeemed on this visit right now. Try again in a moment.'
+      using errcode = 'P0071';
+  end if;
+
+  -- Provenance, per row (spec §6).
   select coalesce(sum(round(amount_php * 100)), 0)::bigint,
          count(*) filter (where legacy_import_run_id is null),
          count(*) filter (where legacy_import_run_id is not null)
@@ -549,7 +690,7 @@ begin
 
   if v_all_live then
     -- Priced live lines: headers and standalone lines; ₱0 package components
-    -- (parent_id set) never carry money. Largest remainder in centavos.
+    -- (parent_id set) never carry money.
     select coalesce(sum(round(final_price_php * 100)), 0)::bigint into v_sum_c
       from public.test_requests
      where visit_id = p_visit_id and deleted_at is null and status <> 'cancelled'
@@ -557,10 +698,27 @@ begin
     if v_sum_c = 0 then
       raise exception 'No priced lines to allocate the waiver over.' using errcode = 'P0071';
     end if;
-    if v_rem_c > v_sum_c then
-      raise exception 'This visit''s total is more than its lines add up to; fix the lines first.' using errcode = 'P0071';
+    -- The release bridge books LINE prices, so the waiver only clears AR if
+    -- the visit total is exactly the priced lines. Either direction is refused.  [CR-6]
+    if v_total_c <> v_sum_c then
+      raise exception 'This visit''s total (₱%) does not match its lines (₱%); fix the lines before waiving.',
+        to_char(v_total_c / 100.0, 'FM999,999,990.00'), to_char(v_sum_c / 100.0, 'FM999,999,990.00')
+        using errcode = 'P0071';
+    end if;
+    -- A released live line must have its release JE in the books, or the
+    -- standalone credit to 1100 would clear AR that was never booked.  [CR-6]
+    if exists (
+      select 1 from public.test_requests tr
+       where tr.visit_id = p_visit_id and tr.deleted_at is null and tr.parent_id is null
+         and tr.status = 'released' and coalesce(tr.final_price_php, 0) > 0
+         and not exists (select 1 from public.journal_entries je
+                          where je.source_kind = 'test_request' and je.source_id = tr.id and je.status = 'posted')
+    ) then
+      raise exception 'A released line on this visit has no journal entry; reconcile the books before waiving.'
+        using errcode = 'P0071';
     end if;
 
+    -- Largest remainder in centavos.
     drop table if exists tmp_waiver_alloc;
     create temp table tmp_waiver_alloc on commit drop as
       select tr.id as test_request_id,
@@ -585,7 +743,9 @@ begin
      where share_c > 0;
     get diagnostics v_n = row_count;
 
-    -- Lines already released: their AR is booked, clear it now.
+    -- Lines already released: their AR is booked, clear it now. This is
+    -- OUTSIDE any exception handler: a closed month (P0002) rolls the whole
+    -- waive back.  [CR-8]
     for r in
       select wa.id
         from public.visit_waiver_allocations wa
@@ -605,6 +765,12 @@ begin
          waived_by      = p_actor_id,
          waive_reason   = btrim(p_reason)
    where id = p_visit_id;
+  -- Package headers whose components are all done auto-release inside that
+  -- UPDATE (0109 Leg B, tg_release_headers_on_visit_paid) and fold their
+  -- share. That path catches every error by design — including P0002 in a
+  -- closed month — and leaves the header ready_for_release with a
+  -- test_request.header_auto_release_failed audit row; the share folds when
+  -- the header is released by hand later.  [CR-8]
   perform set_config('app.waive_visit', 'off', true);
 
   return jsonb_build_object(
@@ -612,10 +778,16 @@ begin
     'allocations',     v_n,
     'posted_now',      v_posted,
     'legacy',          v_all_legacy,
-    'previous_status', v_visit.payment_status
+    'previous_status', v_visit.payment_status,
+    'headers_pending', (select count(*) from public.test_requests
+                         where visit_id = p_visit_id and is_package_header
+                           and status = 'ready_for_release' and deleted_at is null)
   );
 end;
 $$;
+
+comment on function public.waive_visit_balance(uuid, uuid, text) is
+  'Admin waives a visit balance (0183): fixes the remainder, allocates it per line (largest remainder), posts the discount JE for lines already released, folds the rest into later release JEs. Refusals raise P0071.';
 
 -- ---- Fold the share into a later release JE ---------------------------------
 -- COPY the whole body of bridge_test_request_released() from 0159 (the latest
@@ -631,8 +803,8 @@ $$;
 --          where test_request_id = new.id and recognised_at is null
 --          for update;
 --         v_waived := coalesce(v_waived, 0);
---   (c) BOTH "DR: receivable for final_price_php" inserts — change the amount
---       and the guard from `new.final_price_php` to `new.final_price_php - v_waived`:
+--   (c) BOTH "DR: receivable for final_price_php" inserts — change the guard
+--       and the amount from `new.final_price_php` to `new.final_price_php - v_waived`:
 --         if coalesce(new.final_price_php, 0) - v_waived > 0 then
 --           ... values (v_je_id, public.coa_uuid_for_code(v_cash_account), new.final_price_php - v_waived, 0, v_line_order, 'Release receivable');
 --   (d) right after the "Discount line (DR contra-revenue)" block — add:
@@ -645,8 +817,8 @@ $$;
 --              set recognised_at = now(), journal_entry_id = v_je_id
 --            where test_request_id = new.id;
 --         end if;
---   Keep the legacy early return, the parent_id return, P0034, PF lines, the
---   suspense audit and the ACL restatement exactly as in 0159.
+--   Keep the legacy early return, the parent_id return, P0034, the PF lines,
+--   the suspense audit and the ACL restatement exactly as in 0159.
 create or replace function public.bridge_test_request_released()
 returns trigger
 language plpgsql
@@ -660,9 +832,9 @@ revoke execute on function public.bridge_test_request_released() from public, an
 grant  execute on function public.bridge_test_request_released() to service_role;
 
 -- ---- Undo-release: reverse the share with the line ---------------------------
--- COPY fn_undo_release_bridge() from 0140 (lines 591–668) and add ONE line
--- immediately after the accounting-reversal block (after `end if;` that closes
--- `if v_original_je is not null then`), before the doctor_pf_entries void:
+-- COPY fn_undo_release_bridge() from 0166 (line 140 — the cogs-free body) and
+-- add ONE line immediately after the `end if;` that closes
+-- `if v_original_je is not null then`, before the doctor_pf_entries void:  [CR-1]
 --         -- 0183: a standalone waiver JE for this line is reversed too; a folded share went with the JE above.
 --         perform public.waiver_unrecognise_line(new.id, v_actor, 'release undone');
 create or replace function public.fn_undo_release_bridge()
@@ -671,15 +843,15 @@ language plpgsql
 security definer
 set search_path = public
 as $$
--- <<< paste the 0140 body here with the one added line >>>
+-- <<< paste the 0166 body here with the one added line >>>
 $$;
 
 revoke execute on function public.fn_undo_release_bridge() from public, anon, authenticated;
 grant  execute on function public.fn_undo_release_bridge() to service_role;
 
 -- ---- Cancel: same hook --------------------------------------------------------
--- COPY bridge_test_request_cancelled() from 0141 and add ONE line immediately
--- after `v_actor := auth.uid();`:
+-- COPY bridge_test_request_cancelled() from 0166 (line 29) and add ONE line
+-- immediately after `v_actor := auth.uid();`:  [CR-1]
 --         perform public.waiver_unrecognise_line(new.id, v_actor, 'test request cancelled');
 create or replace function public.bridge_test_request_cancelled()
 returns trigger
@@ -687,18 +859,18 @@ language plpgsql
 security definer
 set search_path to 'public'
 as $function$
--- <<< paste the 0141 body here with the one added line >>>
+-- <<< paste the 0166 body here with the one added line >>>
 $function$;
 
 revoke execute on function public.bridge_test_request_cancelled() from public, anon, authenticated;
 grant  execute on function public.bridge_test_request_cancelled() to service_role;
 
 -- ---- correct_payment: the equal-amount exception ------------------------------
--- COPY correct_payment from 0174 (lines 48–187: same signature, `create or
--- replace`) and add, in the declare block:
+-- COPY correct_payment from 0174 (lines 48–187, same signature). Add to the
+-- declare block:
 --         v_src_status text;
 --         v_tgt_status text;
--- and this block immediately BEFORE the comment
+-- Add this block immediately BEFORE the comment
 -- `-- Reference / notes only: not a money change, edit in place.`:
 --         -- 0183: a waived visit's money is fixed. Lock order payment → visit,
 --         -- the same as the insert path (guard_payment_on_waived_visit).
@@ -717,9 +889,17 @@ grant  execute on function public.bridge_test_request_cancelled() to service_rol
 --             raise exception 'This visit''s balance was waived, so the amount is fixed. Change only the method, reference or notes.'
 --               using errcode = 'P0070';
 --           end if;
---           -- Same amount: let the replacement insert and the void through the guard.
+--         end if;
+-- Then wrap ONLY the proven replacement — the flag is set right before the
+-- insert and cleared right after the void; the in-place (reference/notes)
+-- branch returns before it is ever set:  [CR-3]
+--         if v_src_status = 'waived' then
 --           perform set_config('app.waived_visit_edit', 'on', true);
 --         end if;
+--         insert into public.payments ( ... ) values ( ... ) returning id into v_new_id;
+--         update public.payments set voided_at = now(), voided_by = p_actor_id, void_reason = ... where id = p_payment_id;
+--         perform set_config('app.waived_visit_edit', 'off', true);
+--         return v_new_id;
 create or replace function public.correct_payment(
   p_payment_id       uuid,
   p_amount_php       numeric,
@@ -736,34 +916,33 @@ language plpgsql
 security definer
 set search_path = public
 as $$
--- <<< paste the 0174 body here with the added declarations and block >>>
+-- <<< paste the 0174 body here with the added declarations, block and flag scoping >>>
 $$;
 
 comment on function public.correct_payment(uuid, numeric, text, text, text, text, uuid, uuid, jsonb) is
   'Edit / Move a payment (0161, stale guard 0174, waived-visit rule 0183): re-create then void in one transaction; reference/notes-only edits in place. On a waived visit only an equal-amount replacement is allowed (P0070). p_expected = the payment as the caller saw it; any difference is refused (P0054).';
 
--- ---- ACLs for the new functions (0119: new functions are service_role-only;
--- restate by name — hosted Supabase also grants anon/authenticated by default)
-revoke execute on function public.guard_visit_waived_transition()            from public, anon, authenticated;
-revoke execute on function public.guard_payment_on_waived_visit()            from public, anon, authenticated;
-revoke execute on function public.waiver_post_allocation(uuid, uuid)         from public, anon, authenticated;
-revoke execute on function public.waiver_unrecognise_line(uuid, uuid, text)  from public, anon, authenticated;
-revoke execute on function public.waive_visit_balance(uuid, uuid, text)      from public, anon, authenticated;
-grant  execute on function public.guard_visit_waived_transition()            to service_role;
-grant  execute on function public.guard_payment_on_waived_visit()            to service_role;
-grant  execute on function public.waiver_post_allocation(uuid, uuid)         to service_role;
-grant  execute on function public.waiver_unrecognise_line(uuid, uuid, text)  to service_role;
-grant  execute on function public.waive_visit_balance(uuid, uuid, text)      to service_role;
+-- ---- ACLs (0119: new functions are service_role-only; restated by name —
+-- hosted Supabase also grants anon/authenticated by default)
+revoke execute on function public.guard_visit_waived_transition()             from public, anon, authenticated;
+revoke execute on function public.guard_payment_on_waived_visit()             from public, anon, authenticated;
+revoke execute on function public.guard_test_request_on_waived_visit()        from public, anon, authenticated;
+revoke execute on function public.waiver_post_allocation(uuid, uuid)          from public, anon, authenticated;
+revoke execute on function public.waiver_unrecognise_line(uuid, uuid, text)   from public, anon, authenticated;
+revoke execute on function public.waive_visit_balance(uuid, uuid, text)       from public, anon, authenticated;
+grant  execute on function public.guard_visit_waived_transition()             to service_role;
+grant  execute on function public.guard_payment_on_waived_visit()             to service_role;
+grant  execute on function public.guard_test_request_on_waived_visit()        to service_role;
+grant  execute on function public.waiver_post_allocation(uuid, uuid)          to service_role;
+grant  execute on function public.waiver_unrecognise_line(uuid, uuid, text)   to service_role;
+grant  execute on function public.waive_visit_balance(uuid, uuid, text)       to service_role;
 revoke execute on function public.correct_payment(uuid, numeric, text, text, text, text, uuid, uuid, jsonb)
   from public, anon, authenticated;
 grant  execute on function public.correct_payment(uuid, numeric, text, text, text, text, uuid, uuid, jsonb)
   to service_role;
-
-comment on function public.waive_visit_balance(uuid, uuid, text) is
-  'Admin waives a visit balance (0183): fixes the remainder, allocates it per line (largest remainder), posts the discount JE for lines already released, folds the rest into later release JEs. Refusals raise P0071.';
 ```
 
-- [ ] **Step 2: Paste the three bodies.** For each `<<< paste … >>>` marker: open the source migration (`0159_retire_send_out_accrual.sql`, `0140_manila_posting_dates.sql` lines 591–668, `0141_manila_posting_dates_remainder.sql`, `0174_correct_payment_stale_guard.sql` lines 63–187), copy the body between `as $function$`/`as $$` and the closing `$function$;`/`$$;`, paste, then make ONLY the listed edits. Diff-check: `diff <(awk '/create or replace function public.fn_undo_release_bridge/,/^\$\$;/' supabase/migrations/0140_manila_posting_dates.sql) <(awk '/create or replace function public.fn_undo_release_bridge/,/^\$\$;/' supabase/migrations/0183_waived_balance_gl.sql)` must show only the added line (same for the other three).
+- [ ] **Step 2: Paste the four bodies.** For each `<<< paste … >>>` marker open the source migration, copy the body between `as $function$`/`as $$` and the closing `$function$;`/`$$;`, paste, then make ONLY the listed edits. Diff-check each: `diff <(awk '/create or replace function public.fn_undo_release_bridge/,/^\$\$;/' supabase/migrations/0166_drop_send_out_accrual_tables.sql) <(awk '/create or replace function public.fn_undo_release_bridge/,/^\$\$;/' supabase/migrations/0183_waived_balance_gl.sql)` shows only the added `perform` line; same for `bridge_test_request_cancelled` (0166), `bridge_test_request_released` (0159, edits a–d) and `correct_payment` (0174, the block + declarations + flag scoping).
 
 - [ ] **Step 3: Mirror the table grants in `supabase/seed.sql`** (append at the tail; `seed-grant-parity.test.ts` fails otherwise):
 
@@ -776,14 +955,7 @@ revoke all on public.visit_waiver_allocations from authenticated;
 grant select on public.visit_waiver_allocations to authenticated;
 ```
 
-- [ ] **Step 4: Lint the SQL by replay on the local stack** — see Task 8 (apply by hand). Do not commit until Task 3's pin test passes.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add supabase/migrations/0183_waived_balance_gl.sql supabase/seed.sql
-git commit -m "feat(accounting): 0183 waived balance → discount JE, per-line allocation, waived-visit guards"
-```
+- [ ] **Step 4: Commit** only after Task 3's pin test passes: `git add supabase/migrations/0183_waived_balance_gl.sql supabase/seed.sql && git commit -m "feat(accounting): 0183 waived balance → discount JE, per-line allocation, waived-visit guards"`
 
 ---
 
@@ -807,6 +979,11 @@ const fn = (name: string) => {
 };
 
 describe("migration 0183 — waived balance GL bridge", () => {
+  it("asserts zero waived visits under a table lock before changing anything", () => {
+    expect(sql).toMatch(/lock table public\.visits in share row exclusive mode;[\s\S]*?payment_status = 'waived'[\s\S]*?raise exception 'STOP 0183/);
+    expect(sql.indexOf("STOP 0183")).toBeLessThan(sql.indexOf("add value if not exists 'visit_waiver'"));
+  });
+
   it("adds the source kind, the visit columns and the allocation table", () => {
     expect(sql).toMatch(/alter type public\.je_source_kind add value if not exists 'visit_waiver'/);
     expect(sql).toMatch(/add column if not exists waived_php\s+numeric\(10,2\)/);
@@ -815,34 +992,50 @@ describe("migration 0183 — waived balance GL bridge", () => {
     expect(sql).toMatch(/unique \(test_request_id\)/);
   });
 
-  it("guards entering and leaving 'waived' behind the RPC's GUC (P0069)", () => {
+  it("guards INSERT and UPDATE into 'waived', never out of it, and freezes the visit's money fields (P0069)", () => {
     const g = fn("guard_visit_waived_transition");
+    expect(g).toMatch(/if tg_op = 'INSERT' then[\s\S]*?errcode = 'P0069'/);
     expect(g).toMatch(/current_setting\('app\.waive_visit', true\)/);
-    expect(g).toMatch(/errcode = 'P0069'/);
     expect(g).toMatch(/cannot be un-waived/);
-    expect(sql).toMatch(/before update of payment_status on public\.visits/);
+    expect(g).toMatch(/new\.total_php\s+is distinct from old\.total_php/);
+    expect(sql).toMatch(/before insert or update of payment_status, total_php, hmo_provider_id, legacy_import_run_id,\s*waived_php, waived_at, waived_by, waive_reason\s*on public\.visits/);
   });
 
-  it("locks the visit row FIRST in the payment guard and in the waiver (one lock order)", () => {
+  it("the payment guard covers insert, void, money-bearing update and hard delete, both visits, visit lock first", () => {
     const g = fn("guard_payment_on_waived_visit");
-    expect(g).toMatch(/from public\.visits\s+where id = new\.visit_id\s+for update/);
+    expect(g).toMatch(/new\.amount_php\s+is distinct from old\.amount_php/);
+    expect(g).toMatch(/unnest\(array\[old\.visit_id, new\.visit_id\]\)/);
+    expect(g).toMatch(/tg_op = 'DELETE'/);
+    expect(g).toMatch(/from public\.visits where id = v_id for update/);
     expect(g).toMatch(/current_setting\('app\.waived_visit_edit', true\)/);
     expect(g).toMatch(/errcode = 'P0070'/);
-    expect(sql).toMatch(/before insert or update of voided_at on public\.payments/);
-    const w = fn("waive_visit_balance");
-    expect(w).toMatch(/select \* into v_visit from public\.visits where id = p_visit_id for update;/);
-    expect(w).not.toMatch(/from public\.payments[\s\S]*?for update/);
+    expect(sql).toMatch(/before insert or update or delete on public\.payments/);
   });
 
-  it("waive_visit_balance: admin only, provenance per row, largest remainder, standalone post for released lines", () => {
+  it("the line guard freezes inserts, restores, reprices, reparents and moves on a waived visit", () => {
+    const g = fn("guard_test_request_on_waived_visit");
+    expect(g).toMatch(/old\.deleted_at is not null and new\.deleted_at is null/);
+    expect(g).toMatch(/new\.final_price_php\s+is distinct from old\.final_price_php/);
+    expect(g).toMatch(/errcode = 'P0070'/);
+    expect(sql).toMatch(/before insert or update of deleted_at, final_price_php, base_price_php, discount_amount_php,\s*clinic_fee_php, doctor_pf_php, parent_id, service_id, visit_id, is_package_header\s*on public\.test_requests/);
+  });
+
+  it("waive_visit_balance: visit lock then line locks, admin only, provenance, exact reconciliation, gift codes in flight", () => {
     const w = fn("waive_visit_balance");
+    expect(w).toMatch(/select \* into v_visit from public\.visits where id = p_visit_id for update;/);
+    expect(w).toMatch(/for update;[\s\S]*?perform 1 from public\.test_requests where visit_id = p_visit_id and deleted_at is null order by id for update;/);
+    expect(w).not.toMatch(/from public\.payments[\s\S]*?for update/);
     expect(w).toMatch(/v_role is distinct from 'admin'/);
     expect(w).toMatch(/mixes imported and live rows/);
+    expect(w).toMatch(/if v_total_c <> v_sum_c then/);
+    expect(w).toMatch(/has no journal entry; reconcile/);
+    expect(w).toMatch(/redeemed_payment_id = p\.id/);
     expect(w).toMatch(/order by frac desc, test_request_id limit v_left/);
     expect(w).toMatch(/parent_id is null and coalesce\(tr\.final_price_php, 0\) > 0/);
     expect(w).toMatch(/when s\.kind in \('doctor_consultation', 'doctor_procedure'\) then '4920' else '4910'/);
     expect(w).toMatch(/where t\.status = 'released'[\s\S]*?perform public\.waiver_post_allocation\(r\.id, p_actor_id\)/);
     expect(w).toMatch(/set_config\('app\.waive_visit', 'on', true\)/);
+    expect(w).toMatch(/'headers_pending'/);
     expect(w).toMatch(/errcode = 'P0071'/);
   });
 
@@ -863,27 +1056,33 @@ describe("migration 0183 — waived balance GL bridge", () => {
     expect(b).toMatch(/if NEW\.legacy_import_run_id is not null then\s+return NEW;/);
   });
 
-  it("undo-release and cancel take the share back out; reversal follows the 0173 pair rule", () => {
-    expect(fn("fn_undo_release_bridge")).toMatch(/waiver_unrecognise_line\(new\.id, v_actor, 'release undone'\)/);
-    expect(fn("bridge_test_request_cancelled")).toMatch(/waiver_unrecognise_line\(new\.id, v_actor, 'test request cancelled'\)/);
-    const u = fn("waiver_unrecognise_line");
-    expect(u).toMatch(/set status = 'reversed', reversed_by = v_rev/);
-    expect(u).toMatch(/set recognised_at = null, journal_entry_id = null/);
+  it("undo-release and cancel use the 0166 (cogs-free) bodies and take the share back out", () => {
+    const u = fn("fn_undo_release_bridge");
+    const c = fn("bridge_test_request_cancelled");
+    expect(u).toMatch(/waiver_unrecognise_line\(new\.id, v_actor, 'release undone'\)/);
+    expect(c).toMatch(/waiver_unrecognise_line\(new\.id, v_actor, 'test request cancelled'\)/);
+    expect(u).not.toMatch(/cogs_send_out_entries/);
+    expect(c).not.toMatch(/cogs_send_out_entries/);
+    const r = fn("waiver_unrecognise_line");
+    expect(r).toMatch(/set status = 'reversed', reversed_by = v_rev/);
+    expect(r).toMatch(/set recognised_at = null, journal_entry_id = null/);
   });
 
-  it("correct_payment: equal-amount edit only on a waived visit, no move on or off (P0070)", () => {
+  it("correct_payment: equal-amount edit only on a waived visit, no move on or off, flag scoped to the replacement", () => {
     const c = fn("correct_payment");
     expect(c).toMatch(/where id = v_old\.visit_id for update/);
     expect(c).toMatch(/cannot be moved\.' using errcode = 'P0070'/);
     expect(c).toMatch(/moved onto it\.' using errcode = 'P0070'/);
     expect(c).toMatch(/amount is fixed[\s\S]*?errcode = 'P0070'/);
-    expect(c).toMatch(/set_config\('app\.waived_visit_edit', 'on', true\)/);
+    expect(c).toMatch(/set_config\('app\.waived_visit_edit', 'on', true\);\s*end if;\s*insert into public\.payments/);
+    expect(c).toMatch(/where id = p_payment_id;\s*perform set_config\('app\.waived_visit_edit', 'off', true\);/);
   });
 
   it("restates every ACL by name (0118/0119)", () => {
     for (const f of [
       "guard_visit_waived_transition\\(\\)",
       "guard_payment_on_waived_visit\\(\\)",
+      "guard_test_request_on_waived_visit\\(\\)",
       "waiver_post_allocation\\(uuid, uuid\\)",
       "waiver_unrecognise_line\\(uuid, uuid, text\\)",
       "waive_visit_balance\\(uuid, uuid, text\\)",
@@ -900,37 +1099,40 @@ describe("migration 0183 — waived balance GL bridge", () => {
 });
 ```
 
-- [ ] **Step 2: Run** `npx vitest run src/lib/accounting/waived-balance-gl.test.ts` — expected: 9 passed (fix the SQL, never the assertions, when one fails).
-
+- [ ] **Step 2: Run** `npx vitest run src/lib/accounting/waived-balance-gl.test.ts` — expected 11 passed (fix the SQL, never the assertions, when one fails).
 - [ ] **Step 3: Commit** `git add src/lib/accounting/waived-balance-gl.test.ts && git commit -m "test(accounting): pin 0183's waiver bridge SQL"`
 
 ---
 
-### Task 4: P-code translations + coverage
+### Task 4: P-code translations + deadlock + coverage
 
 **Files:**
-- Modify: `src/lib/accounting/pg-errors.ts` (after the `P0067` case)
+- Modify: `src/lib/accounting/pg-errors.ts` (after the `P0067` case; `40P01` next to the other standard SQLSTATEs)
 
 - [ ] **Step 1: Add the cases**
 
 ```ts
     // 0183 — waived balances
     case "P0069":
-      // Entering 'waived' outside waive_visit_balance(), or leaving it at all.
+      // Entering 'waived' outside waive_visit_balance(), leaving it, or
+      // changing a waived visit's total / billing / waiver record.
       return err.message ?? "A balance can only be waived with Waive balance on the visit page.";
     case "P0070":
-      // Money on a waived visit: record, delete, move. Several messages, all
-      // staff-readable — pass them through.
-      return err.message ?? "This visit's balance was waived, so its payments are fixed.";
+      // Money or bill lines on a waived visit. Several messages, all written
+      // for staff — pass them through.
+      return err.message ?? "This visit's balance was waived, so its payments and lines are fixed.";
     case "P0071":
       // waive_visit_balance refusals (not admin, HMO, already waived/paid,
-      // mixed provenance, nothing to waive …) — each message is written for staff.
+      // mixed provenance, total out of step, gift code in flight …).
       return err.message ?? "This visit's balance cannot be waived.";
+    case "40P01":
+      // deadlock_detected — the 0183 serialization protocol accepts one rare
+      // cycle (waiver vs. an undo cascade) and lets Postgres abort one side.
+      return "Something else changed this visit at the same moment. Try again.";
 ```
 
-- [ ] **Step 2: Run** `npx vitest run src/lib/accounting/pg-error-coverage.test.ts src/lib/accounting/pg-errors.test.ts` — expected: pass (the coverage test finds P0069–P0071 raised in 0183 and translated).
-
-- [ ] **Step 3: Commit** `git add src/lib/accounting/pg-errors.ts && git commit -m "feat(accounting): translate P0069–P0071 (waived balance)"`
+- [ ] **Step 2: Run** `npx vitest run src/lib/accounting/pg-error-coverage.test.ts src/lib/accounting/pg-errors.test.ts` — expected pass.
+- [ ] **Step 3: Commit** `git add src/lib/accounting/pg-errors.ts && git commit -m "feat(accounting): translate P0069–P0071 and 40P01 (waived balance)"`
 
 ---
 
@@ -947,10 +1149,15 @@ describe("migration 0183 — waived balance GL bridge", () => {
   "function:waiver_unrecognise_line":
     "Finds the live standalone waiver JE to reverse on undo-release / cancel; a reversed one must not be reversed twice (0183).",
 ```
+(`waive_visit_balance` reads `journal_entries` once for the released-line check — posted-only on purpose: "does this line's live release JE exist"; register it too:)
+```ts
+  "function:waive_visit_balance":
+    "Refuses to waive when a released live line has no live release JE (0183) — an existence lookup, not a total.",
+```
+and add the matching `comment on function public.waive_visit_balance(uuid, uuid, text) is …` text in the migration: append " Posted-only journal read on purpose: existence of a released line's live release JE (LEDGER_TOTAL_STATUSES, ledger-status-sql.test.ts SQL_LOOKUPS)." to the comment written in Task 2.
 
-- [ ] **Step 2: Run** `npx vitest run src/lib/accounting/ledger-status-sql.test.ts src/lib/accounting/ledger-status.test.ts` — expected: pass. If it reports `waive_visit_balance` or the guards as journal readers, they are not (they read `visits`/`payments` only) — fix the SQL, not the allowlist.
-
-- [ ] **Step 3: Commit** `git add src/lib/accounting/ledger-status-sql.test.ts && git commit -m "test(accounting): register 0183's posted-only lookups"`
+- [ ] **Step 2: Run** `npx vitest run src/lib/accounting/ledger-status-sql.test.ts src/lib/accounting/ledger-status.test.ts` — expected pass. If it reports the guards as journal readers they are not (they read `visits`/`payments` only) — fix the SQL, not the allowlist.
+- [ ] **Step 3: Commit** `git add src/lib/accounting/ledger-status-sql.test.ts supabase/migrations/0183_waived_balance_gl.sql && git commit -m "test(accounting): register 0183's posted-only lookups"`
 
 ---
 
@@ -959,160 +1166,127 @@ describe("migration 0183 — waived balance GL bridge", () => {
 **Files:**
 - Create: `supabase/tests/0183_waived_balance_gl_smoke.sql`
 
-- [ ] **Step 1: Write it** in the 0174 shape (`begin; do $$ … raise exception 'FAIL: …' … $$;` — the runner rolls back). Seed: an admin `auth.users` + `staff_profiles` row, a patient, a lab service (₱500, `lab_test`) and a consult service (₱800, `doctor_consultation`, a physician), CoA rows exist from 0028. Cases:
+- [ ] **Step 1: Write it** in the 0174 shape: header comment, `begin;`, one `do $$ … $$;` per case group, every case ending in explicit `if … then raise exception 'FAIL: <case> …'; end if;` checks and `raise notice 'PASS <case>';`, refusals caught with nested `begin … exception when others then if sqlstate <> '<code>' then raise; end if; end;`. Seed inside the do-block: an admin `auth.users` + `staff_profiles` row (`role = 'admin'`), a medtech pair, a patient, a lab service (₱500, `lab_test`), a consult service (₱800, `doctor_consultation`) with a physician, a package service (₱5,888, `lab_package`) with 8 `lab_test` components and `package_components` rows. Journal amounts are checked by CoA code via `join chart_of_accounts c on c.id = l.account_id where c.code = '…'`. The runner is `psql "$APP" -v ON_ERROR_STOP=1 -f …` (the file ends without `commit`, so it rolls back).
 
-```sql
--- A  RLS hole closed: a plain `update visits set payment_status='waived'` raises P0069;
---    `update … set payment_status='unpaid'` on a waived visit raises P0069.
--- B  Live visit, lab 500 + consult 800, paid 300, nothing released: waive →
---    payment_status='waived', waived_php=1000, two allocations 384.62 (4910) and
---    615.38 (4920) that sum to 1000, recognised_at null, no 'visit_waiver' JE.
---    Release the lab line → its JE has DR 1100 115.38, DR 4910 384.62, CR 4100 500;
---    allocation recognised, journal_entry_id = that JE. Release the consult →
---    DR 1100 184.62, DR 4920 615.38, CR 4200 300, CR 2110 500. After both:
---    sum over the visit's 1100 lines (posted+reversed) = 300 − 300 = 0.
--- C  Undo-release of the lab line → the release JE is reversed (status
---    'reversed', a mirrored 'posted' entry), allocation recognised_at null;
---    re-release folds again and the 1100 net is unchanged.
--- D  Already-released line at waive time: new visit, lab 500 released while
---    paid 500, then the payment voided (now unpaid; done under
---    app.waived_visit_edit is NOT set — the visit is not yet waived, so allowed),
---    waive → a 'visit_waiver' JE DR 4910 500 / CR 1100 500 posted, allocation
---    recognised. Undo-release → that JE reversed, allocation unrecognised.
--- E  P0070: on visit B insert a payment → P0070; void the existing 300 payment →
---    P0070; correct_payment with a different amount → P0070; correct_payment
---    with the same amount, method gcash → succeeds, replacement row exists,
---    original voided 'Edited: …', visit still 'waived', paid_php 300;
---    correct_payment moving a payment from an unpaid visit onto B → P0070.
--- F  Provenance: an all-imported visit (visits.legacy_import_run_id set, its
---    line and payment too) waives with waived_php set, 0 allocations, 0 JEs;
---    a mixed visit (imported visit, live line) → P0071.
--- G  Refusals: HMO visit → P0071; paid visit → P0071; non-admin actor → P0071;
---    blank reason → P0071; already waived → P0071.
--- H  Largest remainder: three ₱100 lines, remainder ₱1,000 → 333.34/333.33/333.33
---    with the extra centavo on the lowest test_request id; ₱0 package
---    components get no allocation (header 5888 gets it all).
--- I  Closed month: close the current period (period_status_for → 'closed' via
---    the accounting_periods row the 0028 smoke uses), then waive a visit with a
---    released line → P0002 and NOTHING written (payment_status still unpaid,
---    no allocation rows). Reopen.
--- J  Package header auto-release on waive (Leg B): a package visit whose
---    components are all released and whose header is ready_for_release; waive →
---    the header releases inside the same statement and its release JE carries
---    the folded share (recognised_at set, journal_entry_id = header JE).
+```
+A  Guards vs a NON-ADMIN staff JWT [CR-2]:
+     set local role authenticated;
+     select set_config('request.jwt.claims', '{"sub":"<medtech uuid>","role":"authenticated"}', true);
+   — insert a visit with payment_status='waived' → P0069; update an unpaid visit to 'waived' → P0069;
+   update a waived visit to 'unpaid' → P0069; update total_php on a waived visit → P0069.  `reset role;`
+B  Live visit, lab 500 + consult 800 (total 1300), paid 300, nothing released: waive → 'waived',
+   waived_php 1000, allocations 384.62 (4910) + 615.38 (4920) summing to 1000, recognised_at null,
+   no visit_waiver JE. Release lab → JE: DR 1100 115.38, DR 4910 384.62, CR 4100 500; allocation
+   recognised, journal_entry_id = JE. Release consult → DR 1100 184.62, DR 4920 615.38, CR 4200 300,
+   CR 2110 500. 1100 net over the visit's entries (status in ('posted','reversed')) = 0.
+C  Undo-release of the lab line → release JE 'reversed' + mirrored 'posted' reversal, allocation
+   recognised_at null; re-release folds again; 1100 net unchanged.
+C2 Cancel the consult (released → cancelled) → its JE reversed, allocation unrecognised, no
+   visit_waiver JE; 1100 net still 0 for that line.
+D  Already-released line at waive time: lab 500 released while paid 500, payment voided (allowed —
+   not yet waived), waive → visit_waiver JE DR 4910 500 / CR 1100 500 posted, allocation recognised.
+   Undo-release → that JE reversed (pair), allocation unrecognised. A second such visit: cancel instead
+   of undo → same outcome.
+E  P0070 on visit B: insert a payment; void the 300 payment; `delete from payments` (hard delete);
+   `update payments set amount_php = 250`; `update payments set visit_id = <other>`; correct_payment
+   with a different amount; correct_payment moving B's payment off; moving an unpaid visit's payment
+   onto B — all P0070. correct_payment same amount, method gcash → OK: replacement row exists,
+   original 'Edited: …', visit still 'waived', paid_php 300.
+F  Provenance: all-imported visit (visit, line and payment carry legacy_import_run_id) waives with
+   waived_php set, 0 allocations, 0 JEs; a mixed visit (imported visit, live line) → P0071.
+G  Refusals: HMO visit → P0071; paid visit → P0071; non-admin actor → P0071; blank reason → P0071;
+   already waived → P0071.
+H  Largest remainder [CR-9]: three ₱500 lab lines (total 1500), paid 500 → remainder 1000 →
+   333.34 / 333.33 / 333.33, the extra centavo on the lowest test_request id; a package visit
+   (header 5888 + 8 ₱0 components, total 5888, unpaid) → one allocation of 5888 on the header only.
+I  Closed month: close the current period the way 0028's smoke does; waive a visit with a released
+   line → P0002 and NOTHING written (payment_status unchanged, no allocation rows); reopen.
+J  Package header auto-release on waive (Leg B): components released, header ready_for_release →
+   the header releases inside the waive statement with the share folded (recognised,
+   journal_entry_id = header JE); RPC result headers_pending = 0.
+J2 Same with the period closed [CR-8]: waive succeeds (nothing standalone to post); header stays
+   ready_for_release; a test_request.header_auto_release_failed audit row exists with sqlstate
+   'P0002'; allocation unrecognised; RPC result headers_pending = 1. Reopen the period, release the
+   header by hand → folded.
+K  Ordinary never-waived visit [CR-1]: release, undo, re-release, cancel all still post/reverse as
+   before (no allocation rows are touched, no error).
+L  Line freeze on a waived visit [CR-4]: insert a new line → P0070; restore a line deleted BEFORE the
+   waive → P0070; `update test_requests set final_price_php = …` → P0070; `set parent_id` and
+   `set visit_id` → P0070; release / undo of an existing line still allowed.
+M  Reconciliation [CR-6]: total_php 500 with a ₱1,000 line → P0071 (message names ₱500.00 and
+   ₱1,000.00); total 1500 with ₱1,000 of lines → P0071; a released live line with no posted JE
+   (delete its JE rows under session_replication_role = replica) → P0071.
+N  Gift code in flight [CR-7]: a non-voided gift_code payment with no gift_codes.redeemed_payment_id
+   pointing at it → waive refused P0071; link the voucher → waive proceeds.
 ```
 
-Every case ends in explicit `if … then raise exception 'FAIL: <case> …'; end if;` checks on `visits.payment_status`, `visit_waiver_allocations`, `journal_entries.status`, `journal_lines` amounts by CoA code (join `chart_of_accounts` by `code`), and P-code catches via `exception when others then if sqlstate <> 'P0070' then raise; end if;` inside nested `begin … end` blocks. Print `raise notice 'PASS <case>'` after each.
-
-- [ ] **Step 2: Run against the LOCAL stack only** (after Task 8 applies 0183):
-
-```bash
-/opt/homebrew/opt/libpq/bin/psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -v ON_ERROR_STOP=1 -f supabase/tests/0183_waived_balance_gl_smoke.sql 2>&1 | grep -E "PASS|FAIL|ERROR"
-```
-Expected: `PASS A` … `PASS J`, then `ROLLBACK`.
-
-- [ ] **Step 3: Commit** `git add supabase/tests/0183_waived_balance_gl_smoke.sql && git commit -m "test(sql): 0183 waived balance GL smoke A–J"`
+- [ ] **Step 2: Run** (after Task 8 applies 0183): `/opt/homebrew/opt/libpq/bin/psql "$APP" -v ON_ERROR_STOP=1 -f supabase/tests/0183_waived_balance_gl_smoke.sql 2>&1 | grep -E "PASS|FAIL|ERROR"` — expected `PASS A` … `PASS N`, then `ROLLBACK`.
+- [ ] **Step 3: Commit** `git add supabase/tests/0183_waived_balance_gl_smoke.sql && git commit -m "test(sql): 0183 waived balance GL smoke A–N"`
 
 ---
 
-### Task 7: Two-session race smoke (dblink, local only)
+### Task 7: Two-session race smoke (dblink, `supabase_admin`, local only) `[CR-5, CR-10]`
 
 **Files:**
 - Create: `supabase/tests/0183_waiver_race_smoke.sql`
 
-- [ ] **Step 1: Write it.** Header comment: LOCAL ONLY (opens two extra connections to the same database through `dblink`; never run on prod). Body:
+- [ ] **Step 1: Write it.** Header: LOCAL ONLY — opens extra connections through `dblink` as `supabase_admin`; run with `psql "$ADMIN" -v ON_ERROR_STOP=1 -f supabase/tests/0183_waiver_race_smoke.sql`. First statement refuses anything that is not the local container: `do $$ begin if host(inet_server_addr()) not like '172.%' and host(inet_server_addr()) not like '127.%' then raise exception 'local only'; end if; end $$;`
 
-```sql
-begin;
-create extension if not exists dblink;
-do $$
-declare
-  c   text := 'dbname=postgres user=postgres password=postgres host=localhost port=5432';
-  v_actor uuid := gen_random_uuid(); v_patient uuid; v_visit uuid; v_svc uuid; v_res text;
-  v_waived numeric; v_alloc numeric; v_status text;
-begin
-  -- seed admin + patient + a ₱1,000 lab line, visit unpaid (total_php = 1000)
-  -- … (same seeding as 0183_waived_balance_gl_smoke.sql; commit it on the
-  -- MAIN connection with a savepoint? No: the seed must be visible to the
-  -- other connections, so run the seed through dblink_exec on connection 's0'
-  -- and delete it again at the end of the do-block, whatever happens.)
-  perform dblink_connect('s0', c);
-  perform dblink_exec('s0', format($q$insert into auth.users (...) values (%L, ...); insert into public.staff_profiles ...; insert into public.patients ...; insert into public.visits (id, patient_id, total_php) values (%L, %L, 1000); insert into public.test_requests (...) values (...);$q$, v_actor, v_visit, v_patient));
+Mechanics:
+- `create extension if not exists dblink;` then `dblink_connect('s0', c)`, `('s1', c)`, `('s2', c)` with `c := 'dbname=postgres user=supabase_admin password=postgres host=localhost port=5432'`.
+- Seed through `dblink_exec('s0', …)` in FK order (auth.users → staff_profiles → patients → services → visits → test_requests) so the rows are COMMITTED and visible to the workers; capture ids as literals built with `format(%L)`.
+- Row-returning statements go through `dblink(conn, sql) as t(x text)`; `dblink_exec` is only for `begin`/`commit`/`rollback`/DML without RETURNING.
+- Async: `dblink_send_query(w, sql)`; then a bounded lock-wait check — read the worker's pid once at connect time (`select x from dblink(w, 'select pg_backend_pid()') as t(x int)`) and loop up to 20 × 0.25 s until `exists (select 1 from pg_stat_activity where pid = <pid> and wait_event_type = 'Lock')`, else `raise exception 'FAIL n: worker never waited on the lock'`. After releasing the blocker, drain with `perform * from dblink_get_result(w) as t(x text)` (twice: result then end-of-results), catching the remote error's SQLSTATE where a refusal is expected (`exception when others then if sqlstate <> 'P0070' then raise; end if;`).
+- Teardown (at the end AND inside `exception when others then … raise;`): for each worker `perform dblink_cancel_query(w)`, `perform dblink_exec(w, 'rollback')` inside its own `begin … exception when others then null; end`, `perform dblink_disconnect(w)`; then via `s0`: `set session_replication_role = replica` and delete journal_lines → journal_entries (by allocation ids and payment ids of the seeded visits) → visit_waiver_allocations → payments → test_requests → visits → patients → staff_profiles → auth.users; `dblink_disconnect('s0')`.
 
-  -- Case 1: payment first, waiver waits, then sees the payment.
-  perform dblink_connect('s1', c);
-  perform dblink_connect('s2', c);
-  perform dblink_exec('s1', 'begin');
-  perform dblink_exec('s1', format('insert into public.payments (visit_id, amount_php, method, received_by) values (%L, 400, ''cash'', %L)', v_visit, v_actor));
-  -- s1 now holds the visit row lock (recalc_visit_payment FOR UPDATE).
-  perform dblink_send_query('s2', format('select public.waive_visit_balance(%L, %L, ''race'')', v_visit, v_actor));
-  perform pg_sleep(0.5);
-  if dblink_is_busy('s2') <> 1 then raise exception 'FAIL 1: the waiver did not wait for the visit lock'; end if;
-  perform dblink_exec('s1', 'commit');
-  select val into v_res from dblink_get_result('s2') as t(val text);
-  perform dblink_get_result('s2'); -- drain
-  select waived_php, payment_status into v_waived, v_status from public.visits where id = v_visit;
-  select sum(amount_php) into v_alloc from public.visit_waiver_allocations where visit_id = v_visit;
-  if v_status <> 'waived' or v_waived <> 600 or v_alloc <> 600 then
-    raise exception 'FAIL 1: waiver did not see the committed payment (status %, waived %, alloc %)', v_status, v_waived, v_alloc;
-  end if;
-  raise notice 'PASS 1 payment-then-waive: waived % over %', v_waived, v_alloc;
-
-  -- Case 2: waiver first (uncommitted), payment waits, then is refused.
-  -- Fresh visit V2 (seed via s0 as above, total 1000, unpaid).
-  perform dblink_exec('s1', 'begin');
-  perform dblink_exec('s1', format('select public.waive_visit_balance(%L, %L, ''race'')', v_visit2, v_actor));
-  perform dblink_send_query('s2', format('insert into public.payments (visit_id, amount_php, method, received_by) values (%L, 400, ''cash'', %L)', v_visit2, v_actor));
-  perform pg_sleep(0.5);
-  if dblink_is_busy('s2') <> 1 then raise exception 'FAIL 2: the payment did not wait for the visit lock'; end if;
-  perform dblink_exec('s1', 'commit');
-  begin
-    perform dblink_get_result('s2');
-    raise exception 'FAIL 2: a payment was recorded on a waived visit';
-  exception when others then
-    if sqlerrm not like '%P0070%' and sqlerrm not like '%balance was waived%' then raise; end if;
-  end;
-  raise notice 'PASS 2 waive-then-payment: refused';
-
-  -- teardown via s0 (delete in FK order, session_replication_role = replica)
-  perform dblink_exec('s0', 'set session_replication_role = replica; delete from public.journal_lines where entry_id in (select id from public.journal_entries where source_id in (select id from public.visit_waiver_allocations where visit_id in (' || quote_literal(v_visit) || ',' || quote_literal(v_visit2) || ')) or source_id in (select id from public.payments where visit_id in (...)));' /* … journal_entries, allocations, payments, test_requests, visits, patients, staff_profiles, auth.users … */);
-  perform dblink_disconnect('s0'); perform dblink_disconnect('s1'); perform dblink_disconnect('s2');
-exception when others then
-  -- best-effort teardown, then re-raise
-  begin perform dblink_exec('s0', '… same deletes …'); exception when others then null; end;
-  raise;
-end $$;
-rollback;
+Scenarios (fresh ₱1,000 `lab_test` visit each, `total_php = 1000`, unpaid; actor = the seeded admin):
+```
+1 payment-then-waive: s1 `begin` + insert payment 400 (holds the visit lock via recalc) → s2 send
+  waive → lock wait seen → s1 `commit` → s2 result: visits.waived_php 600, payment_status 'waived',
+  sum(allocations) 600.
+2 waive-then-payment: s1 `begin` + waive (uncommitted) → s2 send insert payment 400 → lock wait
+  seen → s1 `commit` → s2 raises P0070; no new payment row.
+3 undo-then-waive: prepare — pay 1000 (paid), release the line (JE posted), void the payment
+  (allowed: not waived; visit unpaid). s1 `begin` + `update test_requests set status =
+  'ready_for_release', released_at = null, released_by = null, release_medium = null where id = …`
+  (holds the line lock; fn_undo_release_bridge reversed the release JE) → s2 send waive → lock wait
+  seen → s1 `commit` → s2 result: allocation for the line has recognised_at null and NO
+  visit_waiver JE exists (the waiver read the final status ready_for_release).
+4 waive-then-undo: same preparation on a fresh visit; s1 `begin` + waive (standalone JE posted,
+  uncommitted) → s2 send the same undo UPDATE → lock wait seen → s1 `commit` → s2 succeeds: the
+  visit_waiver JE is 'reversed' with a mirrored 'posted' reversal, allocation unrecognised.
 ```
 
-Write the seeding and teardown SQL out in full (the `…` above are the same statements as Task 6's seed, run through `dblink_exec('s0', …)` so the rows are committed and visible to `s1`/`s2`; the teardown deletes them in FK order with `session_replication_role = replica` because the GL balance-check triggers refuse to delete posted lines).
-
-- [ ] **Step 2: Run locally** `psql … -f supabase/tests/0183_waiver_race_smoke.sql 2>&1 | grep -E "PASS|FAIL|ERROR"` — expected `PASS 1`, `PASS 2`. Confirm teardown: `select count(*) from visit_waiver_allocations` returns what it did before.
-
-- [ ] **Step 3: Commit** `git add supabase/tests/0183_waiver_race_smoke.sql && git commit -m "test(sql): 0183 two-session waiver race (dblink, local only)"`
+- [ ] **Step 2: Run** `psql "$ADMIN" -v ON_ERROR_STOP=1 -f supabase/tests/0183_waiver_race_smoke.sql 2>&1 | grep -E "PASS|FAIL|ERROR"` — expected `PASS 1` … `PASS 4`; afterwards `select count(*) from visit_waiver_allocations` equals the count before the run.
+- [ ] **Step 3: Commit** `git add supabase/tests/0183_waiver_race_smoke.sql && git commit -m "test(sql): 0183 two-session waiver races (dblink, local only)"`
 
 ---
 
-### Task 8: Apply 0183 locally by hand, regenerate types
+### Task 8: Apply 0183 locally by hand, replay gate, regenerate types
 
-- [ ] **Step 1: Check the local ledger** — `psql … -Atc "select max(version) from supabase_migrations.schema_migrations; select version from supabase_migrations.schema_migrations where version in ('0178','0180','0181','0183')"`. Apply whichever of 0178, 0180, 0181 are missing first (they are on main), each as `begin; <file>; insert into supabase_migrations.schema_migrations (version, name, statements) values ('NNNN','<name>', array['applied by hand (local)']); commit;` via `psql -v ON_ERROR_STOP=1 -f`. Never `migration repair`.
-
-- [ ] **Step 2: Apply 0183 the same way.** Expected: `COMMIT`. Verify: `select proname from pg_proc where proname in ('waive_visit_balance','waiver_post_allocation','waiver_unrecognise_line','guard_visit_waived_transition','guard_payment_on_waived_visit')` returns 5 rows; `select tgname from pg_trigger where tgname in ('trg_visits_waived_transition_guard','trg_payments_waived_visit_guard')` returns 2.
-
-- [ ] **Step 3: Run Tasks 6 and 7's smokes.** Both must pass before continuing.
-
-- [ ] **Step 4: Regenerate types** `npm run db:types` then `git diff --stat src/types/database.ts`. Keep the hunks for `visit_waiver_allocations`, the four `visits` columns and `waive_visit_balance`; if the diff also contains objects from other sessions' local-only migrations, revert those hunks by hand (`git add -p`).
-
-- [ ] **Step 5: Typecheck** `npm run typecheck` — expected clean.
-
-- [ ] **Step 6: Commit** `git add src/types/database.ts && git commit -m "chore(types): 0183 waiver objects"`
+- [ ] **Step 1: Check the local ledger** `psql "$APP" -Atc "select max(version) from supabase_migrations.schema_migrations; select version from supabase_migrations.schema_migrations where version in ('0178','0180','0181','0183')"`. Apply whichever of 0178, 0180, 0181 are missing first (all on main), each as a file `begin; <migration>; insert into supabase_migrations.schema_migrations (version, name, statements) values ('NNNN','<name>', array['applied by hand (local)']); commit;` via `psql "$APP" -v ON_ERROR_STOP=1 -f`. Never `migration repair`.
+- [ ] **Step 2: Apply 0183 the same way.** Expected `COMMIT`. If the zero-waiver assertion fires, the shared stack holds leftover waived test rows — find them (`select id, visit_number from visits where payment_status = 'waived'`), delete them with `session_replication_role = replica` in FK order, and re-run. Verify: `select proname from pg_proc where proname in ('waive_visit_balance','waiver_post_allocation','waiver_unrecognise_line','guard_visit_waived_transition','guard_payment_on_waived_visit','guard_test_request_on_waived_visit')` → 6 rows; `select tgname from pg_trigger where tgname in ('trg_visits_waived_transition_guard','trg_payments_waived_visit_guard','trg_test_requests_waived_visit_guard')` → 3.
+- [ ] **Step 3: Fresh-replay gate without resetting the shared stack** (Codex validation gap). Create a scratch database from the stack's template and replay the whole migration set plus `seed.sql` into it:
+  ```bash
+  psql "$ADMIN" -c "create database replay_0183 template template0"
+  R="postgresql://supabase_admin:postgres@127.0.0.1:54322/replay_0183"
+  # the Supabase image's auth/extensions/storage schemas are not in template0; take them from the live db:
+  /opt/homebrew/opt/libpq/bin/pg_dump "$ADMIN" --schema-only --schema=auth --schema=extensions --schema=storage --schema=supabase_migrations --no-owner | psql "$R" -q
+  for f in supabase/migrations/*.sql; do psql "$R" -v ON_ERROR_STOP=1 -q -f "$f" > /dev/null || { echo "REPLAY FAILED at $f"; break; }; done
+  psql "$R" -v ON_ERROR_STOP=1 -q -f supabase/seed.sql && echo "REPLAY OK"
+  psql "$ADMIN" -c "drop database replay_0183"
+  ```
+  Expected `REPLAY OK`. If the auth-schema dump is not enough for the earliest migrations, fall back to asking the owner for one `supabase db reset` from this worktree (wait until `pgrep -f "supabase db reset"` is quiet; it wipes the shared local data) and record in the PR body which path proved the replay.
+- [ ] **Step 4: Run Tasks 6 and 7's smokes.** Both must pass before continuing.
+- [ ] **Step 5: Regenerate types** `npm run db:types`; `git diff --stat src/types/database.ts`. Keep the hunks for `visit_waiver_allocations`, the four `visits` columns and `waive_visit_balance`; revert hunks that belong to other sessions' local-only migrations (`git add -p`).
+- [ ] **Step 6:** `npm run typecheck` — clean. **Commit** `git add src/types/database.ts && git commit -m "chore(types): 0183 waiver objects"`.
 
 ---
 
 ### Task 9: Stop the direct `'waived'` writes in existing smokes
 
 **Files:**
-- Modify: `scripts/smoke-14-d1.sql:59`, `supabase/tests/0167_patient_soft_delete_smoke.sql:475,537,564`, `scripts/smoke-print.ts:263`
+- Modify: `scripts/smoke-14-d1.sql:59`, `supabase/tests/0167_patient_soft_delete_smoke.sql:475,537,564`, `scripts/smoke-print.ts:263` + its `cleanup()`
 
 - [ ] **Step 1:** In the two SQL files, immediately before each `update public.visits set payment_status = 'waived' …` add:
 ```sql
@@ -1123,8 +1297,22 @@ Write the seeding and teardown SQL out in full (the `…` above are the same sta
   await q("update visits set total_php = 550 where id = $1", [s.waivedVisitId]);
   await q("select public.waive_visit_balance($1, $2, 'smoke: charity')", [s.waivedVisitId, staffId]);
 ```
-and in `cleanup()` add, before the `visits` delete, `await q("delete from visit_waiver_allocations where visit_id = any($1::uuid[])", [visitIds]);` and extend the journal deletes to include `source_id in (select id from visit_waiver_allocations where visit_id = any(...))` (do this BEFORE the allocations delete).
-- [ ] **Step 3:** Run `psql … -f supabase/tests/0167_patient_soft_delete_smoke.sql | grep -E "PASS|FAIL|ERROR"` — expected all PASS.
+and in `cleanup()` — BEFORE the payments/visits deletes — add the allocation entries and rows:
+```ts
+  await q(
+    `delete from journal_lines where entry_id in (
+       select id from journal_entries where source_kind = 'visit_waiver'
+          and source_id in (select id from visit_waiver_allocations where visit_id = any($1::uuid[])))`,
+    [visitIds],
+  );
+  await q(
+    `delete from journal_entries where source_kind = 'visit_waiver'
+        and source_id in (select id from visit_waiver_allocations where visit_id = any($1::uuid[]))`,
+    [visitIds],
+  );
+  await q("delete from visit_waiver_allocations where visit_id = any($1::uuid[])", [visitIds]);
+```
+- [ ] **Step 3:** `psql "$APP" -v ON_ERROR_STOP=1 -f supabase/tests/0167_patient_soft_delete_smoke.sql 2>&1 | grep -E "PASS|FAIL|ERROR"` — all PASS.
 - [ ] **Step 4: Commit** `git add scripts/smoke-14-d1.sql supabase/tests/0167_patient_soft_delete_smoke.sql scripts/smoke-print.ts && git commit -m "test: waive through the RPC / GUC now that 0183 guards the status"`
 
 ---
@@ -1134,9 +1322,9 @@ and in `cleanup()` add, before the `visits` delete, `await q("delete from visit_
 **Files:**
 - Modify: `src/app/(staff)/staff/(dashboard)/visits/[id]/actions.ts` (`waiveVisitBalanceAction`)
 - Modify: `src/lib/visits/payment-edit.ts` (add `WAIVE_CLOSED_MONTH_MESSAGE`)
-- Test: `src/lib/visits/payment-leaves.test.ts` (one assertion on the message constant)
+- Test: `src/lib/visits/payment-leaves.test.ts`
 
-- [ ] **Step 1: Add the message** to `payment-edit.ts` next to `CLOSED_MONTH_MESSAGE`:
+- [ ] **Step 1: Add the message** to `payment-edit.ts` next to `CLOSED_MONTH_MESSAGE`, and one assertion in `payment-leaves.test.ts`: `expect(WAIVE_CLOSED_MONTH_MESSAGE).toMatch(/closed for this month/);`
 
 ```ts
 /**
@@ -1147,7 +1335,6 @@ and in `cleanup()` add, before the `visits` delete, `await q("delete from visit_
 export const WAIVE_CLOSED_MONTH_MESSAGE =
   "The books are closed for this month, so the waived amount cannot be booked yet. Ask an admin to reopen the month, then waive the balance.";
 ```
-Test: `expect(WAIVE_CLOSED_MONTH_MESSAGE).toMatch(/closed for this month/);` in `payment-leaves.test.ts`.
 
 - [ ] **Step 2: Replace the action body** from `const supabase = await createClient();` to the end with:
 
@@ -1159,8 +1346,8 @@ Test: `expect(WAIVE_CLOSED_MONTH_MESSAGE).toMatch(/closed for this month/);` in 
   if (!active.ok) return { ok: false, error: active.error };
 
   // 0183: the RPC owns every rule (admin actor, non-HMO, unpaid/partial,
-  // provenance, the per-line split, the discount JE) under the visit row
-  // lock, and raises P0071 with a staff-readable message for each refusal.
+  // provenance, the per-line split, the discount JE) under the visit + line
+  // row locks, and raises P0071 with a staff-readable message per refusal.
   const { data, error } = await admin.rpc("waive_visit_balance", {
     p_visit_id: visitId,
     p_actor_id: session.user_id,
@@ -1179,6 +1366,7 @@ Test: `expect(WAIVE_CLOSED_MONTH_MESSAGE).toMatch(/closed for this month/);` in 
     posted_now?: number;
     legacy?: boolean;
     previous_status?: string;
+    headers_pending?: number;
   };
 
   const { ip, ua } = await ipAndAgent();
@@ -1196,6 +1384,9 @@ Test: `expect(WAIVE_CLOSED_MONTH_MESSAGE).toMatch(/closed for this month/);` in 
       allocations: result.allocations ?? 0,
       posted_now: result.posted_now ?? 0,
       legacy: result.legacy ?? false,
+      // A package header the waive could not auto-release (closed month):
+      // it stays ready_for_release and folds when released by hand.
+      headers_pending: result.headers_pending ?? 0,
     },
     ip_address: ip,
     user_agent: ua,
@@ -1204,10 +1395,9 @@ Test: `expect(WAIVE_CLOSED_MONTH_MESSAGE).toMatch(/closed for this month/);` in 
   revalidatePath(`/staff/visits/${visitId}`);
   return { ok: true };
 ```
-Delete the now-unused pre-checks (the `supabase.from("visits").select(...)` read and the four `if` refusals) — the RPC repeats them with the same wording. Keep `WaiveBalanceSchema` parsing and `requireAdminStaff()`. Import `WAIVE_CLOSED_MONTH_MESSAGE` from `@/lib/visits/payment-edit`. Update the doc-comment above the function: "Setting payment_status = 'waived' now happens inside waive_visit_balance() (0183), which also books the waived remainder as a discount and clears 1100."
+Delete the now-unused pre-checks (the `supabase.from("visits").select(...)` read and the four `if` refusals) — the RPC repeats them with the same wording. Keep `WaiveBalanceSchema` parsing and `requireAdminStaff()`. Import `WAIVE_CLOSED_MONTH_MESSAGE` from `@/lib/visits/payment-edit`. Rewrite the doc-comment above the function: "Setting payment_status = 'waived' happens inside waive_visit_balance() (0183), which also fixes the waiver, allocates it per line, books the discount and clears 1100; the P0069/P0070 guards then freeze the visit's money and lines."
 
-- [ ] **Step 3:** `npm run typecheck` — clean. `npx vitest run src/lib/visits/query-surfaces.test.ts` — if it complains the file no longer reads `visits` there, nothing to do; if it complains about a new read, register it (`LIFECYCLES`, live).
-
+- [ ] **Step 3:** `npm run typecheck` — clean. `npx vitest run src/lib/visits/query-surfaces.test.ts src/lib/visits/payment-leaves.test.ts` — pass (if `query-surfaces` reports a stale `LIFECYCLES` entry for this file because the visits read went away, remove that entry).
 - [ ] **Step 4: Commit** `git add -A && git commit -m "feat(visits): waive balance through waive_visit_balance (0183)"`
 
 ---
@@ -1217,29 +1407,34 @@ Delete the now-unused pre-checks (the `supabase.from("visits").select(...)` read
 **Files:**
 - Modify: `src/app/(staff)/staff/(dashboard)/visits/[id]/waive-balance-dialog.tsx`, `page.tsx` (the `<WaiveBalanceDialog` call at ~line 862)
 
-- [ ] **Step 1:** Add props to the dialog: `preview: { labPhp: number; doctorPhp: number; lines: number } | null` and `legacy: boolean`. Under the existing "Waiving {balanceLabel}…" description render:
+- [ ] **Step 1:** Add props `preview: { labPhp: number; doctorPhp: number; lines: number } | null` and `legacy: boolean`. Under the existing "Waiving {balanceLabel}…" description render (copy does not overclaim — imported visits post nothing; unreleased shares post at release) `[P3]`:
 
 ```tsx
 {legacy ? (
-  <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+  <p className="text-xs text-[color:var(--color-brand-text-soft)]" data-testid="waive-preview">
     Imported visit: the books never held this balance, so nothing is posted.
   </p>
 ) : preview ? (
   <p className="text-xs text-[color:var(--color-brand-text-soft)]" data-testid="waive-preview">
-    {formatPhp(preview.labPhp + preview.doctorPhp)} is recorded as a discount
+    {formatPhp(preview.labPhp + preview.doctorPhp)} is recorded as a discount as each line is released
+    (lines already released: now)
     {preview.doctorPhp > 0 && preview.labPhp > 0
       ? ` — ${formatPhp(preview.labPhp)} on lab tests and ${formatPhp(preview.doctorPhp)} on doctor fees`
       : preview.doctorPhp > 0
         ? " on doctor fees"
         : " on lab tests"}
-    {" "}across {preview.lines} line{preview.lines === 1 ? "" : "s"}, and the patient receivable is cleared. Nothing is collected.
+    , across {preview.lines} line{preview.lines === 1 ? "" : "s"}, and the patient receivable is cleared.
+    Nothing is collected. After this, payments and lines on the visit are fixed.
   </p>
 ) : (
-  <p className="text-xs text-amber-800">This visit's lines do not add up to its total; fix the lines before waiving.</p>
+  <p className="text-xs text-amber-800" data-testid="waive-preview">
+    This visit&apos;s lines do not add up to its total; fix the lines before waiving.
+  </p>
 )}
 ```
+Import `formatPhp` from `@/lib/marketing/format`.
 
-- [ ] **Step 2:** In `page.tsx`, build the preview from the lines the page already loads (`test_requests` with `final_price_php, parent_id, status, services ( kind )`):
+- [ ] **Step 2:** In `page.tsx`, build the preview from the lines the page already loads (`test_requests` with `final_price_php, parent_id, status, services ( kind )`; add `legacy_import_run_id` to the visit select if it is not there):
 
 ```tsx
 import { waiverPreview } from "@/lib/accounting/waiver-allocation";
@@ -1262,21 +1457,26 @@ const waivePreview = (() => {
   }
 })();
 // …
-<WaiveBalanceDialog visitId={visit.id} balanceLabel={formatPhp(balance > 0 ? balance : 0)} preview={waivePreview} legacy={visit.legacy_import_run_id != null} />
+<WaiveBalanceDialog
+  visitId={visit.id}
+  balanceLabel={formatPhp(balance > 0 ? balance : 0)}
+  preview={waivePreview}
+  legacy={visit.legacy_import_run_id != null}
+/>
 ```
-(`liveLines` = the page's non-deleted `test_requests`; add `legacy_import_run_id` to the visit select if it is not already there.)
+(`liveLines` = the page's non-deleted `test_requests`.)
 
-- [ ] **Step 3:** `npm run typecheck` + `npm run lint`. Commit `git commit -am "feat(visits): waive dialog previews the discount split"`.
+- [ ] **Step 3:** `npm run typecheck && npm run lint`. **Commit** `git commit -am "feat(visits): waive dialog previews the discount split"`.
 
 ---
 
-### Task 12: Record payment page + action refuse a waived visit
+### Task 12: Record payment page + actions refuse a waived visit `[CR-7, P3]`
 
 **Files:**
 - Modify: `src/app/(staff)/staff/(dashboard)/payments/new/page.tsx`, `actions.ts`
-- Modify: `src/lib/visits/query-surfaces.test.ts` (`LIFECYCLES` entry for `actions.ts`)
+- Modify: `src/lib/visits/query-surfaces.test.ts` (`LIFECYCLES` entry for `payments/new/actions.ts`)
 
-- [ ] **Step 1: Page.** After `const balance = …`, add:
+- [ ] **Step 1: Page.** Add `legacy_import_run_id` to the visit select. After `const balance = …`, add:
 
 ```tsx
 import { visitMoneySummary } from "@/lib/visits/statement";
@@ -1285,19 +1485,28 @@ const money = visitMoneySummary(visit);
 if (visit.payment_status === "waived") {
   return (
     <div className="mx-auto max-w-xl px-4 py-8 sm:px-6 lg:px-8">
-      <Link href={`/staff/visits/${visit.id}`} className="…same class…">← Visit #{visit.visit_number}</Link>
-      <h1 className="…same class…">Record payment</h1>
+      <Link
+        href={`/staff/visits/${visit.id}`}
+        className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
+      >
+        ← Visit #{visit.visit_number}
+      </Link>
+      <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+        Record payment
+      </h1>
       <p className="mt-6 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900" data-testid="waived-notice">
-        The balance on this visit was waived — {formatPhp(money.waived)} was recorded as a discount and there is nothing to collect.
+        {visit.legacy_import_run_id
+          ? `The balance on this visit was waived (imported history — nothing was posted to the books).`
+          : `The balance on this visit was waived — ${formatPhp(money.waived)} is recorded as a discount as its lines are released, and there is nothing to collect.`}{" "}
         Payments on a waived visit are not accepted.
       </p>
     </div>
   );
 }
 ```
-(`visitMoneySummary` takes `total_php, paid_php, payment_status, hmo_provider_id` — all in the page's select.)
+(`visitMoneySummary` takes `total_php, paid_php, payment_status, hmo_provider_id` — all in the select; import `formatPhp` from `@/lib/marketing/format`.)
 
-- [ ] **Step 2: Action.** In `recordPaymentAction`, after the active-patient check and before the insert:
+- [ ] **Step 2: Actions.** In `recordPaymentAction`, after the active-patient check and before the insert:
 
 ```ts
   // 0183: a waived visit's money is fixed (the DB refuses too — P0070).
@@ -1310,7 +1519,7 @@ if (visit.payment_status === "waived") {
     return { ok: false, error: "This visit's balance was waived, so no payment can be recorded on it." };
   }
 ```
-Do the same in `redeemGiftCode` right after its visit read (it already reads the visit — add `payment_status` to that select and the same early return).
+In `redeemGiftCode`, add `payment_status` to its visit select and the same early return right after that read. At the compensation site (the `voidRedemptionPayment` call after a failed voucher update) add the comment: `// 0183: waive_visit_balance refuses while a gift-code payment has no linked voucher (P0071), so this void can never be blocked by a waive that landed in between.`
 
 - [ ] **Step 3:** Register in `query-surfaces.test.ts` `LIFECYCLES`:
 ```ts
@@ -1319,7 +1528,7 @@ Do the same in `redeemGiftCode` right after its visit read (it already reads the
     why: "Reads one visit's payment_status by id to refuse a payment on a waived visit (0183). A deleted visit is refused by P0045 either way.",
   },
 ```
-- [ ] **Step 4:** `npx vitest run src/lib/visits/query-surfaces.test.ts` + typecheck. Commit `git commit -am "feat(payments): Record payment refuses a waived visit and says the balance was waived"`.
+- [ ] **Step 4:** `npx vitest run src/lib/visits/query-surfaces.test.ts` + typecheck. **Commit** `git commit -am "feat(payments): Record payment refuses a waived visit and says the balance was waived"`.
 
 ---
 
@@ -1365,9 +1574,9 @@ export function waivedVisitPaymentRules(v: Pick<VisitMoney, "paymentStatus">): {
   };
 }
 ```
-- [ ] **Step 3: Visit page.** Compute `const waivedRules = waivedVisitPaymentRules(visitMoney);` once. Render `<MovePaymentDialog …>` only when `waivedRules.canMove`, `<VoidPaymentDialog …>` only when `waivedRules.canDelete`; pass `amountLocked={waivedRules.amountLocked}` to `<EditPaymentDialog>`; when `waivedRules.reason` is set, render it once under the payments table as `<p className="mt-2 text-xs text-[color:var(--color-brand-text-soft)]" data-testid="waived-payments-note">{waivedRules.reason}</p>`.
-- [ ] **Step 4: Edit dialog.** Add prop `amountLocked: boolean`; set `disabled={amountLocked}` on the amount `<Input>` and, when locked, a helper line under it: `Fixed — the balance on this visit was waived.` Also skip the "This leaves ₱X unpaid" and `PaymentLeavesNotice` lines when `amountLocked` (the amount cannot change).
-- [ ] **Step 5:** `npx vitest run src/lib/visits/payment-leaves.test.ts`, typecheck, lint. Commit `git commit -am "feat(visits): payment dialogs follow the waived-visit rule"`.
+- [ ] **Step 3: Visit page.** Compute `const waivedRules = waivedVisitPaymentRules(visitMoney);` once. Render `<MovePaymentDialog …>` only when `waivedRules.canMove`, `<VoidPaymentDialog …>` only when `waivedRules.canDelete`; pass `amountLocked={waivedRules.amountLocked}` to `<EditPaymentDialog>`; when `waivedRules.reason` is set, render it once under the payments table: `<p className="mt-2 text-xs text-[color:var(--color-brand-text-soft)]" data-testid="waived-payments-note">{waivedRules.reason}</p>`.
+- [ ] **Step 4: Edit dialog.** Add prop `amountLocked: boolean`; set `disabled={amountLocked}` on the amount `<Input>`; when locked, a helper line under it: `Fixed — the balance on this visit was waived.`; skip the "This leaves ₱X unpaid" line and the `PaymentLeavesNotice` when `amountLocked` (the amount cannot change).
+- [ ] **Step 5:** `npx vitest run src/lib/visits/payment-leaves.test.ts`, typecheck, lint. **Commit** `git commit -am "feat(visits): payment dialogs follow the waived-visit rule"`.
 
 ---
 
@@ -1375,28 +1584,29 @@ export function waivedVisitPaymentRules(v: Pick<VisitMoney, "paymentStatus">): {
 
 **Files:** `docs/drmed-user-guide.html`, `.claude/skills/drmed-payments/SKILL.md`, `.claude/skills/drmed-migrations/SKILL.md`, `CLAUDE.md`
 
-- [ ] **Step 1: Guide.** Find the waive-balance paragraph (grep `Waive balance`) and the "Deleting a payment" / "Fixing a payment" sections. Add: what waiving does in the books ("the waived amount is recorded as a discount — lab tests or doctor fees — and the patient receivable is cleared; nothing is collected"); that after waiving, payments on the visit are fixed (no Record payment, Delete or Move; Edit may change only the method, reference or notes) with the exact refusal texts; that an imported visit waives with no books entry; the closed-month message. Bump the version (v2.28 → v2.29) in both places and CLAUDE.md line 21.
-- [ ] **Step 2: drmed-payments skill.** Schema block: `visits.waived_php/waived_at/waived_by/waive_reason`, `visit_waiver_allocations`. Trigger table: the two guards + `waive_visit_balance` + fold/hooks. "Waive balance (admin)" row: rewrite to the RPC + accounting. GL bridge section: the waiver lines. Hard rules: "Never manually SET visits.payment_status" now reads "…never — 'waived' only through waive_visit_balance() (P0069)".
-- [ ] **Step 3: drmed-migrations skill.** Landmark list: `0183_waived_balance_gl.sql` one-liner; P-code registry: P0069–P0071.
-- [ ] **Step 4: CLAUDE.md.** Ledger line: prod head after push (Task 16); "in use" P-code list adds P0069–P0071.
-- [ ] **Step 5: Commit** `git commit -am "docs: waived balance in the books (guide v2.29, skills, ledger)"`.
+- [ ] **Step 1: Guide.** Find the waive-balance paragraph (grep `Waive balance`) and the "Deleting a payment" / "Fixing a payment" sections. State: what waiving does in the books ("the waived amount is recorded as a discount — lab tests or doctor fees — as each line is released, and the patient receivable is cleared; nothing is collected"); that after waiving the visit's payments and lines are fixed (no Record payment, Delete or Move; Edit may change only the method, reference or notes; no new test can be added or restored — register a new visit) with the exact refusal texts; that an imported visit waives with no books entry; the closed-month message; that a package on a waived visit releases later when the month is reopened; the "Something else changed this visit at the same moment. Try again." message. Bump the version (v2.28 → v2.29) in both places and CLAUDE.md line 21.
+- [ ] **Step 2: drmed-payments skill.** Schema block: `visits.waived_php/waived_at/waived_by/waive_reason`, `visit_waiver_allocations`. Trigger table: the three guards (P0069/P0070), `waive_visit_balance`, the fold and the undo/cancel hooks, the serialization protocol in one sentence. "Waive balance (admin)" row: rewrite to the RPC + accounting. GL bridge section: the waiver lines. Hard rules: "Never manually SET visits.payment_status" now reads "… — 'waived' only through waive_visit_balance() (P0069); a waived visit's payments and lines are frozen (P0070)".
+- [ ] **Step 3: drmed-migrations skill.** Landmark list: `0183_waived_balance_gl.sql` one-liner; P-code registry: P0069–P0071 (+ the `40P01` translation).
+- [ ] **Step 4: CLAUDE.md.** "in use" P-code list adds P0069–P0071; the ledger line is updated after the prod push (Task 16).
+- [ ] **Step 5: Commit** `git commit -am "docs: waived balance in the books (guide v2.29, skills)"`.
 
 ---
 
 ### Task 15: Full checks, browser smoke, Codex, PR
 
 - [ ] **Step 1:** `npm test && npm run typecheck && npm run lint` — all green (note the count).
-- [ ] **Step 2: smoke:print** (dev server from this worktree with `SUPABASE_JWT_SECRET`, port 3009): `APP_BASE=http://localhost:3009 npm run smoke:print` — green; the waived visit now goes through the RPC.
-- [ ] **Step 3: Targeted browser check** (throwaway script in the worktree, deleted after): waive a live visit with a released lab line + an unreleased consult → visit page shows Waived + the dialog preview text; `journal_entries` has one `visit_waiver` entry; release the consult → its JE carries `Balance waived`; `/staff/payments/new?visit_id=…` shows the waived notice; the visit page shows no Delete/Move and the Edit amount is disabled.
-- [ ] **Step 4:** `/codex-review astra high` (context: spec + this plan + check results), fix, one recheck.
-- [ ] **Step 5:** Push, open the PR (body: the seven rules, the accounting check, verification). Do NOT merge yet.
+- [ ] **Step 2: smoke:print** (dev server from this worktree with `SUPABASE_JWT_SECRET` from `supabase status -o env`, port 3009): `APP_BASE=http://localhost:3009 npm run smoke:print` — green; the waived visit now goes through the RPC.
+- [ ] **Step 3: Targeted browser check** (throwaway script inside the worktree, deleted after): waive a live visit with a released lab line + an unreleased consult → visit page shows Waived and the dialog preview text; `journal_entries` holds one `visit_waiver` entry; release the consult → its JE carries `Balance waived`; `/staff/payments/new?visit_id=…` shows the waived notice; the visit page shows no Delete/Move and the Edit amount is disabled; restoring a line deleted before the waive (via the queue's Restore) is refused with the P0070 text.
+- [ ] **Step 4:** `/codex-review astra high` (context: spec + this plan + the check results), fix, one recheck.
+- [ ] **Step 5:** Push, open the PR (body: the seven rules, the serialization protocol, the accounting check, verification incl. which replay path Task 8 used). Do NOT merge yet.
 
 ---
 
-### Task 16: Prod
+### Task 16: Prod `[CR-11]`
 
-- [ ] **Step 1: Re-count waived visits on prod** (read-only, MCP `execute_sql` or ask the owner): `select count(*) from visits where payment_status = 'waived'`. If **> 0**, STOP and reconcile before pushing (those visits have no allocation and their AR is still booked; the migration does not backfill).
-- [ ] **Step 2:** `git fetch origin && git merge origin/main` (rebase the docs if needed), rerun `npm test`.
-- [ ] **Step 3:** From the worktree: `/opt/homebrew/bin/supabase db push --dry-run` — must list ONLY `0183`. If prod already holds a higher number from another branch, use `--include-all` and confirm the list is still only 0183 (copy a missing sibling in untracked if the CLI demands it; never `migration repair`).
-- [ ] **Step 4:** `supabase db push` (no dry-run flag). Verify by object on prod: the 5 functions, the 2 triggers, the table + policy, `je_source_kind` contains `visit_waiver`, `correct_payment` comment mentions 0183.
-- [ ] **Step 5:** Merge the PR, confirm the Vercel production deploy, update CLAUDE.md's ledger line (prod head = 0183) in a follow-up commit if it was not already right, and update memory.
+- [ ] **Step 1: Preflight count** (read-only; MCP `execute_sql` or ask the owner): `select count(*) from visits where payment_status = 'waived'` — if > 0 STOP and reconcile; the migration's own assertion is the atomic gate and refuses anyway.
+- [ ] **Step 2:** `git fetch origin && git merge origin/main`; rerun `npm test`. If `0182_staff_view_as_role.sql` has landed on main it replays before 0183 (no object overlap). If prod holds 0182 or a higher number when pushing, `--dry-run --include-all` must list only 0183 (copy a missing sibling in untracked only if the CLI demands it; never `migration repair`).
+- [ ] **Step 3:** From the worktree: `/opt/homebrew/bin/supabase db push --dry-run` → only 0183.
+- [ ] **Step 4:** `supabase db push` right before the merge. Verify by object on prod: the 6 functions, the 3 triggers, the table + policy, `je_source_kind` contains `visit_waiver`, `correct_payment`'s comment mentions 0183.
+- [ ] **Step 5: Deploy window and recovery.** Between the push and the Vercel deploy, the OLD app's Waive button issues the direct UPDATE, which P0069 now refuses — the old app shows the raw P0069 message and writes nothing (safe). If the Vercel deploy fails, fix forward with a hotfix commit; never revert the migration — the guards are what keep the books and the waiver consistent, and any waiver committed through the new RPC keeps its allocations.
+- [ ] **Step 6:** Merge, confirm the production deploy, update CLAUDE.md's ledger line (prod head = 0183) and memory.
