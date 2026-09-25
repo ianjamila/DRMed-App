@@ -63,6 +63,11 @@ const PettyCashSchema = z.object({
   amount_php: z.number().positive("Amount must be greater than 0"),
   vendor_label: z.string().max(200).optional().nullable(),
   description: z.string().max(500).optional().nullable(),
+  // The shift the page was viewing when the form was submitted. Optional so a
+  // caller with no shift context (there is currently only one) still works;
+  // `postTillCashExpense` re-verifies it is an active shift rather than
+  // trusting it. See cash-drawer's own `recordCashAdjustmentAction`.
+  shift_id: z.string().uuid("Invalid shift").optional(),
 });
 
 export type PettyCashInput = z.infer<typeof PettyCashSchema>;
@@ -99,6 +104,7 @@ export async function createPettyCashExpenseAction(
     vendor_label: input.vendor_label ?? null,
     description: input.description ?? null,
     actorId: session.user_id,
+    shift_id: input.shift_id,
   });
   if (!posted.ok) return posted;
 
