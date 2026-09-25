@@ -32,12 +32,14 @@
 --     "review" is a HOLD: no patient, and the sync never auto-decides that
 --     key again — enforced here too, not only by the planner: link and create
 --     never overwrite a hold, and only an admin link / create resolve replaces
---     one (a held item cannot be dismissed, and a dismissed item re-opens
---     while its key is held). Undoing a sync run turns its auto links, the
---     links of a patient the undo deletes, and the auto links of every
---     patient whose values it restores into holds, so an undo sticks instead
---     of the next nightly run re-deriving the same link or fill. Undoing a
---     map-answer run also takes back the alias it wrote.
+--     one (an item with an evidence-based hold cannot be dismissed, and a
+--     dismissed item re-opens while its key is held; an item held only by an
+--     undo may be dismissed as "keep undone" and stays so). Undoing a sync
+--     run turns its auto links, the links of a patient the undo deletes,
+--     and the auto links of every patient whose values it restores into
+--     holds, so an undo sticks instead of the next nightly run re-deriving
+--     the same link or fill. Undoing a map-answer run also takes back the
+--     alias it wrote.
 -- Nothing here creates visits, payments or journal entries.
 -- =============================================================================
 
@@ -233,6 +235,9 @@ create table public.sheet_sync_changes (
   row_version_after  bigint not null,
   changed_at         timestamptz not null default now(),
   reverted_at        timestamptz,
+  -- what an undo did with this patient (sheet_sync_revert_run is paged and
+  -- resumes from the rows still NULL here)
+  undo_outcome       text check (undo_outcome in ('restored','blocked','deleted','kept','gone')),
   constraint sheet_sync_changes_update_has_column check ((change_kind = 'create') = (column_name is null))
 );
 create index sheet_sync_changes_run on public.sheet_sync_changes (run_id, patient_id);
@@ -470,6 +475,13 @@ begin
     raise exception 'Unknown sheet sync trigger.' using errcode = '22023';
   end if;
   perform pg_advisory_xact_lock(hashtext('sheet_sync_lease'));
+  -- Staged rows (names, phones) belong only to a LIVE run: finish clears a
+  -- run's own, but a run that crashed never finishes. Sweep them first —
+  -- also on the paused path below, which returns before any takeover.
+  delete from public.sheet_mirror_staging s
+   where not exists (select 1 from public.sheet_sync_runs r
+                      where r.id = s.run_id and r.status = 'running'
+                        and public._sheet_sync_lease_live(r.heartbeat_at));
   select s.paused into v_paused from public.sheet_sync_settings s where s.id;
   if coalesce(v_paused, true) and p_trigger in ('cron','manual','cli') and not coalesce(p_dry_run, false) then
     insert into public.sheet_sync_runs (trigger, actor_id, dry_run, status, ended_at)
@@ -484,9 +496,6 @@ begin
     end if;
     update public.sheet_sync_runs set status = 'failed', ended_at = now(), error = 'lease expired (no heartbeat for 10 minutes)'
      where id = v_run.id;
-    -- The dead run never reached finish, which is what clears staging: its
-    -- staged rows (names, phones) would otherwise stay forever.
-    delete from public.sheet_mirror_staging where run_id = v_run.id;
   end if;
   insert into public.sheet_sync_runs (trigger, actor_id, dry_run, status, lease_token, heartbeat_at)
   values (p_trigger, p_actor, coalesce(p_dry_run, false), 'running', v_token, now())
@@ -781,14 +790,24 @@ begin
   for v_item in select e from jsonb_array_elements(p_items) e loop
     -- A dismissed item stays dismissed — unless one of its keys is HELD: a
     -- hold waits for an admin link / create, so hiding it would park the key
-    -- forever. Then the item re-opens (as a new open row).
+    -- forever. Then the item re-opens (as a new open row). The exception is a
+    -- "keep undone" dismissal (sheet_review_resolve): its undo holds are the
+    -- admin's answer, so it stays dismissed — under any identity kind a later
+    -- run computes for the key — until some key carries a DIFFERENT hold.
     if exists (select 1 from public.sheet_sync_review_items i
-                where i.kind = v_item->>'kind' and i.item_key = v_item->>'item_key' and i.status = 'dismissed')
-       and not exists (select 1 from public.sheet_patient_links l
-                        where l.decision = 'review'
-                          and l.link_key in (select jsonb_array_elements_text(
-                                case when jsonb_typeof(v_item->'payload'->'link_keys') = 'array'
-                                     then v_item->'payload'->'link_keys' else '[]'::jsonb end))) then
+                where i.item_key = v_item->>'item_key' and i.status = 'dismissed'
+                  and (i.kind = v_item->>'kind'
+                       or (coalesce((i.resolution->>'keep_undone')::boolean, false)
+                           and i.kind in ('ambiguous_patient','identity_conflict','possible_existing_patient')
+                           and v_item->>'kind' in ('ambiguous_patient','identity_conflict','possible_existing_patient')))
+                  and not exists (
+                    select 1 from public.sheet_patient_links l
+                     where l.decision = 'review'
+                       and l.link_key in (select jsonb_array_elements_text(
+                             case when jsonb_typeof(v_item->'payload'->'link_keys') = 'array'
+                                  then v_item->'payload'->'link_keys' else '[]'::jsonb end))
+                       and (not coalesce((i.resolution->>'keep_undone')::boolean, false)
+                            or l.hold_reason is distinct from 'undone by an admin'))) then
       continue;
     end if;
     update public.sheet_sync_review_items i
@@ -912,9 +931,10 @@ end $$;
 -- patient changed since (row_version). So that an undo STICKS instead of the
 -- next nightly run re-deriving what the admin just undid, these become HOLDS
 -- (decision 'review', hold_reason 'undone by an admin'):
---   * the run's own auto identity decisions, except the links of a created
---     patient the undo has to keep (in use, or changed since) — a kept
---     patient keeps its links, as "kept" says;
+--   * the run's own auto identity decisions, except the links of a patient
+--     the undo did not undo — a created patient it had to keep (in use, or
+--     changed since) and a patient whose restore was blocked keep their
+--     links (counted as links_left), since their values stay;
 --   * every link of a created patient the undo deletes (admin ones too:
 --     there is no patient left to point at);
 --   * for a sync run (cron / manual / cli), the AUTO links of every patient
@@ -925,26 +945,41 @@ end $$;
 --     decision, so their values come back on the next run (change the link
 --     in the review queue, or fix the sheet, to stop that).
 -- Undoing a map-answer run also puts back the alias row it replaced (or
--- removes the one it added), unless a later run has rewritten it since. The
+-- removes the one it added), unless a later run has rewritten it since —
+-- skipping any replaced version whose own run was undone already. The
 -- mirror's referral_source_id is left to the next nightly run to recompute.
 -- An undo run itself cannot be undone.
-create or replace function public.sheet_sync_revert_run(p_lease_token uuid, p_target_run uuid)
+--
+-- PAGED: p_limit (NULL = everything in one call) caps the patients handled
+-- per call, so an undo of a first catch-up run (~8k patients) fits the 8 s
+-- PostgREST statement_timeout. Each patient's before-images carry the
+-- outcome (undo_outcome), so a call resumes where the last one stopped —
+-- under the same lease, or a later one if the worker died. Only the call
+-- that finds nothing left holds the run's own links, takes back its alias
+-- and stamps the run undone; it returns done = true. Counts are per call.
+create or replace function public.sheet_sync_revert_run(p_lease_token uuid, p_target_run uuid, p_limit integer default null)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
   v_run uuid := public._sheet_sync_fence(p_lease_token, true);
   v_target public.sheet_sync_runs%rowtype;
   v_sync_run boolean;
+  v_left bigint;
+  v_done boolean;
   v_pid uuid;
   v_ver bigint;
   v_map jsonb;
   v_cur public.patients%rowtype;
   v_new public.patients%rowtype;
   v_alias public.referral_source_aliases%rowtype;
-  v_kept uuid[] := '{}';
+  v_restore jsonb;
   v_rows int;
   n_restored int := 0; n_blocked int := 0; n_deleted int := 0; n_kept int := 0; n_held int := 0;
-  n_alias_removed int := 0; n_alias_restored int := 0;
+  n_alias_removed int := 0; n_alias_restored int := 0; n_links_left int := 0;
 begin
+  if p_limit is not null and p_limit < 1 then
+    raise exception 'The undo page size must be at least 1.' using errcode = '22023';
+  end if;
+  v_left := coalesce(p_limit, 2147483647);
   select * into v_target from public.sheet_sync_runs r where r.id = p_target_run for update;
   if not found then
     raise exception 'Unknown sheet sync run.' using errcode = '22023';
@@ -965,11 +1000,19 @@ begin
     -- before-image (the true pre-run value) is aggregated last and wins.
     select c.patient_id, max(c.row_version_after), jsonb_object_agg(c.column_name, c.old_value order by c.id desc)
       from public.sheet_sync_changes c
-     where c.run_id = p_target_run and c.change_kind = 'update' and c.reverted_at is null
+     where c.run_id = p_target_run and c.change_kind = 'update' and c.undo_outcome is null
      group by c.patient_id
+     order by c.patient_id
+     limit v_left
   loop
+    v_left := v_left - 1;
     select * into v_cur from public.patients p where p.id = v_pid for update;
-    if not found or v_cur.row_version <> v_ver then n_blocked := n_blocked + 1; continue; end if;
+    if not found or v_cur.row_version <> v_ver then
+      update public.sheet_sync_changes set undo_outcome = 'blocked'
+       where run_id = p_target_run and patient_id = v_pid and change_kind = 'update' and undo_outcome is null;
+      n_blocked := n_blocked + 1;
+      continue;
+    end if;
     -- The origin is only recorded when it changed. When it did not (a
     -- sheet -> sheet channel move), row_version equality proves the current
     -- origin is still the pre-run one, so restore under that.
@@ -990,7 +1033,7 @@ begin
     returning * into v_new;
     perform set_config('app.referral_origin', '', true);
     perform public._sheet_sync_record_changes(v_run, to_jsonb(v_cur), to_jsonb(v_new));
-    update public.sheet_sync_changes set reverted_at = now()
+    update public.sheet_sync_changes set reverted_at = now(), undo_outcome = 'restored'
      where run_id = p_target_run and patient_id = v_pid and change_kind = 'update';
     n_restored := n_restored + 1;
     if v_sync_run then
@@ -1004,62 +1047,97 @@ begin
     end if;
   end loop;
 
-  for v_pid in select c.patient_id from public.sheet_sync_changes c
-                where c.run_id = p_target_run and c.change_kind = 'create' and c.reverted_at is null loop
-    select p.row_version into v_ver from public.patients p where p.id = v_pid for update;
-    if not found then continue; end if;
-    if v_ver <> 0 then n_kept := n_kept + 1; v_kept := v_kept || v_pid; continue; end if;
-    begin
-      -- Hold (not cascade-delete) every key that pointed at this patient.
-      update public.sheet_patient_links
-         set decision = 'review', patient_id = null, run_id = v_run, decided_at = now(),
-             hold_reason = 'undone by an admin'
-       where patient_id = v_pid;
-      get diagnostics v_rows = row_count;
-      delete from public.patient_acquisition_facts where patient_id = v_pid;
-      update public.sheet_customer_rows set patient_id = null, link_state = 'unlinked' where patient_id = v_pid;
-      update public.sheet_encounter_lines set patient_id = null where patient_id = v_pid;
-      delete from public.patients where id = v_pid;
-      update public.sheet_sync_changes set reverted_at = now()
-       where run_id = p_target_run and patient_id = v_pid and change_kind = 'create';
-      n_deleted := n_deleted + 1;
-      n_held := n_held + v_rows;
-    exception when foreign_key_violation then
-      n_kept := n_kept + 1;
-      v_kept := v_kept || v_pid;
-    end;
-  end loop;
+  if v_left > 0 then
+    for v_pid in select c.patient_id from public.sheet_sync_changes c
+                  where c.run_id = p_target_run and c.change_kind = 'create' and c.undo_outcome is null
+                  order by c.patient_id
+                  limit v_left loop
+      select p.row_version into v_ver from public.patients p where p.id = v_pid for update;
+      if not found then
+        -- removed by staff since: nothing left to undo
+        update public.sheet_sync_changes set undo_outcome = 'gone'
+         where run_id = p_target_run and patient_id = v_pid and change_kind = 'create';
+        continue;
+      end if;
+      if v_ver <> 0 then
+        update public.sheet_sync_changes set undo_outcome = 'kept'
+         where run_id = p_target_run and patient_id = v_pid and change_kind = 'create';
+        n_kept := n_kept + 1;
+        continue;
+      end if;
+      begin
+        -- Hold (not cascade-delete) every key that pointed at this patient.
+        update public.sheet_patient_links
+           set decision = 'review', patient_id = null, run_id = v_run, decided_at = now(),
+               hold_reason = 'undone by an admin'
+         where patient_id = v_pid;
+        get diagnostics v_rows = row_count;
+        delete from public.patient_acquisition_facts where patient_id = v_pid;
+        update public.sheet_customer_rows set patient_id = null, link_state = 'unlinked' where patient_id = v_pid;
+        update public.sheet_encounter_lines set patient_id = null where patient_id = v_pid;
+        delete from public.patients where id = v_pid;
+        update public.sheet_sync_changes set reverted_at = now(), undo_outcome = 'deleted'
+         where run_id = p_target_run and patient_id = v_pid and change_kind = 'create';
+        n_deleted := n_deleted + 1;
+        n_held := n_held + v_rows;
+      exception when foreign_key_violation then
+        update public.sheet_sync_changes set undo_outcome = 'kept'
+         where run_id = p_target_run and patient_id = v_pid and change_kind = 'create';
+        n_kept := n_kept + 1;
+      end;
+    end loop;
+  end if;
 
-  -- The run's own auto decisions (still the latest word on their key) -> holds,
-  -- except the links of a created patient the undo kept.
-  update public.sheet_patient_links l
-     set decision = 'review', patient_id = null, run_id = v_run, decided_at = now(),
-         hold_reason = 'undone by an admin'
-   where l.run_id = p_target_run and l.method <> 'admin' and l.decision <> 'review'
-     and not (l.patient_id = any (v_kept));
-  get diagnostics v_rows = row_count;
-  n_held := n_held + v_rows;
+  v_done := not exists (select 1 from public.sheet_sync_changes c
+                         where c.run_id = p_target_run and c.undo_outcome is null);
+  if v_done then
+    -- The run's own auto decisions (still the latest word on their key) ->
+    -- holds, except the links of a patient the undo did not undo (kept or
+    -- blocked): those stay and are counted as links_left.
+    update public.sheet_patient_links l
+       set decision = 'review', patient_id = null, run_id = v_run, decided_at = now(),
+           hold_reason = 'undone by an admin'
+     where l.run_id = p_target_run and l.method <> 'admin' and l.decision <> 'review'
+       and not exists (select 1 from public.sheet_sync_changes c
+                        where c.run_id = p_target_run and c.patient_id = l.patient_id
+                          and c.undo_outcome in ('kept','blocked'));
+    get diagnostics v_rows = row_count;
+    n_held := n_held + v_rows;
+    select count(*) into n_links_left from public.sheet_patient_links l
+     where l.run_id = p_target_run and l.method <> 'admin' and l.decision = 'link';
 
-  -- A map-answer run: take back the alias it wrote, unless rewritten since.
-  for v_alias in select * from public.referral_source_aliases a where a.run_id = p_target_run for update loop
-    if v_alias.replaced is null then
-      delete from public.referral_source_aliases a where a.raw_normalized = v_alias.raw_normalized;
-      n_alias_removed := n_alias_removed + 1;
-    else
-      update public.referral_source_aliases a set
-        referral_source_id = v_alias.replaced->>'referral_source_id',
-        created_by = (select u.id from auth.users u where u.id = (v_alias.replaced->>'created_by')::uuid),
-        created_at = coalesce((v_alias.replaced->>'created_at')::timestamptz, now()),
-        run_id = (select r.id from public.sheet_sync_runs r where r.id = (v_alias.replaced->>'run_id')::uuid),
-        replaced = nullif(v_alias.replaced->'replaced', 'null'::jsonb)
-      where a.raw_normalized = v_alias.raw_normalized;
-      n_alias_restored := n_alias_restored + 1;
-    end if;
-  end loop;
+    -- A map-answer run: take back the alias it wrote, unless rewritten since
+    -- (then the later run owns the row, and its own undo walks past this run
+    -- — see below). What comes back is the newest replaced version whose run
+    -- has NOT been undone: undos can happen in any order, and restoring a
+    -- mapping an earlier undo already took back would make it permanent (its
+    -- run can never be undone twice).
+    for v_alias in select * from public.referral_source_aliases a where a.run_id = p_target_run for update loop
+      v_restore := v_alias.replaced;
+      while v_restore is not null and exists (
+        select 1 from public.sheet_sync_runs r
+         where r.id = (v_restore->>'run_id')::uuid and r.reverted_by_run_id is not null) loop
+        v_restore := nullif(v_restore->'replaced', 'null'::jsonb);
+      end loop;
+      if v_restore is null then
+        delete from public.referral_source_aliases a where a.raw_normalized = v_alias.raw_normalized;
+        n_alias_removed := n_alias_removed + 1;
+      else
+        update public.referral_source_aliases a set
+          referral_source_id = v_restore->>'referral_source_id',
+          created_by = (select u.id from auth.users u where u.id = (v_restore->>'created_by')::uuid),
+          created_at = coalesce((v_restore->>'created_at')::timestamptz, now()),
+          run_id = (select r.id from public.sheet_sync_runs r where r.id = (v_restore->>'run_id')::uuid),
+          replaced = nullif(v_restore->'replaced', 'null'::jsonb)
+        where a.raw_normalized = v_alias.raw_normalized;
+        n_alias_restored := n_alias_restored + 1;
+      end if;
+    end loop;
 
-  update public.sheet_sync_runs set reverted_by_run_id = v_run where id = p_target_run;
-  return jsonb_build_object('restored', n_restored, 'blocked', n_blocked, 'deleted', n_deleted,
-                            'kept', n_kept, 'held', n_held,
+    update public.sheet_sync_runs set reverted_by_run_id = v_run where id = p_target_run;
+  end if;
+  return jsonb_build_object('done', v_done, 'restored', n_restored, 'blocked', n_blocked, 'deleted', n_deleted,
+                            'kept', n_kept, 'held', n_held, 'links_left', n_links_left,
                             'alias_removed', n_alias_removed, 'alias_restored', n_alias_restored);
 end $$;
 
@@ -1082,12 +1160,18 @@ $$;
 -- in the live window is dead by the lease's own rule and does not block —
 -- and the fence refuses that run's every later write (P0063), so it cannot
 -- act on the decisions it read before this one. The lease lock serialises
--- with acquire, and locking the running row waits out a write the worker has
--- in flight (the fence holds that row), then re-reads its heartbeat.
+-- with acquire, and the running row is locked NOWAIT: a worker with a write in
+-- flight holds that row (the fence locks it), which is "busy" (P0062), never
+-- a wait that could end in a raw lock_timeout.
 --
--- Dismiss is refused for an item any of whose keys is HELD: a hold is only
--- ever replaced by an admin link or create (the review queue offers those
--- two for a held item), and a dismissed hold would park the key unseen.
+-- Dismiss on an item with HELD keys:
+--   * every held key is an undo hold (hold_reason 'undone by an admin') ->
+--     allowed, meaning "keep it undone": the holds stay, the item stays
+--     dismissed (resolution.keep_undone = true), and the sync never re-opens
+--     it (sheet_sync_upsert_review) — whatever kind a later run gives it;
+--   * any other (evidence-based) hold -> refused (22023): that hold is only
+--     ever replaced by an admin link or create, and hiding it would park the
+--     key unseen.
 create or replace function public.sheet_review_resolve(
   p_item_id uuid, p_actor uuid, p_action text, p_patient_id uuid
 ) returns void language plpgsql security definer set search_path = '' as $$
@@ -1095,10 +1179,17 @@ declare
   v_item public.sheet_sync_review_items%rowtype;
   v_live public.sheet_sync_runs%rowtype;
   v_keys jsonb;
+  v_keep_undone boolean;
 begin
-  perform pg_advisory_xact_lock(hashtext('sheet_sync_lease'));
-  select * into v_live from public.sheet_sync_runs r where r.status = 'running' for update;
-  if found and not v_live.dry_run and public._sheet_sync_lease_live(v_live.heartbeat_at) then
+  if not pg_try_advisory_xact_lock(hashtext('sheet_sync_lease')) then
+    raise exception 'Another sheet sync is starting.' using errcode = 'P0062';
+  end if;
+  begin
+    select * into v_live from public.sheet_sync_runs r where r.status = 'running' for update nowait;
+  exception when lock_not_available then
+    raise exception 'Another sheet sync is running.' using errcode = 'P0062';
+  end;
+  if v_live.id is not null and not v_live.dry_run and public._sheet_sync_lease_live(v_live.heartbeat_at) then
     raise exception 'Another sheet sync is running.' using errcode = 'P0062';
   end if;
   select * into v_item from public.sheet_sync_review_items i where i.id = p_item_id and i.status = 'open' for update;
@@ -1108,11 +1199,15 @@ begin
   v_keys := case when jsonb_typeof(v_item.payload->'link_keys') = 'array' then v_item.payload->'link_keys' else '[]'::jsonb end;
   if p_action = 'dismiss' then
     if exists (select 1 from public.sheet_patient_links l
-                where l.decision = 'review' and l.link_key in (select jsonb_array_elements_text(v_keys))) then
+                where l.decision = 'review' and l.link_key in (select jsonb_array_elements_text(v_keys))
+                  and l.hold_reason is distinct from 'undone by an admin') then
       raise exception 'This row is held for a decision: link it to a patient or create a new one.' using errcode = '22023';
     end if;
+    v_keep_undone := exists (select 1 from public.sheet_patient_links l
+                              where l.decision = 'review' and l.link_key in (select jsonb_array_elements_text(v_keys)));
     update public.sheet_sync_review_items
-       set status = 'dismissed', resolved_by = p_actor, resolved_at = now(), resolution = jsonb_build_object('action', 'dismiss')
+       set status = 'dismissed', resolved_by = p_actor, resolved_at = now(),
+           resolution = jsonb_build_object('action', 'dismiss', 'keep_undone', v_keep_undone)
      where id = p_item_id;
     return;
   end if;
@@ -1154,7 +1249,7 @@ begin
     'public.sheet_sync_upsert_review(uuid, text, jsonb, boolean)',
     'public.sheet_resort_apply(uuid, uuid[], text, text)',
     'public.sheet_alias_apply(uuid, text, text, uuid)',
-    'public.sheet_sync_revert_run(uuid, uuid)',
+    'public.sheet_sync_revert_run(uuid, uuid, integer)',
     'public.sheet_review_resolve(uuid, uuid, text, uuid)',
     'public.sheet_resort_candidates()'] loop
     execute format('revoke all on function %s from public', f);
@@ -1173,7 +1268,7 @@ grant execute on function public.sheet_sync_apply_customer_ops(uuid, jsonb) to s
 grant execute on function public.sheet_sync_upsert_review(uuid, text, jsonb, boolean) to service_role;
 grant execute on function public.sheet_resort_apply(uuid, uuid[], text, text) to service_role;
 grant execute on function public.sheet_alias_apply(uuid, text, text, uuid) to service_role;
-grant execute on function public.sheet_sync_revert_run(uuid, uuid) to service_role;
+grant execute on function public.sheet_sync_revert_run(uuid, uuid, integer) to service_role;
 grant execute on function public.sheet_review_resolve(uuid, uuid, text, uuid) to service_role;
 grant execute on function public.sheet_resort_candidates() to service_role;
 

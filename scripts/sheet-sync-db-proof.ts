@@ -59,7 +59,7 @@
 // with one piece of text swapped (run it from the worktree root; it refuses
 // when the text is not there, so a later edit cannot turn a mutation into a
 // silent no-op). Two mutations of the same function overwrite each other, so
-// they run in two rounds with a reset between them.
+// they run in separate rounds (A–D) with a reset between them.
 //
 //   PSQL=/opt/homebrew/opt/libpq/bin/psql
 //   DB=postgresql://postgres:postgres@127.0.0.1:54322/postgres
@@ -82,13 +82,18 @@
 //   # overwrite a hold (… link over a hold: expected skipped …).
 //   mutate sheet_sync_apply_customer_ops "and public.sheet_patient_links.decision <> 'review'" "and true"
 //   # M5 — an undo holds only its own run's links. Expect: FAIL Undo holds
-//   # the auto links of a restored patient (… expected restored=1 held=1 …).
+//   # the auto links of a restored patient (… expected restored=1 held=1 …)
+//   # and FAIL Timing: 8,000 fills … (… held=16000, got … "held":8000 …).
 //   mutate sheet_sync_revert_run "if v_sync_run then" "if false then"
 //   # M7 — map answer moves a patient on ANY row with the answer. Expect: FAIL
 //   # Map answer moves only patients whose earliest answered row carries it
-//   # (… expected 3 patients moved …, got 4).
+//   # (… expected 3 patients moved …, got 5).
 //   mutate sheet_alias_apply "where c.patient_id is not null and c.source_norm <> ''" "where c.patient_id is not null and c.source_norm = p_raw_normalized"
-//   npm run sheet-sync:db-proof          # expect exactly those five FAILs
+//   # M11 — no "keep undone": dismiss is refused for undo holds too. Expect:
+//   # FAIL Dismiss: refused on an evidence hold … (… dismiss an undo-held item
+//   # (keep undone): unexpected error — [22023] …).
+//   mutate sheet_review_resolve "and l.hold_reason is distinct from 'undone by an admin') then" ") then"
+//   npm run sheet-sync:db-proof          # expect exactly those seven FAILs
 //   /opt/homebrew/bin/supabase db reset  # undo round A
 //
 //   ## Round B ##
@@ -99,16 +104,27 @@
 //   # M6 — an undo leaves the alias behind. Expect: FAIL Undo of a map-answer
 //   # run removes the alias it added … (… expected alias_removed=1 …).
 //   mutate sheet_sync_revert_run "where a.run_id = p_target_run for update loop" "where false for update loop"
-//   npm run sheet-sync:db-proof          # expect exactly those three FAILs
+//   # M9 — undated rows sort FIRST. Expect: FAIL Map answer moves only
+//   # patients whose earliest answered row carries it (Zeta5 moves).
+//   mutate sheet_alias_apply "c.registered_on asc nulls last" "c.registered_on asc nulls first"
+//   npm run sheet-sync:db-proof          # expect exactly those four FAILs
 //   /opt/homebrew/bin/supabase db reset  # undo round B
 //
 //   ## Round C ##
-//   # M8 — an undo holds the links of a created patient it had to keep.
-//   # Expect: FAIL Undo holds the auto links of a restored patient; a kept
-//   # patient keeps its links (… expected kept=1 deleted=0 held=0 …).
-//   mutate sheet_sync_revert_run "and not (l.patient_id = any (v_kept))" ""
+//   # M8 — an undo holds the links of patients it did not undo (kept or
+//   # blocked). Expect: FAIL Undo holds the auto links of a restored patient;
+//   # a kept patient keeps its links (… expected kept=1 deleted=0 held=0 …).
+//   mutate sheet_sync_revert_run "and c.undo_outcome in ('kept','blocked')" "and false"
 //   npm run sheet-sync:db-proof          # expect exactly that FAIL
-//   /opt/homebrew/bin/supabase db reset  # undo round C, then re-run: all PASS
+//   /opt/homebrew/bin/supabase db reset  # undo round C
+//
+//   ## Round D ##
+//   # M10 — an alias undo restores a version whose own run was undone. Expect:
+//   # FAIL Undo of a map-answer run … (… u1c answer (older run undone first):
+//   # expected no alias left, got flyers).
+//   mutate sheet_sync_revert_run "while v_restore is not null and exists (" "while false and exists ("
+//   npm run sheet-sync:db-proof          # expect exactly that FAIL
+//   /opt/homebrew/bin/supabase db reset  # undo round D, then re-run: all PASS
 import "./lib/load-env";
 import { requireLocalOrExplicitProd } from "./lib/env-guard";
 import { Client, type QueryResult, type QueryResultRow } from "pg";
@@ -1940,6 +1956,38 @@ async function main() {
         kept.rows[0].decision === "link" && kept.rows[0].patient_id === kId,
         `a kept patient keeps its link, got ${JSON.stringify(kept.rows[0])}`,
       );
+
+      // A patient whose restore is BLOCKED (changed since) keeps the run's
+      // own link too: its filled values stay, so its sheet rows stay linked.
+      await setRole("postgres", null);
+      const bp = await q<{ id: string }>(
+        `insert into public.patients (first_name, last_name, birthdate) values ('Blas', 'Blocked', '1981-01-01') returning id`,
+      );
+      const bId = bp.rows[0].id;
+      await setRole("service_role", null);
+      const r5 = await acquire("manual", false);
+      await apply(r5.token, [
+        { op: "link", link_key: "u1:blocked", patient_id: bId, method: "auto_exact" },
+        { op: "fill", patient_id: bId, fields: { email: "blas@example.test" } },
+      ]);
+      await finish(r5.token);
+      await setRole("postgres", null);
+      await q(`update public.patients set address = 'Touched by reception' where id = $1`, [bId]);
+      await setRole("service_role", null);
+      const rv3 = await acquire("revert", false);
+      const u3 = await q<{ j: Json }>(`select public.sheet_sync_revert_run($1::uuid, $2::uuid) as j`, [rv3.token, r5.runId]);
+      assert(
+        u3.rows[0].j.blocked === 1 && u3.rows[0].j.held === 0 && u3.rows[0].j.links_left === 1,
+        `undo with a blocked restore: expected blocked=1 held=0 links_left=1, got ${JSON.stringify(u3.rows[0].j)}`,
+      );
+      await finish(rv3.token);
+      const bl = await q<{ decision: string; patient_id: string | null }>(
+        `select decision, patient_id::text as patient_id from public.sheet_patient_links where link_key = 'u1:blocked'`,
+      );
+      assert(
+        bl.rows[0].decision === "link" && bl.rows[0].patient_id === bId,
+        `a blocked patient keeps the run's link, got ${JSON.stringify(bl.rows[0])}`,
+      );
     });
 
     // 24. Undoing a map-answer run takes back its alias (review round 3, 1) ----
@@ -1981,6 +2029,40 @@ async function main() {
         back.rows[0].src === "other" && back.rows[0].run_id === null && back.rows[0].replaced === null,
         `undo alias run 2: expected the pre-run alias (other, no run), got ${JSON.stringify(back.rows[0])}`,
       );
+
+      // Two runs map the same answer; undo them in either order. Either way
+      // the answer ends unmapped — an undone mapping never comes back.
+      const aliasRun = async (raw: string, src: string) => {
+        const l = await acquire("alias", false);
+        await q(`select public.sheet_alias_apply($1::uuid, $2, $3, null)`, [l.token, raw, src]);
+        await finish(l.token);
+        return l.runId;
+      };
+      const undo = async (runId: string) => {
+        const l = await acquire("revert", false);
+        const j = (await q<{ j: Json }>(`select public.sheet_sync_revert_run($1::uuid, $2::uuid) as j`, [l.token, runId])).rows[0].j;
+        await finish(l.token);
+        return j;
+      };
+      const aliasOf = async (raw: string) =>
+        (await q<{ src: string }>(`select referral_source_id as src from public.referral_source_aliases where raw_normalized = $1`, [raw])).rows[0]?.src ?? null;
+      for (const [raw, firstUndo] of [["u1c answer", "older"], ["u1d answer", "newer"]] as const) {
+        const older = await aliasRun(raw, "flyers");
+        const newer = await aliasRun(raw, "walk_in");
+        if (firstUndo === "older") {
+          await undo(older);
+          const mid2 = await aliasOf(raw);
+          assert(mid2 === "walk_in", `${raw}: undoing the older run must leave the newer mapping, got ${mid2}`);
+          await undo(newer);
+        } else {
+          await undo(newer);
+          const mid2 = await aliasOf(raw);
+          assert(mid2 === "flyers", `${raw}: undoing the newer run must bring back the older mapping, got ${mid2}`);
+          await undo(older);
+        }
+        const end = await aliasOf(raw);
+        assert(end === null, `${raw} (older run undone ${firstUndo === "older" ? "first" : "last"}): expected no alias left, got ${end}`);
+      }
     });
 
     // 25. Map answer follows the fill's own channel rule (review round 3, 5) ---
@@ -1989,7 +2071,8 @@ async function main() {
       const ps = await q<{ id: string; first_name: string }>(
         `insert into public.patients (first_name, last_name, birthdate) values
            ('Zeta1', 'Earliest', '1971-01-01'), ('Zeta2', 'Earliest', '1972-01-01'),
-           ('Zeta3', 'Earliest', '1973-01-01'), ('Zeta4', 'Earliest', '1974-01-01')
+           ('Zeta3', 'Earliest', '1973-01-01'), ('Zeta4', 'Earliest', '1974-01-01'),
+           ('Zeta5', 'Earliest', '1975-01-01')
          returning id, first_name`,
       );
       const z = Object.fromEntries(ps.rows.map((r) => [r.first_name, r.id]));
@@ -2003,6 +2086,9 @@ async function main() {
         ["Zeta3", "f5-z3a", null, "f5 later"], ["Zeta3", "f5-z3b", "2026-01-01", ""],
         // Zeta4: same day, source_key breaks the tie (f5-z4a first) → moved
         ["Zeta4", "f5-z4b", "2026-01-05", "f5 other"], ["Zeta4", "f5-z4a", "2026-01-05", "f5 later"],
+        // Zeta5: the undated row answers "f5 later", but undated rows sort LAST,
+        // so the dated "f5 other" row is the earliest answer → not moved
+        ["Zeta5", "f5-z5a", null, "f5 later"], ["Zeta5", "f5-z5b", "2026-03-01", "f5 other"],
       ];
       let i = 0;
       for (const [who, key, reg, norm] of rows) {
@@ -2023,8 +2109,8 @@ async function main() {
         `select first_name, referral_source as src from public.patients where last_name = 'Earliest' order by first_name`,
       );
       assert(
-        JSON.stringify(got.rows.map((r) => r.src)) === JSON.stringify([null, "flyers", "flyers", "flyers"]),
-        `map answer: expected [null, flyers, flyers, flyers], got ${JSON.stringify(got.rows)}`,
+        JSON.stringify(got.rows.map((r) => r.src)) === JSON.stringify([null, "flyers", "flyers", "flyers", null]),
+        `map answer: expected [null, flyers, flyers, flyers, null], got ${JSON.stringify(got.rows)}`,
       );
     });
 
@@ -2044,7 +2130,7 @@ async function main() {
     });
 
     // 27. A hold is never hidden by a dismiss (review round 3, minor e) --------
-    await check("A held item cannot be dismissed; a dismissed item re-opens while its key is held", async () => {
+    await check("Dismiss: refused on an evidence hold, allowed as keep-undone on an undo hold; re-open rules", async () => {
       await setRole("postgres", null);
       await q(`insert into public.sheet_patient_links (link_key, decision, method) values ('e:held', 'review', 'auto_exact')`);
       const items = await q<{ id: string; item_key: string }>(
@@ -2087,9 +2173,262 @@ async function main() {
         open.rows.length === 1 && open.rows[0].item_key === "e:free",
         `upsert: expected e:free open again and e:row still dismissed, got ${JSON.stringify(open.rows)}`,
       );
+
+      // An item held only by an UNDO may be dismissed: "keep it undone". The
+      // hold stays, and later runs never re-open it — even under another
+      // identity kind — until the key carries a different (evidence) hold.
+      await setRole("postgres", null);
+      await q(
+        `insert into public.sheet_patient_links (link_key, decision, method, hold_reason)
+         values ('e:undone', 'review', 'auto_exact', 'undone by an admin')`,
+      );
+      const u = await q<{ id: string }>(
+        `insert into public.sheet_sync_review_items (tab, item_key, kind, payload)
+         values ('customers', 'e:undone', 'ambiguous_patient', '{"link_keys":["e:undone"]}'::jsonb) returning id`,
+      );
+      await setRole("service_role", null);
+      await expectOk("dismiss an undo-held item (keep undone)", () =>
+        q(`select public.sheet_review_resolve($1::uuid, $2::uuid, 'dismiss', null)`, [u.rows[0].id, fx.adminId]),
+      );
+      const res = await q<{ status: string; keep: boolean | null; decision: string }>(
+        `select i.status, (i.resolution->>'keep_undone')::boolean as keep, l.decision
+           from public.sheet_sync_review_items i join public.sheet_patient_links l on l.link_key = i.item_key
+          where i.id = $1`,
+        [u.rows[0].id],
+      );
+      assert(
+        res.rows[0].status === "dismissed" && res.rows[0].keep === true && res.rows[0].decision === "review",
+        `keep undone: expected dismissed, keep_undone, hold kept, got ${JSON.stringify(res.rows[0])}`,
+      );
+      const report = (kind: string) => JSON.stringify([{ kind, item_key: "e:undone", payload: { link_keys: ["e:undone"] } }]);
+      const l2 = await acquire("manual", false);
+      const up2 = await q<{ j: Json }>(`select public.sheet_sync_upsert_review($1::uuid, 'customers', $2::jsonb, false) as j`, [
+        l2.token, report("identity_conflict"),
+      ]);
+      await finish(l2.token);
+      assert(
+        up2.rows[0].j.opened === 0 && up2.rows[0].j.updated === 0,
+        `keep undone: a later run (another identity kind) must not re-open it, got ${JSON.stringify(up2.rows[0].j)}`,
+      );
+      await setRole("postgres", null);
+      await q(`update public.sheet_patient_links set hold_reason = 'phone differs' where link_key = 'e:undone'`);
+      await setRole("service_role", null);
+      const l3 = await acquire("manual", false);
+      const up3 = await q<{ j: Json }>(`select public.sheet_sync_upsert_review($1::uuid, 'customers', $2::jsonb, false) as j`, [
+        l3.token, report("identity_conflict"),
+      ]);
+      await finish(l3.token);
+      assert(up3.rows[0].j.opened === 1, `an evidence hold re-opens a keep-undone item, got ${JSON.stringify(up3.rows[0].j)}`);
     });
 
-    // 28. Timing (M9) ---------------------------------------------------------
+    // 28. Resolve never waits on the lease lock (review round 5, 6 + 7) -------
+    // A second connection, outside this script's transaction. That
+    // transaction has held the lease advisory lock since its first acquire
+    // (xact locks last until the rollback at the end), so a resolve from the
+    // other connection must answer "busy" at once instead of queueing until
+    // lock_timeout. It writes nothing: it raises before reading the item.
+    // (The running-row NOWAIT half cannot be shown this way: rows this
+    // transaction inserted are invisible to another connection, and this
+    // script never commits anything.)
+    await check("Resolve answers busy at once while the lease lock is held (second connection)", async () => {
+      const other = new Client({ connectionString: DB_URL });
+      await other.connect();
+      try {
+        const got = await other.query<{ ok: boolean }>(`select pg_try_advisory_lock(hashtext('sheet_sync_lease')) as ok`);
+        assert(got.rows[0].ok === false, "precondition: this script's transaction should hold the lease lock");
+        await other.query(`set lock_timeout = '2s'`);
+        await other.query(`set role service_role`);
+        const t0 = performance.now();
+        let code: string | undefined;
+        try {
+          await other.query(`select public.sheet_review_resolve(gen_random_uuid(), null, 'dismiss', null)`);
+        } catch (err) {
+          code = (err as Error & { code?: string }).code;
+        }
+        const ms = Math.round(performance.now() - t0);
+        assert(code === "P0062", `resolve beside a held lease lock: expected P0062, got ${code ?? "success"} after ${ms} ms`);
+        assert(ms < 1000, `resolve must not wait for the lease lock (took ${ms} ms)`);
+      } finally {
+        await other.end();
+      }
+    });
+
+    // 29. A paused acquire still sweeps a dead run's staging (review round 5, 8)
+    await check("A paused acquire sweeps a dead run's staged rows without taking over", async () => {
+      await setRole("service_role", null);
+      const a = await acquire("manual", false);
+      await q(`select public.sheet_mirror_stage($1::uuid, 'lab', '[{"sheet_row":1}]'::jsonb)`, [a.token]);
+      await q(`update public.sheet_sync_runs set heartbeat_at = now() - interval '11 minutes' where id = $1`, [a.runId]);
+      await setRole("postgres", null);
+      await q(`update public.sheet_sync_settings set paused = true where id`);
+      await setRole("service_role", null);
+      const p = await acquire("cron", false);
+      assert(p.status === "skipped_paused", `paused cron: expected skipped_paused, got ${p.status}`);
+      const staged = await q<{ n: string }>(`select count(*)::text as n from public.sheet_mirror_staging where run_id = $1`, [a.runId]);
+      assert(staged.rows[0].n === "0", `paused acquire: the dead run's staged rows must be gone, got ${staged.rows[0].n}`);
+      const st = await q<{ status: string }>(`select status from public.sheet_sync_runs where id = $1`, [a.runId]);
+      assert(st.rows[0].status === "running", `paused acquire must not take the lease over, got ${st.rows[0].status}`);
+      await setRole("postgres", null);
+      await q(`update public.sheet_sync_settings set paused = false where id`);
+      await setRole("service_role", null);
+      const b = await acquire("manual", false);
+      assert(b.status === "running", `takeover after unpause: expected running, got ${b.status}`);
+      await finish(b.token);
+    });
+
+    // 30. A paged undo resumes and finishes exactly once (review round 5, 3) --
+    await check("Paged undo: each call resumes where the last stopped; only the last one finishes the run", async () => {
+      await setRole("postgres", null);
+      const ps = (await q<{ id: string }>(
+        `insert into public.patients (first_name, last_name, birthdate)
+         select 'Page ' || g, 'Paged', date '1950-01-01' + g from generate_series(1, 3) g returning id`,
+      )).rows.map((r) => r.id);
+      await setRole("service_role", null);
+      const r = await acquire("manual", false);
+      await q(`select public.sheet_sync_apply_customer_ops($1::uuid, $2::jsonb)`, [r.token, JSON.stringify([
+        ...ps.map((id, i) => ({ op: "link", link_key: `pg:link-${i}`, patient_id: id, method: "auto_exact" })),
+        ...ps.map((id) => ({ op: "fill", patient_id: id, fields: { email: `${id}@example.test` } })),
+        ...[0, 1].map((i) => ({ op: "create", create_key: `pg-new-${i}`, method: "auto_exact",
+          fields: { first_name: `New ${i}`, last_name: "Paged", middle_name: null }, link_keys: [`pg:new-${i}`],
+          admin_link_keys: [], legacy_intake: {}, facts: { registered_on: null, new_repeat: null, source_ref: `pg${i}` } })),
+      ])]);
+      await finish(r.token);
+      const rv = await acquire("revert", false);
+      await expectPgError("undo page size 0", "22023", () =>
+        q(`select public.sheet_sync_revert_run($1::uuid, $2::uuid, 0)`, [rv.token, r.runId]));
+      const page = async () =>
+        (await q<{ j: Json }>(`select public.sheet_sync_revert_run($1::uuid, $2::uuid, 2) as j`, [rv.token, r.runId])).rows[0].j;
+      const stamped = async () =>
+        (await q<{ by: string | null }>(`select reverted_by_run_id::text as by from public.sheet_sync_runs where id = $1`, [r.runId])).rows[0].by;
+      const p1 = await page();
+      assert(p1.done === false && p1.restored === 2 && p1.deleted === 0, `page 1: expected 2 restored, not done, got ${JSON.stringify(p1)}`);
+      assert((await stamped()) === null, "page 1: the run must not be marked undone yet");
+      const p2 = await page();
+      assert(p2.done === false && p2.restored === 1 && p2.deleted === 1, `page 2: expected 1 restored + 1 deleted, not done, got ${JSON.stringify(p2)}`);
+      const p3 = await page();
+      assert(p3.done === true && p3.restored === 0 && p3.deleted === 1, `page 3: expected the last delete and done, got ${JSON.stringify(p3)}`);
+      assert((await stamped()) === rv.runId, "page 3: the run must now be marked undone by this undo run");
+      const held = [p1, p2, p3].reduce((n, p) => n + p.held, 0);
+      assert(held === 5, `paged undo: expected 5 holds in total (3 restored patients + 2 deleted), got ${held}`);
+      await expectPgError("a page after done", "22023", () => page());
+      await finish(rv.token);
+    });
+
+    // 31. Undo of a first-catch-up-sized run under the PostgREST limits -------
+    // statement_timeout (and lock_timeout) is 8 s for `authenticator`, which
+    // service_role inherits. The first real run creates/fills ~8k patients;
+    // this one fills 8,000 AND creates 8,000, then undoes all of it in ONE
+    // call, with every call below under `set local statement_timeout = '8s'`.
+    await check("Timing: 8,000 fills + 8,000 creates in 500-op chunks, full-size mirror commits, a paged undo (statement_timeout 8 s)", async () => {
+      const N = 8000;
+      const CHUNK = 500;
+      const LIMIT_MS = 8000;
+      await setRole("postgres", null);
+      const ids = (
+        await q<{ id: string }>(
+          `insert into public.patients (first_name, last_name, birthdate)
+           select 'Fill ' || g, 'Timing8k', date '1960-01-01' + g from generate_series(1, ${N}) g
+           returning id`,
+        )
+      ).rows.map((r) => r.id);
+      await setRole("service_role", null);
+      const apply = (token: string, ops: unknown[]) =>
+        q<{ j: Json }>(`select public.sheet_sync_apply_customer_ops($1::uuid, $2::jsonb) as j`, [token, JSON.stringify(ops)]);
+      const r0 = await acquire("manual", false);
+      for (let i = 0; i < N; i += CHUNK) {
+        await apply(r0.token, ids.slice(i, i + CHUNK).map((id, j) => ({
+          op: "link", link_key: `t8k-link-${i + j}`, patient_id: id, method: "auto_exact" })));
+      }
+      await finish(r0.token);
+
+      const timings: [string, number][] = [];
+      async function timed<T>(label: string, fn: () => Promise<T>): Promise<T> {
+        const t0 = performance.now();
+        const out = await fn();
+        timings.push([label, Math.round(performance.now() - t0)]);
+        return out;
+      }
+      await q(`set local statement_timeout = '8s'`);
+      try {
+        const r1 = await acquire("manual", false);
+        for (let i = 0; i < N; i += CHUNK) {
+          await timed(`fill chunk ${i / CHUNK + 1}`, () => apply(r1.token, ids.slice(i, i + CHUNK).map((id, j) => ({
+            op: "fill", patient_id: id,
+            fields: { phone: `+6391700${String(i + j).padStart(5, "0")}`, email: `t8k${i + j}@example.test`, address: "Timing Town" } }))));
+        }
+        for (let i = 0; i < N; i += CHUNK) {
+          await timed(`create chunk ${i / CHUNK + 1}`, () => apply(r1.token, Array.from({ length: CHUNK }, (_, j) => ({
+            op: "create", create_key: `t8k-new-${i + j}`, method: "auto_exact",
+            fields: { first_name: `New ${i + j}`, last_name: "Timing8k", middle_name: null, sex: "female",
+              phone: `+6391800${String(i + j).padStart(5, "0")}`, referral_source: "online_facebook" },
+            link_keys: [`t8k-new-${i + j}`], admin_link_keys: [], legacy_intake: { source: "sheet_sync:CUSTOMER LIST2" },
+            facts: { registered_on: "2026-06-01", new_repeat: "new", source_ref: `t8k-${i + j}` } }))));
+        }
+        // Full-size mirror commits: each commit is ONE statement over a whole
+        // tab (delete + insert of every staged row), so staging in chunks does
+        // not protect it. Customers ~8k (the sheet has ~4.9k named rows); lab
+        // at the WHOLE tab, 21,504 rows (the mirror window normally keeps
+        // ~3k of them).
+        const cust = (i: number) => ({
+          sheet_row: i + 2, source_key: `t8k-src-${i}`, dup_count: 1, full_name_raw: `Timing8k, Person ${i}`,
+          name_norm: `timing8k|person ${i}`, loose_key: `timing8kperson${i}`, link_key: `t8k-new-${i}`, phone_norm: "9171234567",
+          dob: "1990-01-01", registered_on: "2026-06-01", source_raw: "Facebook", source_norm: "facebook",
+          referral_source_id: "online_facebook", referred_by_raw: null, new_repeat: "new", release_medium_raw: "Email",
+          patient_id: null, link_state: "unlinked", row_hash: `t8k-hash-${i}`,
+        });
+        const lab = (i: number) => ({
+          sheet_row: i + 3, service_date: "2026-06-01", name_raw: `Timing8k, Person ${i}`, name_norm: `timing8k|person ${i}`,
+          loose_key: `timing8kperson${i}`, patient_id: null, identity_key: `name:timing8k|person ${i}`,
+          service_raw: "CBC, URINALYSIS, FBS", doctor_raw: "Dr. Example", hmo_raw: null, base_php: 850, final_php: 850,
+          clinic_fee_php: null, revenue_php: 850, payment_method_raw: "CASH", payment_detail_raw: null,
+          release_medium_raw: "EMAIL", released_on: "2026-06-02", control_no: `C-${i}`, test_no: `T-${i}`,
+          raw: Array.from({ length: 20 }, (_, k) => (k === 4 ? `Timing8k, Person ${i}` : `cell ${k} value`)), row_hash: `t8k-lab-${i}`,
+        });
+        const STAGE = 2000;
+        for (const [tab, total, row] of [["customers", N, cust], ["lab", 21504, lab]] as const) {
+          for (let i = 0; i < total; i += STAGE) {
+            const rows = Array.from({ length: Math.min(STAGE, total - i) }, (_, j) => row(i + j));
+            await timed(`stage ${tab} chunk ${i / STAGE + 1}`, () =>
+              q(`select public.sheet_mirror_stage($1::uuid, $2, $3::jsonb)`, [r1.token, tab, JSON.stringify(rows)]));
+          }
+          const c = await timed(`commit ${tab} (${total} rows, one statement)`, () =>
+            q<{ n: number }>(`select public.sheet_mirror_commit($1::uuid, $2, $3) as n`, [r1.token, tab, total]));
+          assert(c.rows[0].n === total, `commit ${tab}: expected ${total}, got ${c.rows[0].n}`);
+        }
+        await finish(r1.token);
+
+        // Undo in pages of 2,000 patients (the runner's page size), summing
+        // the per-call counts until done.
+        const rv = await acquire("revert", false);
+        const sum: Record<string, number> = {};
+        let passes = 0;
+        for (;;) {
+          passes++;
+          const u = await timed(`undo page ${passes} (p_limit 2000)`, () =>
+            q<{ j: Json }>(`select public.sheet_sync_revert_run($1::uuid, $2::uuid, 2000) as j`, [rv.token, r1.runId]));
+          for (const [k, v] of Object.entries(u.rows[0].j)) if (typeof v === "number") sum[k] = (sum[k] ?? 0) + v;
+          if (u.rows[0].j.done) break;
+          assert(passes < 20, "undo never finished");
+        }
+        await finish(rv.token);
+        assert(
+          passes === 8 && sum.restored === N && sum.deleted === N && sum.held === 2 * N,
+          `paged undo: expected 8 calls, restored=${N} deleted=${N} held=${2 * N}, got ${passes} calls ${JSON.stringify(sum)}`,
+        );
+      } finally {
+        await q(`set local statement_timeout = 0`).catch(() => {});
+      }
+      const worst = (prefix: string) => Math.max(...timings.filter(([l]) => l.startsWith(prefix)).map(([, ms]) => ms));
+      console.log(`       ${String(worst("fill chunk")).padStart(6)} ms  worst 500-op fill chunk`);
+      console.log(`       ${String(worst("create chunk")).padStart(6)} ms  worst 500-op create chunk`);
+      console.log(`       ${String(worst("undo page")).padStart(6)} ms  worst undo page (2,000 patients)`);
+      console.log(`       ${String(worst("stage ")).padStart(6)} ms  worst 2,000-row stage chunk`);
+      for (const [label, ms] of timings.filter(([l]) => !l.includes("chunk "))) console.log(`       ${String(ms).padStart(6)} ms  ${label}`);
+      const slow = timings.filter(([, ms]) => ms >= LIMIT_MS);
+      assert(slow.length === 0, `over ${LIMIT_MS} ms: ${slow.map(([l, ms]) => `${l} (${ms} ms)`).join("; ")}`);
+    });
+
+    // 32. Timing (M9) ---------------------------------------------------------
     await check("Timing: 5,000-row commit, 500-op create chunk, undo (each < 8,000 ms)", async () => {
       await setRole("service_role", null);
       const LIMIT_MS = 8000;

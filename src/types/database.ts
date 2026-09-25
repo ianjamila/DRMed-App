@@ -5822,6 +5822,7 @@ export type Database = {
           reverted_at: string | null
           row_version_after: number
           run_id: string
+          undo_outcome: string | null
         }
         Insert: {
           change_kind: string
@@ -5834,6 +5835,7 @@ export type Database = {
           reverted_at?: string | null
           row_version_after: number
           run_id: string
+          undo_outcome?: string | null
         }
         Update: {
           change_kind?: string
@@ -5846,6 +5848,7 @@ export type Database = {
           reverted_at?: string | null
           row_version_after?: number
           run_id?: string
+          undo_outcome?: string | null
         }
         Relationships: [
           {
@@ -7322,7 +7325,7 @@ export type Database = {
         Returns: undefined
       }
       sheet_sync_revert_run: {
-        Args: { p_lease_token: string; p_target_run: string }
+        Args: { p_lease_token: string; p_limit?: number; p_target_run: string }
         Returns: Json
       }
       sheet_sync_upsert_review: {
