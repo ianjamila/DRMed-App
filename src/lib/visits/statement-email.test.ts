@@ -106,4 +106,11 @@ describe("renderStatementEmail", () => {
     expect(text).not.toContain("Balance due");
     expect(html).toContain("Balance waived");
   });
+
+  it("says who asked for it", () => {
+    expect(renderStatementEmail(input()).html).toContain("DRMed staff emailed you");
+    expect(renderStatementEmail(input({ requestedBy: "patient" })).html).toContain(
+      "you asked for your statement of account in the DRMed patient portal",
+    );
+  });
 });

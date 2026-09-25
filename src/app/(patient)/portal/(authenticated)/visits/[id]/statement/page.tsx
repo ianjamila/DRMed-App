@@ -6,6 +6,7 @@ import { fetchStatement } from "@/lib/visits/statement-data";
 import { auditPatientStatement } from "@/lib/portal/statement-audit";
 import { StatementSheet } from "@/components/statement/statement-sheet";
 import { PatientStatementPrintButton } from "./print-button";
+import { PatientEmailStatementButton } from "./email-button";
 
 export const metadata = {
   title: "Statement of account",
@@ -51,11 +52,14 @@ export default async function PatientStatementPage({ params }: Props) {
         >
           ← Visit
         </Link>
-        <PatientStatementPrintButton visitId={data.visit.id} />
+        <div className="flex flex-wrap items-start justify-end gap-2">
+          <PatientEmailStatementButton visitId={data.visit.id} email={data.patient.email} />
+          <PatientStatementPrintButton visitId={data.visit.id} />
+        </div>
       </div>
       <p className="mb-4 text-sm text-[color:var(--color-brand-text-soft)] print:hidden">
-        To keep a copy for your HMO or employer, press Print and choose
-        &ldquo;Save as PDF&rdquo;.
+        To keep a copy for your HMO or employer, email it to yourself, or press
+        Print and choose &ldquo;Save as PDF&rdquo;.
       </p>
       <StatementSheet data={data} issuedAt={new Date()} />
     </div>

@@ -37,6 +37,7 @@ const REQUIRE_PATIENT_CLIENT = [
   "(authenticated)/visits/[id]/page.tsx",
   "(authenticated)/visits/[id]/statement/page.tsx",
   "(authenticated)/visits/[id]/statement/print-action.ts",
+  "(authenticated)/visits/[id]/statement/email-action.ts",
   "(authenticated)/data-export/route.ts",
   "(authenticated)/actions.ts",
 ];

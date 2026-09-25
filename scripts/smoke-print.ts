@@ -105,6 +105,8 @@ interface Seed {
   otherVisitId: string;
   /** A service on the patient's bill that has since been retired (0175). */
   retiredServiceId: string;
+  /** A ₱550 visit, nothing paid, balance waived by the clinic. */
+  waivedVisitId: string;
 }
 
 async function createAuthUser(email: string, password: string): Promise<string> {
@@ -154,6 +156,7 @@ async function seed(db: pg.Client, staffId: string, email: string, password: str
     otherPatientId: randomUUID(),
     otherVisitId: randomUUID(),
     retiredServiceId: "",
+    waivedVisitId: randomUUID(),
   };
   const q = (sql: string, params: unknown[] = []) => db.query(sql, params);
 
@@ -249,6 +252,16 @@ async function seed(db: pg.Client, staffId: string, email: string, password: str
     [s.paymentId, s.visitId, staffId],
   );
 
+  // A visit the clinic waived in full: no payment row, so the statement must
+  // read "Nothing due", not "Balance due".
+  await q("insert into visits (id, patient_id) values ($1, $2)", [s.waivedVisitId, s.patientId]);
+  await q(
+    `insert into test_requests (visit_id, service_id, requested_by, base_price_php, final_price_php)
+     values ($1, $2, $3, 550, 550)`,
+    [s.waivedVisitId, xray, staffId],
+  );
+  await q("update visits set total_php = 550, payment_status = 'waived' where id = $1", [s.waivedVisitId]);
+
   // Retire the X-ray after billing it: the patient's portal copy must still
   // name it (0175 lets a patient read catalog rows their own bill references).
   s.retiredServiceId = xray;
@@ -313,7 +326,7 @@ async function cleanup(db: pg.Client, s: Partial<Seed> & { staffId: string }): P
   // protect real books; these rows are this run's alone, so skip triggers for
   // the teardown. Local only — the host check at the top guarantees it.
   await q("set local session_replication_role = replica");
-  const visitIds = [s.visitId, s.consultVisitId, s.otherVisitId].filter(Boolean);
+  const visitIds = [s.visitId, s.consultVisitId, s.otherVisitId, s.waivedVisitId].filter(Boolean);
   const patientIds = [s.patientId, s.otherPatientId].filter(Boolean);
   const sourceIds = [s.paymentId, s.eodId, s.disbursementId].filter(Boolean);
   await q(
@@ -703,6 +716,44 @@ async function main(): Promise<void> {
 
     // Straight at PostgREST with the portal's own token shape — RLS alone,
     // no app code between (the page's 404 also has an app-level check).
+    await check("waived-visit", async () => {
+      const problems: string[] = [];
+      await page.goto(`${APP_BASE}/staff/visits/${s.waivedVisitId}`, { timeout: 180_000 });
+      if ((await page.getByText("Balance waived", { exact: true }).count()) !== 1) {
+        problems.push("visit page does not show the balance as waived");
+      }
+      await page.goto(`${APP_BASE}/staff/visits/${s.waivedVisitId}/statement`, { timeout: 180_000 });
+      const sheet = (await page.locator("article.receipt-sheet").textContent()) ?? "";
+      if (!sheet.includes("Nothing due") || !sheet.includes("Balance waived")) {
+        problems.push("statement does not read Balance waived / Nothing due");
+      }
+      if (sheet.includes("Balance due")) problems.push("statement still asks for a waived balance");
+      return problems;
+    });
+
+    await check("portal-email-it-to-me", async () => {
+      // The staff send above holds this visit + address for 2 minutes; free
+      // it, as if the window had passed, so the patient's send can go.
+      await db.query("delete from rate_limit_attempts where identifier like $1", [`${s.visitId}:%`]);
+      await portalPage.emulateMedia({ media: "screen" });
+      await portalPage.goto(`${APP_BASE}/portal/visits/${s.visitId}/statement`, { timeout: 180_000 });
+      await portalPage.getByRole("button", { name: "Email it to me" }).click();
+      const confirm = portalPage.getByRole("group", { name: "Email my statement" });
+      const problems: string[] = [];
+      if (!(await confirm.textContent())?.includes(PATIENT_EMAIL)) problems.push("confirm does not name the address on file");
+      await confirm.getByRole("button", { name: "Send email" }).click();
+      const outcome = portalPage.locator("p[role=status], p[role=alert]").filter({ hasText: /Sent to|switched on|couldn/ });
+      await outcome.first().waitFor({ timeout: 60_000 });
+      const { rows } = await db.query(
+        `select 1 from audit_log
+          where actor_type = 'patient' and patient_id = $1 and resource_id = $2
+            and action in ('statement.emailed', 'statement.email_failed') and metadata->>'to' = $3`,
+        [s.patientId, s.visitId, PATIENT_EMAIL],
+      );
+      if (rows.length !== 1) problems.push(`expected 1 patient send audit row, found ${rows.length}`);
+      return problems;
+    });
+
     await check("portal-rls-direct", async () => {
       const secret = process.env.SUPABASE_JWT_SECRET;
       const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;

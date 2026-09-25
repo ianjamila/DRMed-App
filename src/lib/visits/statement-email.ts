@@ -49,6 +49,8 @@ export interface StatementEmailInput {
   }[];
   summary: StatementSummary;
   issuedAt: Date;
+  /** Who asked for it: reception/admin, or the patient in the portal. */
+  requestedBy?: "staff" | "patient";
 }
 
 export interface RenderedEmail {
@@ -149,7 +151,9 @@ export function renderStatementEmail(input: StatementEmailInput): RenderedEmail 
       (hmoNote ? emailFinePrint(escapeHtml(hmoNote)) : "") +
       emailFinePrint(`Issued ${escapeHtml(manilaDateTime(input.issuedAt))}. ${NOT_A_RECEIPT}`),
     receivedNote:
-      "You received this because DRMed staff emailed you the statement of account for your visit.",
+      input.requestedBy === "patient"
+        ? "You received this because you asked for your statement of account in the DRMed patient portal."
+        : "You received this because DRMed staff emailed you the statement of account for your visit.",
   });
 
   return { subject, text, html };

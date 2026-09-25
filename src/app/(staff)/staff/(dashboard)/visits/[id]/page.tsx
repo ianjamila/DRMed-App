@@ -397,6 +397,9 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
     hmo_provider_id: visit.hmo_provider_id,
   });
   const balance = Number(visit.total_php) - Number(visit.paid_php);
+  // Waiving writes no payment row, so paid_php stays short of the total: the
+  // remainder is waived, not owed (same rule as the statement of account).
+  const waivedBalance = visit.payment_status === "waived" && balance > 0 ? balance : 0;
   const activePayments = (payments ?? []).filter((p) => !p.voided_at);
   const voidedPayments = (payments ?? []).filter((p) => p.voided_at);
   // Edit / Move (0161) link a corrected row to the original it voided. A move
@@ -770,11 +773,15 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
         <section className="mt-6 grid gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5 sm:grid-cols-4">
           <Field label="Total" value={formatPhp(visit.total_php)} />
           <Field label="Paid" value={formatPhp(visit.paid_php)} />
-          <Field
-            label="Balance"
-            value={formatPhp(balance > 0 ? balance : 0)}
-            highlight={balance > 0}
-          />
+          {waivedBalance > 0 ? (
+            <Field label="Balance waived" value={formatPhp(waivedBalance)} />
+          ) : (
+            <Field
+              label="Balance"
+              value={formatPhp(balance > 0 ? balance : 0)}
+              highlight={balance > 0}
+            />
+          )}
           <div>
             <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
               Status
