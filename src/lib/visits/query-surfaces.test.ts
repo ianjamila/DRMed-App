@@ -670,6 +670,18 @@ interface Chain {
    * exact opposite — satisfy the check just by naming the column.
    */
   selectLiterals: string[];
+  /**
+   * One entry per `.select(cond ? A : B)` argument: the resolved text of
+   * every leaf branch (nested ternaries flattened; a leaf that is neither a
+   * literal nor a known string constant resolves to "", so it can never
+   * satisfy an embed rule).
+   *
+   * Needed because `literals` pools every branch, so ONE branch carrying
+   * `visits!inner` let a sibling branch that dropped it pass — and at run
+   * time only one branch is sent. The embed rules require the embed in
+   * every branch.
+   */
+  conditionalSelects: string[][];
   /** Every identifier referenced anywhere in the chain. */
   identifiers: string[];
   /** Source text of the nearest enclosing function (or the whole file). */
@@ -802,10 +814,22 @@ function scanSource(text: string, full: string): Chain[] {
       const literals: string[] = [];
       const identifiers: string[] = [];
       const selectLiterals: string[] = [];
+      const conditionalSelects: string[][] = [];
+      const leaves = (a: ts.Expression): string[] => {
+        const e = ts.isParenthesizedExpression(a) ? a.expression : a;
+        if (ts.isConditionalExpression(e)) return [...leaves(e.whenTrue), ...leaves(e.whenFalse)];
+        if (ts.isStringLiteralLike(e)) return [e.text];
+        if (ts.isIdentifier(e)) return [consts.get(e.text) ?? ""];
+        return [""];
+      };
 
       for (const [i, call] of calls.entries()) {
         const isSelect = methods[i] === "select";
         for (const arg of call.arguments) {
+          if (isSelect) {
+            const inner = ts.isParenthesizedExpression(arg) ? arg.expression : arg;
+            if (ts.isConditionalExpression(inner)) conditionalSelects.push(leaves(inner));
+          }
           const collectArg = (a: ts.Node) => {
             if (ts.isStringLiteralLike(a)) {
               literals.push(a.text);
@@ -837,6 +861,7 @@ function scanSource(text: string, full: string): Chain[] {
         })),
         literals,
         selectLiterals,
+        conditionalSelects,
         identifiers,
         scopeText: scope.getText(src),
       });
@@ -887,12 +912,24 @@ function hasDoctorFilter(chain: Chain): boolean {
 
 /** Does this chain embed `services` as an INNER join? */
 function hasInnerServicesEmbed(chain: Chain): boolean {
-  return chain.literals.some((l) => /services\s*!\s*inner/.test(l));
+  return hasEmbedInEveryBranch(chain, /services\s*!\s*inner/);
 }
 
 /** Does this chain embed `visits` as an INNER join? */
 function hasInnerVisitsEmbed(chain: Chain): boolean {
-  return chain.literals.some((l) => /visits\s*!\s*inner/.test(l));
+  return hasEmbedInEveryBranch(chain, /visits\s*!\s*inner/);
+}
+
+/**
+ * The chain carries `embed` somewhere AND in every branch of every
+ * conditional select — only one branch is sent at run time, so a branch
+ * that drops the embed is a live left join (see `conditionalSelects`).
+ */
+function hasEmbedInEveryBranch(chain: Chain, embed: RegExp): boolean {
+  return (
+    chain.literals.some((l) => embed.test(l)) &&
+    chain.conditionalSelects.every((branches) => branches.every((b) => embed.test(b)))
+  );
 }
 
 /**
@@ -1284,6 +1321,41 @@ describe("the lifecycle predicates reject what they should", () => {
         "deleted_at check, so dropping .is('deleted_at', null) from a guarded " +
         "action would not have failed anything.",
     ).toBe(false);
+  });
+
+  it("requires the inner embed in every branch of a conditional select", () => {
+    // The archive shape (results/page.tsx): the select is chosen by a
+    // ternary over hoisted constants. Only one branch is sent, so a branch
+    // that drops visits!inner is a live left join even though its siblings
+    // keep it.
+    const source = (mine: string) => `
+      const BASE = "id, visits!inner ( id ), services!inner ( kind )";
+      const WITH_7D = "id, visits!inner ( id ), services!inner ( kind ), result_test_requests!inner ( id )";
+      const MINE = "${mine}";
+      async function archive() {
+        const { data } = await db
+          .from("test_requests")
+          .select(updated === "7d" ? WITH_7D : updated === "mine" ? (MINE) : BASE)
+          .is("deleted_at", null)
+          .is("visits.deleted_at", null)
+          .neq("services.kind", "doctor_consultation");
+      }
+    `;
+    const good = oneChain(source("id, visits!inner ( id ), services!inner ( kind )"));
+    expect(good.conditionalSelects).toHaveLength(1);
+    expect(good.conditionalSelects[0]).toHaveLength(3);
+    expect(hasInnerVisitsEmbed(good)).toBe(true);
+    expect(hasInnerServicesEmbed(good)).toBe(true);
+
+    const leftVisits = oneChain(source("id, visits ( id ), services!inner ( kind )"));
+    expect(
+      hasInnerVisitsEmbed(leftVisits),
+      "One branch with visits!inner vouched for a sibling branch without it.",
+    ).toBe(false);
+    expect(hasInnerServicesEmbed(leftVisits)).toBe(true);
+
+    const leftServices = oneChain(source("id, visits!inner ( id ), services ( kind )"));
+    expect(hasInnerServicesEmbed(leftServices)).toBe(false);
   });
 
   it("does not let a filtered query in the same function vouch for an unfiltered one", () => {

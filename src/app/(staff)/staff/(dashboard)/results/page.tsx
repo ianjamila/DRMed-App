@@ -110,6 +110,50 @@ const STATUS_BADGE: Record<string, string> = {
   cancelled: "bg-red-50 text-red-700 border-red-200",
 };
 
+// The archive's main select, in three literal shapes rather than one
+// interpolated with `${…}`. query-surfaces.test.ts statically proves every
+// test_requests chain that filters visits.deleted_at also embeds
+// visits!inner, by reading the literal text passed to .select() in the same
+// call chain (CLAUDE.md: PostgREST silently ignores a filter on a
+// LEFT-joined embed) — it can resolve a plain string/template-literal
+// constant referenced by name, even from inside a ternary, but not a
+// template built with a substitution, so each shape below is spelled out in
+// full rather than composed from a shared fragment.
+const ARCHIVE_SELECT_BASE = `
+  id, status, released_at, completed_at, requested_at,
+  visits!inner ( id, visit_number, payment_status, hmo_provider_id,
+    patients!inner ( first_name, last_name, drm_id ) ),
+  services!inner ( code, name, kind, section, report_group_id, report_groups ( name ) )
+`;
+
+// "Updated · last 7 days" (?updated=7d): adds an inner embed down to
+// results.amended_at, which every result_edit_commit stamps to now() — the
+// latest correction's own timestamp, so no result_amendments read is
+// needed. Only added while this filter is active: an unconditional !inner
+// here would turn the plain select into an inner join and silently drop
+// every test whose result was never corrected.
+const ARCHIVE_SELECT_UPDATED_7D = `
+  id, status, released_at, completed_at, requested_at,
+  visits!inner ( id, visit_number, payment_status, hmo_provider_id,
+    patients!inner ( first_name, last_name, drm_id ) ),
+  services!inner ( code, name, kind, section, report_group_id, report_groups ( name ) ),
+  result_test_requests!inner ( results!inner ( amended_at ) )
+`;
+
+// "Updated by me" (?updated=mine): nested two levels under `results`, not
+// test_requests directly, because result_edit_commit only stamps
+// result_amendments.test_request_id with the ANCHOR member of a
+// consolidated report (p_anchor_test_request_id, 0172) — filtering via the
+// embedded result_id instead catches every sibling member of the report,
+// matching what the old id-list version did.
+const ARCHIVE_SELECT_UPDATED_MINE = `
+  id, status, released_at, completed_at, requested_at,
+  visits!inner ( id, visit_number, payment_status, hmo_provider_id,
+    patients!inner ( first_name, last_name, drm_id ) ),
+  services!inner ( code, name, kind, section, report_group_id, report_groups ( name ) ),
+  result_test_requests!inner ( results!inner ( result_amendments!inner ( amended_by ) ) )
+`;
+
 interface SearchProps {
   searchParams: Promise<{
     status?: string;
@@ -172,49 +216,55 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
   const q = sp.q?.trim() ?? "";
 
   const admin = createAdminClient();
-  // Hoisted above the main query: the "Updated" filter (below) needs it to
-  // read result_amendments before the archive query runs, and the Updated
-  // column further down reuses the same client.
+  // The Updated column further down still reads result_amendments through
+  // the signed-in client (RLS-scoped reasons).
   const staffDb = await createClient();
 
   // "Updated" filter (?updated=7d|mine) — narrows the archive to tests whose
   // result was corrected recently, or by the signed-in staff member. Applied
-  // IN the query (not post-fetch, CLAUDE.md) so count:"exact" + .range()
-  // paging stay correct. Read through the signed-in client: RLS on
-  // result_amendments (0172) keeps this to results the caller may see.
+  // as a database-side filter via a PostgREST embedded !inner join on the
+  // main query itself — never a post-fetch id list (CLAUDE.md: a filter
+  // applied after the fetch breaks count:"exact" + .range() paging) and
+  // never an inlined uuid array (the old shape read up to 1000
+  // result_amendments rows, then inlined their linked test ids into
+  // `.in("id", …)` — a URL up to ~37KB, and itself silently capped at 1000
+  // corrections).
+  //
+  // 7d: `results.amended_at` is stamped to now() by every result_edit_commit
+  // (0172, redefined by 0179) — it already IS the latest correction's
+  // timestamp, so no result_amendments read is needed at all. "Latest
+  // correction within 7 days" and "any correction within 7 days" are the
+  // same test, since the latest correction time is >= every earlier one.
+  //
+  // mine: nested two levels under `results`, not test_requests directly,
+  // because result_edit_commit only stamps result_amendments.test_request_id
+  // with the ANCHOR member of a consolidated report (p_anchor_test_request_id,
+  // 0172) — filtering via the embedded result_id instead catches every
+  // sibling member, matching what the old id-list version did. This runs on
+  // the service-role client, so `amended_by = me` isn't RLS-enforced here —
+  // the archive's own section gating (below) already scopes which rows this
+  // role can see at all.
+  //
+  // Both embeds are added to the select ONLY while their filter is active:
+  // CLAUDE.md — an unconditional !inner would turn the plain select into an
+  // inner join and silently drop every test whose result was never
+  // corrected.
   const updated: UpdatedFilter | null = parseUpdatedFilter(sp.updated);
-  let updatedTestIds: string[] | null = null;
-  let updatedFilterError = false;
-  let updatedFilterCapped = false;
-  if (updated) {
-    let amQuery = staffDb.from("result_amendments").select("result_id").order("result_id");
-    amQuery =
-      updated === "7d"
-        ? amQuery.gte("amended_at", updatedSinceIso())
-        : amQuery.eq("amended_by", staff.user_id);
-    const { data: am, error: amErr } = await amQuery.limit(1000);
-    if (amErr) {
-      updatedFilterError = true;
-      updatedTestIds = [];
-    } else {
-      const resultIds = [...new Set((am ?? []).map((r) => r.result_id))];
-      updatedFilterCapped = (am ?? []).length === 1000;
-      const { data: links } = resultIds.length
-        ? await admin.from("result_test_requests").select("test_request_id").in("result_id", resultIds)
-        : { data: [] as { test_request_id: string }[] };
-      updatedTestIds = (links ?? []).map((l) => l.test_request_id);
-    }
-  }
 
   let query = admin
     .from("test_requests")
     .select(
-      `
-        id, status, released_at, completed_at, requested_at,
-        visits!inner ( id, visit_number, payment_status, hmo_provider_id,
-          patients!inner ( first_name, last_name, drm_id ) ),
-        services!inner ( code, name, kind, section, report_group_id, report_groups ( name ) )
-      `,
+      // Three literal select shapes, chosen by a plain ternary rather than
+      // `${…}` interpolation: query-surfaces.test.ts statically proves every
+      // test_requests chain that filters visits.deleted_at embeds
+      // visits!inner (CLAUDE.md — PostgREST silently ignores a filter on a
+      // LEFT-joined embed), and it can only read a literal/no-substitution
+      // template argument, not a computed string.
+      updated === "7d"
+        ? ARCHIVE_SELECT_UPDATED_7D
+        : updated === "mine"
+          ? ARCHIVE_SELECT_UPDATED_MINE
+          : ARCHIVE_SELECT_BASE,
       { count: "exact" },
     )
     .is("deleted_at", null)
@@ -280,14 +330,13 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
     }
   }
 
-  if (updatedTestIds) {
-    query = query.in(
-      "id",
-      updatedTestIds.length ? updatedTestIds : ["00000000-0000-0000-0000-000000000000"],
-    );
+  if (updated === "7d") {
+    query = query.gte("result_test_requests.results.amended_at", updatedSinceIso());
+  } else if (updated === "mine") {
+    query = query.eq("result_test_requests.results.result_amendments.amended_by", staff.user_id);
   }
 
-  const { data, count } = await query.returns<ResultRow[]>();
+  const { data, count, error: updatedFilterError } = await query.returns<ResultRow[]>();
   const rows = data ?? [];
 
   // Which result each test_request links to — junction → results. A
@@ -363,7 +412,6 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
   // SIGNED-IN client, not `admin`: RLS on result_amendments (0172,
   // staff_can_read_finished_result) keeps the reason from a medtech whose
   // sections cover only part of a combined report — the date still shows.
-  // (staffDb was hoisted above the main query for the Updated filter.)
   const amendedIds = Array.from(
     new Set(
       Array.from(linkByTrId.values())
@@ -601,14 +649,6 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
           className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900"
         >
           Couldn&apos;t apply the Updated filter — try again in a moment.
-        </p>
-      ) : null}
-      {updated && updatedFilterCapped ? (
-        <p
-          role="status"
-          className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
-        >
-          Showing results from the latest 1000 corrections.
         </p>
       ) : null}
 
