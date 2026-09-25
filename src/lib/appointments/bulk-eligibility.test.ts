@@ -80,4 +80,10 @@ describe("summariseOutcome / outcomeMessage", () => {
       "Marked 1 of 3 bookings arrived. 1 partly changed — open it to check. 1 had already changed.",
     );
   });
+
+  it("omits the past tense cleanly instead of leaving a space before the period", () => {
+    expect(
+      outcomeMessage("Confirmed", "", { changed: ["a"], partly: [], unchanged: ["b"] }),
+    ).toBe("Confirmed 1 of 2 bookings. 1 had already changed.");
+  });
 });

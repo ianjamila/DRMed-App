@@ -100,7 +100,10 @@ export function summariseOutcome(
 export function outcomeMessage(verb: string, pastTense: string, outcome: Outcome): string | null {
   const total = outcome.changed.length + outcome.partly.length + outcome.unchanged.length;
   if (outcome.partly.length === 0 && outcome.unchanged.length === 0) return null;
-  const parts = [`${verb} ${outcome.changed.length} of ${total} bookings ${pastTense}.`];
+  const firstSentence = pastTense
+    ? `${verb} ${outcome.changed.length} of ${total} bookings ${pastTense}.`
+    : `${verb} ${outcome.changed.length} of ${total} bookings.`;
+  const parts = [firstSentence];
   if (outcome.partly.length > 0) {
     parts.push(
       `${outcome.partly.length} partly changed — open ${outcome.partly.length === 1 ? "it" : "them"} to check.`,

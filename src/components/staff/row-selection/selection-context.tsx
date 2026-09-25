@@ -63,14 +63,24 @@ export function SelectionProvider({ resetKey, limits, children }: ProviderProps)
   );
 }
 
+interface SelectionAndRefused {
+  selection: SelectionState;
+  /** How many rows the last setMany could not add because a cap was reached; 0 after any other change. */
+  refused: number;
+}
+
+const EMPTY: SelectionAndRefused = { selection: EMPTY_SELECTION, refused: 0 };
+
 function InnerProvider({ limits, children }: { limits: SelectionLimits; children: ReactNode }) {
-  const [state, setState] = useState<SelectionState>(EMPTY_SELECTION);
-  const [refusedCount, setRefusedCount] = useState(0);
+  // Selection and refusedCount live in ONE state object so every updater can
+  // return both from a single, pure function — React (StrictMode especially)
+  // requires a setState updater to have no side effects, and calling a second
+  // setState from inside one is exactly that.
+  const [sel, setSel] = useState<SelectionAndRefused>(EMPTY);
 
   const toggle = useCallback(
     (entry: SelectionEntry) => {
-      setRefusedCount(0);
-      setState((prev) => toggleEntry(prev, entry, limits));
+      setSel((prev) => ({ selection: toggleEntry(prev.selection, entry, limits), refused: 0 }));
     },
     [limits],
   );
@@ -78,42 +88,47 @@ function InnerProvider({ limits, children }: { limits: SelectionLimits; children
   const setMany = useCallback(
     (entries: readonly SelectionEntry[], selected: boolean) => {
       if (!selected) {
-        setRefusedCount(0);
-        setState((prev) => removeKeys(prev, entries.map((e) => e.rowKey)));
+        setSel((prev) => ({
+          selection: removeKeys(prev.selection, entries.map((e) => e.rowKey)),
+          refused: 0,
+        }));
         return;
       }
-      setState((prev) => {
-        const { next, refused } = addEntries(prev, entries, limits);
-        setRefusedCount(refused.length);
-        return next;
+      setSel((prev) => {
+        const { next, refused } = addEntries(prev.selection, entries, limits);
+        return { selection: next, refused: refused.length };
       });
     },
     [limits],
   );
 
   const clear = useCallback(() => {
-    setRefusedCount(0);
-    setState(EMPTY_SELECTION);
+    setSel(EMPTY);
   }, []);
 
   const clearKeys = useCallback((rowKeys: readonly string[]) => {
     if (rowKeys.length === 0) return;
-    // removeKeys returns the same reference when nothing was removed, so the
-    // unmount-pruning effect (fires for every row on a full revalidation) does
-    // not cause a re-render.
-    setState((prev) => removeKeys(prev, rowKeys));
+    setSel((prev) => {
+      // removeKeys returns the same reference when nothing was removed, so
+      // returning prev unchanged (same object identity) lets React bail out
+      // of the re-render — load-bearing for the unmount-pruning effect, which
+      // fires for every row on a full revalidation.
+      const next = removeKeys(prev.selection, rowKeys);
+      if (next === prev.selection) return prev;
+      return { selection: next, refused: 0 };
+    });
   }, []);
 
-  const isSelected = useCallback((rowKey: string) => state.has(rowKey), [state]);
+  const isSelected = useCallback((rowKey: string) => sel.selection.has(rowKey), [sel.selection]);
   const canAdd = useCallback(
-    (entry: SelectionEntry) => canAddPure(state, entry, limits),
-    [state, limits],
+    (entry: SelectionEntry) => canAddPure(sel.selection, entry, limits),
+    [sel.selection, limits],
   );
-  const byKind = useMemo(() => keysByKindPure(state), [state]);
+  const byKind = useMemo(() => keysByKindPure(sel.selection), [sel.selection]);
 
   const value = useMemo<RowSelection>(
     () => ({
-      state,
+      state: sel.selection,
       isSelected,
       toggle,
       setMany,
@@ -121,12 +136,12 @@ function InnerProvider({ limits, children }: { limits: SelectionLimits; children
       clearKeys,
       canAdd,
       keysByKind: byKind,
-      count: state.size,
-      records: recordsOf(state),
-      refusedCount,
+      count: sel.selection.size,
+      records: recordsOf(sel.selection),
+      refusedCount: sel.refused,
       limits,
     }),
-    [state, isSelected, toggle, setMany, clear, clearKeys, canAdd, byKind, refusedCount, limits],
+    [sel, isSelected, toggle, setMany, clear, clearKeys, canAdd, byKind, limits],
   );
 
   return <SelectionContext.Provider value={value}>{children}</SelectionContext.Provider>;
