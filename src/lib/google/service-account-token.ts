@@ -93,10 +93,13 @@ export async function getServiceAccountToken(
     const text = await res.text().catch(() => "");
     throw new Error(`Google token exchange failed (${res.status}): ${text}`);
   }
-  const data = (await res.json()) as { access_token: string; expires_in: number };
+  const data = (await res.json()) as { access_token?: unknown; expires_in?: unknown };
+  if (typeof data.access_token !== "string" || !data.access_token) {
+    throw new Error("Google token exchange returned no access token");
+  }
   cache.set(cacheKey, {
     accessToken: data.access_token,
-    expiresAt: now + data.expires_in,
+    expiresAt: now + Number(data.expires_in),
   });
   return data.access_token;
 }

@@ -32,6 +32,13 @@ describe("getServiceAccountToken", () => {
 
   it("throws a clear error on a failed exchange without echoing the key", async () => {
     const f = vi.fn(async () => new Response("nope", { status: 400 }));
-    await expect(getServiceAccountToken(SA, "s", f as unknown as typeof fetch)).rejects.toThrow(/token exchange failed \(400\)/);
+    const err = await getServiceAccountToken(SA, "s", f as unknown as typeof fetch).catch((e: Error) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/token exchange failed \(400\)/);
+    expect((err as Error).message).not.toContain("PRIVATE KEY");
+  });
+  it("refuses a 200 response without an access token", async () => {
+    const f = vi.fn(async () => new Response(JSON.stringify({ expires_in: 3600 })));
+    await expect(getServiceAccountToken(SA, "s", f as unknown as typeof fetch)).rejects.toThrow(/no access token/);
   });
 });

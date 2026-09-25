@@ -25,9 +25,12 @@ export async function readSheetTabs(opts: {
   keys.forEach((k, i) => {
     const vr = ranges[i];
     const name = SHEET_TAB_NAMES[k];
-    if (!vr?.range || !vr.range.startsWith(`'${name}'!`)) throw new Error(`Google Sheets returned no range for tab "${name}"`);
+    // Google quotes a range's tab name only when it needs quoting (spaces etc.).
+    if (!vr?.range || !(vr.range.startsWith(`'${name}'!`) || vr.range.startsWith(`${name}!`))) {
+      throw new Error(`Google Sheets returned an unexpected range for tab "${name}"`);
+    }
     const values = vr.values ?? [];
-    if (!Array.isArray(values) || values.length > MAX_ROWS_PER_TAB) throw new Error(`Tab "${name}" returned an unexpected shape`);
+    if (!Array.isArray(values) || values.length > MAX_ROWS_PER_TAB || !values.every(Array.isArray)) throw new Error(`Tab "${name}" returned an unexpected shape`);
     out[k] = values;
   });
   return out;
