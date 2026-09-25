@@ -7,8 +7,15 @@ import { manilaDate, manilaDateTime, manilaRangeUtc, todayManilaISODate } from "
 import { loadHiddenCardIds } from "@/lib/dashboards/card-prefs";
 import { fetchAllRows, REPORT_EXPORT_MAX_ROWS, type PageFetcher } from "@/lib/reports/paging";
 import { reportError } from "@/lib/observability/report-error";
+import {
+  STALE_UNTIMED_AFTER_DAYS,
+  countLikelyNoShowBookings,
+  type BookingRow,
+  type StaleCandidate,
+} from "@/lib/appointments/stale";
 import { RealtimeRefresher, type Subscription } from "@/components/staff/realtime-refresher";
 import { DashboardHeader } from "./_components/dashboard-header";
+import { EodReminderBanner } from "./_components/eod-reminder-banner";
 import { SectionHeading } from "./_components/section-heading";
 import { StatCard } from "./_components/stat-card";
 import { QuickLinks } from "./_components/quick-links";
@@ -112,6 +119,12 @@ type UnpaidMoneyRow = {
   total_php: number | null;
   paid_php: number | null;
 };
+
+// The rows behind the "Likely no-shows" card: every open appointment with no
+// set time, oldest first — the same set, order and rule the Appointments
+// page's "Bookings with no set time" section uses, so the card and the page's
+// "Mark N as no-show" bar can't disagree.
+type NoSetTimeRow = BookingRow & StaleCandidate;
 
 // The rows behind the "Website messages waiting" strip: the newest 'new'
 // contact_messages rows. Only the columns rendered are selected.
@@ -247,6 +260,7 @@ async function loadReceptionStats(userId: string, show: (id: string) => boolean)
     recentMessages,
     cashDrawerState,
     todayOrders,
+    noSetTimeRows,
   ] = await Promise.all([
     show("reception.visits_today")
       ? supabase
@@ -398,6 +412,21 @@ async function loadReceptionStats(userId: string, show: (id: string) => boolean)
           .is("visits.deleted_at", null)
           .returns<OrderRow[]>()
       : SKIP_DATA,
+    show("reception.likely_no_shows")
+      ? safeFetchAllRows<NoSetTimeRow>(
+          (from, to) =>
+            supabase
+              .from("appointments")
+              .select("id, booking_group_id, status, scheduled_at, created_at")
+              .is("scheduled_at", null)
+              .in("status", ["confirmed", "arrived"])
+              .order("created_at", { ascending: true })
+              .order("id", { ascending: true })
+              .range(from, to)
+              .returns<NoSetTimeRow[]>(),
+          REPORT_EXPORT_MAX_ROWS,
+        )
+      : Promise.resolve({ rows: [] as NoSetTimeRow[], truncated: false, error: null }),
   ]);
 
   const orderBreakdown: OrderBreakdown = {
@@ -424,6 +453,8 @@ async function loadReceptionStats(userId: string, show: (id: string) => boolean)
     walkInRowsData.map((r) => r.booking_group_id ?? r.id),
   ).size;
 
+  const likelyNoShows = countLikelyNoShowBookings(noSetTimeRows.rows, today);
+
   const arrivals = groupArrivals((arrivalsRows.data ?? []) as ArrivalRow[]).slice(0, 5);
 
   const cashState = cashDrawerState.data as CashDrawerState | null;
@@ -448,6 +479,7 @@ async function loadReceptionStats(userId: string, show: (id: string) => boolean)
     { scope: "strip_messages", error: recentMessages.error },
     { scope: "cash_drawer", error: activeShiftError ?? cashDrawerState.error },
     { scope: "orders_by_type", error: todayOrders.error },
+    { scope: "likely_no_shows", error: noSetTimeRows.error },
   ];
   await Promise.all(
     namedResults
@@ -479,6 +511,9 @@ async function loadReceptionStats(userId: string, show: (id: string) => boolean)
 
     walkInsWaiting,
     walkInsError: !!walkInsRows.error,
+
+    likelyNoShows,
+    likelyNoShowsError: !!noSetTimeRows.error,
 
     newMessages: newMessagesCount.count ?? 0,
     newMessagesError: !!newMessagesCount.error,
@@ -605,6 +640,7 @@ export async function ReceptionDashboard({
     "reception.unpaid_balance",
     "reception.pending_release",
     "reception.walk_ins_waiting",
+    "reception.likely_no_shows",
     "reception.new_messages",
     "reception.gift_codes_sold",
     "reception.cash_drawer",
@@ -628,6 +664,8 @@ export async function ReceptionDashboard({
         title="Today at the front desk"
         updatedAt={new Date()}
       />
+
+      <EodReminderBanner />
 
       {hasSnapshot && (
         <SectionHeading title="Today's snapshot">
@@ -667,6 +705,16 @@ export async function ReceptionDashboard({
                 hint="Checked in, not yet registered — one per booking"
                 href="/staff/appointments"
                 error={stats.walkInsError}
+              />
+            )}
+            {show("reception.likely_no_shows") && (
+              <StatCard
+                label="Likely no-shows"
+                value={stats.likelyNoShows}
+                hint={`Booked ${STALE_UNTIMED_AFTER_DAYS}+ days ago with no set time, never marked arrived`}
+                href="/staff/appointments#no-set-time"
+                accent={stats.likelyNoShows > 0 ? "warn" : "default"}
+                error={stats.likelyNoShowsError}
               />
             )}
             {show("reception.new_messages") && (

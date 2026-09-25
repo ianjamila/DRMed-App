@@ -23,6 +23,10 @@
       "schedule": "0 1 * * 1"
     },
     {
+      "path": "/api/cron/stale-bookings",
+      "schedule": "30 0 * * *"
+    },
+    {
       "path": "/api/cron/template-health",
       "schedule": "0 22 * * *"
     },

@@ -13,6 +13,7 @@ const NOT_PATIENT: Record<string, string> = {
   "src/app/(staff)/staff/(dashboard)/admin/settings/alerts/actions.ts": "Test email to staff alert recipients.",
   "src/app/(staff)/staff/(dashboard)/messages/actions.ts": "Reply to a website message sender, not a patient record.",
   "src/app/api/cron/dedup-digest/route.ts": "Staff digest.",
+  "src/app/api/cron/stale-bookings/route.ts": "Staff reminder (Bookings not acted on).",
   "src/app/api/cron/template-health/route.ts": "Staff alert.",
   "src/lib/appointments/booking-alert.ts": "Staff alert about a booking.",
   "src/lib/contact-messages/alert.ts": "Staff alert about a website message.",

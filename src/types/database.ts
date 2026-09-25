@@ -5436,6 +5436,8 @@ export type Database = {
           signature_path: string | null
           signature_uploaded_at: string | null
           updated_at: string
+          view_as_role: string | null
+          view_as_until: string | null
         }
         Insert: {
           created_at?: string
@@ -5450,6 +5452,8 @@ export type Database = {
           signature_path?: string | null
           signature_uploaded_at?: string | null
           updated_at?: string
+          view_as_role?: string | null
+          view_as_until?: string | null
         }
         Update: {
           created_at?: string
@@ -5464,6 +5468,8 @@ export type Database = {
           signature_path?: string | null
           signature_uploaded_at?: string | null
           updated_at?: string
+          view_as_role?: string | null
+          view_as_until?: string | null
         }
         Relationships: [
           {
@@ -6516,6 +6522,10 @@ export type Database = {
       eod_lock_check: {
         Args: { p_business_date: string; p_shift_id: string }
         Returns: undefined
+      }
+      eod_unclosed_days: {
+        Args: { p_from: string | null; p_shift_id: string; p_to: string | null }
+        Returns: string[]
       }
       generate_drm_id: { Args: never; Returns: string }
       generate_visit_number: { Args: never; Returns: string }

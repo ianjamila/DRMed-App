@@ -20,6 +20,14 @@ import { chunkIds } from "@/lib/patients/require-active-core";
 // most 200 ids even though MAX_BULK_RECORDS allows up to 500 in one
 // selection — a URL with hundreds of UUIDs risks proxy/PostgREST limits.
 const ID_CHUNK = 200;
+import {
+  BulkBookingIdsSchema,
+  STALE_UNTIMED_AFTER_DAYS,
+  staleCutoffIso,
+  splitBookingsByActivePatient,
+  type BulkBookingIds,
+} from "@/lib/appointments/stale";
+import { todayManilaISODate } from "@/lib/dates/manila";
 
 type Transition =
   | "arrived"
@@ -678,4 +686,189 @@ export async function bulkDeleteAction(batch: unknown): Promise<ApptResult> {
     return { ok: false, error: "Completed bookings cannot be deleted from here." };
   }
   return deleteGroups(parsed.data);
+}
+
+// ---------------------------------------------------------------------------
+// Bulk "Mark as no-show" for bookings with no set time that have sat open for
+// STALE_UNTIMED_AFTER_DAYS or more (src/lib/appointments/stale.ts). Nothing
+// closes these automatically, so an online booking the patient never came in
+// for stays on the Appointments page for months.
+//
+// The page sends the bookings it showed as likely no-shows, but this is a
+// callable endpoint, so the database re-checks the SAME rule on every row
+// inside the update itself — still confirmed, still no set time, still older
+// than the cutoff. A booking reception marked arrived after the page rendered,
+// or any id that was never stale, is silently left alone rather than trusted.
+// ---------------------------------------------------------------------------
+
+// `heldBack` (Undo only): bookings that stay no-show because a patient on
+// them was merged or deleted after the bulk mark — the single ↶ Revert
+// refuses those too.
+export type BulkNoShowResult =
+  | { ok: true; data: { marked: string[][]; heldBack?: number } }
+  | { ok: false; error: string };
+
+// PostgREST puts `.in()` ids in the URL; keep each request comfortably short.
+const BULK_ID_CHUNK = 150;
+
+function chunk<T>(items: readonly T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+// Regroups the rows an update actually touched back into the bookings they
+// came from, so the audit trail and the Undo name exactly what moved.
+function regroup(bookings: readonly (readonly string[])[], movedIds: ReadonlySet<string>): string[][] {
+  return bookings
+    .map((ids) => ids.filter((id) => movedIds.has(id)))
+    .filter((ids) => ids.length > 0);
+}
+
+async function auditBulk(
+  session: { user_id: string; role: string },
+  rows: ReadonlyArray<{ id: string; patient_id: string | null }>,
+  groups: string[][],
+  action: string,
+  via: string,
+) {
+  const h = await headers();
+  const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+  const ua = h.get("user-agent");
+  const groupOf = new Map<string, string[]>();
+  for (const g of groups) for (const id of g) groupOf.set(id, g);
+  await Promise.all(
+    rows.map((row) =>
+      audit({
+        actor_id: session.user_id,
+        actor_type: "staff",
+        patient_id: row.patient_id,
+        action,
+        resource_type: "appointment",
+        resource_id: row.id,
+        metadata: {
+          actor_role: session.role,
+          group_appointment_ids: groupOf.get(row.id) ?? [row.id],
+          via,
+          stale_after_days: STALE_UNTIMED_AFTER_DAYS,
+          bulk_booking_count: groups.length,
+        },
+        ip_address: ip,
+        user_agent: ua,
+      }),
+    ),
+  );
+}
+
+export async function markLikelyNoShowsAction(bookings: BulkBookingIds): Promise<BulkNoShowResult> {
+  const session = await requireActiveStaff();
+  if (session.role !== "reception" && session.role !== "admin") {
+    return { ok: false, error: "Reception or admin only." };
+  }
+  const parsed = BulkBookingIdsSchema.safeParse(bookings);
+  if (!parsed.success) return { ok: false, error: "Nothing to mark — refresh the page and try again." };
+
+  const cutoffIso = staleCutoffIso(todayManilaISODate());
+  const supabase = await createClient();
+  const moved: { id: string; patient_id: string | null }[] = [];
+  for (const ids of chunk(parsed.data.flat(), BULK_ID_CHUNK)) {
+    const { data, error } = await supabase
+      .from("appointments")
+      .update({ status: "no_show" })
+      .in("id", ids)
+      .eq("status", "confirmed")
+      .is("scheduled_at", null)
+      .lt("created_at", cutoffIso)
+      .select("id, patient_id");
+    if (error) {
+      // Earlier chunks may already have moved; still audit them and let
+      // reception see what happened rather than hiding a partial run.
+      if (moved.length > 0) {
+        const groups = regroup(parsed.data, new Set(moved.map((r) => r.id)));
+        await auditBulk(session, moved, groups, "appointment.no_show", "bulk_likely_no_show");
+        revalidatePath("/staff/appointments");
+      }
+      return { ok: false, error: "Could not mark all of them — refresh the page to see which are left." };
+    }
+    moved.push(...(data ?? []));
+  }
+
+  if (moved.length === 0) {
+    return { ok: false, error: "None of those bookings can be marked any more — refresh the page." };
+  }
+  const groups = regroup(parsed.data, new Set(moved.map((r) => r.id)));
+  await auditBulk(session, moved, groups, "appointment.no_show", "bulk_likely_no_show");
+  revalidatePath("/staff/appointments");
+  return { ok: true, data: { marked: groups } };
+}
+
+// Undo for the action above: puts exactly the bookings it just marked back to
+// confirmed. Same guard as the single ↶ Revert (transitionGroup → confirmed):
+// moving a booking back into active work requires every linked patient to
+// still be active.
+export async function undoLikelyNoShowsAction(bookings: BulkBookingIds): Promise<BulkNoShowResult> {
+  const session = await requireActiveStaff();
+  if (session.role !== "reception" && session.role !== "admin") {
+    return { ok: false, error: "Reception or admin only." };
+  }
+  const parsed = BulkBookingIdsSchema.safeParse(bookings);
+  if (!parsed.success) return { ok: false, error: "Nothing to undo." };
+
+  // One merged or deleted patient must not block the whole Undo: split the
+  // bookings first, restore only those whose every row is a walk-in or an
+  // active patient, and report the rest as held back.
+  const admin = createAdminClient();
+  const patientOf = new Map<string, string | null>();
+  for (const ids of chunk(parsed.data.flat(), BULK_ID_CHUNK)) {
+    const { data, error } = await admin.from("appointments").select("id, patient_id").in("id", ids);
+    if (error) return { ok: false, error: "Could not check the patient records — try again." };
+    for (const row of data ?? []) patientOf.set(row.id, row.patient_id);
+  }
+  const patientIds = [...new Set([...patientOf.values()].filter((p): p is string => p !== null))];
+  const activeIds = new Set<string>();
+  for (const ids of chunk(patientIds, BULK_ID_CHUNK)) {
+    const { data, error } = await activePatients(admin.from("patients").select("id")).in("id", ids);
+    if (error) return { ok: false, error: "Could not check the patient records — try again." };
+    for (const row of data ?? []) activeIds.add(row.id);
+  }
+  const { restorable, heldBack } = splitBookingsByActivePatient(parsed.data, patientOf, activeIds);
+  if (restorable.length === 0) {
+    return heldBack.length > 0
+      ? { ok: true, data: { marked: [], heldBack: heldBack.length } }
+      : { ok: false, error: "Nothing left to undo." };
+  }
+
+  const restorableIds = restorable.flat();
+  const active = await assertAppointmentsPatientsActive(admin, restorableIds);
+  if (!active.ok) return { ok: false, error: active.error };
+
+  const supabase = await createClient();
+  const moved: { id: string; patient_id: string | null }[] = [];
+  for (const ids of chunk(restorableIds, BULK_ID_CHUNK)) {
+    const { data, error } = await supabase
+      .from("appointments")
+      .update({ status: "confirmed" })
+      .in("id", ids)
+      .eq("status", "no_show")
+      .select("id, patient_id");
+    if (error) {
+      if (moved.length > 0) {
+        const groups = regroup(restorable, new Set(moved.map((r) => r.id)));
+        await auditBulk(session, moved, groups, "appointment.confirmed", "bulk_likely_no_show_undo");
+        revalidatePath("/staff/appointments");
+      }
+      return { ok: false, error: "Could not undo all of them — refresh the page to see which are back." };
+    }
+    moved.push(...(data ?? []));
+  }
+
+  if (moved.length === 0) {
+    return heldBack.length > 0
+      ? { ok: true, data: { marked: [], heldBack: heldBack.length } }
+      : { ok: false, error: "Nothing left to undo." };
+  }
+  const groups = regroup(restorable, new Set(moved.map((r) => r.id)));
+  await auditBulk(session, moved, groups, "appointment.confirmed", "bulk_likely_no_show_undo");
+  revalidatePath("/staff/appointments");
+  return { ok: true, data: { marked: groups, heldBack: heldBack.length } };
 }
