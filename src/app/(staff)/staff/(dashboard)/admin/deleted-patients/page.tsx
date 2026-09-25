@@ -52,13 +52,19 @@ export default async function DeletedPatientsPage({ searchParams }: Props) {
   const totalPages = pageCount(total, size);
 
   // Display enrichment only (never sort/filter/page input). service_role RPC,
-  // called after the admin gate above.
+  // called after the admin gate above. An RPC error must not read as "kept
+  // nothing" — the row shows "—" instead of a false zero.
   const kept = new Map<string, ReturnType<typeof parseKeptCounts>>();
+  let keptCountsFailed = false;
   if (rows.length > 0) {
-    const { data: counts } = await createAdminClient().rpc("patient_kept_counts", {
+    const { data: counts, error: keptErr } = await createAdminClient().rpc("patient_kept_counts", {
       p_patient_ids: rows.map((r) => r.id),
     });
-    for (const c of counts ?? []) kept.set(c.patient_id, parseKeptCounts(c));
+    if (keptErr) {
+      keptCountsFailed = true;
+    } else {
+      for (const c of counts ?? []) kept.set(c.patient_id, parseKeptCounts(c));
+    }
   }
 
   const isDefaultSort = sort.key === DEFAULT_SORT.key && sort.dir === DEFAULT_SORT.dir;
@@ -134,7 +140,7 @@ export default async function DeletedPatientsPage({ searchParams }: Props) {
                     ) : null}
                   </td>
                   <td className="px-4 py-3 text-xs text-[color:var(--color-brand-text-mid)]">
-                    {keptSummary(kept.get(r.id) ?? parseKeptCounts(null))}
+                    {keptCountsFailed ? "—" : keptSummary(kept.get(r.id) ?? parseKeptCounts(null))}
                   </td>
                   <td className="px-4 py-3 text-right">
                     <RestorePatientButton patientId={r.id} drmId={r.drm_id} />

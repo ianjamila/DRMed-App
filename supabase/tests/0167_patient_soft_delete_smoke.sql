@@ -1180,6 +1180,12 @@ begin
   perform pg_temp.expect('s9.5 CONTROL null patient_id is left alone',
     pg_temp.state_of(format($q$delete from public.appointment_attachments where id = %L$q$, att_p)), 'ok');
   reset role;
+
+  -- SECURITY DEFINER so the guard can't fail open for a caller whose own RLS
+  -- hides the patients row (see the migration's comment on this function).
+  perform pg_temp.expect('s9.6 attachment delete guard is definer, pinned',
+    (select format('%s|%s', prosecdef, proconfig) from pg_proc where proname = 'enforce_appointment_attachment_delete'),
+    't|{"search_path=pg_catalog, public, pg_temp"}');
 end
 $s9$;
 

@@ -1,4 +1,4 @@
-import type { NextRequest } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -33,7 +33,15 @@ export async function GET(req: NextRequest) {
   const admin = createAdminClient();
   const kept = new Map<string, KeptCounts>();
   for (const ids of chunk(rows.map((r) => r.id), 500)) {
-    const { data } = await admin.rpc("patient_kept_counts", { p_patient_ids: ids });
+    const { data, error: keptErr } = await admin.rpc("patient_kept_counts", { p_patient_ids: ids });
+    // A partial read (some rows' kept counts silently zeroed) is worse than no
+    // file — fail the whole export instead of shipping a wrong CSV.
+    if (keptErr) {
+      return NextResponse.json(
+        { error: "Could not load kept-record counts. Try again." },
+        { status: 502 },
+      );
+    }
     for (const c of data ?? []) kept.set(c.patient_id, parseKeptCounts(c));
   }
 

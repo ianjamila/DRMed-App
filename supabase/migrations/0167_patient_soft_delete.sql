@@ -948,18 +948,25 @@ grant execute on function public.resolve_patient_guarded(text, text, date, jsonb
 -- against an inactive patient raises. Spec:
 -- docs/superpowers/specs/2026-09-24-patient-delete-design.md ("deleting an
 -- attachment on an inactive patient is refused by the database").
--- SECURITY INVOKER, like (4)'s guard, so it runs as whichever role issues
--- the DELETE. deletePatientLabRequestUpload runs it via the admin
--- (service_role) client, which already holds default SELECT on both
--- appointment_attachments and patients and bypasses RLS — this migration
--- grants it nothing new. A row with no patient_id (the column allows null;
--- never actually null in practice — every insert path sets it) has nothing
--- to check against and is left alone.
+-- SECURITY DEFINER, owned by the migration owner (postgres, which owns
+-- patients and is not subject to its RLS) — like (8)'s current_patient_id.
+-- A SECURITY INVOKER version runs the `select ... from public.patients` as
+-- whichever role issues the DELETE; if that role's RLS hides the row (or it
+-- lacks SELECT on patients at all), the lookup finds nothing, both output
+-- variables stay NULL, and the guard fails OPEN — it would let the delete
+-- through instead of blocking it. DEFINER always sees the real row, so the
+-- guard cannot be bypassed by a caller with narrower visibility than
+-- postgres. deletePatientLabRequestUpload runs the DELETE via the admin
+-- (service_role) client, which already bypasses RLS either way, so this
+-- changes no live behaviour today — it closes the gap for any future caller
+-- with less than service_role's reach. A row with no patient_id (the column
+-- allows null; never actually null in practice — every insert path sets it)
+-- has nothing to check against and is left alone.
 -- ---------------------------------------------------------------------------
 create or replace function public.enforce_appointment_attachment_delete()
 returns trigger
 language plpgsql
-security invoker
+security definer
 set search_path = pg_catalog, public, pg_temp
 as $$
 declare

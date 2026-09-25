@@ -30,7 +30,6 @@ import {
 import {
   assertTestRequestsPatientsActive,
   assertClaimItemsPatientsActive,
-  assertBatchPatientsActive,
   assertResolutionPatientActive,
   assertPaymentPatientActive,
 } from "@/lib/patients/require-active";
@@ -295,10 +294,6 @@ export async function submitBatchAction(input: unknown): Promise<ActionResult> {
   }
   const admin = createAdminClient();
 
-  // 0167: no claim-change on an inactive patient's batch.
-  const active = await assertBatchPatientsActive(admin, parsed.data.batch_id);
-  if (!active.ok) return { ok: false, error: active.error };
-
   const { data: batch } = await admin
     .from("hmo_claim_batches")
     .select("id, status, voided_at")
@@ -357,10 +352,6 @@ export async function acknowledgeBatchAction(input: unknown): Promise<ActionResu
   }
   const admin = createAdminClient();
 
-  // 0167: no claim-change on an inactive patient's batch.
-  const active = await assertBatchPatientsActive(admin, parsed.data.batch_id);
-  if (!active.ok) return { ok: false, error: active.error };
-
   const { data: batch } = await admin
     .from("hmo_claim_batches")
     .select("status, voided_at")
@@ -407,10 +398,6 @@ export async function voidBatchAction(input: unknown): Promise<ActionResult> {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
   }
   const admin = createAdminClient();
-
-  // 0167: no claim-change on an inactive patient's batch.
-  const active = await assertBatchPatientsActive(admin, parsed.data.batch_id);
-  if (!active.ok) return { ok: false, error: active.error };
 
   const { error } = await admin
     .from("hmo_claim_batches")
@@ -496,10 +483,6 @@ export async function bulkSetHmoResponseAction(
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
   }
   const admin = createAdminClient();
-
-  // 0167: no claim-change on an inactive patient's batch.
-  const active = await assertBatchPatientsActive(admin, parsed.data.batch_id);
-  if (!active.ok) return { ok: false, error: active.error };
 
   const { count: totalItems } = await admin
     .from("hmo_claim_items")

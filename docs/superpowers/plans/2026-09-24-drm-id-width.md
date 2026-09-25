@@ -1,5 +1,7 @@
 # DRM-ID width fix (patient-delete rollout, PR 1) Implementation Plan
 
+> Shipped as 0163 (#216).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Stop `generate_drm_id()` truncating five-digit sequence values, so patient creation keeps working past DRM-9999.
