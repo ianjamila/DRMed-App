@@ -120,6 +120,7 @@ Admin-managed `discount_types` catalog. Kinds `percent` / `fixed` / `custom` (cu
 - Test release → revenue JE with HMO splits + discount lines + doctor PF accrual (`bridge_test_request_released`).
 - Void / undo-release → reversal JE.
 - Everything routes through service-role RPCs (`ap_*` incl. `ap_reverse_je_for_source`, …) that take `p_actor_id` from `requireAdminStaff()` — that is NOT a spoofing hole (0118 revoked JWT callers; investigated and closed).
+- **Ledger totals count posted + reversed; posted-only is for finding the live entry, never for sums.** A reversal marks the original `'reversed'` and posts a mirrored `'posted'` entry, so `status = 'posted'` on a report drops the original and subtracts the amount twice instead of netting to zero (0173, `src/lib/accounting/ledger-status.ts`'s `LEDGER_TOTAL_STATUSES`).
 
 ## Hard rules
 
