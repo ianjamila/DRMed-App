@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 
-export const metadata = { title: "Accrual templates" };
+export const metadata = { title: ROUTE_NAME["/staff/admin/accounting/accrual-templates"] };
 export const dynamic = "force-dynamic";
 
 const PHP = new Intl.NumberFormat("en-PH", {
@@ -60,7 +61,7 @@ export default async function AccrualTemplatesPage({ searchParams }: SearchProps
       <header className="mt-3 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-            Accrual templates
+            {ROUTE_NAME["/staff/admin/accounting/accrual-templates"]}
           </h1>
           <p className="mt-1 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
             Named recurring JE shapes. Hit <strong>Apply</strong> on a template

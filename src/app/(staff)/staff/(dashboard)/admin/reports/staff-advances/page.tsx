@@ -30,8 +30,9 @@ import {
 } from "@/lib/ui/table-params";
 import { SortableTh } from "@/components/staff/sortable-th";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 
-export const metadata = { title: "Staff advances" };
+export const metadata = { title: ROUTE_NAME["/staff/admin/reports/staff-advances"] };
 export const dynamic = "force-dynamic";
 
 const PESO = (n: number) =>
@@ -151,7 +152,7 @@ export default async function StaffAdvancesPage({
       <header className="mb-6">
         <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">Books &amp; Reports</p>
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">Staff advances</h1>
+          <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">{ROUTE_NAME["/staff/admin/reports/staff-advances"]}</h1>
           <ExportCsvLink href={staffAdvancesCsvHref()} />
         </div>
       </header>

@@ -9,8 +9,9 @@ import {
   readAllWatermarks,
 } from "@/lib/accounting/sync";
 import { AccountingActions } from "./accounting-actions";
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 
-export const metadata = { title: "Accounting sync" };
+export const metadata = { title: ROUTE_NAME["/staff/admin/accounting"] };
 export const dynamic = "force-dynamic";
 
 const SYNC_SCHEDULE = describeCronSchedule(
@@ -56,11 +57,8 @@ export default async function AccountingAdminPage() {
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6">
-        <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-          External Sync Status
-        </p>
-        <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Accounting sync
+        <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+          {ROUTE_NAME["/staff/admin/accounting"]}
         </h1>
         <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
           {SYNC_SCHEDULE} (Manila), new sales are copied to the three Google

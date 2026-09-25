@@ -8,8 +8,9 @@ import { Panel } from "@/components/ui/panel";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { RefundGiftCodeForm } from "./refund-form";
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 
-export const metadata = { title: "Refund Gift Code Sale" };
+export const metadata = { title: ROUTE_NAME["/staff/gift-codes/refund"] };
 
 export const dynamic = "force-dynamic";
 
@@ -61,7 +62,7 @@ export default async function RefundGiftCodePage({ searchParams }: PageProps) {
           Reception
         </p>
         <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Refund a gift code sale
+          {ROUTE_NAME["/staff/gift-codes/refund"]}
         </h1>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
           Use this when a sale was mis-keyed — wrong buyer details, wrong

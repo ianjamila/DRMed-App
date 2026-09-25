@@ -1,9 +1,10 @@
 import { createClient } from "@/lib/supabase/server";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { ClosuresClient } from "./closures-client";
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 
 export const metadata = {
-  title: "Closures",
+  title: ROUTE_NAME["/staff/admin/closures"],
 };
 
 export const dynamic = "force-dynamic";
@@ -61,7 +62,7 @@ export default async function ClosuresAdminPage() {
     <div className="px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6">
         <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Clinic closures
+          {ROUTE_NAME["/staff/admin/closures"]}
         </h1>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
           Days the clinic is closed — Philippine public holidays plus ad-hoc

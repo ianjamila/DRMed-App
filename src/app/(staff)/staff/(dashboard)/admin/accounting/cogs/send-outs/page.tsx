@@ -2,8 +2,9 @@ import { fetchCompleteRows } from "@/lib/reports/paging";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { SendOutsClient } from "./send-outs-client";
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 
-export const metadata = { title: "Send-out COGS" };
+export const metadata = { title: ROUTE_NAME["/staff/admin/accounting/cogs/send-outs"] };
 export const dynamic = "force-dynamic";
 
 export default async function SendOutsPage() {
@@ -54,11 +55,8 @@ export default async function SendOutsPage() {
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6">
-        <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">
-          Outside-Lab Costs
-        </p>
-        <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Send-out COGS
+        <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+          {ROUTE_NAME["/staff/admin/accounting/cogs/send-outs"]}
         </h1>
         <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
           Accrued send-out costs grouped by vendor, and bill true-up matching
