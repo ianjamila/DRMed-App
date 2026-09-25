@@ -236,11 +236,12 @@ export async function notifyResultCorrected({
   // a throw above, so the row shows "Send failed" instead of no record at
   // all (which staff would read as "status unknown").
   try {
-    await admin.rpc("result_record_patient_notify", {
+    const { error: recErr } = await admin.rpc("result_record_patient_notify", {
       p_amendment_id: amendmentId,
       p_channels: channels,
       p_error: error as unknown as string,
     });
+    if (recErr) throw new Error(recErr.message);
   } catch (e) {
     await reportError({
       scope: "notify/result-corrected:record",
