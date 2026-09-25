@@ -14,6 +14,7 @@ import type { RunOutcome } from "@/lib/sheet-sync/run";
 import type { Database } from "@/types/database";
 import { SyncSwitch, SyncNow } from "./sync-controls";
 import { RunHistory } from "./run-history";
+import { ReviewQueue } from "./review-queue";
 import { KIND_LABEL, TAB_LABEL, tabErrorLabel } from "./format";
 
 export const metadata = { title: ROUTE_NAME["/staff/admin/sheet-sync"] };
@@ -162,9 +163,10 @@ export default async function SheetSyncPage({
         />
       )}
       {view === "history" && <RunHistory searchParams={params} />}
-      {(view === "review" || view === "resort") && (
+      {view === "review" && <ReviewQueue searchParams={params} />}
+      {view === "resort" && (
         <Panel className="p-6 text-sm text-[color:var(--color-brand-text-soft)]">
-          {view === "review" ? "The review queue lands in a follow-up PR task." : "The re-sort panel lands in a follow-up PR task."}
+          The re-sort panel lands in a follow-up PR task.
         </Panel>
       )}
     </div>

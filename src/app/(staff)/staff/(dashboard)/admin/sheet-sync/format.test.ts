@@ -12,7 +12,9 @@ import {
   STATUS_LABEL,
   TRIGGER_LABEL,
   TAB_LABEL,
+  RESOLUTION_ACTION_LABEL,
   durationLabel,
+  resolutionSummary,
   revertSummaryLine,
   tabErrorLabel,
 } from "./format";
@@ -164,6 +166,56 @@ describe("tabErrorLabel", () => {
     expect(tabErrorLabel("lab", "database error 08006")).toBe("database error 08006");
     expect(tabErrorLabel("lab", "This sheet sync lost its turn to another run.")).toBe(
       "This sheet sync lost its turn to another run.",
+    );
+  });
+});
+
+// The four `resolution.action` values 0170's sheet_review_resolve (link,
+// create, dismiss) and sheet_alias_apply (alias) actually write — grepped
+// directly from the migration text rather than re-declaring a TS union, the
+// same "read the source of truth" idea as the CHECK-list tests above.
+const RESOLUTION_ACTIONS = [...new Set(
+  [...MIGRATION.matchAll(/jsonb_build_object\('action',\s*'([a-z]+)'/g)].map((m) => m[1]),
+)];
+
+describe("RESOLUTION_ACTION_LABEL", () => {
+  it("found at least one action in the migration (regex isn't broken)", () => {
+    expect(RESOLUTION_ACTIONS.length).toBeGreaterThan(0);
+  });
+
+  it("has a label for every resolution action 0170 writes", () => {
+    for (const a of RESOLUTION_ACTIONS) expect(RESOLUTION_ACTION_LABEL[a]).toBeTruthy();
+  });
+});
+
+describe("resolutionSummary", () => {
+  it("shows an em dash for no resolution yet", () => {
+    expect(resolutionSummary(null)).toBe("—");
+    expect(resolutionSummary(undefined)).toBe("—");
+  });
+
+  it("labels link and create plainly", () => {
+    expect(resolutionSummary({ action: "link", patient_id: "p1" })).toBe("Linked to a patient");
+    expect(resolutionSummary({ action: "create" })).toBe("Created a new patient");
+  });
+
+  it("a plain dismiss reads Dismissed", () => {
+    expect(resolutionSummary({ action: "dismiss", keep_undone: false })).toBe("Dismissed");
+  });
+
+  it("a dismiss with keep_undone reads Kept undone, not Dismissed", () => {
+    expect(resolutionSummary({ action: "dismiss", keep_undone: true })).toBe("Kept undone");
+  });
+
+  it("names the channel an alias was mapped to", () => {
+    expect(resolutionSummary({ action: "alias", referral_source_id: "family_friends" })).toBe(
+      "Mapped to Family / friends",
+    );
+  });
+
+  it("falls back to the bare action word for an unknown referral_source_id", () => {
+    expect(resolutionSummary({ action: "alias", referral_source_id: "not_a_real_id" })).toBe(
+      RESOLUTION_ACTION_LABEL.alias,
     );
   });
 });

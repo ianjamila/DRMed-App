@@ -3,6 +3,7 @@
 // Pinned to migration 0170's CHECK lists by format.test.ts.
 import type { ReviewKind, TabKey } from "@/lib/sheet-sync/types";
 import type { RevertSummary } from "@/lib/sheet-sync/run";
+import { REFERRAL_SOURCE_LABEL, isReferralSource } from "@/lib/patients/referral-sources";
 
 export const TAB_LABEL: Record<TabKey, string> = {
   customers: "Customers",
@@ -80,4 +81,35 @@ export function tabErrorLabel(tab: TabKey, error: string | null | undefined): st
   if (!m) return error;
   const [, previous, current, pct] = m;
   return `${KIND_LABEL.suspect_snapshot} — ${TAB_LABEL[tab]} had ${previous} rows last time and ${current} now (−${pct}%). The sync skipped this tab.`;
+}
+
+// Plain words for a HANDLED review item's `resolution.action` (0170's
+// sheet_review_resolve / sheet_alias_apply write it as jsonb: `{action, ...}`).
+// Shown only in the review queue's "Show handled" list — the open list never
+// reads `resolution`, it doesn't exist until the item is resolved/dismissed.
+export const RESOLUTION_ACTION_LABEL: Record<string, string> = {
+  link: "Linked to a patient",
+  create: "Created a new patient",
+  dismiss: "Dismissed",
+  alias: "Answer mapped to a channel",
+};
+
+/**
+ * One line for a resolved/dismissed item's resolution. `dismiss` with
+ * `keep_undone: true` (0170 round 3+5) is the "Keep undone" outcome, not a
+ * plain dismiss — the admin re-affirmed an undo hold rather than clearing it.
+ * `alias` names the channel it was mapped to when the id is one this page
+ * knows (`isReferralSource`); an id added to the lookup without a matching
+ * label here falls back to the bare action word rather than showing nothing.
+ */
+export function resolutionSummary(resolution: Record<string, unknown> | null | undefined): string {
+  if (!resolution) return "—";
+  const action = typeof resolution.action === "string" ? resolution.action : undefined;
+  if (action === "dismiss" && resolution.keep_undone === true) return "Kept undone";
+  if (action === "alias") {
+    const id = resolution.referral_source_id;
+    if (typeof id === "string" && isReferralSource(id)) return `Mapped to ${REFERRAL_SOURCE_LABEL[id]}`;
+    return RESOLUTION_ACTION_LABEL.alias;
+  }
+  return (action && RESOLUTION_ACTION_LABEL[action]) || "—";
 }
