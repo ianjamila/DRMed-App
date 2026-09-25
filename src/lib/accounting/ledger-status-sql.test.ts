@@ -56,6 +56,11 @@
  *      journal source it reads must. Unless `SQL_AGGREGATE_EXEMPT` says why.
  *   3. No stale allowlist entries, and no overloaded journal function (the
  *      allowlists key by name).
+ *   4. Every SQL_LOOKUPS function carries a `comment on function` saying it
+ *      is posted-only on purpose and naming SQL_LOOKUPS (0180), so the reason
+ *      is on the object too, for anyone editing it from psql or Studio. The
+ *      replay tracks comments per overload: `create or replace` keeps one,
+ *      `drop` loses it, `rename to` carries it, `is null` removes it.
  *
  * NOT covered: SQL built at runtime (`execute format(…)`); a plpgsql
  * row-by-row total (`for r in … loop t := t + r.debit_php`) that has no
@@ -324,9 +329,12 @@ function signature(argsClean: string, argsMask: string): string {
 
 function replay(files: { file: string; sql: string }[]): {
   live: Map<string, LiveObject>;
+  /** `comment on function` text by function id. A replace keeps it; a drop loses it. */
+  comments: Map<string, string>;
   unsupported: Unsupported[];
 } {
   const live = new Map<string, LiveObject>();
+  const comments = new Map<string, string>();
   const unsupported: Unsupported[] = [];
 
   /** Live function ids named by `name` — one overload, or all when no signature is given. */
@@ -411,7 +419,10 @@ function replay(files: { file: string; sql: string }[]): {
           }
           const open = item[2] ? a + item[0].length - 1 : -1;
           const sig = open < 0 ? null : signature(clean.slice(open + 1, closeParen(mask, open)), mask.slice(open + 1, closeParen(mask, open)));
-          for (const id of functionIds(name, sig)) live.delete(id);
+          for (const id of functionIds(name, sig)) {
+            live.delete(id);
+            comments.delete(id);
+          }
         }
         continue;
       }
@@ -440,11 +451,56 @@ function replay(files: { file: string; sql: string }[]): {
           .filter((o): o is LiveObject => !!o);
         for (const o of matches) {
           live.delete(o.id);
+          const comment = comments.get(o.id);
+          comments.delete(o.id);
           if (!rename) continue;
           const to = rename[1]!.toLowerCase();
           const kind = isFn ? "function" : "view";
           const id = isFn ? `function:${to}(${o.id.slice(o.id.indexOf("(") + 1, -1)})` : `view:${to}`;
           live.set(id, { ...o, id, label: `${kind}:${to}` });
+          if (comment !== undefined) comments.set(id, comment);
+        }
+        continue;
+      }
+
+      // comment on function|procedure name[(args)] is '…' ['…' …] | null
+      const note = new RegExp(String.raw`^comment\s+on\s+(?:function|procedure)\s+${QNAME}\s*`, "i").exec(head);
+      if (note) {
+        if (!isPublic(note[1]!)) continue;
+        const name = unquote(note[1]!);
+        let rest = off + note[0].length;
+        let sig: string | null = null;
+        if (sm[rest] === "(") {
+          const close = closeParen(sm, rest);
+          sig = signature(st.slice(rest + 1, close), sm.slice(rest + 1, close));
+          rest = close + 1;
+        }
+        const is = /^\s*is\s+/i.exec(sm.slice(rest));
+        let j = rest + (is ? is[0].length : 0);
+        let text: string | null = null;
+        if (is && /^null\b/i.test(st.slice(j))) text = "";
+        // Adjacent literals separated by whitespace are one string in Postgres.
+        while (is && st[j] === "'") {
+          let k = j + 1;
+          let part = "";
+          while (k < st.length) {
+            if (st[k] === "'" && st[k + 1] === "'") {
+              part += "'";
+              k += 2;
+            } else if (st[k] === "'") break;
+            else part += st[k++];
+          }
+          text = (text ?? "") + part;
+          j = k + 1;
+          while (/\s/.test(st[j] ?? "")) j++;
+        }
+        if (text === null) {
+          unsupported.push({ file, what: `comment on function ${name}: unreadable text` });
+          continue;
+        }
+        for (const id of functionIds(name, sig)) {
+          if (text) comments.set(id, text);
+          else comments.delete(id);
         }
         continue;
       }
@@ -456,7 +512,7 @@ function replay(files: { file: string; sql: string }[]): {
       }
     }
   }
-  return { live, unsupported };
+  return { live, comments, unsupported };
 }
 
 // ---------------------------------------------------------------------------
@@ -877,7 +933,7 @@ const migrations = readdirSync(MIGRATIONS_DIR)
   .sort()
   .map((file) => ({ file, sql: readFileSync(join(MIGRATIONS_DIR, file), "utf8") }));
 
-const { live, unsupported } = replay(migrations);
+const { live, comments, unsupported } = replay(migrations);
 const journal = new Journal(live);
 const journalObjects = [...live.values()].filter((o) => journal.readsJournal(o.body));
 
@@ -929,6 +985,21 @@ describe("SQL ledger totals count posted + reversed", () => {
     expect(blank).toEqual([]);
   });
 
+  it("gives every SQL_LOOKUPS function a database comment saying why it is posted-only", () => {
+    const byLabel = new Map(journalObjects.map((o) => [o.label, o]));
+    const missing = Object.keys(SQL_LOOKUPS).filter((k) => {
+      const o = byLabel.get(k);
+      const text = o ? comments.get(o.id) : undefined;
+      return !text || !/posted-only/i.test(text) || !text.includes("SQL_LOOKUPS");
+    });
+    expect(
+      missing,
+      "Add `comment on function public.<name>(<arg types>) is 'Posted-only … on purpose: <why>. … Listed in " +
+        "SQL_LOOKUPS (src/lib/accounting/ledger-status-sql.test.ts).'` in a migration (0180 is the model). " +
+        "A `drop function` loses the comment, so a drop-and-recreate must restate it.",
+    ).toEqual([]);
+  });
+
   it("has no stale SQL_LOOKUPS or SQL_AGGREGATE_EXEMPT entries", () => {
     const byLabel = new Map(journalObjects.map((o) => [o.label, o]));
     const staleLookups = Object.keys(SQL_LOOKUPS).filter((k) => {
@@ -963,6 +1034,39 @@ function probe(...sqls: string[]) {
 const TOTAL = "select sum(jl.debit_php) from journal_lines jl join journal_entries je on je.id = jl.entry_id";
 
 describe("the SQL replay", () => {
+  it("tracks function comments: kept by a replace, carried by a rename, lost by a drop", () => {
+    const fn = (body: string) =>
+      `create or replace function public.f(a uuid) returns int language sql as $$ ${body} $$;`;
+    const why = "comment on function public.f(uuid) is 'why';";
+
+    const kept = probe(fn("select 1"), "comment on function public.f(uuid) is 'one '\n  'two''s';", fn("select 2"));
+    expect(kept.comments.get("function:f(uuid)")).toBe("one two's");
+
+    const moved = probe(fn("select 1"), why, "alter function public.f(uuid) rename to g;");
+    expect([...moved.comments]).toEqual([["function:g(uuid)", "why"]]);
+
+    const lost = probe(fn("select 1"), why, "drop function public.f(uuid);", fn("select 1"));
+    expect(lost.comments.size).toBe(0);
+
+    const cleared = probe(fn("select 1"), "comment on function public.f is 'why';", "comment on function f(uuid) is null;");
+    expect(cleared.comments.size).toBe(0);
+
+    const overload = probe(
+      fn("select 1"),
+      "create function public.f() returns int language sql as $$ select 1 $$;",
+      "comment on function public.f() is 'why';",
+    );
+    expect([...overload.comments.keys()]).toEqual(["function:f()"]);
+  });
+
+  it("fails loudly on a function comment it cannot read", () => {
+    const p = probe(
+      "create function public.f() returns int language sql as $$ select 1 $$;",
+      "comment on function public.f() is E'why';",
+    );
+    expect(p.unsupported).toHaveLength(1);
+  });
+
   it("keeps the latest definition, so a fixed view is judged by its fix", () => {
     const p = probe(
       `create view public.v_x as ${TOTAL} where je.status = 'posted';`,
