@@ -45,6 +45,8 @@ export interface RevertPageResult {
   links_left: number;
   alias_removed: number;
   alias_restored: number;
+  /** Created patients already gone (removed by staff) when the undo reached them. */
+  gone: number;
 }
 
 export interface SheetSyncStore {

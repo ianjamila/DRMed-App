@@ -299,7 +299,7 @@ describe("withAdminLease — same fix for admin actions (review fix #5)", () => 
 
 /** A revertRun page, defaulting to "more to do, nothing happened yet" — override per test. */
 const page = (over: Partial<RevertPageResult> = {}): RevertPageResult =>
-  ({ done: false, restored: 0, blocked: 0, deleted: 0, kept: 0, held: 0, links_left: 0, alias_removed: 0, alias_restored: 0, ...over });
+  ({ done: false, restored: 0, blocked: 0, deleted: 0, kept: 0, held: 0, links_left: 0, alias_removed: 0, alias_restored: 0, gone: 0, ...over });
 
 describe("revertRunPaged — paged, resumable undo (migration round 5)", () => {
   it("sums counts across pages under one lease and stops the moment a page reports done", async () => {
@@ -310,8 +310,17 @@ describe("revertRunPaged — paged, resumable undo (migration round 5)", () => {
       page({ restored: 999 }), // must never be reached — the loop stops at done
     ] });
     const { result } = await revertRunPaged(store, "staff-1", "target-run");
-    expect(result).toEqual({ restored: 7, blocked: 1, deleted: 3, kept: 0, held: 7, links_left: 1, alias_removed: 1, alias_restored: 0 });
+    const summed = { restored: 7, blocked: 1, deleted: 3, kept: 0, held: 7, links_left: 1, alias_removed: 1, alias_restored: 0, gone: 0 };
+    expect(result).toEqual(summed);
     expect(store.calls.filter((c) => c[0] === "revertRun")).toHaveLength(3);
+    // The run row records the summed result, not the last page's.
+    expect(store.finishes).toEqual([{ status: "succeeded", error: null, summary: { result: summed } }]);
+  });
+  it("a page of only already-removed patients counts as progress (gone), not a stall", async () => {
+    const store = new FakeStore({ revertPages: [page({ gone: 2000 }), page({ done: true, restored: 1 })] });
+    const { result } = await revertRunPaged(store, "staff-1", "target-run");
+    expect(result.gone).toBe(2000);
+    expect(result.restored).toBe(1);
   });
 
   it("heartbeats between pages, but not after the final (done) page", async () => {

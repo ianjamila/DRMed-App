@@ -271,7 +271,7 @@ export async function withAdminLease<T>(
 export type RevertSummary = Omit<RevertPageResult, "done">;
 
 const REVERT_SUMMARY_KEYS: ReadonlyArray<keyof RevertSummary> =
-  ["restored", "blocked", "deleted", "kept", "held", "links_left", "alias_removed", "alias_restored"];
+  ["restored", "blocked", "deleted", "kept", "held", "links_left", "alias_removed", "alias_restored", "gone"];
 
 /** Generous backstop against a stuck loop — a real undo finishes in a handful of pages. */
 const REVERT_MAX_PAGES = 1000;
@@ -294,7 +294,7 @@ export async function revertRunPaged(
 ): Promise<{ runId: string; result: RevertSummary }> {
   const pageSize = opts.pageSize ?? 2000;
   return withAdminLease(store, "revert", actorId, async (lease) => {
-    const summary: RevertSummary = { restored: 0, blocked: 0, deleted: 0, kept: 0, held: 0, links_left: 0, alias_removed: 0, alias_restored: 0 };
+    const summary: RevertSummary = { restored: 0, blocked: 0, deleted: 0, kept: 0, held: 0, links_left: 0, alias_removed: 0, alias_restored: 0, gone: 0 };
     for (let page = 0; page < REVERT_MAX_PAGES; page++) {
       const res = await store.revertRun(lease, targetRunId, pageSize);
       for (const k of REVERT_SUMMARY_KEYS) summary[k] += res[k];

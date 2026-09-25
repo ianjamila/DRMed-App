@@ -30,14 +30,14 @@ export interface FakeStoreOptions {
 }
 
 const ZERO_REVERT_PAGE: RevertPageResult = {
-  done: true, restored: 0, blocked: 0, deleted: 0, kept: 0, held: 0, links_left: 0, alias_removed: 0, alias_restored: 0,
+  done: true, restored: 0, blocked: 0, deleted: 0, kept: 0, held: 0, links_left: 0, alias_removed: 0, alias_restored: 0, gone: 0,
 };
 
 export class FakeStore implements SheetSyncStore {
   calls: Array<[string, ...unknown[]]> = [];
   audits: AuditRow[] = [];
   stagedRows: Record<TabKey, unknown[]> = { customers: [], lab: [], consult: [] };
-  finishes: Array<{ status: string; error: string | null }> = [];
+  finishes: Array<{ status: string; error: string | null; summary?: Json }> = [];
 
   private paused: boolean;
   private busy: boolean;
@@ -84,10 +84,10 @@ export class FakeStore implements SheetSyncStore {
 
   async heartbeat(lease: string) { this.calls.push(["heartbeat", lease]); this.fence(); }
 
-  async finish(_lease: string, status: "succeeded" | "partial" | "failed", _perTab: Json, _summary: Json, error: string | null) {
+  async finish(_lease: string, status: "succeeded" | "partial" | "failed", _perTab: Json, summary: Json, error: string | null) {
     this.calls.push(["finish", status]);
     this.fence();
-    this.finishes.push({ status, error });
+    this.finishes.push(status === "failed" ? { status, error } : { status, error, summary });
   }
 
   async readSettings() { return { paused: this.paused, mirrorWindowStart: this.mirrorWindowStart }; }
