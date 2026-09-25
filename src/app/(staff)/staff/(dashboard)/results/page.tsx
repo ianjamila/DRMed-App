@@ -54,6 +54,7 @@ import {
   UPDATED_FILTER_LABEL,
   type UpdatedFilter,
 } from "@/lib/results/updated-filter";
+import { resultsMemberSections, membersWithinSections } from "@/lib/results/report-section-gate";
 
 export const metadata = { title: "Results" };
 export const dynamic = "force-dynamic";
@@ -444,6 +445,30 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
     awaitingPayment: awaitingByVisit.get(r.visit.id) ?? false,
   }));
 
+  // Every-member section check on the "PDF →" link (0179): a shared report
+  // PDF still carries a deleted member's values, so the gate has to read
+  // sections for EVERY linked test — deleted ones included — not just the
+  // live members this page's query already returned. One batched read keyed
+  // by every result on the page that has a PDF.
+  const pdfResultIds = Array.from(
+    new Set(
+      foldedRows.flatMap((v) =>
+        v.items
+          .filter((item) => item.pdfTestRequestId !== null && item.resultId !== null)
+          .map((item) => item.resultId!),
+      ),
+    ),
+  );
+  const memberSectionsByResultId =
+    pdfResultIds.length > 0 ? await resultsMemberSections(admin, pdfResultIds) : new Map<string, (string | null)[]>();
+  const canViewItemPdf = (item: ArchiveItem): boolean => {
+    if (!item.pdfTestRequestId || !item.resultId) return false;
+    return (
+      memberSectionsByResultId !== null &&
+      membersWithinSections(allowedSections, memberSectionsByResultId.get(item.resultId) ?? [])
+    );
+  };
+
   // One membership lookup per report item, shared by the label and the
   // caveat line below the table.
   const membershipFor = (item: ArchiveItem): MembershipDisplay =>
@@ -811,7 +836,12 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
                       <td className="px-4 py-3 text-xs">
                         <div className="flex flex-col gap-1">
                           {g.items.map((item) => (
-                            <ArchiveItemActions key={item.key} item={item} visitId={g.visitId} />
+                            <ArchiveItemActions
+                              key={item.key}
+                              item={item}
+                              visitId={g.visitId}
+                              pdfAllowed={canViewItemPdf(item)}
+                            />
                           ))}
                         </div>
                       </td>
@@ -957,12 +987,23 @@ function ArchiveItemLabel({
   );
 }
 
-function ArchiveItemActions({ item, visitId }: { item: ArchiveItem; visitId: string }) {
+function ArchiveItemActions({
+  item,
+  visitId,
+  pdfAllowed,
+}: {
+  item: ArchiveItem;
+  visitId: string;
+  /** Every-member section check (0179) — a shared report PDF still carries a
+   *  deleted member's values, so a lab role must cover every linked test,
+   *  not just the live ones this row shows. */
+  pdfAllowed: boolean;
+}) {
   const editable =
     item.kind === "test" && item.resultId !== null && EDITABLE_STATUSES.has(item.tests[0].status);
   return (
     <div className="flex flex-wrap items-baseline gap-x-2">
-      {item.pdfTestRequestId ? (
+      {item.pdfTestRequestId && pdfAllowed ? (
         <a
           href={`/staff/results/${item.pdfTestRequestId}/pdf`}
           target="_blank"

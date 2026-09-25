@@ -27,6 +27,10 @@ export interface ReportCardData {
   history: { seq: number; at: string; reason: string; by: string | null }[];
   /** Set when the viewer may edit this report (staff_can_read_finished_result). */
   editHref: string | null;
+  /** Every-member section check (0179): whether the viewer's role covers
+   *  every linked test, deleted ones included — the shared PDF still prints
+   *  a deleted member's values. */
+  canViewPdf: boolean;
   /** Claims and edits across every member, oldest first (fetchClaimEvents). */
   remarks: ClaimRemark[];
   /** "What changed" between corrected versions (0179), newest first — [] when nothing to show. */
@@ -144,14 +148,16 @@ export function ReportCards({
             </ul>
 
             <div className="mt-4 flex flex-wrap items-center gap-3">
-              <a
-                href={`/staff/results/${rep.pdfTestRequestId}/pdf`}
-                target="_blank"
-                rel="noopener"
-                className="inline-flex min-h-[44px] items-center rounded-lg bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
-              >
-                View PDF →
-              </a>
+              {rep.canViewPdf ? (
+                <a
+                  href={`/staff/results/${rep.pdfTestRequestId}/pdf`}
+                  target="_blank"
+                  rel="noopener"
+                  className="inline-flex min-h-[44px] items-center rounded-lg bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
+                >
+                  View PDF →
+                </a>
+              ) : null}
               {rep.editHref && editForm?.resultId !== rep.resultId ? (
                 <Link
                   href={rep.editHref}

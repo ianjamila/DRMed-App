@@ -26,6 +26,7 @@ import { claimRemarks, type ClaimEvent } from "@/lib/queue/claim-remarks";
 import { fetchClaimEvents } from "@/lib/queue/fetch-claim-events";
 import { ClaimHistory } from "@/components/staff/claim-remarks-list";
 import { QueueUnclaimButton } from "../../../queue-unclaim-button";
+import { resultsMemberSections, membersWithinSections } from "@/lib/results/report-section-gate";
 import { shouldOfferNotify } from "@/lib/results/copy-followups";
 import { fetchCopyStates } from "@/lib/results/copy-followups.server";
 import { fetchVersionDiff } from "@/lib/results/version-diff.server";
@@ -169,9 +170,22 @@ export default async function ConsolidatedQueuePage({
     groupId,
   );
   const byId = new Map(rows.map((r) => [r.id, r]));
+  const admin = createAdminClient();
 
   // ---- Finished reports -------------------------------------------------
   const resultIds = partition.reports.map((r) => r.resultId);
+
+  // Every-member section check on "View PDF →" (0179): the page-level gate
+  // above (loadConsolidatedDetail's sectionOk) only sees LIVE members, but a
+  // shared report PDF still carries a deleted member's values — so a lab
+  // role must cover every linked test, deleted ones included, the same rule
+  // the archive's "PDF →" link uses.
+  const allowedSections = sectionsForRole(session.role);
+  const memberSectionsByResultId =
+    resultIds.length > 0 ? await resultsMemberSections(admin, resultIds) : new Map<string, (string | null)[]>();
+  const canViewPdf = (resultId: string): boolean =>
+    memberSectionsByResultId !== null &&
+    membersWithinSections(allowedSections, memberSectionsByResultId.get(resultId) ?? []);
   const reportResults = new Map(
     partition.reports.map((rep) => {
       const res = one(one(byId.get(rep.memberIds[0])!.result_test_requests)!.results)!;
@@ -279,6 +293,7 @@ export default async function ConsolidatedQueuePage({
       })),
       remarks: claimRemarks(rep.memberIds.flatMap((id) => reportEvents.get(id) ?? [])),
       changes: changesByResult.get(rep.resultId) ?? [],
+      canViewPdf: canViewPdf(rep.resultId),
       editHref: canEdit.get(rep.resultId)
         ? `/staff/queue/consolidated/${visitId}/${groupId}?edit=${rep.resultId}#result-${rep.resultId}`
         : null,
@@ -372,7 +387,6 @@ export default async function ConsolidatedQueuePage({
   // the same viewer re-rendering within 5 minutes (refresh, back button) is
   // not a new view. Never from generateMetadata — only a real render counts.
   if (resultIds.length > 0) {
-    const admin = createAdminClient();
     const { ip, ua } = await ipAndAgent();
     for (const resultId of resultIds) {
       const recent = await hasRecentAudit(
