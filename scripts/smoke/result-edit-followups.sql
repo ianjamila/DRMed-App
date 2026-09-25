@@ -14,6 +14,9 @@
 --      and reason; reception sees nothing; a medtech sees nothing for a report
 --      with a member outside their sections, and sees it once the report is
 --      wholly theirs.
+--   D. result_edit_commit (redefined in 0176) stores what an edit did to
+--      critical alerts and a replay of the same attempt answers it (1 withdrawn),
+--      without writing a second version.
 -- Everything is inside one transaction that ROLLS BACK.
 -- =============================================================================
 \set ON_ERROR_STOP on
@@ -190,6 +193,45 @@ begin
   raise notice 'B backfill OK';
 end $$;
 
+-- ----- D. a replayed edit reports the alerts it withdrew ---------------------------
+insert into public.critical_alerts (result_id, test_request_id, parameter_id, direction, parameter_name, observed_value_si)
+values ('00000000-0000-4000-8000-00000000f001', '00000000-0000-4000-8000-00000000e001',
+        (select id from public.result_template_params limit 1), 'high', 'Smoke K', 7.1);
+
+do $$
+declare
+  v_first  jsonb;
+  v_replay jsonb;
+begin
+  -- The correction brings the value back to normal: no alerts desired.
+  v_first := public.result_edit_commit(
+    '00000000-0000-4000-8000-0000000000aa', '00000000-0000-4000-8000-00000000f001', 1,
+    '00000000-0000-4000-8000-00000000a001', 'value re-run, now normal',
+    '00000000-0000-4000-8000-00000000e001', 'v/r1.v3.bbbb.pdf', 100, null, null, '[]'::jsonb);
+  if (v_first ->> 'replayed')::boolean or (v_first ->> 'alerts_removed')::int <> 1 then
+    raise exception 'D1: first commit should withdraw 1 alert, got %', v_first;
+  end if;
+  if (select commit_outcome ->> 'alerts_removed' from public.result_amendments
+       where attempt_id = '00000000-0000-4000-8000-0000000000aa') <> '1' then
+    raise exception 'D2: the outcome must be stored on the amendment row';
+  end if;
+
+  -- The app lost the response and retries the same attempt.
+  v_replay := public.result_edit_commit(
+    '00000000-0000-4000-8000-0000000000aa', '00000000-0000-4000-8000-00000000f001', 1,
+    '00000000-0000-4000-8000-00000000a001', 'value re-run, now normal',
+    '00000000-0000-4000-8000-00000000e001', 'v/r1.v3.cccc.pdf', 100, null, null, '[]'::jsonb);
+  if not (v_replay ->> 'replayed')::boolean
+     or (v_replay ->> 'alerts_removed')::int <> 1
+     or (v_replay ->> 'amendment_seq')::int <> 2 then
+    raise exception 'D3: replay must answer the original outcome (1 withdrawn, seq 2), got %', v_replay;
+  end if;
+  if (select count(*) from public.result_amendments where result_id = '00000000-0000-4000-8000-00000000f001') <> 2 then
+    raise exception 'D4: a replay must not write a second version';
+  end if;
+  raise notice 'D replay outcome OK';
+end $$;
+
 -- ----- C. the remarks reader ------------------------------------------------------
 create temp table smoke_ids on commit drop as
   select array['00000000-0000-4000-8000-00000000e001', '00000000-0000-4000-8000-00000000e002',
@@ -202,11 +244,13 @@ select set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-8000-0000000
 do $$
 declare v_rows int; v_bad int;
 begin
-  select count(*), count(*) filter (where actor_name <> 'Smoke Admin' or reason <> 'wrong unit on glucose' or action <> 'result.amended')
+  -- Two edits by now (the fixture's and section D's), each on all 3 members.
+  select count(*), count(*) filter (where actor_name <> 'Smoke Admin' or action <> 'result.amended'
+                                       or reason not in ('wrong unit on glucose', 'value re-run, now normal'))
     into v_rows, v_bad
     from public.result_amendment_remarks((select ids from smoke_ids));
-  if v_rows <> 3 or v_bad <> 0 then
-    raise exception 'C1: admin should see the edit on all 3 members, named, reason trimmed (rows=%, bad=%)', v_rows, v_bad;
+  if v_rows <> 6 or v_bad <> 0 then
+    raise exception 'C1: admin should see both edits on all 3 members, named, reason trimmed (rows=%, bad=%)', v_rows, v_bad;
   end if;
   raise notice 'C1 admin OK';
 end $$;
@@ -242,8 +286,8 @@ do $$
 declare v_rows int;
 begin
   select count(*) into v_rows from public.result_amendment_remarks((select ids from smoke_ids));
-  if v_rows <> 2 then
-    raise exception 'C4: medtech should see the edit on both chemistry members, got %', v_rows;
+  if v_rows <> 4 then
+    raise exception 'C4: medtech should see both edits on both chemistry members, got %', v_rows;
   end if;
   raise notice 'C4 medtech in-section OK';
 end $$;

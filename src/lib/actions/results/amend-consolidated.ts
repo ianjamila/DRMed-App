@@ -10,7 +10,11 @@ import { translatePgError } from "@/lib/accounting/pg-errors";
 import { sectionsForRole } from "@/lib/auth/role-sections";
 import { isSectionAllowed } from "@/lib/auth/section-access";
 import { renderResultPdf } from "@/lib/results/render-pdf";
-import { loadResultDocumentInput, loadTemplateParams } from "@/lib/results/loaders";
+import {
+  isTemplateParamsLoadError,
+  loadResultDocumentInput,
+  loadTemplateParams,
+} from "@/lib/results/loaders";
 import { calculateAgeMonths, normalisePatientSex } from "@/lib/results/types";
 import { countValueChanges, isEditableStatus, validateEditReason } from "@/lib/results/result-edit";
 import { buildValueRows, detectCrossings, valueRowsToDocValues } from "@/lib/results/value-rows";
@@ -145,7 +149,13 @@ export async function amendConsolidatedReport(
     .eq("report_group_id", result.report_group_id)
     .eq("is_active", true)
     .maybeSingle();
-  const templateParams = template ? await loadTemplateParams(admin, template.id) : [];
+  let templateParams: Awaited<ReturnType<typeof loadTemplateParams>> = [];
+  try {
+    templateParams = template ? await loadTemplateParams(admin, template.id, { strict: true }) : [];
+  } catch (e) {
+    if (isTemplateParamsLoadError(e)) return { ok: false, error: REPORT_VALUES_LOAD_FAILED };
+    throw e;
+  }
   const paramsById = new Map(templateParams.map((p) => [p.id, p]));
   const liveServiceIds = live.map((t) => one(t.services)?.id ?? "");
   const { data: mapRows, error: mapErr } =

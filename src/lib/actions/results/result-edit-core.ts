@@ -177,6 +177,9 @@ export async function commitResultEdit(
   }
   uploads.push({ bucket: "results", path: newStoragePath, body: args.pdf, contentType: "application/pdf" });
 
+  // What the committed attempt did to critical alerts, as recorded on its
+  // amendment row (0176) — read by the probe when the RPC's answer was lost.
+  let probedOutcome: Json | null = null;
   const outcome = await commitWithUploads<Json>(
     admin,
     uploads,
@@ -204,28 +207,34 @@ export async function commitResultEdit(
     async () => {
       const { data, error } = await admin
         .from("result_amendments")
-        .select("id")
+        .select("id, commit_outcome")
         .eq("attempt_id", attemptId)
         .maybeSingle();
       if (error) return null;
+      if (data) probedOutcome = data.commit_outcome;
       return data != null;
     },
   );
   if (outcome.status === "failed") return { ok: false, error: outcome.error };
 
-  const d = (outcome.data ?? {}) as {
+  const d = (outcome.data ?? probedOutcome ?? {}) as {
     replayed?: boolean;
+    outcome_unknown?: boolean;
     amendment_seq?: number;
     prior_storage_path?: string;
     alerts_added?: CommitResultEditData["alertsAdded"];
     alerts_removed?: number;
     alerts_kept_acknowledged?: number;
   };
-  // Confirmed by the probe or by the RPC's replay branch: the response that
-  // said which alerts were added was lost, so report the ones this attempt
-  // SENT (a superset — some may have existed already) rather than none, and
-  // flag it, so the critical-value audit row is not silently skipped.
+  // Confirmed by the probe or by the RPC's replay branch: the response was
+  // lost. Since 0176 the commit records what it did to critical alerts on its
+  // amendment row and both paths hand that back, so the audit rows below are
+  // exact. Only when no record exists (an edit from before 0176, or a
+  // concurrent probe that raced the row) fall back to the alerts this attempt
+  // SENT (a superset) rather than none — flagged, so the critical-value audit
+  // row is never silently skipped.
   const replayed = d.replayed ?? outcome.data == null;
+  const recorded = d.alerts_added !== undefined && !d.outcome_unknown;
   return {
     ok: true,
     data: {
@@ -234,7 +243,7 @@ export async function commitResultEdit(
       priorStoragePath: d.prior_storage_path ?? args.currentStoragePath,
       newStoragePath,
       newImagePath,
-      alertsAdded: replayed ? (args.alerts ?? []) : (d.alerts_added ?? []),
+      alertsAdded: replayed && !recorded ? (args.alerts ?? []) : (d.alerts_added ?? []),
       alertsRemoved: d.alerts_removed ?? 0,
       alertsKeptAcknowledged: d.alerts_kept_acknowledged ?? 0,
     },

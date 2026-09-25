@@ -92,7 +92,13 @@ export function claimRemarks(events: readonly ClaimEvent[]): ClaimRemark[] {
   for (const e of sorted) {
     const d = describe(e);
     if (!d) continue;
-    const dedupe = `${d.text}|${e.created_at.slice(0, 16)}`;
+    // Per-member copies of ONE event share its text and minute. An edit
+    // carries its exact commit time, so two different edits in the same
+    // minute (same editor, same reason) still read as two lines.
+    const dedupe =
+      e.action === RESULT_AMENDED_ACTION
+        ? `${d.text}|${e.created_at}`
+        : `${d.text}|${e.created_at.slice(0, 16)}`;
     if (seen.has(dedupe)) continue;
     seen.add(dedupe);
     out.push({

@@ -4801,6 +4801,7 @@ export type Database = {
           amended_by: string
           amendment_seq: number
           attempt_id: string | null
+          commit_outcome: Json | null
           id: string
           prior_file_size_bytes: number | null
           prior_image_filename: string | null
@@ -4821,6 +4822,7 @@ export type Database = {
           amended_by: string
           amendment_seq: number
           attempt_id?: string | null
+          commit_outcome?: Json | null
           id?: string
           prior_file_size_bytes?: number | null
           prior_image_filename?: string | null
@@ -4841,6 +4843,7 @@ export type Database = {
           amended_by?: string
           amendment_seq?: number
           attempt_id?: string | null
+          commit_outcome?: Json | null
           id?: string
           prior_file_size_bytes?: number | null
           prior_image_filename?: string | null

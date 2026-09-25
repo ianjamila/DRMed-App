@@ -15,7 +15,10 @@ vi.mock("server-only", () => ({}));
 
 const fx = vi.hoisted(() => ({
   rpc: null as null | (() => Promise<{ data: unknown; error: { code?: string | null; message: string } | null }>),
-  probe: { data: null as { id: string } | null, error: null as { message: string } | null },
+  probe: {
+    data: null as { id: string; commit_outcome?: unknown } | null,
+    error: null as { message: string } | null,
+  },
   uploads: [] as { bucket: string; path: string }[],
   removed: [] as { bucket: string; paths: string[] }[],
   audits: [] as Record<string, unknown>[],
@@ -174,6 +177,53 @@ describe("commitResultEdit — a lost response", () => {
     const out = await commitResultEdit(args());
     expect(out).toEqual({ ok: false, error: UNCONFIRMED_SAVE_ERROR });
     expect(fx.removed).toEqual([]);
+  });
+});
+
+describe("commitResultEdit — the recorded outcome (0176)", () => {
+  it("a lost response confirmed by the probe reports the withdrawal the commit recorded, and audits it", async () => {
+    fx.rpc = async () => {
+      throw new Error("fetch failed");
+    };
+    fx.probe = {
+      data: { id: "am-1", commit_outcome: { alerts_added: [], alerts_removed: 1, alerts_kept_acknowledged: 0 } },
+      error: null,
+    };
+    const out = await commitResultEdit(args({ alerts: [] }));
+    if (!out.ok) throw new Error(out.error);
+    expect(out.data.replayed).toBe(true);
+    expect(out.data.alertsRemoved).toBe(1);
+    expect(out.data.alertsAdded).toEqual([]);
+
+    await auditAlertChanges(out.data, { actorId: "u1", patientId: "pt1", resultId: "r1", testRequestIds: ["t1"], ip: null, ua: null });
+    expect(fx.audits.map((a) => a.action)).toEqual(["result.critical_alert_withdrawn"]);
+    expect((fx.audits[0].metadata as Record<string, unknown>).withdrawn_count).toBe(1);
+  });
+
+  it("the RPC's replay branch hands back the recorded outcome: exact alerts, not what was sent", async () => {
+    const recordedAlert = { parameter_name: "Potassium", direction: "high", observed_value_si: 7.1, threshold_si: 6.5 };
+    fx.rpc = async () => ({
+      data: {
+        replayed: true, amendment_seq: 1, prior_storage_path: "visit/r1.pdf",
+        alerts_added: [recordedAlert], alerts_removed: 2, alerts_kept_acknowledged: 1,
+      },
+      error: null,
+    });
+    const out = await commitResultEdit(args({ alerts: [ALERT, ALERT] }));
+    if (!out.ok) throw new Error(out.error);
+    expect(out.data.alertsAdded).toEqual([recordedAlert]);
+    expect(out.data.alertsRemoved).toBe(2);
+    expect(out.data.alertsKeptAcknowledged).toBe(1);
+  });
+
+  it("an edit from before 0176 (no record) falls back to the alerts this attempt sent", async () => {
+    fx.rpc = async () => ({
+      data: { replayed: true, amendment_seq: 1, prior_storage_path: "visit/r1.pdf",
+              alerts_added: [], alerts_removed: 0, alerts_kept_acknowledged: 0, outcome_unknown: true },
+      error: null,
+    });
+    const out = await commitResultEdit(args());
+    expect(out.ok && out.data.alertsAdded).toEqual([ALERT]);
   });
 });
 

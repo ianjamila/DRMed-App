@@ -121,3 +121,16 @@ describe("claimRemarks — edits of a finished result (0176)", () => {
     );
   });
 });
+
+describe("claimRemarks — two distinct edits in one minute", () => {
+  it("keeps both (only per-member copies of one edit collapse)", () => {
+    const e = (at: string, tr = T1) =>
+      ev({ test_request_id: tr, action: "result.amended", created_at: at, actor_name: "Ana", reason: "typo" });
+    const out = claimRemarks([
+      e("2026-09-25T07:04:01.100000Z"),
+      e("2026-09-25T07:04:01.100000Z", T2),
+      e("2026-09-25T07:04:40.500000Z"),
+    ]);
+    expect(out).toHaveLength(2);
+  });
+});

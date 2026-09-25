@@ -5,6 +5,7 @@ import { createPatientClient } from "@/lib/supabase/patient";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { notePatientDownload, type ServedResultFile } from "@/lib/results/patient-download";
+import { patientSafeAuditRows } from "@/lib/portal/export-audit";
 import { chunk, fetchAllRows, IN_CHUNK, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 import { isResultDownloadEligible } from "@/lib/results/release-eligibility";
 
@@ -211,7 +212,9 @@ export async function GET() {
   const testRequests = testRequestsResult.rows;
   const payments = paymentsResult.rows;
   const appointments = appointmentsResult.rows;
-  const auditEntries = auditResult.data ?? [];
+  // Clinic-only free text (edit / undo / delete reasons, staff notes) is
+  // stripped — the event stays, the clinic's wording does not (export-audit.ts).
+  const auditEntries = patientSafeAuditRows(auditResult.data ?? []);
   const releasedResults = releasedResultsResult.rows;
   const truncated =
     visitsTruncated ||
