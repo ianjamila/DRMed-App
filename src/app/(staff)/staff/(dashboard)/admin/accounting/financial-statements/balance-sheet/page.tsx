@@ -6,6 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { paginatedFetch } from "@/lib/supabase/paginated-fetch";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { buildAsOfPresets } from "@/lib/reports/period-presets";
+import { LEDGER_TOTAL_STATUSES } from "@/lib/accounting/ledger-status";
 
 export const metadata = { title: ROUTE_NAME["/staff/admin/accounting/financial-statements/balance-sheet"] };
 export const dynamic = "force-dynamic";
@@ -73,7 +74,7 @@ export default async function BalanceSheetPage({ searchParams }: SearchProps) {
         chart_of_accounts!inner ( id, code, name, type, normal_balance )
       `,
       )
-      .eq("journal_entries.status", "posted")
+      .in("journal_entries.status", LEDGER_TOTAL_STATUSES)
       .lte("journal_entries.posting_date", asOf)
       .in("chart_of_accounts.type", ["asset", "liability", "equity"])
       .range(from, to)
@@ -117,7 +118,7 @@ export default async function BalanceSheetPage({ searchParams }: SearchProps) {
         chart_of_accounts!inner ( normal_balance, type )
       `,
       )
-      .eq("journal_entries.status", "posted")
+      .in("journal_entries.status", LEDGER_TOTAL_STATUSES)
       .lte("journal_entries.posting_date", asOf)
       .in("chart_of_accounts.type", ["revenue", "contra_revenue", "expense"])
       .range(from, to)
@@ -163,7 +164,8 @@ export default async function BalanceSheetPage({ searchParams }: SearchProps) {
           eyebrow={SECTION_NAME["/staff/admin/accounting/financial-statements"]}
           title={ROUTE_NAME["/staff/admin/accounting/financial-statements/balance-sheet"]}
           subtitle={<>Balance sheet as of <strong>{asOf}</strong>. Cumulative posted
-          journal entries through this date.</>}
+          journal entries through this date (reversed entries count alongside
+          their reversal so a corrected pair nets to zero).</>}
         />
       </div>
 
@@ -271,7 +273,8 @@ export default async function BalanceSheetPage({ searchParams }: SearchProps) {
         <div className="mt-3 space-y-2 text-xs text-[color:var(--color-brand-text-soft)]">
           <p>
             Each account&apos;s balance is the cumulative signed sum of its
-            posted journal lines with <code>posting_date ≤ as_of</code>:{" "}
+            posted-or-reversed journal lines with <code>posting_date ≤ as_of</code>{" "}
+            (both halves of a reversed pair count, so they net to zero):{" "}
             <code>credit − debit</code> for credit-normal accounts,{" "}
             <code>debit − credit</code> for debit-normal accounts.
           </p>

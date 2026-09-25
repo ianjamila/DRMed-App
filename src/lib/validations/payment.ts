@@ -33,3 +33,25 @@ export const PaymentRecordSchema = z.object({
 });
 
 export type PaymentRecordInput = z.infer<typeof PaymentRecordSchema>;
+
+// Edit payment (0161). Only the counter methods — a gift code is redeemed,
+// never keyed in, and HMO settlements come from the claims screens.
+export const PaymentEditSchema = z.object({
+  payment_id: z.string().uuid(),
+  // Matched on the text, not the number: 5888.1 * 100 is not an integer in
+  // floating point, so a numeric centavo check would refuse a valid amount.
+  amount_php: z
+    .string()
+    .trim()
+    .regex(/^\d+(\.\d{1,2})?$/, "Enter an amount like 1500 or 1500.50.")
+    .transform((v) => Number(v))
+    .pipe(z.number().positive("Amount must be greater than zero.")),
+  method: z.enum(["cash", "gcash", "maya", "card", "bank_transfer"], {
+    message: "Choose Cash, GCash, Maya, Card or Bank transfer.",
+  }),
+  reference_number: z.string().trim().max(80),
+  notes: z.string().trim().max(2000),
+  reason: z.string().trim().min(1, "Reason is required to edit a payment.").max(500),
+});
+
+export type PaymentEditInput = z.infer<typeof PaymentEditSchema>;

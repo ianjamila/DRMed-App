@@ -2,8 +2,9 @@ import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ConsentGateToggle } from "./client";
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 
-export const metadata = { title: "Consent Gate" };
+export const metadata = { title: ROUTE_NAME["/staff/admin/settings/consent-gate"] };
 export const dynamic = "force-dynamic";
 
 export default async function ConsentGateSettingsPage() {
@@ -37,7 +38,7 @@ export default async function ConsentGateSettingsPage() {
           ← Dashboard
         </Link>
         <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Data privacy consent gate
+          {ROUTE_NAME["/staff/admin/settings/consent-gate"]}
         </h1>
         <p className="mt-1 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
           When ON, a lab result cannot be released for a patient who has no

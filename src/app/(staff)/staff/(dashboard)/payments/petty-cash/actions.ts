@@ -70,6 +70,11 @@ const PettyCashSchema = z.object({
   // enforced by `sendOutLabRule`, not here — the schema doesn't know the
   // category/vendor pairing rule, only that the shape is a nullable uuid.
   vendor_id: z.string().uuid().optional().nullable(),
+  // The shift the page was viewing when the form was submitted. Optional so a
+  // caller with no shift context (there is currently only one) still works;
+  // `postTillCashExpense` re-verifies it is an active shift rather than
+  // trusting it. See cash-drawer's own `recordCashAdjustmentAction`.
+  shift_id: z.string().uuid("Invalid shift").optional(),
 });
 
 export type PettyCashInput = z.infer<typeof PettyCashSchema>;
@@ -130,6 +135,7 @@ export async function createPettyCashExpenseAction(
     description: input.description ?? null,
     actorId: session.user_id,
     vendor_id: input.vendor_id ?? null,
+    shift_id: input.shift_id,
   });
   if (!posted.ok) return posted;
 

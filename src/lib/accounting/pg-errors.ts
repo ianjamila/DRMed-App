@@ -21,6 +21,9 @@ export function translatePgError(err: PgError): string {
       if (m.includes("vendors_tin_unique")) {
         return "A vendor with this TIN already exists.";
       }
+      if (m.includes("services_code_key")) {
+        return "A service with this code already exists. Pick a different code.";
+      }
       if (m.includes("payments_gift_code_redemption_unique")) {
         // Finding 6 (go-live review): the redemption race guard — someone
         // else's redemption of the same code landed first.
@@ -169,6 +172,28 @@ export function translatePgError(err: PgError): string {
     // rewrite it.
     case "P0053":
       return "A website message cannot be edited. You can only change its status, type or notes.";
+    // Edit payment (0161): correct_payment refuses a stale, already-voided,
+    // gift-code, HMO or imported payment, or an input it cannot record. The
+    // DB message names which one and is written for reception.
+    case "P0054":
+      return err.message ?? "This payment cannot be edited. Delete it and record it again.";
+    // 0172 — editing a FINISHED result (result_edit_commit / result_finalise_commit / result_save_draft)
+    case "P0065":
+      // Someone else's edit landed first under the row lock; the version this
+      // form was opened with is stale. A fixed message reads better than the
+      // DB's own wording here.
+      return "Someone saved an edit to this result since you opened it. Reload the page to see their change, then make yours again.";
+    case "P0066":
+      // Raised from several different checks (result not found, no finished
+      // PDF yet, not finalised, bad reason length, every test deleted, a test
+      // not finished, the anchor test not live, already finalised…) — each
+      // message is already staff-readable, so pass it through like P0029/P0051.
+      // The raises are lower-case clauses; show them as a sentence.
+      return err.message
+        ? `${err.message.charAt(0).toUpperCase()}${err.message.slice(1)}.`
+        : "This result can't be edited right now. Reload the page and try again.";
+    case "P0067":
+      return "This test is part of a finished combined report (such as Chemistry), so it can't be deleted on its own.";
     default:
       return err.message ?? "Database error. Please try again.";
   }

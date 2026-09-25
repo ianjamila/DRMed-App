@@ -18,6 +18,7 @@ export const dynamic = "force-dynamic";
 
 interface SearchParams {
   date?: string;
+  shift?: string;
 }
 
 export default async function PettyCashPage({
@@ -34,11 +35,30 @@ export default async function PettyCashPage({
   const isToday = business_date === today;
   const admin = createAdminClient();
 
-  // 0164: reception can read active partner labs directly (vendors' read
-  // policy allows it), so use the RLS-scoped server client here rather than
-  // the admin one.
+  // 0164: the "Which lab?" list comes from the partner_labs() RPC (id + name,
+  // admin/reception only), called with the RLS-scoped server client so the
+  // function can see who is asking — the vendors table itself stays admin-only.
   const supabase = await createClient();
   const partnerLabs = await loadPartnerLabs(supabase);
+
+  // Same active-shift list Cash Drawer reads, so the two tabs offer the same
+  // choices and the round trip (drawer -> petty cash -> drawer) stays on one
+  // shift.
+  const { data: shifts } = await admin
+    .from("cash_shifts")
+    .select("id, code, label")
+    .eq("is_active", true)
+    .order("sort_order");
+
+  // Unlike Cash Drawer's own `params.shift ?? shifts?.[0]?.id`, validate the
+  // query param against the active list rather than trusting it outright — a
+  // stale or tampered `?shift=` must fall back to the default, not silently
+  // pass an inactive/unknown id through to the writer.
+  const currentShift = (params.shift && shifts?.find((s) => s.id === params.shift)) ?? shifts?.[0];
+  if (!currentShift) {
+    return <main className="p-6"><p>No active cash shift configured. Ask admin.</p></main>;
+  }
+  const shift_id = currentShift.id;
 
   // Reception can't read these tables via RLS (admin-only), so read with the
   // service-role client here in the RSC.
@@ -48,6 +68,10 @@ export default async function PettyCashPage({
   // door recorded it, so this page now shows petty cash logged here, petty cash
   // paid out from the Cash drawer's own modal, AND an admin Quick expense
   // booked to Clinic Cash. One physical till, one history.
+  //
+  // Filtered to the selected shift, same as Cash Drawer's own adjustments
+  // list — with more than one active shift, an unfiltered list here would mix
+  // in payouts that don't count against the drawer being viewed.
   const { data: entries, error: completeError } = await fetchCompleteRows((from, to) => admin
     .from("eod_cash_adjustments")
     .select(
@@ -55,6 +79,7 @@ export default async function PettyCashPage({
     )
     .eq("kind", "petty_cash")
     .eq("business_date", business_date)
+    .eq("shift_id", shift_id)
     .order("recorded_at", { ascending: false })
     .order("id", { ascending: true })
     .range(from, to));
@@ -104,22 +129,28 @@ export default async function PettyCashPage({
         subtitle="Log small cash expenses paid from the till — transport, courier, office or lab supplies, minor repairs. Each entry comes straight out of the drawer, so the day's expected cash drops by the same amount and the count still ties. For anything paid by GCash, bank transfer, or a vendor invoice, ask admin."
       />
 
-      <PettyCashDatePicker date={business_date} today={today} />
+      <PettyCashDatePicker
+        date={business_date}
+        today={today}
+        shifts={shifts ?? []}
+        currentShiftId={shift_id}
+      />
 
       <div className="max-w-3xl space-y-6">
         {/* The form always records against the day being viewed, but never a
             future one — a payout can't leave the till before the day happens.
             Recording into an already-closed day is refused by the DB (P0015)
             with a message telling reception to ask admin to reopen. */}
-        <PettyCashForm defaultDate={business_date} maxDate={today} partnerLabs={partnerLabs} />
+        <PettyCashForm defaultDate={business_date} maxDate={today} shiftId={shift_id} partnerLabs={partnerLabs} />
 
         <section className="space-y-3">
           <h2 className="font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">
             {isToday ? "Today's petty cash" : "Petty cash for this day"}
           </h2>
           <p className="text-xs text-[color:var(--color-brand-text-soft)]">
-            Includes cash paid out from the {ROUTE_NAME["/staff/payments/cash-drawer"]} tab, so this matches
-            what the drawer expects.
+            Includes cash paid out from the {ROUTE_NAME["/staff/payments/cash-drawer"]} tab
+            {(shifts?.length ?? 0) > 1 ? ` for the ${currentShift.label} shift` : ""}, so this
+            matches what the drawer expects.
           </p>
           <PettyCashList rows={rows} isToday={isToday} />
         </section>

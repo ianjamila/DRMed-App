@@ -3447,6 +3447,7 @@ export type Database = {
       payments: {
         Row: {
           amount_php: number
+          corrects_payment_id: string | null
           created_at: string
           id: string
           legacy_import_run_id: string | null
@@ -3463,6 +3464,7 @@ export type Database = {
         }
         Insert: {
           amount_php: number
+          corrects_payment_id?: string | null
           created_at?: string
           id?: string
           legacy_import_run_id?: string | null
@@ -3479,6 +3481,7 @@ export type Database = {
         }
         Update: {
           amount_php?: number
+          corrects_payment_id?: string | null
           created_at?: string
           id?: string
           legacy_import_run_id?: string | null
@@ -3494,6 +3497,13 @@ export type Database = {
           voided_by?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "payments_corrects_payment_id_fkey"
+            columns: ["corrects_payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "payments_legacy_import_run_id_fkey"
             columns: ["legacy_import_run_id"]
@@ -4628,6 +4638,7 @@ export type Database = {
           amended_at: string
           amended_by: string
           amendment_seq: number
+          attempt_id: string | null
           id: string
           prior_file_size_bytes: number | null
           prior_image_filename: string | null
@@ -4647,6 +4658,7 @@ export type Database = {
           amended_at?: string
           amended_by: string
           amendment_seq: number
+          attempt_id?: string | null
           id?: string
           prior_file_size_bytes?: number | null
           prior_image_filename?: string | null
@@ -4666,6 +4678,7 @@ export type Database = {
           amended_at?: string
           amended_by?: string
           amendment_seq?: number
+          attempt_id?: string | null
           id?: string
           prior_file_size_bytes?: number | null
           prior_image_filename?: string | null
@@ -6387,6 +6400,19 @@ export type Database = {
         Returns: boolean
       }
       coa_uuid_for_code: { Args: { p_code: string }; Returns: string }
+      correct_payment: {
+        Args: {
+          p_actor_id: string
+          p_amount_php: number
+          p_method: string
+          p_notes: string
+          p_payment_id: string
+          p_reason: string
+          p_reference_number: string
+          p_visit_id?: string
+        }
+        Returns: string
+      }
       current_patient_id: { Args: never; Returns: string }
       employee_leave_balance: {
         Args: { p_as_of_date?: string; p_employee_id: string; p_kind: string }
@@ -6401,6 +6427,7 @@ export type Database = {
       has_role: { Args: { roles: string[] }; Returns: boolean }
       is_staff: { Args: never; Returns: boolean }
       je_next_number: { Args: { p_fiscal_year: number }; Returns: string }
+      lab_sections_for_role: { Args: { p_role: string }; Returns: string[] }
       next_pf_disbursement_batch_number: {
         Args: { p_year: number }
         Returns: number
@@ -6468,6 +6495,39 @@ export type Database = {
           name: string
         }[]
       }
+      result_edit_commit: {
+        Args: {
+          p_alerts: Json
+          p_anchor_test_request_id: string
+          p_attempt_id: string
+          p_editor: string
+          p_expected_amendment_count: number
+          p_new_file_size_bytes: number
+          p_new_image: Json
+          p_new_storage_path: string
+          p_reason: string
+          p_result_id: string
+          p_values: Json
+        }
+        Returns: Json
+      }
+      result_finalise_commit: {
+        Args: {
+          p_alerts: Json
+          p_file_size_bytes: number
+          p_finalised_at: string
+          p_finaliser: string
+          p_new_image: Json
+          p_result_id: string
+          p_storage_path: string
+          p_values: Json
+        }
+        Returns: Json
+      }
+      result_save_draft: {
+        Args: { p_result_id: string; p_values: Json }
+        Returns: undefined
+      }
       send_out_monthly_margin: {
         Args: { p_end?: string; p_start?: string }
         Returns: {
@@ -6507,6 +6567,10 @@ export type Database = {
       }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
+      staff_can_read_finished_result: {
+        Args: { p_result_id: string }
+        Returns: boolean
+      }
       staff_role: { Args: never; Returns: string }
       visits_classification_summary: {
         Args: { p_deleted?: string; p_end?: string; p_start?: string }

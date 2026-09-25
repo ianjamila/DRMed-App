@@ -21,7 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CircleAlert } from "lucide-react";
 import { StatusBadge } from "@/lib/ui/status-badge";
-import { todayManilaISODate } from "@/lib/dates/manila";
+import { manilaDate, todayManilaISODate } from "@/lib/dates/manila";
 
 const PHP = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
 
@@ -161,7 +161,7 @@ export function RecurringClient({
                     PHP.format(t.amount_php)
                   )}
                 </td>
-                <td className="px-3 py-2 text-xs">{t.next_run_date}</td>
+                <td className="px-3 py-2 text-xs">{manilaDate(t.next_run_date)}</td>
                 <td className="px-3 py-2 text-xs">
                   <StatusBadge status={t.is_active ? "active" : "inactive"} />
                 </td>
@@ -345,7 +345,7 @@ function TemplateForm({
 
         <Field
           label="Bill date offset (days)"
-          help="Negative = bill_date posted earlier than the run date."
+          help="A negative number dates the bill that many days before the run date."
         >
           <Input
             type="number"

@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
+import { translatePgError } from "@/lib/accounting/pg-errors";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import {
   resolveSendOutVendorSelection,
@@ -103,7 +104,10 @@ export async function createServiceAction(
     .single();
 
   if (error || !data) {
-    return { ok: false, error: error?.message ?? "Could not create service." };
+    return {
+      ok: false,
+      error: error ? translatePgError(error) : "Could not create service.",
+    };
   }
 
   const h = await headers();
@@ -200,7 +204,7 @@ export async function updateServiceAction(
     })
     .eq("id", serviceId);
 
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: translatePgError(error) };
 
   const h = await headers();
 

@@ -4,6 +4,12 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { formatPhp } from "@/lib/marketing/format";
 import { Panel } from "@/components/ui/panel";
+import { humaniseCode } from "@/lib/format/humanise-code";
+import {
+  STATUS_BADGE,
+  STATUS_LABELS,
+  type GiftCodeStatus,
+} from "@/lib/gift-codes/labels";
 import { ExportCsvLink } from "@/components/staff/export-csv-link";
 
 export const metadata = { title: "Gift code sales" };
@@ -262,7 +268,7 @@ export default async function SalesPage({ searchParams }: PageProps) {
                     <td className="px-4 py-3 text-xs text-[color:var(--color-brand-text-mid)]">
                       {s.purchase_method
                         ? PAYMENT_LABELS[s.purchase_method] ??
-                          s.purchase_method
+                          humaniseCode(s.purchase_method)
                         : "—"}
                     </td>
                     <td className="px-4 py-3 text-xs text-[color:var(--color-brand-text-soft)]">
@@ -283,8 +289,14 @@ export default async function SalesPage({ searchParams }: PageProps) {
                           Outstanding
                         </span>
                       ) : (
-                        <span className="rounded-md bg-zinc-100 px-2 py-0.5 font-semibold text-zinc-700">
-                          {s.status}
+                        <span
+                          className={`rounded-md px-2 py-0.5 font-semibold ${
+                            STATUS_BADGE[s.status as GiftCodeStatus] ??
+                            "bg-zinc-100 text-zinc-700"
+                          }`}
+                        >
+                          {STATUS_LABELS[s.status as GiftCodeStatus] ??
+                            humaniseCode(s.status)}
                         </span>
                       )}
                     </td>

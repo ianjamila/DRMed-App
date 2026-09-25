@@ -152,10 +152,30 @@ interface TemplateRow {
  * (see the N5/M13 fix in finalise-consolidated.ts). The row's real
  * `finalised_at` stays null in the database until that write, but the
  * printed report still needs to show the true finalisation moment.
+ *
+ * `options.valuesOverride`: render these values instead of the stored ones.
+ * Finalise and edit both render the PDF from the values they are ABOUT to
+ * write, then commit values + PDF pointer in one transaction (0172) — so the
+ * stored rows are still the old ones when the PDF is drawn.
+ *
+ * `options.signerStaffId`: sign as this staff member instead of
+ * `results.finalised_by_staff_id`. An edited report signs as the editor
+ * (owner decision 2026-09-24).
+ *
+ * The printed date and the age-as-of instant are `finalisedAtOverride`, else
+ * the stored `finalised_at`: an edit keeps the original report date, so the
+ * patient's age band — and every range, flag and critical threshold behind
+ * it — is the one the report was first issued under.
  */
+export interface LoadResultDocumentOptions {
+  finalisedAtOverride?: Date;
+  valuesOverride?: ResultDocumentInput["values"];
+  signerStaffId?: string;
+}
+
 export async function loadResultDocumentInput(
   resultId: string,
-  options?: { finalisedAtOverride?: Date },
+  options?: LoadResultDocumentOptions,
 ): Promise<ResultDocumentInput> {
   // Both imports are deferred to call time (rather than module scope) so that
   // importing loadTemplateParams alone — e.g. from scripts/smoke-render-results.ts
@@ -221,12 +241,14 @@ export async function loadResultDocumentInput(
 
   const templateParams = await loadTemplateParams(admin, template.id);
 
-  const { data: valueRows } = await admin
-    .from("result_values")
-    .select("parameter_id, numeric_value_si, numeric_value_conv, text_value, select_value, flag, is_blank")
-    .eq("result_id", resultId);
+  const { data: valueRows } = options?.valuesOverride
+    ? { data: [] }
+    : await admin
+        .from("result_values")
+        .select("parameter_id, numeric_value_si, numeric_value_conv, text_value, select_value, flag, is_blank")
+        .eq("result_id", resultId);
 
-  const values: ResultDocumentInput["values"] = {};
+  const values: ResultDocumentInput["values"] = { ...(options?.valuesOverride ?? {}) };
   for (const v of valueRows ?? []) {
     values[v.parameter_id] = {
       numeric_value_si: v.numeric_value_si,
@@ -263,8 +285,12 @@ export async function loadResultDocumentInput(
       code: first.services.code,
       kind: first.services.kind ?? null,
     },
-    finalisedByStaffId: results.finalised_by_staff_id,
+    finalisedByStaffId: options?.signerStaffId ?? results.finalised_by_staff_id,
   });
+
+  const finalisedAt =
+    options?.finalisedAtOverride ??
+    (results.finalised_at ? new Date(results.finalised_at) : null);
 
   return {
     template: {
@@ -291,9 +317,8 @@ export async function loadResultDocumentInput(
     },
     visit: { visit_number: visit.visit_number },
     controlNo: results.control_no,
-    finalisedAt:
-      options?.finalisedAtOverride ??
-      (results.finalised_at ? new Date(results.finalised_at) : null),
+    finalisedAt,
+    ageAsOf: finalisedAt,
     performer,
     consultantPathologist: consultants.pathologist,
     medtech: performer

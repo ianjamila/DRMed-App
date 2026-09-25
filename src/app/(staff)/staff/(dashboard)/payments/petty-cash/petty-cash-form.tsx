@@ -14,11 +14,13 @@ interface Props {
   defaultDate: string;
   /** Manila today — a till payout can not be dated into the future. */
   maxDate: string;
+  /** The shift the page is currently viewing — recorded onto the entry. */
+  shiftId: string;
   /** Active partner labs for the "Which lab?" picker (Send Out category only). */
   partnerLabs: PartnerLab[];
 }
 
-export function PettyCashForm({ defaultDate, maxDate, partnerLabs }: Props) {
+export function PettyCashForm({ defaultDate, maxDate, shiftId, partnerLabs }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [err, setErr] = useState<string | null>(null);
@@ -71,6 +73,7 @@ export function PettyCashForm({ defaultDate, maxDate, partnerLabs }: Props) {
         vendor_label: vendor || null,
         description: description || null,
         vendor_id: isSendOut ? vendorId : null,
+        shift_id: shiftId,
       });
       if (!r.ok) {
         setErr(r.error);

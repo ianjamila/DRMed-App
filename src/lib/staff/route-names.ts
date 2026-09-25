@@ -37,6 +37,7 @@ export const ROUTE_NAME: Record<string, string> = {
   "/staff/admin/reports/stuck-tests": "Stuck Tests",
   "/staff/admin/reports/undone-releases": "Undone Releases",
   "/staff/admin/reports/deleted-entries": "Deleted Queue Entries",
+  "/staff/admin/reports/payment-changes": "Payment Changes",
   "/staff/admin/reports/patients-without-consent": "Patients Without Consent",
   "/staff/admin/accounting": "External Sync Status",
   "/staff/admin/closures": "Closures",

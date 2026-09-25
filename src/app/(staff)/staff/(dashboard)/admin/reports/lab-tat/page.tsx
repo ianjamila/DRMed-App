@@ -15,8 +15,9 @@ import {
   SECTION_LABEL,
   UNSECTIONED_LABEL,
 } from "@/lib/reports/lab-tat";
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 
-export const metadata = { title: "Lab TAT analytics" };
+export const metadata = { title: ROUTE_NAME["/staff/admin/reports/lab-tat"] };
 export const dynamic = "force-dynamic";
 
 interface SearchProps {
@@ -56,7 +57,7 @@ export default async function LabTatPage({ searchParams }: SearchProps) {
       </Link>
       <header className="mt-3">
         <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Lab TAT analytics
+          {ROUTE_NAME["/staff/admin/reports/lab-tat"]}
         </h1>
         <p className="mt-1 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
           Per-section turnaround time for released test requests in the

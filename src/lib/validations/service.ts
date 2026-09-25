@@ -9,6 +9,8 @@ export const SERVICE_KINDS = [
   "vaccine",
 ] as const;
 
+export type ServiceKind = (typeof SERVICE_KINDS)[number];
+
 export const SERVICE_SECTIONS = [
   "package",
   "chemistry",
