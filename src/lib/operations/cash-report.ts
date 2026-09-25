@@ -139,10 +139,21 @@ export interface CashReconRow {
    * them). Drives the "count sheet" links on the reconciliation panel.
    */
   closeIds: string[];
+  /**
+   * Shifts that moved cash this day and were never closed, once Admin has set
+   * the End of Day reminders start date (0185). Empty while the reminders are
+   * off — so an empty list means "not flagged", never "closed".
+   */
+  notClosedShiftIds: string[];
 }
-export function buildCashReconRows(eod: EodCloseRow[], days: string[]): CashReconRow[] {
+export function buildCashReconRows(
+  eod: EodCloseRow[],
+  days: string[],
+  notClosed: ReadonlyMap<string, string[]> = new Map(),
+): CashReconRow[] {
   return days.map((day) => {
     const forDay = eod.filter((e) => e.business_date === day);
+    const notClosedShiftIds = notClosed.get(day) ?? [];
     if (forDay.length === 0) {
       return {
         day,
@@ -152,10 +163,12 @@ export function buildCashReconRows(eod: EodCloseRow[], days: string[]): CashReco
         variance: 0,
         denominations: null,
         closeIds: [],
+        notClosedShiftIds,
       };
     }
     return {
       closeIds: forDay.map((e) => e.id).filter((id): id is string => !!id),
+      notClosedShiftIds,
       day,
       reconciled: true,
       expected: forDay.reduce((s, e) => s + num(e.expected_cash_php), 0),

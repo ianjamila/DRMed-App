@@ -2,7 +2,7 @@
 
 import { useState, useTransition, type ReactNode } from "react";
 import { Panel } from "@/components/ui/panel";
-import { manilaDate } from "@/lib/dates/manila";
+import { friendlyManilaDate, isISODate, manilaDate } from "@/lib/dates/manila";
 import {
   CASH_KIND_HELP,
   FIXED_CASH_KINDS,
@@ -19,6 +19,7 @@ import {
 import {
   updateCashRoutingAction,
   updateDefaultChangeFundAction,
+  updateEodRemindersStartAction,
   updatePaymentRoutingAction,
 } from "./actions";
 
@@ -62,6 +63,7 @@ export function MoneyRoutingClient(props: {
   cash: CashRule[];
   accounts: RoutingAccount[];
   defaultChangeFund: number;
+  eodRemindersStart: string | null;
   cashDrawerInUse: boolean;
   lastChanges: Record<string, LastChange>;
 }) {
@@ -136,6 +138,9 @@ export function MoneyRoutingClient(props: {
         />
         <div className="mt-4">
           <StartingCash amount={props.defaultChangeFund} lastChange={props.lastChanges.fund} />
+        </div>
+        <div className="mt-3">
+          <EodRemindersStart start={props.eodRemindersStart} lastChange={props.lastChanges.eodStart} />
         </div>
         <div className="mt-5">
           {props.cashDrawerInUse ? (
@@ -577,6 +582,93 @@ function StartingCash(props: { amount: number; lastChange?: LastChange }) {
             className="min-h-[44px] text-sm font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
           >
             Edit
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** When the End of Day "not closed" reminders start counting. Blank = off. */
+function EodRemindersStart(props: { start: string | null; lastChange?: LastChange }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(props.start ?? "");
+  const [err, setErr] = useState<string | null>(null);
+  const [pending, start] = useTransition();
+
+  const open = () => {
+    setValue(props.start ?? "");
+    setErr(null);
+    setEditing(true);
+  };
+  const saveAs = (next: string | null) => {
+    if (next !== null && !isISODate(next)) {
+      setErr("Pick a date, or turn the reminders off.");
+      return;
+    }
+    start(async () => {
+      setErr(null);
+      const r = await updateEodRemindersStartAction(next);
+      if (!r.ok) setErr(r.error);
+      else setEditing(false);
+    });
+  };
+
+  return (
+    <div
+      id="eod-reminders"
+      className="grid scroll-mt-24 gap-2 rounded-lg border border-[color:var(--color-brand-bg-mid)] px-4 py-3 sm:grid-cols-[minmax(0,13rem)_minmax(0,1fr)_auto] sm:items-start sm:gap-4"
+    >
+      <div className="min-w-0">
+        <p className="font-semibold text-[color:var(--color-brand-navy)]">End of Day reminders</p>
+        <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+          From this day on, any day that took or paid out cash but was never closed is flagged on
+          the dashboard, Cash In &amp; Out, End of Day and the Cash &amp; cards report. Leave it off while the
+          clinic isn&apos;t closing the day yet.
+        </p>
+      </div>
+      <div className="min-w-0 text-sm">
+        {editing ? (
+          <div>
+            <label htmlFor="eod-reminders-start" className="block text-xs font-semibold text-[color:var(--color-brand-text-soft)]">
+              Start counting from
+              <input
+                id="eod-reminders-start"
+                type="date"
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                className="mt-1 block min-h-[44px] w-44 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 text-sm font-normal text-[color:var(--color-brand-text)]"
+              />
+            </label>
+            <EditButtons pending={pending} onSave={() => saveAs(value || null)} onCancel={() => setEditing(false)} err={err} />
+            {props.start && (
+              <button
+                type="button"
+                onClick={() => saveAs(null)}
+                disabled={pending}
+                className="mt-2 min-h-[44px] text-sm font-semibold text-[color:var(--color-brand-cyan)] hover:underline disabled:opacity-50"
+              >
+                Turn reminders off
+              </button>
+            )}
+          </div>
+        ) : (
+          <>
+            <p className="text-base font-semibold">
+              {props.start ? `On — counting from ${friendlyManilaDate(props.start)}` : "Off"}
+            </p>
+            <LastChangedLine change={props.lastChange} />
+          </>
+        )}
+      </div>
+      <div className="sm:text-right">
+        {!editing && (
+          <button
+            type="button"
+            onClick={open}
+            className="min-h-[44px] text-sm font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
+          >
+            {props.start ? "Edit" : "Set a start date"}
           </button>
         )}
       </div>

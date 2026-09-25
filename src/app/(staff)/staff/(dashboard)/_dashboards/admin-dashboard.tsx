@@ -23,6 +23,7 @@ import {
 } from "@/lib/reports/hmo-unbilled-bands";
 import { HmoUnbilledCard } from "./_admin-components/hmo-unbilled-card";
 import { DashboardHeader } from "./_components/dashboard-header";
+import { EodReminderBanner } from "./_components/eod-reminder-banner";
 import { SectionHeading } from "./_components/section-heading";
 import { StatCard } from "./_components/stat-card";
 import { QuickLinks } from "./_components/quick-links";
@@ -778,6 +779,8 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
         title="Clinic command centre"
         updatedAt={new Date()}
       />
+
+      <EodReminderBanner />
 
       {showOperations && (
         <SectionHeading title="Operations">

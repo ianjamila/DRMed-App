@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { isISODate, todayManilaISODate } from "@/lib/dates/manila";
 import { ROUTE_NAME } from "@/lib/staff/route-names";
 import { loadPartnerLabs } from "@/lib/accounting/partner-labs.server";
+import { loadUnclosedEodDays } from "@/lib/accounting/eod-reminders";
 import { CashDrawerClient } from "./cash-drawer-client";
 
 export const metadata = { title: ROUTE_NAME["/staff/payments/cash-drawer"] };
@@ -75,6 +76,9 @@ export default async function CashDrawerPage({
   const supabase = await createClient();
   const partnerLabs = await loadPartnerLabs(supabase);
 
+  // Earlier days nobody closed — empty until Admin sets a reminders start date.
+  const unclosedDays = await loadUnclosedEodDays(admin, shift_id);
+
   return (
     <CashDrawerClient
       sessionUserId={session.user_id}
@@ -89,6 +93,7 @@ export default async function CashDrawerPage({
       routing={routing ?? []}
       staff={staff ?? []}
       partnerLabs={partnerLabs}
+      unclosedDays={unclosedDays}
     />
   );
 }

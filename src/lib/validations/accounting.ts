@@ -345,6 +345,14 @@ export const UpdateDefaultChangeFundSchema = z.object({
 });
 export type UpdateDefaultChangeFundInput = z.infer<typeof UpdateDefaultChangeFundSchema>;
 
+/** Money Routing: when the End of Day reminders start counting. null = off. */
+export const UpdateEodRemindersStartSchema = z.object({
+  start_date: z
+    .string()
+    .refine(isISODate, "Pick a date, or turn the reminders off.")
+    .nullable(),
+});
+
 export const CashShiftCreateSchema = z.object({
   code: z
     .string()
