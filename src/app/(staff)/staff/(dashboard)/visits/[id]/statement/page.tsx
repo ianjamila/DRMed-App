@@ -13,53 +13,26 @@ import { formatPhp } from "@/lib/marketing/format";
 import { manilaDate, manilaDateTime } from "@/lib/dates/manila";
 import { CONTACT, SITE } from "@/lib/marketing/site";
 import { formatPatientName } from "@/lib/patients/format-name";
-import { hasStatutoryDiscountLine } from "@/lib/pricing/statutory";
 import { paymentMethodLabel } from "@/lib/accounting/money-routing";
-import {
-  visibleReceiptLines,
-  receiptTotals,
-  toReceiptLine,
-} from "@/lib/visits/receipt-totals";
-import { livePayments, statementSummary } from "@/lib/visits/statement";
+import { STATEMENT_ROLES } from "@/lib/visits/statement";
+import { fetchStatement } from "@/lib/visits/statement-data";
 import { ReceiptLinesTable } from "@/components/staff/receipt-lines-table";
 import { StatementPrintButton } from "./print-button";
+import { EmailStatementButton } from "./email-button";
 
-// Share the header lookup with metadata within this request.
-const loadDetail = cache(async (id: string) => {
-  const supabase = await createClient();
-  return supabase
-    .from("visits")
-    .select(
-      `
-        id, visit_number, visit_date, hmo_provider_id,
-        patients!inner (
-          id, drm_id, first_name, middle_name, last_name,
-          senior_pwd_id_number
-        ),
-        hmo_providers ( name ),
-        test_requests (
-          id, deleted_at, parent_id, is_package_header,
-          base_price_php, discount_kind, discount_amount_php, final_price_php,
-          services ( code, name, price_php, kind )
-        )
-      `,
-    )
-    .eq("id", id)
-    // A deleted visit has no bill (0125) — nothing to state.
-    .is("deleted_at", null)
-    .maybeSingle();
-});
-
-// Money paper: the same audience as the visit page's payments section.
-const STATEMENT_ROLES = new Set(["reception", "admin"]);
+// One load per request, shared by metadata and the page (and, outside this
+// request, by the emailed copy — see statement-data.ts).
+const loadStatement = cache(async (id: string) =>
+  fetchStatement(await createClient(), id),
+);
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
   const session = await requireActiveStaff();
   const { id } = await params;
   if (!STATEMENT_ROLES.has(session.role)) return { title: ROUTE_NAME["/staff/visits/[id]/statement"] };
   return detailMetadata(ROUTE_NAME["/staff/visits/[id]/statement"], async () => {
-    const { data, error } = await loadDetail(id);
-    return error || !data ? null : data.visit_number;
+    const data = await loadStatement(id).catch(() => null);
+    return data ? data.visit.visit_number : null;
   });
 }
 export const dynamic = "force-dynamic";
@@ -81,38 +54,11 @@ export default async function StatementPage({ params }: Props) {
   const { id } = await params;
   const session = await requireActiveStaff();
   if (!STATEMENT_ROLES.has(session.role)) redirect(`/staff/visits/${id}`);
-  const supabase = await createClient();
-
-  const { data: visit } = await loadDetail(id);
-  if (!visit) notFound();
-  const patient = Array.isArray(visit.patients) ? visit.patients[0] : visit.patients;
-  if (!patient) notFound();
-  const hmo = Array.isArray(visit.hmo_providers) ? visit.hmo_providers[0] : visit.hmo_providers;
-
-  const [{ data: paymentRows, error: paymentErr }, { data: statutoryRows }] = await Promise.all([
-    supabase
-      .from("payments")
-      .select("id, amount_php, method, reference_number, received_at, voided_at")
-      .eq("visit_id", visit.id)
-      .order("received_at", { ascending: true })
-      .order("id", { ascending: true }),
-    supabase.from("discount_types").select("code").eq("is_statutory", true),
-  ]);
-  if (paymentErr) {
-    // A statement that silently lists no payments would show the whole bill
-    // as owed — refuse rather than print a wrong balance.
-    throw new Error(`statement: payments lookup failed: ${paymentErr.message}`);
-  }
-
-  const allLines = (visit.test_requests ?? []).map(toReceiptLine);
-  const lines = visibleReceiptLines(allLines);
-  const { subtotal, totalDiscount, total } = receiptTotals(lines);
-  const payments = livePayments(paymentRows ?? []);
-  const summary = statementSummary(total, payments, { hmoBilled: visit.hmo_provider_id != null });
-  const hasSeniorPwdLine = hasStatutoryDiscountLine(
-    lines,
-    new Set((statutoryRows ?? []).map((d) => d.code)),
-  );
+  const data = await loadStatement(id);
+  if (!data) notFound();
+  const {
+    visit, patient, hmo, lines, subtotal, totalDiscount, total, payments, summary, hasSeniorPwdLine,
+  } = data;
 
   // Viewing the statement discloses name, DRM-ID, bill lines and payments
   // (RA 10173). Deduped like `receipt.viewed`: force-dynamic re-renders on
@@ -156,7 +102,14 @@ export default async function StatementPage({ params }: Props) {
         >
           ← Visit
         </Link>
-        <StatementPrintButton visitId={visit.id} />
+        <div className="flex flex-wrap items-start justify-end gap-2">
+          <EmailStatementButton
+            visitId={visit.id}
+            patientEmail={patient.email}
+            patientId={patient.id}
+          />
+          <StatementPrintButton visitId={visit.id} />
+        </div>
       </div>
 
       <article className="receipt-sheet rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-8 print:border-0 print:p-0 print:text-xs">

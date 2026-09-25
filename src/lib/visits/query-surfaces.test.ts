@@ -544,9 +544,9 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
     lifecycle: "any",
     why: "Hydrates the ATTRIBUTION on a receipt.printed audit row (RA 10173), not a read of current data. The receipt page 404s on a deleted visit, so the only way here with one is a delete between render and print — and window.print() has already run. Filtering would blank the patient id, visit number and total on the record of a disclosure that did happen.",
   },
-  "app/(staff)/staff/(dashboard)/visits/[id]/statement/page.tsx": {
+  "lib/visits/statement-data.ts": {
     lifecycle: "live",
-    why: "The statement of account — same rule as the receipt: a deleted visit bills nothing, so there is nothing to state.",
+    why: "The statement of account, printed and emailed (one loader for both) — same rule as the receipt: a deleted visit bills nothing, so there is nothing to state.",
   },
   "app/(staff)/staff/(dashboard)/visits/[id]/statement/log-print-action.ts": {
     lifecycle: "any",

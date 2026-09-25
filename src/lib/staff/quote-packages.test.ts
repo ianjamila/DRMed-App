@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { packageContents, coveredByPickedPackage, matchQuoteServices } from "./quote-packages";
 
-const comp = (id: string, name: string) => ({ id, name });
+const comp = (id: string, name: string, code?: string) => ({ id, name, ...(code ? { code } : {}) });
 
 describe("packageContents", () => {
   it("groups tests under their package in the package's own order", () => {
@@ -29,6 +29,13 @@ describe("packageContents", () => {
       { package_service_id: "p", sort_order: 3, component: [] },
     ]);
     expect(map.get("p")).toEqual([comp("cbc", "CBC")]);
+  });
+
+  it("carries each test's code through, so search can match it", () => {
+    const map = packageContents([
+      { package_service_id: "p", sort_order: 1, component: comp("fbs", "Fasting Blood Sugar", "FBS") },
+    ]);
+    expect(map.get("p")).toEqual([{ id: "fbs", name: "Fasting Blood Sugar", code: "FBS" }]);
   });
 
   it("has no entry for a package with no readable tests", () => {
@@ -61,14 +68,14 @@ describe("coveredByPickedPackage", () => {
 });
 
 describe("matchQuoteServices", () => {
-  const svc = (id: string, name: string, code: string, includes: { id: string; name: string }[] = []) => ({
+  const svc = (id: string, name: string, code: string, includes: { id: string; name: string; code?: string }[] = []) => ({
     id,
     name,
     code,
     includes,
   });
   const catalog = [
-    svc("exec", "Executive Package", "EXEC_PKG", [comp("ua", "Urinalysis"), comp("cbc", "CBC + PC")]),
+    svc("exec", "Executive Package", "EXEC_PKG", [comp("ua", "Urinalysis"), comp("cbc", "CBC + PC"), comp("fbs", "Fasting Blood Sugar", "FBS")]),
     svc("basic", "Basic Package", "BASIC_PKG", [comp("cbc", "CBC + PC")]),
     svc("ua", "Urinalysis", "URINALYSIS"),
     svc("xray", "Chest X-Ray", "XRAYCHEST"),
@@ -97,5 +104,10 @@ describe("matchQuoteServices", () => {
   it("is case-insensitive and matches codes", () => {
     expect(matchQuoteServices(catalog, "xraychest").map((m) => m.service.id)).toEqual(["xray"]);
     expect(matchQuoteServices(catalog, "cbc").map((m) => m.service.id)).toEqual(["exec", "basic"]);
+  });
+
+  it("finds a package through an included test's code, naming the test", () => {
+    const out = matchQuoteServices(catalog, "fbs");
+    expect(out.map((m) => [m.service.id, m.viaIncludes])).toEqual([["exec", ["Fasting Blood Sugar"]]]);
   });
 });

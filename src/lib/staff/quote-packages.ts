@@ -15,11 +15,14 @@
 export interface PackageIncludedTest {
   id: string;
   name: string;
+  /** The test's service code, so a search for "FBS" finds the packages covering it. */
+  code?: string;
 }
 
 interface EmbeddedComponent {
   id: string;
   name: string;
+  code?: string | null;
 }
 
 /** A `package_components` row as the quote page selects it. */
@@ -56,7 +59,7 @@ export function packageContents(
   const out = new Map<string, PackageIncludedTest[]>();
   for (const r of sorted) {
     const arr = out.get(r.pkg) ?? [];
-    arr.push({ id: r.comp.id, name: r.comp.name });
+    arr.push({ id: r.comp.id, name: r.comp.name, ...(r.comp.code ? { code: r.comp.code } : {}) });
     out.set(r.pkg, arr);
   }
   return out;
@@ -91,7 +94,7 @@ export interface QuoteSearchMatch<S> {
 
 /**
  * The Quick Quote search: services whose name or code contains the query,
- * then packages that don't match themselves but include a test that does.
+ * then packages that don't match themselves but include a test whose name or code does.
  * Direct matches come first — someone typing "urinalysis" most likely wants
  * the test itself — and each group keeps the catalog's own order.
  */
@@ -109,7 +112,7 @@ export function matchQuoteServices<
       continue;
     }
     const hits = service.includes
-      .filter((t) => t.name.toLowerCase().includes(q))
+      .filter((t) => `${t.name} ${t.code ?? ""}`.toLowerCase().includes(q))
       .map((t) => t.name);
     if (hits.length > 0) viaPackage.push({ service, viaIncludes: hits });
   }

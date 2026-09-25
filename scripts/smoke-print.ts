@@ -16,7 +16,11 @@
 //      clip around the sheet, no repeating <tfoot>, the text the paper must
 //      carry), prints it to PDF with the page's own @page size, and checks
 //      the page count (a stray blank page or a spill shows up there).
-//   4. Deletes everything it made — including the journal entries the GL
+//   4. Clicks through the statement's other two doors: "Email to patient"
+//      (confirm shows the address on file; the send leaves one audit row —
+//      the patient's address is .invalid, so nothing can be delivered) and
+//      the Statement link on the visit's Patient AR row.
+//   5. Deletes everything it made — including the journal entries the GL
 //      bridges post for the payment, payout and cash close — even on failure.
 //
 // Usage (local stack + dev server running):
@@ -54,6 +58,7 @@ if (!SUPABASE_URL || !SERVICE_KEY) {
   console.error("Missing NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY");
   process.exit(1);
 }
+const PATIENT_EMAIL = "print-smoke@example.invalid";
 const APP_BASE = (process.env.APP_BASE ?? "http://localhost:3000").replace(/\/$/, "");
 
 interface Target {
@@ -131,7 +136,12 @@ async function seed(db: pg.Client, staffId: string, email: string, password: str
     "insert into staff_profiles (id, full_name, role, is_active) values ($1, 'Print Smoke', 'admin', true)",
     [staffId],
   );
-  await q("insert into patients (id, first_name, last_name, birthdate) values ($1, 'Print', 'Smoke', '1980-01-15')", [s.patientId]);
+  // A .invalid address (RFC 2606) can never be delivered, even if this
+  // machine has live mail keys switched on.
+  await q(
+    "insert into patients (id, first_name, last_name, birthdate, email) values ($1, 'Print', 'Smoke', '1980-01-15', $2)",
+    [s.patientId, PATIENT_EMAIL],
+  );
   await q(
     "insert into physicians (id, slug, full_name, specialty) values ($1, $2, 'Dr. Print Smoke', 'General Medicine')",
     [s.physicianId, `smoke-print-${tag.toLowerCase()}`],
@@ -198,6 +208,15 @@ async function seed(db: pg.Client, staffId: string, email: string, password: str
     `insert into test_requests (visit_id, service_id, requested_by, base_price_php, final_price_php)
      values ($1, $2, $3, 550, 550)`,
     [s.visitId, xray, staffId],
+  );
+  // The app stamps visits.total_php when it creates a visit; nothing derives
+  // it from inserted lines. Without it the ₱3,000 payment below reads as
+  // "paid" and the visit never reaches Patient AR.
+  await q(
+    `update visits set total_php =
+       (select sum(final_price_php) from test_requests where visit_id = $1)
+     where id = $1`,
+    [s.visitId],
   );
   await q(
     "insert into payments (id, visit_id, amount_php, method, received_by) values ($1, $2, 3000, 'cash', $3)",
@@ -443,6 +462,70 @@ async function main(): Promise<void> {
       for (const p of problems) console.log(`    - ${p}`);
       if (problems.length) failures++;
     }
+
+    // Not print surfaces, but the statement's two other doors: emailing it,
+    // and reaching it from Patient AR. Both need the seeded, part-paid visit.
+    const check = async (name: string, run: () => Promise<string[]>) => {
+      let problems: string[];
+      try {
+        problems = await run();
+      } catch (e) {
+        problems = [`could not run: ${String((e as Error).message).split("\n")[0]}`];
+      }
+      console.log(`${problems.length ? "✗" : "✓"} ${name}`);
+      for (const p of problems) console.log(`    - ${p}`);
+      if (problems.length) failures++;
+    };
+
+    await check("statement-email", async () => {
+      const problems: string[] = [];
+      await page.emulateMedia({ media: "screen" });
+      await page.goto(`${APP_BASE}/staff/visits/${s.visitId}/statement`, { timeout: 180_000 });
+      await page.getByRole("button", { name: "Email to patient" }).click();
+      const confirm = page.getByRole("group", { name: "Email the statement" });
+      if (!(await confirm.textContent())?.includes(PATIENT_EMAIL)) {
+        problems.push("the confirm step does not show the address on file");
+      }
+      await confirm.getByRole("button", { name: "Send email" }).click();
+      // Locally mail is normally switched off, so the honest outcome is the
+      // "not switched on" notice; with live keys it is the success toast.
+      // The confirm's own alert, not the page's: Next.js keeps an always-
+      // present role="alert" route announcer, which would match at once.
+      await confirm
+        .getByRole("alert")
+        .or(page.getByText(`Statement emailed to ${PATIENT_EMAIL}`))
+        .first()
+        .waitFor({ timeout: 60_000 });
+      const { rows } = await db.query(
+        `select action from audit_log
+          where actor_id = $1 and resource_id = $2
+            and action in ('statement.emailed', 'statement.email_failed')
+            and metadata->>'to' = $3`,
+        [s.staffId, s.visitId, PATIENT_EMAIL],
+      );
+      if (rows.length !== 1) {
+        const shown = await confirm.getByRole("alert").allTextContents();
+        problems.push(`expected 1 send audit row, found ${rows.length}${shown.length ? ` (page said: ${shown.join(" / ")})` : ""}`);
+      }
+      return problems;
+    });
+
+    await check("patient-ar-statement-link", async () => {
+      await page.goto(
+        `${APP_BASE}/staff/admin/accounting/patient-ar?scope=all&sort=visit_date&dir=desc&size=100`,
+        { timeout: 180_000 },
+      );
+      const link = page.locator(`a[href="/staff/visits/${s.visitId}/statement"]`);
+      if ((await link.count()) === 1) return [];
+      const { rows } = await db.query(
+        "select payment_status, total_php, paid_php, visit_number from visits where id = $1",
+        [s.visitId],
+      );
+      const onPage = rows[0] ? await page.getByText(`#${String(rows[0].visit_number).padStart(4, "0")}`).count() : 0;
+      return [
+        `no Statement link on the seeded visit's row (visit ${JSON.stringify(rows[0] ?? null)}; its number appears ${onPage}× on the page)`,
+      ];
+    });
   } finally {
     await browser.close();
     await cleanup(db, seeded).catch((e) => {
@@ -454,10 +537,10 @@ async function main(): Promise<void> {
 
   console.log(`\nPDFs: ${outDir}`);
   if (failures) {
-    console.error(`${failures} print surface(s) failed.`);
+    console.error(`${failures} check(s) failed.`);
     process.exit(1);
   }
-  console.log("All print surfaces passed.");
+  console.log("All print surfaces and statement checks passed.");
 }
 
 main().catch((e) => {

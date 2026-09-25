@@ -52,3 +52,9 @@ export function statementSummary(
   else balanceLabel = opts.hmoBilled ? "Balance" : "Balance due";
   return { charges, paid, balance, balanceLabel };
 }
+
+/**
+ * Who may open, print or email a statement: the money paper's audience — the
+ * same roles that see the visit page's payments section.
+ */
+export const STATEMENT_ROLES: ReadonlySet<string> = new Set(["reception", "admin"]);

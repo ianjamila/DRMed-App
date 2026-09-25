@@ -4,6 +4,7 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
 import { audit } from "@/lib/audit/log";
 import { ipAndAgent } from "@/lib/server/action-helpers";
+import { STATEMENT_ROLES } from "@/lib/visits/statement";
 
 /**
  * Record that staff printed a visit's statement of account.
@@ -15,7 +16,7 @@ import { ipAndAgent } from "@/lib/server/action-helpers";
  */
 export async function logStatementPrintAction(visitId: string): Promise<void> {
   const session = await requireActiveStaff();
-  if (session.role !== "reception" && session.role !== "admin") return;
+  if (!STATEMENT_ROLES.has(session.role)) return;
   const supabase = await createClient();
 
   // Deliberately NOT filtered on deleted_at, for the receipt's reason: this

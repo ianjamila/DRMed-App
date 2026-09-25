@@ -389,7 +389,7 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
           </p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-sm">
+            <table className="w-full min-w-[800px] text-sm">
               <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                 <tr>
                   {th("visit_date", "Visit date")}
@@ -400,6 +400,10 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
                   {th("hmo", "HMO")}
                   {th("outstanding", "Outstanding", "right")}
                   {th("payment_status", "Status")}
+                  {/* One click to the PIN-free statement of account — the
+                      paper that proves an open balance to the patient or
+                      their company. */}
+                  <PlainTh label="Statement" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
@@ -459,6 +463,15 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
                         >
                           {paymentStatusLabel(v.payment_status)}
                         </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <Link
+                          href={`/staff/visits/${v.id}/statement`}
+                          aria-label={`Statement of account for visit #${String(v.visit_number).padStart(4, "0")}`}
+                          className="text-xs font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
+                        >
+                          Open
+                        </Link>
                       </td>
                     </tr>
                   );

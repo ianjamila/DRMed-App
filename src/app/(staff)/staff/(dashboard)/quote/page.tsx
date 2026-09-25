@@ -50,7 +50,7 @@ export default async function QuotePage({ searchParams }: Props) {
       .from("package_components")
       .select(
         `package_service_id, sort_order,
-         component:services!package_components_component_service_id_fkey ( id, name )`,
+         component:services!package_components_component_service_id_fkey ( id, name, code )`,
       ),
   ]);
   if (componentErr) {
