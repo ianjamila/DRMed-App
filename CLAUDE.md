@@ -25,9 +25,9 @@ Key reference artifacts:
   every post-1.0 programme (partner revisions, release lifecycle, group templates, EOD
   denomination count…). Read the spec before re-deriving a design decision.
 
-Migration ledger: **prod head = 0178** (`released_payment_removed_alert`, #228) as of 2026-09-25;
-**0176** (`result_patient_download_and_remarks`, #226) and **0177** (`statement_email_claim`, #212) are
-applied too. The prod ledger is not contiguous (no 0165, 0167–0170):
+Migration ledger: **prod head = 0180** (`posted_lookup_comments`, #231 — comments only) as of 2026-09-25;
+**0178** (`released_payment_removed_alert`, #228), **0176** (`result_patient_download_and_remarks`, #226) and **0177** (`statement_email_claim`, #212) are
+applied too. The prod ledger is not contiguous (no 0165, 0167–0170, 0179):
 **0175** (`patient_billed_catalog_read`) and **0177** (#212), **0174** (`correct_payment_stale_guard`,
 #224), **0173** (`ledger_reversal_pairs`, #222), **0172** (`result_edit_commit`, #223 — applied
 after 0173 with `--include-all`), **0171**, **0166** (`drop_send_out_accrual_tables`, #211, pushed
@@ -98,7 +98,7 @@ Compliance target: **Philippine Data Privacy Act (RA 10173)**. Locale: en-PH, As
 | `supabase start` | Run a local Supabase stack (needs Docker) — the only "staging" |
 | `npm run seed:test` / `seed:services` / `seed:physicians` / `seed:hmo` / `seed:templates` / `seed:signatures` / etc. | Idempotent seed scripts — target the **local** stack by default (see below) |
 | `npm run smoke:results` / `smoke:chemistry` / `smoke:dashboards` | Render-pipeline / consolidated-chemistry / dashboard smoke tests |
-| `npm run smoke:print` | Every staff print surface in real Chrome with scrollbars on (local stack; needs a dev server — `APP_BASE=http://localhost:3007 npm run smoke:print`). Seeds and deletes its own data; checks clip, repeating `<tfoot>`, required text and PDF page count, plus the statement's Email-to-patient, Patient AR link and the patient's own portal statement (start the dev server with `SUPABASE_JWT_SECRET` from `supabase status -o env`) |
+| `npm run smoke:print` | Every staff print surface in real Chrome with scrollbars on (local stack; needs a dev server — `APP_BASE=http://localhost:3007 npm run smoke:print`). Seeds and deletes its own data; checks clip, repeating `<tfoot>`, required text and PDF page count, plus the statement's Email-to-patient, Patient AR link, the patient's own portal statement, the waived amount on the Queue / patient Visits / Visit Records (+ CSV), the portal's Your visits list, and a mid-session consent withdrawal (client navigation, stale-tab email, data export and the page payload must all refuse) (start the dev server with `SUPABASE_JWT_SECRET` from `supabase status -o env`) |
 
 There is **no PR-triggered CI** — `.github/workflows/` holds only scheduled jobs:
 `db-backup.yml` and `cron-watchdog.yml` (independent jobs for Vercel cron heartbeats

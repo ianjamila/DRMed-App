@@ -26,6 +26,7 @@ import {
 } from "@/lib/visits/queue-stage";
 import { visitDeletability, hasOpenHmoClaim } from "@/lib/visits/deletion";
 import { shouldPrintReceipt } from "@/lib/visits/receipt-policy";
+import { waivedAmount } from "@/lib/visits/statement";
 import { countReleasedLines } from "@/lib/visits/payment-edit";
 import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
 import { SampleBadge } from "@/components/staff/sample-badge";
@@ -560,6 +561,21 @@ function PaymentBadge({ visit }: { visit: QueueVisitRow }) {
   );
 }
 
+// Waiving writes no payment, so a waived visit reads "Paid ₱200" on a ₱1,500
+// bill — which looks like money still owed, and on the Processing tab nothing
+// else in the row says otherwise (the status column shows tests there). Name
+// the remainder, same rule as the visit page and the statement.
+function WaivedNote({ visit, inline = false }: { visit: QueueVisitRow; inline?: boolean }) {
+  const waived = waivedAmount(visit);
+  if (waived <= 0) return null;
+  const className = "font-sans text-xs text-[color:var(--color-brand-text-soft)]";
+  return inline ? (
+    <span className={className}> · {PHP.format(waived)} waived</span>
+  ) : (
+    <div className={className}>{PHP.format(waived)} waived</div>
+  );
+}
+
 // A Waiting row whose results already went out while it was paid — a
 // payment deleted or moved, or a test added after the release. Released
 // results stay released (owner rule); the badge only says so, so the counter
@@ -634,7 +650,10 @@ function QueueRow({
             {PHP.format(balanceOf(visit))}
           </span>
         ) : (
-          PHP.format(Number(visit.paid_php))
+          <>
+            {PHP.format(Number(visit.paid_php))}
+            <WaivedNote visit={visit} />
+          </>
         )}
       </td>
       <td className="px-4 py-3 text-right">
@@ -713,6 +732,7 @@ function QueueCard({
               <span className="font-mono">
                 {PHP.format(Number(visit.paid_php))}
               </span>
+              <WaivedNote visit={visit} inline />
             </span>
           )}
         </div>

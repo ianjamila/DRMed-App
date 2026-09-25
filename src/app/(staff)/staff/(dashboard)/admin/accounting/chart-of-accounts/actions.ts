@@ -203,6 +203,7 @@ export async function toggleAccountActiveAction(
   // Lines in closed periods don't block — those are immutable history.
   // The check is delegated to the SQL helper coa_account_has_open_period_postings
   // (defined in migration 0028) to avoid a multi-hop join through Supabase JS.
+  // Its posted-only read is deliberate (a live-entry lookup, not a total) — see its 0180 comment.
   if (current.is_active) {
     const { data: hasOpen, error: rpcError } = await admin.rpc(
       "coa_account_has_open_period_postings",

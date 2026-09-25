@@ -5,6 +5,7 @@ import { audit } from "@/lib/audit/log";
 import { ipAndAgent } from "@/lib/server/action-helpers";
 import { reportError } from "@/lib/observability/report-error";
 import { getPatientSession } from "@/lib/auth/patient-session-cookies";
+import { PORTAL_CONSENT_REQUIRED_ERROR, portalConsentCurrent } from "@/lib/portal/consent-guard";
 import {
   BookingSchema,
   ExistingPatientBookingSchema,
@@ -234,6 +235,13 @@ export async function submitBookingAction(_prev: BookingResult | null, formData:
   if (isPortalSource) {
     const session = await getPatientSession();
     if (!session) return { ok: false, error: "Your session expired. Please sign in again." };
+    // Same rule as every portal entry point (consent-guard.ts): /portal/book
+    // shows the consent notice instead of the form, but a tab opened before
+    // staff recorded a withdrawal can still submit. The anonymous /schedule
+    // path records its own consent and stays open.
+    if (!(await portalConsentCurrent(session.patient_id))) {
+      return { ok: false, error: PORTAL_CONSENT_REQUIRED_ERROR };
+    }
     resolvedPatientIdFromSession = session.patient_id;
   }
 

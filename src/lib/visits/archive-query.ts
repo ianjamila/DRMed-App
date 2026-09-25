@@ -25,6 +25,7 @@ import {
 } from "./classification";
 import { archiveSearchPlan, applyArchiveSearch } from "./archive-search";
 import { shouldPrintReceipt } from "./receipt-policy";
+import { waivedAmount } from "./statement";
 import { fetchCompleteRowsByIds } from "@/lib/reports/paging";
 
 type AnyClient = SupabaseClient<Database>;
@@ -85,6 +86,11 @@ export interface ArchiveRow {
   testCount: number;
   total: number;
   paid: number;
+  /**
+   * What the clinic waived, summed per member: a split visit whose halves are
+   * paid + waived combines to "paid", which would otherwise hide the waiver.
+   */
+  waived: number;
   status: string;
   methods: string;
   deleted: boolean;
@@ -380,6 +386,7 @@ export async function fetchArchiveWindow(
         ),
         total: f.members.reduce((sum, m) => sum + Number(m.total_php), 0),
         paid: f.members.reduce((sum, m) => sum + Number(m.paid_php), 0),
+        waived: f.members.reduce((sum, m) => sum + waivedAmount(m), 0),
         status: combinePaymentStatus(f.members.map((m) => m.payment_status)),
         methods: methodsFor(f.members.flatMap((m) => m.payments ?? [])),
         deleted: deletedMember !== undefined,
