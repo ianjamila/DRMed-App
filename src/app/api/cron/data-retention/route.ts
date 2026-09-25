@@ -94,7 +94,7 @@ export async function GET(request: Request) {
     // night forever — a `skipped_paused` run does no other work (run.ts
     // returns right after this row is written, before heartbeat/stage/
     // commit/applyCustomerOps), so nothing else ever points at its id:
-    // sheet_sync_changes/sheet_customer_rows/sheet_encounter_lines
+    // sheet_sync_changes and the sheet customer/encounter mirror tables
     // (run_id NOT NULL, no ON DELETE) and sheet_mirror_staging (ON DELETE
     // CASCADE) never carry a row for it, and reverted_by_run_id is only set
     // by a revert of a run that made real changes. lastGoodRowsRead already
