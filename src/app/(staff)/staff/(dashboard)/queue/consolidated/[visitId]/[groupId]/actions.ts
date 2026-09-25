@@ -14,6 +14,10 @@ import {
   finaliseConsolidatedReport,
   type FinaliseResult,
 } from "@/lib/actions/results/finalise-consolidated";
+import {
+  amendConsolidatedReport,
+  type AmendConsolidatedResult,
+} from "@/lib/actions/results/amend-consolidated";
 
 const ClaimSchema = z.object({
   testRequestIds: z.array(z.string().uuid()).min(1),
@@ -133,6 +137,28 @@ export async function finaliseConsolidated(
   try {
     const parsed = FinaliseSchema.parse(input);
     return await finaliseConsolidatedReport(parsed);
+  } catch (err) {
+    return { ok: false, error: (err as Error).message };
+  }
+}
+
+const AmendSchema = z.object({
+  resultId: z.string().uuid(),
+  expectedAmendmentCount: z.number().int().min(0),
+  reason: z.string(),
+  values: z.array(
+    z.object({
+      parameter_id: z.string().uuid(),
+      numeric_value_si: z.number().nullable(),
+      numeric_value_conv: z.number().nullable(),
+    }),
+  ),
+});
+
+export async function amendConsolidated(input: unknown): Promise<AmendConsolidatedResult> {
+  try {
+    const parsed = AmendSchema.parse(input);
+    return await amendConsolidatedReport(parsed);
   } catch (err) {
     return { ok: false, error: (err as Error).message };
   }

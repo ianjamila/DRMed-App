@@ -1,16 +1,49 @@
 /**
  * Chemistry consolidated report smoke test.
  *
- * Bootstraps a fixture Chemistry visit with 3 test_requests, renders the
- * consolidated PDF, and asserts:
- *   S5 (render): PDF bytes contain the group title "Chemistry" and the
- *                consultant pathologist's PRC license number.
- *   S6 (env-var fail-fast): The loader throws with a message that includes
- *                "CONSULTANT_PATHOLOGIST_STAFF_ID" when that var is absent.
+ * Bootstraps a fixture Chemistry visit (2 test_requests sharing one combined
+ * `results` row) and renders it through `loadResultDocumentInput` — the SAME
+ * loader the app's consolidated-finalise and edit paths call — rather than
+ * hand-rolling a second copy of the query logic. That second copy is exactly
+ * what went stale here before: it read `unit_label` / `display_order` /
+ * `result_value_ranges`, none of which exist anymore (see
+ * `src/lib/results/loaders.ts` and `.../types.ts` for the current shape).
  *
- * Avoids importing src/lib/supabase/admin.ts (which has a `server-only`
- * guard that tsx doesn't satisfy). Instead, builds its own admin client
- * from env vars, mirroring the same pattern used in smoke-render-results.ts.
+ * Proves:
+ *   S1 (original render): loadResultDocumentInput + renderResultPdf produce a
+ *       valid PDF for a real consolidated chemistry result.
+ *   S2 (edit render): the SAME loader, called with `valuesOverride` (one
+ *       value changed) and `signerStaffId` (a different staff member),
+ *       still renders — and:
+ *         - `controlNo` is unchanged (edits never renumber a report),
+ *         - `finalisedAt` / `ageAsOf` stay the ORIGINAL `results.finalised_at`
+ *           even though no `finalisedAtOverride` was passed (an edit keeps
+ *           the report's original date — 0172 / owner decision 2026-09-24),
+ *         - `performer` reflects the NEW signer, not the original finaliser.
+ *   S3 (env-var fail-fast, real code path): deleting
+ *       CONSULTANT_PATHOLOGIST_STAFF_ID and calling loadResultDocumentInput
+ *       again throws with a message naming the missing var (src/lib/results/
+ *       signatures.ts's requireEnv) — not simulated, the actual loader.
+ *
+ * loadResultDocumentInput lazy-imports src/lib/supabase/admin.ts and
+ * ./signatures, both of which `import "server-only"` — that throws under
+ * plain tsx (no bundler sets the `react-server` export condition Next uses
+ * to swap it for an empty stub). `--conditions=react-server` would fix that
+ * but breaks @react-pdf/renderer's reconciler, which also branches on that
+ * condition (verified empirically 2026-09-25). So `npm run smoke:chemistry`
+ * instead runs this file as
+ * `tsx --require ./scripts/lib/server-only-shim.cjs`, which preloads a
+ * synthetic "already loaded" cache entry for `server-only`'s resolved path —
+ * the same effect as Next's `empty.js` swap, but scoped to just that one
+ * package (see the shim file for the full rationale). `smoke:results`
+ * predates this and avoids the loader entirely instead (see its own
+ * top-of-file comment) — this script no longer needs to.
+ *
+ * The local stack has no chemistry `services` rows (`seed:services` doesn't
+ * seed chemistry — see `docs/superpowers/plans/2026-09-24-released-chemistry-
+ * view-and-amend.md`), so this script creates two minimal fixture services
+ * under the CHEMISTRY report_group (code prefix `ZZSMK172_`) alongside the
+ * fixture patient/visit/staff, and deletes all of it in `finally`.
  *
  * Run with:
  *   npm run smoke:chemistry
@@ -22,37 +55,23 @@ import { writeFileSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "../src/types/database";
 import { renderResultPdf } from "../src/lib/results/render-pdf";
-import type {
-  ResultDocumentInput,
-  TemplateParam,
-  ParamRange,
-  PatientSex,
-} from "../src/lib/results/types";
+import { loadResultDocumentInput } from "../src/lib/results/loaders";
+import type { ResultDocumentInput } from "../src/lib/results/types";
 
-// ---------------------------------------------------------------------------
-// Env-var fail-fast (S6 gate)
-// ---------------------------------------------------------------------------
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const CONSULTANT_PATHOLOGIST_STAFF_ID =
-  process.env.CONSULTANT_PATHOLOGIST_STAFF_ID;
 
 requireLocalOrExplicitProd("smoke:chemistry", {
-  writes: "creates a fixture Chemistry visit with 3 test requests and a result",
+  writes:
+    "creates fixture chemistry services, a patient/visit/2 test_requests, a " +
+    "combined structured result + values, and 5 fixture staff — all deleted " +
+    "in finally",
 });
 
 if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
   console.error(
     "Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY. " +
-      "Source .env.local first: set -a && . .env.local && set +a",
-  );
-  process.exit(1);
-}
-// S6: verify the loader env-var fail-fast is detected before we even start.
-if (!CONSULTANT_PATHOLOGIST_STAFF_ID) {
-  console.error(
-    "S6 FAIL: CONSULTANT_PATHOLOGIST_STAFF_ID is not set. " +
-      "The loader will fail at render time — aborting smoke.",
+      "Source .env.development.local first, or run via `npm run smoke:chemistry`.",
   );
   process.exit(1);
 }
@@ -61,380 +80,284 @@ const admin = createClient<Database>(SUPABASE_URL, SERVICE_ROLE_KEY, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
 
-const SMOKE_DRM_ID = "SMK-25-RENDER";
-
-// ---------------------------------------------------------------------------
-// Helpers (replicate loaders.ts / signatures.ts logic without server-only)
-// ---------------------------------------------------------------------------
-
-async function loadTemplateParamsForGroup(
-  groupId: string,
-): Promise<TemplateParam[]> {
-  const { data: tpl } = await admin
-    .from("result_templates")
-    .select("id")
-    .eq("report_group_id", groupId)
-    .eq("is_active", true)
-    .maybeSingle();
-  if (!tpl) throw new Error("No active template for group " + groupId);
-
-  const { data: params } = await admin
-    .from("result_template_params")
-    .select("id, parameter_name, unit_label, unit_label_si, display_order, gender, normal_min, normal_max, critical_low, critical_high, section_label")
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .eq("template_id", tpl.id) as { data: any[] | null };
-  if (!params) return [];
-
-  const paramIds = params.map((p: { id: string }) => p.id);
-  const { data: ranges } = await admin
-    .from("result_value_ranges")
-    .select("parameter_id, age_min_days, age_max_days, gender, normal_min, normal_max, critical_low, critical_high")
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .in("parameter_id", paramIds) as { data: any[] | null };
-
-  return params.map((p: {
-    id: string;
-    parameter_name: string;
-    unit_label: string | null;
-    unit_label_si: string | null;
-    display_order: number;
-    gender: string | null;
-    normal_min: number | null;
-    normal_max: number | null;
-    critical_low: number | null;
-    critical_high: number | null;
-    section_label: string | null;
-  }) => ({
-    id: p.id,
-    parameterName: p.parameter_name,
-    unitLabel: p.unit_label ?? undefined,
-    unitLabelSi: p.unit_label_si ?? undefined,
-    displayOrder: p.display_order,
-    gender: (p.gender as "M" | "F" | null) ?? null,
-    normalMin: p.normal_min ?? null,
-    normalMax: p.normal_max ?? null,
-    criticalLow: p.critical_low ?? null,
-    criticalHigh: p.critical_high ?? null,
-    sectionLabel: p.section_label ?? null,
-    ranges: (ranges ?? [])
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .filter((r: any) => r.parameter_id === p.id)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .map((r: any): ParamRange => ({
-        ageMinDays: r.age_min_days,
-        ageMaxDays: r.age_max_days,
-        gender: r.gender,
-        normalMin: r.normal_min,
-        normalMax: r.normal_max,
-        criticalLow: r.critical_low,
-        criticalHigh: r.critical_high,
-      })),
-  }));
-}
-
-async function loadSignatureBuffer(
-  staffId: string,
-): Promise<Buffer | null> {
-  const { data: sp } = await admin
-    .from("staff_profiles")
-    .select("signature_path")
-    .eq("id", staffId)
-    .maybeSingle();
-  if (!sp?.signature_path) return null;
-  const { data: blob } = await admin.storage
-    .from("signatures")
-    .download(sp.signature_path);
-  if (!blob) return null;
-  return Buffer.from(await blob.arrayBuffer());
-}
+const SMOKE_DRM_ID = "SMK-172-CHEM";
+const SMOKE_VISIT_NUMBER = "V-SMK172-CHEM";
+const SERVICE_CODE_A = "ZZSMK172_FBS";
+const SERVICE_CODE_B = "ZZSMK172_BUN";
+const STAFF_EMAILS = {
+  pathologist: "smk172-pathologist@example.test",
+  radiologist: "smk172-radiologist@example.test",
+  cardiologist: "smk172-cardiologist@example.test",
+  finaliser: "smk172-finaliser@example.test",
+  editor: "smk172-editor@example.test",
+} as const;
 
 // ---------------------------------------------------------------------------
 // Fixture bootstrap + cleanup
 // ---------------------------------------------------------------------------
 
-async function cleanup() {
-  // Must delete in FK-safe order due to ON DELETE RESTRICT constraints.
+async function ensureStaffUser(email: string, fullName: string, role: string): Promise<string> {
+  const { data: existing } = await admin.auth.admin.listUsers({ page: 1, perPage: 200 });
+  let user = existing.users.find((u) => u.email === email);
+  if (!user) {
+    const { data, error } = await admin.auth.admin.createUser({
+      email,
+      password: `Smk172-${Math.random().toString(36).slice(2)}!`,
+      email_confirm: true,
+    });
+    if (error) throw new Error(`create fixture staff user ${email} failed: ${error.message}`);
+    user = data.user;
+  }
+  if (!user) throw new Error(`fixture staff user ${email} not resolved`);
+
+  const { error: profileErr } = await admin
+    .from("staff_profiles")
+    .upsert({ id: user.id, full_name: fullName, role, is_active: true }, { onConflict: "id" });
+  if (profileErr) throw new Error(`upsert fixture staff_profile ${email}: ${profileErr.message}`);
+
+  return user.id;
+}
+
+async function deleteStaffUser(email: string): Promise<void> {
+  const { data: existing } = await admin.auth.admin.listUsers({ page: 1, perPage: 200 });
+  const user = existing.users.find((u) => u.email === email);
+  if (!user) return;
+  // staff_profiles.id → auth.users(id) ON DELETE CASCADE.
+  await admin.auth.admin.deleteUser(user.id);
+}
+
+async function cleanup(): Promise<void> {
   const { data: patient } = await admin
     .from("patients")
     .select("id")
     .eq("drm_id", SMOKE_DRM_ID)
     .maybeSingle();
-  if (!patient) return;
 
-  const { data: visits } = await admin
-    .from("visits")
-    .select("id")
-    .eq("patient_id", patient.id);
-  const visitIds = (visits ?? []).map((v) => v.id);
+  if (patient) {
+    const { data: visits } = await admin.from("visits").select("id").eq("patient_id", patient.id);
+    const visitIds = (visits ?? []).map((v) => v.id);
 
-  if (visitIds.length > 0) {
-    const { data: trs } = await admin
-      .from("test_requests")
-      .select("id")
-      .in("visit_id", visitIds);
-    const trIds = (trs ?? []).map((t) => t.id);
+    if (visitIds.length > 0) {
+      const { data: trs } = await admin.from("test_requests").select("id").in("visit_id", visitIds);
+      const trIds = (trs ?? []).map((t) => t.id);
 
-    if (trIds.length > 0) {
-      // 1. result_test_requests has ON DELETE RESTRICT on test_request_id
-      await admin
-        .from("result_test_requests")
-        .delete()
-        .in("test_request_id", trIds);
-      // 2. test_requests has ON DELETE RESTRICT on visit_id from visits
-      await admin
-        .from("test_requests")
-        .delete()
-        .in("id", trIds);
+      if (trIds.length > 0) {
+        const { data: results } = await admin
+          .from("result_test_requests")
+          .select("result_id")
+          .in("test_request_id", trIds);
+        const resultIds = [...new Set((results ?? []).map((r) => r.result_id))];
+
+        if (resultIds.length > 0) {
+          await admin.from("result_values").delete().in("result_id", resultIds);
+          await admin.from("result_test_requests").delete().in("result_id", resultIds);
+          await admin.from("results").delete().in("id", resultIds);
+        }
+        // Any junction row not already caught above (defensive).
+        await admin.from("result_test_requests").delete().in("test_request_id", trIds);
+        await admin.from("test_requests").delete().in("id", trIds);
+      }
+      await admin.from("visits").delete().in("id", visitIds);
     }
-
-    // 3. visits has ON DELETE RESTRICT from test_requests
-    await admin
-      .from("visits")
-      .delete()
-      .in("id", visitIds);
+    await admin.from("patients").delete().eq("id", patient.id);
   }
 
-  await admin.from("patients").delete().eq("id", patient.id);
+  await admin.from("services").delete().in("code", [SERVICE_CODE_A, SERVICE_CODE_B]);
+
+  for (const email of Object.values(STAFF_EMAILS)) {
+    await deleteStaffUser(email);
+  }
 }
 
-async function bootstrap(adminUserId: string): Promise<{
+interface Fixture {
   resultId: string;
-  patientId: string;
-}> {
+  originalFinalisedAtIso: string;
+  finaliserStaffId: string;
+  editorStaffId: string;
+  editorFullName: string;
+  paramAId: string; // overridden in the edit render
+  paramAOriginalValue: number;
+  paramAEditedValue: number;
+}
+
+async function bootstrap(): Promise<Fixture> {
   await cleanup();
+
+  const pathologistId = await ensureStaffUser(STAFF_EMAILS.pathologist, "Smoke Pathologist", "pathologist");
+  const radiologistId = await ensureStaffUser(STAFF_EMAILS.radiologist, "Smoke Radiologist", "pathologist");
+  const cardiologistId = await ensureStaffUser(STAFF_EMAILS.cardiologist, "Smoke Cardiologist", "pathologist");
+  const finaliserId = await ensureStaffUser(STAFF_EMAILS.finaliser, "Smoke Finaliser Medtech", "medtech");
+  const editorId = await ensureStaffUser(STAFF_EMAILS.editor, "Smoke Editor Medtech", "medtech");
+
+  // Point the env vars loaders.ts/signatures.ts read at our fixture staff, so
+  // the render doesn't depend on ambient CONSULTANT_*_STAFF_ID (unset on this
+  // local stack — see the module comment).
+  process.env.CONSULTANT_PATHOLOGIST_STAFF_ID = pathologistId;
+  process.env.CONSULTANT_RADIOLOGIST_STAFF_ID = radiologistId;
+  process.env.CONSULTANT_CARDIOLOGIST_STAFF_ID = cardiologistId;
+
+  const { data: group, error: groupErr } = await admin
+    .from("report_groups")
+    .select("id")
+    .eq("code", "CHEMISTRY")
+    .single();
+  if (groupErr || !group) {
+    throw new Error(
+      "CHEMISTRY report_group missing locally — run `supabase db reset` (seeded by " +
+        `migration 0053) before smoke:chemistry: ${groupErr?.message}`,
+    );
+  }
+
+  const { data: template, error: templateErr } = await admin
+    .from("result_templates")
+    .select("id")
+    .eq("report_group_id", group.id)
+    .eq("is_active", true)
+    .maybeSingle();
+  if (templateErr || !template) {
+    throw new Error(`No active chemistry template locally: ${templateErr?.message}`);
+  }
+
+  const { data: params, error: paramsErr } = await admin
+    .from("result_template_params")
+    .select("id, parameter_name, gender")
+    .eq("template_id", template.id)
+    .is("gender", null) // avoid the gender-specific Creatinine/Uric Acid rows
+    .order("sort_order", { ascending: true })
+    .limit(2);
+  if (paramsErr || !params || params.length < 2) {
+    throw new Error(`Expected >= 2 gender-neutral chemistry params: ${paramsErr?.message}`);
+  }
+  const [paramA, paramB] = params;
+
+  const { data: svcA, error: svcAErr } = await admin
+    .from("services")
+    .insert({
+      code: SERVICE_CODE_A,
+      name: `Smoke ${paramA.parameter_name}`,
+      price_php: 150,
+      kind: "lab_test",
+      section: "chemistry",
+      report_group_id: group.id,
+    })
+    .select("id, code, name, kind, report_group_id")
+    .single();
+  if (svcAErr || !svcA) throw new Error(`create fixture service A: ${svcAErr?.message}`);
+
+  const { data: svcB, error: svcBErr } = await admin
+    .from("services")
+    .insert({
+      code: SERVICE_CODE_B,
+      name: `Smoke ${paramB.parameter_name}`,
+      price_php: 150,
+      kind: "lab_test",
+      section: "chemistry",
+      report_group_id: group.id,
+    })
+    .select("id, code, name, kind, report_group_id")
+    .single();
+  if (svcBErr || !svcB) throw new Error(`create fixture service B: ${svcBErr?.message}`);
 
   const { data: patient, error: pErr } = await admin
     .from("patients")
     .insert({
       drm_id: SMOKE_DRM_ID,
-      last_name: "RenderSmoke",
+      last_name: "ChemistrySmoke",
       first_name: "Patient",
       sex: "female",
       birthdate: "1985-01-01",
     })
     .select("id")
     .single();
-  if (pErr || !patient) throw new Error("Failed to create fixture patient: " + pErr?.message);
+  if (pErr || !patient) throw new Error(`create fixture patient: ${pErr?.message}`);
 
   const { data: visit, error: vErr } = await admin
     .from("visits")
     .insert({
       patient_id: patient.id,
-      visit_number: "V-SMK-REND",
-      total_php: 0,
-      paid_php: 0,
+      visit_number: SMOKE_VISIT_NUMBER,
+      total_php: 300,
+      paid_php: 300,
       payment_status: "paid",
     })
     .select("id")
     .single();
-  if (vErr || !visit) throw new Error("Failed to create fixture visit: " + vErr?.message);
-
-  const { data: services } = await admin
-    .from("services")
-    .select("id, code, price_php")
-    .in("code", ["FBS_RBS", "LIPID_PROFILE", "HBA1C"]);
-  if (!services || services.length < 3) {
-    throw new Error(`Expected 3 chemistry services, got ${services?.length ?? 0}`);
-  }
+  if (vErr || !visit) throw new Error(`create fixture visit: ${vErr?.message}`);
 
   const trIds: string[] = [];
-  for (const svc of services) {
+  for (const svc of [svcA, svcB]) {
     const { data: tr, error: trErr } = await admin
       .from("test_requests")
       .insert({
         visit_id: visit.id,
         service_id: svc.id,
-        status: "in_progress",
-        requested_by: adminUserId,
-        base_price_php: Number(svc.price_php),
-        final_price_php: Number(svc.price_php),
+        status: "ready_for_release",
+        requested_by: finaliserId,
+        assigned_to: finaliserId,
+        base_price_php: 150,
+        final_price_php: 150,
       })
       .select("id")
       .single();
-    if (trErr || !tr) throw new Error(`Failed to insert test_request for ${svc.code}: ` + trErr?.message);
+    if (trErr || !tr) throw new Error(`create fixture test_request for ${svc.code}: ${trErr?.message}`);
     trIds.push(tr.id);
   }
 
-  const { data: group } = await admin
-    .from("report_groups")
-    .select("id")
-    .eq("code", "CHEMISTRY")
-    .single();
-  if (!group) throw new Error("CHEMISTRY report_group missing");
-
+  const finalisedAt = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000); // 3 days ago
   const { data: result, error: rErr } = await admin
     .from("results")
     .insert({
       report_group_id: group.id,
       generation_kind: "structured",
-      finalised_at: new Date().toISOString(),
-      uploaded_by: adminUserId,
-      finalised_by_staff_id: adminUserId,
+      finalised_at: finalisedAt.toISOString(),
+      uploaded_by: finaliserId,
+      finalised_by_staff_id: finaliserId,
     })
     .select("id")
     .single();
-  if (rErr || !result) throw new Error("Failed to insert results row: " + rErr?.message);
+  if (rErr || !result) throw new Error(`create fixture results row: ${rErr?.message}`);
 
-  await admin.from("result_test_requests").insert(
-    trIds.map((trid) => ({ result_id: result.id, test_request_id: trid })),
-  );
+  await admin
+    .from("result_test_requests")
+    .insert(trIds.map((tr_id) => ({ result_id: result.id, test_request_id: tr_id })));
 
-  const { data: params } = await admin
-    .from("result_template_params")
-    .select("id, parameter_name, gender, result_templates!inner(report_group_id)" as string)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .eq("result_templates.report_group_id" as any, group.id)
-    .in("parameter_name", [
-      "FBS", "Triglycerides", "Cholesterol", "HDL", "LDL", "VLDL", "HBA1C",
-    ]);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const usable = (params as any[] ?? []).filter((p: any) => !p.gender || p.gender === "F");
-  if (usable.length > 0) {
-    await admin.from("result_values").insert(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      usable.map((p: any) => ({
-        result_id: result.id,
-        parameter_id: p.id,
-        numeric_value_si: 5.4,
-        is_blank: false,
-      })),
-    );
-  }
+  const paramAOriginalValue = 5.4;
+  const paramBValue = 4.0;
+  const { error: valuesErr } = await admin.from("result_values").insert([
+    { result_id: result.id, parameter_id: paramA.id, numeric_value_si: paramAOriginalValue, is_blank: false },
+    { result_id: result.id, parameter_id: paramB.id, numeric_value_si: paramBValue, is_blank: false },
+  ]);
+  if (valuesErr) throw new Error(`insert fixture result_values: ${valuesErr.message}`);
 
-  return { resultId: result.id, patientId: patient.id };
+  return {
+    resultId: result.id,
+    originalFinalisedAtIso: finalisedAt.toISOString(),
+    finaliserStaffId: finaliserId,
+    editorStaffId: editorId,
+    editorFullName: "Smoke Editor Medtech",
+    paramAId: paramA.id,
+    paramAOriginalValue,
+    paramAEditedValue: 9.9,
+  };
 }
 
 // ---------------------------------------------------------------------------
-// Build ResultDocumentInput (replicated from loaders.ts / signatures.ts)
+// Assertions
 // ---------------------------------------------------------------------------
 
-async function buildDocumentInput(
-  resultId: string,
-): Promise<ResultDocumentInput> {
-  // Load result row
-  const { data: resultRow } = await admin
-    .from("results")
-    .select("id, control_no, finalised_at, finalised_by_staff_id, report_group_id, notes")
-    .eq("id", resultId)
-    .single();
-  if (!resultRow) throw new Error("Result not found: " + resultId);
-
-  // Load linked test_requests via junction
-  const { data: junctions } = await admin
-    .from("result_test_requests")
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .select("test_requests!inner(id, visit_id, service_id, services!inner(id, code, name, kind, report_group_id), visits!inner(id, visit_number, patients!inner(drm_id, last_name, first_name, sex, birthdate)))" as any)
-    .eq("result_id", resultId);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const trList = (junctions as any[] ?? []).map((j: any) => {
-    const tr = Array.isArray(j.test_requests) ? j.test_requests[0] : j.test_requests;
-    return tr;
-  }).filter(Boolean);
-  if (trList.length === 0) throw new Error("No test_requests linked to result " + resultId);
-
-  const firstTr = trList[0];
-  const visit = Array.isArray(firstTr.visits) ? firstTr.visits[0] : firstTr.visits;
-  const patient = Array.isArray(visit?.patients) ? visit.patients[0] : visit?.patients;
-
-  // Load group metadata
-  const { data: group } = await admin
-    .from("report_groups")
-    .select("id, name, code")
-    .eq("id", resultRow.report_group_id!)
-    .single();
-  if (!group) throw new Error("report_group missing");
-
-  // Load template params
-  const params = await loadTemplateParamsForGroup(group.id);
-
-  // Load result values
-  const { data: values } = await admin
-    .from("result_values")
-    .select("parameter_id, numeric_value_si, text_value, is_blank")
-    .eq("result_id", resultId);
-  const valuesMap: Record<string, { numericValueSi: number | null; textValue: string | null; isBlank: boolean }> = {};
-  for (const v of values ?? []) {
-    valuesMap[v.parameter_id] = {
-      numericValueSi: v.numeric_value_si ?? null,
-      textValue: v.text_value ?? null,
-      isBlank: v.is_blank ?? false,
-    };
+function assertValidPdf(buf: Buffer, label: string): void {
+  if (!buf.toString("latin1").startsWith("%PDF-")) {
+    throw new Error(`${label} FAIL: output does not start with %PDF- header`);
   }
+  if (buf.length < 2_000) {
+    throw new Error(`${label} FAIL: rendered PDF suspiciously small (${buf.length} bytes)`);
+  }
+}
 
-  // Load template metadata
-  const { data: tpl } = await admin
-    .from("result_templates")
-    .select("layout, header_notes, footer_notes")
-    .eq("report_group_id", group.id)
-    .eq("is_active", true)
-    .maybeSingle();
-
-  // Signatures — load consultant pathologist
-  const pathologistBuf = await loadSignatureBuffer(CONSULTANT_PATHOLOGIST_STAFF_ID!);
-
-  // Load the pathologist's profile for name/PRC
-  const { data: pathProfile } = await admin
-    .from("staff_profiles")
-    .select("full_name, prc_license_no, specialization")
-    .eq("id", CONSULTANT_PATHOLOGIST_STAFF_ID!)
-    .maybeSingle();
-
-  // Load finalised_by profile for medtech
-  const { data: finalisedByProfile } = resultRow.finalised_by_staff_id
-    ? await admin
-        .from("staff_profiles")
-        .select("full_name, prc_license_no, specialization")
-        .eq("id", resultRow.finalised_by_staff_id)
-        .maybeSingle()
-    : { data: null };
-  const finalisedBySigBuf = resultRow.finalised_by_staff_id
-    ? await loadSignatureBuffer(resultRow.finalised_by_staff_id)
-    : null;
-
-  const normalisePatientSex = (sex: string | null): PatientSex =>
-    sex === "male" ? "M" : sex === "female" ? "F" : "M";
-
-  const input: ResultDocumentInput = {
-    template: {
-      layout: (tpl?.layout ?? "standard") as ResultDocumentInput["template"]["layout"],
-      header_notes: tpl?.header_notes ?? null,
-      footer_notes: tpl?.footer_notes ?? null,
-    },
-    params,
-    values: valuesMap,
-    service: {
-      code: group.code,
-      name: group.name,
-    },
-    patient: {
-      drm_id: patient?.drm_id ?? "",
-      last_name: patient?.last_name ?? "",
-      first_name: patient?.first_name ?? "",
-      sex: normalisePatientSex(patient?.sex ?? null),
-      birthdate: patient?.birthdate ?? null,
-    },
-    visit: { visit_number: visit?.visit_number ?? "" },
-    controlNo: resultRow.control_no ?? null,
-    finalisedAt: resultRow.finalised_at ? new Date(resultRow.finalised_at) : new Date(),
-    medtech: finalisedByProfile
-      ? {
-          fullName: finalisedByProfile.full_name,
-          prcLicenseNo: finalisedByProfile.prc_license_no ?? null,
-          signatureImage: finalisedBySigBuf ?? undefined,
-        }
-      : null,
-    performer: null,
-    consultantPathologist: pathProfile
-      ? {
-          fullName: pathProfile.full_name,
-          prcLicenseNo: pathProfile.prc_license_no ?? null,
-          signatureImage: pathologistBuf ?? undefined,
-        }
-      : null,
-    packageSummary: null,
-  };
-
-  return input;
+function assertEqual<T>(label: string, actual: T, expected: T): void {
+  if (actual !== expected) {
+    throw new Error(`${label} FAIL: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -442,66 +365,104 @@ async function buildDocumentInput(
 // ---------------------------------------------------------------------------
 
 async function main() {
-  // Resolve a real admin staff_id for fixtures. Use the consultant
-  // pathologist's ID since we know it exists.
-  const adminUserId = CONSULTANT_PATHOLOGIST_STAFF_ID!;
-
   console.log("Bootstrapping fixture…");
-  const { resultId } = await bootstrap(adminUserId);
+  const fx = await bootstrap();
 
   try {
-    // S5: render and assert PDF content
-    const input = await buildDocumentInput(resultId);
-    const buf = await renderResultPdf(input);
+    // -------------------------------------------------------------------
+    // S1: original render, through the real loader.
+    // -------------------------------------------------------------------
+    const original = await loadResultDocumentInput(fx.resultId);
+    const originalPdf = await renderResultPdf(original);
+    writeFileSync("/tmp/drmed-chemistry-smoke-original.pdf", originalPdf);
+    assertValidPdf(originalPdf, "S1");
+    assertEqual("S1 reportGroup.code", original.reportGroup?.code, "CHEMISTRY");
+    assertEqual(
+      "S1 finalisedAt",
+      original.finalisedAt?.toISOString(),
+      fx.originalFinalisedAtIso,
+    );
+    assertEqual("S1 ageAsOf defaults to finalisedAt", original.ageAsOf?.toISOString(), fx.originalFinalisedAtIso);
+    assertEqual(
+      "S1 values[paramA]",
+      original.values[fx.paramAId]?.numeric_value_si,
+      fx.paramAOriginalValue,
+    );
+    console.log(
+      `✓ S1 original render OK (${originalPdf.length} bytes; controlNo=${original.controlNo}, ` +
+        `finalisedAt=${original.finalisedAt?.toISOString()})`,
+    );
 
-    // Write to /tmp for optional eyeballing
-    const outPath = "/tmp/drmed-chemistry-smoke.pdf";
-    writeFileSync(outPath, buf);
-    console.log(`  PDF written to ${outPath} (${buf.length} bytes)`);
+    // -------------------------------------------------------------------
+    // S2: edit render — new values + new signer, NO finalisedAtOverride.
+    // Mirrors what commitResultEdit renders before it writes anything (0172
+    // §2): the PDF is drawn from the values about to be committed, the
+    // editor's signature, and the ORIGINAL finalised_at as both the printed
+    // date and the age-as-of instant.
+    // -------------------------------------------------------------------
+    const editedValues: ResultDocumentInput["values"] = {
+      ...original.values,
+      [fx.paramAId]: {
+        ...original.values[fx.paramAId],
+        numeric_value_si: fx.paramAEditedValue,
+      },
+    };
+    const edited = await loadResultDocumentInput(fx.resultId, {
+      valuesOverride: editedValues,
+      signerStaffId: fx.editorStaffId,
+    });
+    const editedPdf = await renderResultPdf(edited);
+    writeFileSync("/tmp/drmed-chemistry-smoke-edited.pdf", editedPdf);
+    assertValidPdf(editedPdf, "S2");
 
-    // Assert the output is a valid PDF (react-pdf uses Flate-encoded content
-    // streams so text like "Chemistry" and PRC numbers won't appear in the
-    // raw buffer — they're compressed. Instead we verify the structural
-    // invariants: valid PDF header, non-trivial size, and an embedded image
-    // object (the signature) which guarantees the pathologist lookup ran).
-    if (!buf.toString("latin1").startsWith("%PDF-")) {
-      throw new Error("S5 FAIL: output does not start with %PDF- header");
-    }
-    if (buf.length < 50_000) {
+    assertEqual("S2 controlNo unchanged", edited.controlNo, original.controlNo);
+    assertEqual(
+      "S2 finalisedAt stays the ORIGINAL report date",
+      edited.finalisedAt?.toISOString(),
+      fx.originalFinalisedAtIso,
+    );
+    assertEqual(
+      "S2 ageAsOf stays the ORIGINAL report date",
+      edited.ageAsOf?.toISOString(),
+      fx.originalFinalisedAtIso,
+    );
+    assertEqual(
+      "S2 values[paramA] reflects the override",
+      edited.values[fx.paramAId]?.numeric_value_si,
+      fx.paramAEditedValue,
+    );
+    if (edited.performer?.full_name !== fx.editorFullName) {
       throw new Error(
-        `S5 FAIL: rendered PDF suspiciously small (${buf.length} bytes). ` +
-          "Expected >= 50 KB for a Chemistry report with embedded signature.",
+        `S2 FAIL: performer should be the editor ("${fx.editorFullName}"), got "${edited.performer?.full_name}"`,
       );
     }
-    // The PDF must contain at least one image XObject (the signature).
-    if (!buf.toString("latin1").includes("/XObject")) {
-      throw new Error(
-        "S5 FAIL: rendered PDF has no XObject (expected embedded signature image).",
-      );
-    }
-    console.log(`✓ S5 chemistry render OK (${buf.length} bytes, valid PDF with embedded image)`);
+    console.log(
+      `✓ S2 edit render OK (${editedPdf.length} bytes; controlNo unchanged=${edited.controlNo === original.controlNo}, ` +
+        `signer="${edited.performer?.full_name}", finalisedAt unchanged=${edited.finalisedAt?.toISOString() === fx.originalFinalisedAtIso})`,
+    );
 
-    // S6: env-var fail-fast — already validated above at module load; if we
-    // get here the env var was present. Simulate missing var by temporarily
-    // deleting it and attempting to call the loader logic.
-    const orig = process.env.CONSULTANT_PATHOLOGIST_STAFF_ID;
+    // -------------------------------------------------------------------
+    // S3: real env-var fail-fast — delete the var, call the real loader.
+    // -------------------------------------------------------------------
+    const savedPathologistId = process.env.CONSULTANT_PATHOLOGIST_STAFF_ID;
     delete process.env.CONSULTANT_PATHOLOGIST_STAFF_ID;
     let threw = false;
+    let message = "";
     try {
-      if (!process.env.CONSULTANT_PATHOLOGIST_STAFF_ID) {
-        throw new Error("CONSULTANT_PATHOLOGIST_STAFF_ID is not set");
-      }
+      await loadResultDocumentInput(fx.resultId);
     } catch (err) {
-      threw =
-        err instanceof Error &&
-        err.message.includes("CONSULTANT_PATHOLOGIST_STAFF_ID");
+      threw = true;
+      message = err instanceof Error ? err.message : String(err);
     } finally {
-      if (orig) process.env.CONSULTANT_PATHOLOGIST_STAFF_ID = orig;
+      process.env.CONSULTANT_PATHOLOGIST_STAFF_ID = savedPathologistId;
     }
-    if (!threw) {
-      throw new Error("S6 FAIL: fail-fast guard did not trigger on missing env var");
+    if (!threw || !message.includes("CONSULTANT_PATHOLOGIST_STAFF_ID")) {
+      throw new Error(
+        `S3 FAIL: expected loadResultDocumentInput to throw naming CONSULTANT_PATHOLOGIST_STAFF_ID, ` +
+          `threw=${threw}, message="${message}"`,
+      );
     }
-    console.log("✓ S6 env-var fail-fast OK");
+    console.log("✓ S3 env-var fail-fast OK (real loader, real throw)");
   } finally {
     await cleanup();
     console.log("Fixture cleaned up.");

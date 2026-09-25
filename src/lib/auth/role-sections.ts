@@ -48,7 +48,10 @@ export const LAB_SECTIONS: readonly ServiceSection[] = ALL_SECTIONS.filter(
 // xray_technician owns all imaging: x-ray AND ultrasound.
 //
 // reception is intentionally excluded — they never see the lab queue.
-const SECTIONS_BY_ROLE: Record<StaffSession["role"], ServiceSection[] | null> = {
+// Exported (read-only use) so result-edit-migration.test.ts can pin
+// lab_sections_for_role() in migration 0172 to this table without
+// re-deriving it.
+export const SECTIONS_BY_ROLE: Record<StaffSession["role"], ServiceSection[] | null> = {
   reception: [],
   medtech: [
     "chemistry",

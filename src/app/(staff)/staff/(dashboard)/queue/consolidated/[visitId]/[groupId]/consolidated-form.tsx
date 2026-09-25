@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { claimConsolidated, finaliseConsolidated } from "./actions";
 import type { ConsolidatedFormTemplate, ConsolidatedFormVisit } from "./page";
 import { normalisePatientSex } from "@/lib/results/types";
+import { ConsolidatedValuesTable, useConsolidatedValues } from "./consolidated-values-table";
 
 interface Props {
   group: { id: string; code: string; name: string };
@@ -45,42 +46,7 @@ export function ConsolidatedForm(props: Props) {
     .filter((p) => !p.gender || p.gender === patientSex)
     .sort((a, b) => a.sort_order - b.sort_order);
 
-  // Controlled state for each param's SI + conventional values.
-  const [values, setValues] = useState<
-    Record<string, { si: string; conv: string }>
-  >({});
-
-  function updateSi(
-    paramId: string,
-    factor: number | null,
-    raw: string,
-  ) {
-    setValues((prev) => {
-      const si = raw;
-      const numeric = parseFloat(raw);
-      const conv =
-        factor && !Number.isNaN(numeric)
-          ? (numeric * factor).toFixed(2)
-          : (prev[paramId]?.conv ?? "");
-      return { ...prev, [paramId]: { si, conv } };
-    });
-  }
-
-  function updateConv(
-    paramId: string,
-    factor: number | null,
-    raw: string,
-  ) {
-    setValues((prev) => {
-      const conv = raw;
-      const numeric = parseFloat(raw);
-      const si =
-        factor && factor !== 0 && !Number.isNaN(numeric)
-          ? (numeric / factor).toFixed(4)
-          : (prev[paramId]?.si ?? "");
-      return { ...prev, [paramId]: { si, conv } };
-    });
-  }
+  const { values, updateSi, updateConv, payload: buildPayload } = useConsolidatedValues();
 
   const isClaimedByMe = props.claimedBy === props.myStaffId;
 
@@ -100,19 +66,7 @@ export function ConsolidatedForm(props: Props) {
 
   function handleFinalise() {
     setError(null);
-    const payload = params
-      .filter((p) => enabledParamIds.has(p.id))
-      .map((p) => ({
-        parameter_id: p.id,
-        numeric_value_si:
-          values[p.id]?.si ? parseFloat(values[p.id].si) : null,
-        numeric_value_conv:
-          values[p.id]?.conv ? parseFloat(values[p.id].conv) : null,
-      }))
-      .filter(
-        (row) =>
-          row.numeric_value_si != null || row.numeric_value_conv != null,
-      );
+    const payload = buildPayload(params, enabledParamIds);
 
     startTransition(async () => {
       const res = await finaliseConsolidated({
@@ -223,76 +177,14 @@ export function ConsolidatedForm(props: Props) {
               </p>
             ) : null}
 
-            <div className="overflow-x-auto rounded-lg border border-[color:var(--color-brand-bg-mid)]">
-              <table className="w-full text-sm">
-                <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-                  <tr>
-                    <th className="px-3 py-2">Test</th>
-                    <th className="px-3 py-2 text-right">SI Result</th>
-                    <th className="px-3 py-2">SI Unit</th>
-                    <th className="px-3 py-2 text-right">Conv Result</th>
-                    <th className="px-3 py-2">Conv Unit</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
-                  {params.map((p) => {
-                    const enabled = enabledParamIds.has(p.id);
-                    return (
-                      <tr
-                        key={p.id}
-                        className={
-                          enabled
-                            ? "hover:bg-[color:var(--color-brand-bg)]"
-                            : "opacity-40"
-                        }
-                      >
-                        <td className="px-3 py-2 font-medium text-[color:var(--color-brand-navy)]">
-                          {p.parameter_name}
-                        </td>
-                        <td className="px-3 py-2">
-                          <input
-                            type="number"
-                            step="any"
-                            disabled={!enabled || pending}
-                            value={values[p.id]?.si ?? ""}
-                            onChange={(e) =>
-                              updateSi(
-                                p.id,
-                                p.si_to_conv_factor,
-                                e.target.value,
-                              )
-                            }
-                            className="w-24 rounded border border-[color:var(--color-brand-bg-mid)] px-2 py-1 text-right min-h-[44px] disabled:bg-[color:var(--color-brand-bg)] disabled:cursor-not-allowed"
-                          />
-                        </td>
-                        <td className="px-3 py-2 text-[color:var(--color-brand-text-soft)]">
-                          {p.unit_si ?? "—"}
-                        </td>
-                        <td className="px-3 py-2">
-                          <input
-                            type="number"
-                            step="any"
-                            disabled={!enabled || pending}
-                            value={values[p.id]?.conv ?? ""}
-                            onChange={(e) =>
-                              updateConv(
-                                p.id,
-                                p.si_to_conv_factor,
-                                e.target.value,
-                              )
-                            }
-                            className="w-24 rounded border border-[color:var(--color-brand-bg-mid)] px-2 py-1 text-right min-h-[44px] disabled:bg-[color:var(--color-brand-bg)] disabled:cursor-not-allowed"
-                          />
-                        </td>
-                        <td className="px-3 py-2 text-[color:var(--color-brand-text-soft)]">
-                          {p.unit_conv ?? "—"}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <ConsolidatedValuesTable
+              params={params}
+              enabled={enabledParamIds}
+              values={values}
+              onSi={updateSi}
+              onConv={updateConv}
+              disabled={pending}
+            />
 
             {error ? (
               <p className="rounded-lg border border-destructive bg-destructive/5 p-3 text-sm text-destructive">

@@ -486,8 +486,11 @@ function PatientInfoGrid({
   visit,
   controlNo,
   finalisedAt,
-}: Pick<ResultDocumentInput, "patient" | "visit" | "controlNo" | "finalisedAt">) {
-  const age = calculateAge(patient.birthdate);
+  ageAsOf,
+}: Pick<ResultDocumentInput, "patient" | "visit" | "controlNo" | "finalisedAt"> & {
+  ageAsOf: Date;
+}) {
+  const age = calculateAge(patient.birthdate, ageAsOf);
   const sexLabel =
     patient.sex === "F" ? "FEMALE" : patient.sex === "M" ? "MALE" : "—";
   const fullName = `${patient.last_name}, ${patient.first_name}`.toUpperCase();
@@ -1259,7 +1262,8 @@ function RemarksBlock({ notes }: { notes: string | null }) {
 
 export function ResultDocument(input: ResultDocumentInput) {
   const visibleParams = filterParamsForPatient(input.params, input.patient.sex);
-  const ageMonths = calculateAgeMonths(input.patient.birthdate);
+  const ageAsOf = input.ageAsOf ?? input.finalisedAt ?? new Date();
+  const ageMonths = calculateAgeMonths(input.patient.birthdate, ageAsOf);
   const ranges = new Map<string, EffectiveRange>();
   for (const p of visibleParams) {
     if (!p.is_section_header) {
@@ -1285,6 +1289,7 @@ export function ResultDocument(input: ResultDocumentInput) {
           visit={input.visit}
           controlNo={input.controlNo}
           finalisedAt={input.finalisedAt}
+          ageAsOf={ageAsOf}
         />
 
         <SectionTitle service={input.service} reportGroup={input.reportGroup} />

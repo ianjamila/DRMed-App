@@ -15,6 +15,7 @@ import {
   roleCanActOnResults,
 } from "@/lib/visits/line-visibility";
 import { ReleaseButton } from "./release-button";
+import { fetchSharedReportTestIds } from "@/lib/visits/shared-report-links";
 import { ReleaseAllButton } from "./release-all-button";
 import { ReleasePackageHeaderButton } from "./release-package-header-button";
 import { MarkDoneButton } from "./mark-done-button";
@@ -44,7 +45,9 @@ import {
   visitDeletability,
   hasOpenHmoClaim,
   QUEUE_DELETE_ROLES,
+  type ResultLinkRow,
 } from "@/lib/visits/deletion";
+import { foldEditNotes, type EditNoteTestRow } from "@/lib/results/edit-note";
 import {
   CONSULT_ONLY_RECEIPT_NOTE,
   shouldPrintReceipt,
@@ -178,7 +181,10 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
           deleted_at, deleted_by, delete_reason,
           parent_id, is_package_header, package_completed_at,
           hmo_claim_items ( batch_voided ),
-          services!inner ( id, code, name, kind, section, price_php )
+          services!inner (
+            id, code, name, kind, section, price_php,
+            report_group_id, report_groups ( name )
+          )
         `,
         )
         .eq("visit_id", id)
@@ -248,6 +254,77 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
   // the chip is a bench detail reception has no use for.
   const claimEvents = await fetchClaimEvents(supabase, allTestIds);
   const handedBackFor = (id: string) => handedBack(claimEvents.get(id) ?? []);
+
+  // Which tests sit on a FINISHED COMBINED report (0172, P0067/§5/§6.1) —
+  // one junction query keyed by test_request_id feeds the delete-guard
+  // mirror (has_shared_report below), the whole-report undo scope shown to
+  // the operator before they confirm, and the per-result amendment data the
+  // Edited note needs. No N+1.
+  const resultLinkRows: ResultLinkRow[] = [];
+  const resultIdByTrId = new Map<string, string>();
+  const amendedAtByTrId = new Map<string, string | null>();
+  const amendmentCountByTrId = new Map<string, number>();
+  if (allTestIds.length > 0) {
+    const { data: pdfLinks } = await supabase
+      .from("result_test_requests")
+      .select(
+        "test_request_id, result_id, results!inner ( storage_path, amended_at, amendment_count )",
+      )
+      .in("test_request_id", allTestIds);
+    type ResultCols = {
+      storage_path: string | null;
+      amended_at: string | null;
+      amendment_count: number;
+    };
+    for (const link of pdfLinks ?? []) {
+      const res = (link as { results: ResultCols | ResultCols[] | null }).results;
+      const resolved = Array.isArray(res) ? res[0] : res;
+      const trId = link.test_request_id as string;
+      const resultId = link.result_id as string;
+      resultLinkRows.push({
+        test_request_id: trId,
+        result_id: resultId,
+        storage_path: resolved?.storage_path ?? null,
+      });
+      resultIdByTrId.set(trId, resultId);
+      amendedAtByTrId.set(trId, resolved?.amended_at ?? null);
+      amendmentCountByTrId.set(trId, resolved?.amendment_count ?? 0);
+    }
+  }
+  // Counted like P0067: members off this visit's live list (a deleted
+  // member) still make the report shared.
+  const sharedReportIds = await fetchSharedReportTestIds(supabase, allTestIds);
+
+  // Full report membership (ANY status) keyed by result id, and each
+  // member's group name — used only to size/word the whole-report undo
+  // warning shown before the operator confirms (0172 §5/§9 R6). Display
+  // only: undoReleaseSelectedAction re-derives and enforces the real scope
+  // server-side.
+  const membersByResultId = new Map<string, string[]>();
+  for (const l of resultLinkRows) {
+    const members = membersByResultId.get(l.result_id) ?? [];
+    members.push(l.test_request_id);
+    membersByResultId.set(l.result_id, members);
+  }
+  const reportGroupNameByTrId = new Map<string, string | null>();
+  for (const t of tests ?? []) {
+    const svc = Array.isArray(t.services) ? t.services[0] : t.services;
+    const rg = svc
+      ? Array.isArray(svc.report_groups)
+        ? svc.report_groups[0]
+        : svc.report_groups
+      : null;
+    reportGroupNameByTrId.set(t.id, rg?.name ?? null);
+  }
+  const reportScopeByTrId: Record<string, { memberIds: string[]; label: string }> = {};
+  for (const members of membersByResultId.values()) {
+    if (members.length <= 1) continue;
+    const scope = {
+      memberIds: members,
+      label: reportGroupNameByTrId.get(members[0]) ?? "combined",
+    };
+    for (const trId of members) reportScopeByTrId[trId] = scope;
+  }
 
   // Admin-only: fetch PF entries to render status badges per test_request.
   const testIds = (tests ?? []).map((t) => t.id);
@@ -446,14 +523,63 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
   const releasedRowIds = allRows
     .filter((r) => !r.is_package_header && r.status === "released")
     .map((r) => r.id);
+  // Widen to every visible combined-report member (any status), not just
+  // currently-released ones — a member released-then-undone earlier can
+  // still carry a real view count, and the whole-report undo warning (0172
+  // §5/§9 R6) aggregates over the report, not just what's released today.
+  const visibleRowIds = new Set(allRows.map((r) => r.id));
+  const viewedCountIds = new Set<string>(releasedRowIds);
+  for (const trId of Object.keys(reportScopeByTrId)) {
+    if (visibleRowIds.has(trId)) viewedCountIds.add(trId);
+  }
   const viewedCountByTrId = new Map<string, number>(
     await Promise.all(
-      releasedRowIds.map(
+      Array.from(viewedCountIds).map(
         async (trId) => [trId, await countResultViews(trId)] as const,
       ),
     ),
   );
   const viewedCountRecord = Object.fromEntries(viewedCountByTrId);
+
+  // "Edited <date/time> — <reason>" notes (0172 §6.1). result_amendments is
+  // readable only through the SIGNED-IN client — RLS (staff_can_read_
+  // finished_result) restricts it to pathologist/admin and an in-section
+  // medtech/xray_technician; reception's read comes back empty, which is
+  // correct (the note simply doesn't show). One batched query for every
+  // amended result on this visit, then a pure fold picks the latest reason
+  // per result and assigns the full note to the first member in page order.
+  const amendedResultIds = Array.from(
+    new Set(
+      Array.from(amendmentCountByTrId.entries())
+        .filter(([, count]) => count > 0)
+        .map(([trId]) => resultIdByTrId.get(trId))
+        .filter((v): v is string => !!v),
+    ),
+  );
+  const reasonByResultId = new Map<string, string>();
+  if (amendedResultIds.length > 0) {
+    const { data: amends } = await supabase
+      .from("result_amendments")
+      .select("result_id, reason, amendment_seq")
+      .in("result_id", amendedResultIds)
+      .order("amendment_seq", { ascending: false });
+    for (const am of amends ?? []) {
+      if (!reasonByResultId.has(am.result_id)) {
+        reasonByResultId.set(am.result_id, am.reason);
+      }
+    }
+  }
+  const editNoteRows: EditNoteTestRow[] = allRows.map((r) => {
+    const svc = Array.isArray(r.services) ? r.services[0] : r.services;
+    return {
+      id: r.id,
+      name: svc?.name ?? "",
+      resultId: resultIdByTrId.get(r.id) ?? null,
+      amendedAt: amendedAtByTrId.get(r.id) ?? null,
+      amendmentCount: amendmentCountByTrId.get(r.id) ?? 0,
+    };
+  });
+  const editNoteByTrId = foldEditNotes(editNoteRows, reasonByResultId);
 
   // Names for the "deleted by" lines (banner + deleted-entries panel). The
   // service-role client resolves them the same way the PF badge block does.
@@ -842,6 +968,12 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                             components.some((c) =>
                               hasOpenHmoClaim(c.hmo_claim_items),
                             ),
+                          // Same reasoning (0172, P0067): a component sitting
+                          // on a finished combined report aborts the whole
+                          // header delete at depth 2.
+                          has_shared_report:
+                            sharedReportIds.has(h.id) ||
+                            components.some((c) => sharedReportIds.has(c.id)),
                         }).ok ? (
                           <QueueDeleteDialog
                             visitId={visit.id}
@@ -884,6 +1016,14 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                                 ? c.services[0]
                                 : c.services;
                               if (!csvc) return null;
+                              const componentEditNote = editNoteByTrId.get(c.id) ?? null;
+                              const componentReportScope = reportScopeByTrId[c.id] ?? null;
+                              const componentViewedCount = componentReportScope
+                                ? componentReportScope.memberIds.reduce(
+                                    (sum, id) => sum + (viewedCountByTrId.get(id) ?? 0),
+                                    0,
+                                  )
+                                : viewedCountByTrId.get(c.id) ?? 0;
                               return (
                                 <tr
                                   key={c.id}
@@ -967,7 +1107,9 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                                           pdfStates.get(c.id)?.reportReleased ?? false,
                                       })}
                                       kind={csvc.kind}
-                                      viewedCount={viewedCountByTrId.get(c.id) ?? 0}
+                                      viewedCount={componentViewedCount}
+                                      editNote={componentEditNote}
+                                      reportScope={componentReportScope}
                                       preferredMedium={
                                         (patient.preferred_release_medium ?? null) as
                                           | "physical"
@@ -1037,6 +1179,14 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                   : null;
                 const isConsult = svc.kind === "doctor_consultation";
                 const isProcedure = svc.kind === "doctor_procedure";
+                const editNote = editNoteByTrId.get(t.id) ?? null;
+                const reportScope = reportScopeByTrId[t.id] ?? null;
+                const viewedCountForRow = reportScope
+                  ? reportScope.memberIds.reduce(
+                      (sum, id) => sum + (viewedCountByTrId.get(id) ?? 0),
+                      0,
+                    )
+                  : viewedCountByTrId.get(t.id) ?? 0;
                 return (
                   <tr
                     key={t.id}
@@ -1179,7 +1329,9 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                           reportReleased: pdfStates.get(t.id)?.reportReleased ?? false,
                         })}
                         kind={svc.kind}
-                        viewedCount={viewedCountByTrId.get(t.id) ?? 0}
+                        viewedCount={viewedCountForRow}
+                        editNote={editNote}
+                        reportScope={reportScope}
                         preferredMedium={
                           (patient.preferred_release_medium ?? null) as
                             | "physical"
@@ -1197,6 +1349,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                         visit_payment_status: visit.payment_status,
                         visit_deleted_at: visit.deleted_at,
                         has_open_hmo_claim: hasOpenHmoClaim(t.hmo_claim_items),
+                        has_shared_report: sharedReportIds.has(t.id),
                       }).ok ? (
                         <div className="mt-1.5 flex justify-end">
                           <QueueDeleteDialog
@@ -1251,6 +1404,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
           consentOnFile={consent.current}
           gateRequired={gateRequired}
           viewedCountById={viewedCountRecord}
+          reportScopeByTrId={reportScopeByTrId}
         />
       )}
       </SelectionProvider>
@@ -1543,8 +1697,16 @@ interface TestActionProps {
   canViewPdf: boolean;
   kind: string;
   // Patient viewed/downloaded count for a released row — drives the undo
-  // dialog's "already viewed" warning.
+  // dialog's "already viewed" warning. Already aggregated across a combined
+  // report's members when `reportScope` is set (0172 §5/§9 R6).
   viewedCount: number;
+  // "Edited <date/time> — <reason>" (0172 §6.1), or null when unamended or
+  // when RLS returned no reason (reception). Shown on released rows (under
+  // View PDF) and on ready_for_release rows.
+  editNote?: string | null;
+  // Present when this row shares a finished result with other tests — undo
+  // reverts the whole report, not just this row (display only).
+  reportScope?: { memberIds: string[]; label: string } | null;
   // "compact" is used inside package-component rows, which are denser than
   // the standalone tests table.
   size?: "default" | "compact";
@@ -1568,6 +1730,8 @@ function TestAction({
   canViewPdf,
   kind,
   viewedCount,
+  editNote = null,
+  reportScope = null,
   size = "default",
 }: TestActionProps) {
   const sizeCls = size === "compact" ? "text-[10px]" : "text-xs";
@@ -1681,15 +1845,22 @@ function TestAction({
 
   if (status === "ready_for_release") {
     return (
-      <ReleaseButton
-        testRequestId={testRequestId}
-        visitId={visitId}
-        moneySettled={moneySettled}
-        preferredMedium={preferredMedium}
-        consentOnFile={consentOnFile}
-        gateRequired={gateRequired}
-        size={size}
-      />
+      <div className="flex flex-col items-end gap-0.5">
+        <ReleaseButton
+          testRequestId={testRequestId}
+          visitId={visitId}
+          moneySettled={moneySettled}
+          preferredMedium={preferredMedium}
+          consentOnFile={consentOnFile}
+          gateRequired={gateRequired}
+          size={size}
+        />
+        {editNote ? (
+          <span className={`${sizeCls} max-w-[16rem] text-right text-violet-800`}>
+            {editNote}
+          </span>
+        ) : null}
+      </div>
     );
   }
 
@@ -1733,6 +1904,11 @@ function TestAction({
             Released ✓
           </span>
         )}
+        {editNote ? (
+          <span className={`${sizeCls} max-w-[16rem] text-right text-violet-800`}>
+            {editNote}
+          </span>
+        ) : null}
         {/* Headers never reach TestAction (only components + standalones
             render it), so every released row here may offer Undo — the 0110
             cascade flips the header when its last component is undone. */}
@@ -1740,6 +1916,7 @@ function TestAction({
           testRequestId={testRequestId}
           visitId={visitId}
           viewedCount={viewedCount}
+          reportScope={reportScope}
           size={size}
         />
       </div>

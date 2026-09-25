@@ -10,13 +10,15 @@ import { loadResultDocumentInput, loadTemplateParams } from "@/lib/results/loade
 import { deriveEnabledParamIds } from "@/lib/results/enabled-params";
 import { sectionsForRole } from "@/lib/auth/role-sections";
 import { scopeToAllowedSections } from "@/lib/visits/bulk-selection";
+import { calculateAgeMonths, normalisePatientSex } from "@/lib/results/types";
 import {
-  calculateAgeMonths,
-  computeFlag,
-  detectCritical,
-  normalisePatientSex,
-  pickRangeForPatient,
-} from "@/lib/results/types";
+  buildValueRows,
+  detectCrossings,
+  mergeValueRows,
+  valueRowsToDocValues,
+  type ValueRow,
+} from "@/lib/results/value-rows";
+import { commitResultFinalise } from "@/lib/actions/results/result-edit-core";
 
 export interface FinaliseInput {
   visitId: string;
@@ -182,7 +184,6 @@ export async function finaliseConsolidatedReport(
     return { ok: false, error: "Visit or patient not found." };
   }
   const patientSex = normalisePatientSex(patientRaw.sex ?? null);
-  const patientAgeMonths = calculateAgeMonths(patientRaw.birthdate ?? null);
 
   // ---------------------------------------------------------------------
   // 4) Idempotency / retry resolution (N5). If any of these test_requests
@@ -294,148 +295,51 @@ export async function finaliseConsolidatedReport(
   }
 
   // ---------------------------------------------------------------------
-  // 5) Result values, WITH flag computed (N3). Uses the exact same
-  // pickRangeForPatient + computeFlag pair the single-test path uses
-  // (src/lib/results/types.ts), so the two can never drift.
+  // 5) Values, flags and crossings — computed here, written below in ONE
+  // transaction with the PDF pointer (0172 result_finalise_commit). Flags use
+  // the same pickRangeForPatient + computeFlag pair as the single-test path.
   //
-  // WIPE the in-scope value set before writing, mirroring the single-test
-  // amend flow's "DELETE + reinsert" pattern (queue/[id]/actions.ts step
-  // 9) rather than upsert-only. The form omits empty fields entirely, so
-  // an upsert-only write can never remove a value: a medtech who CLEARS an
-  // incorrect result and retries after an upload failure would otherwise
-  // leave the old value (and its critical alert) live in the database and
-  // on the printed PDF. Scope the delete to `enabledParamIds` — the
-  // params for the services in THIS call (derived from orderedServiceIds
-  // above) — never a blanket delete on resultId, so a value belonging to
-  // a test outside this call's scope can't be touched. On a fresh
-  // finalise there is nothing to delete yet, so this is a harmless no-op
-  // there; on a resume, `enabledParamIds` covers exactly the same
-  // services as the original attempt (isCleanResumableState above
-  // requires input.testRequestIds to match the existing result's full
-  // membership), so nothing outside this result's own scope is at risk.
-  // ---------------------------------------------------------------------
-  if (enabledParamIds.size > 0) {
-    const { error: wipeErr } = await admin
-      .from("result_values")
-      .delete()
-      .eq("result_id", resultId)
-      .in("parameter_id", [...enabledParamIds]);
-    if (wipeErr) return { ok: false, error: translatePgError(wipeErr) };
-  }
-  if (input.values.length > 0) {
-    const valueRows = input.values.map((v) => {
-      const param = paramsById.get(v.parameter_id);
-      const flag = param
-        ? computeFlag(param, pickRangeForPatient(param, patientSex, patientAgeMonths), {
-            numeric_value_si: v.numeric_value_si,
-            numeric_value_conv: v.numeric_value_conv,
-            select_value: null,
-            is_blank: false,
-          })
-        : null;
-      return {
-        result_id: resultId,
-        parameter_id: v.parameter_id,
-        numeric_value_si: v.numeric_value_si,
-        numeric_value_conv: v.numeric_value_conv,
-        is_blank: false,
-        flag,
-      };
-    });
-    const { error: vErr } = await admin
-      .from("result_values")
-      .upsert(valueRows, { onConflict: "result_id,parameter_id" });
-    if (vErr) return { ok: false, error: translatePgError(vErr) };
-  }
-
-  // Headers are needed both for the critical-alert audit below (moved to
-  // after the PDF upload, step 6-relocated) and for the finalise/release
-  // audits in step 10.
-  const h = await headers();
-  const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
-  const ua = h.get("user-agent");
-
-  // ---------------------------------------------------------------------
-  // 7) Render the consolidated PDF and upload it BEFORE any release write,
-  // and BEFORE `finalised_at` is ever written to the database (N5 + M13).
-  // This is the crux of the fix: nothing below this point can leave a test
-  // released — or even advanced past 'in_progress' — without a
-  // downloadable PDF, because both the status flip AND release (step 9)
-  // only happen after the upload AND the metadata write (step 8) have
-  // already succeeded. If rendering, the upload, or the metadata write
-  // fails, every linked test_request is still sitting at 'in_progress'
-  // (step 4 left it there — see the comment on the fresh-insert branch
-  // above) — a state the consolidated entry page's ACTIVE_STATUSES already
-  // includes, so the medtech can simply reopen the same URL and retry; the
-  // idempotency check in step 4 resumes from this existing no-PDF result
-  // row rather than refusing.
-  //
-  // `finalisedAtOverride` prints this moment on the PDF even though it
-  // isn't written to `results.finalised_at` until step 8 succeeds — see
-  // the comment on loadResultDocumentInput's options parameter.
+  // The written set is COMPLETE: values outside this call's enabled scope
+  // (none in practice — a resume covers exactly the original services, see
+  // isCleanResumableState) are kept, every in-scope value is replaced by what
+  // the form sent. The form omits empty fields, so a value the medtech
+  // CLEARED before retrying disappears (and so does its critical alert)
+  // rather than surviving on the database and the PDF.
   // ---------------------------------------------------------------------
   const finalisedNow = new Date();
-  const docInput = await loadResultDocumentInput(resultId, {
-    finalisedAtOverride: finalisedNow,
-  });
-  const pdfBuf = await renderResultPdf(docInput);
-  const pdfPath = `${resultId}.pdf`;
-  const { error: upErr } = await admin.storage
-    .from("results")
-    .upload(pdfPath, pdfBuf, { contentType: "application/pdf", upsert: true });
-  if (upErr) return { ok: false, error: translatePgError(upErr) };
+  const patientForRanges = {
+    sex: patientSex,
+    ageMonths: calculateAgeMonths(patientRaw.birthdate ?? null, finalisedNow),
+  };
+  const newRows = buildValueRows(
+    Object.fromEntries(
+      input.values.map((v) => [
+        v.parameter_id,
+        {
+          numeric_value_si: v.numeric_value_si,
+          numeric_value_conv: v.numeric_value_conv,
+          text_value: null,
+          select_value: null,
+          is_blank: false,
+        },
+      ]),
+    ),
+    paramsById,
+    patientForRanges,
+  );
+  const { data: storedRows, error: storedErr } = await admin
+    .from("result_values")
+    .select("parameter_id, numeric_value_si, numeric_value_conv, text_value, select_value, flag, is_blank")
+    .eq("result_id", resultId);
+  if (storedErr) return { ok: false, error: translatePgError(storedErr) };
+  const keptRows: ValueRow[] = (storedRows ?? [])
+    .filter((r) => !enabledParamIds.has(r.parameter_id))
+    .map((r) => ({ ...r, flag: r.flag as ValueRow["flag"] }));
+  const completeRows = mergeValueRows(keptRows, newRows);
 
-  // 8) Stamp storage_path + file_size_bytes + finalised_at now that the
-  // PDF is safely uploaded. Writing finalised_at (NULL → not-NULL) here is
-  // what fires advance_test_on_result_upload and flips every linked
-  // test_request from 'in_progress' to 'result_uploaded' /
-  // 'ready_for_release' — deliberately deferred to this exact moment so
-  // that flip can only ever happen once a downloadable PDF already exists.
-  // This write's result MUST be checked: the upload can succeed while this
-  // UPDATE fails (e.g. a transient DB error), and if we proceeded to
-  // release anyway, `results.storage_path` would still be null in the
-  // database — a released test whose patient-facing download says "No
-  // result file on this test", contradicting the invariant this whole
-  // function exists to guarantee (no test is ever released without a
-  // downloadable PDF). Abort before release on failure; the object
-  // already sitting in storage is harmless (re-finalising overwrites it
-  // via `upsert: true` above) and the idempotency check in step 4 lets the
-  // medtech retry.
-  const { error: metaErr } = await admin
-    .from("results")
-    .update({
-      storage_path: pdfPath,
-      file_size_bytes: pdfBuf.byteLength,
-      finalised_at: finalisedNow.toISOString(),
-    })
-    .eq("id", resultId);
-  if (metaErr) return { ok: false, error: translatePgError(metaErr) };
-
-  // ---------------------------------------------------------------------
-  // 6 (relocated, Finding 6 go-live review): critical-value detection (N3),
-  // mirroring the single-test path's step 11. Map each parameter back to a
-  // test_request in this report (via report_group_service_params) so the
-  // alert carries a real test_request_id.
-  //
-  // This step now runs AFTER the PDF has been rendered and uploaded and
-  // `finalised_at`/`storage_path` have been durably written (steps 7-8),
-  // not before. Previously it ran up front and unconditionally deleted +
-  // re-inserted every critical_alerts row for this result on EVERY attempt
-  // — including a retry that resumes a stalled prior attempt (step 4).
-  // Because the idempotency check above refuses to resume once
-  // `storage_path` is set (it demands "no stored PDF yet"), critical_alerts
-  // can now only ever be written once per resultId: by the time this point
-  // is reached, the PDF/metadata write has already succeeded, so any
-  // further call for the same test_request_ids is refused up front as
-  // "already have a result on file" and never reaches this block again.
-  // That closes both problems the old ordering had: a pathologist's
-  // acknowledgement made between two attempts can no longer be wiped by a
-  // second attempt's delete+insert (there is no second attempt past this
-  // point), and result.critical_value_detected can no longer be audited
-  // twice for the same underlying event. The delete below is kept as
-  // defense-in-depth for a genuinely stale row (e.g. a legacy result that
-  // predates this ordering) rather than something the normal flow relies on.
-  // ---------------------------------------------------------------------
+  // Each crossing is filed under the member whose service enables the
+  // parameter (report_group_service_params), so the alert carries a real
+  // test_request_id.
   const serviceIdToTestRequestId = new Map(
     claimRows.map((r) => [flatService(r.services)?.id ?? "", r.id]),
   );
@@ -444,70 +348,67 @@ export async function finaliseConsolidatedReport(
     const trId = serviceIdToTestRequestId.get(m.service_id);
     if (trId) paramIdToTestRequestId.set(m.parameter_id, trId);
   }
+  const alerts = detectCrossings(
+    newRows,
+    paramsById,
+    patientForRanges,
+    (paramId) => paramIdToTestRequestId.get(paramId) ?? null,
+  );
 
-  const alerts: Array<{
-    result_id: string;
-    test_request_id: string;
-    parameter_id: string;
-    parameter_name: string;
-    direction: "low" | "high";
-    observed_value_si: number;
-    threshold_si: number;
-    patient_id: string;
-    patient_drm_id: string;
-  }> = [];
-  for (const v of input.values) {
-    const param = paramsById.get(v.parameter_id);
-    const testRequestId = paramIdToTestRequestId.get(v.parameter_id);
-    if (!param || !testRequestId) continue;
-    const range = pickRangeForPatient(param, patientSex, patientAgeMonths);
-    const hit = detectCritical(param, range, {
-      numeric_value_si: v.numeric_value_si,
-      numeric_value_conv: v.numeric_value_conv,
-      is_blank: false,
+  const h = await headers();
+  const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+  const ua = h.get("user-agent");
+
+  // ---------------------------------------------------------------------
+  // 6) Render the PDF from the values about to be written, then commit
+  // values + PDF pointer + finalised_at + alerts in one transaction. Writing
+  // finalised_at fires advance_test_on_result_upload INSIDE that
+  // transaction, so every linked test flips to result_uploaded /
+  // ready_for_release together with the PDF or not at all — no test can be
+  // advanced (or released, step 9) without a downloadable PDF. The upload
+  // goes to a path unique to this attempt (result-edit-core), so a retry
+  // never overwrites the object a committed row points at, and a failed
+  // attempt leaves every test at in_progress: the medtech reopens the page
+  // and step 4 resumes from this no-PDF result row. A second finalise of an
+  // already-finalised result is refused inside the lock (P0066).
+  // ---------------------------------------------------------------------
+  const docInput = await loadResultDocumentInput(resultId, {
+    finalisedAtOverride: finalisedNow,
+    valuesOverride: valueRowsToDocValues(completeRows),
+  });
+  const pdfBuf = await renderResultPdf(docInput);
+  const committed = await commitResultFinalise({
+    resultId,
+    finaliserId: session.user_id,
+    base: resultId,
+    pdf: pdfBuf,
+    finalisedAt: finalisedNow,
+    values: completeRows,
+    image: null,
+    alerts,
+  });
+  if (!committed.ok) return { ok: false, error: committed.error };
+
+  if (committed.data.alertsAdded.length > 0) {
+    await audit({
+      actor_id: session.user_id,
+      actor_type: "staff",
+      patient_id: patientRaw.id,
+      action: "result.critical_value_detected",
+      resource_type: "result",
+      resource_id: resultId,
+      metadata: {
+        test_request_ids: input.testRequestIds,
+        alerts: committed.data.alertsAdded.map((a) => ({
+          parameter: a.parameter_name,
+          direction: a.direction,
+          observed: a.observed_value_si,
+          threshold: a.threshold_si,
+        })),
+      },
+      ip_address: ip,
+      user_agent: ua,
     });
-    if (hit) {
-      alerts.push({
-        result_id: resultId,
-        test_request_id: testRequestId,
-        parameter_id: param.id,
-        parameter_name: param.parameter_name,
-        direction: hit.direction,
-        observed_value_si: hit.observed_si,
-        threshold_si: hit.threshold_si,
-        patient_id: patientRaw.id,
-        patient_drm_id: patientRaw.drm_id,
-      });
-    }
-  }
-  await admin.from("critical_alerts").delete().eq("result_id", resultId);
-  if (alerts.length > 0) {
-    const { error: alertErr } = await admin.from("critical_alerts").insert(alerts);
-    if (alertErr) {
-      // Don't fail the finalise — the result row (and its PDF) are already
-      // committed. Surface in the audit log so the gap is investigatable.
-      console.error("critical_alerts insert failed", alertErr);
-    } else {
-      await audit({
-        actor_id: session.user_id,
-        actor_type: "staff",
-        patient_id: patientRaw.id,
-        action: "result.critical_value_detected",
-        resource_type: "result",
-        resource_id: resultId,
-        metadata: {
-          test_request_ids: input.testRequestIds,
-          alerts: alerts.map((a) => ({
-            parameter: a.parameter_name,
-            direction: a.direction,
-            observed: a.observed_value_si,
-            threshold: a.threshold_si,
-          })),
-        },
-        ip_address: ip,
-        user_agent: ua,
-      });
-    }
   }
 
   // ---------------------------------------------------------------------
@@ -587,6 +488,7 @@ export async function finaliseConsolidatedReport(
       report_group_id: input.groupId,
       visit_id: input.visitId,
       pdf_size_bytes: pdfBuf.byteLength,
+      storage_path: committed.data.storagePath,
       release_deferred: releaseDeferred,
       deferred_reason: deferredReason,
     },

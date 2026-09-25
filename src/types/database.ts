@@ -4800,6 +4800,7 @@ export type Database = {
           amended_at: string
           amended_by: string
           amendment_seq: number
+          attempt_id: string | null
           id: string
           prior_file_size_bytes: number | null
           prior_image_filename: string | null
@@ -4819,6 +4820,7 @@ export type Database = {
           amended_at?: string
           amended_by: string
           amendment_seq: number
+          attempt_id?: string | null
           id?: string
           prior_file_size_bytes?: number | null
           prior_image_filename?: string | null
@@ -4838,6 +4840,7 @@ export type Database = {
           amended_at?: string
           amended_by?: string
           amendment_seq?: number
+          attempt_id?: string | null
           id?: string
           prior_file_size_bytes?: number | null
           prior_image_filename?: string | null
@@ -6586,6 +6589,7 @@ export type Database = {
       has_role: { Args: { roles: string[] }; Returns: boolean }
       is_staff: { Args: never; Returns: boolean }
       je_next_number: { Args: { p_fiscal_year: number }; Returns: string }
+      lab_sections_for_role: { Args: { p_role: string }; Returns: string[] }
       next_pf_disbursement_batch_number: {
         Args: { p_year: number }
         Returns: number
@@ -6646,12 +6650,49 @@ export type Database = {
         Args: { p_service_kind: string }
         Returns: string
       }
+      result_edit_commit: {
+        Args: {
+          p_alerts: Json
+          p_anchor_test_request_id: string
+          p_attempt_id: string
+          p_editor: string
+          p_expected_amendment_count: number
+          p_new_file_size_bytes: number
+          p_new_image: Json
+          p_new_storage_path: string
+          p_reason: string
+          p_result_id: string
+          p_values: Json
+        }
+        Returns: Json
+      }
+      result_finalise_commit: {
+        Args: {
+          p_alerts: Json
+          p_file_size_bytes: number
+          p_finalised_at: string
+          p_finaliser: string
+          p_new_image: Json
+          p_result_id: string
+          p_storage_path: string
+          p_values: Json
+        }
+        Returns: Json
+      }
+      result_save_draft: {
+        Args: { p_result_id: string; p_values: Json }
+        Returns: undefined
+      }
       set_patient_context: {
         Args: { p_patient_id: string }
         Returns: undefined
       }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
+      staff_can_read_finished_result: {
+        Args: { p_result_id: string }
+        Returns: boolean
+      }
       staff_role: { Args: never; Returns: string }
       visits_classification_summary: {
         Args: { p_deleted?: string; p_end?: string; p_start?: string }
