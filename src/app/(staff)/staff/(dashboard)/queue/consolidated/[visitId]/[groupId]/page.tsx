@@ -26,6 +26,8 @@ import { claimRemarks, type ClaimEvent } from "@/lib/queue/claim-remarks";
 import { fetchClaimEvents } from "@/lib/queue/fetch-claim-events";
 import { ClaimHistory } from "@/components/staff/claim-remarks-list";
 import { QueueUnclaimButton } from "../../../queue-unclaim-button";
+import { shouldOfferNotify } from "@/lib/results/copy-followups";
+import { fetchCopyStates } from "@/lib/results/copy-followups.server";
 
 type One<T> = T | T[] | null;
 const one = <T,>(v: One<T>): T | null => (Array.isArray(v) ? (v[0] ?? null) : v);
@@ -323,6 +325,11 @@ export default async function ConsolidatedQueuePage({
         conv: v.numeric_value_conv == null ? "" : String(v.numeric_value_conv),
       };
     }
+    // 0179: the edit form's opt-in "let the patient know" checkbox. Read
+    // through the signed-in client; amendConsolidatedReport re-checks with
+    // the admin client before it ever sends.
+    const copyStates = await fetchCopyStates(supabase, [editing.resultId]);
+    const notifyOffer = shouldOfferNotify(copyStates?.get(editing.resultId));
     editForm = {
       resultId: editing.resultId,
       node: loadState === "load_failed" ? (
@@ -337,6 +344,7 @@ export default async function ConsolidatedQueuePage({
           params={params}
           editableParamIds={[...editable]}
           initial={initial}
+          notifyOffer={notifyOffer}
           doneHref={`/staff/queue/consolidated/${visitId}/${groupId}#result-${editing.resultId}`}
         />
       ) : (

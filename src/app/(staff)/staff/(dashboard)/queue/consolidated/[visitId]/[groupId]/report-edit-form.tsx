@@ -9,6 +9,8 @@ import {
   type ConsolidatedParam,
   type ValueCells,
 } from "./consolidated-values-table";
+import { NotifyPatientCheckbox } from "@/components/staff/notify-patient-checkbox";
+import { NOTIFY_OUTCOME_TEXT, type NotifyOffer } from "@/lib/results/copy-followups";
 
 /**
  * Edit a finished combined report in place. Pre-filled with the report's
@@ -23,6 +25,7 @@ export function ReportEditForm({
   params,
   editableParamIds,
   initial,
+  notifyOffer,
   doneHref,
 }: {
   resultId: string;
@@ -30,6 +33,8 @@ export function ReportEditForm({
   params: ConsolidatedParam[];
   editableParamIds: string[];
   initial: ValueCells;
+  /** 0179: whether "let the patient know" can offer anything. */
+  notifyOffer: NotifyOffer;
   /** Where Save / Cancel go (the page without ?edit). */
   doneHref: string;
 }) {
@@ -37,6 +42,8 @@ export function ReportEditForm({
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<{ message: string; stale: boolean } | null>(null);
   const [reason, setReason] = useState("");
+  const [notify, setNotify] = useState(false);
+  const [saved, setSaved] = useState<{ notify?: string } | null>(null);
   const enabled = new Set(editableParamIds);
   const { values, updateSi, updateConv, payload } = useConsolidatedValues(initial);
 
@@ -52,14 +59,32 @@ export function ReportEditForm({
         expectedAmendmentCount,
         reason: reason.trim(),
         values: payload(params, enabled),
+        notifyPatient: notify,
       });
       if (!res.ok) {
         setError({ message: res.error, stale: Boolean(res.stale) });
         return;
       }
-      router.replace(doneHref);
+      setSaved({ notify: res.notify });
       router.refresh();
     });
+  }
+
+  if (saved) {
+    return (
+      <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+        <p role="status" className="text-sm font-semibold text-emerald-800">
+          Saved.{NOTIFY_OUTCOME_TEXT[saved.notify ?? ""] ?? ""}
+        </p>
+        <button
+          type="button"
+          onClick={() => router.replace(doneHref)}
+          className="mt-3 min-h-[44px] rounded-lg bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
+        >
+          Done
+        </button>
+      </div>
+    );
   }
 
   return (
@@ -75,8 +100,8 @@ export function ReportEditForm({
         <p className="mt-1 text-xs text-amber-900">
           Change the values below and give a reason. Saving makes a new PDF that replaces the
           current one — the patient sees only the new version. The replaced PDF and its values
-          are kept in the edit history. A patient who already downloaded the old PDF is not told
-          automatically.
+          are kept in the edit history. Patients who already have a copy appear on Result
+          follow-ups until someone contacts them.
         </p>
       </div>
 
@@ -104,6 +129,13 @@ export function ReportEditForm({
           placeholder="e.g. Glucose re-run after a sample mix-up"
         />
       </div>
+
+      <NotifyPatientCheckbox
+        offer={notifyOffer}
+        checked={notify}
+        onChange={setNotify}
+        id={`notify-patient-${resultId}`}
+      />
 
       {error ? (
         <p role="alert" className="rounded-lg border border-destructive bg-destructive/5 p-3 text-sm text-destructive">

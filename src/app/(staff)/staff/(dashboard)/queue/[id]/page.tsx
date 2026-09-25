@@ -33,6 +33,8 @@ import {
 import { loadTemplateParams } from "@/lib/results/loaders";
 import { labQueueGate } from "@/lib/visits/lab-gate";
 import { manilaDateTime } from "@/lib/dates/manila";
+import { shouldOfferNotify, type NotifyOffer } from "@/lib/results/copy-followups";
+import { fetchCopyStates } from "@/lib/results/copy-followups.server";
 
 const loadTestDetail = cache(async (id: string) => {
   const session = await requireActiveStaff();
@@ -249,6 +251,15 @@ export default async function QueueTestDetailPage({ params }: Props) {
         test.status,
       ),
   );
+
+  // 0179: the amend form's opt-in "let the patient know" checkbox. Read
+  // through the signed-in client (RLS-gated); the Server Action re-checks
+  // with the admin client before sending regardless.
+  let notifyOffer: NotifyOffer = { offered: false, reason: "No result on file yet." };
+  if (amendable && result) {
+    const states = await fetchCopyStates(supabase, [result.id]);
+    notifyOffer = shouldOfferNotify(states?.get(result.id));
+  }
 
   // Load amendment history for the panel below the result.
   const amendments = result
@@ -554,6 +565,7 @@ export default async function QueueTestDetailPage({ params }: Props) {
                 <AmendResultForm
                   testRequestId={test.id}
                   expectedAmendmentCount={result.amendment_count}
+                  notifyOffer={notifyOffer}
                   generationKind={
                     result.generation_kind === "structured"
                       ? "structured"

@@ -63,3 +63,11 @@ export function outdatedCopyChip(s: CopyState | undefined): string | null {
 }
 
 export const PATIENT_CONTACTED_ACTION = "result.patient_contacted";
+
+/** What an edit form's notify outcome ("sent" | "failed" | "already" | "not_offered") reads as. */
+export const NOTIFY_OUTCOME_TEXT: Record<string, string> = {
+  sent: " The patient was sent an update notice.",
+  failed: " The patient notice could not be sent — they're on Result follow-ups.",
+  already: " The patient was already notified about this correction.",
+  not_offered: " No patient notice was sent (no copy or no contact on file).",
+};
