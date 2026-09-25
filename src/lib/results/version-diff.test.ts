@@ -1,12 +1,31 @@
 import { describe, expect, it } from "vitest";
-import { changesPerAmendment, diffResultVersions, type SnapshotValue } from "./version-diff";
+import { changesPerAmendment, diffResultVersions, displayValue, type SnapshotValue } from "./version-diff";
 
 const v = (id: string, name: string, si: number | null, flag: string | null = null, extra: Partial<SnapshotValue> = {}): SnapshotValue => ({
   parameter_id: id, parameter_name: name, numeric_value_si: si, numeric_value_conv: null,
   text_value: null, select_value: null, flag, is_blank: si == null, ...extra,
 });
 
+describe("displayValue", () => {
+  it("shows a conv-only value (no SI reading) instead of reading as blank", () => {
+    const x: SnapshotValue = {
+      parameter_id: "w", parameter_name: "Weight", numeric_value_si: null,
+      numeric_value_conv: 68.2, text_value: null, select_value: null,
+      flag: null, is_blank: false,
+    };
+    expect(displayValue(x)).toBe("68.2");
+  });
+});
+
 describe("diffResultVersions", () => {
+  it("a conv-only value change appears with its old and new values", () => {
+    const convOnly = (id: string, name: string, conv: number) => ({
+      parameter_id: id, parameter_name: name, numeric_value_si: null, numeric_value_conv: conv,
+      text_value: null, select_value: null, flag: null, is_blank: false,
+    });
+    const d = diffResultVersions([convOnly("w", "Weight", 68.2)], [convOnly("w", "Weight", 70.5)]);
+    expect(d).toEqual([{ parameterId: "w", name: "Weight", before: "68.2", after: "70.5", flagBefore: null, flagAfter: null }]);
+  });
   it("lists only changed parameters, in the new order", () => {
     const d = diffResultVersions([v("g", "Glucose", 55, "H"), v("c", "Cholesterol", 4)], [v("g", "Glucose", 5.5), v("c", "Cholesterol", 4)]);
     expect(d).toEqual([{ parameterId: "g", name: "Glucose", before: "55", after: "5.5", flagBefore: "H", flagAfter: null }]);

@@ -29,7 +29,11 @@ export interface AmendmentSnapshot {
 
 export function displayValue(x: SnapshotValue | undefined): string {
   if (!x || x.is_blank) return "—";
-  if (x.numeric_value_si != null) return String(x.numeric_value_si);
+  // House pattern (types.ts computeFlag/detectCritical): a conv-only value
+  // (no SI reading, only the converted one) must still show, not read as
+  // blank.
+  const numeric = x.numeric_value_si ?? x.numeric_value_conv;
+  if (numeric != null) return String(numeric);
   return x.select_value ?? x.text_value ?? "—";
 }
 
