@@ -247,7 +247,7 @@
 <div class="layout">
 <nav class="toc" aria-label="Contents">
   <p class="toc-brand">drmed<span>.</span>ph</p>
-  <p class="toc-tag">User guide · v2.24</p>
+  <p class="toc-tag">User guide · v2.25</p>
   <div class="filter" role="group" aria-label="Show chapters for">
     <button type="button" data-filter="all" aria-pressed="true">All roles</button>
     <button type="button" data-filter="reception">Reception</button>
@@ -1096,6 +1096,7 @@
       <li><p class="step-title">Undo a run.</p><p>From Run history, click <kbd class="ui">Undo</kbd> beside an eligible run and confirm. Undo is offered for a sync run (nightly, Sync now, or the command line) that succeeded, partly succeeded, or failed but had already written something, and for a re-sort approval or answer mapping that succeeded — never for an undo itself, a run still in progress, or one already undone. A large undo is worked through in pages behind the one click; it reports patients <b>restored</b> (details put back), <b>left alone because staff changed it</b> since, <b>kept because in use</b>, <b>already removed</b> by staff, and links <b>sent back to review</b>. Changes to the reporting copy (lab and consultation rows) are never undone — the next sync rebuilds it. The rows an undo sent back to review stay held — the nightly sync will not link or create them again on its own.</p></li>
       <li><p class="step-title">Let the sync decide again.</p><p>Once whatever made an undone run wrong has been fixed (for example the sheet was corrected), click <kbd class="ui">Let the sync decide again</kbd> on that undo's row in Run history and confirm. It hands the rows that undo held back to the sync: their <q>Kept undone</q> items close as <q>Released — the sync decides again</q>, and the <b>next</b> sync links or creates those rows again as if they were new. The row reports how many rows were handed back and how many review items closed. This cannot be undone — if the next sync gets it wrong again, undo that run.</p></li>
     </ol>
+    <div class="note why"><span class="k">Two counts mean the sync deliberately did nothing, not that it failed</span><div><p>After a real sync (not Preview), Overview and Run history's <q>What changed</q> can show <q>N skipped — changed since the sync read them (next sync retries)</q> — a patient staff edited between the sheet read and the sync applying it, so the sync backed off rather than overwrite the newer change; the next sync re-plans it from a fresh read. They can also show <q>N skipped — already registered (next sync links them)</q> — reception registered that exact person at the counter after the sheet read, so the sync skipped creating a duplicate; the next sync links the sheet row to the patient reception already made.</p></div></div>
     <div class="note why"><span class="k">A few sheet quirks the sync handles on its own</span><div><p>The empty template rows at the bottom of the sheet — left over from copy-paste, with no name and no data except a formula-filled Age cell — are skipped silently; they never appear as review items. A row with a blank surname before the comma (no last name typed) is not silently dropped either way: it stays a <q>Row the sync can't use</q> review item until staff fix the surname in the sheet.</p></div></div>
     <div class="note why"><span class="k">The public forms gained new channels</span><div><p>Turning on the sheet's fuller list of <q>how did you hear about us?</q> answers added the matching channels to the website's own question on <code class="route">/schedule</code> and <code class="route">/register</code>. Two existing options were reworded so no two read the same: <q>Customer referral</q> now asks patients <q>Another DRMed patient told me</q>, and <q>Family / friends</q> asks <q>A friend or family member</q>.</p></div></div>
   </section>
@@ -1273,7 +1274,7 @@
 </section>
 
 <footer class="end">
-  <p>drmed.ph User Guide · v2.24 · 25 September 2026 · Matches the production release at migration 0177, plus 0176 and 0170 (applied out of order). Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
+  <p>drmed.ph User Guide · v2.25 · 25 September 2026 · Matches the production release at migration 0177, plus 0176 and 0170 (applied out of order). Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
 </footer>
 </main>
 </div>

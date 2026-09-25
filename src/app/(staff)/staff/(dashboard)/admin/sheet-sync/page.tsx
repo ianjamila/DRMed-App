@@ -18,7 +18,7 @@ import { RunHistory } from "./run-history";
 import { ReviewQueue } from "./review-queue";
 import { ResortPanel } from "./resort-panel";
 import { DoneBanner } from "./done-banner";
-import { KIND_LABEL, TAB_LABEL, tabErrorLabel, isDoneKind, type DoneKind } from "./format";
+import { appliedChangeParts, KIND_LABEL, TAB_LABEL, tabErrorLabel, isDoneKind, type DoneKind } from "./format";
 
 export const metadata = { title: ROUTE_NAME["/staff/admin/sheet-sync"] };
 export const dynamic = "force-dynamic";
@@ -299,6 +299,11 @@ function Overview({
               })}
             </tbody>
           </table>
+          {appliedChangeParts(lastRun.per_tab?.customers?.applied).length > 0 && (
+            <p className="border-t border-[color:var(--color-brand-bg-mid)] p-3 text-xs text-[color:var(--color-brand-text-soft)]">
+              Customers changed: {appliedChangeParts(lastRun.per_tab?.customers?.applied).join(", ")}
+            </p>
+          )}
         </Panel>
       )}
 

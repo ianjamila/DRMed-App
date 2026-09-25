@@ -13,7 +13,7 @@ import {
 import type { ReleaseSummary, RevertSummary } from "@/lib/sheet-sync/run";
 import type { TabKey } from "@/lib/sheet-sync/types";
 import { ReleaseUndoButton, UndoRunButton } from "./sync-controls";
-import { canRelease, canUndo, durationLabel, releaseSummaryLine, revertSummaryLine, STATUS_LABEL, tabErrorLabel, TAB_LABEL, TRIGGER_LABEL } from "./format";
+import { appliedChangeParts, canRelease, canUndo, durationLabel, releaseSummaryLine, revertSummaryLine, STATUS_LABEL, tabErrorLabel, TAB_LABEL, TRIGGER_LABEL } from "./format";
 
 const BASE_PATH = "/staff/admin/sheet-sync";
 
@@ -56,11 +56,7 @@ function whatChanged(run: RunRow): string {
   const parts: string[] = [];
   const applied = per.customers?.applied;
   if (applied) {
-    const bits = [
-      applied.created ? `${applied.created} created` : null,
-      applied.filled ? `${applied.filled} filled` : null,
-      applied.linked ? `${applied.linked} linked` : null,
-    ].filter((b): b is string => b !== null);
+    const bits = appliedChangeParts(applied);
     if (bits.length) parts.push(bits.join(", "));
   }
   for (const tab of ["customers", "lab", "consult"] as TabKey[]) {

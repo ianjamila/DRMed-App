@@ -13,6 +13,7 @@ import {
   TRIGGER_LABEL,
   TAB_LABEL,
   RESOLUTION_ACTION_LABEL,
+  APPLIED_COUNT_LABEL,
   DONE_KINDS,
   durationLabel,
   doneBannerMessage,
@@ -20,6 +21,7 @@ import {
   isDoneKind,
   resolutionSummary,
   releaseSummaryLine,
+  appliedChangeParts,
   canRelease,
   canUndo,
   hasCommittedChanges,
@@ -366,6 +368,53 @@ describe("canRelease — Let the sync decide again", () => {
   });
   it("never on a run that is not an undo", () => {
     for (const trigger of ["cron", "manual", "cli", "resort", "alias", "release"]) expect(canRelease(undo({ trigger }))).toBe(false);
+  });
+});
+
+// 0170's sheet_sync_apply_customer_ops returns exactly this counts jsonb —
+// pinned so `stale` and `skipped_existing` can't silently drift from what
+// the migration actually writes (the same "read the source of truth" idea
+// as the CHECK-list / resolution-action tests above).
+describe("APPLIED_COUNT_LABEL / appliedChangeParts (0170's counts jsonb: created, linked, filled, facts, held, skipped, stale, skipped_existing)", () => {
+  it("the migration's counts jsonb literally names stale and skipped_existing", () => {
+    expect(MIGRATION).toContain("'stale', n_stale");
+    expect(MIGRATION).toContain("'skipped_existing', n_skipped_existing");
+  });
+
+  it("has a plain-language label for stale and skipped_existing", () => {
+    expect(APPLIED_COUNT_LABEL.stale).toBeTruthy();
+    expect(APPLIED_COUNT_LABEL.skipped_existing).toBeTruthy();
+  });
+
+  it("formats created/filled/linked in order, skipping zero or missing counts", () => {
+    expect(appliedChangeParts({ created: 3, filled: 0, linked: 2 })).toEqual(["3 created", "2 linked"]);
+  });
+
+  it("labels stale as re-planned next run, and skipped_existing as linked next run", () => {
+    expect(appliedChangeParts({ stale: 2 })).toEqual([
+      "2 skipped — changed since the sync read them (next sync retries)",
+    ]);
+    expect(appliedChangeParts({ skipped_existing: 5 })).toEqual([
+      "5 skipped — already registered (next sync links them)",
+    ]);
+  });
+
+  it("orders created/filled/linked before stale/skipped_existing", () => {
+    expect(appliedChangeParts({ skipped_existing: 5, stale: 2, created: 1 })).toEqual([
+      "1 created",
+      "2 skipped — changed since the sync read them (next sync retries)",
+      "5 skipped — already registered (next sync links them)",
+    ]);
+  });
+
+  it("returns an empty array for no counts", () => {
+    expect(appliedChangeParts(undefined)).toEqual([]);
+    expect(appliedChangeParts(null)).toEqual([]);
+    expect(appliedChangeParts({})).toEqual([]);
+  });
+
+  it("silently ignores counts with no label on screen (held, facts, the generic skipped)", () => {
+    expect(appliedChangeParts({ held: 3, facts: 2, skipped: 1 })).toEqual([]);
   });
 });
 

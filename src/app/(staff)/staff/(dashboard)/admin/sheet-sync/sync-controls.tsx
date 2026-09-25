@@ -14,7 +14,7 @@ import { friendlyManilaDate } from "@/lib/dates/manila";
 import type { TabKey } from "@/lib/sheet-sync/types";
 import type { RunOutcome } from "@/lib/sheet-sync/run";
 import { runSheetSyncNowAction, setSheetSyncPausedAction, revertRunAction, releaseUndoAction, type RunOutcomeSummary } from "./actions";
-import { KIND_LABEL, STATUS_LABEL, TAB_LABEL, releaseSummaryLine, revertSummaryLine, tabErrorLabel } from "./format";
+import { appliedChangeParts, KIND_LABEL, STATUS_LABEL, TAB_LABEL, releaseSummaryLine, revertSummaryLine, tabErrorLabel } from "./format";
 import { pauseConfirmArgs, resumeArgs, syncSwitchIntent } from "./sync-switch-logic";
 
 // ---------------------------------------------------------------------------
@@ -177,6 +177,9 @@ function PerTabPanel({ perTab }: { perTab: RunOutcome["perTab"] }) {
                   To link: {Number(out.planned.link_new ?? 0)} · To create: {Number(out.planned.create ?? 0)} ·
                   {" "}To fill: {Number(out.planned.fill ?? 0)} · Registration dates recorded: {Number(out.planned.facts ?? 0)}
                 </p>
+              ) : null}
+              {tab === "customers" && appliedChangeParts(out.applied).length ? (
+                <p>Applied: {appliedChangeParts(out.applied).join(", ")}</p>
               ) : null}
               {out.mirror_rows !== undefined ? <p>Copied rows: {out.mirror_rows}</p> : null}
               {reviewCountsLine(out.review) ? <p>Review: {reviewCountsLine(out.review)}</p> : null}

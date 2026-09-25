@@ -39,6 +39,36 @@ export const STATUS_LABEL: Record<string, string> = {
   skipped_paused: "Skipped (paused)",
 };
 
+// Plain words for a real (non-dry-run) sync's customers `applied` counts
+// (0170's sheet_sync_apply_customer_ops counts jsonb: created, linked,
+// filled, facts, held, skipped, stale, skipped_existing). Only the counts
+// worth calling out on screen have a label; an unlisted key (held, facts,
+// the generic skipped) is left off rather than shown as a raw code. `stale`
+// is an op the sync skipped because the patient changed since it read the
+// sheet (link or fill) — the next run re-plans it from a fresh read.
+// `skipped_existing` is a create the sync skipped because someone matching
+// this exact person (same normalized name + birthdate, or name + phone) was
+// already a live patient — the next run links the sheet row to them instead
+// of creating a duplicate.
+export const APPLIED_COUNT_LABEL: Partial<Record<string, (n: number) => string>> = {
+  created: (n) => `${n} created`,
+  filled: (n) => `${n} filled`,
+  linked: (n) => `${n} linked`,
+  stale: (n) => `${n} skipped — changed since the sync read them (next sync retries)`,
+  skipped_existing: (n) => `${n} skipped — already registered (next sync links them)`,
+};
+
+/** Ordered, non-zero parts of a customers `applied` count record, in `APPLIED_COUNT_LABEL`'s key order. */
+export function appliedChangeParts(applied: Record<string, number> | undefined | null): string[] {
+  if (!applied) return [];
+  return Object.keys(APPLIED_COUNT_LABEL)
+    .map((k) => {
+      const n = applied[k];
+      return n ? APPLIED_COUNT_LABEL[k]!(n) : null;
+    })
+    .filter((b): b is string => b !== null);
+}
+
 export function durationLabel(ms: number | null | undefined): string {
   if (ms === null || ms === undefined) return "—";
   if (ms < 1000) return `${ms} ms`;
