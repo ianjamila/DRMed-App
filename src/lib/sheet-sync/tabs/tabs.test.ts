@@ -113,6 +113,29 @@ describe("parseCustomersTab", () => {
     expect(r.referralSourceId).toBe("online_google");
     expect(r.email).toBe("juan@example.com");
   });
+  it("skips a formula-only filler row (bare comma + Age) silently: no issue, not counted", () => {
+    const row: Cell[] = new Array(22).fill("");
+    row[4] = ","; row[7] = 30; // Age is a spreadsheet formula that yields a value even on an empty row
+    const p = parseCustomersTab([CUST_HEADER, row], { today: TODAY, aliases: new Map() });
+    expect(p.rows).toHaveLength(0);
+    expect(p.issues).toHaveLength(0);
+    expect(p.rowsRead).toBe(0);
+  });
+  it("keeps a filler-looking row in play when any other cell (e.g. phone) is non-blank", () => {
+    const row: Cell[] = new Array(22).fill("");
+    row[4] = ","; row[7] = 30; row[11] = "9171234567";
+    const p = parseCustomersTab([CUST_HEADER, row], { today: TODAY, aliases: new Map() });
+    expect(p.rows).toHaveLength(0);
+    expect(p.rowsRead).toBe(1);
+    expect(p.issues).toHaveLength(1);
+    expect(p.issues[0].kind).toBe("invalid_row");
+  });
+  it("uses the Last Name fallback column when Full Name has a blank surname before the comma", () => {
+    const row = cust({ 4: ", Juan Santos", 0: "Dela Cruz" });
+    const p = parseCustomersTab([CUST_HEADER, row], { today: TODAY, aliases: new Map() });
+    expect(p.rows).toHaveLength(1);
+    expect(p.rows[0]).toMatchObject({ first: "Juan", middle: "Santos", last: "Dela Cruz" });
+  });
 });
 
 describe("money", () => {

@@ -44,10 +44,25 @@ export function parseCustomersTab(
   let undated = 0;
   let lastDate: string | null = null;
 
+  // A formula-only filler/template row: Full Name is a bare comma (or blank)
+  // and every other cell is blank EXCEPT col 7 (Age), which is a spreadsheet
+  // FORMULA that yields a value even on an otherwise-empty row. Any other
+  // non-blank cell (phone, DOB, address, answer, timestamp…) means real data
+  // was entered, so the row stays in play and still gets its invalid_row
+  // issue if it turns out nameless.
+  const isFillerRow = (r: Cell[]): boolean => {
+    if (text(r[4]).replace(/[,\s]/g, "") !== "") return false;
+    for (let c = 0; c < header.length; c++) {
+      if (c === 4 || c === 7) continue;
+      if (text(r[c]) !== "") return false;
+    }
+    return true;
+  };
+
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i] ?? [];
+    if (isFillerRow(r)) continue; // skipped silently: no issue, not a customer row
     const fullName = text(r[4]);
-    if (!fullName && !text(r[0]) && !text(r[1])) continue;
     rowsRead++;
     const sheetRow = i + 1;
     const rowHash = sha1Hex(JSON.stringify(r));
