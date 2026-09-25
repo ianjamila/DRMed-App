@@ -5,6 +5,12 @@ import { createClient } from "@/lib/supabase/server";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { RealtimeRefresher, type Subscription } from "@/components/staff/realtime-refresher";
 import { TransitionButtons } from "./transition-buttons";
+import { SelectionProvider } from "@/components/staff/row-selection/selection-context";
+import { RowSelectCheckbox } from "@/components/staff/row-selection/row-select-checkbox";
+import { SelectAllCheckbox } from "@/components/staff/row-selection/select-all-checkbox";
+import type { SelectionEntry } from "@/lib/ui/bulk-selection";
+import type { GroupInfo } from "@/lib/appointments/bulk-eligibility";
+import { AppointmentsBulkBar } from "./appointments-bulk-bar";
 import {
   NewAppointmentSheet,
   type ServiceOption,
@@ -202,6 +208,45 @@ function groupRows(rows: ApptRow[]): ApptGroup[] {
     }
   }
   return groups;
+}
+
+// Bulk selection: a row is a booking group; nothing acts on completed ones.
+function isSelectableGroup(g: ApptGroup): boolean {
+  return g.lead.status !== "completed";
+}
+
+function selectionEntry(g: ApptGroup): SelectionEntry {
+  return { rowKey: g.key, kinds: [g.lead.status], weight: g.rows.length };
+}
+
+function selectableEntries(groups: readonly ApptGroup[]): SelectionEntry[] {
+  return groups.filter(isSelectableGroup).map(selectionEntry);
+}
+
+function groupPatientActive(r: ApptRow): boolean {
+  return isActivePatient({
+    drm_id: r.patient_drm_id ?? "",
+    deleted_at: r.patient_deleted_at,
+    merged_into_id: r.patient_merged_into_id,
+  });
+}
+
+function groupInfoMap(groups: readonly ApptGroup[]): Record<string, GroupInfo> {
+  const out: Record<string, GroupInfo> = {};
+  for (const g of groups) {
+    if (!isSelectableGroup(g)) continue;
+    out[g.key] = {
+      ids: g.rows.map((row) => row.id),
+      status: g.lead.status,
+      patientActive: groupPatientActive(g.lead),
+    };
+  }
+  return out;
+}
+
+function selectionLabel(g: ApptGroup): string {
+  const who = g.lead.patient_name ?? g.lead.walk_in_name ?? "Walk-in";
+  return g.rows.length > 1 ? `${who}, ${g.rows.length} services` : who;
 }
 
 interface LoadedAppts {
@@ -589,6 +634,22 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
   // Drops q/sort/dir/page/size entirely — back to the grouped default.
   const exitFlatHref = buildListHref(BASE_PATH, { type: typeParam }, {});
 
+  // Any change to what the list shows or how it is ordered drops the
+  // selection (SelectionProvider keys its state on this).
+  const selectionResetKey = [
+    isFlatView ? "flat" : "grouped",
+    type,
+    query,
+    sp.sort ?? "",
+    sp.dir ?? "",
+    String(page),
+    String(size),
+    rawSource,
+  ].join("|");
+  const groupsByKey = groupInfoMap(
+    isFlatView ? flatGroups : [...pendingGroups, ...walkInGroups, ...todayGroups, ...upcomingGroups],
+  );
+
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
       <RealtimeRefresher
@@ -714,6 +775,7 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
         })}
       </nav>
 
+      <SelectionProvider resetKey={selectionResetKey}>
       {isFlatView ? (
         <>
           {anyTruncated ? (
@@ -812,6 +874,8 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
           />
         </>
       )}
+      <AppointmentsBulkBar groupsByKey={groupsByKey} isAdmin={session.role === "admin"} />
+      </SelectionProvider>
     </div>
   );
 }
@@ -849,6 +913,12 @@ function Section({
         <table className="w-full text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
+              <th className="w-12 px-2 py-3">
+                <SelectAllCheckbox
+                  entries={selectableEntries(groups)}
+                  label={`Select all bookings in ${title.replace(/\s*\(\d+\)\s*$/, "")}`}
+                />
+              </th>
               <th className="px-4 py-3">Requested</th>
               <th className="px-4 py-3">When</th>
               <th className="px-4 py-3">Patient</th>
@@ -861,7 +931,7 @@ function Section({
             {groups.length === 0 ? (
               <tr>
                 <td
-                  colSpan={6}
+                  colSpan={7}
                   className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]"
                 >
                   {empty}
@@ -914,6 +984,9 @@ function FlatTable({
       <table className="w-full text-sm">
         <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
           <tr>
+            <th className="w-12 px-2 py-3">
+              <SelectAllCheckbox entries={selectableEntries(groups)} label="Select all bookings on this page" />
+            </th>
             <SortableTh
               label="Requested"
               href={sortHref("created_at")}
@@ -940,7 +1013,7 @@ function FlatTable({
           {groups.length === 0 ? (
             <tr>
               <td
-                colSpan={8}
+                colSpan={9}
                 className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]"
               >
                 No appointments match.
@@ -984,6 +1057,16 @@ function GroupRow({
   const ids = group.rows.map((row) => row.id);
   return (
     <tr className="align-top hover:bg-[color:var(--color-brand-bg)]">
+      <td className="px-2 py-2 align-middle">
+        {isSelectableGroup(group) ? (
+          <RowSelectCheckbox
+            rowKey={group.key}
+            kinds={[r.status]}
+            weight={group.rows.length}
+            label={selectionLabel(group)}
+          />
+        ) : null}
+      </td>
       <td className="px-4 py-3 whitespace-nowrap text-xs text-[color:var(--color-brand-text-soft)]">
         {manilaDateTime(r.created_at)}
       </td>
@@ -1114,11 +1197,7 @@ function GroupRow({
           status={r.status}
           isAdmin={isAdmin}
           groupSize={group.rows.length}
-          patientActive={isActivePatient({
-            drm_id: r.patient_drm_id ?? "",
-            deleted_at: r.patient_deleted_at,
-            merged_into_id: r.patient_merged_into_id,
-          })}
+          patientActive={groupPatientActive(r)}
         />
       </td>
     </tr>
