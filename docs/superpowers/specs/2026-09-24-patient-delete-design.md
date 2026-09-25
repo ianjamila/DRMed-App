@@ -200,8 +200,11 @@ claim-scoped RLS identity helper below, which accepts no arbitrary patient ID.
 
 ### One locking protocol for deletion and all patient-associated writes
 
-Use transaction-scoped advisory locks `pg_advisory_xact_lock(hashtext('patient_lifecycle'),
-hashtext(patient_id::text))`, shared by every writer below. For multiple patients, acquire
+Use transaction-scoped advisory locks on the key `(hashtext('patient_lifecycle'),
+hashtext(patient_id::text))`: delete/restore/merge/undo and ownership changes take it
+EXCLUSIVE (`pg_advisory_xact_lock`), ordinary writers take it SHARED
+(`pg_advisory_xact_lock_shared`) — see "PR 3 revision" below, which supersedes this
+section where they differ. For multiple patients, acquire
 distinct advisory keys in sorted numeric order, then patient rows in UUID order. Hash
 collisions merely serialize unrelated patients. Helpers are VOLATILE and run at READ COMMITTED:
 after waiting for the lock, issue a **new SELECT** for activity/blockers. Never reuse a
@@ -530,6 +533,201 @@ Each PR is independently reviewable and revertible; later PRs build on earlier o
 
 After PR 2 is live: preview blockers on prod for the owner's five test rows and delete them
 through the UI, only with the owner's go-ahead at that step.
+
+## PR 3 revision — split into 3a and 3b (Codex spec review + owner, 2026-09-25)
+
+PR 2 (#234, migration 0167) is live. A Codex xhigh spec review of PR 3 found 7 P1 and 4 P2
+design gaps; the owner then split PR 3 in two. This section supersedes the PR 3 parts of
+"One locking protocol…" and "Rollout" wherever they differ.
+
+### Owner decisions (2026-09-25)
+
+- **HMO billing of a deleted patient's unclaimed line stays refused** (create-batch /
+  add-items keep refusing). Restore the record first. Prod has never recorded a claim.
+- **PR 3 ships as 3a then 3b.** 3a = lock protocol, child-table guards, transactional
+  creation paths, resolver, closures, owner extras. 3b = merge/undo RPCs.
+- **Online-booking reuse matches last name case-insensitively.** Prod (2026-09-25) has zero
+  active (email, last name, birthdate) groups that differ only in case, so no existing pair
+  changes behaviour. The identity-lock key already lowercases; the match now agrees with it.
+- **Cancel and no-show stay allowed on a deleted patient's appointment**; every other
+  appointment change (arrive, re-confirm, reschedule, attach, edit) is refused.
+
+### Lock modes (3a + 3b)
+
+One key, `(hashtext('patient_lifecycle'), hashtext(patient_id::text))`, two modes:
+
+| Who | Mode | Why |
+|---|---|---|
+| `delete_patient`, `restore_patient` | exclusive | waits for every in-flight writer; no writer starts until it commits |
+| Merge / undo-merge, and any statement that changes a row's owning patient | exclusive on old **and** new patient, sorted, taken directly (never shared-then-exclusive in one transaction — upgrades deadlock) | shared locks on A and B are compatible, so a shared-mode reassignment of V from A to B would let B be deleted while a writer that resolved V → A is still running (Codex P1-1) |
+| Every other patient-associated writer | shared | writers must not serialize each other; they only exclude lifecycle changes |
+
+**Admission (Codex P1-18): the guard trigger always acquires; entry points pre-acquire.**
+Every guard trigger calls the helper, which *takes* the lock (a re-entrant no-op when the
+transaction already holds it). Multi-statement RPCs and multi-patient writers additionally
+take the complete sorted set **at entry, before touching any row** — this is the only
+ordering guarantee; the trigger acquisition exists so direct/stale PostgREST writes (one
+statement = one transaction) are still covered. Entry points that pre-acquire in 3a:
+`create_visit_encounter`, `result_create_linked`, `result_save_draft`,
+`result_finalise_commit`, `result_edit_commit`, `correct_payment`, `record_hmo_settlement`,
+`reschedule_closure_appointments`, `appointments_insert_slot_guarded`,
+`resolve_patient_guarded`. The existing result/payment RPCs currently lock their target row
+first; 3a re-creates them to resolve the patient set with a plain read, take the advisory
+locks, **then** take their row locks, then re-resolve (below).
+
+**Deadlock analysis.** `delete_patient`/`restore_patient` hold the exclusive advisory lock,
+then 0167 takes `SELECT … FOR UPDATE` on the patient row. `FOR UPDATE` conflicts with the FK
+KEY SHARE a child INSERT takes on `patients`, so a writer that already holds KEY SHARE and
+then waits for the advisory lock would deadlock with delete. 3a therefore (a) re-creates
+delete/restore to take `FOR NO KEY UPDATE` (they change only non-key columns, and NO KEY
+UPDATE does not conflict with KEY SHARE), and (b) guarantees every writer's advisory lock
+precedes its first FK check (BEFORE triggers run before RI checks; RPCs lock at entry).
+Delete reads blockers with plain SELECTs and writes no child rows, so no child-row cycle
+exists. Deadlocks (40P01) or a changed patient set (below) abort the whole transaction;
+server actions that call an RPC retry once, with no partial writes to undo.
+
+**Re-resolution (Codex P2-20).** After acquiring, the writer re-resolves the FK path and
+re-reads `deleted_at`/`merged_into_id` with a fresh statement. If the patient set differs
+from the set it locked, it raises `40001` ("patient changed, try again") — never
+"lock the new one too", because a newly discovered key may sort below one already held.
+The retry starts a fresh transaction and locks the new sorted set. Same for the resolver
+when its candidate changes. Tested with a remap while the first acquisition waits.
+
+**Helper security contract (Codex P1-19).** Child guard trigger functions and the helper
+`lifecycle_lock_and_assert(patient_ids uuid[], mode text)` are **SECURITY DEFINER**, owned
+by the migration owner, `search_path = pg_catalog, public, pg_temp`, EXECUTE revoked from
+PUBLIC/anon/authenticated/service_role (trigger firing needs no EXECUTE grant; the definer
+trigger calls the helper as its owner). Parent resolution therefore reads through RLS-free
+definer rights: an RLS-hidden parent can never look like "no patient". A required parent
+that does not resolve fails closed (P0058). The 0167 patients lifecycle guard stays
+SECURITY INVOKER (it needs `current_user`) and is not changed by 3a.
+
+### 3a — child-table activity guards: default refuse (complete matrix)
+
+**Rule: on an inactive (deleted or merged) patient, every INSERT, UPDATE and DELETE on a
+patient-owned table is refused (P0058) unless listed as an exception below.** No
+trigger-depth exemption (Codex P1-14): nested writes are checked like any other; the
+narrow exceptions are defined by *which columns change*, not by who initiated them.
+
+| Table | Patient path | Exceptions allowed on an inactive patient |
+|---|---|---|
+| `visits` | `patient_id` | UPDATE touching only the derived columns `paid_php`, `payment_status`, `total_php`, `updated_at` (payment recalc, 0125 total cascade) |
+| `test_requests` | visit | none (includes `cancelled`/soft delete: cancelling a released test reverses revenue + PF, 0166 — Codex P1-15). Statuses: `requested`, `in_progress`, `result_uploaded`, `ready_for_release`, `released`, `cancelled` — no status change allowed |
+| `payments` | visit | none (insert, void, edit, move, `correct_payment` all refused) |
+| `visit_pins` | visit | DELETE (retention cron); UPDATE of login bookkeeping only (`failed_attempts`, `locked_until`, `last_used_at` — exact names pinned in the plan). **PIN reissue (hash/expiry change) is refused** (Codex P1-16) |
+| `appointments` | `patient_id` (NULL = walk-in: never guarded) | status → `cancelled`, status → `no_show` (owner decision; `updated_at` may change with them); DELETE |
+| `patient_consents` | `patient_id` | none |
+| `appointment_attachments` | `patient_id` (nullable) | none (0167's delete-only guard is folded in and gains the lock) |
+| `results` | via `result_test_requests` (none at INSERT, 0051) | INSERT of an unlinked row only (inert until linked) |
+| `result_test_requests` | test_request → visit | none (INSERT, UPDATE — an ownership change, DELETE) |
+| `result_values` | result → junction | none (covers `result_save_draft`, Codex P1-2) |
+| `result_amendments` | test_request | none |
+| `critical_alerts` | `patient_id` / test_request | UPDATE of acknowledgement columns only (`acknowledged_by`, `acknowledged_at`, note — pinned in the plan); the existing role restriction on acknowledging is unchanged (Codex P3-23). Owner can flip this default |
+| `hmo_claim_items` | test_request | UPDATE touching only derived rollup columns maintained by allocation/resolution triggers (pinned in the plan); **un-void via batch reopen is refused** (Codex P1-14) |
+| `hmo_payment_allocations` | item + payment | none (void refused: it reopens a settled balance — Codex P1-15) |
+| `hmo_claim_resolutions` | item | none (void refused — Codex P1-15) |
+| `hmo_claim_batches` | none (multi-patient header) | own guard: any transition that **increases liability** (un-void / reopen, per 0034:315 propagation) checks every item's patient and refuses if any is inactive; status recompute from `recompute_hmo_batch_status` is allowed |
+| `doctor_pf_entries` | test_request | UPDATE of disbursement link/unlink columns only (`pf-disbursements.ts:81`: paying a doctor for already-done work adds nothing to the patient — Codex P1-16); void/insert refused |
+| `cogs_send_out_entries` | test_request | none |
+
+`audit_log` is never guarded (it must record refusals and skipped notifications).
+Journal entries are derived from the rows above and are not patient-keyed; no guard.
+Mixed-batch fixture required: settling active patient B's item in a batch that also holds
+deleted patient A's settled item succeeds (A's rows only change via allowed rollups).
+
+### 3a — transactional creation paths
+
+- **Visit encounter RPC** `create_visit_encounter(...)` replaces `createOneVisit` ×1–2 +
+  PIN + intake (Codex P2-11). Pricing, discount and physician-split computation stay in
+  TypeScript (reads) and are passed as a validated snapshot; the RPC re-checks the
+  reception/admin actor, takes the patient lock, and in ONE transaction inserts both visits
+  (shared `visit_group_id` when split), all `test_requests` (headers before components,
+  per-category HMO details, sample flag, price snapshots), the shared `visit_pins` hash, the
+  `pre_registered` clear, and the `visit.created` / `visit_pin.issued` / `package.decomposed`
+  / `patient.identity_verified` audit rows. `deleteVisitCascade` compensation disappears.
+  Appointment completion stays a separate best-effort call after commit (unchanged).
+- **Results: two distinct flows** (Codex P2-21, P1-22).
+  - *Structured / consolidated:* `result_create_linked(test_request_ids[], ...)` creates the
+    `results` draft + all `result_test_requests` rows in one transaction under the lock
+    (no storage). Rendering then loads the linked draft as today; the PDF is uploaded; the
+    existing guarded `result_finalise_commit` commits values, PDF pointer and status together.
+  - *Uploaded PDF (first time):* upload to an **attempt-specific object path**
+    (`…/<attempt_id>.pdf`, never the fixed path), then `result_create_linked` with that
+    `storage_path`. Cleanup follows `commitWithUploads` (`result-edit-core.ts:57`): remove the
+    object only on a confirmed rejection; on an unknown outcome (lost response), re-read by
+    `attempt_id` before deciding; never remove after a confirmed commit. Acceptance cases:
+    lost response, two overlapping first uploads.
+- **HMO settlement RPC** `record_hmo_settlement(...)`: the per-visit `payments` inserts and the
+  `hmo_payment_allocations` insert in one transaction, patient set locked sorted at entry;
+  replaces the compensating-delete loop. Acceptance also covers competing allocations on
+  one item and concurrent settlement of different patients in one batch (row locks on the
+  items still serialize the money; patient locks do not).
+- **Closure reschedule RPC** `reschedule_closure_appointments(closed_on, ...)` (Codex P1-5):
+  selects candidates, locks their patients (sorted, shared), re-reads activity, updates
+  only eligible rows (walk-ins always eligible), writes per-row and summary audits, and
+  returns `{affected, skipped_inactive, skipped_changed}` — all in one transaction, so no
+  chunk can half-commit and no row cap applies. One inactive patient never blocks the action.
+  The admin closures page preview uses `manilaRangeUtc` and excludes inactive patients so its
+  count matches what the action will do.
+- **Resolver** `resolve_patient_guarded`: identity lock first (key unchanged), select the
+  oldest active candidate with `lower(last_name) = lower(p_last_name)`, take its lifecycle
+  lock (shared), re-read activity + the triple; if it changed, raise 40001 and the caller
+  retries once in a fresh transaction (never a second lifecycle lock in the same one), else
+  insert fresh. `appointments_insert_slot_guarded` takes the patient's shared lock before its
+  slot lock and rechecks activity. A new-patient booking that loses the race re-resolves once;
+  an existing-ID booking returns the generic lookup-again error.
+- **Merge/undo compatibility inside 3a (Codex P1-17).** 3a's guards would refuse the current
+  undo, which moves children back to a still-merged source before clearing its marker. 3a
+  therefore re-orders the existing undo action: clear the source's `merged_into_id` first
+  (the source becomes active), then move rows back, checking every error and stopping on the
+  first failure with an admin-visible "undo incomplete" state instead of marking the ledger
+  undone. Merge itself already moves rows onto the active keep patient and marks the source
+  last, so it passes the guards; each of its ownership-changing statements takes exclusive
+  locks on source + keep via the trigger. Prod has **0** `patient_merges` ledger rows
+  (2026-09-25; the 176 merged patients came from the dedup CLI, which writes no ledger), so
+  the old-code deploy window has nothing live to undo.
+
+### 3a — owner extras
+
+- **Skipped patient messages.** Cron Health (admin) gains a "Patient messages not sent" card:
+  counts of `notification.skipped_inactive_patient` by reason (deleted / merged / missing /
+  lookup failed) and sender for the last 7 and 30 days, labelled as *recorded* skips (Codex
+  P3-13: an outage can fail both the lookup and its audit). `lookup_failed` also reports to
+  Sentry so an outage is visible even when the audit insert fails. The merge action's
+  notice email (patient-merge `actions.ts:285`) records its skip too, for uniform coverage.
+- **Drop the portal GUC.** `current_patient_id()` resolves from the JWT claim only (keeps
+  0167's active filter and grants); `drop function set_patient_context(uuid)`; regenerate types.
+- **Closure reschedule tests** (behavioural, against the RPC): concurrent cancel, delete
+  between selection and update, > 1,000 rows, inactive-patient skips, walk-ins.
+- **Small follow-ups:** README local-dev section names `SUPABASE_JWT_SECRET` (from
+  `supabase status -o env`; already in `.env.example` + CLAUDE.md); ConfirmDialog gains an
+  optional `confirmDescribedBy` prop and the delete dialog points it at the blocker list.
+
+### 3b — merge / undo-merge RPCs (own PR, after 3a)
+
+- `merge_patients_guarded` / `undo_patient_merge_guarded`, owned by a private
+  `patient_merge_writer` role (NOLOGIN/NOINHERIT/NOBYPASSRLS, no app membership), EXECUTE
+  service_role only; exclusive lifecycle locks on source, keep and every chain member, sorted.
+- **Consent reconciliation** (Codex P1-7): after moving `patient_consents`, recompute the
+  cached consent state for both patients from the latest event by `seq` (the 0162 semantics),
+  on merge and on undo; fixtures with opposing states and events recorded between merge and undo.
+- **Undo protects later edits** (Codex P2-8): merge snapshots before/after values of every
+  filled field and the complete moved-ID sets (captured in SQL, no PostgREST cap); undo only
+  clears a field whose current value still equals the merged-in value, and only moves back
+  rows still owned by the keep patient. **Legacy ledger rows** (no `snapshot_version`; prod
+  had 0 ledger rows on 2026-09-25, but merges made between the 3a and 3b deploys will be
+  legacy): the merge fill *copies* from the source, which keeps its own values, so undo
+  clears a filled field only when the keep's current value still equals the source's value,
+  and otherwise leaves it and reports it as "kept (edited since merge)". Moved rows are
+  taken from the recorded `moved` ID lists and moved back only while still owned by the keep.
+- **Dedup chain flattening** (Codex P2-9): the merge RPC re-parents existing tombstones that
+  point at the source to the new keep, under lock, and snapshots their original targets for undo.
+- **CLI actor** (Codex P2-10): `scripts/patient-dedup` passes an explicit `--actor <admin
+  staff id>`, validated as an active admin in the RPC; no NULL-actor bypass.
+- **Deploy order** (Codex P1-6): 3b's migration adds the RPCs and callers switch in the same
+  PR, but merge-marker exclusivity (the guard that refuses `merged_into_id` changes outside
+  `patient_merge_writer`) ships in a **follow-up migration** after the 3b deploy is verified.
+  Rollback: revert the enforcement migration first, then app code.
 
 ## Review changes (Codex, 2026-09-24)
 
