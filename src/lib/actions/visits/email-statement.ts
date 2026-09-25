@@ -5,7 +5,6 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { ipAndAgent } from "@/lib/server/action-helpers";
-import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit/check";
 import { reportError } from "@/lib/observability/report-error";
 import { sendEmail } from "@/lib/notifications/email";
 import { STATEMENT_ROLES } from "@/lib/visits/statement";
@@ -14,7 +13,9 @@ import { renderStatementEmail } from "@/lib/visits/statement-email";
 
 type Result = { ok: true; data: { to: string } } | { ok: false; error: string };
 
-const RESEND_GUARD_MINUTES = RATE_LIMITS.statement_email.windowSec / 60;
+// A second send of the same statement to the same address inside this
+// window is a duplicate (double-click, second tab, second receptionist).
+const RESEND_GUARD_MINUTES = 2;
 
 /**
  * Email a visit's statement of account to the patient.
@@ -27,9 +28,10 @@ const RESEND_GUARD_MINUTES = RATE_LIMITS.statement_email.windowSec / 60;
  *
  * A delivered email leaves `statement.emailed`; a skipped or failed one
  * leaves `statement.email_failed`, so the log shows every attempt. The resend
- * guard is the `statement_email` rate-limit bucket, keyed on visit +
- * recipient (not on who clicks), reserved before sending and released when
- * the send does not go out, so a failure can be retried at once.
+ * guard is `claim_statement_email` (0177): an advisory-locked claim keyed on
+ * visit + recipient (not on who clicks) that admits exactly one sender per
+ * window. A send that does not go out releases ITS OWN claim by id, so staff
+ * can retry at once without clearing a rival request's claim.
  */
 export async function emailStatementAction(visitId: string): Promise<Result> {
   const session = await requireActiveStaff();
@@ -54,19 +56,22 @@ export async function emailStatementAction(visitId: string): Promise<Result> {
     };
   }
 
-  const guardId = `${visitId}:${to.toLowerCase()}`;
-  const reserved = await checkRateLimit({
-    bucket: "statement_email",
-    identifier: guardId,
-    ...RATE_LIMITS.statement_email,
+  const admin = createAdminClient();
+  const { data: claimId, error: claimErr } = await admin.rpc("claim_statement_email", {
+    p_visit_id: visitId,
+    p_recipient: to,
+    p_window_seconds: RESEND_GUARD_MINUTES * 60,
   });
-  if (!reserved.allowed) {
+  if (claimErr) {
+    await reportError({ scope: "statement/email:claim", error: claimErr, metadata: { visit_id: visitId } });
+    return { ok: false, error: "Couldn't start the email. Try again." };
+  }
+  if (claimId == null) {
     return {
       ok: false,
       error: `This statement was just emailed (or is sending) — wait ${RESEND_GUARD_MINUTES} minutes and check the patient's inbox and spam before sending again.`,
     };
   }
-  const admin = createAdminClient();
 
   const email = renderStatementEmail({
     patient: data.patient,
@@ -115,12 +120,8 @@ export async function emailStatementAction(visitId: string): Promise<Result> {
   });
 
   if (result.ok) return { ok: true, data: { to } };
-  // Nothing went out: release the reservation so staff can retry now.
-  await admin
-    .from("rate_limit_attempts")
-    .delete()
-    .eq("bucket", "statement_email")
-    .eq("identifier", guardId);
+  // Nothing went out: release this request's own claim so staff can retry now.
+  await admin.from("rate_limit_attempts").delete().eq("id", claimId);
   return {
     ok: false,
     error:

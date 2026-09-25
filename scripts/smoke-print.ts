@@ -64,6 +64,11 @@ if (!SUPABASE_URL || !SERVICE_KEY) {
   process.exit(1);
 }
 const PATIENT_EMAIL = "print-smoke@example.invalid";
+// Every request this run makes claims one unique client address (IPv6
+// documentation range) so the login throttle rows it leaves are its own —
+// teardown deletes exactly those and never another session's.
+const RUN_IP = `2001:db8::${randomBytes(2).toString("hex")}:${randomBytes(2).toString("hex")}`;
+const RUN_HEADERS = { "x-forwarded-for": RUN_IP };
 const APP_BASE = (process.env.APP_BASE ?? "http://localhost:3000").replace(/\/$/, "");
 
 interface Target {
@@ -300,10 +305,7 @@ async function seed(db: pg.Client, staffId: string, email: string, password: str
   return s;
 }
 
-async function cleanup(
-  db: pg.Client,
-  s: Partial<Seed> & { staffId: string; rateLimitFloor?: string },
-): Promise<void> {
+async function cleanup(db: pg.Client, s: Partial<Seed> & { staffId: string }): Promise<void> {
   const q = (sql: string, params: unknown[] = []) => db.query(sql, params);
   await q("rollback").catch(() => undefined);
   await q("begin");
@@ -346,12 +348,12 @@ async function cleanup(
   await q("delete from patients where id = any($1::uuid[])", [patientIds]);
   await q("delete from audit_log where actor_id = $1", [s.staffId]);
   await q("delete from rate_limit_attempts where identifier = $1", [`email:${s.email ?? ""}`]);
-  if (s.rateLimitFloor) {
-    await q(
-      "delete from rate_limit_attempts where id > $1 and bucket in ('staff_login', 'patient_pin', 'statement_email')",
-      [s.rateLimitFloor],
-    );
-  }
+  // Only this run's rows: its unique client address, and statement-email
+  // claims keyed on its own visit.
+  await q(
+    "delete from rate_limit_attempts where identifier = any($1::text[]) or identifier like $2",
+    [[RUN_IP, `ip:${RUN_IP}`], `${s.visitId ?? "-"}:%`],
+  );
   await q("delete from staff_profiles where id = $1", [s.staffId]);
   await q("commit");
   await deleteAuthUser(s.staffId);
@@ -413,15 +415,7 @@ async function main(): Promise<void> {
   const email = `smoke-print-${randomBytes(4).toString("hex")}@drmed.local`;
   const password = `Smoke-${randomBytes(9).toString("base64url")}!`;
   const staffId = await createAuthUser(email, password);
-  // Both logins (and the statement email) leave rate_limit_attempts rows keyed
-  // by the local IP; note where the table stands so teardown removes this
-  // run's rows and repeated runs never throttle the next one.
-  const floor = await db.query("select coalesce(max(id), 0)::bigint as id from rate_limit_attempts");
-  let seeded: Partial<Seed> & { staffId: string; email: string; rateLimitFloor: string } = {
-    staffId,
-    email,
-    rateLimitFloor: String(floor.rows[0].id),
-  };
+  let seeded: Partial<Seed> & { staffId: string; email: string } = { staffId, email };
   const outDir = mkdtempSync(join(tmpdir(), "drmed-smoke-print-"));
   let failures = 0;
 
@@ -436,7 +430,7 @@ async function main(): Promise<void> {
     });
     launched = browser;
     const s = await seed(db, staffId, email, password);
-    seeded = { ...s, rateLimitFloor: seeded.rateLimitFloor };
+    seeded = s;
     const targets: Target[] = [
       {
         name: "receipt",
@@ -511,7 +505,7 @@ async function main(): Promise<void> {
       },
     ];
 
-    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, extraHTTPHeaders: RUN_HEADERS });
     await page.goto(`${APP_BASE}/staff/login`);
     await page.fill('input[name="email"]', email);
     await page.fill('input[name="password"]', password);
@@ -522,7 +516,10 @@ async function main(): Promise<void> {
 
     // The patient signs in the way a patient does — DRM-ID + PIN on the
     // portal login — in a context of their own, so no staff cookie leaks in.
-    const portalCtx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const portalCtx = await browser.newContext({
+      viewport: { width: 1440, height: 900 },
+      extraHTTPHeaders: RUN_HEADERS,
+    });
     const portalPage = await portalCtx.newPage();
     await portalPage.goto(`${APP_BASE}/portal/login`);
     await portalPage.fill('input[name="drm_id"]', s.drmId);
@@ -610,6 +607,42 @@ async function main(): Promise<void> {
       return problems;
     });
 
+    // 0177: many simultaneous senders, exactly one claim — and a released
+    // claim frees the statement for an immediate retry.
+    await check("statement-email-claim-atomic", async () => {
+      const recipient = "race@example.invalid";
+      const clients = await Promise.all(
+        Array.from({ length: 5 }, async () => {
+          const c = new pg.Client({ connectionString: DB_URL });
+          await c.connect();
+          return c;
+        }),
+      );
+      try {
+        const ids = (
+          await Promise.all(
+            clients.map((c) =>
+              c.query("select public.claim_statement_email($1, $2) as id", [s.visitId, recipient]),
+            ),
+          )
+        ).map((r) => r.rows[0].id as string | null);
+        const won = ids.filter((id) => id !== null);
+        const problems: string[] = [];
+        if (won.length !== 1) problems.push(`${won.length} of 5 simultaneous claims won, expected exactly 1`);
+        const { rows } = await db.query(
+          "select count(*)::int as n from rate_limit_attempts where identifier = $1",
+          [`${s.visitId}:${recipient}`],
+        );
+        if (rows[0].n !== 1) problems.push(`refused claims left rows behind (${rows[0].n} rows)`);
+        await db.query("delete from rate_limit_attempts where id = $1", [won[0]]);
+        const again = await db.query("select public.claim_statement_email($1, $2) as id", [s.visitId, recipient]);
+        if (again.rows[0].id === null) problems.push("a released claim did not free the statement");
+        return problems;
+      } finally {
+        await Promise.all(clients.map((c) => c.end()));
+      }
+    });
+
     await check("patient-ar-statement-link", async () => {
       await page.goto(
         `${APP_BASE}/staff/admin/accounting/patient-ar?scope=all&sort=visit_date&dir=desc&size=100`,
@@ -635,7 +668,14 @@ async function main(): Promise<void> {
       }
       const { rows } = await db.query("select visit_number from visits where id = $1", [s.visitId]);
       const email = page.getByRole("button", { name: `Email the statement for visit ${rows[0]?.visit_number}` });
-      if ((await email.count()) !== 1) problems.push("no per-visit Email button with its accessible name");
+      // count() does not wait, and the Visits table streams in after load.
+      await email.waitFor({ timeout: 30_000 }).catch(() => undefined);
+      if ((await email.count()) !== 1) {
+        const seen = await page.locator("button, span").filter({ hasText: /^(Email|No email)$/ }).evaluateAll((els) =>
+          els.map((e) => `${e.tagName.toLowerCase()}[${e.getAttribute("aria-label") ?? e.textContent}]`),
+        );
+        problems.push(`no per-visit Email button named for visit ${rows[0]?.visit_number} (saw: ${seen.join(", ") || "none"})`);
+      }
       return problems;
     });
 
