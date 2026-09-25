@@ -1427,8 +1427,8 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
           </table>
         </Panel>
         {/* Released results stay released (owner rule): a visit that owes
-            money again after its results went out — a payment deleted or
-            moved, or a line added later — says so instead of the generic
+            money again after work on it was completed — a payment deleted,
+            edited down or moved since — says so instead of the generic
             "blocked" note, which would read as if nothing had gone out. */}
         {releasedWhileUnpaid ? (
           <p

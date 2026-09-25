@@ -3,7 +3,7 @@
 import { headers } from "next/headers";
 import { after } from "next/server";
 import { moneySettled } from "@/lib/visits/money-settled";
-import { loadReleasedResultCounts } from "@/lib/visits/released-results";
+import { loadCompletedWorkCounts } from "@/lib/visits/released-results";
 import { paymentMethodLabel } from "@/lib/visits/payment-history";
 import { shouldAlertReleasedPaymentRemoved } from "@/lib/visits/released-payment-alert-content";
 import { sendReleasedPaymentRemovedAlert } from "@/lib/visits/released-payment-alert";
@@ -14,7 +14,13 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { translatePgError } from "@/lib/accounting/pg-errors";
-import { CLOSED_MONTH_MESSAGE, paymentEditability, paymentSnapshot } from "@/lib/visits/payment-edit";
+import {
+  CLOSED_MONTH_MESSAGE,
+  NO_RELEASED,
+  paymentEditability,
+  paymentSnapshot,
+  releasedTotal,
+} from "@/lib/visits/payment-edit";
 
 // Same role pair as Edit and Delete (payments/[id]/{edit,void}/actions.ts).
 function canMovePayment(role: string): boolean {
@@ -147,17 +153,18 @@ export async function movePaymentAction(input: {
   // What the visit the payment LEFT is now in — re-read after the move, the
   // same fields the Delete audit carries. Best-effort: a failed read leaves
   // them null and sends no alert, never drops the audit row.
-  const [{ data: sourceAfter }, sourceReleased] = await Promise.all([
+  const [{ data: sourceAfter }, sourceWork] = await Promise.all([
     admin
       .from("visits")
       .select("payment_status, hmo_provider_id")
       .eq("id", before.visit_id)
       .is("deleted_at", null)
       .maybeSingle(),
-    loadReleasedResultCounts(admin, [before.visit_id]).catch(() => null),
+    loadCompletedWorkCounts(admin, [before.visit_id]).catch(() => null),
   ]);
   const settledAfter = sourceAfter ? moneySettled(sourceAfter) : null;
-  const releasedCount = sourceReleased ? (sourceReleased.get(before.visit_id) ?? 0) : null;
+  const completed = sourceWork ? (sourceWork.get(before.visit_id) ?? NO_RELEASED) : null;
+  const completedWork = completed ? releasedTotal(completed) : null;
 
   const h = await headers();
   await audit({
@@ -174,16 +181,18 @@ export async function movePaymentAction(input: {
       amount_php: Number(before.amount_php),
       method: before.method,
       cross_patient: fromVisit?.patient_id !== target?.patient_id,
-      source_released_count: releasedCount,
+      source_released_count: completed ? completed.results : null,
+      source_completed_work: completedWork,
       source_settled_after: settledAfter,
     },
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),
   });
 
-  // Email Alerts (0178): the source visit owes again after its results went
-  // out. after() — once the response is sent, so it never slows the move.
-  if (shouldAlertReleasedPaymentRemoved({ settledAfter, releasedResults: releasedCount })) {
+  // Email Alerts (0178): the source visit owes again after work on it was
+  // completed. after() — once the response is sent, so it never slows the move.
+  if (completed && shouldAlertReleasedPaymentRemoved({ settledAfter, completedWork })) {
+    const work = completed;
     after(() =>
       sendReleasedPaymentRemovedAlert({
         paymentId: d.payment_id,
@@ -193,8 +202,9 @@ export async function movePaymentAction(input: {
         methodLabel: paymentMethodLabel(before.method),
         reasonLabel: null,
         movedToVisitNumber: target?.visit_number ?? null,
+        editedTo: null,
         actorId: session.user_id,
-        releasedResults: releasedCount ?? 0,
+        completed: work,
       }),
     );
   }

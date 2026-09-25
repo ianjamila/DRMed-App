@@ -49,9 +49,9 @@ export const STAFF_ALERTS: Record<StaffAlertKey, StaffAlertDef> = {
   },
   released_payment_removed: {
     key: "released_payment_removed",
-    label: "Payment removed after results went out",
+    label: "Payment removed after work was completed",
     description:
-      "Sent when a payment is deleted or moved and the visit it leaves then owes money, although results on it were already released. Released results stay released — the email is so someone follows up the balance. It shows the visit number, the amount, what happened and the reason picked, who did it, and what the visit now owes — never the patient's name or which tests. HMO visits never send it.",
+      "Sent when a payment is deleted, edited to a smaller amount or moved and the visit then owes money, although work on it was already completed — results released, or a doctor consult or procedure marked done. Released results stay released — the email is so someone follows up the balance. It shows the visit number, the amount, what happened and the reason picked, who did it, how much work was completed, and what the visit now owes — never the patient's name, which tests, or any note typed. HMO visits never send it.",
     defaultRoles: ["admin"],
     sentAction: "payment.released_removed_alert_sent",
   },

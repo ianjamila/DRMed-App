@@ -224,6 +224,49 @@ export function releasedTotal(c: ReleasedCounts): number {
   return c.results + c.consults + c.procedures;
 }
 
+// ---------------------------------------------------------------------------
+// "Completed work" — the one predicate behind the released-and-owing alert,
+// the Patient AR "Completed work" filter and the queue / Patient AR badges.
+// A released lab or imaging result AND a doctor consult or procedure marked
+// done both count: the patient has had the service either way, so a visit
+// that owes again with any of them is the exception these surfaces flag.
+// countReleasedLines keeps the split (results are worded apart from doctor
+// lines); this is the total of it.
+// ---------------------------------------------------------------------------
+
+/** Released results + done doctor lines on a visit, from rows already loaded. */
+export function completedWorkCount(lines: readonly ReleasableLine[]): number {
+  return releasedTotal(countReleasedLines(lines));
+}
+
+/**
+ * "3 results released", "1 doctor consult done", "2 results released, 1
+ * doctor consult and 1 procedure done" — the row value in the alert email.
+ * Empty when nothing is completed.
+ */
+export function completedWorkSummary(c: ReleasedCounts): string {
+  const parts: string[] = [];
+  if (c.results > 0) parts.push(`${plural(c.results, "result")} released`);
+  const doctor = doctorPhrase(c);
+  if (doctor) parts.push(`${doctor} done`);
+  return parts.join(", ");
+}
+
+/**
+ * The "after its …" clause of the alert subject: "its results went out",
+ * "its doctor consult was done", or both. Empty when nothing is completed.
+ */
+export function completedWorkWentPhrase(c: ReleasedCounts): string {
+  const results = c.results > 0;
+  const doctor = c.consults + c.procedures;
+  if (results && doctor > 0) return "its results went out and its doctor lines were done";
+  if (results) return "its results went out";
+  if (doctor === 0) return "";
+  if (c.consults > 0 && c.procedures > 0) return "its doctor lines were done";
+  const noun = c.consults > 0 ? "doctor consult" : "doctor procedure";
+  return doctor === 1 ? `its ${noun} was done` : `its ${noun}s were done`;
+}
+
 /**
  * What the visit is left in once `amount` leaves it — the dialog preview.
  * The void action re-reads the visit afterwards for its audit row; this is
@@ -331,9 +374,9 @@ export function paymentLeavesMessage(
 }
 
 /**
- * The visit page's note for a visit whose results went out while it was paid
- * and which now owes money again (a payment deleted or moved, or a line added
- * after the release). Null when that is not the case: a settled visit, an HMO
+ * The visit page's note for a visit whose results went out (or doctor lines
+ * were done) while it was paid and which now owes money again — a payment
+ * deleted, edited down or moved since. Null when that is not the case: a settled visit, an HMO
  * visit (it releases unpaid by design) or one with nothing released.
  */
 export function releasedWhileUnpaidMessage(

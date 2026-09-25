@@ -1,6 +1,7 @@
 "use server";
 
 import { headers } from "next/headers";
+import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
@@ -10,9 +11,17 @@ import { translatePgError } from "@/lib/accounting/pg-errors";
 import {
   CLOSED_MONTH_MESSAGE,
   isMoneyChange,
+  NO_RELEASED,
   paymentEditability,
+  releasedTotal,
   type PaymentSnapshot,
+  type ReleasedCounts,
 } from "@/lib/visits/payment-edit";
+import { paymentMethodLabel } from "@/lib/visits/payment-history";
+import { moneySettled } from "@/lib/visits/money-settled";
+import { loadCompletedWorkCounts } from "@/lib/visits/released-results";
+import { shouldAlertPaymentEdited } from "@/lib/visits/released-payment-alert-content";
+import { sendReleasedPaymentRemovedAlert } from "@/lib/visits/released-payment-alert";
 
 export type EditPaymentResult = { ok: true } | { ok: false; error: string };
 
@@ -91,6 +100,28 @@ export async function editPaymentAction(input: {
     };
   }
 
+  // What the visit is in now — re-read after the RPC (recalc_visit_payment
+  // has written the real status), the same fields the Delete and Move audits
+  // carry. Only a money change can move it; a reference/notes edit leaves the
+  // visit as it was and skips the read. Best-effort: a failed read leaves the
+  // fields null and sends no alert, never drops the audit row.
+  let settledAfter: boolean | null = null;
+  let completed: ReleasedCounts | null = null;
+  if (moneyChanged) {
+    const [{ data: visitAfter }, work] = await Promise.all([
+      admin
+        .from("visits")
+        .select("payment_status, hmo_provider_id")
+        .eq("id", before.visit_id)
+        .is("deleted_at", null)
+        .maybeSingle(),
+      loadCompletedWorkCounts(admin, [before.visit_id]).catch(() => null),
+    ]);
+    if (visitAfter) settledAfter = moneySettled(visitAfter);
+    if (work) completed = work.get(before.visit_id) ?? NO_RELEASED;
+  }
+  const completedWork = completed ? releasedTotal(completed) : null;
+
   const h = await headers();
   await audit({
     actor_id: session.user_id,
@@ -105,6 +136,10 @@ export async function editPaymentAction(input: {
       // reference/notes change edits it in place (new_payment_id = itself).
       money_changed: moneyChanged,
       new_payment_id: activePaymentId,
+      // Null on a reference/notes-only edit (the visit's money did not move).
+      released_count: completed ? completed.results : null,
+      completed_work: completedWork,
+      settled_after: settledAfter,
       before: {
         amount_php: Number(before.amount_php),
         method: before.method,
@@ -121,6 +156,36 @@ export async function editPaymentAction(input: {
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),
   });
+
+  // Email Alerts (0178): the amount came down and the visit owes again after
+  // work on it was completed — the same alert Delete and Move send. after()
+  // — once the response is sent, so it never slows the edit.
+  if (
+    completed &&
+    shouldAlertPaymentEdited({
+      moneyChanged,
+      oldAmountPhp: Number(before.amount_php),
+      newAmountPhp: d.amount_php,
+      settledAfter,
+      completedWork,
+    })
+  ) {
+    const work = completed;
+    after(() =>
+      sendReleasedPaymentRemovedAlert({
+        paymentId: d.payment_id,
+        change: "edited",
+        visitId: before.visit_id,
+        amountPhp: Number(before.amount_php),
+        methodLabel: paymentMethodLabel(before.method),
+        reasonLabel: null,
+        movedToVisitNumber: null,
+        editedTo: { amountPhp: d.amount_php, methodLabel: paymentMethodLabel(d.method) },
+        actorId: session.user_id,
+        completed: work,
+      }),
+    );
+  }
 
   revalidatePath(`/staff/visits/${before.visit_id}`);
   const visit = Array.isArray(before.visits) ? before.visits[0] : before.visits;

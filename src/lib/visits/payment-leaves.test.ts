@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { formatPhp } from "@/lib/marketing/format";
 import {
+  completedWorkCount,
+  completedWorkSummary,
+  completedWorkWentPhrase,
   countReleasedLines,
   NO_RELEASED,
   paymentLeavesMessage,
@@ -178,5 +181,39 @@ describe("releasedWhileUnpaidMessage (the visit page note)", () => {
         formatPhp,
       ),
     ).toBe("1 result went out and 1 doctor consult was done while this visit was paid; it now owes ₱800.");
+  });
+});
+
+describe("completed work = released results + doctor lines marked done", () => {
+  it("completedWorkCount counts every released non-header line, doctor kinds included", () => {
+    expect(
+      completedWorkCount([
+        line("lab_package", { is_package_header: true }),
+        line("lab_test"),
+        line("doctor_consultation"),
+        line("doctor_procedure"),
+        line("lab_test", { status: "ready_for_release" }),
+      ]),
+    ).toBe(3);
+  });
+  it("completedWorkCount is 0 for a visit with nothing released", () => {
+    expect(completedWorkCount([line("lab_test", { status: "requested" })])).toBe(0);
+  });
+  it("completedWorkSummary words results and doctor lines apart", () => {
+    expect(completedWorkSummary({ results: 3, consults: 0, procedures: 0 })).toBe("3 results released");
+    expect(completedWorkSummary({ results: 0, consults: 1, procedures: 0 })).toBe("1 doctor consult done");
+    expect(completedWorkSummary({ results: 2, consults: 1, procedures: 1 })).toBe(
+      "2 results released, 1 doctor consult and 1 procedure done",
+    );
+    expect(completedWorkSummary(NO_RELEASED)).toBe("");
+  });
+  it("completedWorkWentPhrase is the 'after its …' clause", () => {
+    expect(completedWorkWentPhrase({ results: 3, consults: 0, procedures: 0 })).toBe("its results went out");
+    expect(completedWorkWentPhrase({ results: 0, consults: 1, procedures: 0 })).toBe("its doctor consult was done");
+    expect(completedWorkWentPhrase({ results: 0, consults: 0, procedures: 2 })).toBe("its doctor procedures were done");
+    expect(completedWorkWentPhrase({ results: 1, consults: 1, procedures: 1 })).toBe(
+      "its results went out and its doctor lines were done",
+    );
+    expect(completedWorkWentPhrase(NO_RELEASED)).toBe("");
   });
 });
