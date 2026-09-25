@@ -101,3 +101,14 @@ A staff-side comparison per correction: for each parameter whose value, flag or 
 ## Out of scope
 
 Pathologist re-sign-off after a correction; automatic (unticked) patient notification; any change to billing / statements; a patient-facing reason or diff.
+
+## Refinements recorded with the plan (2026-09-25)
+
+These supersede the sections above where they differ.
+
+- **Printed copy** (§Definitions): only `result.printed_staff` rows whose `metadata.role` is `reception` or `admin` count. Those are the roles that hand paper over; lab prints are internal. Out of date = highest printed `amendment_count` < current `amendment_count`.
+- **No `patient_notify_requested` column** (§1): `result_claim_patient_notify` stamps `patient_notified_at` directly and returns a row only the first time, so `result_edit_commit` keeps its signature. Nothing is ever re-sent. A claim without a recorded outcome shows "Send status unknown — call the patient".
+- **RPC set** (§1): `result_copy_states_internal(uuid[])` (service role) plus the wrappers `result_copy_state(uuid[])` (any staff, rows gated per result), `result_outdated_copies(boolean)` (reception/admin), `result_mark_copy_contacted(uuid)` (reception/admin), `result_claim_patient_notify` / `result_record_patient_notify` (service role). The list and state RPCs return `notify_failed boolean`, never the error text.
+- **Route** (§2): `/staff/result-follow-ups`, nav label "Result follow-ups".
+- **Print warning on the archive** (§4): the Results archive has no Print button, so it shows a "Printed copy out of date" chip in its Updated column instead.
+- **"Updated this week" → "Updated · last 7 days"** (§7): a rolling 7×24h window on a timestamptz, which is timezone-safe.
