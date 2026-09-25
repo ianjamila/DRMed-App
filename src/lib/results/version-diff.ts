@@ -37,6 +37,23 @@ export function displayValue(x: SnapshotValue | undefined): string {
   return x.select_value ?? x.text_value ?? "—";
 }
 
+// R2: "changed" must be decided on the underlying fields, not on
+// displayValue()'s STRING — displayValue prefers numeric_value_si when it's
+// present, so a correction that only touches numeric_value_conv (the SI
+// reading unchanged) produced identical before/after strings and the diff
+// silently dropped it as "Values unchanged". Added/removed (one side
+// undefined) always counts as a value change.
+function sameValueFields(x: SnapshotValue | undefined, y: SnapshotValue | undefined): boolean {
+  if (!x || !y) return false;
+  return (
+    x.numeric_value_si === y.numeric_value_si &&
+    x.numeric_value_conv === y.numeric_value_conv &&
+    x.text_value === y.text_value &&
+    x.select_value === y.select_value &&
+    Boolean(x.is_blank) === Boolean(y.is_blank)
+  );
+}
+
 export function diffResultVersions(before: readonly SnapshotValue[], after: readonly SnapshotValue[]): ValueChange[] {
   const b = new Map(before.map((x) => [x.parameter_id, x]));
   const a = new Map(after.map((x) => [x.parameter_id, x]));
@@ -45,15 +62,30 @@ export function diffResultVersions(before: readonly SnapshotValue[], after: read
   for (const id of order) {
     const x = b.get(id);
     const y = a.get(id);
-    const change: ValueChange = {
+    const valueChanged = !sameValueFields(x, y);
+    const flagBefore = x?.flag ?? null;
+    const flagAfter = y?.flag ?? null;
+    if (!valueChanged && flagBefore === flagAfter) continue;
+
+    let before_ = displayValue(x);
+    let after_ = displayValue(y);
+    // The SI-preferring display collided (e.g. SI unchanged, conv differs) —
+    // append the conv value so the real change is still visible.
+    if (before_ === after_ && valueChanged && x?.numeric_value_conv !== y?.numeric_value_conv) {
+      const bConv = x?.numeric_value_conv;
+      const aConv = y?.numeric_value_conv;
+      before_ = bConv != null ? `${before_} (conv ${bConv})` : before_;
+      after_ = aConv != null ? `${after_} (conv ${aConv})` : after_;
+    }
+
+    out.push({
       parameterId: id,
       name: y?.parameter_name ?? x?.parameter_name ?? "Parameter",
-      before: displayValue(x),
-      after: displayValue(y),
-      flagBefore: x?.flag ?? null,
-      flagAfter: y?.flag ?? null,
-    };
-    if (change.before !== change.after || change.flagBefore !== change.flagAfter) out.push(change);
+      before: before_,
+      after: after_,
+      flagBefore,
+      flagAfter,
+    });
   }
   return out;
 }

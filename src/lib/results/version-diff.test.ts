@@ -44,6 +44,30 @@ describe("diffResultVersions", () => {
   it("a flag-only change counts", () => {
     expect(diffResultVersions([v("g", "G", 5, "H")], [v("g", "G", 5, null)])).toHaveLength(1);
   });
+
+  // R2: displayValue() shows SI when it's present (numeric_value_si ??
+  // numeric_value_conv), so an SI-unchanged, conv-only correction produced
+  // identical before/after STRINGS and the diff read "Values unchanged" —
+  // even though a real correction happened. "Changed" must be decided on
+  // the underlying fields, and when that makes the plain display strings
+  // collide, the conv value must still show so the change is visible.
+  it("a conventional-unit-only change (SI unchanged) is not dropped as unchanged", () => {
+    const withConv = (id: string, name: string, si: number, conv: number) => ({
+      parameter_id: id, parameter_name: name, numeric_value_si: si, numeric_value_conv: conv,
+      text_value: null, select_value: null, flag: null, is_blank: false,
+    });
+    const d = diffResultVersions(
+      [withConv("g", "Glucose", 120, 6.7)],
+      [withConv("g", "Glucose", 120, 7.0)],
+    );
+    expect(d).toHaveLength(1);
+    // The SI-based display alone ("120") would be identical before and
+    // after — the conv value must be visible in the text so staff can see
+    // what actually changed.
+    expect(d[0].before).not.toBe(d[0].after);
+    expect(d[0].before).toContain("6.7");
+    expect(d[0].after).toContain("7");
+  });
 });
 
 describe("changesPerAmendment", () => {
