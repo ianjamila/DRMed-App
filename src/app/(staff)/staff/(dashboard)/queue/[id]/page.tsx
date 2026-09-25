@@ -35,6 +35,8 @@ import { labQueueGate } from "@/lib/visits/lab-gate";
 import { manilaDateTime } from "@/lib/dates/manila";
 import { shouldOfferNotify, type NotifyOffer } from "@/lib/results/copy-followups";
 import { fetchCopyStates } from "@/lib/results/copy-followups.server";
+import { fetchVersionDiff } from "@/lib/results/version-diff.server";
+import { ResultChanges } from "@/components/staff/result-changes";
 
 const loadTestDetail = cache(async (id: string) => {
   const session = await requireActiveStaff();
@@ -364,6 +366,13 @@ export default async function QueueTestDetailPage({ params }: Props) {
     (await fetchClaimEvents(supabase, [test.id])).get(test.id) ?? [],
   );
 
+  // 0179: "What changed" between corrected versions — one query per result,
+  // and only when there is something to diff (amendment_count > 0).
+  const versionChanges =
+    result && result.amendment_count > 0
+      ? ((await fetchVersionDiff(supabase, result.id)) ?? [])
+      : [];
+
   // Decide which workflow surface to render in the action card.
   // Order of precedence:
   //   structured-form  → in-house service with a template, editable, no
@@ -426,6 +435,7 @@ export default async function QueueTestDetailPage({ params }: Props) {
             </p>
           ) : null}
           <ClaimHistory remarks={history} className="mt-4" />
+          <ResultChanges amendments={versionChanges} />
         </div>
         <div>
           <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">

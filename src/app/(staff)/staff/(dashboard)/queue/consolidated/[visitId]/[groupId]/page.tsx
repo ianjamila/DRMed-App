@@ -28,6 +28,8 @@ import { ClaimHistory } from "@/components/staff/claim-remarks-list";
 import { QueueUnclaimButton } from "../../../queue-unclaim-button";
 import { shouldOfferNotify } from "@/lib/results/copy-followups";
 import { fetchCopyStates } from "@/lib/results/copy-followups.server";
+import { fetchVersionDiff } from "@/lib/results/version-diff.server";
+import type { AmendmentChanges } from "@/lib/results/version-diff";
 
 type One<T> = T | T[] | null;
 const one = <T,>(v: One<T>): T | null => (Array.isArray(v) ? (v[0] ?? null) : v);
@@ -230,6 +232,14 @@ export default async function ConsolidatedQueuePage({
   const reportEvents =
     reportMemberIds.length > 0 ? await fetchClaimEvents(supabase, reportMemberIds) : new Map<string, ClaimEvent[]>();
 
+  // 0179: "What changed" between corrected versions — one query per report,
+  // and only for reports that actually have an amendment to diff.
+  const changesByResult = new Map<string, AmendmentChanges[]>();
+  for (const id of resultIds) {
+    if ((reportResults.get(id)?.amendment_count ?? 0) === 0) continue;
+    changesByResult.set(id, (await fetchVersionDiff(supabase, id)) ?? []);
+  }
+
   const gate = labQueueGate(visit);
   const reports: ReportCardData[] = partition.reports.map((rep) => {
     const res = reportResults.get(rep.resultId)!;
@@ -268,6 +278,7 @@ export default async function ConsolidatedQueuePage({
         by: staffName.get(a.amended_by) ?? null,
       })),
       remarks: claimRemarks(rep.memberIds.flatMap((id) => reportEvents.get(id) ?? [])),
+      changes: changesByResult.get(rep.resultId) ?? [],
       editHref: canEdit.get(rep.resultId)
         ? `/staff/queue/consolidated/${visitId}/${groupId}?edit=${rep.resultId}#result-${rep.resultId}`
         : null,

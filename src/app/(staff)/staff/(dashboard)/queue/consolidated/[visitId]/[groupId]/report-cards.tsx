@@ -5,6 +5,8 @@ import { testStatusLabel } from "@/lib/results/status-filter";
 import { codeDuplicatesName, reportHeadlineStatus } from "@/lib/results/consolidated-reports";
 import type { ClaimRemark } from "@/lib/queue/claim-remarks";
 import { ClaimHistory } from "@/components/staff/claim-remarks-list";
+import { ResultChanges } from "@/components/staff/result-changes";
+import type { AmendmentChanges } from "@/lib/results/version-diff";
 
 export interface ReportCardData {
   resultId: string;
@@ -27,6 +29,8 @@ export interface ReportCardData {
   editHref: string | null;
   /** Claims and edits across every member, oldest first (fetchClaimEvents). */
   remarks: ClaimRemark[];
+  /** "What changed" between corrected versions (0179), newest first — [] when nothing to show. */
+  changes: AmendmentChanges[];
 }
 
 const BADGE: Record<string, string> = {
@@ -162,6 +166,7 @@ export function ReportCards({
             {editForm?.resultId === rep.resultId ? editForm.node : null}
 
             <ClaimHistory remarks={rep.remarks} className="mt-5" />
+            <ResultChanges amendments={rep.changes} />
 
             {rep.history.length > 0 ? (
               <div className="mt-5 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] p-3">
