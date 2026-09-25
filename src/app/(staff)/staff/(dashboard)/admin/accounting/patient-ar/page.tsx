@@ -22,6 +22,7 @@ import {
 import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { loadReleasedResultCounts } from "@/lib/visits/released-results";
 
 export const metadata = { title: ROUTE_NAME["/staff/admin/accounting/patient-ar"] };
 export const dynamic = "force-dynamic";
@@ -78,6 +79,7 @@ const DEFAULT_SORT: SortSpec<SortColumn> = { key: "visit_date", dir: "asc" };
 interface SearchProps {
   searchParams: Promise<{
     scope?: Scope;
+    released?: string;
     sort?: string;
     dir?: string;
     page?: string;
@@ -138,6 +140,8 @@ interface ArRow {
   outstanding: number;
   bucket: keyof BucketTotals;
   days: number;
+  /** Results already released on this (non-HMO) visit — 0 for an HMO visit. */
+  released: number;
 }
 
 function compareText(a: string, b: string, dir: SortDir): number {
@@ -213,6 +217,11 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
   const sp = await searchParams;
   const scope: Scope =
     sp.scope === "hmo" || sp.scope === "all" ? sp.scope : "non_hmo";
+  // "Results released" — visits whose results went out while they were paid
+  // and which owe money again (a payment deleted or moved, or a line added
+  // after the release). HMO visits release unpaid by design (0133), so they
+  // are never badged and this filter leaves them out.
+  const releasedOnly = sp.released === "1" && scope !== "hmo";
   const sort = parseSort(sp.sort, sp.dir, SORTABLE_COLUMNS, DEFAULT_SORT);
   const size = parsePageSize(sp.size, DEFAULT_PAGE_SIZE);
   const currentPage = parsePage(sp.page);
@@ -255,18 +264,21 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
     d90_plus: { count: 0, amount: 0 },
   };
 
-  const enriched: ArRow[] = rows.map((v) => {
+  const enriched = rows.map((v) => {
     const outstanding = Number(v.total_php ?? 0) - Number(v.paid_php ?? 0);
     const bucket = bucketFor(v.visit_date, today);
-    if (outstanding > 0) {
-      totals[bucket].count += 1;
-      totals[bucket].amount += outstanding;
-    }
     const days = Math.floor(
       (Date.parse(today) - Date.parse(v.visit_date)) / 86400000,
     );
     return { v, outstanding, bucket, days };
   });
+
+  // Released results per owing non-HMO visit — a handful on prod, so one
+  // chunked read (released-results.ts) rather than an embed on every row.
+  const releasedByVisit = await loadReleasedResultCounts(
+    admin,
+    enriched.filter((r) => r.outstanding > 0 && r.v.hmo_provider_id === null).map((r) => r.v.id),
+  );
 
   const grandTotal =
     totals.current.amount +
@@ -286,7 +298,20 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
   // prod that was 4,147 of 4,153 rows: six visits genuinely owed money and
   // the rest were zero-balance noise. Filter once, here, so the table, the
   // pager and the cards all describe the same set.
-  const owing = enriched.filter((r) => r.outstanding > 0);
+  const owingAll: ArRow[] = enriched
+    .filter((r) => r.outstanding > 0)
+    .map((r) => ({
+      ...r,
+      released: r.v.hmo_provider_id === null ? (releasedByVisit.get(r.v.id) ?? 0) : 0,
+    }));
+  const releasedCount = owingAll.filter((r) => r.released > 0).length;
+  // The released filter narrows the cards too, so cards, table and pager
+  // keep describing one set.
+  const owing = releasedOnly ? owingAll.filter((r) => r.released > 0) : owingAll;
+  for (const r of owing) {
+    totals[r.bucket].count += 1;
+    totals[r.bucket].amount += r.outstanding;
+  }
   const ordered = [...owing].sort((a, b) => compareArRows(a, b, sort));
   const totalPages = pageCount(ordered.length, size);
   const page = Math.min(currentPage, totalPages);
@@ -298,6 +323,7 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
   const isDefaultSort = sort.key === DEFAULT_SORT.key && sort.dir === DEFAULT_SORT.dir;
   const baseParams: Record<string, string | null> = {
     scope: scope === "non_hmo" ? null : scope,
+    released: releasedOnly ? "1" : null,
     sort: isDefaultSort ? null : sort.key,
     dir: isDefaultSort ? null : sort.dir,
     size: size === DEFAULT_PAGE_SIZE ? null : String(size),
@@ -364,6 +390,27 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
         })}
       </nav>
 
+      {scope === "hmo" ? null : (
+        <div className="mb-4 flex flex-wrap items-center gap-2 text-xs">
+          <Link
+            href={href({ released: releasedOnly ? null : "1", page: null })}
+            aria-pressed={releasedOnly}
+            className={`inline-flex min-h-9 items-center rounded-full border px-3 font-semibold ${
+              releasedOnly
+                ? "border-amber-400 bg-amber-100 text-amber-900"
+                : "border-[color:var(--color-brand-bg-mid)] bg-white text-[color:var(--color-brand-text-mid)] hover:border-amber-400"
+            }`}
+          >
+            {releasedOnly ? "✓ " : ""}Results already released ({releasedCount})
+          </Link>
+          <span className="text-[color:var(--color-brand-text-soft)]">
+            Visits whose results went out while they were paid and which owe
+            money again — a payment deleted or moved, or a test added later.
+            HMO visits are not counted: they release before the HMO pays.
+          </span>
+        </div>
+      )}
+
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <article className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
           <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
@@ -385,7 +432,9 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
       <section className="overflow-hidden rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
         {owing.length === 0 ? (
           <p className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]">
-            No outstanding visits in this scope.
+            {releasedOnly
+              ? "No visit in this scope owes money after its results went out."
+              : "No outstanding visits in this scope."}
           </p>
         ) : (
           <div className="overflow-x-auto">
@@ -407,7 +456,7 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
-                {pageRows.map(({ v, outstanding, days }) => {
+                {pageRows.map(({ v, outstanding, days, released }) => {
                   const p = pluckPatient(v.patients);
                   const providerName = pluckProviderName(v.hmo_providers);
                   return (
@@ -463,6 +512,14 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
                         >
                           {paymentStatusLabel(v.payment_status)}
                         </span>
+                        {released > 0 ? (
+                          <span
+                            className="ml-1.5 inline-block rounded-md border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800"
+                            title="Results went out while this visit was paid; it owes money again. Released results stay released."
+                          >
+                            Results released · {released}
+                          </span>
+                        ) : null}
                       </td>
                       <td className="px-4 py-3">
                         <Link

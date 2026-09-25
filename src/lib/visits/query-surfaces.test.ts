@@ -150,6 +150,10 @@ const SURFACES: Record<string, Surface> = {
     meaning: "lab",
     why: "Lab turnaround time. A consult goes requested → released at the counter with no bench step, so every one is a ~0-hour 'turnaround' that isn't one (#162).",
   },
+  "lib/visits/released-results.ts": {
+    meaning: "lab",
+    why: "Counts RESULTS already released on a visit that now owes money (Delete payment audit row, Patient AR badge). A consult marked done is not a result that went out, and counting one would badge every unpaid consult visit.",
+  },
   "lib/reports/stuck-tests.ts": {
     meaning: "lab",
     why: "Work ageing on the bench. A consult has no queue step that could clear it, so it ages forever and this list is the one place that reads that as a problem to chase (#162).",
@@ -408,6 +412,10 @@ interface LifecycleSurface {
  */
 const LIFECYCLES: Record<string, LifecycleSurface> = {
   // --- Deliberately spans deleted rows -------------------------------------
+  "app/(staff)/staff/(dashboard)/payments/[id]/void/actions.ts": {
+    lifecycle: "any",
+    why: "Re-reads the deleted payment's OWN visit by id, after the void, for the payment.voided audit row. It shows nothing to anyone, and an audit row records the visit's state whatever it is.",
+  },
   "lib/reports/deleted-entries.ts": {
     lifecycle: "any",
     why: "The deletion ledger. Reading only live rows would leave it permanently empty — the deleted rows ARE the report.",
@@ -603,6 +611,10 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
   "lib/reports/lab-tat.ts": {
     lifecycle: "live",
     why: "Turnaround time. This is one of the two surfaces that had reasoned P0043 made the filter a no-op; see the note at the top of this section for why that did not hold.",
+  },
+  "lib/visits/released-results.ts": {
+    lifecycle: "live",
+    why: "Results that went out on a visit that still exists. A deleted line or a line on a deleted visit is not something the clinic still has to collect for.",
   },
   "lib/reports/stuck-tests.ts": {
     lifecycle: "live",

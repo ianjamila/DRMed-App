@@ -28,10 +28,100 @@ export interface HistoryPayment {
   corrects_payment_id: string | null;
 }
 
-/** correct_payment writes 'Edited: <reason>' / 'Moved: <reason>'; this is the reason alone. */
+/**
+ * Why a payment was deleted — picked in the Delete dialog and stored as a
+ * void_reason prefix ("Recorded twice: <note>", or the label alone when no
+ * note was typed), the same way correct_payment stores "Edited: " / "Moved: ".
+ * Deletes from before the picker carry no prefix and read as null.
+ */
+export const DELETE_CATEGORIES = [
+  { value: "recorded_twice", label: "Recorded twice" },
+  { value: "wrong_visit", label: "Wrong visit" },
+  { value: "wrong_amount", label: "Wrong amount" },
+  { value: "refunded", label: "Patient refunded" },
+  { value: "other", label: "Other" },
+] as const;
+
+export type DeleteCategory = (typeof DELETE_CATEGORIES)[number]["value"];
+
+export const DELETE_CATEGORY_VALUES = DELETE_CATEGORIES.map((c) => c.value) as [
+  DeleteCategory,
+  ...DeleteCategory[],
+];
+
+export const DELETE_CATEGORY_LABEL = Object.fromEntries(
+  DELETE_CATEGORIES.map((c) => [c.value, c.label]),
+) as Record<DeleteCategory, string>;
+
+export function isDeleteCategory(v: string | null | undefined): v is DeleteCategory {
+  return (DELETE_CATEGORY_VALUES as readonly string[]).includes(v ?? "");
+}
+
+/** The void_reason the Delete action stores. */
+export function formatDeleteReason(category: DeleteCategory, note: string): string {
+  const n = note.trim();
+  return n ? `${DELETE_CATEGORY_LABEL[category]}: ${n}` : DELETE_CATEGORY_LABEL[category];
+}
+
+/**
+ * A pointer shown under the picked category — Delete is the wrong tool for a
+ * payment on the wrong visit or for the wrong amount when Move / Edit can
+ * fix it in one step, keeping the original date and cashier.
+ */
+export function deleteCategoryHint(category: DeleteCategory | "", canMoveOrEdit: boolean): string | null {
+  if (category === "wrong_visit") {
+    return canMoveOrEdit
+      ? "Use Move instead — it puts this payment on the right visit with the same date and cashier."
+      : "This payment cannot be moved. Delete it here, then record it again on the right visit.";
+  }
+  if (category === "wrong_amount") {
+    return canMoveOrEdit
+      ? "Use Edit instead — it fixes the amount or method and keeps the date and cashier."
+      : "This payment cannot be edited. Delete it here, then record the right amount.";
+  }
+  return null;
+}
+
+/**
+ * A void_reason split into the prefix it carries and the typed note. The
+ * prefixes: correct_payment's "Edited: " / "Moved: " (always followed by a
+ * reason) and the Delete categories (the label alone when no note was typed).
+ */
+export function parseVoidReason(reason: string | null): {
+  prefix: "edited" | "moved" | DeleteCategory | null;
+  note: string | null;
+} {
+  if (reason == null) return { prefix: null, note: null };
+  const tagged = (label: string) =>
+    reason === label || reason.startsWith(`${label}: `)
+      ? reason.slice(label.length + 2).trim() || null
+      : undefined;
+  for (const [label, prefix] of [
+    ["Edited", "edited"],
+    ["Moved", "moved"],
+  ] as const) {
+    if (reason.startsWith(`${label}: `)) return { prefix, note: reason.slice(label.length + 2) };
+  }
+  for (const c of DELETE_CATEGORIES) {
+    const note = tagged(c.label);
+    if (note !== undefined) return { prefix: c.value, note };
+  }
+  return { prefix: null, note: reason };
+}
+
+/**
+ * The staff-typed reason alone, without the prefix correct_payment ("Edited: "
+ * / "Moved: ") or the Delete dialog ("Recorded twice: " …) wrote. Null when
+ * only a category was picked.
+ */
 export function stripCorrectionPrefix(reason: string | null): string | null {
-  if (reason == null) return null;
-  return reason.replace(/^(Edited|Moved): /, "");
+  return parseVoidReason(reason).note;
+}
+
+/** The Delete category a void_reason carries, if any. */
+export function deleteCategoryOf(reason: string | null): DeleteCategory | null {
+  const { prefix } = parseVoidReason(reason);
+  return prefix === null || prefix === "edited" || prefix === "moved" ? null : prefix;
 }
 
 export interface PaymentLinks<T extends HistoryPayment> {
@@ -42,8 +132,10 @@ export interface PaymentLinks<T extends HistoryPayment> {
   fate(p: T): PaymentFate;
   /** For a payment that replaced another: how it came to be here. */
   arrivedBy(p: T): "edited" | "moved" | null;
-  /** The staff-typed reason, without the correction prefix. */
+  /** The staff-typed reason, without the correction / Delete-category prefix. */
   reason(p: T): string | null;
+  /** For a deleted payment: the category picked in the Delete dialog, if any. */
+  deleteCategory(p: T): DeleteCategory | null;
 }
 
 /**
@@ -81,6 +173,7 @@ export function linkPayments<T extends HistoryPayment>(rows: readonly T[]): Paym
       return "edited";
     },
     reason: (p) => (p.voided_at ? stripCorrectionPrefix(p.void_reason) : null),
+    deleteCategory: (p) => (fate(p) === "deleted" ? deleteCategoryOf(p.void_reason) : null),
   };
 }
 

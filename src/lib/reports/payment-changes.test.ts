@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   comparePaymentChanges,
+  deleteReasonLabel,
   deriveInPlaceEdits,
   derivePaymentChanges,
   parsePaymentChangesParams,
   paymentChangeOutcome,
+  paymentChangesCsvFilename,
   paymentChangesCsvHref,
   paymentChangesCsvRows,
+  matchesDeleteReason,
   PAYMENT_CHANGES_CSV_HEADER,
   summarisePaymentChanges,
   type VoidedPaymentRow,
@@ -78,7 +81,18 @@ describe("derivePaymentChanges", () => {
     expect(csv[0]).toEqual([...PAYMENT_CHANGES_CSV_HEADER]);
     expect(csv).toHaveLength(5);
     const movedLine = csv.find((l) => l[1] === "Moved")!;
-    expect(movedLine[10]).toBe("0044");
+    expect(movedLine[11]).toBe("0044");
+  });
+
+  it("puts the Delete reason beside the change, blank for edits and moves", () => {
+    const csv = paymentChangesCsvRows(entries);
+    const col = PAYMENT_CHANGES_CSV_HEADER.indexOf("Delete reason");
+    expect(col).toBe(2);
+    const cell = (id: string) => csv[1 + entries.findIndex((e) => e.id === id)]![col];
+    expect(cell("c")).toBe("Recorded twice");
+    expect(cell("d")).toBe("Not recorded");
+    expect(cell("a")).toBe("");
+    expect(cell("b")).toBe("");
   });
 
   it("sorts an unknown staff member last in both directions", () => {
@@ -90,13 +104,71 @@ describe("derivePaymentChanges", () => {
   });
 });
 
+describe("Delete reason (category picked in the Delete dialog)", () => {
+  const del = (id: string, void_reason: string | null) =>
+    row({ id, voided_at: "2026-09-25T02:00:00Z", voided_by: "s1", void_reason });
+  const entries = derivePaymentChanges(
+    [
+      del("twice", "Recorded twice: keyed by both shifts"),
+      del("refund", "Patient refunded"),
+      del("other", "Other: patient disputed the charge"),
+      del("old", "wrong patient"),
+      row({ id: "ed", voided_at: "2026-09-25T02:00:00Z", void_reason: "Edited: Other: typo" }),
+    ],
+    [],
+    STAFF,
+  );
+  const byId = new Map(entries.map((e) => [e.id, e]));
+
+  it("reads the category off the prefix and keeps the note as the reason", () => {
+    expect(byId.get("twice")).toMatchObject({ category: "recorded_twice", reason: "keyed by both shifts" });
+    expect(byId.get("refund")).toMatchObject({ category: "refunded", reason: null });
+    expect(byId.get("other")).toMatchObject({ category: "other", reason: "patient disputed the charge" });
+  });
+
+  it("leaves a delete from before the picker uncategorised, reason intact", () => {
+    expect(byId.get("old")).toMatchObject({ category: null, reason: "wrong patient" });
+    expect(deleteReasonLabel(byId.get("old")!)).toBe("Not recorded");
+  });
+
+  it("never gives an edit or a move a delete category", () => {
+    expect(byId.get("ed")).toMatchObject({ fate: "edited", category: null, reason: "Other: typo" });
+    expect(deleteReasonLabel(byId.get("ed")!)).toBe("");
+  });
+
+  it("filters to one category, to uncategorised deletes, or not at all", () => {
+    const ids = (why: Parameters<typeof matchesDeleteReason>[1]) =>
+      entries.filter((e) => matchesDeleteReason(e, why)).map((e) => e.id);
+    expect(ids("all")).toHaveLength(5);
+    expect(ids("refunded")).toEqual(["refund"]);
+    expect(ids("none")).toEqual(["old"]);
+    expect(ids("wrong_visit")).toEqual([]);
+  });
+});
+
 describe("parsePaymentChangesParams", () => {
-  it("defaults to the last 90 days and all kinds", () => {
+  it("defaults to the last 90 days, all kinds and any reason", () => {
     expect(parsePaymentChangesParams({}, "2026-09-24")).toEqual({
       start: "2026-06-26",
       end: "2026-09-24",
       kind: "all",
+      why: "all",
     });
+  });
+
+  it("reads a known Delete reason and ignores anything else", () => {
+    expect(parsePaymentChangesParams({ why: "refunded" }, "2026-09-24").why).toBe("refunded");
+    expect(parsePaymentChangesParams({ why: "none" }, "2026-09-24").why).toBe("none");
+    expect(parsePaymentChangesParams({ why: "Recorded twice" }, "2026-09-24").why).toBe("all");
+  });
+
+  it("carries the Delete reason into the CSV link and filename only when set", () => {
+    const p = { start: "2026-09-01", end: "2026-09-24", kind: "all" as const };
+    expect(paymentChangesCsvHref({ ...p, why: "all" })).not.toContain("why");
+    expect(paymentChangesCsvHref({ ...p, why: "recorded_twice" })).toContain("why=recorded_twice");
+    expect(paymentChangesCsvFilename({ ...p, why: "recorded_twice" })).toBe(
+      "payment-changes-recorded-twice-2026-09-01_2026-09-24.csv",
+    );
   });
 
   it("ignores an unknown kind", () => {
@@ -105,8 +177,8 @@ describe("parsePaymentChangesParams", () => {
   });
 
   it("carries a kind into the CSV link only when set", () => {
-    expect(paymentChangesCsvHref({ start: "2026-09-01", end: "2026-09-24", kind: "all" })).not.toContain("kind");
-    expect(paymentChangesCsvHref({ start: "2026-09-01", end: "2026-09-24", kind: "edited" })).toContain("kind=edited");
+    expect(paymentChangesCsvHref({ start: "2026-09-01", end: "2026-09-24", kind: "all", why: "all" })).not.toContain("kind");
+    expect(paymentChangesCsvHref({ start: "2026-09-01", end: "2026-09-24", kind: "edited", why: "all" })).toContain("kind=edited");
   });
 });
 

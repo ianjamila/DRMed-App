@@ -8,6 +8,9 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { VoidPaymentSchema } from "@/lib/validations/accounting";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { reverseJournalEntryBySource } from "@/lib/accounting/journal-entry";
+import { formatDeleteReason, type DeleteCategory } from "@/lib/visits/payment-history";
+import { moneySettled } from "@/lib/visits/money-settled";
+import { loadReleasedResultCounts } from "@/lib/visits/released-results";
 
 // "Voided" is not a word staff see (the button says Delete), and the row may
 // equally have been edited or moved (both void it) by someone else. Not
@@ -28,20 +31,23 @@ function canVoidPayment(role: string): boolean {
 
 export async function voidPaymentAction(
   paymentId: string,
-  reason: string,
+  input: { category: DeleteCategory; reason: string },
 ): Promise<VoidResult> {
   const session = await requireActiveStaff();
   if (!canVoidPayment(session.role)) {
     return { ok: false, error: "Forbidden." };
   }
 
-  const parsed = VoidPaymentSchema.safeParse({ reason });
+  const parsed = VoidPaymentSchema.safeParse(input);
   if (!parsed.success) {
     return {
       ok: false,
       error: parsed.error.issues[0]?.message ?? "Reason is required.",
     };
   }
+  // "Recorded twice: <note>" — the same prefix scheme as correct_payment's
+  // "Edited: " / "Moved: " (payment-history.ts parses it back).
+  const voidReason = formatDeleteReason(parsed.data.category, parsed.data.reason);
 
   const admin = createAdminClient();
 
@@ -70,7 +76,7 @@ export async function voidPaymentAction(
     .update({
       voided_at: new Date().toISOString(),
       voided_by: session.user_id,
-      void_reason: parsed.data.reason,
+      void_reason: voidReason,
     })
     .eq("id", paymentId)
     .is("voided_at", null) // a second concurrent void matches no row…
@@ -129,12 +135,31 @@ export async function voidPaymentAction(
         sourceKind: "gift_code_breakage",
         sourceId: redeemedCode.id,
         actorId: session.user_id,
-        reason: `Payment voided: ${parsed.data.reason}`,
+        reason: `Payment voided: ${voidReason}`,
       });
     }
   }
 
-  // 4. Audit log — always, since the void in step 2 already happened
+  // 4. What the visit is left in, re-read AFTER the void (the dialog showed a
+  // preview; recalc_visit_payment (0111) has now written the real status).
+  // Released results stay released — this only records that they went out.
+  // Best-effort: a failed read leaves the fields null, never the audit row out.
+  let settledAfter: boolean | null = null;
+  let releasedCount: number | null = null;
+  if (payment.visit_id) {
+    const [{ data: after }, released] = await Promise.all([
+      admin
+        .from("visits")
+        .select("payment_status, hmo_provider_id")
+        .eq("id", payment.visit_id)
+        .maybeSingle(),
+      loadReleasedResultCounts(admin, [payment.visit_id]).catch(() => null),
+    ]);
+    if (after) settledAfter = moneySettled(after);
+    if (released) releasedCount = released.get(payment.visit_id) ?? 0;
+  }
+
+  // 5. Audit log — always, since the void in step 2 already happened
   // regardless of how step 3 went.
   const h = await headers();
   await audit({
@@ -144,7 +169,11 @@ export async function voidPaymentAction(
     resource_type: "payment",
     resource_id: paymentId,
     metadata: {
-      reason: parsed.data.reason,
+      reason: voidReason,
+      category: parsed.data.category,
+      visit_id: payment.visit_id,
+      released_count: releasedCount,
+      settled_after: settledAfter,
       original_amount_php: Number(payment.amount_php),
       gift_code_reset: redeemedCode && !giftCodeError ? redeemedCode.id : null,
       gift_code_reset_error: giftCodeError,

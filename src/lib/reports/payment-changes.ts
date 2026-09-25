@@ -13,9 +13,13 @@ import { formatPatientName } from "@/lib/patients/format-name";
 import { formatPhp } from "@/lib/marketing/format";
 import type { SortSpec } from "@/lib/ui/table-params";
 import {
+  DELETE_CATEGORIES,
+  DELETE_CATEGORY_LABEL,
+  isDeleteCategory,
   linkPayments,
   paymentMethodLabel,
   PAYMENT_FATE_LABEL,
+  type DeleteCategory,
   type HistoryPayment,
 } from "@/lib/visits/payment-history";
 import { chunk, fetchAllRows, IN_CHUNK, unique } from "./paging";
@@ -26,15 +30,29 @@ type AnyClient = SupabaseClient<Database>;
 export const PAYMENT_CHANGE_KINDS = ["all", "deleted", "edited", "moved"] as const;
 export type PaymentChangeKind = (typeof PAYMENT_CHANGE_KINDS)[number];
 
+/**
+ * The Delete reason filter: one category, or "none" for deletes made before
+ * the Delete dialog asked (and for automatic rollbacks). Only a delete carries
+ * a category, so any value but "all" narrows the table to deletes.
+ */
+export type DeleteReasonFilter = "all" | DeleteCategory | "none";
+
+export const DELETE_REASON_OPTIONS: { value: DeleteReasonFilter; label: string }[] = [
+  { value: "all", label: "Any reason" },
+  ...DELETE_CATEGORIES.map((c) => ({ value: c.value as DeleteReasonFilter, label: c.label })),
+  { value: "none", label: "Not recorded" },
+];
+
 export interface PaymentChangesParams {
   start: string;
   end: string;
   kind: PaymentChangeKind;
+  why: DeleteReasonFilter;
 }
 
 /** A correction is rare — default to a wide 90-day window, like Undone Releases. */
 export function parsePaymentChangesParams(
-  sp: { start?: string; end?: string; kind?: string },
+  sp: { start?: string; end?: string; kind?: string; why?: string },
   today: string = todayManilaISODate(),
 ): PaymentChangesParams {
   return {
@@ -43,7 +61,21 @@ export function parsePaymentChangesParams(
     kind: (PAYMENT_CHANGE_KINDS as readonly string[]).includes(sp.kind ?? "")
       ? (sp.kind as PaymentChangeKind)
       : "all",
+    why: sp.why === "none" || isDeleteCategory(sp.why) ? (sp.why as DeleteReasonFilter) : "all",
   };
+}
+
+/** Does an entry pass the Delete reason filter? */
+export function matchesDeleteReason(e: PaymentChange, why: DeleteReasonFilter): boolean {
+  if (why === "all") return true;
+  if (e.fate !== "deleted") return false;
+  return why === "none" ? e.category === null : e.category === why;
+}
+
+/** The Delete reason cell: the category, or blank for a non-delete / an older delete. */
+export function deleteReasonLabel(e: PaymentChange): string {
+  if (e.fate !== "deleted") return "";
+  return e.category ? DELETE_CATEGORY_LABEL[e.category] : "Not recorded";
 }
 
 interface PatientEmbed {
@@ -87,6 +119,8 @@ export interface PaymentChange {
   } | null;
   byName: string | null;
   reason: string | null;
+  /** A delete: the category picked in the Delete dialog (null before it asked). */
+  category: DeleteCategory | null;
   /** Set only for a reference/notes-only edit, which changes no money. */
   textEdit?: {
     referenceBefore: string | null;
@@ -139,6 +173,7 @@ export function deriveInPlaceEdits(
       replacement: null,
       byName: a.actor_id ? (staffNameById.get(a.actor_id) ?? null) : null,
       reason: textOrNull(meta.reason),
+      category: null,
       textEdit: {
         referenceBefore,
         referenceAfter,
@@ -206,6 +241,7 @@ export function derivePaymentChanges(
         : null,
       byName: p.voided_by ? (staffNameById.get(p.voided_by) ?? null) : null,
       reason: reason ? (SYSTEM_REASONS[reason] ?? reason) : null,
+      category: links.deleteCategory(p),
     };
   });
 }
@@ -307,7 +343,9 @@ export async function loadPaymentChanges(
     ...derivePaymentChanges(rows, replacements, staffNameById),
     ...deriveInPlaceEdits(audits.rows, editedPayments, staffNameById),
   ];
-  const entries = params.kind === "all" ? all : all.filter((e) => e.fate === params.kind);
+  const entries = all.filter(
+    (e) => (params.kind === "all" || e.fate === params.kind) && matchesDeleteReason(e, params.why),
+  );
   return { entries, summary: summarisePaymentChanges(all), truncated: truncated || audits.truncated };
 }
 
@@ -376,6 +414,7 @@ export function comparePaymentChanges(
 export const PAYMENT_CHANGES_CSV_HEADER = [
   "Changed (Manila)",
   "Change",
+  "Delete reason",
   "Patient",
   "DRM-ID",
   "Visit #",
@@ -395,6 +434,7 @@ export function paymentChangesCsvRows(entries: readonly PaymentChange[]): unknow
     ...entries.map((e) => [
       csvManilaStamp(e.changedAt),
       PAYMENT_FATE_LABEL[e.fate],
+      deleteReasonLabel(e),
       e.patient ? `${e.patient.last_name}, ${e.patient.first_name}` : "",
       e.patient?.drm_id ?? "",
       e.visitNumber ?? "",
@@ -413,9 +453,12 @@ export function paymentChangesCsvRows(entries: readonly PaymentChange[]): unknow
 export function paymentChangesCsvHref(p: PaymentChangesParams): string {
   const q: Record<string, string> = { start: p.start, end: p.end };
   if (p.kind !== "all") q.kind = p.kind;
+  if (p.why !== "all") q.why = p.why;
   return `/api/admin/reports/payment-changes.csv?${new URLSearchParams(q)}`;
 }
 
 export function paymentChangesCsvFilename(p: PaymentChangesParams): string {
-  return `payment-changes-${p.kind === "all" ? "" : `${p.kind}-`}${p.start}_${p.end}.csv`;
+  const kind = p.kind === "all" ? "" : `${p.kind}-`;
+  const why = p.why === "all" ? "" : `${p.why.replace(/_/g, "-")}-`;
+  return `payment-changes-${kind}${why}${p.start}_${p.end}.csv`;
 }
