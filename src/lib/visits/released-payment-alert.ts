@@ -1,9 +1,11 @@
 import "server-only";
 
-// Tells staff that a Delete or a Move left a visit owing money after its
-// results went out (Admin Tools › Email Alerts, alert key
-// `released_payment_removed`, 0178). Called via after() from the Delete and
-// Move actions once they have committed, so it can never slow or fail them.
+// Tells staff that a Delete, an Edit (amount reduced) or a Move left a visit
+// owing money after work on it was completed — results released, doctor
+// lines marked done (Admin Tools › Email Alerts, alert key
+// `released_payment_removed`, 0178). Called via after() from the Delete,
+// Edit and Move actions once they have committed, so it can never slow or
+// fail them.
 // Recipients come from resolveStaffAlertRecipients() — admin by default.
 // Sends only in production (or NOTIFICATIONS_LIVE=true); that gate lives in
 // sendEmail.
@@ -18,19 +20,23 @@ import { resolveStaffAlertRecipients } from "@/lib/notifications/staff-alert-rec
 import { audit } from "@/lib/audit/log";
 import { reportError } from "@/lib/observability/report-error";
 import { SITE } from "@/lib/marketing/site";
-import { buildReleasedPaymentAlertEmail } from "./released-payment-alert-content";
+import { buildReleasedPaymentAlertEmail, type ReleasedPaymentChange } from "./released-payment-alert-content";
+import { releasedTotal, type ReleasedCounts } from "./payment-edit";
 
 export interface ReleasedPaymentRemovedInput {
   paymentId: string;
-  change: "deleted" | "moved";
-  /** The visit the payment LEFT. */
+  change: ReleasedPaymentChange;
+  /** The visit the payment LEFT (for an edit: the visit it is on). */
   visitId: string;
+  /** The payment as it was — for an edit, BEFORE the edit. */
   amountPhp: number;
   methodLabel: string;
   reasonLabel: string | null;
   movedToVisitNumber: string | null;
+  editedTo: { amountPhp: number; methodLabel: string } | null;
   actorId: string;
-  releasedResults: number;
+  /** Completed work on the visit after the change (loadCompletedWorkCounts). */
+  completed: ReleasedCounts;
 }
 
 /** Never throws — an alert failure must not surface anywhere near the counter. */
@@ -58,8 +64,9 @@ export async function sendReleasedPaymentRemovedAlert(input: ReleasedPaymentRemo
       methodLabel: input.methodLabel,
       reasonLabel: input.reasonLabel,
       movedToVisitNumber: input.movedToVisitNumber,
+      editedTo: input.editedTo,
       byName: actor?.full_name ?? null,
-      releasedResults: input.releasedResults,
+      completed: input.completed,
       owesPhp: owes,
       visitUrl: `${SITE.url.replace(/\/$/, "")}/staff/visits/${input.visitId}`,
     });
@@ -89,7 +96,8 @@ export async function sendReleasedPaymentRemovedAlert(input: ReleasedPaymentRemo
       metadata: {
         visit_id: input.visitId,
         change: input.change,
-        released_count: input.releasedResults,
+        released_count: input.completed.results,
+        completed_work: releasedTotal(input.completed),
         owes_php: owes,
         recipients: recipients.emails.length,
         sent,

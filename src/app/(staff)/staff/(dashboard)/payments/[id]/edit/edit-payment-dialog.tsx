@@ -15,13 +15,17 @@ import { Textarea } from "@/components/ui/textarea";
 import { formatPhp } from "@/lib/marketing/format";
 import {
   EDITABLE_PAYMENT_METHODS,
+  amountRemovedByEdit,
   balanceAfterEdit,
   isEditablePaymentMethod,
   isMoneyChange,
   paymentSnapshot,
+  type ReleasedCounts,
+  type VisitMoney,
 } from "@/lib/visits/payment-edit";
 import { editPaymentAction } from "./actions";
 import { usePaymentDialogHandoff } from "@/components/staff/payment-dialog-handoff";
+import { PaymentLeavesNotice } from "@/components/staff/payment-leaves-notice";
 
 const SELECT_CLASS =
   "h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none";
@@ -37,6 +41,9 @@ export function EditPaymentDialog({
   receivedOnOtherDay,
   visitTotal,
   visitPaid,
+  visit,
+  visitNumber,
+  released,
 }: {
   paymentId: string;
   amount: number;
@@ -49,6 +56,11 @@ export function EditPaymentDialog({
   receivedOnOtherDay: string | null;
   visitTotal: number;
   visitPaid: number;
+  /** The visit as the page loaded it — for the same "what it is left in" note Delete and Move show. */
+  visit: VisitMoney;
+  visitNumber: string;
+  /** Completed work on the visit: released results and done doctor lines. */
+  released: ReleasedCounts;
 }) {
   // A legacy method the counter no longer offers (bpi / maybank) starts
   // blank: defaulting it to Cash would let a reference-only fix silently turn
@@ -91,6 +103,10 @@ export function EditPaymentDialog({
     : null;
   const newMethodLabel =
     EDITABLE_PAYMENT_METHODS.find((m) => m.value === newMethod)?.label ?? newMethod;
+  // Money leaves the visit only when the amount comes down; that case gets
+  // the Delete / Move note (what the visit is left in, and what work on it is
+  // already done). A method-only change or a bigger amount removes nothing.
+  const removed = moneyChanged ? amountRemovedByEdit(amount, parsedAmount) : null;
 
   function onSave() {
     if (!reason.trim()) {
@@ -239,7 +255,16 @@ export function EditPaymentDialog({
                   {method === "cash" || newMethod === "cash" ? ", including the cash that day’s drawer should hold" : ""}.
                 </p>
               ) : null}
-              {moneyChanged && balance !== null && balance > 0 ? (
+              {removed !== null ? (
+                <PaymentLeavesNotice
+                  visit={visit}
+                  visitNumber={visitNumber}
+                  amount={removed}
+                  released={released}
+                  className="mt-2"
+                />
+              ) : null}
+              {moneyChanged && removed === null && balance !== null && balance > 0 ? (
                 <p className="mt-2 font-semibold text-amber-800">
                   This leaves {formatPhp(balance)} unpaid on the visit.
                 </p>

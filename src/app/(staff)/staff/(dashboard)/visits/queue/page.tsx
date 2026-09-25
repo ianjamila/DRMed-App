@@ -27,7 +27,7 @@ import {
 import { visitDeletability, hasOpenHmoClaim } from "@/lib/visits/deletion";
 import { shouldPrintReceipt } from "@/lib/visits/receipt-policy";
 import { waivedAmount } from "@/lib/visits/statement";
-import { countReleasedLines } from "@/lib/visits/payment-edit";
+import { completedWorkCount } from "@/lib/visits/payment-edit";
 import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
 import { SampleBadge } from "@/components/staff/sample-badge";
 
@@ -576,15 +576,16 @@ function WaivedNote({ visit, inline = false }: { visit: QueueVisitRow; inline?: 
   );
 }
 
-// A Waiting row whose results already went out while it was paid — a
-// payment deleted or moved, or a test added after the release. Released
-// results stay released (owner rule); the badge only says so, so the counter
-// collects the balance instead of telling the patient to wait for results
-// they already have. An HMO visit never waits here, and releases unpaid by
-// design anyway (0133). Counted like Patient AR's badge: results only.
-function ReleasedBadge({ visit }: { visit: QueueVisitRow }) {
+// A Waiting row with completed work on it — results that went out, or a
+// doctor consult / procedure marked done — while it was paid: a payment was
+// deleted, edited down or moved since. Released results stay released (owner
+// rule); the badge only says so, so the counter collects the balance instead
+// of telling the patient to wait for results they already have. An HMO visit
+// never waits here, and releases unpaid by design anyway (0133). Counted like
+// Patient AR's badge: released results + done doctor lines (completedWorkCount).
+function CompletedWorkBadge({ visit }: { visit: QueueVisitRow }) {
   if (visit.hmo_provider_id != null) return null;
-  const { results } = countReleasedLines(
+  const completed = completedWorkCount(
     (visit.test_requests ?? [])
       .filter((t) => t.deleted_at === null)
       .map((t) => {
@@ -592,13 +593,13 @@ function ReleasedBadge({ visit }: { visit: QueueVisitRow }) {
         return { status: t.status, is_package_header: t.is_package_header, kind: svc?.kind };
       }),
   );
-  if (results === 0) return null;
+  if (completed === 0) return null;
   return (
     <span
       className="ml-1.5 inline-block rounded-md border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800"
-      title="Results went out while this visit was paid; it owes money again. Released results stay released."
+      title="Work on this visit was completed (results released, or a doctor consult done) while it was paid; it owes money again. Released results stay released."
     >
-      Results released · {results}
+      Completed work · {completed}
     </span>
   );
 }
@@ -637,7 +638,7 @@ function QueueRow({
         ) : (
           <>
             <PaymentBadge visit={visit} />
-            {stage === "waiting" ? <ReleasedBadge visit={visit} /> : null}
+            {stage === "waiting" ? <CompletedWorkBadge visit={visit} /> : null}
           </>
         )}
       </td>
@@ -698,7 +699,7 @@ function QueueCard({
         </Link>
         <span>
           <PaymentBadge visit={visit} />
-          {stage === "waiting" ? <ReleasedBadge visit={visit} /> : null}
+          {stage === "waiting" ? <CompletedWorkBadge visit={visit} /> : null}
         </span>
       </div>
       <div className="mt-1">
