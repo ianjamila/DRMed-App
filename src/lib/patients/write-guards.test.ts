@@ -39,12 +39,25 @@ const WRITE_TABLES = new Set([
 const WRITE_METHODS = new Set(["insert", "update", "upsert", "delete"]);
 
 // RPCs (outside the `.from(table).verb()` shape) known to write one of the
-// tables above. None exist on a "use server" file today — the RPC-based
-// appointment insert (appointments_insert_slot_guarded) lives in a plain lib
-// module (src/lib/appointments/create.ts, no "use server"), reached only
+// tables above, filled from a grep of every `.rpc("` call site in src/
+// (2026-09-25, post-rebase). appointments_insert_slot_guarded is
+// deliberately left out — it lives in a plain lib module
+// (src/lib/appointments/create.ts, no "use server", outside the widened
+// src/lib/actions/**·src/lib/results/** scan below too), reached only
 // through callers that already resolve an active patient first (see EXEMPT
 // below) — but the mechanism stays wired for when one is added here.
-const KNOWN_WRITER_RPCS = new Set<string>([]);
+const KNOWN_WRITER_RPCS = new Set<string>([
+  "correct_payment", // payments/[id]/{edit,move}/actions.ts — money moves off/onto a visit.
+  "result_edit_commit", // result-edit-core.ts commitResultEdit — amends a finished result.
+  "result_finalise_commit", // result-edit-core.ts commitResultFinalise — first finalise of a structured result.
+  "result_save_draft", // queue/[id]/actions.ts saveDraftValues — draft values under the result's row lock.
+  // delete_patient/restore_patient ARE the lifecycle-changing RPCs
+  // themselves (0167) — the app-level active-patient guard exists to keep
+  // OTHER writes off an inactive record; requiring it here would be
+  // circular. See their EXEMPT entries below.
+  "delete_patient",
+  "restore_patient",
+]);
 
 // Names that count as "this write is guarded" WHEN CALLED DIRECTLY from the
 // write's own enclosing function. Every assert*Active helper in
@@ -68,8 +81,16 @@ const GUARD_PATTERN = /\b(assert\w*Active|getActivePatientSession|isActivePatien
 const GUARD_WRAPPERS: Record<string, string> = {
   [`src/app/(staff)/staff/(dashboard)/visits/[id]/actions.ts:refuseIfVisitDeleted`]:
     "Wraps assertVisitPatientActive and returns an early-refusal object every caller checks before writing (6 call sites: release/undo-release/mark-done family).",
-  [`src/app/(staff)/staff/(dashboard)/queue/[id]/actions.ts:prepareStructured`]:
-    "Shared precondition helper for saveDraftAction/finaliseStructuredAction — calls assertPatientActive itself and returns {ok:false} before either caller writes results/result_test_requests.",
+  // NOTE: prepareStructured itself still calls assertPatientActive before its
+  // OWN two writes (a new results/result_test_requests row) — those resolve
+  // directly against GUARD_PATTERN, with no wrapper credit needed. A
+  // GUARD_WRAPPERS entry for it went stale post-rebase: 0172 moved the
+  // draft/finalise/amend writes themselves out of saveDraftAction/
+  // finaliseStructuredAction's own bodies and into separate helpers
+  // (saveDraftValues here; commitResultEdit/commitResultFinalise in
+  // result-edit-core.ts) that do not call prepareStructured directly — so no
+  // caller's write is ever credited THROUGH this wrapper. See the EXEMPT
+  // entries below for where that credit now belongs.
 };
 
 // file:function → why it deliberately has no guard. Seeded from the plan's
@@ -120,6 +141,24 @@ const EXEMPT: Record<string, string> = {
     "Rollback-only cleanup of a visit/tests just created in this same guarded call; a delete, not new work.",
   [`src/app/(staff)/staff/(dashboard)/payments/new/actions.ts:voidRedemptionPayment`]:
     "Rollback helper invoked by redeemGiftCode only after that function's own assertVisitPatientActive guard already passed, to void the payment it just inserted.",
+  [`src/app/(staff)/staff/(dashboard)/queue/[id]/actions.ts:saveDraftValues`]:
+    "Invoked by saveDraftAction only after prepareStructured (which calls assertPatientActive) already passed; the result_save_draft RPC call lives in this separate helper, not in prepareStructured's own body.",
+  [`src/lib/actions/results/result-edit-core.ts:commitResultEdit`]:
+    "Shared commit helper for the result_edit_commit RPC — every caller (amend-consolidated.ts's amendConsolidatedReport, queue/[id]/actions.ts's amendResultAction/amendStructuredResultAction) calls assertPatientActive before invoking it.",
+  [`src/lib/actions/results/result-edit-core.ts:commitResultFinalise`]:
+    "Shared commit helper for the result_finalise_commit RPC — every caller (finalise-consolidated.ts's finaliseConsolidatedReport, queue/[id]/actions.ts's finaliseStructuredAction via prepareStructured) calls assertVisitPatientActive/assertPatientActive before invoking it.",
+  [`src/lib/actions/patients/lifecycle.ts:deletePatientAction`]:
+    "delete_patient IS the lifecycle-deleting RPC itself — the database refuses it (P0058) when the record is already deleted or merged, so an app-level active-patient guard here would be circular.",
+  [`src/lib/actions/patients/lifecycle.ts:restorePatientAction`]:
+    "restore_patient IS the lifecycle-restoring RPC itself — guarding it with assertPatientActive would be backwards (restore only makes sense on a currently-INACTIVE record); the database enforces its own precondition (P0061).",
+  [`src/app/(staff)/staff/(dashboard)/admin/accounting/hmo-claims/actions.ts:submitBatchAction`]:
+    "I1 (2026-09-25 rebase review): whole-batch guards were removed. A batch's items are guarded when added (createClaimBatchAction/addItemsToBatchAction, both assertTestRequestsPatientsActive) and per-item edits keep assertClaimItemsPatientsActive; the delete_patient blocker already refuses to delete a patient with any non-voided hmo_claim_item, so a batch status change can never land on an inactive patient's claim.",
+  [`src/app/(staff)/staff/(dashboard)/admin/accounting/hmo-claims/actions.ts:acknowledgeBatchAction`]:
+    "Same reasoning as submitBatchAction above — a status change on a batch whose items are all already guarded at creation/edit time.",
+  [`src/app/(staff)/staff/(dashboard)/admin/accounting/hmo-claims/actions.ts:voidBatchAction`]:
+    "Same reasoning as submitBatchAction above; voiding also reduces work rather than adding it.",
+  [`src/app/(staff)/staff/(dashboard)/admin/accounting/hmo-claims/actions.ts:bulkSetHmoResponseAction`]:
+    "Same reasoning as submitBatchAction above — a bulk item-response update on a batch whose items are already guarded at creation/edit time.",
 };
 
 const isCheckable = (p: string) => /\.(ts|tsx)$/.test(p) && !/\.test\.tsx?$/.test(p) && !/\.d\.ts$/.test(p);
@@ -136,7 +175,18 @@ function walk(dir: string, out: string[] = []): string[] {
 const rel = (full: string) => relative(ROOT, full).split(sep).join("/");
 
 const isApiRoute = (f: string) => /\/app\/api\/.*\/route\.tsx?$/.test(f.replace(/\\/g, "/"));
-const files = walk(SRC).filter((f) => isApiRoute(f) || /"use server"/.test(readFileSync(f, "utf8")));
+// A write no longer has to sit directly in a "use server" action body — since
+// 0172 the money/result RPCs (result_edit_commit, result_finalise_commit,
+// correct_payment's callers) are shared out to plain lib helpers a "use
+// server" file calls. Scan those helper directories too, so the write site
+// the RPC call itself lives at (not just its caller) is covered.
+const isScannedLibDir = (f: string) => {
+  const r = rel(f);
+  return r.startsWith("src/lib/actions/") || r.startsWith("src/lib/results/");
+};
+const files = walk(SRC).filter(
+  (f) => isApiRoute(f) || isScannedLibDir(f) || /"use server"/.test(readFileSync(f, "utf8")),
+);
 
 interface WriteSite {
   file: string;
@@ -415,5 +465,22 @@ describe("every patient-table write is guarded or explicitly exempt", () => {
     expect(writes[0]!.fnKey).toBe("saveDraftAction");
     const guarded = makeGuardChecker("chain3.ts", fns, new Set());
     expect(guarded("saveDraftAction")).toBe(false);
+  });
+
+  it("mutation proof: a new unguarded correct_payment RPC caller is picked up and stays unresolved", () => {
+    // A hand-written control, not the real payments/[id]/{edit,move} files —
+    // proves a FUTURE caller of a KNOWN_WRITER_RPC that skips the guard and
+    // isn't in GUARD_WRAPPERS/EXEMPT would fail "every write resolves to a
+    // guard call or an EXEMPT entry" (it is neither guarded nor exempt here).
+    const src = `
+      export async function newUnguardedCaller() {
+        admin.rpc("correct_payment", { p_payment_id: x });
+      }
+    `;
+    const { writes, fns } = scanSource(src, "mutation-control.ts");
+    expect(writes).toHaveLength(1);
+    expect(writes[0]!.fnKey).toBe("newUnguardedCaller");
+    const guarded = makeGuardChecker("mutation-control.ts", fns, new Set());
+    expect(guarded("newUnguardedCaller")).toBe(false);
   });
 });
