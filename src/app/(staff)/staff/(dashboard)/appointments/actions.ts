@@ -1,5 +1,6 @@
 "use server";
 
+import { z } from "zod";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
@@ -11,6 +12,8 @@ import { activePatients } from "@/lib/patients/active";
 import { assertAppointmentsPatientsActive } from "@/lib/patients/require-active";
 import { AttachPatientSchema, type AttachPatientInput } from "@/lib/appointments/attach-patient";
 import { matchArrivedAppointmentsForServices } from "@/lib/appointments/match-arrived";
+import { MAX_BULK_RECORDS } from "@/lib/ui/bulk-selection";
+import { BULK_DELETABLE_STATUSES } from "@/lib/appointments/bulk-eligibility";
 
 type Transition =
   | "arrived"
@@ -33,10 +36,64 @@ const ALLOWED_FROM: Record<Transition, string[]> = {
   completed: ["arrived"],
 };
 
-export type ApptResult = { ok: true } | { ok: false; error: string };
+export type ApptResult =
+  | { ok: true; changedIds: string[] }
+  | { ok: false; error: string };
 
-async function transitionGroup(
-  appointmentIds: ReadonlyArray<string>,
+// One booking as the operator saw it: its appointment ids and the status on
+// screen when they ticked it. `from: null` = no expected status (the single-row
+// buttons, whose job includes a deliberate revert).
+interface BatchEntry {
+  ids: ReadonlyArray<string>;
+  from: string | null;
+}
+
+function flattenBatch(batch: ReadonlyArray<BatchEntry>): {
+  ids: string[];
+  idsByFrom: Map<string | null, string[]>;
+} {
+  const seen = new Set<string>();
+  const idsByFrom = new Map<string | null, string[]>();
+  for (const entry of batch) {
+    for (const id of entry.ids) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const list = idsByFrom.get(entry.from) ?? [];
+      list.push(id);
+      idsByFrom.set(entry.from, list);
+    }
+  }
+  return { ids: [...seen], idsByFrom };
+}
+
+// Sibling ids per appointment WITHIN this batch, derived from booking_group_id
+// on the server — the client's grouping is never what the audit trail records.
+async function bookingSiblings(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  ids: string[],
+): Promise<Map<string, string[]>> {
+  const { data } = await supabase
+    .from("appointments")
+    .select("id, booking_group_id")
+    .in("id", ids);
+  const byGroup = new Map<string, string[]>();
+  for (const row of data ?? []) {
+    if (!row.booking_group_id) continue;
+    const list = byGroup.get(row.booking_group_id) ?? [];
+    list.push(row.id);
+    byGroup.set(row.booking_group_id, list);
+  }
+  const out = new Map<string, string[]>();
+  for (const row of data ?? []) {
+    out.set(row.id, row.booking_group_id ? byGroup.get(row.booking_group_id)! : [row.id]);
+  }
+  return out;
+}
+
+const TOO_MANY = `Too many appointments in one go — the limit is ${MAX_BULK_RECORDS}. Select fewer bookings.`;
+
+async function transitionGroups(
+  batch: ReadonlyArray<BatchEntry>,
   to: Transition,
   extraMetadata?: Record<string, unknown>,
 ): Promise<ApptResult> {
@@ -44,42 +101,56 @@ async function transitionGroup(
   if (session.role !== "reception" && session.role !== "admin") {
     return { ok: false, error: "Reception or admin only." };
   }
-  if (appointmentIds.length === 0) {
+  const { ids, idsByFrom } = flattenBatch(batch);
+  if (ids.length === 0) {
     return { ok: false, error: "No appointments to update." };
+  }
+  if (ids.length > MAX_BULK_RECORDS) {
+    return { ok: false, error: TOO_MANY };
+  }
+  const allowed = ALLOWED_FROM[to];
+  const notInState = `Appointment is not in a state we can mark "${to.replace(/_/g, " ")}".`;
+  for (const from of idsByFrom.keys()) {
+    if (from !== null && !allowed.includes(from)) return { ok: false, error: notInState };
   }
 
   // Moving to arrived or back to confirmed puts work back on the record;
   // cancelling or marking no-show does not, so those stay unguarded.
-  // Walk-in appointments (patient_id NULL) pass.
+  // Walk-in appointments (patient_id NULL) pass. All-or-nothing on purpose:
+  // one inactive patient refuses the whole batch and nothing is written.
   if (to === "arrived" || to === "confirmed") {
-    const active = await assertAppointmentsPatientsActive(createAdminClient(), [...appointmentIds]);
+    const active = await assertAppointmentsPatientsActive(createAdminClient(), ids);
     if (!active.ok) return { ok: false, error: active.error };
   }
 
   const supabase = await createClient();
-  const allowed = ALLOWED_FROM[to];
-  const { data, error } = await supabase
-    .from("appointments")
-    .update({ status: to })
-    .in("id", [...appointmentIds])
-    .in("status", allowed)
-    .select("id, patient_id");
+  const siblings = await bookingSiblings(supabase, ids);
 
-  if (error) return { ok: false, error: error.message };
-  if (!data || data.length === 0) {
-    return {
-      ok: false,
-      error: `Appointment is not in a state we can mark "${to.replace(/_/g, " ")}".`,
-    };
-  }
+  // One UPDATE per expected status. `eq("status", from)` is the stale-click
+  // guard: ALLOWED_FROM alone would let a "Confirm" prepared on a pending
+  // callback un-cancel a booking a colleague cancelled a second earlier.
+  const writes = await Promise.all(
+    [...idsByFrom].map(([from, groupIds]) =>
+      supabase
+        .from("appointments")
+        .update({ status: to })
+        .in("id", groupIds)
+        .in("status", from === null ? allowed : [from])
+        .select("id, patient_id"),
+    ),
+  );
+  const failed = writes.find((w) => w.error);
+  if (failed?.error) return { ok: false, error: failed.error.message };
+  const data = writes.flatMap((w) => w.data ?? []);
+  if (data.length === 0) return { ok: false, error: notInState };
 
   const h = await headers();
   const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
   const ua = h.get("user-agent");
 
-  // One audit row per appointment so the trail per-row stays grep-able,
-  // but include the booking-group siblings in metadata so the group is
-  // reconstructable.
+  // One audit row per appointment so the trail per-row stays grep-able;
+  // group_appointment_ids is the BOOKING's own siblings (server-derived),
+  // bulk_batch_size is how many ids this call carried — a sweep is batch > group.
   await Promise.all(
     data.map((row) =>
       audit({
@@ -91,7 +162,8 @@ async function transitionGroup(
         resource_id: row.id,
         metadata: {
           actor_role: session.role,
-          group_appointment_ids: data.map((r) => r.id),
+          group_appointment_ids: siblings.get(row.id) ?? [row.id],
+          bulk_batch_size: ids.length,
           ...extraMetadata,
         },
         ip_address: ip,
@@ -101,7 +173,18 @@ async function transitionGroup(
   );
 
   revalidatePath("/staff/appointments");
-  return { ok: true };
+  return { ok: true, changedIds: data.map((row) => row.id) };
+}
+
+// Single-booking wrapper — every existing caller (the row buttons,
+// completeAppointmentFromVisitAction, completeArrivedAppointmentsForPatientAction)
+// keeps calling this and is unaffected: no expected status, ALLOWED_FROM only.
+async function transitionGroup(
+  appointmentIds: ReadonlyArray<string>,
+  to: Transition,
+  extraMetadata?: Record<string, unknown>,
+): Promise<ApptResult> {
+  return transitionGroups([{ ids: appointmentIds, from: null }], to, extraMetadata);
 }
 
 export async function markArrivedAction(
@@ -126,6 +209,22 @@ export async function revertToConfirmedAction(
   ids: ReadonlyArray<string>,
 ): Promise<ApptResult> {
   return transitionGroup(ids, "confirmed");
+}
+
+const BULK_TRANSITIONS = ["arrived", "no_show", "cancelled", "confirmed"] as const;
+// Inputs from the client are untrusted: bookings as {ids, from}, and a target
+// that can never be "completed" (only starting a visit completes a booking).
+const BulkBatchSchema = z
+  .array(z.object({ ids: z.array(z.string().uuid()).min(1), from: z.string().min(1) }))
+  .min(1);
+
+export async function bulkTransitionAction(batch: unknown, to: unknown): Promise<ApptResult> {
+  const parsedBatch = BulkBatchSchema.safeParse(batch);
+  const parsedTo = z.enum(BULK_TRANSITIONS).safeParse(to);
+  if (!parsedBatch.success || !parsedTo.success) {
+    return { ok: false, error: "Could not read the selection — refresh and try again." };
+  }
+  return transitionGroups(parsedBatch.data, parsedTo.data);
 }
 
 // Completes the appointment(s) a visit was started from. Called from
@@ -418,40 +517,47 @@ export async function attachPatientToAppointmentAction(
   );
 
   revalidatePath("/staff/appointments");
-  return { ok: true };
+  return { ok: true, changedIds: updatedIds };
 }
 
-export async function deleteAppointmentAction(
-  appointmentIds: ReadonlyArray<string>,
-): Promise<ApptResult> {
+async function deleteGroups(batch: ReadonlyArray<BatchEntry>): Promise<ApptResult> {
   const session = await requireActiveStaff();
   if (session.role !== "admin") {
     return { ok: false, error: "Admin only." };
   }
-  if (appointmentIds.length === 0) {
+  const { ids, idsByFrom } = flattenBatch(batch);
+  if (ids.length === 0) {
     return { ok: false, error: "No appointments to delete." };
+  }
+  if (ids.length > MAX_BULK_RECORDS) {
+    return { ok: false, error: TOO_MANY };
   }
 
   const supabase = await createClient();
-  const { data: existing } = await supabase
-    .from("appointments")
-    .select("id, patient_id, status, scheduled_at")
-    .in("id", [...appointmentIds]);
-  if (!existing || existing.length === 0) {
+  const siblings = await bookingSiblings(supabase, ids);
+  // Audit from what the DELETE actually returned — never from a pre-read, so
+  // two admins deleting overlapping selections cannot audit rows the other
+  // one removed. With an expected status (bulk) a booking that changed since
+  // selection is left alone and reported as unchanged.
+  const writes = await Promise.all(
+    [...idsByFrom].map(([from, groupIds]) => {
+      let query = supabase.from("appointments").delete().in("id", groupIds);
+      if (from !== null) query = query.eq("status", from);
+      return query.select("id, patient_id, status, scheduled_at");
+    }),
+  );
+  const failed = writes.find((w) => w.error);
+  if (failed?.error) return { ok: false, error: failed.error.message };
+  const deleted = writes.flatMap((w) => w.data ?? []);
+  if (deleted.length === 0) {
     return { ok: false, error: "No matching appointments." };
   }
-
-  const { error } = await supabase
-    .from("appointments")
-    .delete()
-    .in("id", [...appointmentIds]);
-  if (error) return { ok: false, error: error.message };
 
   const h = await headers();
   const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
   const ua = h.get("user-agent");
   await Promise.all(
-    existing.map((row) =>
+    deleted.map((row) =>
       audit({
         actor_id: session.user_id,
         actor_type: "staff",
@@ -462,7 +568,8 @@ export async function deleteAppointmentAction(
         metadata: {
           previous_status: row.status,
           scheduled_at: row.scheduled_at,
-          group_appointment_ids: existing.map((r) => r.id),
+          group_appointment_ids: siblings.get(row.id) ?? [row.id],
+          bulk_batch_size: ids.length,
         },
         ip_address: ip,
         user_agent: ua,
@@ -471,5 +578,27 @@ export async function deleteAppointmentAction(
   );
 
   revalidatePath("/staff/appointments");
-  return { ok: true };
+  return { ok: true, changedIds: deleted.map((row) => row.id) };
+}
+
+// Single booking, any status — today's row-button behaviour (now audited from
+// the returned rows).
+export async function deleteAppointmentAction(
+  appointmentIds: ReadonlyArray<string>,
+): Promise<ApptResult> {
+  return deleteGroups([{ ids: appointmentIds, from: null }]);
+}
+
+// Bulk bar: every entry must carry a non-completed expected status, which the
+// delete enforces in the write — a booking that completed since selection
+// is not deleted.
+export async function bulkDeleteAction(batch: unknown): Promise<ApptResult> {
+  const parsed = BulkBatchSchema.safeParse(batch);
+  if (!parsed.success) {
+    return { ok: false, error: "Could not read the selection — refresh and try again." };
+  }
+  if (parsed.data.some((entry) => !BULK_DELETABLE_STATUSES.includes(entry.from))) {
+    return { ok: false, error: "Completed bookings cannot be deleted from here." };
+  }
+  return deleteGroups(parsed.data);
 }

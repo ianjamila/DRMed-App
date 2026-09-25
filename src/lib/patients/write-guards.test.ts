@@ -131,8 +131,8 @@ const EXEMPT: Record<string, string> = {
     "Deletes stay unguarded by design (Task 23) — they remove work, never put it back.",
   [`src/app/(staff)/staff/(dashboard)/appointments/actions.ts:attachPatientToAppointmentAction`]:
     "The patient is resolved via an activePatients(...)-filtered read or resolvePatient (active-only, Task 9) earlier in this same function, before the attach write.",
-  [`src/app/(staff)/staff/(dashboard)/appointments/actions.ts:deleteAppointmentAction`]:
-    "Deletes reduce work and stay unguarded, same reasoning as cancelAppointmentAction (Task 22 note).",
+  [`src/app/(staff)/staff/(dashboard)/appointments/actions.ts:deleteGroups`]:
+    "Deletes reduce work and stay unguarded, same reasoning as cancelAppointmentAction (Task 22 note); shared by deleteAppointmentAction and bulkDeleteAction.",
   [`src/app/(staff)/staff/(dashboard)/visits/new/actions.ts:createOneVisit`]:
     "Private helper invoked by createVisitAction only after that function's own assertPatientActive guard already passed.",
   [`src/app/(staff)/staff/(dashboard)/visits/new/actions.ts:deleteVisitCascade`]:
