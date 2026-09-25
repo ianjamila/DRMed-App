@@ -5,7 +5,7 @@
 // same trust boundary approveResortGroupAction (actions.ts) uses for the
 // same RPC.
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createSupabaseStore } from "@/lib/sheet-sync/store";
+import { createSupabaseStore, type SheetSyncStore } from "@/lib/sheet-sync/store";
 import { computeResortGroups } from "@/lib/sheet-sync/resort";
 import { Panel } from "@/components/ui/panel";
 import { REFERRAL_NOT_RECORDED_LABEL, referralSourceLabel } from "@/lib/patients/referral-sources";
@@ -13,7 +13,23 @@ import { ApproveResortGroupButton } from "./review-actions";
 
 export async function ResortPanel() {
   const store = createSupabaseStore(createAdminClient());
-  const [candidates, aliases] = await Promise.all([store.resortCandidates(), store.loadAliases()]);
+
+  // No error.tsx above this route segment — an unhandled throw here (a DB
+  // error, or the loaders' own row-ceiling error) would take down the whole
+  // admin page, not just this panel. Match ReviewQueue's load-failure shape.
+  let candidates: Awaited<ReturnType<SheetSyncStore["resortCandidates"]>>;
+  let aliases: Awaited<ReturnType<SheetSyncStore["loadAliases"]>>;
+  try {
+    [candidates, aliases] = await Promise.all([store.resortCandidates(), store.loadAliases()]);
+  } catch (e) {
+    console.error("sheet sync resort panel load failed", e);
+    return (
+      <p className="text-sm text-red-600" role="alert">
+        Could not load the re-sort groups. Try refreshing the page.
+      </p>
+    );
+  }
+
   const { groups, keptByStaff } = computeResortGroups(candidates, aliases);
 
   return (
@@ -60,6 +76,7 @@ export async function ResortPanel() {
                         from={g.from}
                         to={g.to}
                         patientCount={g.patientIds.length}
+                        sampleAnswer={g.sampleAnswer}
                         fromLabel={fromLabel}
                         toLabel={toLabel}
                       />

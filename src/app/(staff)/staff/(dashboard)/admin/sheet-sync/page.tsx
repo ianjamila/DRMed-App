@@ -7,6 +7,7 @@ import { Panel } from "@/components/ui/panel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { sectionTabClass, sectionTabsNavClass } from "@/components/staff/section-tabs-style";
 import { friendlyManilaDate, manilaDateTime } from "@/lib/dates/manila";
+import { buildListHref } from "@/lib/ui/table-params";
 import { ROUTE_NAME } from "@/lib/staff/route-names";
 import { missingSheetEnv } from "@/lib/sheet-sync/config";
 import type { ReviewKind, TabKey } from "@/lib/sheet-sync/types";
@@ -16,7 +17,8 @@ import { SyncSwitch, SyncNow } from "./sync-controls";
 import { RunHistory } from "./run-history";
 import { ReviewQueue } from "./review-queue";
 import { ResortPanel } from "./resort-panel";
-import { KIND_LABEL, TAB_LABEL, tabErrorLabel } from "./format";
+import { DoneBanner } from "./done-banner";
+import { KIND_LABEL, TAB_LABEL, tabErrorLabel, isDoneKind, type DoneKind } from "./format";
 
 export const metadata = { title: ROUTE_NAME["/staff/admin/sheet-sync"] };
 export const dynamic = "force-dynamic";
@@ -48,19 +50,31 @@ const TAB_STATUS_LABEL: Record<string, string> = {
   failed: "Failed",
 };
 
-async function countOpenByKind(supabase: Client): Promise<Record<ReviewKind, number>> {
+/**
+ * Open review-item counts per kind — the single source both the nav badge
+ * (this page) and the review queue's kind chips (review-queue.tsx) need, so
+ * it is computed here once and passed down rather than each querying it
+ * separately. `failed` lists any kind whose count query errored, so a caller
+ * can show "—" instead of a possibly-wrong 0 for that kind.
+ */
+async function countOpenByKind(supabase: Client): Promise<{ counts: Record<ReviewKind, number>; failed: ReviewKind[] }> {
   const kinds = Object.keys(KIND_LABEL) as ReviewKind[];
+  const failed: ReviewKind[] = [];
   const rows = await Promise.all(
     kinds.map(async (kind) => {
-      const { count } = await supabase
+      const { count, error } = await supabase
         .from("sheet_sync_review_items")
         .select("id", { count: "exact", head: true })
         .eq("kind", kind)
         .eq("status", "open");
+      if (error) {
+        console.error("sheet sync open-count failed", { kind, error });
+        failed.push(kind);
+      }
       return [kind, count ?? 0] as const;
     }),
   );
-  return Object.fromEntries(rows) as Record<ReviewKind, number>;
+  return { counts: Object.fromEntries(rows) as Record<ReviewKind, number>, failed };
 }
 
 async function countOpenByTab(supabase: Client): Promise<Record<TabKey, number>> {
@@ -90,6 +104,22 @@ interface LastRunRow {
   error: string | null;
 }
 
+/**
+ * `?done=<kind>&n=<count>` — the one-time success banner Map answer / Approve
+ * group navigate to (review-actions.tsx's `useGoDone`), since their own
+ * row/group disappears from the list they were on, which would otherwise
+ * unmount the message before anyone could read it. Both params are
+ * validated: `done` against the fixed `DoneKind` set, `n` as a non-negative
+ * integer — anything else and no banner renders, rather than trusting raw
+ * query-string content.
+ */
+function parseDoneParams(searchParams: Record<string, string | undefined>): { kind: DoneKind; n: number } | null {
+  if (!isDoneKind(searchParams.done)) return null;
+  const n = Number(searchParams.n);
+  if (!Number.isInteger(n) || n < 0) return null;
+  return { kind: searchParams.done, n };
+}
+
 export default async function SheetSyncPage({
   searchParams,
 }: {
@@ -100,21 +130,23 @@ export default async function SheetSyncPage({
   const view: View = VIEWS.find((v) => v === params.view) ?? "overview";
   const supabase = await createClient();
 
-  const [{ data: settings }, { data: lastRunData }, openByKind, openByTab] = await Promise.all([
-    supabase.from("sheet_sync_settings").select("*").eq("id", true).single(),
-    supabase
-      .from("sheet_sync_runs")
-      .select("id, trigger, dry_run, status, started_at, ended_at, per_tab, summary, error")
-      .eq("dry_run", false)
-      .order("started_at", { ascending: false })
-      .order("id", { ascending: true })
-      .limit(1),
-    countOpenByKind(supabase),
-    countOpenByTab(supabase),
-  ]);
+  const [{ data: settings }, { data: lastRunData }, { counts: openByKind, failed: openCountsFailed }, openByTab] =
+    await Promise.all([
+      supabase.from("sheet_sync_settings").select("*").eq("id", true).single(),
+      supabase
+        .from("sheet_sync_runs")
+        .select("id, trigger, dry_run, status, started_at, ended_at, per_tab, summary, error")
+        .eq("dry_run", false)
+        .order("started_at", { ascending: false })
+        .order("id", { ascending: true })
+        .limit(1),
+      countOpenByKind(supabase),
+      countOpenByTab(supabase),
+    ]);
   const lastRun = (lastRunData?.[0] ?? null) as unknown as LastRunRow | null;
   const envMissing = missingSheetEnv();
   const openTotal = Object.values(openByKind).reduce((a, b) => a + b, 0);
+  const done = parseDoneParams(params);
 
   let pausedByName: string | null = null;
   if (settings?.paused_by) {
@@ -137,6 +169,14 @@ export default async function SheetSyncPage({
           "its lab and consultation lines for patient-source reports. Nothing here creates visits or payments."
         }
       />
+
+      {done && (
+        <DoneBanner
+          kind={done.kind}
+          n={done.n}
+          clearHref={buildListHref(BASE_PATH, params, { done: null, n: null })}
+        />
+      )}
 
       <nav className={sectionTabsNavClass} aria-label="Sheet sync sections">
         {VIEWS.map((v) => {
@@ -164,7 +204,9 @@ export default async function SheetSyncPage({
         />
       )}
       {view === "history" && <RunHistory searchParams={params} />}
-      {view === "review" && <ReviewQueue searchParams={params} />}
+      {view === "review" && (
+        <ReviewQueue searchParams={params} openByKind={openByKind} openCountsFailed={openCountsFailed} />
+      )}
       {view === "resort" && <ResortPanel />}
     </div>
   );

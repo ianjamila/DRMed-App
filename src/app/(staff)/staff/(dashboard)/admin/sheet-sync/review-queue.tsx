@@ -16,9 +16,10 @@ import {
   parsePageSize,
   rangeFor,
 } from "@/lib/ui/table-params";
+import { fetchAllRows, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 import { manilaDate, manilaDateTime } from "@/lib/dates/manila";
 import type { ReviewKind, TabKey } from "@/lib/sheet-sync/types";
-import { KIND_LABEL, TAB_LABEL, resolutionSummary } from "./format";
+import { KIND_LABEL, TAB_LABEL, resolutionSummary, isAutoResolution } from "./format";
 import {
   IdentityItemControls,
   SimpleDismissControls,
@@ -93,7 +94,68 @@ function phoneTail(last4: string | null): string {
   return last4 ? `••${last4}` : "—";
 }
 
-export async function ReviewQueue({ searchParams }: { searchParams: Record<string, string | undefined> }) {
+// A card's identifying phrase for its buttons' aria-labels — kind + sheet
+// row, or the answer text for unmapped_source — never a name, even though
+// the name is already on screen: aria-label content still shouldn't need to
+// change if the visible evidence table's columns ever do.
+function rowLabelFor(item: ReviewItemRow): string {
+  if (IDENTITY_KINDS.has(item.kind)) {
+    const payload = item.payload as unknown as IdentityPayload;
+    const row = payload.rows[0]?.sheet_row;
+    return row !== undefined ? `row ${row}` : KIND_LABEL[item.kind];
+  }
+  if (item.kind === "suspect_snapshot") {
+    const payload = item.payload as unknown as SnapshotPayload;
+    return `${TAB_LABEL[payload.tab]} tab`;
+  }
+  const payload = item.payload as unknown as DateOrRowPayload;
+  return `${TAB_LABEL[payload.tab]} row ${payload.sheet_row}`;
+}
+
+/**
+ * Holds (0170: `sheet_patient_links` rows with `decision = 'review'`) —
+ * loaded WITHOUT any `.in("link_key", …)` filter, because a link_key is
+ * `<name norm>#<dob>` (names.ts's `linkKeyOf`): putting a page's worth of
+ * them in a PostgREST `.in()` list would ride verbatim in the request URL —
+ * proxy/API-gateway access logs, browser history — the exact patient-data
+ * disclosure the last-4-digit phone masking elsewhere on this page exists to
+ * avoid. Holds are a small, decision-scoped subset of all links (review
+ * round 5 review's own words: "holds are few"), so one filtered, paged read
+ * with a generous ceiling is cheap and matches every other loader here.
+ */
+async function loadHoldMap(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+): Promise<{ holdMap: Map<string, string | null>; failed: boolean }> {
+  try {
+    const { rows, truncated } = await fetchAllRows<{ link_key: string; hold_reason: string | null }>(
+      (from, to) =>
+        supabase
+          .from("sheet_patient_links")
+          .select("link_key, hold_reason")
+          .eq("decision", "review")
+          .order("link_key")
+          .range(from, to),
+      REPORT_EXPORT_MAX_ROWS,
+    );
+    if (truncated) throw new Error("sheet_patient_links holds loader hit its row ceiling");
+    return { holdMap: new Map(rows.map((r) => [r.link_key, r.hold_reason])), failed: false };
+  } catch (e) {
+    console.error("sheet sync review queue: failed to load holds", e);
+    return { holdMap: new Map(), failed: true };
+  }
+}
+
+export async function ReviewQueue({
+  searchParams,
+  openByKind,
+  openCountsFailed,
+}: {
+  searchParams: Record<string, string | undefined>;
+  /** Open counts per kind — computed once in page.tsx (also needed for the nav badge) and passed down rather than re-queried here. */
+  openByKind: Record<ReviewKind, number>;
+  /** Kinds whose count query failed — shown as "—" instead of a possibly-wrong 0. */
+  openCountsFailed: ReviewKind[];
+}) {
   const supabase = await createClient();
   const kindFilter = parseKindFilter(searchParams.kind);
   const showHandled = searchParams.handled === "1";
@@ -102,32 +164,17 @@ export async function ReviewQueue({ searchParams }: { searchParams: Record<strin
   const [from, to] = rangeFor(page, size);
 
   const kinds = KIND_KEYS;
-  const [openCountRows, itemsResult] = await Promise.all([
-    Promise.all(
-      kinds.map(async (kind) => {
-        const { count } = await supabase
-          .from("sheet_sync_review_items")
-          .select("id", { count: "exact", head: true })
-          .eq("kind", kind)
-          .eq("status", "open");
-        return [kind, count ?? 0] as const;
-      }),
-    ),
-    (async () => {
-      let q = supabase
-        .from("sheet_sync_review_items")
-        .select(
-          "id, tab, item_key, kind, payload, status, resolution, resolved_by, resolved_at, first_seen_at, last_seen_at",
-          { count: "exact" },
-        );
-      q = showHandled ? q.in("status", ["resolved", "dismissed"]) : q.eq("status", "open");
-      if (kindFilter) q = q.eq("kind", kindFilter);
-      return q.order("last_seen_at", { ascending: false }).order("id", { ascending: true }).range(from, to);
-    })(),
-  ]);
-
-  const openByKind = Object.fromEntries(openCountRows) as Record<ReviewKind, number>;
   const openTotal = Object.values(openByKind).reduce((a, b) => a + b, 0);
+
+  let itemsQuery = supabase
+    .from("sheet_sync_review_items")
+    .select(
+      "id, tab, item_key, kind, payload, status, resolution, resolved_by, resolved_at, first_seen_at, last_seen_at",
+      { count: "exact" },
+    );
+  itemsQuery = showHandled ? itemsQuery.in("status", ["resolved", "dismissed"]) : itemsQuery.eq("status", "open");
+  if (kindFilter) itemsQuery = itemsQuery.eq("kind", kindFilter);
+  const itemsResult = await itemsQuery.order("last_seen_at", { ascending: false }).order("id", { ascending: true }).range(from, to);
 
   if (itemsResult.error) {
     console.error("sheet sync review queue load failed", itemsResult.error);
@@ -142,27 +189,13 @@ export async function ReviewQueue({ searchParams }: { searchParams: Record<strin
   const total = itemsResult.count ?? 0;
   const totalPages = pageCount(total, size);
 
-  // Held state for every identity-kind item on this page: batch-query
-  // sheet_patient_links for every link_key their payloads name, decision =
-  // 'review' only (0170's hold). Only matters for the open list — a handled
-  // item is read-only regardless of any hold that formed after it resolved.
-  const holdMap = new Map<string, string | null>();
-  if (!showHandled) {
-    const allKeys = [
-      ...new Set(
-        items
-          .filter((i) => IDENTITY_KINDS.has(i.kind))
-          .flatMap((i) => (i.payload as unknown as IdentityPayload).link_keys ?? []),
-      ),
-    ];
-    if (allKeys.length > 0) {
-      const { data: holds } = await supabase
-        .from("sheet_patient_links")
-        .select("link_key, hold_reason")
-        .eq("decision", "review")
-        .in("link_key", allKeys);
-      for (const h of holds ?? []) holdMap.set(h.link_key, h.hold_reason);
-    }
+  // Held state for every identity-kind item on this page. Only matters for
+  // the open list — a handled item is read-only regardless of any hold that
+  // formed after it resolved.
+  let holdMap = new Map<string, string | null>();
+  let holdsFailed = false;
+  if (!showHandled && items.some((i) => IDENTITY_KINDS.has(i.kind))) {
+    ({ holdMap, failed: holdsFailed } = await loadHoldMap(supabase));
   }
 
   // Resolver names for the handled list ("who and when").
@@ -175,14 +208,20 @@ export async function ReviewQueue({ searchParams }: { searchParams: Record<strin
     }
   }
 
-  const baseParams = { page: String(page), size: String(size) };
-  const chipHref = (kind: ReviewKind | null) =>
-    buildListHref(BASE_PATH, { view: "review", handled: showHandled ? "1" : null }, { kind, page: null });
-  const toggleHandledHref = buildListHref(
-    BASE_PATH,
-    { view: "review", kind: kindFilter },
-    { handled: showHandled ? null : "1", page: null },
-  );
+  // Every link this view can produce, from one shared base so none of them
+  // silently drops a dimension (page, size, kind or handled) — chip/toggle
+  // links used to drop `size`.
+  const currentParams = {
+    view: "review",
+    kind: kindFilter,
+    handled: showHandled ? "1" : null,
+    page: String(page),
+    size: String(size),
+  };
+  const hrefFor = (overrides: Record<string, string | null>) => buildListHref(BASE_PATH, currentParams, overrides);
+  const chipHref = (kind: ReviewKind | null) => hrefFor({ kind, page: null });
+  const toggleHandledHref = hrefFor({ handled: showHandled ? null : "1", page: null });
+  const page1Href = hrefFor({ page: null });
 
   return (
     <div>
@@ -204,7 +243,9 @@ export async function ReviewQueue({ searchParams }: { searchParams: Record<strin
               className={chipClass(kindFilter === kind)}
             >
               {KIND_LABEL[kind]}
-              <span className="ml-1 text-xs opacity-80">{openByKind[kind]}</span>
+              <span className="ml-1 text-xs opacity-80">
+                {openCountsFailed.includes(kind) ? "—" : openByKind[kind]}
+              </span>
             </Link>
           ))}
         </div>
@@ -213,16 +254,40 @@ export async function ReviewQueue({ searchParams }: { searchParams: Record<strin
         </Link>
       </div>
 
+      {openCountsFailed.length > 0 && (
+        <p className="mb-3 text-sm text-red-600" role="alert">
+          Some kind counts could not be loaded — the chips above marked &ldquo;—&rdquo; may be missing open items.
+        </p>
+      )}
+      {holdsFailed && (
+        <p className="mb-3 text-sm text-red-600" role="alert">
+          Could not check which items are held for a decision. Showing them as held, so nothing here can be
+          dismissed by mistake — refresh the page to try again.
+        </p>
+      )}
+
       {items.length === 0 ? (
         <Panel className="p-6 text-sm text-[color:var(--color-brand-text-soft)]">
-          {showHandled ? "No handled review items yet." : "Nothing to review right now."}
+          {total > 0 ? (
+            <>
+              This page is empty.{" "}
+              <Link href={page1Href} className="font-semibold text-cyan-700 hover:underline">
+                Go to page 1
+              </Link>
+              .
+            </>
+          ) : showHandled ? (
+            "No handled review items yet."
+          ) : (
+            "Nothing to review right now."
+          )}
         </Panel>
       ) : showHandled ? (
         <HandledTable items={items} resolverNames={resolverNames} />
       ) : (
         <div className="space-y-4">
           {items.map((item) => (
-            <ReviewItemCard key={item.id} item={item} holdMap={holdMap} />
+            <ReviewItemCard key={item.id} item={item} holdMap={holdMap} holdsFailed={holdsFailed} />
           ))}
         </div>
       )}
@@ -233,26 +298,11 @@ export async function ReviewQueue({ searchParams }: { searchParams: Record<strin
           pageCount={totalPages}
           total={total}
           size={size}
-          prevHref={
-            page > 1
-              ? buildListHref(BASE_PATH, { ...baseParams, view: "review", kind: kindFilter, handled: showHandled ? "1" : null }, {
-                  page: page - 1 > 1 ? String(page - 1) : null,
-                })
-              : null
-          }
-          nextHref={
-            page < totalPages
-              ? buildListHref(BASE_PATH, { ...baseParams, view: "review", kind: kindFilter, handled: showHandled ? "1" : null }, {
-                  page: String(page + 1),
-                })
-              : null
-          }
+          prevHref={page > 1 ? hrefFor({ page: page - 1 > 1 ? String(page - 1) : null }) : null}
+          nextHref={page < totalPages ? hrefFor({ page: String(page + 1) }) : null}
           sizeOptions={PAGE_SIZES.map((s) => ({
             size: s,
-            href: buildListHref(BASE_PATH, { ...baseParams, view: "review", kind: kindFilter, handled: showHandled ? "1" : null }, {
-              size: s === DEFAULT_PAGE_SIZE ? null : String(s),
-              page: null,
-            }),
+            href: hrefFor({ size: s === DEFAULT_PAGE_SIZE ? null : String(s), page: null }),
           }))}
           noun="item"
         />
@@ -269,7 +319,13 @@ function chipClass(active: boolean): string {
   }`;
 }
 
-function holdStateFor(payload: IdentityPayload, holdMap: Map<string, string | null>): HoldState {
+// `holdsFailed`: the holds query itself failed to load (loadHoldMap above),
+// so `holdMap` cannot be trusted — fall back to "blocked" (no Dismiss/Keep
+// undone) rather than "none", the safe direction: hiding Dismiss on an item
+// that turns out to be unheld costs a click; showing it on an item that
+// turns out to be held risks the SQL's 22023 refusal reaching the admin.
+function holdStateFor(payload: IdentityPayload, holdMap: Map<string, string | null>, holdsFailed: boolean): HoldState {
+  if (holdsFailed) return "blocked";
   const heldKeys = payload.link_keys.filter((k) => holdMap.has(k));
   if (heldKeys.length === 0) return "none";
   return heldKeys.every((k) => holdMap.get(k) === UNDO_HOLD_REASON) ? "keep_undone" : "blocked";
@@ -315,10 +371,20 @@ function ItemShell({ kind, children }: { kind: ReviewKind; children: React.React
   );
 }
 
-function ReviewItemCard({ item, holdMap }: { item: ReviewItemRow; holdMap: Map<string, string | null> }) {
+function ReviewItemCard({
+  item,
+  holdMap,
+  holdsFailed,
+}: {
+  item: ReviewItemRow;
+  holdMap: Map<string, string | null>;
+  holdsFailed: boolean;
+}) {
+  const rowLabel = rowLabelFor(item);
+
   if (IDENTITY_KINDS.has(item.kind)) {
     const payload = item.payload as unknown as IdentityPayload;
-    const holdState = holdStateFor(payload, holdMap);
+    const holdState = holdStateFor(payload, holdMap, holdsFailed);
     return (
       <ItemShell kind={item.kind}>
         <p className="mt-1 text-sm font-semibold text-[color:var(--color-brand-navy)]">{payload.reason}</p>
@@ -327,7 +393,7 @@ function ReviewItemCard({ item, holdMap }: { item: ReviewItemRow; holdMap: Map<s
           <p className="text-xs text-[color:var(--color-brand-text-soft)]">Held because: {payload.held_because}</p>
         )}
         <EvidenceTable rows={payload.rows} />
-        <IdentityItemControls itemId={item.id} candidates={payload.candidates} holdState={holdState} />
+        <IdentityItemControls itemId={item.id} candidates={payload.candidates} holdState={holdState} rowLabel={rowLabel} />
       </ItemShell>
     );
   }
@@ -339,7 +405,7 @@ function ReviewItemCard({ item, holdMap }: { item: ReviewItemRow; holdMap: Map<s
         <p className="mt-1 text-sm font-semibold text-[color:var(--color-brand-navy)]">
           &ldquo;{payload.answer}&rdquo; — {payload.rows} row{payload.rows === 1 ? "" : "s"}
         </p>
-        <UnmappedItemControls itemId={item.id} />
+        <UnmappedItemControls itemId={item.id} answer={payload.answer} />
       </ItemShell>
     );
   }
@@ -362,6 +428,7 @@ function ReviewItemCard({ item, holdMap }: { item: ReviewItemRow; holdMap: Map<s
         <SimpleDismissControls
           itemId={item.id}
           hint="Fix it in the sheet — the next sync picks it up."
+          rowLabel={rowLabel}
         />
       </ItemShell>
     );
@@ -379,6 +446,7 @@ function ReviewItemCard({ item, holdMap }: { item: ReviewItemRow; holdMap: Map<s
         itemId={item.id}
         label="Accept the new row count"
         hint="Only if rows were deleted on purpose; otherwise check the sheet for a filter or a sort in progress."
+        rowLabel={rowLabel}
       />
     </ItemShell>
   );
@@ -427,7 +495,11 @@ function HandledTable({
               <td className="px-3 py-2">{itemSummary(item)}</td>
               <td className="px-3 py-2">{resolutionSummary(item.resolution)}</td>
               <td className="px-3 py-2 whitespace-nowrap">
-                {item.resolved_by ? (resolverNames.get(item.resolved_by) ?? "—") : "—"}
+                {isAutoResolution(item.resolution)
+                  ? "Automatic"
+                  : item.resolved_by
+                    ? (resolverNames.get(item.resolved_by) ?? "—")
+                    : "—"}
               </td>
               <td className="px-3 py-2 whitespace-nowrap">
                 {item.resolved_at ? manilaDateTime(item.resolved_at) : "—"}

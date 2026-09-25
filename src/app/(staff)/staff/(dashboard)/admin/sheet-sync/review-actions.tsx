@@ -1,15 +1,17 @@
 "use client";
 
 // Client controls for the review queue (Task 15) and the re-sort panel
-// (Task 16). Each control uses useTransition, shows the action's error
-// inline (role="alert"), and calls router.refresh() on success so the
-// server list (review-queue.tsx / resort-panel.tsx) re-fetches and the
-// handled item drops off the open list — the same idea as sync-controls.tsx's
-// UndoRunButton, but here the row itself disappears rather than swapping to
-// a durable "Undone" state, so any local success text is a brief flash.
+// (Task 16). Each control uses useTransition and shows the action's error
+// inline (role="alert"). Link / Create / Dismiss / Keep undone show no
+// success text of their own — they just `router.refresh()`, and the row
+// leaving the open list on success IS the feedback. Map answer and Approve
+// group DO have something to say ("N patients updated") but their own
+// row/group also leaves its list on success, which would unmount the
+// message before anyone could read it — see `useGoDone` below for how they
+// hand it to page.tsx's DoneBanner instead.
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState, useTransition } from "react";
 import {
   Dialog,
@@ -23,6 +25,29 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { manilaDate } from "@/lib/dates/manila";
 import { REFERRAL_SOURCE_IDS, REFERRAL_SOURCE_LABEL, type ReferralSourceId } from "@/lib/patients/referral-sources";
 import { approveResortGroupAction, mapAnswerToChannelAction, resolveReviewItemAction } from "./actions";
+import type { DoneKind } from "./format";
+
+/**
+ * Navigate to the current URL with `?done=<kind>&n=<count>` appended (every
+ * other current param preserved) — the durable-success-banner handoff to
+ * page.tsx (DoneBanner). Used instead of `router.refresh()` by the two
+ * controls whose own row/group disappears from the list on success (Map
+ * answer, Approve group), so the "N patients updated" text survives past the
+ * unmount that a plain refresh would cause — the same class of bug Task 14
+ * fixed for Undo by keeping its message in a row that survives; here there
+ * is no surviving row, so the message rides the URL instead.
+ */
+function useGoDone() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  return (kind: DoneKind, n: number) => {
+    const sp = new URLSearchParams(searchParams.toString());
+    sp.set("done", kind);
+    sp.set("n", String(n));
+    router.push(`${pathname}?${sp.toString()}`);
+  };
+}
 
 const primaryBtn =
   "min-h-9 rounded-md bg-[color:var(--color-brand-navy)] px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50";
@@ -68,10 +93,13 @@ export function IdentityItemControls({
   itemId,
   candidates,
   holdState,
+  rowLabel,
 }: {
   itemId: string;
   candidates: CandidatePayload[];
   holdState: HoldState;
+  /** Identifies this card in its aria-labels, e.g. "row 12" — never a name. */
+  rowLabel: string;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -143,7 +171,7 @@ export function IdentityItemControls({
           type="button"
           disabled={pending || !selected}
           onClick={() => resolve("link")}
-          aria-label="Link to selected patient"
+          aria-label={`Link ${rowLabel} to selected patient`}
           className={primaryBtn}
         >
           {pending ? "Working…" : "Link to selected patient"}
@@ -152,7 +180,7 @@ export function IdentityItemControls({
           type="button"
           disabled={pending}
           onClick={() => resolve("create")}
-          aria-label="Create a new patient"
+          aria-label={`Create a new patient for ${rowLabel}`}
           className={secondaryBtn}
         >
           {pending ? "Working…" : "Create a new patient"}
@@ -162,7 +190,7 @@ export function IdentityItemControls({
             type="button"
             disabled={pending}
             onClick={() => resolve("dismiss")}
-            aria-label={holdState === "keep_undone" ? "Keep undone" : "Dismiss"}
+            aria-label={holdState === "keep_undone" ? `Keep ${rowLabel} undone` : `Dismiss ${rowLabel}`}
             className={quietBtn}
           >
             {pending ? "Working…" : holdState === "keep_undone" ? "Keep undone" : "Dismiss"}
@@ -181,12 +209,12 @@ export function IdentityItemControls({
 // 2. unmapped_source
 // ---------------------------------------------------------------------------
 
-export function UnmappedItemControls({ itemId }: { itemId: string }) {
+export function UnmappedItemControls({ itemId, answer }: { itemId: string; answer: string }) {
   const router = useRouter();
+  const goDone = useGoDone();
   const [pending, startTransition] = useTransition();
   const [sourceId, setSourceId] = useState<ReferralSourceId | "">("");
   const [err, setErr] = useState<string | null>(null);
-  const [done, setDone] = useState<string | null>(null);
 
   function mapAnswer() {
     if (!sourceId) return;
@@ -198,8 +226,11 @@ export function UnmappedItemControls({ itemId }: { itemId: string }) {
           setErr(res.error);
           return;
         }
-        setDone(`${res.data.patientsUpdated} patient${res.data.patientsUpdated === 1 ? "" : "s"} updated.`);
-        router.refresh();
+        // Not router.refresh(): the item leaves the open list once mapped,
+        // which would unmount this component — and its "N updated" message
+        // with it — before anyone could read it. goDone() carries the
+        // message to page.tsx's DoneBanner via the URL instead.
+        goDone("alias", res.data.patientsUpdated);
       } catch (e) {
         console.error("sheet sync map answer failed", e);
         setErr("Could not reach the server. Check your connection and try again.");
@@ -227,7 +258,7 @@ export function UnmappedItemControls({ itemId }: { itemId: string }) {
   return (
     <div className="mt-3 flex flex-wrap items-center gap-2">
       <Select value={sourceId} onValueChange={(v) => setSourceId(v as ReferralSourceId)}>
-        <SelectTrigger size="sm" className="w-64" aria-label="Choose a channel">
+        <SelectTrigger size="sm" className="w-64" aria-label={`Choose a channel for the answer "${answer}"`}>
           <SelectValue placeholder="Choose a channel" />
         </SelectTrigger>
         <SelectContent>
@@ -238,17 +269,24 @@ export function UnmappedItemControls({ itemId }: { itemId: string }) {
           ))}
         </SelectContent>
       </Select>
-      <button type="button" disabled={pending || !sourceId} onClick={mapAnswer} className={primaryBtn}>
+      <button
+        type="button"
+        disabled={pending || !sourceId}
+        onClick={mapAnswer}
+        aria-label={`Map the answer "${answer}" to the selected channel`}
+        className={primaryBtn}
+      >
         {pending ? "Working…" : "Map answer"}
       </button>
-      <button type="button" disabled={pending} onClick={dismiss} className={quietBtn}>
+      <button
+        type="button"
+        disabled={pending}
+        onClick={dismiss}
+        aria-label={`Dismiss the answer "${answer}"`}
+        className={quietBtn}
+      >
         {pending ? "Working…" : "Dismiss"}
       </button>
-      {done && (
-        <p className="w-full text-sm text-[color:var(--color-brand-text-soft)]" role="status">
-          {done}
-        </p>
-      )}
       {err && (
         <p className="w-full text-sm text-red-600" role="alert">
           {err}
@@ -266,10 +304,13 @@ export function SimpleDismissControls({
   itemId,
   label = "Dismiss",
   hint,
+  rowLabel,
 }: {
   itemId: string;
   label?: string;
   hint?: string;
+  /** Identifies this card in its aria-label, e.g. "Customers row 90". */
+  rowLabel: string;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -294,7 +335,13 @@ export function SimpleDismissControls({
 
   return (
     <div className="mt-3">
-      <button type="button" disabled={pending} onClick={dismiss} className={quietBtn}>
+      <button
+        type="button"
+        disabled={pending}
+        onClick={dismiss}
+        aria-label={`${label} — ${rowLabel}`}
+        className={quietBtn}
+      >
         {pending ? "Working…" : label}
       </button>
       {hint && <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">{hint}</p>}
@@ -314,6 +361,7 @@ export function ApproveResortGroupButton({
   patientCount,
   fromLabel,
   toLabel,
+  sampleAnswer,
 }: {
   answerNorm: string;
   from: string | null;
@@ -321,12 +369,13 @@ export function ApproveResortGroupButton({
   patientCount: number;
   fromLabel: string;
   toLabel: string;
+  /** Identifies this group's Approve button/dialog, e.g. `"Family / Friends"`. */
+  sampleAnswer: string;
 }) {
-  const router = useRouter();
+  const goDone = useGoDone();
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
   const [err, setErr] = useState<string | null>(null);
-  const [done, setDone] = useState<string | null>(null);
 
   function confirm() {
     setErr(null);
@@ -337,9 +386,13 @@ export function ApproveResortGroupButton({
           setErr(res.error);
           return;
         }
-        setDone(`${res.data.updated} patient${res.data.updated === 1 ? "" : "s"} updated.`);
         setOpen(false);
-        router.refresh();
+        // Not router.refresh(): once approved, this group's patients no
+        // longer match the proposal and the row disappears from the table —
+        // which would unmount this button, and its "N updated" message with
+        // it, before anyone could read it. goDone() carries the message to
+        // page.tsx's DoneBanner via the URL instead.
+        goDone("resort", res.data.updated);
       } catch (e) {
         console.error("sheet sync resort approve failed", e);
         setErr("Could not reach the server. Check your connection and try again.");
@@ -347,17 +400,11 @@ export function ApproveResortGroupButton({
     });
   }
 
-  if (done) {
-    return (
-      <p className="text-xs text-[color:var(--color-brand-text-soft)]" role="status">
-        {done}
-      </p>
-    );
-  }
+  const groupLabel = `the "${sampleAnswer}" group`;
 
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)} className={secondaryBtn}>
+      <button type="button" onClick={() => setOpen(true)} aria-label={`Approve ${groupLabel}`} className={secondaryBtn}>
         Approve
       </button>
       <Dialog open={open} onOpenChange={setOpen}>
@@ -375,7 +422,13 @@ export function ApproveResortGroupButton({
             <button type="button" onClick={() => setOpen(false)} disabled={pending} className={quietBtn}>
               Cancel
             </button>
-            <button type="button" onClick={confirm} disabled={pending} className={dangerBtn}>
+            <button
+              type="button"
+              onClick={confirm}
+              disabled={pending}
+              aria-label={`Confirm approve ${groupLabel}`}
+              className={dangerBtn}
+            >
               {pending ? "Updating…" : "Approve"}
             </button>
           </DialogFooter>

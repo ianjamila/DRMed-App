@@ -13,7 +13,11 @@ import {
   TRIGGER_LABEL,
   TAB_LABEL,
   RESOLUTION_ACTION_LABEL,
+  DONE_KINDS,
   durationLabel,
+  doneBannerMessage,
+  isAutoResolution,
+  isDoneKind,
   resolutionSummary,
   revertSummaryLine,
   tabErrorLabel,
@@ -170,20 +174,33 @@ describe("tabErrorLabel", () => {
   });
 });
 
-// The four `resolution.action` values 0170's sheet_review_resolve (link,
-// create, dismiss) and sheet_alias_apply (alias) actually write — grepped
-// directly from the migration text rather than re-declaring a TS union, the
-// same "read the source of truth" idea as the CHECK-list tests above.
-const RESOLUTION_ACTIONS = [...new Set(
+// Two of the four `resolution.action` values 0170 writes are literal
+// jsonb_build_object('action', '<word>') calls (sheet_review_resolve's
+// dismiss branch, sheet_alias_apply) — grepped straight from the migration
+// text, the same "read the source of truth" idea as the CHECK-list tests
+// above. The other two (link, create) are NOT literals there:
+// sheet_review_resolve writes `jsonb_build_object('action', p_action, …)`
+// with the p_action VARIABLE, so they're pinned instead via the guard a few
+// lines above that constrains p_action to exactly this set once the dismiss
+// branch has already returned — `if p_action is null or p_action not in
+// ('link','create') or v_item.kind not in (…) then raise …`.
+const RESOLUTION_ACTIONS_LITERAL = [...new Set(
   [...MIGRATION.matchAll(/jsonb_build_object\('action',\s*'([a-z]+)'/g)].map((m) => m[1]),
 )];
+const LINK_CREATE_GUARD_RE = /p_action is null or p_action not in \(([^)]*)\)/;
+const linkCreateGuardMatch = LINK_CREATE_GUARD_RE.exec(MIGRATION);
+if (!linkCreateGuardMatch) throw new Error("sheet_review_resolve's p_action guard not found — regex is broken");
+const LINK_CREATE_ACTIONS = [...linkCreateGuardMatch[1].matchAll(/'([a-z]+)'/g)].map((m) => m[1]);
+const RESOLUTION_ACTIONS = [...new Set([...RESOLUTION_ACTIONS_LITERAL, ...LINK_CREATE_ACTIONS])];
 
 describe("RESOLUTION_ACTION_LABEL", () => {
-  it("found at least one action in the migration (regex isn't broken)", () => {
-    expect(RESOLUTION_ACTIONS.length).toBeGreaterThan(0);
+  it("found the alias/dismiss literals and the link/create guard list (regexes aren't broken)", () => {
+    expect(RESOLUTION_ACTIONS_LITERAL.length).toBeGreaterThan(0);
+    expect(LINK_CREATE_ACTIONS).toEqual(["link", "create"]);
   });
 
-  it("has a label for every resolution action 0170 writes", () => {
+  it("has a label for every resolution action 0170 can write — all four: link, create, dismiss, alias", () => {
+    expect(RESOLUTION_ACTIONS).toHaveLength(4);
     for (const a of RESOLUTION_ACTIONS) expect(RESOLUTION_ACTION_LABEL[a]).toBeTruthy();
   });
 });
@@ -217,5 +234,55 @@ describe("resolutionSummary", () => {
     expect(resolutionSummary({ action: "alias", referral_source_id: "not_a_real_id" })).toBe(
       RESOLUTION_ACTION_LABEL.alias,
     );
+  });
+
+  it("reads an automatic clear (0170's sheet_sync_upsert_review, p_clear_absent) as Cleared, not an em dash", () => {
+    expect(resolutionSummary({ auto: "no longer reported by the sheet" })).toBe("Cleared — no longer in the sheet");
+  });
+
+  it("never echoes the raw resolution.auto text onto the screen", () => {
+    expect(resolutionSummary({ auto: "some future internal marker text" })).not.toContain(
+      "some future internal marker text",
+    );
+  });
+});
+
+// 0170's sheet_sync_upsert_review writes exactly this shape for an
+// auto-clear: `jsonb_build_object('auto', 'no longer reported by the
+// sheet')` — pinned so `isAutoResolution` and `resolutionSummary` can't
+// silently drift from what the migration actually writes.
+describe("isAutoResolution", () => {
+  it("matches the migration's own auto-clear literal", () => {
+    expect(MIGRATION).toContain("jsonb_build_object('auto', 'no longer reported by the sheet')");
+  });
+
+  it("is true only when resolution.auto is a string", () => {
+    expect(isAutoResolution({ auto: "no longer reported by the sheet" })).toBe(true);
+    expect(isAutoResolution({ action: "dismiss", keep_undone: false })).toBe(false);
+    expect(isAutoResolution(null)).toBe(false);
+    expect(isAutoResolution(undefined)).toBe(false);
+    expect(isAutoResolution({ auto: 123 })).toBe(false);
+  });
+});
+
+describe("isDoneKind / doneBannerMessage (the ?done=&n= success banner)", () => {
+  it("accepts only the known done kinds", () => {
+    for (const k of DONE_KINDS) expect(isDoneKind(k)).toBe(true);
+    expect(isDoneKind("revert")).toBe(false);
+    expect(isDoneKind(undefined)).toBe(false);
+    expect(isDoneKind("")).toBe(false);
+  });
+
+  it("states the count and says the change is undoable", () => {
+    expect(doneBannerMessage("alias", 12)).toBe(
+      "Answer mapped — 12 patients updated. You can undo it from Run history.",
+    );
+    expect(doneBannerMessage("resort", 1)).toBe(
+      "Group approved — 1 patient updated. You can undo it from Run history.",
+    );
+  });
+
+  it("pluralises on zero too", () => {
+    expect(doneBannerMessage("alias", 0)).toContain("0 patients updated");
   });
 });

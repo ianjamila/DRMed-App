@@ -95,15 +95,30 @@ export const RESOLUTION_ACTION_LABEL: Record<string, string> = {
 };
 
 /**
+ * True for a review item 0170's `sheet_sync_upsert_review` auto-cleared
+ * (`p_clear_absent`) because a later sync no longer reports it — a *system*
+ * resolution, not an admin decision: `resolved_by` stays NULL and
+ * `resolution` is `{auto: 'no longer reported by the sheet'}`, a different
+ * shape from every admin resolution's `{action, ...}`.
+ */
+export function isAutoResolution(resolution: Record<string, unknown> | null | undefined): boolean {
+  return !!resolution && typeof resolution.auto === "string";
+}
+
+/**
  * One line for a resolved/dismissed item's resolution. `dismiss` with
  * `keep_undone: true` (0170 round 3+5) is the "Keep undone" outcome, not a
  * plain dismiss — the admin re-affirmed an undo hold rather than clearing it.
  * `alias` names the channel it was mapped to when the id is one this page
  * knows (`isReferralSource`); an id added to the lookup without a matching
  * label here falls back to the bare action word rather than showing nothing.
+ * An auto-clear (see `isAutoResolution`) reads as "Cleared", never as the raw
+ * `resolution.auto` text — that text is a fixed internal marker, not a
+ * message meant for a screen.
  */
 export function resolutionSummary(resolution: Record<string, unknown> | null | undefined): string {
   if (!resolution) return "—";
+  if (isAutoResolution(resolution)) return "Cleared — no longer in the sheet";
   const action = typeof resolution.action === "string" ? resolution.action : undefined;
   if (action === "dismiss" && resolution.keep_undone === true) return "Kept undone";
   if (action === "alias") {
@@ -112,4 +127,29 @@ export function resolutionSummary(resolution: Record<string, unknown> | null | u
     return RESOLUTION_ACTION_LABEL.alias;
   }
   return (action && RESOLUTION_ACTION_LABEL[action]) || "—";
+}
+
+// ---------------------------------------------------------------------------
+// "Done" banner — a one-time success message that survives the row/group it
+// came from disappearing off the open list. Map answer and Approve group
+// both navigate to `?...&done=<kind>&n=<count>` on success (review-actions.tsx's
+// `useGoDone`), which re-fetches the page as a side effect of the new URL;
+// page.tsx renders this as a role="status" banner and then strips the
+// params back out of the URL so a later refresh doesn't repeat it.
+// ---------------------------------------------------------------------------
+
+export const DONE_KINDS = ["alias", "resort"] as const;
+export type DoneKind = (typeof DONE_KINDS)[number];
+
+export function isDoneKind(value: string | undefined): value is DoneKind {
+  return !!value && (DONE_KINDS as readonly string[]).includes(value);
+}
+
+const DONE_MESSAGE: Record<DoneKind, (n: number) => string> = {
+  alias: (n) => `Answer mapped — ${n} patient${n === 1 ? "" : "s"} updated. You can undo it from Run history.`,
+  resort: (n) => `Group approved — ${n} patient${n === 1 ? "" : "s"} updated. You can undo it from Run history.`,
+};
+
+export function doneBannerMessage(kind: DoneKind, n: number): string {
+  return DONE_MESSAGE[kind](n);
 }
