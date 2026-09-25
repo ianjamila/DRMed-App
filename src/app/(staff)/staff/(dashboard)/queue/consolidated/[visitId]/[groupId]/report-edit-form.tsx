@@ -65,8 +65,14 @@ export function ReportEditForm({
         setError({ message: res.error, stale: Boolean(res.stale) });
         return;
       }
+      // X2: do NOT router.refresh() here. The page keys this form by
+      // `${resultId}:${amendment_count}` (page.tsx) precisely so a fresh
+      // edit starts from the new version — but a save bumps
+      // amendment_count, so a refresh right now would remount this
+      // component and wipe the Saved panel (and its patient-notice
+      // outcome) before anyone reads it. Fresh server data is instead
+      // fetched when "Done" navigates away.
       setSaved({ notify: res.notify });
-      router.refresh();
     });
   }
 
@@ -78,7 +84,10 @@ export function ReportEditForm({
         </p>
         <button
           type="button"
-          onClick={() => router.replace(doneHref)}
+          onClick={() => {
+            router.replace(doneHref);
+            router.refresh();
+          }}
           className="mt-3 min-h-[44px] rounded-lg bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
         >
           Done
