@@ -123,6 +123,15 @@ export interface PatientRecord {
   referral_source_origin: "staff" | "patient" | "sheet" | null;
   merged_into_id: string | null;
   /**
+   * 0167's patients.deleted_at. Only meaningful in the customer-world fixture
+   * (which mirrors sheet_sync_apply_customer_ops's SQL and so must see the
+   * whole patients table, deleted rows included); the real loader
+   * (store.ts's loadPatients) filters it out server-side, so a row a live
+   * planner run ever sees always has it null. Optional so existing
+   * fixtures/tests need no changes.
+   */
+  deleted_at?: string | null;
+  /**
    * 0170's patients.row_version (bumped by trg_patients_referral_origin on
    * every UPDATE). Optional so existing fixtures/tests that don't care about
    * the stale-read guard need no changes; the real loader always sends it.

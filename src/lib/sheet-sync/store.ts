@@ -107,9 +107,10 @@ function raise(error: { code?: string; message: string }): never {
   throw e;
 }
 
-const PATIENT_COLUMNS = "id, drm_id, first_name, middle_name, last_name, birthdate, phone, phone_normalized, email, sex, " +
-  "address, referred_by_doctor, preferred_release_medium, senior_pwd_id_kind, senior_pwd_id_number, referral_source, " +
-  "referral_source_origin, merged_into_id, row_version";
+// One string literal (not `+`-concatenated) so query-surfaces.test.ts's static
+// scanner — which only resolves a plain string/no-substitution-template
+// constant, not a concatenation — can see deleted_at and merged_into_id in it.
+const PATIENT_COLUMNS = "id, drm_id, first_name, middle_name, last_name, birthdate, phone, phone_normalized, email, sex, address, referred_by_doctor, preferred_release_medium, senior_pwd_id_kind, senior_pwd_id_number, referral_source, referral_source_origin, deleted_at, merged_into_id, row_version";
 
 /** Review items per sheet_sync_upsert_review call (see upsertReview below). */
 export const REVIEW_CHUNK = 1000;
@@ -179,13 +180,13 @@ export function createSupabaseStore(client: Client): SheetSyncStore {
       if (error) raise(error);
       return (count ?? 0) > 0;
     },
-    // NOTE: no `.is("deleted_at", null)` — `patients.deleted_at` does not exist on
-    // origin/main yet (migration 0167, branch feat/patient-delete, is parallel).
-    // Add that filter here the moment patient soft delete lands, so the sync
-    // never links to or fills a deleted patient (a merged patient must still be
-    // loaded — the index needs it to resolve a link to its survivor).
+    // 0167 (patient soft delete) landed: excludes deleted rows so the sync
+    // never links to or fills one — but NOT merged_into_id, since the planner
+    // still needs a merged patient to resolve a link to its survivor
+    // (query-surfaces.test.ts classifies this as "lifecycle": it selects both
+    // deleted_at and merged_into_id and makes that active/merged decision).
     loadPatients: () => all<PatientRecord>((from, to) =>
-      client.from("patients").select(PATIENT_COLUMNS).order("id").range(from, to) as never),
+      client.from("patients").select(PATIENT_COLUMNS).is("deleted_at", null).order("id").range(from, to) as never),
     loadLinks: () => all<LinkRecord>((from, to) =>
       client.from("sheet_patient_links").select("link_key, patient_id, decision, method, hold_reason").order("link_key").range(from, to) as never),
     loadFacts: () => all<FactsRecord>((from, to) =>

@@ -74,6 +74,22 @@ describe("createSupabaseStore — lastGoodRowsRead", () => {
   });
 });
 
+describe("createSupabaseStore — loadPatients excludes deleted rows only (0167)", () => {
+  it("filters deleted_at is null but never merged_into_id — the identity index still needs merged tombstones", async () => {
+    const isCalls: Array<[string, unknown]> = [];
+    const chain = {
+      from: () => chain,
+      select: () => chain,
+      is: (col: string, v: unknown) => { isCalls.push([col, v]); return chain; },
+      order: () => chain,
+      range: async () => ({ data: [], error: null }),
+    };
+    const store = createSupabaseStore(chain as unknown as SupabaseClient<Database>);
+    await store.loadPatients();
+    expect(isCalls).toEqual([["deleted_at", null]]);
+  });
+});
+
 /** A client whose rpc() records calls and answers from `reply`. */
 function recordingClient(reply: (fn: string, args: Record<string, unknown>) => unknown) {
   const calls: Array<{ fn: string; args: Record<string, unknown> }> = [];

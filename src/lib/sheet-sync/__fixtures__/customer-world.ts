@@ -5,32 +5,35 @@
  *
  * - create: SKIPPED (no patient, no link — counted only by the caller, not
  *   modelled as a count here) when the op is NOT an admin create and a LIVE
- *   non-merged patient already matches this op's normalized name (names.ts
- *   nameNormOf) plus its birthdate (both present) — or, when the op has
- *   none, its normalized phone (phone10) — a concurrent registration since
- *   the planner read patients. An ADMIN create is exempt (its own decision
- *   is never second-guessed). Otherwise inserts the patient (an unknown
- *   referral_source id → null; origin
- *   'sheet' when a channel is set, row_version 0). Each link key is written
- *   with method 'admin' when it is in `admin_link_keys`, else 'auto_exact' —
- *   an existing row takes that method too (SQL: `method = excluded.method`)
- *   and is re-pointed (decision 'link') only when it is not a hold and its
- *   method is not admin or it was an admin 'create'. Any other existing row
- *   makes the SQL raise 22023 and roll the chunk back; here it THROWS, so a
- *   plan that would do it fails the test instead of being modelled.
- * - link: SKIPPED when the op carries `expected_row_version` and it no
- *   longer matches the target patient's (or the patient is gone) — a stale
- *   read, same as fill below. Otherwise upsert, never over an admin row or a
- *   hold (skipped).
+ *   non-deleted, non-merged patient (0167) already matches this op's
+ *   normalized name (names.ts nameNormOf) plus its birthdate (both present)
+ *   — or, when the op has none, its normalized phone (phone10) — a
+ *   concurrent registration since the planner read patients. An ADMIN create
+ *   is exempt (its own decision is never second-guessed). Otherwise inserts
+ *   the patient (an unknown referral_source id → null; origin
+ *   'sheet' when a channel is set, row_version 0, deleted_at null). Each
+ *   link key is written with method 'admin' when it is in `admin_link_keys`,
+ *   else 'auto_exact' — an existing row takes that method too (SQL:
+ *   `method = excluded.method`) and is re-pointed (decision 'link') only
+ *   when it is not a hold and its method is not admin or it was an admin
+ *   'create'. Any other existing row makes the SQL raise 22023 and roll the
+ *   chunk back; here it THROWS, so a plan that would do it fails the test
+ *   instead of being modelled.
+ * - link: SKIPPED (0167) when the target patient is missing, deleted or
+ *   merged — never link to an inactive record — or (same bucket as that
+ *   race) the op carries `expected_row_version` and it no longer matches the
+ *   target's, same stale read as fill below. Otherwise upsert, never over an
+ *   admin row or a hold (skipped).
  * - hold: upsert (patient_id null, decision 'review', method 'auto_exact',
  *   hold_reason = the op reason); an existing non-admin row becomes decision
  *   'review', patient_id null, with that reason.
- * - fill: skipped for a missing or merged patient, or (when the op carries
- *   `expected_row_version`) a patient whose row_version has since moved —
- *   staff changed it after the planner read it; coalesce per column; the
- *   senior/PWD pair only when both are blank; referral_source only when the
- *   patient has none or the sheet owns it (unknown id → null), and the
- *   origin follows the patients_referral_origin_guard trigger.
+ * - fill: skipped for a missing, deleted (0167) or merged patient, or (when
+ *   the op carries `expected_row_version`) a patient whose row_version has
+ *   since moved — staff changed it after the planner read it; coalesce per
+ *   column; the senior/PWD pair only when both are blank; referral_source
+ *   only when the patient has none or the sheet owns it (unknown id →
+ *   null), and the origin follows the patients_referral_origin_guard
+ *   trigger.
  * - facts: upsert.
  */
 import { isReferralSource } from "../../patients/referral-sources";
@@ -68,7 +71,7 @@ export function applyOps(ops: readonly CustomerOp[], w: World): World {
       const opDob = f.birthdate ?? null;
       const opPhone = phone10(f.phone ?? null);
       const dupe = o.method === "admin" ? undefined : patients.find((p) => {
-        if (p.merged_into_id) return false;
+        if (p.deleted_at || p.merged_into_id) return false;
         if (nameNormOf({ first: p.first_name, middle: p.middle_name, last: p.last_name }) !== opNorm) return false;
         if (opDob) return p.birthdate === opDob;
         return !!opPhone && phone10(p.phone) === opPhone;
@@ -81,7 +84,7 @@ export function applyOps(ops: readonly CustomerOp[], w: World): World {
         address: f.address ?? null, referred_by_doctor: f.referred_by_doctor ?? null,
         preferred_release_medium: f.preferred_release_medium ?? null, senior_pwd_id_kind: f.senior_pwd_id_kind ?? null,
         senior_pwd_id_number: f.senior_pwd_id_number ?? null, referral_source: src,
-        referral_source_origin: src ? "sheet" : null, merged_into_id: null, row_version: 0 };
+        referral_source_origin: src ? "sheet" : null, merged_into_id: null, deleted_at: null, row_version: 0 };
       patients.push(rec); byId.set(id, rec);
       for (const k of o.link_keys) {
         const ex = links.get(k);
@@ -94,10 +97,11 @@ export function applyOps(ops: readonly CustomerOp[], w: World): World {
     } else if (o.op === "link") {
       const ex = links.get(o.link_key);
       if (ex && (ex.method === "admin" || ex.decision === "review")) continue;
-      if (o.expected_row_version !== undefined) {
-        const target = byId.get(o.patient_id);
-        if (!target || target.row_version !== o.expected_row_version) continue; // stale read
-      }
+      const target = byId.get(o.patient_id);
+      // 0167: never link to a missing, deleted or merged patient — same
+      // "stale read" bucket as a changed row_version below.
+      if (!target || target.deleted_at || target.merged_into_id) continue;
+      if (o.expected_row_version !== undefined && target.row_version !== o.expected_row_version) continue; // stale read
       links.set(o.link_key, { link_key: o.link_key, patient_id: o.patient_id, decision: "link", method: o.method, hold_reason: null });
     } else if (o.op === "hold") {
       const ex = links.get(o.link_key);
@@ -107,7 +111,7 @@ export function applyOps(ops: readonly CustomerOp[], w: World): World {
         : { link_key: o.link_key, patient_id: null, decision: "review", method: "auto_exact", hold_reason });
     } else if (o.op === "fill") {
       const p = byId.get(o.patient_id);
-      if (!p || p.merged_into_id) continue;
+      if (!p || p.deleted_at || p.merged_into_id) continue;
       if (o.expected_row_version !== undefined && p.row_version !== o.expected_row_version) continue; // stale read
       const f = o.fields;
       for (const c of COALESCE) if (p[c] === null && f[c] !== undefined) p[c] = f[c] || null;

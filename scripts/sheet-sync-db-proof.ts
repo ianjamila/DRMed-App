@@ -192,6 +192,19 @@
 //   mutate sheet_sync_apply_customer_ops "if v_dupe_id is not null then" "if false then"
 //   npm run sheet-sync:db-proof          # expect exactly that one FAIL
 //   /opt/homebrew/bin/supabase db reset  # undo round F, then re-run: all PASS
+//
+//   ## Round G ##
+//   # M23 — 0167 (patient soft delete): undo no longer treats a since-
+//   # deleted CREATED patient as `gone` — it falls through to the `kept`
+//   # branch instead (harmless — still never hard-deletes it — but the wrong
+//   # label, and it would stop counting as `gone` on the UI). Expect: FAIL
+//   # 0167: undo blocks a restore onto a since-deleted patient, and calls a
+//   # since-deleted CREATED patient gone (never kept, never re-deleted) (…
+//   # undo of a since-deleted create: expected gone=1 deleted=0 kept=0, got
+//   # …"kept":1…"gone":0… ).
+//   mutate sheet_sync_revert_run "if v_del_at is not null then" "if false then"
+//   npm run sheet-sync:db-proof          # expect exactly that one FAIL
+//   /opt/homebrew/bin/supabase db reset  # undo round G, then re-run: all PASS
 import "./lib/load-env";
 import { requireLocalOrExplicitProd } from "./lib/env-guard";
 import { Client, type QueryResult, type QueryResultRow } from "pg";
@@ -3107,6 +3120,191 @@ async function main() {
       for (const [label, ms] of timings) console.log(`       ${String(ms).padStart(6)} ms  ${label}`);
       const slow = timings.filter(([, ms]) => ms >= LIMIT_MS);
       assert(slow.length === 0, `over ${LIMIT_MS} ms: ${slow.map(([l, ms]) => `${l} (${ms} ms)`).join("; ")}`);
+    });
+
+    // 36. 0167 (patient soft delete): a deleted patient is inactive everywhere
+    // sheet sync touches patients ------------------------------------------
+    await check("0167: a soft-deleted patient is inactive — create/link/fill/resort/alias skip it, review resolve refuses it", async () => {
+      await setRole("service_role", null);
+
+      // A genuinely soft-deleted patient, via 0167's own delete_patient() RPC
+      // (never by hand-setting deleted_at) — the same path an admin uses.
+      const p = await q<{ id: string }>(
+        `insert into public.patients (first_name, last_name, birthdate, referral_source, legacy_intake)
+         values ('Deleted', 'ByAdmin', '1980-01-01', 'other', '{"source":"google_sheet_CUSTOMER_LIST2"}'::jsonb)
+         returning id`,
+      );
+      const pid = p.rows[0].id;
+      await q(`select public.delete_patient($1::uuid, 'test_record', null, $2::uuid, null)`, [pid, fx.adminId]);
+      const after = await q<{ deleted_at: string | null; referral_source_origin: string | null }>(
+        `select deleted_at, referral_source_origin from public.patients where id = $1`,
+        [pid],
+      );
+      assert(after.rows[0].deleted_at !== null, "fixture: expected the patient to be deleted");
+      assert(
+        after.rows[0].referral_source_origin !== null,
+        "fixture: a deleted patient with a referral_source must still carry a referral_source_origin — the CHECK constraint pairing (and the invariant 0170's backfill maintains for every existing row, deleted or not) survives delete_patient",
+      );
+
+      // create: the deleted patient must NOT count as "someone already holds
+      // this identity" — the same name+DOB creates a brand-new patient.
+      const lease1 = await acquire("manual", false);
+      const createOps = [{
+        op: "create", create_key: "deleted-dupe:1", method: "auto_exact",
+        fields: { first_name: "Deleted", last_name: "ByAdmin", middle_name: null, birthdate: "1980-01-01" },
+        link_keys: ["deleted-dupe:1"], admin_link_keys: [], legacy_intake: {},
+        facts: { registered_on: null, new_repeat: null, source_ref: "deleted-dupe:1" },
+      }];
+      const c = await q<{ j: Json }>(`select public.sheet_sync_apply_customer_ops($1::uuid, $2::jsonb) as j`, [
+        lease1.token, JSON.stringify(createOps),
+      ]);
+      assert(
+        c.rows[0].j.counts.created === 1 && (c.rows[0].j.counts.skipped_existing ?? 0) === 0,
+        `create over a deleted patient: expected created=1 skipped_existing=0, got ${JSON.stringify(c.rows[0].j.counts)}`,
+      );
+
+      // link / fill: targeting the deleted patient's id directly must never
+      // write to it — counted stale/skipped, never a raised error.
+      const linkFillOps = [
+        { op: "link", link_key: "deleted-link:1", patient_id: pid, method: "auto_exact" },
+        { op: "fill", patient_id: pid, fields: { email: "should-not-write@example.test" } },
+      ];
+      const lf = await q<{ j: Json }>(`select public.sheet_sync_apply_customer_ops($1::uuid, $2::jsonb) as j`, [
+        lease1.token, JSON.stringify(linkFillOps),
+      ]);
+      assert(
+        lf.rows[0].j.counts.stale === 1 && lf.rows[0].j.counts.skipped === 1,
+        `link/fill over a deleted patient: expected stale=1 skipped=1, got ${JSON.stringify(lf.rows[0].j.counts)}`,
+      );
+      const linkRow = await q<{ n: string }>(`select count(*)::text as n from public.sheet_patient_links where link_key = 'deleted-link:1'`);
+      assert(linkRow.rows[0].n === "0", "link over a deleted patient must write no link row");
+      const stillNoEmail = await q<{ email: string | null }>(`select email from public.patients where id = $1`, [pid]);
+      assert(stillNoEmail.rows[0].email === null, "fill over a deleted patient must not write");
+      await finish(lease1.token);
+
+      // resort: excluded from the candidate list, and applying it is a no-op
+      // (isolated from resort_apply's other predicates: this patient matches
+      // every one of them except deleted_at).
+      const candidates = await q<{ id: string }>(`select id from public.sheet_resort_candidates()`);
+      assert(!candidates.rows.some((r) => r.id === pid), "sheet_resort_candidates must exclude a deleted patient");
+      const lease2 = await acquire("resort", false);
+      const rn = await q<{ sheet_resort_apply: number }>(
+        `select public.sheet_resort_apply($1::uuid, $2::uuid[], 'other', 'online_google')`,
+        [lease2.token, [pid]],
+      );
+      assert(rn.rows[0].sheet_resort_apply === 0, "sheet_resort_apply must no-op on a deleted patient");
+      await finish(lease2.token);
+
+      // alias: a mirror row pointing at the deleted patient is skipped. Uses
+      // its OWN throwaway patient with no referral_source (unlike `p` above,
+      // whose origin 'staff' would already exclude it from sheet_alias_apply
+      // for an unrelated reason) so this isolates the deleted_at exclusion.
+      const p2 = await q<{ id: string }>(
+        `insert into public.patients (first_name, last_name, birthdate) values ('Deleted', 'NoSource', '1981-01-01') returning id`,
+      );
+      const pid2 = p2.rows[0].id;
+      await q(`select public.delete_patient($1::uuid, 'test_record', null, $2::uuid, null)`, [pid2, fx.adminId]);
+      const runForMirror = await q<{ id: string }>(
+        `insert into public.sheet_sync_runs (trigger, status, ended_at) values ('manual','succeeded', now()) returning id`,
+      );
+      await q(
+        `insert into public.sheet_customer_rows
+           (sheet_row, source_key, full_name_raw, name_norm, loose_key, link_key, phone_norm, dob, registered_on,
+            source_raw, source_norm, patient_id, link_state, row_hash, run_id)
+         values (1, 'deleted-alias-src', 'Deleted NoSource', 'nosource|deleted', 'nosource', 'deleted-alias-link', null, '1981-01-01', '2026-01-01',
+                 'Some Clinic Ref', 'deleted alias probe', $1, 'linked', 'deleted-alias-hash', $2)`,
+        [pid2, runForMirror.rows[0].id],
+      );
+      const lease3 = await acquire("alias", false);
+      const an = await q<{ sheet_alias_apply: number }>(
+        `select public.sheet_alias_apply($1::uuid, 'deleted alias probe', 'other', $2::uuid, null)`,
+        [lease3.token, fx.adminId],
+      );
+      assert(an.rows[0].sheet_alias_apply === 0, "sheet_alias_apply must skip a deleted patient's mirror row");
+      await finish(lease3.token);
+
+      // review resolve: an admin Link onto a deleted patient is refused
+      // outright (a deliberate one-shot decision, unlike the automated ops
+      // above, which quietly re-plan a stale target instead).
+      const item = await q<{ id: string }>(
+        `insert into public.sheet_sync_review_items (tab, item_key, kind, payload)
+         values ('customers', 'deleted-resolve:1', 'possible_existing_patient', '{"link_keys":["deleted-resolve:1"]}'::jsonb)
+         returning id`,
+      );
+      await expectPgError("sheet_review_resolve link onto a deleted patient", "22023", () =>
+        q(`select public.sheet_review_resolve($1::uuid, $2::uuid, 'link', $3::uuid)`, [item.rows[0].id, fx.adminId, pid]),
+      );
+    });
+
+    // 37. 0167: undo and a soft-deleted patient -------------------------------
+    await check("0167: undo blocks a restore onto a since-deleted patient, and calls a since-deleted CREATED patient gone (never kept, never re-deleted)", async () => {
+      await setRole("service_role", null);
+
+      // --- restore loop: blocked, never raised --------------------------------
+      const target = await q<{ id: string }>(
+        `insert into public.patients (first_name, last_name, birthdate) values ('Undo', 'ThenDeleted', '1977-07-07') returning id`,
+      );
+      const tid = target.rows[0].id;
+      const leaseA = await acquire("manual", false);
+      const fillOps = [{ op: "fill", patient_id: tid, fields: { email: "before-delete@example.test" } }];
+      const fa = await q<{ j: Json }>(`select public.sheet_sync_apply_customer_ops($1::uuid, $2::jsonb) as j`, [
+        leaseA.token, JSON.stringify(fillOps),
+      ]);
+      assert(fa.rows[0].j.counts.filled === 1, `fixture: expected the fill to apply, got ${JSON.stringify(fa.rows[0].j.counts)}`);
+      await finish(leaseA.token);
+
+      await q(`select public.delete_patient($1::uuid, 'test_record', null, $2::uuid, null)`, [tid, fx.adminId]);
+
+      const leaseR1 = await acquire("revert", false);
+      const undoA = await expectOk("undo of a fill onto a since-deleted patient", () =>
+        q<{ j: Json }>(`select public.sheet_sync_revert_run($1::uuid, $2::uuid) as j`, [leaseR1.token, leaseA.runId]),
+      );
+      assert(
+        undoA.rows[0].j.blocked === 1 && undoA.rows[0].j.restored === 0,
+        `undo onto a since-deleted patient: expected blocked=1 restored=0, got ${JSON.stringify(undoA.rows[0].j)}`,
+      );
+      await finish(leaseR1.token);
+      const stillDeleted = await q<{ email: string | null; deleted_at: string | null }>(
+        `select email, deleted_at from public.patients where id = $1`,
+        [tid],
+      );
+      assert(stillDeleted.rows[0].deleted_at !== null, "undo must not touch a deleted patient's lifecycle fields");
+      // A blocked restore leaves the patient exactly as the fill left it
+      // (still "before-delete@example.test") — undo did NOT revert it back
+      // to its pre-fill null.
+      assert(
+        stillDeleted.rows[0].email === "before-delete@example.test",
+        `a blocked restore must not write the patient's columns, got email=${stillDeleted.rows[0].email}`,
+      );
+
+      // --- create loop: gone, never kept, never hard-deleted ------------------
+      const leaseB = await acquire("manual", false);
+      const createOps = [{
+        op: "create", create_key: "undo-gone:1", method: "auto_exact",
+        fields: { first_name: "WillBe", last_name: "SoftDeleted", middle_name: null, birthdate: "1999-01-01" },
+        link_keys: ["undo-gone:1"], admin_link_keys: [], legacy_intake: {},
+        facts: { registered_on: null, new_repeat: null, source_ref: "undo-gone:1" },
+      }];
+      const cb = await q<{ j: Json }>(`select public.sheet_sync_apply_customer_ops($1::uuid, $2::jsonb) as j`, [
+        leaseB.token, JSON.stringify(createOps),
+      ]);
+      assert(cb.rows[0].j.counts.created === 1, `fixture: expected the create to apply, got ${JSON.stringify(cb.rows[0].j.counts)}`);
+      const createdId = cb.rows[0].j.created["undo-gone:1"];
+      await finish(leaseB.token);
+
+      await q(`select public.delete_patient($1::uuid, 'test_record', null, $2::uuid, null)`, [createdId, fx.adminId]);
+
+      const leaseR2 = await acquire("revert", false);
+      const undoB = await expectOk("undo of a create whose patient was since soft-deleted", () =>
+        q<{ j: Json }>(`select public.sheet_sync_revert_run($1::uuid, $2::uuid) as j`, [leaseR2.token, leaseB.runId]),
+      );
+      assert(
+        undoB.rows[0].j.gone === 1 && undoB.rows[0].j.deleted === 0 && undoB.rows[0].j.kept === 0,
+        `undo of a since-deleted create: expected gone=1 deleted=0 kept=0, got ${JSON.stringify(undoB.rows[0].j)}`,
+      );
+      await finish(leaseR2.token);
+      const stillThere = await q<{ n: string }>(`select count(*)::text as n from public.patients where id = $1`, [createdId]);
+      assert(stillThere.rows[0].n === "1", "a gone (soft-deleted) created patient must never be hard-deleted");
     });
   } finally {
     // Never persisted. This proof never writes anything real.
