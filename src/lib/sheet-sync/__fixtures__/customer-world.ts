@@ -58,10 +58,10 @@ export function applyOps(ops: readonly CustomerOp[], w: World): World {
   for (const o of ops) {
     if (o.op === "create") {
       const f = o.fields;
-      // Concurrent-registration guard (Codex P2): mirrors the SQL's
-      // patients_name_norm(last, first, middle) equality plus the same
-      // birthdate (both present) or, when this op has none, the same
-      // normalized phone. Skip the whole create — no patient, no link.
+      // Concurrent-registration guard (Codex P2): mirrors the SQL's inline
+      // normalized-name (nameNormOf) equality plus the same birthdate (both
+      // present) or, when this op has none, the same normalized phone. Skip
+      // the whole create — no patient, no link.
       // Exempt for an ADMIN create (o.method === "admin"): an admin's own
       // decision is never second-guessed by this heuristic.
       const opNorm = nameNormOf({ first: f.first_name, middle: f.middle_name, last: f.last_name });

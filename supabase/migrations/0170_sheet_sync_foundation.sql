@@ -625,37 +625,6 @@ begin
   return v_n;
 end $$;
 
--- General patients helper (NOT sheet-sync-private, despite living in this
--- migration): same normalization as names.ts's nameNormOf/normalizeName
--- (lower, drop apostrophes, other punctuation -> space, collapse whitespace)
--- MINUS diacritic folding (no unaccent extension here) — a defensive-only
--- gap, see the concurrent-registration guard in sheet_sync_apply_customer_ops
--- below. IMMUTABLE so the functional index below can be used. Deliberately
--- named and granted OUTSIDE the sheet_/​_sheet_sync_ "closed to every JWT
--- role" convention (see the ACL do-block and post-conditions further down):
--- the index makes this function run on EVERY insert/update that touches
--- patients' name columns, from every part of the app, most of them under the
--- `authenticated` role (the staff RLS-scoped client edits a patient's name
--- directly, e.g. src/app/(staff)/staff/(dashboard)/patients/[id]/edit-actions.ts)
--- — closing it to authenticated the way the sheet-sync control-plane RPCs are
--- closed would break every one of those writes with "permission denied for
--- function patients_name_norm". No `anon` grant: every anon-reachable write
--- path to patients (resolve_patient_guarded) is itself SECURITY DEFINER
--- (owner postgres), so its internal INSERT never runs as anon.
-create or replace function public.patients_name_norm(p_last text, p_first text, p_middle text)
-returns text language sql immutable set search_path = '' as $$
-  select
-    trim(regexp_replace(regexp_replace(lower(replace(coalesce(p_last, ''), '''', '')), '[^a-z0-9\s]', ' ', 'g'), '\s+', ' ', 'g'))
-    || '|' ||
-    trim(regexp_replace(regexp_replace(lower(replace(coalesce(p_first, '') || ' ' || coalesce(p_middle, ''), '''', '')), '[^a-z0-9\s]', ' ', 'g'), '\s+', ' ', 'g'));
-$$;
-revoke all on function public.patients_name_norm(text, text, text) from public;
-grant execute on function public.patients_name_norm(text, text, text) to authenticated, service_role;
-
-create index sheet_sync_patients_name_norm on public.patients
-  (public.patients_name_norm(last_name, first_name, middle_name))
-  where merged_into_id is null;
-
 -- Applies one chunk of the planner's customer ops. Contract (types.ts CustomerOp):
 --   create — new sheet-owned patient; each link key is written 'admin' when it
 --            is in admin_link_keys (a subset of link_keys) and 'auto_exact'
@@ -703,6 +672,7 @@ declare
   v_link_ver bigint;
   v_op_phone_digits text;
   v_op_phone text;
+  v_op_name_norm text;
   v_dupe_id uuid;
   n_created int := 0; n_linked int := 0; n_filled int := 0; n_facts int := 0; n_held int := 0; n_skipped int := 0;
   n_stale int := 0; n_skipped_existing int := 0;
@@ -745,17 +715,45 @@ begin
       -- patient, so this heuristic must not silently veto that decision (and
       -- must not turn it into a re-asked question every run — the saved
       -- 'create' link decision has no patient yet until this insert runs).
+      --
+      -- No standing function or index on `patients` for this (review
+      -- decision: a permanent functional index on an every-write core table
+      -- was too much blast radius for a narrow race). Instead, prefilter
+      -- with an EQUALITY match on birthdate (no index; `patients` has none
+      -- on `birthdate` alone — a plain seq scan over merged_into_id is null
+      -- rows, proven fast enough at 10k patients by the Timing check below)
+      -- or phone_normalized (indexed: idx_patients_phone_normalized), plus
+      -- merged_into_id is null, and only THEN compare the normalized name
+      -- inline against that small candidate set — never scanning the whole
+      -- table by name. The name-norm expression below is byte-identical to
+      -- names.ts's nameNormOf (see its own comment).
       v_dupe_id := null;
       if v_op->>'method' <> 'admin' then
         v_op_phone_digits := regexp_replace(coalesce(v_f->>'phone', ''), '[^0-9]', '', 'g');
         v_op_phone := case when length(v_op_phone_digits) between 10 and 12 then right(v_op_phone_digits, 10) else null end;
-        select p.id into v_dupe_id from public.patients p
-         where p.merged_into_id is null
-           and public.patients_name_norm(p.last_name, p.first_name, p.middle_name)
-               = public.patients_name_norm(v_f->>'last_name', v_f->>'first_name', v_f->>'middle_name')
-           and ( (nullif(v_f->>'birthdate', '') is not null and p.birthdate = (v_f->>'birthdate')::date)
-              or (nullif(v_f->>'birthdate', '') is null and v_op_phone is not null and p.phone_normalized = v_op_phone) )
-         limit 1;
+        v_op_name_norm :=
+          trim(regexp_replace(regexp_replace(lower(replace(coalesce(v_f->>'last_name', ''), '''', '')), '[^a-z0-9\s]', ' ', 'g'), '\s+', ' ', 'g'))
+          || '|' ||
+          trim(regexp_replace(regexp_replace(lower(replace(coalesce(v_f->>'first_name', '') || ' ' || coalesce(v_f->>'middle_name', ''), '''', '')), '[^a-z0-9\s]', ' ', 'g'), '\s+', ' ', 'g'));
+        if nullif(v_f->>'birthdate', '') is not null then
+          select p.id into v_dupe_id from public.patients p
+           where p.merged_into_id is null
+             and p.birthdate = (v_f->>'birthdate')::date
+             and trim(regexp_replace(regexp_replace(lower(replace(coalesce(p.last_name, ''), '''', '')), '[^a-z0-9\s]', ' ', 'g'), '\s+', ' ', 'g'))
+                 || '|' ||
+                 trim(regexp_replace(regexp_replace(lower(replace(coalesce(p.first_name, '') || ' ' || coalesce(p.middle_name, ''), '''', '')), '[^a-z0-9\s]', ' ', 'g'), '\s+', ' ', 'g'))
+                 = v_op_name_norm
+           limit 1;
+        elsif v_op_phone is not null then
+          select p.id into v_dupe_id from public.patients p
+           where p.merged_into_id is null
+             and p.phone_normalized = v_op_phone
+             and trim(regexp_replace(regexp_replace(lower(replace(coalesce(p.last_name, ''), '''', '')), '[^a-z0-9\s]', ' ', 'g'), '\s+', ' ', 'g'))
+                 || '|' ||
+                 trim(regexp_replace(regexp_replace(lower(replace(coalesce(p.first_name, '') || ' ' || coalesce(p.middle_name, ''), '''', '')), '[^a-z0-9\s]', ' ', 'g'), '\s+', ' ', 'g'))
+                 = v_op_name_norm
+           limit 1;
+        end if;
       end if;
       if v_dupe_id is not null then
         n_skipped_existing := n_skipped_existing + 1;
@@ -1675,9 +1673,6 @@ begin
     'public._sheet_sync_lease_live(timestamptz)',
     'public._sheet_sync_fence(uuid, boolean)',
     'public._sheet_sync_record_changes(uuid, jsonb, jsonb)',
-    -- patients_name_norm is deliberately NOT here: its own revoke/grant pair
-    -- above gives it a different ACL (authenticated + service_role), see the
-    -- comment on its definition.
     'public.sheet_sync_acquire(text, uuid, boolean)',
     'public.sheet_sync_heartbeat(uuid)',
     'public.sheet_sync_finish(uuid, text, jsonb, jsonb, text)',
@@ -1763,19 +1758,6 @@ begin
   if (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
        where n.nspname = 'public' and (p.proname like 'sheet\_%' or p.proname like '\_sheet\_sync\_%')) <> 17 then
     raise exception '0170: expected exactly 17 sheet sync routines (a stale overload survived?)';
-  end if;
-
-  -- patients_name_norm is the one exception to "every sheet-sync routine is
-  -- closed to both JWT roles": the functional index makes it run on every
-  -- patients name write app-wide, most under `authenticated` (staff RLS
-  -- edits) — so it must stay open to authenticated + service_role, closed
-  -- only to anon.
-  if has_function_privilege('anon', 'public.patients_name_norm(text,text,text)', 'execute') then
-    raise exception '0170: patients_name_norm must not be executable by anon';
-  end if;
-  if not has_function_privilege('authenticated', 'public.patients_name_norm(text,text,text)', 'execute')
-     or not has_function_privilege('service_role', 'public.patients_name_norm(text,text,text)', 'execute') then
-    raise exception '0170: patients_name_norm must be executable by authenticated and service_role';
   end if;
 
   -- Tables: anon gets nothing; authenticated may only read, and never the staging table.

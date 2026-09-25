@@ -606,18 +606,6 @@ async function main() {
           q(rpc.sql),
         );
       }
-      // patients_name_norm is the one deliberate exception (see 0170's
-      // comment on its definition): the staff RLS-scoped client edits a
-      // patient's name as `authenticated`, and the functional index needs it.
-      await expectOk("patients_name_norm as authenticated (must stay open — the functional index needs it)", () =>
-        q(`select public.patients_name_norm('Cruz', 'Juan', 'Santos')`),
-      );
-
-      await setRole("anon", null);
-      await expectPgError("patients_name_norm as anon", "42501", () =>
-        q(`select public.patients_name_norm('Cruz', 'Juan', 'Santos')`),
-      );
-
       await setRole("service_role", null);
       const a = await expectOk("service_role acquire", () => acquire("manual", true));
       assert(

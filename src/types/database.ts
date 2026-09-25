@@ -7161,10 +7161,6 @@ export type Database = {
           name: string
         }[]
       }
-      patients_name_norm: {
-        Args: { p_first: string; p_last: string; p_middle: string }
-        Returns: string
-      }
       result_edit_commit: {
         Args: {
           p_alerts: Json
