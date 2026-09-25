@@ -7,6 +7,7 @@ import {
   PETTY_CASH_CATEGORY_OPTIONS,
   type ExpenseCategory,
 } from "@/lib/accounting/expense-mappings";
+import { isSendOutCategory, type PartnerLab } from "@/lib/accounting/partner-labs";
 import { createPettyCashExpenseAction } from "./actions";
 
 interface Props {
@@ -15,9 +16,11 @@ interface Props {
   maxDate: string;
   /** The shift the page is currently viewing — recorded onto the entry. */
   shiftId: string;
+  /** Active partner labs for the "Which lab?" picker (Send Out category only). */
+  partnerLabs: PartnerLab[];
 }
 
-export function PettyCashForm({ defaultDate, maxDate, shiftId }: Props) {
+export function PettyCashForm({ defaultDate, maxDate, shiftId, partnerLabs }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [err, setErr] = useState<string | null>(null);
@@ -28,16 +31,19 @@ export function PettyCashForm({ defaultDate, maxDate, shiftId }: Props) {
   const [amountText, setAmountText] = useState("");
   const [vendor, setVendor] = useState("");
   const [description, setDescription] = useState("");
+  const [vendorId, setVendorId] = useState("");
 
   const categoryHint = PETTY_CASH_CATEGORY_OPTIONS.find(
     (c) => c.value === category,
   )?.hint;
+  const isSendOut = isSendOutCategory(category);
 
   function reset() {
     setCategory("");
     setAmountText("");
     setVendor("");
     setDescription("");
+    setVendorId("");
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -54,6 +60,10 @@ export function PettyCashForm({ defaultDate, maxDate, shiftId }: Props) {
       setErr("Pick what it was for.");
       return;
     }
+    if (isSendOut && !vendorId) {
+      setErr("Pick which lab you paid.");
+      return;
+    }
 
     startTransition(async () => {
       const r = await createPettyCashExpenseAction({
@@ -62,6 +72,7 @@ export function PettyCashForm({ defaultDate, maxDate, shiftId }: Props) {
         amount_php: amount,
         vendor_label: vendor || null,
         description: description || null,
+        vendor_id: isSendOut ? vendorId : null,
         shift_id: shiftId,
       });
       if (!r.ok) {
@@ -121,7 +132,10 @@ export function PettyCashForm({ defaultDate, maxDate, shiftId }: Props) {
         <Field label="What was it for?" required hint={categoryHint}>
           <select
             value={category}
-            onChange={(e) => setCategory(e.target.value as ExpenseCategory | "")}
+            onChange={(e) => {
+              setCategory(e.target.value as ExpenseCategory | "");
+              setVendorId("");
+            }}
             required
             className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm"
           >
@@ -133,6 +147,24 @@ export function PettyCashForm({ defaultDate, maxDate, shiftId }: Props) {
             ))}
           </select>
         </Field>
+
+        {isSendOut && (
+          <Field label="Which lab?" required>
+            <select
+              value={vendorId}
+              onChange={(e) => setVendorId(e.target.value)}
+              required
+              className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-sm"
+            >
+              <option value="">— Pick one —</option>
+              {partnerLabs.map((lab) => (
+                <option key={lab.id} value={lab.id}>
+                  {lab.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
 
         <Field label="Amount (₱)" required>
           <input

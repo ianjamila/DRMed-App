@@ -2,11 +2,13 @@ import { fetchCompleteRows } from "@/lib/reports/paging";
 import { redirect } from "next/navigation";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 import { isISODate, todayManilaISODate } from "@/lib/dates/manila";
 import { PageHeader } from "@/components/staff/page-header";
 import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
 import { PaymentsTabs } from "../_components/payments-tabs";
 import { PETTY_CASH_COA_TO_CATEGORY } from "@/lib/accounting/expense-mappings";
+import { loadPartnerLabs } from "@/lib/accounting/partner-labs.server";
 import { PettyCashDatePicker } from "./petty-cash-date-picker";
 import { PettyCashForm } from "./petty-cash-form";
 import { PettyCashList, type PettyCashRow } from "./petty-cash-list";
@@ -32,6 +34,12 @@ export default async function PettyCashPage({
   const business_date = isISODate(params.date) ? params.date : today;
   const isToday = business_date === today;
   const admin = createAdminClient();
+
+  // 0164: the "Which lab?" list comes from the partner_labs() RPC (id + name,
+  // admin/reception only), called with the RLS-scoped server client so the
+  // function can see who is asking — the vendors table itself stays admin-only.
+  const supabase = await createClient();
+  const partnerLabs = await loadPartnerLabs(supabase);
 
   // Same active-shift list Cash Drawer reads, so the two tabs offer the same
   // choices and the round trip (drawer -> petty cash -> drawer) stays on one
@@ -67,7 +75,7 @@ export default async function PettyCashPage({
   const { data: entries, error: completeError } = await fetchCompleteRows((from, to) => admin
     .from("eod_cash_adjustments")
     .select(
-      "id, amount_php, payee, notes, recorded_at, voided_at, contra_account_id, chart_of_accounts:contra_account_id(code, name)",
+      "id, amount_php, payee, notes, recorded_at, voided_at, contra_account_id, chart_of_accounts:contra_account_id(code, name), vendors:vendor_id(name)",
     )
     .eq("kind", "petty_cash")
     .eq("business_date", business_date)
@@ -102,6 +110,9 @@ export default async function PettyCashPage({
       label,
       uncategorised,
       payee: e.payee,
+      // 0164: the partner lab this Send Out payout paid, so reception can
+      // spot a mis-tagged one right on this list.
+      labName: e.vendors?.name ?? null,
       note: e.notes,
       amount_php: Number(e.amount_php) || 0,
       voided: e.voided_at !== null,
@@ -130,7 +141,7 @@ export default async function PettyCashPage({
             future one — a payout can't leave the till before the day happens.
             Recording into an already-closed day is refused by the DB (P0015)
             with a message telling reception to ask admin to reopen. */}
-        <PettyCashForm defaultDate={business_date} maxDate={today} shiftId={shift_id} />
+        <PettyCashForm defaultDate={business_date} maxDate={today} shiftId={shift_id} partnerLabs={partnerLabs} />
 
         <section className="space-y-3">
           <h2 className="font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">

@@ -18,7 +18,7 @@ Key reference artifacts:
 - `IMPLEMENTATION_PLAN.md` — original phase plan (historical; cross-check before relying on it)
 - `README.md` — operational setup
 - `.env.example` — env-var inventory
-- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.20, 25 Sep 2026): every
+- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.21, 25 Sep 2026): every
   screen, label and blocked-message the app shows, checked against the code. Update it in the
   PR that changes a flow it describes.
 - `docs/superpowers/specs/` and `docs/superpowers/audits/` — design specs and audits for
@@ -35,6 +35,7 @@ first from a parallel branch) and verified by object 2026-09-24; **0154** (#198)
 #192) is also applied and verified: 159 public policies, zero unwrapped helper calls, and no
 unexpected policyless tables. Prod also has **0163** (`drm_id_width`) out of order, so 0161/0162
 land later with `db push --include-all`.
+**0159** (`retire_send_out_accrual`) and **0164** (`send_out_lab_tagging`) are applied; **0173** (`ledger_reversal_pairs`, #222) is applied. **0166** (`drop_send_out_accrual_tables`, #211) is pushed AFTER #211 merges and deploys (the pre-merge app reads the dropped column; the new code works either way).
 
 **Rule — claim a number before you use it: `npm run claim -- migration` / `npm run claim -- pcode <n>`.**
 Several sessions work here at once, each in its own worktree, and picking "the next number" by
@@ -171,7 +172,7 @@ A Postgres trigger on `test_requests` (`enforce_payment_before_release`) blocks 
 Other DB-side automation to be aware of (details and P-codes in the `drmed-migrations` / `drmed-payments` skills):
 - `payments` insert (and void, 0111) recalculates `visits.paid_php` and `visits.payment_status`; `'waived'` is preserved.
 - Linking a result to a test (insert on `result_test_requests`) auto-flips `test_requests.status` from `in_progress` → `result_uploaded` (or `ready_for_release` when no pathologist sign-off is configured). For structured results the same flip also happens when `results.finalised_at` transitions from NULL → not-NULL.
-- Release also fires the GL bridge (`bridge_test_request_released`: revenue JE + doctor PF accrual; P0034 when a PF-carrying doctor line has no attending physician) and the consent gate (`enforce_consent_before_release`, ships OFF).
+- Release also fires the GL bridge (`bridge_test_request_released`: revenue JE + doctor PF accrual — no send-out cost since 0159, that is the "Send Out" expense; P0034 when a PF-carrying doctor line has no attending physician) and the consent gate (`enforce_consent_before_release`, ships OFF).
 - **Soft delete (0125):** `visits` and `test_requests` carry `deleted_at/by/reason`; guard triggers P0042–P0046 decide deletability (only `unpaid`) and block payments/status changes on deleted visits. **Every read of those tables filters `deleted_at is null`.** **0147 adds P0050** to both delete guards: an entry carrying a non-voided `hmo_claim_item` is money already billed to an HMO, and since 0146 the HMO reports skip deleted rows, so deleting it would drop a real receivable out of AR. Reachable via undo-release — a claimed line goes back to `ready_for_release`, 0110 does not void its claim, and 0133 keeps an HMO visit `unpaid` forever, so neither P0042 nor P0043 fires. `src/lib/visits/deletion.ts` mirrors it for the UI (`hasOpenHmoClaim`, reason `hmo_claimed`) and `deletion.test.ts` pins the migration's SQL text so the two can't drift.
 - Package headers (0040) auto-promote to `ready_for_release`; components are ₱0 rows with `parent_id`. Multi-row inserts list headers before components.
 - The statutory Senior/PWD discount row is locked at 20% (P0047, 0128); the EOD denomination breakdown must tie to the counted total (P0048, 0132).
@@ -233,6 +234,7 @@ All Server Actions return `{ ok: true, data } | { ok: false, error }`. User-faci
 | Discount arithmetic (form preview AND server recompute) | `src/lib/pricing/discounts.ts` |
 | Shared visit actions (queue delete/restore, PIN re-issue) | `src/lib/actions/visits/{queue-deletion,reissue-pin}.ts` |
 | Cash denominations, amount-in-words, PF labels, Expenses (AP) bill-status + payment-method labels, chart-of-accounts grouping + same-type parent rule | `src/lib/accounting/{cash-denominations,amount-in-words,pf-labels,ap-labels,account-groups}.ts` |
+| Send Out expenses and partner labs: the "Which lab?" rule (`sendOutLabRule`), `SEND_OUT_CATEGORY` / 6420, `loadPartnerLabs` / `verifyPartnerLab`; the Send-out Labs report pivots | `src/lib/accounting/partner-labs{,.server}.ts`, `src/lib/reports/send-out-labs.ts` |
 | Words for a stored snake_case code with no label yet (`humaniseCode`) — label maps fall back to it so a raw code never reaches a staff screen | `src/lib/format/humanise-code.ts` |
 | CSV escaping (one copy) | `src/lib/csv/escape.ts` |
 | Results-archive tab config and per-test status words (`testStatusLabel`, shared with the portal), template drift checks | `src/lib/results/{status-filter,template-health}.ts` |

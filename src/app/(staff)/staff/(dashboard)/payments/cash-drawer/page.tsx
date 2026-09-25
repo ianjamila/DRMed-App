@@ -1,9 +1,11 @@
 import { fetchCompleteRows } from "@/lib/reports/paging";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { redirect } from "next/navigation";
 import { isISODate, todayManilaISODate } from "@/lib/dates/manila";
 import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { loadPartnerLabs } from "@/lib/accounting/partner-labs.server";
 import { CashDrawerClient } from "./cash-drawer-client";
 
 export const metadata = { title: ROUTE_NAME["/staff/payments/cash-drawer"] };
@@ -68,6 +70,11 @@ export default async function CashDrawerPage({
     .eq("is_active", true)
     .order("full_name");
 
+  // 0164: reception can read active partner labs directly (vendors' read
+  // policy allows it), so use the RLS-scoped server client here.
+  const supabase = await createClient();
+  const partnerLabs = await loadPartnerLabs(supabase);
+
   return (
     <CashDrawerClient
       sessionUserId={session.user_id}
@@ -81,6 +88,7 @@ export default async function CashDrawerPage({
       accounts={accounts ?? []}
       routing={routing ?? []}
       staff={staff ?? []}
+      partnerLabs={partnerLabs}
     />
   );
 }

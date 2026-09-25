@@ -233,22 +233,6 @@ export const STAFF_NAV: StaffNavSection[] = [
         description: "Everything expense-related in one place. Use + Quick expense on the overview for already-paid same-day expenses (cash, GCash, owner OOP). Tabs inside: Overview (what's outstanding), Vendor Bills (invoices with due dates), Bill Payments (the outflows), Vendors (master list), Recurring Bills (monthly auto-bills).",
         roles: ["admin"],
       },
-      {
-        href: "/staff/admin/accounting/cogs/send-outs",
-        label: ROUTE_NAME["/staff/admin/accounting/cogs/send-outs"],
-        // Outside-Lab Performance lives UNDER this href
-        // (…/send-outs/vendor-performance), so exclude it or both items light
-        // at once on that page.
-        excludePrefixes: ["/staff/admin/accounting/cogs/send-outs/vendor-performance"],
-        description: "Costs for tests the clinic doesn't run in-house and sends to another lab (e.g. Hi Precision). Two tabs: Accrued (you billed the patient but the other lab's invoice isn't in yet) and True-ups (matching your estimate to the real bill once it arrives).",
-        roles: ["admin"],
-      },
-      {
-        href: "/staff/admin/accounting/cogs/send-outs/vendor-performance",
-        label: ROUTE_NAME["/staff/admin/accounting/cogs/send-outs/vendor-performance"],
-        description: "How each outside lab is doing: average cost per test, turnaround time, and how close your cost estimates were. Use it when deciding whether to switch outside labs or renegotiate rates.",
-        roles: ["admin"],
-      },
     ],
     subgroups: [
       {
@@ -337,6 +321,12 @@ export const STAFF_NAV: StaffNavSection[] = [
       {
         heading: "Books & Reports",
         items: [
+          {
+            href: "/staff/admin/accounting/send-out-labs",
+            label: ROUTE_NAME["/staff/admin/accounting/send-out-labs"],
+            description: "How much each partner lab costs per month, what send-out tests earn against that, and how fast each lab returns results.",
+            roles: ["admin"],
+          },
           {
             href: "/staff/admin/accounting/journal",
             quicklink: {"admin":{"order":4}},

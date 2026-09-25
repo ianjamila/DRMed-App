@@ -27,6 +27,7 @@ type VendorInitial = {
   default_wt_classification: string | null;
   default_wt_rate: number | null;
   notes: string | null;
+  is_partner_lab: boolean;
 };
 
 type Props =
@@ -46,6 +47,7 @@ export function VendorFormClient(props: Props) {
     default_wt_rate:
       props.initial?.default_wt_rate == null ? "" : String(props.initial.default_wt_rate),
     notes: props.initial?.notes ?? "",
+    is_partner_lab: props.initial?.is_partner_lab ?? false,
   });
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -65,6 +67,7 @@ export function VendorFormClient(props: Props) {
       default_wt_classification: form.default_wt_classification.trim() || null,
       default_wt_rate: form.default_wt_rate === "" ? null : Number(form.default_wt_rate),
       notes: form.notes.trim() || null,
+      is_partner_lab: form.is_partner_lab,
     };
 
     startTransition(async () => {
@@ -186,6 +189,22 @@ export function VendorFormClient(props: Props) {
             rows={3}
           />
         </Field>
+
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={form.is_partner_lab}
+            onChange={(e) => setForm((f) => ({ ...f, is_partner_lab: e.target.checked }))}
+            className="mt-0.5 h-4 w-4"
+          />
+          <span>
+            Partner lab (we send tests to them)
+            <span className="block text-xs text-muted-foreground">
+              Shows this vendor in the &ldquo;Which lab?&rdquo; picker on Send Out
+              expenses and the service form&apos;s send-out lab field.
+            </span>
+          </span>
+        </label>
 
         <div className="flex flex-wrap items-center gap-3">
           <Button
