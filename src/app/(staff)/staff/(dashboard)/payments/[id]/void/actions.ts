@@ -1,6 +1,7 @@
 "use server";
 
 import { headers } from "next/headers";
+import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
@@ -8,7 +9,14 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { VoidPaymentSchema } from "@/lib/validations/accounting";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { reverseJournalEntryBySource } from "@/lib/accounting/journal-entry";
-import { formatDeleteReason, type DeleteCategory } from "@/lib/visits/payment-history";
+import {
+  DELETE_CATEGORY_LABEL,
+  formatDeleteReason,
+  paymentMethodLabel,
+  type DeleteCategory,
+} from "@/lib/visits/payment-history";
+import { shouldAlertReleasedPaymentRemoved } from "@/lib/visits/released-payment-alert-content";
+import { sendReleasedPaymentRemovedAlert } from "@/lib/visits/released-payment-alert";
 import { moneySettled } from "@/lib/visits/money-settled";
 import { loadReleasedResultCounts } from "@/lib/visits/released-results";
 
@@ -54,7 +62,7 @@ export async function voidPaymentAction(
   // 1. Read payment to check state.
   const { data: payment, error: readErr } = await admin
     .from("payments")
-    .select("id, visit_id, voided_at, amount_php, visits ( patient_id )")
+    .select("id, visit_id, voided_at, amount_php, method, visits ( patient_id )")
     .eq("id", paymentId)
     .maybeSingle();
   if (readErr) return { ok: false, error: translatePgError(readErr) };
@@ -181,6 +189,25 @@ export async function voidPaymentAction(
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),
   });
+
+  // Email Alerts (0178): the visit owes again after its results went out.
+  // after() — once the response is sent, so it never slows the delete.
+  if (payment.visit_id && shouldAlertReleasedPaymentRemoved({ settledAfter, releasedResults: releasedCount })) {
+    const visitId = payment.visit_id;
+    after(() =>
+      sendReleasedPaymentRemovedAlert({
+        paymentId,
+        change: "deleted",
+        visitId,
+        amountPhp: Number(payment.amount_php),
+        methodLabel: paymentMethodLabel(payment.method),
+        reasonLabel: DELETE_CATEGORY_LABEL[parsed.data.category],
+        movedToVisitNumber: null,
+        actorId: session.user_id,
+        releasedResults: releasedCount ?? 0,
+      }),
+    );
+  }
 
   if (giftCodeError) {
     return { ok: false, error: giftCodeError };

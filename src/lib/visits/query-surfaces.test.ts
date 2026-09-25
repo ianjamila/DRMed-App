@@ -612,6 +612,10 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
     lifecycle: "live",
     why: "Turnaround time. This is one of the two surfaces that had reasoned P0043 made the filter a no-op; see the note at the top of this section for why that did not hold.",
   },
+  "lib/visits/released-payment-alert.ts": {
+    lifecycle: "live",
+    why: "Emails staff that a live visit owes money after its results went out. A deleted visit owes nothing and needs no follow-up.",
+  },
   "lib/visits/released-results.ts": {
     lifecycle: "live",
     why: "Results that went out on a visit that still exists. A deleted line or a line on a deleted visit is not something the clinic still has to collect for.",

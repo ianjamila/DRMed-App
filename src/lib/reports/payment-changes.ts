@@ -187,6 +187,8 @@ export interface PaymentChangesSummary {
   total: number;
   deleted: number;
   deletedPhp: number;
+  /** Deletes by the reason picked, most common first; zero counts left out. */
+  deletedByReason: { why: Exclude<DeleteReasonFilter, "all">; label: string; count: number }[];
   edited: number;
   moved: number;
   /** Who made the most changes in the window — an oversight signal, not blame. */
@@ -260,6 +262,17 @@ export function summarisePaymentChanges(entries: readonly PaymentChange[]): Paym
     total: entries.length,
     deleted: deleted.length,
     deletedPhp: deleted.reduce((s, e) => s + Math.round(e.amountPhp * 100), 0) / 100,
+    deletedByReason: DELETE_REASON_OPTIONS.filter(
+      (o): o is { value: Exclude<DeleteReasonFilter, "all">; label: string } => o.value !== "all",
+    )
+      .map((o) => ({
+        why: o.value,
+        label: o.label,
+        count: deleted.filter((e) => matchesDeleteReason(e, o.value)).length,
+      }))
+      .filter((r) => r.count > 0)
+      // Stable: equal counts keep the dialog's order.
+      .sort((a, b) => b.count - a.count),
     edited: entries.filter((e) => e.fate === "edited").length,
     moved: entries.filter((e) => e.fate === "moved").length,
     topActor,

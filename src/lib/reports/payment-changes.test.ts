@@ -136,6 +136,20 @@ describe("Delete reason (category picked in the Delete dialog)", () => {
     expect(deleteReasonLabel(byId.get("ed")!)).toBe("");
   });
 
+  it("breaks the Deleted tile down by reason, most common first", () => {
+    const more = derivePaymentChanges(
+      [del("t2", "Recorded twice"), del("t3", "Recorded twice: again")],
+      [],
+      STAFF,
+    );
+    expect(summarisePaymentChanges([...entries, ...more]).deletedByReason).toEqual([
+      { why: "recorded_twice", label: "Recorded twice", count: 3 },
+      { why: "refunded", label: "Patient refunded", count: 1 },
+      { why: "other", label: "Other", count: 1 },
+      { why: "none", label: "Not recorded", count: 1 },
+    ]);
+  });
+
   it("filters to one category, to uncategorised deletes, or not at all", () => {
     const ids = (why: Parameters<typeof matchesDeleteReason>[1]) =>
       entries.filter((e) => matchesDeleteReason(e, why)).map((e) => e.id);

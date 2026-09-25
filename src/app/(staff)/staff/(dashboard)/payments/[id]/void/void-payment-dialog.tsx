@@ -15,6 +15,7 @@ import { PaymentLeavesNotice } from "@/components/staff/payment-leaves-notice";
 import { DELETE_CATEGORIES, deleteCategoryHint, type DeleteCategory } from "@/lib/visits/payment-history";
 import type { ReleasedCounts, VisitMoney } from "@/lib/visits/payment-edit";
 import { voidPaymentAction } from "./actions";
+import { openPaymentDialog } from "@/components/staff/payment-dialog-handoff";
 
 // Staff-facing name is "Delete"; underneath it is still the soft void
 // (voidPaymentAction) — the row stays, marked deleted, and the reversal
@@ -130,9 +131,23 @@ export function VoidPaymentDialog({
               </label>
             ))}
             {hint ? (
-              <p className="text-xs font-semibold text-amber-800" aria-live="polite">
-                {hint}
-              </p>
+              <div className="flex flex-wrap items-center gap-2" aria-live="polite">
+                <p className="text-xs font-semibold text-amber-800">{hint}</p>
+                {canMoveOrEdit && (category === "wrong_visit" || category === "wrong_amount") ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="touch"
+                    disabled={pending}
+                    onClick={() => {
+                      setOpen(false);
+                      openPaymentDialog(paymentId, category === "wrong_visit" ? "move" : "edit");
+                    }}
+                  >
+                    {category === "wrong_visit" ? "Open Move instead" : "Open Edit instead"}
+                  </Button>
+                ) : null}
+              </div>
             ) : null}
           </fieldset>
           <div className="grid gap-1.5">

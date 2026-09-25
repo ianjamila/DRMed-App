@@ -230,7 +230,23 @@ export default async function PaymentChangesPage({ searchParams }: SearchProps) 
           value={String(summary.deleted)}
           hint={`${formatPhp(summary.deletedPhp)} taken off visits — ${start} → ${end}`}
           tone={summary.deleted > 0 ? "warn" : "ok"}
-        />
+        >
+          {summary.deletedByReason.length > 0 ? (
+            <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
+              {summary.deletedByReason.map((r, i) => (
+                <span key={r.why}>
+                  {i > 0 ? " · " : ""}
+                  <Link
+                    href={href({ kind: "deleted", why: r.why })}
+                    className="font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
+                  >
+                    {r.count} {r.label.toLowerCase()}
+                  </Link>
+                </span>
+              ))}
+            </p>
+          ) : null}
+        </SummaryTile>
         <SummaryTile label="Edited" value={String(summary.edited)} hint="Wrong method, amount or reference fixed" />
         <SummaryTile label="Moved" value={String(summary.moved)} hint="Filed against the wrong visit" />
         <SummaryTile
@@ -369,11 +385,14 @@ function SummaryTile({
   value,
   hint,
   tone = "ok",
+  children,
 }: {
   label: string;
   value: string;
   hint?: string;
   tone?: "ok" | "warn";
+  /** Extra lines under the hint (the Deleted tile's reason breakdown). */
+  children?: React.ReactNode;
 }) {
   const accent = tone === "warn" ? "before:bg-amber-400" : "before:bg-[color:var(--color-brand-cyan)]";
   return (
@@ -383,6 +402,7 @@ function SummaryTile({
       <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">{label}</p>
       <p className="mt-2 font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">{value}</p>
       {hint ? <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">{hint}</p> : null}
+      {children}
     </article>
   );
 }

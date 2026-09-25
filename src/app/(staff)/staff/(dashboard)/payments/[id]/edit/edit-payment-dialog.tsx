@@ -21,6 +21,7 @@ import {
   paymentSnapshot,
 } from "@/lib/visits/payment-edit";
 import { editPaymentAction } from "./actions";
+import { usePaymentDialogHandoff } from "@/components/staff/payment-dialog-handoff";
 
 const SELECT_CLASS =
   "h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 text-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none";
@@ -61,6 +62,12 @@ export function EditPaymentDialog({
   const [reason, setReason] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+
+  // The Delete dialog's "Open Edit instead" (Wrong amount).
+  usePaymentDialogHandoff(paymentId, "edit", () => {
+    reset();
+    setOpen(true);
+  });
 
   function reset() {
     setNewMethod(initialMethod);

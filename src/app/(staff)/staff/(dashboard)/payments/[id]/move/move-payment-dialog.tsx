@@ -16,6 +16,7 @@ import { formatPhp } from "@/lib/marketing/format";
 import { manilaDate } from "@/lib/dates/manila";
 import { visitBalanceAfter, type ReleasedCounts, type VisitMoney } from "@/lib/visits/payment-edit";
 import { PaymentLeavesNotice } from "@/components/staff/payment-leaves-notice";
+import { usePaymentDialogHandoff } from "@/components/staff/payment-dialog-handoff";
 import { findVisitForMoveAction, movePaymentAction, type MoveTarget } from "./actions";
 
 const SELECT_CLASS =
@@ -69,6 +70,12 @@ export function MovePaymentDialog({
     setReason("");
     setErr(null);
   }
+
+  // The Delete dialog's "Open Move instead" (Wrong visit).
+  usePaymentDialogHandoff(paymentId, "move", () => {
+    reset();
+    setOpen(true);
+  });
 
   const samePatient = otherVisits.find((v) => v.id === picked) ?? null;
   const target: (SamePatientVisit & { patientName: string; drmId: string }) | null = samePatient
