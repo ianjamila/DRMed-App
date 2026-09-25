@@ -7,6 +7,7 @@ import ts from "typescript";
 import { createClient } from "@supabase/supabase-js";
 import { expect } from "vitest";
 import { fetchCompleteRows, fetchCompleteRowsByIds } from "./paging";
+import { LEDGER_TOTAL_STATUSES } from "@/lib/accounting/ledger-status";
 
 export async function checkCompleteQuery(
   file: string,
@@ -54,6 +55,7 @@ export async function checkCompleteQuery(
     yearStartIso: "2025-12-31T16:00:00Z", yearEndIso: "2026-12-31T16:00:00Z",
     fromIso: "2025-12-31T16:00:00Z", toIso: "2026-12-31T16:00:00Z",
     watermark: "2020-01-01T00:00:00Z", TEST_REQUEST_SELECT: "id",
+    LEDGER_TOTAL_STATUSES,
     DOCTOR_KINDS_PG_LIST: "(doctor_consultation,doctor_procedure)",
     CONSULT_KINDS: ["doctor_consultation"], PROCEDURE_KINDS: ["doctor_procedure"],
     ...bindings,
