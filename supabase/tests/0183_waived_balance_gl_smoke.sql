@@ -1065,6 +1065,8 @@ declare
   v_visit uuid;
   v_line  uuid;
   v_n     int;
+  v_je_line1 uuid;
+  v_je_line2 uuid;
 begin
   insert into public.visits (patient_id, total_php, paid_php, payment_status)
   values (k_patient, 500, 500, 'paid') returning id into v_visit;
@@ -1074,7 +1076,9 @@ begin
   update public.test_requests
      set status = 'released', released_at = now(), released_by = k_admin, release_medium = 'physical'
    where id = v_line;
-  if not exists (select 1 from public.journal_entries where source_kind = 'test_request' and source_id = v_line and status = 'posted') then
+  select id into v_je_line1 from public.journal_entries
+   where source_kind = 'test_request' and source_id = v_line and status = 'posted';
+  if v_je_line1 is null then
     raise exception 'K FAIL: release did not post a JE';
   end if;
 
@@ -1085,13 +1089,21 @@ begin
   update public.test_requests
      set status = 'released', released_at = now(), released_by = k_admin, release_medium = 'physical'
    where id = v_line;
+  select id into v_je_line2 from public.journal_entries
+   where source_kind = 'test_request' and source_id = v_line and status = 'posted';
+  if v_je_line2 is null or v_je_line2 = v_je_line1 then
+    raise exception 'K FAIL: re-release did not produce a fresh posted JE (got %, original %)', v_je_line2, v_je_line1;
+  end if;
 
+  -- Cancel must reverse THIS (re-release) JE specifically, not merely find
+  -- some reversal somewhere — the undo step already reversed v_je_line1, so
+  -- an unscoped check here would pass even if the cancel were a no-op.
   update public.test_requests set status = 'cancelled' where id = v_line;
-  if not exists (select 1 from public.journal_entries
-                 where source_kind = 'reversal'
-                   and reverses in (select id from public.journal_entries where source_kind = 'test_request' and source_id = v_line)
-                   and status = 'posted') then
-    raise exception 'K FAIL: cancel did not reverse the release JE';
+  if (select status from public.journal_entries where id = v_je_line2) <> 'reversed' then
+    raise exception 'K FAIL: the re-release JE was not marked reversed after cancel';
+  end if;
+  if not exists (select 1 from public.journal_entries where reverses = v_je_line2 and status = 'posted') then
+    raise exception 'K FAIL: cancel did not post a mirrored reversal of the re-release JE';
   end if;
 
   select count(*) into v_n from public.visit_waiver_allocations where test_request_id = v_line;
