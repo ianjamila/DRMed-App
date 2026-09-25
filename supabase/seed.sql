@@ -133,3 +133,9 @@ revoke all on public.v_patients_directory_admin from public, anon, authenticated
 grant select on public.v_patients_directory_admin to authenticated;
 revoke all on public.v_patient_dedup_candidate_pairs from public, anon, authenticated;
 grant select on public.v_patient_dedup_candidate_pairs to service_role;
+
+-- 0183: visit_waiver_allocations is read-only for reception/admin; writes come
+-- from waive_visit_balance() and the bridges (service_role / triggers).
+revoke all on public.visit_waiver_allocations from anon;
+revoke all on public.visit_waiver_allocations from authenticated;
+grant select on public.visit_waiver_allocations to authenticated;
