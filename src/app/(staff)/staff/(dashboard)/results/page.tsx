@@ -38,12 +38,15 @@ import {
 import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
 import {
   foldArchiveRows,
+  reportMembershipOnPage,
   type ArchiveItem,
   type ArchiveResultLink,
   type ArchiveTestRow,
+  type MembershipDisplay,
 } from "@/lib/results/archive-fold";
 import { codeDuplicatesName } from "@/lib/results/consolidated-reports";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
+import { fetchCompleteRowsByIds } from "@/lib/reports/paging";
 
 export const metadata = { title: "Results" };
 export const dynamic = "force-dynamic";
@@ -261,6 +264,50 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
     }
   }
 
+  // Full live membership per finished result, for the fold label. The base
+  // query above paginates test_requests BEFORE the fold, so a report can
+  // straddle a page boundary or lose a sibling to the date/search filters —
+  // "Chemistry (8 tests)" on this page must count the report's REAL size, not
+  // just what happened to land on this page. One batched junction query, keyed
+  // by every finished result_id on the page, counting only LIVE members
+  // (deleted_at is null on both the test and its visit) — the same predicate
+  // the consolidated report-group page counts "N tests" by, so the two
+  // surfaces never disagree about a report's size.
+  //
+  // At most `size` (≤100) result ids go in, but the members they return are
+  // deliberately off-page too (a report with 19 tests showing one), so the
+  // read is paged to completion with a total order (test_request_id is unique
+  // on the junction) rather than trusting one request under PostgREST's
+  // silent 1000-row cap.
+  const finishedResultIds = Array.from(
+    new Set(
+      Array.from(linkByTrId.values())
+        .filter((l) => l.hasPdf)
+        .map((l) => l.resultId),
+    ),
+  );
+  const fullMembershipByResultId = new Map<string, number>();
+  if (finishedResultIds.length > 0) {
+    const { data: memberRows } = await fetchCompleteRowsByIds(
+      finishedResultIds,
+      (ids, from, to) =>
+        admin
+          .from("result_test_requests")
+          .select("result_id, test_request_id, test_requests!inner ( id, visits!inner ( id ) )")
+          .in("result_id", ids)
+          .is("test_requests.deleted_at", null)
+          .is("test_requests.visits.deleted_at", null)
+          .order("test_request_id", { ascending: true })
+          .range(from, to),
+    );
+    for (const row of memberRows ?? []) {
+      fullMembershipByResultId.set(
+        row.result_id,
+        (fullMembershipByResultId.get(row.result_id) ?? 0) + 1,
+      );
+    }
+  }
+
   // The latest edit's reason per amended result, for the Edited column. Only
   // results on this page with amendment_count > 0, so this is empty on almost
   // every render and bounded by the page size when it isn't.
@@ -325,6 +372,21 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
       visit: { id: visit.id, visitNumber: visit.visit_number, patient: visit.patients },
     });
   }
+
+  const foldedRows = foldArchiveRows(archiveRows, linkByTrId, (r) => ({
+    awaitingPayment: awaitingByVisit.get(r.visit.id) ?? false,
+  }));
+
+  // One membership lookup per report item, shared by the label and the
+  // caveat line below the table.
+  const membershipFor = (item: ArchiveItem): MembershipDisplay =>
+    reportMembershipOnPage({
+      shown: item.tests.length,
+      full: item.resultId ? fullMembershipByResultId.get(item.resultId) ?? item.tests.length : null,
+    });
+  const hasPartialReport = foldedRows.some((g) =>
+    g.items.some((item) => item.kind === "report" && membershipFor(item).partial),
+  );
 
   const total = count ?? 0;
   const totalPages = pageCount(total, size);
@@ -537,9 +599,7 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
-                {foldArchiveRows(archiveRows, linkByTrId, (r) => ({
-                  awaitingPayment: awaitingByVisit.get(r.visit.id) ?? false,
-                })).map((g) => {
+                {foldedRows.map((g) => {
                   const pat = g.patient;
                   const patientLabel = pat
                     ? `${pat.last_name}, ${pat.first_name}`
@@ -560,7 +620,12 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
                       <td className="px-4 py-3 text-xs">
                         <div className="flex flex-col gap-1">
                           {g.items.map((item) => (
-                            <ArchiveItemLabel key={item.key} item={item} visitId={g.visitId} />
+                            <ArchiveItemLabel
+                              key={item.key}
+                              item={item}
+                              visitId={g.visitId}
+                              membership={membershipFor(item)}
+                            />
                           ))}
                         </div>
                       </td>
@@ -653,6 +718,12 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
         )}
       </section>
 
+      {hasPartialReport ? (
+        <p className="mt-2 text-xs text-[color:var(--color-brand-text-soft)]">
+          A report&apos;s other tests may be on another page or outside this filter.
+        </p>
+      ) : null}
+
       {/* The pager counts TESTS, which is what `.range()` slices; the table
           folds them by visit, so a page of 50 tests renders as fewer rows. */}
       <ListPagination
@@ -732,7 +803,15 @@ function itemHref(item: ArchiveItem, visitId: string): string {
  * page — mirrors `amendable` in queue/[id]/page.tsx. */
 const EDITABLE_STATUSES = new Set(["result_uploaded", "ready_for_release", "released"]);
 
-function ArchiveItemLabel({ item, visitId }: { item: ArchiveItem; visitId: string }) {
+function ArchiveItemLabel({
+  item,
+  visitId,
+  membership,
+}: {
+  item: ArchiveItem;
+  visitId: string;
+  membership: MembershipDisplay;
+}) {
   if (item.kind === "report") {
     return (
       <div>
@@ -740,7 +819,7 @@ function ArchiveItemLabel({ item, visitId }: { item: ArchiveItem; visitId: strin
           href={itemHref(item, visitId)}
           className="font-semibold text-[color:var(--color-brand-navy)] hover:underline"
         >
-          {item.label} ({item.tests.length} {item.tests.length === 1 ? "test" : "tests"})
+          {item.label} ({membership.text})
         </Link>
         <div className="text-[color:var(--color-brand-text-soft)]">
           {item.tests.map((t) => t.name || t.code).join(" · ")}

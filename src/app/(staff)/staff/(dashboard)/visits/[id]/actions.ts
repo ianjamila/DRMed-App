@@ -19,6 +19,11 @@ import {
 } from "@/lib/visits/bulk-selection";
 import { countResultViews } from "@/lib/results/viewed-count";
 import { canManuallyReleasePackageHeader } from "@/lib/visits/package-header-release";
+import {
+  expandUndoReleaseScope,
+  type UndoScopeMemberRow,
+  type UndoScopeRejectionReason,
+} from "@/lib/visits/undo-release-scope";
 
 export type ReleaseMedium =
   | "physical"
@@ -50,6 +55,18 @@ const VALID_MEDIA: readonly ReleaseMedium[] = [
   "pickup",
   "other",
 ];
+
+// User-facing text for expandUndoReleaseScope's rejections (0172). The whole
+// request is refused — no partial undo — so each message explains why
+// nothing happened rather than which row was the problem.
+const UNDO_SCOPE_REJECTION_MESSAGE: Record<UndoScopeRejectionReason, string> = {
+  outside_sections:
+    "This report has tests outside the sections you can act on, so it can't be undone from here — ask an admin.",
+  package_header:
+    "This report includes a package header, which shouldn't happen — ask an admin to check it.",
+  other_visit:
+    "This report spans more than one visit, which shouldn't happen — ask an admin to check it.",
+};
 
 /**
  * Refuse to act on a soft-deleted visit (0125).
@@ -564,6 +581,62 @@ export async function undoReleaseSelectedAction(
   if (visitDeleted) return visitDeleted;
 
   const allowedSections = sectionsForRole(session.role);
+
+  // 0172 / PR 2 §5, §9 R4: undo-release is WHOLE-REPORT. Expand the caller's
+  // selection to every member of any combined (chemistry) result it touches
+  // — regardless of that member's own status — before scoping/updating, so a
+  // partially-released or legacy report is undone as a whole rather than
+  // splitting one report across two statuses. Two batched queries, no N+1:
+  // which results the selection links to, then every member of those
+  // results. expandUndoReleaseScope rejects the WHOLE request (no partial
+  // undo) when a member is outside the caller's sections, a package header,
+  // or on another visit — the server expansion is authoritative; any client
+  // wording of the scope is display only.
+  // Fail closed: a read error must not silently shrink the undo to a partial
+  // report.
+  const { data: initialLinks, error: linkErr } = await supabase
+    .from("result_test_requests")
+    .select("test_request_id, result_id")
+    .in("test_request_id", testRequestIds);
+  if (linkErr) return { ok: false, error: translatePgError(linkErr) };
+  const touchedResultIds = Array.from(
+    new Set((initialLinks ?? []).map((l) => l.result_id)),
+  );
+
+  let scopeMembers: UndoScopeMemberRow[] = [];
+  if (touchedResultIds.length > 0) {
+    const { data: memberLinks, error: memberErr } = await supabase
+      .from("result_test_requests")
+      .select(
+        "test_request_id, result_id, test_requests!inner ( visit_id, is_package_header, services!inner ( section ) )",
+      )
+      .in("result_id", touchedResultIds);
+    if (memberErr) return { ok: false, error: translatePgError(memberErr) };
+    scopeMembers = (memberLinks ?? []).map((l) => {
+      const tr = Array.isArray(l.test_requests) ? l.test_requests[0] : l.test_requests;
+      const svc = tr ? (Array.isArray(tr.services) ? tr.services[0] : tr.services) : null;
+      return {
+        testRequestId: l.test_request_id,
+        resultId: l.result_id,
+        visitId: tr?.visit_id ?? "",
+        isPackageHeader: tr?.is_package_header ?? false,
+        section: svc?.section ?? null,
+      };
+    });
+  }
+
+  const expansion = expandUndoReleaseScope({
+    selectedIds: testRequestIds,
+    members: scopeMembers,
+    visitId,
+    allowedSections,
+  });
+  if (!expansion.ok) {
+    return { ok: false, error: UNDO_SCOPE_REJECTION_MESSAGE[expansion.reason] };
+  }
+  const expandedIds = expansion.expandedIds;
+  const reportResultIdByTestRequestId = expansion.reportResultIdByTestRequestId;
+
   // is_package_header = false is LOAD-BEARING, not a convenience filter:
   // nothing at the DB layer blocks a direct header released→ready_for_release
   // transition, and that state (header ready, components released) would let
@@ -574,7 +647,7 @@ export async function undoReleaseSelectedAction(
   const { data: candidates } = await supabase
     .from("test_requests")
     .select("id, release_medium, released_at, services!inner ( section, name )")
-    .in("id", testRequestIds)
+    .in("id", expandedIds)
     .eq("visit_id", visitId)
     .eq("status", "released")
     .eq("is_package_header", false)
@@ -610,6 +683,15 @@ export async function undoReleaseSelectedAction(
     ),
   );
 
+  // Whole-report undo [R4]: every member of an expanded report goes to the
+  // UPDATE, not only the ones observed as released a round trip ago — a
+  // member released in between would otherwise stay released while the rest
+  // of its report is undone. The expansion above already proved every such
+  // member is in the caller's sections, on this visit and not a header; the
+  // status filter decides which rows actually revert.
+  const updateIds = Array.from(
+    new Set([...scopedIds, ...reportResultIdByTestRequestId.keys()]),
+  );
   const { data: undone, error } = await supabase
     .from("test_requests")
     .update({
@@ -618,9 +700,11 @@ export async function undoReleaseSelectedAction(
       released_by: null,
       release_medium: null,
     })
-    .in("id", scopedIds)
+    .in("id", updateIds)
     .eq("visit_id", visitId)
     .eq("status", "released")
+    .eq("is_package_header", false)
+    .is("deleted_at", null)
     .select("id");
 
   if (error) return { ok: false, error: translatePgError(error) };
@@ -632,6 +716,12 @@ export async function undoReleaseSelectedAction(
   const h = await headers();
   const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
   const ua = h.get("user-agent");
+  // A member released after the candidate read has no snapshot yet.
+  for (const row of undone) {
+    if (!viewedCountById.has(row.id)) {
+      viewedCountById.set(row.id, await countResultViews(row.id));
+    }
+  }
   for (const row of undone) {
     const prior = priorById.get(row.id);
     await audit({
@@ -647,6 +737,9 @@ export async function undoReleaseSelectedAction(
         prior_released_at: prior?.released_at ?? null,
         viewed_count: viewedCountById.get(row.id) ?? 0,
         bulk: true,
+        // Present only when this row was reverted as part of a whole-report
+        // undo (0172) — the combined result every member shares.
+        report_result_id: reportResultIdByTestRequestId.get(row.id) ?? null,
       },
       ip_address: ip,
       user_agent: ua,

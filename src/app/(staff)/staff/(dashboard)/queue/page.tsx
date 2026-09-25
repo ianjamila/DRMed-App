@@ -45,6 +45,7 @@ import {
 import { matchesAllTokens } from "@/lib/patients/search";
 import { visitNumberFilter } from "@/lib/visits/visit-number-filter";
 import { testDeletability, hasOpenHmoClaim } from "@/lib/visits/deletion";
+import { fetchSharedReportTestIds } from "@/lib/visits/shared-report-links";
 import { LAB_QUEUE_GATE_VISITS_OR } from "@/lib/visits/lab-gate";
 import { DOCTOR_KINDS_PG_LIST } from "@/lib/visits/classification";
 import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
@@ -398,6 +399,15 @@ export default async function QueuePage({ searchParams }: SearchProps) {
     return state ? printSummaries.get(state.resultId) : undefined;
   };
 
+  // Which of this page's rows sit on a FINISHED combined report (0172,
+  // P0067) — only such a member is locked from individual deletion. Counted
+  // over each report's FULL membership, so a report split across a page
+  // boundary still locks the members shown here.
+  const sharedReportIds = await fetchSharedReportTestIds(
+    supabase,
+    (rows ?? []).map((r) => r.id),
+  );
+
   // -------------------------------------------------------------------------
   // Fold chemistry rows by (visit_id, report_group_id) — and, on Released
   // today, by result file too (reportCardKey). Non-grouped rows stay as
@@ -436,6 +446,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
       visit_payment_status: visit.payment_status,
       visit_deleted_at: null,
       has_open_hmo_claim: hasOpenHmoClaim(r.hmo_claim_items),
+      has_shared_report: sharedReportIds.has(r.id),
     }).ok;
 
     const pdfState = pdfStates.get(r.id);

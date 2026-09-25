@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { foldArchiveRows, type ArchiveResultLink, type ArchiveTestRow } from "./archive-fold";
+import {
+  foldArchiveRows,
+  reportMembershipOnPage,
+  type ArchiveResultLink,
+  type ArchiveTestRow,
+} from "./archive-fold";
 
 const CHEM = "grp-chem";
 
@@ -97,5 +102,45 @@ describe("foldArchiveRows", () => {
     expect(out[0].requestedAt).toBe("2026-09-24T09:00:00Z");
     expect(out[0].releasedAt).toBe("2026-09-24T12:00:00Z");
     expect(out[0].extra).toBe("v2");
+  });
+});
+
+describe("reportMembershipOnPage", () => {
+  it("says the plain count when every live member is on this page", () => {
+    expect(reportMembershipOnPage({ shown: 8, full: 8 })).toEqual({
+      text: "8 tests",
+      partial: false,
+    });
+  });
+
+  it("says '<shown> of <full> tests shown' and flags partial when members are missing", () => {
+    expect(reportMembershipOnPage({ shown: 3, full: 8 })).toEqual({
+      text: "3 of 8 tests shown",
+      partial: true,
+    });
+  });
+
+  it("handles two reports independently — one full, one partial", () => {
+    expect(reportMembershipOnPage({ shown: 2, full: 2 }).partial).toBe(false);
+    expect(reportMembershipOnPage({ shown: 1, full: 2 }).partial).toBe(true);
+  });
+
+  it("says just the shown count with no 'of N' for an unfinished grouped report (no result yet)", () => {
+    expect(reportMembershipOnPage({ shown: 2, full: null })).toEqual({
+      text: "2 tests",
+      partial: false,
+    });
+  });
+
+  it("singularises a lone test either way", () => {
+    expect(reportMembershipOnPage({ shown: 1, full: 1 }).text).toBe("1 test");
+    expect(reportMembershipOnPage({ shown: 1, full: null }).text).toBe("1 test");
+  });
+
+  it("fails closed (not partial) rather than reading backward when shown somehow exceeds full", () => {
+    expect(reportMembershipOnPage({ shown: 5, full: 3 })).toEqual({
+      text: "5 tests",
+      partial: false,
+    });
   });
 });

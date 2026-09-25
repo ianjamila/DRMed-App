@@ -67,6 +67,58 @@ export interface ArchiveVisitRow<Extra> {
   extra: Extra;
 }
 
+/**
+ * What "N tests" should say for one report ITEM on the archive page, given
+ * how many of its members actually landed on this fetched page versus how
+ * many the report really has.
+ *
+ * The archive paginates `test_requests` BEFORE folding (`.range()` on the
+ * base query, then `foldArchiveRows` above groups whatever came back), so a
+ * report can straddle a page boundary or have a sibling excluded by the date
+ * range / search box. `full` is the report's TRUE live membership — from one
+ * batched `result_test_requests` junction query keyed by result_id, counting
+ * only test_requests with `deleted_at is null` and `visits.deleted_at is
+ * null` (the same predicate the consolidated report-group page counts "N
+ * tests" by, so the two surfaces never disagree about what a report's size
+ * is). `shown` is how many of those members are on THIS page (`item.tests.length`).
+ *
+ * `full === null` means there is no result yet — the report is still on the
+ * bench, folded by `report_group_id` rather than `result_id` (see
+ * `foldArchiveRows`). There is nothing to join a membership count against in
+ * that case (no `result_id`), so this says nothing about "of N" and just
+ * reports what's on the page — not a lie, since an unfinished group has no
+ * fixed final size to compare against yet.
+ *
+ * Pure — unit-tested in `archive-fold.test.ts`.
+ */
+export interface ReportMembershipOnPage {
+  /** Members of the report shown on this page. */
+  shown: number;
+  /** True live membership count, or null when there is no result to count against yet. */
+  full: number | null;
+}
+
+export interface MembershipDisplay {
+  /** "8 tests" or "3 of 8 tests shown" — the caller wraps it as "Label (…)" . */
+  text: string;
+  /** True when at least one live member is NOT on this page. */
+  partial: boolean;
+}
+
+export function reportMembershipOnPage(m: ReportMembershipOnPage): MembershipDisplay {
+  const word = (n: number) => (n === 1 ? "test" : "tests");
+  // No result yet, or every live member is already on the page (shown can
+  // never legitimately exceed full, but a >= guard rather than === keeps this
+  // from mis-reading as partial on a stale/short count instead of failing
+  // closed to "looks complete").
+  if (m.full === null || m.shown >= m.full) {
+    // Never print a count below what's visibly on the page.
+    const n = Math.max(m.shown, m.full ?? m.shown);
+    return { text: `${n} ${word(n)}`, partial: false };
+  }
+  return { text: `${m.shown} of ${m.full} ${word(m.full)} shown`, partial: true };
+}
+
 export function foldArchiveRows<Extra>(
   rows: readonly ArchiveTestRow[],
   linkByTestId: ReadonlyMap<string, ArchiveResultLink>,

@@ -15,6 +15,9 @@ import { audit } from "@/lib/audit/log";
 import { hasRecentAudit, ipAndAgent } from "@/lib/server/action-helpers";
 import { ConsolidatedForm } from "./consolidated-form";
 import { ReportCards, type ReportCardData } from "./report-cards";
+import { ReportEditForm } from "./report-edit-form";
+import type { ValueCells } from "./consolidated-values-table";
+import { normalisePatientSex } from "@/lib/results/types";
 import { claimRemarks } from "@/lib/queue/claim-remarks";
 import { fetchClaimEvents } from "@/lib/queue/fetch-claim-events";
 import { ClaimHistory } from "@/components/staff/claim-remarks-list";
@@ -145,10 +148,14 @@ export async function generateMetadata({ params }: { params: Promise<{ visitId: 
 
 export default async function ConsolidatedQueuePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ visitId: string; groupId: string }>;
+  searchParams: Promise<{ edit?: string | string[] }>;
 }) {
   const { visitId, groupId } = await params;
+  const editParam = (await searchParams).edit;
+  const editResultId = typeof editParam === "string" ? editParam : null;
   const { session, supabase, group, rows, partition, visit } = await loadConsolidatedDetail(
     visitId,
     groupId,
@@ -164,8 +171,11 @@ export default async function ConsolidatedQueuePage({
     }),
   );
 
-  // Latest amendment per report, for the "Edited <when> — <reason>" line.
-  const latestAmendment = new Map<string, { reason: string; amended_at: string; amended_by: string }>();
+  // Every amendment per report (newest first): the "Edited <when> — <reason>"
+  // line uses the latest, the edit-history panel lists them all. Read through
+  // the signed-in client — 0172 limits it to staff who may read the values.
+  type Amendment = { reason: string; amended_at: string; amended_by: string; amendment_seq: number };
+  const amendmentsByResult = new Map<string, Amendment[]>();
   if (resultIds.some((id) => (reportResults.get(id)?.amendment_count ?? 0) > 0)) {
     const { data: amends } = await supabase
       .from("result_amendments")
@@ -173,15 +183,30 @@ export default async function ConsolidatedQueuePage({
       .in("result_id", resultIds)
       .order("amendment_seq", { ascending: false });
     for (const a of amends ?? []) {
-      if (!latestAmendment.has(a.result_id)) latestAmendment.set(a.result_id, a);
+      const list = amendmentsByResult.get(a.result_id) ?? [];
+      list.push(a);
+      amendmentsByResult.set(a.result_id, list);
     }
+  }
+  const latestAmendment = new Map(
+    [...amendmentsByResult].map(([id, list]) => [id, list[0]] as const),
+  );
+
+  // Who may edit each report: the database's own rule (every linked test in
+  // the caller's sections, every live one finished), asked as the signed-in
+  // user — the same call amendConsolidatedReport makes, so the button never
+  // offers what the action refuses [R3].
+  const canEdit = new Map<string, boolean>();
+  for (const id of resultIds) {
+    const { data } = await supabase.rpc("staff_can_read_finished_result", { p_result_id: id });
+    canEdit.set(id, data === true);
   }
 
   const staffIds = new Set<string>();
   for (const res of reportResults.values()) {
     if (res.finalised_by_staff_id) staffIds.add(res.finalised_by_staff_id);
   }
-  for (const a of latestAmendment.values()) staffIds.add(a.amended_by);
+  for (const list of amendmentsByResult.values()) for (const a of list) staffIds.add(a.amended_by);
   const staffName = new Map<string, string>();
   if (staffIds.size > 0) {
     const { data: profs } = await supabase
@@ -222,8 +247,89 @@ export default async function ConsolidatedQueuePage({
             by: staffName.get(amendment.amended_by) ?? null,
           }
         : null,
+      history: (amendmentsByResult.get(rep.resultId) ?? []).map((a) => ({
+        seq: a.amendment_seq,
+        at: a.amended_at,
+        reason: a.reason,
+        by: staffName.get(a.amended_by) ?? null,
+      })),
+      editHref: canEdit.get(rep.resultId)
+        ? `/staff/queue/consolidated/${visitId}/${groupId}?edit=${rep.resultId}#result-${rep.resultId}`
+        : null,
     };
   });
+
+  // ---- Edit form for one finished report (?edit=<resultId>) -------------
+  let editForm: { resultId: string; node: ReactNode } | null = null;
+  const editing = editResultId ? reports.find((r) => r.resultId === editResultId) : undefined;
+  if (editing && canEdit.get(editing.resultId)) {
+    const res = reportResults.get(editing.resultId)!;
+    const { data: template, error: templateErr } = await supabase
+      .from("result_templates")
+      .select("id, layout, header_notes, footer_notes, result_template_params(*)")
+      .eq("report_group_id", groupId)
+      .eq("is_active", true)
+      .maybeSingle();
+    const tplParams = ((template as unknown as ConsolidatedFormTemplate | null)?.result_template_params ?? []);
+    // Values through the signed-in client: the 0172 read policy is the same
+    // rule as canEdit above.
+    const { data: valueRows, error: valuesErr } = await supabase
+      .from("result_values")
+      .select("parameter_id, numeric_value_si, numeric_value_conv")
+      .eq("result_id", editing.resultId);
+    const liveServiceIds = editing.members.map((m) => one(byId.get(m.id)!.services)?.id ?? "");
+    const { data: mapRows, error: mapErr } =
+      tplParams.length > 0
+        ? await supabase
+            .from("report_group_service_params")
+            .select("service_id, parameter_id")
+            .in("parameter_id", tplParams.map((p) => p.id))
+            .in("service_id", liveServiceIds)
+        : { data: [], error: null };
+    // An edit REPLACES the whole value set, so a form opened over values that
+    // failed to load would save a partial set and erase the rest. Refuse to
+    // render it instead.
+    const loadFailed = Boolean(templateErr || valuesErr || mapErr);
+    // Editable = what the members' services enable, plus anything already
+    // holding a value (a mapping changed since finalise must not strand it).
+    const stored = new Set((valueRows ?? []).map((v) => v.parameter_id));
+    const editable = new Set<string>([...(mapRows ?? []).map((m) => m.parameter_id), ...stored]);
+    const sex = normalisePatientSex(visit.patients.sex);
+    const params = tplParams
+      .filter((p) => !p.gender || p.gender === sex || stored.has(p.id))
+      .sort((a, b) => a.sort_order - b.sort_order);
+    const initial: ValueCells = {};
+    for (const v of valueRows ?? []) {
+      initial[v.parameter_id] = {
+        si: v.numeric_value_si == null ? "" : String(v.numeric_value_si),
+        conv: v.numeric_value_conv == null ? "" : String(v.numeric_value_conv),
+      };
+    }
+    editForm = {
+      resultId: editing.resultId,
+      node: loadFailed ? (
+        <p role="alert" className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+          This report&apos;s values couldn&apos;t be loaded, so it can&apos;t be edited right now.
+          Reload the page to try again.
+        </p>
+      ) : template ? (
+        <ReportEditForm
+          key={`${editing.resultId}:${res.amendment_count}`}
+          resultId={editing.resultId}
+          expectedAmendmentCount={res.amendment_count}
+          params={params}
+          editableParamIds={[...editable]}
+          initial={initial}
+          doneHref={`/staff/queue/consolidated/${visitId}/${groupId}#result-${editing.resultId}`}
+        />
+      ) : (
+        <p role="alert" className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+          {group.name} has no active result template, so this report can&apos;t be edited. Ask an
+          admin to check Result Templates.
+        </p>
+      ),
+    };
+  }
 
   // Viewing a finished report is a disclosure of patient results, so it is
   // audited like the PDF route (`result.viewed_staff`). One row per result;
@@ -386,6 +492,7 @@ export default async function ConsolidatedQueuePage({
           reports={reports}
           groupName={group.name}
           awaitingPaymentHint={gate.ok ? null : gate.hint}
+          editForm={editForm}
         />
       ) : null}
 

@@ -247,7 +247,7 @@
 <div class="layout">
 <nav class="toc" aria-label="Contents">
   <p class="toc-brand">drmed<span>.</span>ph</p>
-  <p class="toc-tag">User guide · v2.19</p>
+  <p class="toc-tag">User guide · v2.20</p>
   <div class="filter" role="group" aria-label="Show chapters for">
     <button type="button" data-filter="all" aria-pressed="true">All roles</button>
     <button type="button" data-filter="reception">Reception</button>
@@ -288,7 +288,7 @@
         <li><a href="#lab-chem">Chemistry panel</a></li>
         <li><a href="#lab-upload">Upload a PDF result</a></li>
         <li><a href="#lab-imaging">Imaging reports</a></li>
-        <li><a href="#lab-after">Release, undo, amend</a></li>
+        <li><a href="#lab-after">Release, undo, edit</a></li>
         <li><a href="#lab-critical">Critical Alerts</a></li>
         <li><a href="#lab-path">Pathologists</a></li>
         <li><a href="#lab-results">Results archive</a></li>
@@ -670,10 +670,10 @@
   <section class="sub" id="rec-fix">
     <h3>3.9 Fix-ups on the visit page</h3>
     <dl class="defs">
-      <dt>Wrong test billed, not yet paid</dt><dd><kbd class="ui">Delete</kbd> the visit and give a reason, then create it again correctly. Nothing is billed for a deleted visit; it moves to <b>Deleted entries</b> and to Admin's <b>Deleted Queue Entries</b> report, and <kbd class="ui">Restore</kbd> brings it back. Removing a single line instead of the whole visit needs Admin, who can see the lines. Once any payment is recorded, deletion is no longer possible: delete the payment first.</dd>
+      <dt>Wrong test billed, not yet paid</dt><dd><kbd class="ui">Delete</kbd> the visit and give a reason, then create it again correctly. Nothing is billed for a deleted visit; it moves to <b>Deleted entries</b> and to Admin's <b>Deleted Queue Entries</b> report, and <kbd class="ui">Restore</kbd> brings it back. Removing a single line instead of the whole visit needs Admin, who can see the lines. A test on a finished chemistry report can't be removed on its own (the button says <q>Part of a finished combined report (e.g. Chemistry) — it can’t be deleted on its own.</q>); delete the whole visit instead. Once any payment is recorded, deletion is no longer possible: delete the payment first.</dd>
       <dt>Patient lost the receipt / PIN</dt><dd>Open the patient's page, <kbd class="ui">Re-issue PIN</kbd>. A fresh 60-day PIN for their latest visit prints on a <b>Patient portal access</b> slip, replacing that visit's PIN in place. If the patient also has an older, separate visit whose PIN hasn't expired yet, that one still works — remind them to destroy any old receipts too. (The visit page's <kbd class="ui">Issue portal PIN</kbd> appears only on consult-only visits, which never had a receipt.)</dd>
       <dt>Forgot the doctor</dt><dd><b>Attending physician</b> section → <kbd class="ui">Assign physician</kbd> (or <kbd class="ui">Change</kbd>).</dd>
-      <dt>Result needs correcting after release</dt><dd>Tell the lab. They undo the release, amend with a reason, and release again (4.7). If the patient had already opened it, phone them.</dd>
+      <dt>Result needs correcting after release</dt><dd>Tell the lab. They open the result and click <kbd class="ui">Edit result…</kbd> (chemistry: <kbd class="ui">Edit results</kbd> on the report card), correct the values and give a reason — no need to undo the release first (4.7). If the patient had already opened it, phone them.</dd>
       <dt>Wrong patient entirely</dt><dd>If unpaid, delete the visit and create it again under the right patient. If paid, delete the payment first.</dd>
     </dl>
   </section>
@@ -804,7 +804,7 @@
       <li><p class="step-title">Click <kbd class="ui">Save draft</kbd> whenever you step away.</p><p>Drafts keep everything you typed. The test stays <span class="status">in progress</span>.</p></li>
       <li><p class="step-title">When every row is filled or blanked, click <kbd class="ui">Finalise &amp; generate PDF</kbd>.</p><p>If anything is missing you get <q>Missing values for: …. Mark blank if you didn't run the sub-test.</q> On success: <q>✓ Saved. Control No. … — finalised.</q> The test becomes <span class="status">ready for release</span> and the PDF is generated with your name on it.</p></li>
     </ol>
-    <div class="note stop"><span class="k">Finalise means finished</span><div><p>After finalising, the only way to change a value is an <b>amendment</b> with a written reason (4.7), and the original stays on record. Check the row against the analyser printout before you click.</p></div></div>
+    <div class="note stop"><span class="k">Finalise means finished</span><div><p>After finalising, the only way to change a value is an <b>edit</b> with a written reason (4.7) — you don't need to undo the release first, and the original stays on record. Check the row against the analyser printout before you click.</p></div></div>
     <div class="note why"><span class="k">Critical values</span><div><p>A numeric value beyond a critical threshold is recorded as a critical alert the moment you finalise. You will not see a pop-up; the pathologist and admin see it on their <b>Critical Alerts</b> page (4.8). Tell them in person as well. That is a clinical duty, not a software one.</p></div></div>
   </section>
 
@@ -813,8 +813,8 @@
     <h3>4.4 The chemistry panel (one form for the whole order)</h3>
     <div class="screen"><div class="where"><code class="route">/staff/queue/consolidated/[visit]/[group]</code> · opened automatically from any chemistry test</div>
       <dl><dt>Heading</dt><dd>The report group name, then <b>Ordered:</b> and the service codes still to encode (<b>Still to encode:</b> when the visit already has a finished report)</dd>
-      <dt>Report cards</dt><dd>one card per finished report: its tests, <b>Finalised</b> date and medtech, <b>Released</b> date, a status chip, an <b>Edited</b> note if it was corrected, and <kbd class="ui">View PDF →</kbd></dd>
-      <dt>Buttons</dt><dd><kbd class="ui">Claim this report</kbd> · <kbd class="ui">Finalise + release</kbd> · <kbd class="ui">Back to queue</kbd> · <kbd class="ui">View PDF →</kbd></dd></dl></div>
+      <dt>Report cards</dt><dd>one card per finished report: its tests, <b>Finalised</b> date and medtech, <b>Released</b> date, a status chip, an <b>Edited</b> note if it was corrected, <kbd class="ui">View PDF →</kbd>, and — for anyone who may edit it — <kbd class="ui">Edit results</kbd> plus an <b>Edit history</b> panel once it has been corrected</dd>
+      <dt>Buttons</dt><dd><kbd class="ui">Claim this report</kbd> · <kbd class="ui">Finalise + release</kbd> · <kbd class="ui">Back to queue</kbd> · <kbd class="ui">View PDF →</kbd> · <kbd class="ui">Edit results</kbd></dd></dl></div>
     <p>Chemistry tests (FBS, lipid profile, creatinine, and so on) are reported together on one consolidated form so the patient gets one chemistry report, not six. Clicking any chemistry test in the queue lands you here — and so does every other link to a chemistry test: the queue's <span class="tab">Released today</span> tab, Critical Alerts, the visit page, the notification bell and the lab reports.</p>
     <p>Once a report is finalised it shows here as a <b>report card</b> instead of disappearing. A card reads <span class="status">Ready for release</span> with <q>Not released to the patient yet</q> while the visit is waiting for payment, and <span class="status">Released</span> once it has gone out. The card links the stored PDF, which is the report of record: it is exactly what the patient received. If a chemistry test is added to the visit after the panel was finalised, the card stays at the top and the form below it covers only the new test; finishing it makes a second report card.</p>
     <ol class="steps">
@@ -823,6 +823,16 @@
       <li><p class="step-title">Click <kbd class="ui">Finalise + release</kbd>.</p><p>This form releases straight to the patient if the visit is paid, waived or HMO-billed. If it isn't, you see <q>Report finalised — release deferred: visit not yet paid (HMO visits are exempt). Record the payment, then come back and release these results — only packages release on their own.</q> Nothing is lost, but unlike a package this does <b>not</b> release itself once payment lands — reception records the payment, then someone comes back to this visit and clicks Release.</p><p>When it does release, you stay on the page and the new report card appears at the top with its <kbd class="ui">View PDF →</kbd> button — that is your confirmation of what went to the patient.</p></li>
     </ol>
     <div class="note stop"><span class="k">Every field greyed out?</span><div><p>The screen will say so in plain words: it is a template configuration problem, not a data-entry one. Report it to Admin (the group template under Result Templates has no fields mapped for the ordered tests). Don't work around it by typing into another test.</p></div></div>
+    <h4>Editing a finished report</h4>
+    <p>A report card's <kbd class="ui">Edit results</kbd> button is open to any medtech whose sections cover every test on the report, plus pathologists and admins — no claim needed, and it works whether the report is released or not.</p>
+    <ol class="steps">
+      <li><p class="step-title">Click <kbd class="ui">Edit results</kbd> on the card.</p><p>The values open pre-filled, in place.</p></li>
+      <li><p class="step-title">Correct the values and type a <b>Reason for the edit</b> (required).</p></li>
+      <li><p class="step-title">Click <kbd class="ui">Save edit</kbd>, or <kbd class="ui">Cancel</kbd> to back out.</p><p>Saving makes a new PDF that replaces the current one — the patient sees only the new version. The replaced PDF and its values are kept; a patient who already downloaded the old PDF is not told automatically.</p></li>
+    </ol>
+    <p>The card then shows an <b>Edited</b> note and an <b>Edit history</b> panel: <q>Current version (v<i>N</i>)</q> links the live PDF, and each past edit lists its version, when, who, the reason, and <q>View replaced version (v<i>N</i>)</q>. If someone else saves an edit first, yours is refused: <q>Someone saved an edit to this result since you opened it. Reload the page to see their change, then make yours again.</q>, with a <kbd class="ui">Reload</kbd> button.</p>
+    <div class="note why"><span class="k">What stays the same on an edited PDF</span><div><p>An edited report signs as whoever made the edit, but keeps the original control number and the original report date — age, reference ranges, flags and critical thresholds stay those of the original date. A corrected value that newly crosses a critical threshold pages again (4.8); a correction that removes an unacknowledged critical alert withdraws it. An already-acknowledged alert is never changed.</p></div></div>
+    <p>Edit history and values stay visible only to medtechs/x-ray techs for their own sections, plus pathologist and admin; reception sees none of it — reception never had View PDF either.</p>
   </section>
 
   <!-- 4.5 -->
@@ -850,12 +860,12 @@
 
   <!-- 4.7 -->
   <section class="sub" id="lab-after">
-    <h3>4.7 After finalising: release, undo, amend</h3>
+    <h3>4.7 After finalising: release, undo, edit</h3>
     <div class="screen"><div class="where">The visit page · <code class="route">/staff/visits/[visit]</code> · reached from the <span class="tab">Pending release</span> tab of your queue</div>
       <dl><dt>Buttons</dt><dd><kbd class="ui">Release</kbd> per line · <kbd class="ui">Release all ready (N)</kbd> · <kbd class="ui">Release selected (N)</kbd> · <kbd class="ui">Unrelease selected (N)</kbd> · <kbd class="ui">Undo</kbd></dd>
       <dt>You see</dt><dd>only the lines in your own sections; doctor lines are visible to Admin and pathologists</dd>
       <dt>Blocked when</dt><dd>visit not paid, waived or HMO-billed · consent gate on and consent missing · a PF-earning doctor line has no attending physician</dd></dl></div>
-    <p>The test page now shows a <b>Result on file</b> panel with <kbd class="ui">View / download result</kbd> (a 5-minute link; every view is logged) and <kbd class="ui">Amend result…</kbd>. The test is <span class="status">ready for release</span>. Releasing is what makes it visible to the patient, and it is your job, not reception's.</p>
+    <p>The test page now shows a <b>Result on file</b> panel with <kbd class="ui">View / download result</kbd> (a 5-minute link; every view is logged) and <kbd class="ui">Edit result…</kbd>. The test is <span class="status">ready for release</span>. Releasing is what makes it visible to the patient, and it is your job, not reception's.</p>
     <h4>Releasing</h4>
     <ol class="steps">
       <li><p class="step-title">Open the <span class="tab">Pending release</span> tab of your queue and click the visit number.</p><p>Lines are grouped under <b>Packages</b> and <b>Individual tests</b>.</p></li>
@@ -871,14 +881,17 @@
     </dl>
     <p>Undoing a release is never money-gated — you can always take a result back.</p>
     <h4>Taking a release back</h4>
-    <p>Click <kbd class="ui">Undo</kbd> on a released line, type the reason, and <kbd class="ui">Confirm undo</kbd>. The result disappears from the portal and returns to <span class="status">ready for release</span> so you can amend it. If the patient already opened it, the dialog says so: undoing does not un-see it, so reception should call them.</p>
-    <h4>Amending a result</h4>
+    <p>Click <kbd class="ui">Undo</kbd> on a released line, type the reason, and <kbd class="ui">Confirm undo</kbd>. The result disappears from the portal and returns to <span class="status">ready for release</span>. If the patient already opened it, the dialog says so: undoing does not un-see it, so reception should call them. Undo is for pulling a release back, not for correcting values — for that, edit the result directly (below), which works whether or not it's still released.</p>
+    <div class="note why"><span class="k">Undoing a chemistry report</span><div><p>Because a chemistry report is one PDF for several tests, undoing any one of them undoes the <b>whole</b> report — the dialog says so: <q>This undoes the whole <i>[report group]</i> report (N tests)</q>, and if the patient has already seen some of them, <q>Patient already viewed X of the N affected results — undoing does not un-see them.</q> If the report has tests outside the sections you can act on, undo is refused: <q>This report has tests outside the sections you can act on, so it can't be undone from here — ask an admin.</q></p></div></div>
+    <h4>Editing a result</h4>
+    <p>A finalised result no longer shows the entry form — only <kbd class="ui">Edit result…</kbd>. Editing works whether the result is still released or not; you don't need to undo the release first.</p>
     <ol class="steps">
-      <li><p class="step-title">If the result has already been released, <kbd class="ui">Undo</kbd> the release first.</p><p>Otherwise the patient can still download the wrong version while you fix it.</p></li>
-      <li><p class="step-title">Open the test, click <kbd class="ui">Amend result…</kbd>, correct the values, and write the reason (at least a sentence).</p></li>
-      <li><p class="step-title">Save. The panel now shows <b>Amended ×1</b>; the original PDF is kept for the audit trail.</p></li>
-      <li><p class="step-title">Release again, and ask reception to phone the patient if they had already seen the first version.</p></li>
+      <li><p class="step-title">Open the test and click <kbd class="ui">Edit result…</kbd>.</p></li>
+      <li><p class="step-title">Correct the values and write the reason (at least a sentence) — required.</p></li>
+      <li><p class="step-title">Save. The panel now shows an <b>Edited</b> note and an <b>Edit history</b> panel headed <q>Current version (v<i>N</i>)</q>, with each past edit's version, when, who, the reason, and <q>View replaced version (v<i>N</i>)</q>; the original PDF is kept.</p></li>
+      <li><p class="step-title">Ask reception to phone the patient if they had already seen the earlier version — they aren't told automatically.</p></li>
     </ol>
+    <p>If someone else saved an edit to the same result first, yours is refused: <q>Someone saved an edit to this result since you opened it. Reload the page to see their change, then make yours again.</q></p>
   </section>
 
   <!-- 4.8 -->
@@ -897,7 +910,7 @@
   <!-- 4.9 -->
   <section class="sub" id="lab-path">
     <h3>4.9 For pathologists</h3>
-    <p>You see every section in the queue and can claim, enter and finalise like a medtech. Your extra duties today are the <b>Critical Alerts</b> page and reviewing amended results. Your dashboard adds <b>Critical Alerts unacked</b>.</p>
+    <p>You see every section in the queue and can claim, enter and finalise like a medtech. Your extra duties today are the <b>Critical Alerts</b> page and reviewing edited results — you can also edit any finished result yourself, in any section, without claiming it first. Your dashboard adds <b>Critical Alerts unacked</b>.</p>
     <div class="note warn"><span class="k">Sign-off is not active yet</span><div><p>The system has a place for a formal pathologist sign-off step before release, but the screen is not built and no service has <q>Requires pathologist sign-off</q> switched on. Results go from the bench straight to <span class="status">ready for release</span>.</p><p>Your dashboard's <b>Ready for sign-off</b> card and its <b>Pending sign-off</b> strip both count tests sitting at <span class="status">result uploaded</span> — the status a finished test takes only when its service requires sign-off. Both therefore read zero today, which is correct, and they will agree with each other the day the flag is switched on. The card's hint says as much: <q>Sign-off screen not built yet</q>. (Until the September 2026 release the strip counted ready-for-release tests instead, so a list headed <q>Pending sign-off</q> was showing work already past it.) See <a href="#limits">Known limitations</a>.</p></div></div>
   </section>
 
@@ -908,8 +921,8 @@
       <dl><dt>Tabs</dt><dd><span class="tab">All</span> · <span class="tab">Released</span> · <span class="tab">Ready for release</span> · <span class="tab">In progress</span> · <span class="tab">Unclaimed</span> · <span class="tab">Cancelled</span></dd>
       <dt>Filters</dt><dd><b>Requested from</b> / <b>…to</b> · <b>Patient / service search</b></dd>
       <dt>Per row</dt><dd>one line per visit with its tests, timestamps, an <b>Edited</b> note for any corrected result, one <b>PDF →</b> link per report, <b>Remarks</b> (each test's claim history — who claimed, unclaimed with the reason, or reassigned it — headed by the test or report name when the visit has several), and a link to the visit</dd></dl></div>
-    <p>A chemistry panel reads as one line, for example <q>Chemistry (8 tests)</q> with the test names underneath, and has <b>one</b> <q>Chemistry PDF →</q> link, because the whole panel is one report. Other tests list one by one; the grey service code only appears when it says something the name doesn't. Click a test (or the chemistry line) to open it.</p>
-    <p>Nothing here releases a result. Use it to find an old result, open or print its PDF, or spot tests nobody has picked up. A finished single test also has an <b>Edit</b> link, which opens its page where <kbd class="ui">Amend result…</kbd> lives; every correction asks for a reason. The <b>Edited</b> column then shows when it was last changed and why, for example <q>Edited Sep 24, 2026, 4:52 PM — wrong unit on glucose</q> (with a count if it was edited more than once). A chemistry report can't be edited yet. <span class="tab">Unclaimed</span> opens sorted oldest first (every other tab opens newest first), and you can re-sort by <b>Status</b>, <b>Requested</b>, <b>Completed</b>, <b>Released</b> or <b>Visit</b>; a row marked <b>awaiting payment</b> is one reception hasn't been paid for yet, which is why it isn't on your queue.</p>
+    <p>A chemistry panel reads as one line, for example <q>Chemistry (8 tests)</q> with the test names underneath, and has <b>one</b> <q>Chemistry PDF →</q> link, because the whole panel is one report. When some of a report's tests are on another page or excluded by your filters, the count says so instead — <q>Chemistry (3 of 8 tests shown)</q> — with a note under the table: <q>A report's other tests may be on another page or outside this filter.</q> Other tests list one by one; the grey service code only appears when it says something the name doesn't. Click a test (or the chemistry line) to open it.</p>
+    <p>Nothing here releases a result. Use it to find an old result, open or print its PDF, or spot tests nobody has picked up. A finished single test also has an <b>Edit</b> link, which opens its page where <kbd class="ui">Edit result…</kbd> lives; every correction asks for a reason. The <b>Edited</b> column then shows when it was last changed and why, for example <q>Edited Sep 24, 2026, 4:52 PM — wrong unit on glucose</q> (with a count if it was edited more than once). A chemistry report is edited from its own report card (4.4), not from here — click through to the consolidated page and use <kbd class="ui">Edit results</kbd>. <span class="tab">Unclaimed</span> opens sorted oldest first (every other tab opens newest first), and you can re-sort by <b>Status</b>, <b>Requested</b>, <b>Completed</b>, <b>Released</b> or <b>Visit</b>; a row marked <b>awaiting payment</b> is one reception hasn't been paid for yet, which is why it isn't on your queue.</p>
   </section>
 </section>
 
@@ -1135,8 +1148,8 @@
     <dt>The patient lost their PIN.</dt><dd>Open the patient's page, click <kbd class="ui">Re-issue PIN</kbd>, print the slip. The old PIN stops working. Never read a PIN over the phone.</dd>
     <dt>I recorded a payment on the wrong visit.</dt><dd>Click <kbd class="ui">Move</kbd> beside it and pick the right visit, even if it belongs to another patient. Nothing needs recording again.</dd>
     <dt>I picked the wrong payment method (or typed the wrong amount).</dt><dd><kbd class="ui">Edit</kbd> the payment on the visit page. The old version stays in the history with your reason.</dd>
-    <dt>I need to remove a test that was billed by mistake.</dt><dd>If unpaid: <kbd class="ui">Delete</kbd> the line with a reason. If paid: delete the payment first, delete the line, then record the payment again for the corrected total.</dd>
-    <dt>A result is wrong and it's already released.</dt><dd>The lab clicks <kbd class="ui">Undo</kbd> on the line, amends with a reason, and releases again. Reception phones the patient if they had already opened it.</dd>
+    <dt>I need to remove a test that was billed by mistake.</dt><dd>If unpaid: <kbd class="ui">Delete</kbd> the line with a reason. A test that is part of a finished chemistry report can't be deleted alone — delete the visit, or edit the report. If paid: delete the payment first, delete the line, then record the payment again for the corrected total.</dd>
+    <dt>A result is wrong and it's already released.</dt><dd>The lab opens the result and clicks <kbd class="ui">Edit result…</kbd> (chemistry: <kbd class="ui">Edit results</kbd> on the report card), corrects the values and gives a reason — no need to undo the release first. Reception phones the patient if they had already opened it.</dd>
     <dt>The chemistry form is all greyed out.</dt><dd>Template configuration problem. Tell Admin; don't work around it.</dd>
     <dt>End of Day won't close.</dt><dd>A non-zero <b>Difference</b> needs a <b>Reason for the difference</b>. Also check the ₱20 bill and ₱20 coin rows are in the right columns.</dd>
     <dt>The doctor's fee isn't showing under Pay Doctors.</dt><dd>Admin or the pathologist must click <kbd class="ui">Mark consultation done</kbd> on the visit (reception can see the doctor line but cannot mark it done; medtechs do not see it at all), and the visit must be paid, waived or HMO-billed. Once marked done, an HMO visit's fee waits under <b>Waiting on insurance</b> until the claim settles.</dd>
@@ -1155,7 +1168,7 @@
     <dt>Doctor lines</dt><dd>Consultation and procedure lines are visible only to Admin and pathologists, so only they can click <b>Mark consultation done</b>. Reception can still assign the physician and record the fee.</dd>
     <dt>HMO package headers</dt><dd>On an HMO-billed package the component tests release normally, but the package's own summary line stays at <span class="status">ready for release</span>: it is released automatically only when the visit's payment status changes, and there is no button anywhere to release it by hand. It clears when Admin records the settlement. Admin's <b>Stuck Tests</b> report lists these under <q>Package header not auto-released</q>.</dd>
     <dt>HMO balances look unpaid</dt><dd>An HMO visit keeps its <span class="status">unpaid</span> payment status until Admin records the settlement — that is correct, the insurer really does still owe it. It does <b>not</b> sit on the Reception Queue's <span class="tab">Waiting for payment</span> tab any more, and the queue shows it as <span class="status">HMO · provider</span> rather than a red Unpaid badge. Do not waive the balance to tidy the list — that writes off a real receivable (3.6).</dd>
-    <dt>Pathologist sign-off</dt><dd>The <b>Sign-off</b> page is a placeholder and no service has <q>Requires pathologist sign-off</q> switched on. Results go from the bench straight to ready for release, and the pathologist dashboard's two sign-off counters therefore read zero. Pathologists review via Critical Alerts and amendments instead.</dd>
+    <dt>Pathologist sign-off</dt><dd>The <b>Sign-off</b> page is a placeholder and no service has <q>Requires pathologist sign-off</q> switched on. Results go from the bench straight to ready for release, and the pathologist dashboard's two sign-off counters therefore read zero. Pathologists review via Critical Alerts and edited results instead.</dd>
     <dt>SMS</dt><dd>No text messages are sent to patients. Booking confirmations, reminders and result-ready notices are email only. Patients with no email get no automatic notice.</dd>
     <dt>A lost authenticator cannot be cleared in the app</dt><dd>Nothing in the app can remove an enrolled authenticator, and Google sign-in does not bypass the code once you're enrolled — there is no self-service reset, no Admin reset, and no recovery codes. Clearing a lost factor needs direct access to the Supabase project. Treat enrolment as a decision, not an experiment.</dd>
     <dt>Doctor procedures</dt><dd>The catalog has no <q>Doctor procedure</q> services yet, so that path is untested in daily use. Add them under Services before billing procedures.</dd>
@@ -1187,7 +1200,7 @@
     <dt>Clinic cut</dt><dd>The clinic's share of a consultation fee for PF-split doctors.</dd>
     <dt>Attending physician</dt><dd>The doctor recorded on a visit. Required whenever a line earns PF.</dd>
     <dt>Critical alert</dt><dd>An automatic flag when a finalised value crosses a critical threshold. Acknowledged by a pathologist or admin.</dd>
-    <dt>Amendment</dt><dd>A correction to a finalised result, with a reason. The original is kept.</dd>
+    <dt>Edit (result)</dt><dd>A correction to a finalised result, with a required reason; the original PDF and values are kept and a new PDF replaces the current one. On a chemistry report, editing any one test corrects the whole shared report. Still called an <b>amendment</b> in the database and older audit-log entries.</dd>
     <dt>EOD</dt><dd>End of Day: counting the drawer by denomination and closing the shift.</dd>
     <dt>Audit Log</dt><dd>The tamper-evident record of every action, view, print and download. Required by RA 10173.</dd>
     <dt>Online Booking pause</dt><dd>An admin switch that replaces the online booking form with a <q>contact reception</q> notice. Staff booking is unaffected.</dd>
@@ -1201,7 +1214,7 @@
 </section>
 
 <footer class="end">
-  <p>drmed.ph User Guide · v2.19 · 25 September 2026 · Matches the production release at migration 0161. Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
+  <p>drmed.ph User Guide · v2.20 · 25 September 2026 · Matches the production release at migration 0173. Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
 </footer>
 </main>
 </div>

@@ -46,6 +46,8 @@ interface Props {
   // currently-attached image, shown as a hint so the medtech knows what
   // they're keeping if they don't pick a new file.
   currentImageFilename?: string | null;
+  // 'amend' mode: results.amendment_count the page was rendered on (P0065).
+  expectedAmendmentCount?: number;
 }
 
 // Local form state per parameter.
@@ -215,6 +217,7 @@ export function StructuredResultForm(props: Props) {
       }
       if (action === "amend") {
         fd.append("reason", reason.trim());
+        fd.append("expected_amendment_count", String(props.expectedAmendmentCount ?? ""));
         const result = await amendStructuredResultAction(
           props.testRequestId,
           fd,

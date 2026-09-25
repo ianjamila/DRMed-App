@@ -1,15 +1,22 @@
 import { NextResponse } from "next/server";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 import { audit } from "@/lib/audit/log";
 import { canViewResultPdf } from "@/lib/visits/line-visibility";
 import { isResultDownloadEligible } from "@/lib/results/release-eligibility";
 
 /**
- * Streams the released result PDF for a test_request to the requesting staff.
+ * Streams a result PDF for a test_request to the requesting staff.
+ *
+ * This serves ANY result with a stored PDF, not only released ones — staff
+ * review before release is intended (a medtech or pathologist opens the PDF
+ * on a `result_uploaded` / `ready_for_release` line before it is released,
+ * e.g. from the queue or the consolidated report cards). The gate below is
+ * the section check, not the test's status.
  *
  * Policy:
- *  - admin + pathologist: view any released result (sectionsForRole=null)
+ *  - admin + pathologist: view any result in any section (sectionsForRole=null)
  *  - medtech: view results in their bench sections (chemistry/hematology/
  *    immunology/urinalysis/microbiology/send_out)
  *  - xray_technician: view imaging sections (imaging_xray/imaging_ultrasound/imaging_ecg)
@@ -19,13 +26,26 @@ import { isResultDownloadEligible } from "@/lib/results/release-eligibility";
  *  The rule is canViewResultPdf() in lib/visits/line-visibility.ts; the visit
  *  page and the queue call it too, so they only offer what this answers.
  *
+ * `?version=N` serves a REPLACED version instead of the current PDF: 1 ≤ N ≤
+ * amendment_count serves the PDF that amendment #N's edit overwrote (its
+ * `prior_storage_path`); absent, or N equal to amendment_count + 1, serves the
+ * current PDF; anything else 404s. A versioned request additionally requires
+ * `staff_can_read_finished_result` (0172) to pass over the signed-in staff
+ * client — the same rule the chemistry edit path gates on: every linked test
+ * (deleted ones included) inside the caller's sections, and every LIVE linked
+ * test finished. That keeps a medtech from reading edit history for a report
+ * outside their bench even though the current-PDF path above only checks the
+ * single test's section.
+ *
  * Logs every view to audit_log so a later access review can surface who
  * looked at what. `?print=1` (the Print buttons) logs `result.printed_staff`
  * instead of `result.viewed_staff` — a printed copy leaves the building, and
  * RA 10173 wants that disclosure told apart from a look on screen.
  *
- * 404 if the test_request has no released result with a stored PDF.
- * 403 if the staff role is not permitted to view this section.
+ * 404 if the test_request has no result with a stored PDF, or `version` is
+ * malformed / out of range.
+ * 403 if the staff role is not permitted to view this section, or (for a
+ * versioned request) fails `staff_can_read_finished_result`.
  */
 export async function GET(
   req: Request,
@@ -123,9 +143,62 @@ export async function GET(
     );
   }
 
+  // ?version=N — strictly a positive integer, no leading zeros / decimals /
+  // sign. Anything else (including "0", "1.5", "-1", "abc") 404s rather than
+  // silently falling back to the current PDF.
+  const rawVersion = new URL(req.url).searchParams.get("version");
+  let requestedVersion: number | null = null;
+  if (rawVersion !== null) {
+    if (!/^[1-9]\d*$/.test(rawVersion)) {
+      return NextResponse.json({ error: "Invalid version." }, { status: 404 });
+    }
+    requestedVersion = Number(rawVersion);
+  }
+
+  const currentVersion = resolved.amendment_count + 1;
+  const isCurrent = requestedVersion === null || requestedVersion === currentVersion;
+  let storagePath = resolved.storage_path;
+
+  if (!isCurrent) {
+    if (requestedVersion! < 1 || requestedVersion! > resolved.amendment_count) {
+      return NextResponse.json({ error: "Invalid version." }, { status: 404 });
+    }
+
+    // Same rule as editing (0172, §R3): every linked test — deleted ones
+    // included — inside the caller's sections, and every LIVE linked test
+    // finished. The section check above only proved THIS test's section, not
+    // every member of a shared combined report, so a versioned request needs
+    // the stronger gate. Read through the signed-in client: RLS on
+    // result_amendments now enforces this same function (0172), so a signed-
+    // in read and a service-role read after the RPC check are equivalent —
+    // the signed-in client is used here to keep one code path for both.
+    const supabase = await createClient();
+    const { data: canRead } = await supabase.rpc(
+      "staff_can_read_finished_result",
+      { p_result_id: resolved.id },
+    );
+    if (!canRead) {
+      return NextResponse.json(
+        { error: "You don't have access to this section." },
+        { status: 403 },
+      );
+    }
+
+    const { data: amendment } = await supabase
+      .from("result_amendments")
+      .select("prior_storage_path")
+      .eq("result_id", resolved.id)
+      .eq("amendment_seq", requestedVersion!)
+      .maybeSingle();
+    if (!amendment) {
+      return NextResponse.json({ error: "Invalid version." }, { status: 404 });
+    }
+    storagePath = amendment.prior_storage_path;
+  }
+
   const { data: blob, error: dlErr } = await admin.storage
     .from("results")
-    .download(resolved.storage_path);
+    .download(storagePath);
   if (dlErr || !blob) {
     return NextResponse.json(
       { error: dlErr?.message ?? "Failed to fetch PDF." },
@@ -144,8 +217,15 @@ export async function GET(
     resource_type: "test_request",
     resource_id: testRequestId,
     // amendment_count: which version of the file went out, so the
-    // "Printed …" note resets when an amended PDF replaces it.
-    metadata: { result_id: resolved.id, amendment_count: resolved.amendment_count, role: staff.role },
+    // "Printed …" note resets when an amended PDF replaces it. version /
+    // is_current: which version THIS request served (?version=N, 0172).
+    metadata: {
+      result_id: resolved.id,
+      amendment_count: resolved.amendment_count,
+      role: staff.role,
+      version: requestedVersion ?? currentVersion,
+      is_current: isCurrent,
+    },
   });
 
   const bytes = new Uint8Array(await blob.arrayBuffer());

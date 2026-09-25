@@ -12,18 +12,31 @@ import { renderResultPdf } from "@/lib/results/render-pdf";
 import { loadConsultantSignatures, resolvePerformer } from "@/lib/results/signatures";
 import {
   calculateAgeMonths,
-  computeFlag,
-  detectCritical,
   filterParamsForPatient,
   normalisePatientSex,
-  pickRangeForPatient,
   type PatientSex,
   type ResultDocumentInput,
   type ResultLayout,
-  type ParamValue,
   type TemplateParam,
 } from "@/lib/results/types";
 import { loadTemplateParams } from "@/lib/results/loaders";
+import {
+  buildValueRows,
+  detectCrossings,
+  mergeValueRows,
+  missingParams,
+  missingParamsError,
+  valueRowsToDocValues,
+  type ValueRow,
+} from "@/lib/results/value-rows";
+import { countValueChanges, isEditableStatus, validateEditReason } from "@/lib/results/result-edit";
+import {
+  auditAlertChanges,
+  commitResultEdit,
+  commitResultFinalise,
+} from "@/lib/actions/results/result-edit-core";
+import { translatePgError } from "@/lib/accounting/pg-errors";
+import type { Json } from "@/types/database";
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
 
@@ -172,7 +185,7 @@ async function prepareStructured(
   // Ensure a draft results row exists (one per test_request).
   const { data: existingLink } = await admin
     .from("result_test_requests")
-    .select("result_id, results!inner(id, generation_kind)")
+    .select("result_id, results!inner(id, generation_kind, finalised_at)")
     .eq("test_request_id", testRequestId)
     .maybeSingle();
   const existing = existingLink
@@ -217,6 +230,15 @@ async function prepareStructured(
       error:
         "This test already has an uploaded PDF result; structured entry is not available.",
     };
+  } else if (existing.finalised_at) {
+    // 0172: a finished structured result changes only through Edit, which
+    // keeps a version and checks nobody else edited it first. The database
+    // refuses a draft or a second finalise too (result_save_draft /
+    // result_finalise_commit, P0066); this is the friendly early answer.
+    return {
+      ok: false,
+      error: "This result is already finalised. Use Edit results to change it.",
+    };
   }
 
   return {
@@ -234,50 +256,28 @@ async function prepareStructured(
   };
 }
 
-async function upsertValues(
+// A draft save: flags computed here, written by result_save_draft under the
+// result's row lock (0172), which refuses once the result is finalised.
+async function saveDraftValues(
   resultId: string,
-  payload: StructuredPayload,
-  params: TemplateParam[],
-  patientSex: PatientSex,
-  patientAgeMonths: number | null,
+  rows: ValueRow[],
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const admin = createAdminClient();
-  const paramsById = new Map(params.map((p) => [p.id, p]));
-
-  const rows = Object.entries(payload.values).map(([paramId, v]) => {
-    const param = paramsById.get(paramId);
-    let flag: "H" | "L" | "A" | null = null;
-    if (param) {
-      const range = pickRangeForPatient(param, patientSex, patientAgeMonths);
-      flag = computeFlag(param, range, v);
-    }
-    return {
-      result_id: resultId,
-      parameter_id: paramId,
-      numeric_value_si: v.numeric_value_si,
-      numeric_value_conv: v.numeric_value_conv,
-      text_value: v.text_value,
-      select_value: v.select_value,
-      is_blank: v.is_blank,
-      flag,
-    };
-  });
-
   if (rows.length === 0) return { ok: true };
-
-  const { error } = await admin
-    .from("result_values")
-    .upsert(rows, { onConflict: "result_id,parameter_id" });
-
-  if (error) {
-    return { ok: false, error: `Could not save values: ${error.message}` };
-  }
+  const admin = createAdminClient();
+  const { error } = await admin.rpc("result_save_draft", {
+    p_result_id: resultId,
+    p_values: rows as unknown as Json,
+  });
+  if (error) return { ok: false, error: translatePgError(error) };
   return { ok: true };
 }
 
 // Load template params + patient (sex, birthdate) for one prepared context.
 // Both saveDraft and finalise need this before computing flags.
-async function loadParamsAndPatient(ctx: PreparedContext): Promise<{
+async function loadParamsAndPatient(
+  ctx: PreparedContext,
+  ageAsOf: Date = new Date(),
+): Promise<{
   params: TemplateParam[];
   patientSex: PatientSex;
   patientAgeMonths: number | null;
@@ -290,7 +290,7 @@ async function loadParamsAndPatient(ctx: PreparedContext): Promise<{
     .eq("id", ctx.patientId)
     .single();
   const patientSex = normalisePatientSex(pat?.sex ?? null);
-  const patientAgeMonths = calculateAgeMonths(pat?.birthdate ?? null);
+  const patientAgeMonths = calculateAgeMonths(pat?.birthdate ?? null, ageAsOf);
   return { params, patientSex, patientAgeMonths };
 }
 
@@ -304,12 +304,12 @@ export async function saveDraftAction(
   const { params, patientSex, patientAgeMonths } = await loadParamsAndPatient(
     prep.ctx,
   );
-  const ups = await upsertValues(
+  const ups = await saveDraftValues(
     prep.ctx.resultId,
-    payload,
-    params,
-    patientSex,
-    patientAgeMonths,
+    buildValueRows(payload.values, new Map(params.map((p) => [p.id, p])), {
+      sex: patientSex,
+      ageMonths: patientAgeMonths,
+    }),
   );
   if (!ups.ok) return ups;
 
@@ -366,72 +366,49 @@ export async function finaliseStructuredAction(
   if (!prep.ok) return prep;
   const ctx = prep.ctx;
   const admin = createAdminClient();
+  const session = await requireActiveStaff();
 
-  // 1) Load params + patient up-front so we can compute flags during the
-  //    upsert (the DB trigger that used to do this was dropped in 0010).
+  // 1) Params + patient. Age is taken at the instant printed on the PDF.
+  const finalisedNow = new Date();
   const { params, patientSex, patientAgeMonths } = await loadParamsAndPatient(
     ctx,
+    finalisedNow,
   );
+  const patientForRanges = { sex: patientSex, ageMonths: patientAgeMonths };
+  const paramsById = new Map(params.map((p) => [p.id, p]));
+  const newRows = buildValueRows(payload.values, paramsById, patientForRanges);
 
-  // 2) Persist the values + flags.
-  const ups = await upsertValues(
-    ctx.resultId,
-    payload,
-    params,
-    patientSex,
-    patientAgeMonths,
-  );
-  if (!ups.ok) return ups;
+  // 2) Keep the medtech's entries even when finalise stops below (a missing
+  //    value, a missing image) — the same thing the old upsert-first order
+  //    guaranteed.
+  const draft = await saveDraftValues(ctx.resultId, newRows);
+  if (!draft.ok) return draft;
 
   // Validate against only the params relevant to this patient's sex —
   // gender-specific rows (e.g. Hemoglobin F + Hemoglobin M) are filtered to
   // the matching one so the form's view and the server's view agree.
   const visibleParams = filterParamsForPatient(params, patientSex);
-
-  const missing = visibleParams
-    .filter((p) => !p.is_section_header)
-    .filter((p) => {
-      const v = payload.values[p.id];
-      if (!v) return true;
-      if (v.is_blank) return false;
-      if (p.input_type === "numeric") {
-        return v.numeric_value_si == null && v.numeric_value_conv == null;
-      }
-      if (p.input_type === "select") {
-        return !v.select_value;
-      }
-      return !v.text_value || !v.text_value.trim();
-    });
-
+  const missing = missingParams(visibleParams, payload.values);
   if (missing.length > 0) {
-    return {
-      ok: false,
-      error: `Missing values for: ${missing
-        .slice(0, 5)
-        .map((p) => p.parameter_name)
-        .join(", ")}${missing.length > 5 ? "…" : ""}. Mark blank if you didn't run the sub-test.`,
-    };
+    return { ok: false, error: missingParamsError(missing) };
   }
 
-  // 3) Re-read the persisted values (with computed flags) for the PDF.
-  const { data: valueRows } = await admin
+  // 3) The COMPLETE value set this finalise writes and prints: the stored
+  //    draft rows (restricted to this template) overlaid with the form's.
+  const { data: storedRows, error: storedErr } = await admin
     .from("result_values")
     .select(
       "parameter_id, numeric_value_si, numeric_value_conv, text_value, select_value, flag, is_blank",
     )
     .eq("result_id", ctx.resultId);
-
-  const values: Record<string, ParamValue> = {};
-  for (const r of valueRows ?? []) {
-    values[r.parameter_id] = {
-      numeric_value_si: r.numeric_value_si,
-      numeric_value_conv: r.numeric_value_conv,
-      text_value: r.text_value,
-      select_value: r.select_value,
-      flag: r.flag as ParamValue["flag"],
-      is_blank: r.is_blank,
-    };
-  }
+  if (storedErr) return { ok: false, error: translatePgError(storedErr) };
+  const completeRows = mergeValueRows(
+    (storedRows ?? [])
+      .filter((r) => ctx.paramIds.has(r.parameter_id))
+      .map((r) => ({ ...r, flag: r.flag as ValueRow["flag"] })),
+    newRows,
+  );
+  const values = valueRowsToDocValues(completeRows);
 
   // 4) Load template + service + patient + medtech for the document.
   const { data: tplRow } = await admin
@@ -463,7 +440,6 @@ export async function finaliseStructuredAction(
     .eq("id", ctx.patientId)
     .single();
 
-  const session = await requireActiveStaff();
   const { data: medtech } = await admin
     .from("staff_profiles")
     .select("full_name, prc_license_kind, prc_license_no")
@@ -479,11 +455,8 @@ export async function finaliseStructuredAction(
   //    skip it. Validate now, BEFORE rendering the PDF, so we can fail fast
   //    if the file is missing / oversized / wrong mime.
   const isImaging = tplRow.layout === "imaging_report";
-  let imageBuffer: Buffer | null = null;
-  let imageMime: string | null = null;
-  let imageFilename: string | null = null;
-  let imageSize = 0;
-  let imagePath: string | null = null;
+  let image: { body: Buffer; mime: string; filename: string; size: number; ext: string } | null =
+    null;
 
   if (isImaging) {
     const rawImage = formData.get("image");
@@ -506,10 +479,13 @@ export async function finaliseStructuredAction(
         error: "Image must be 25 MB or less.",
       };
     }
-    imageBuffer = Buffer.from(await rawImage.arrayBuffer());
-    imageMime = rawImage.type;
-    imageFilename = rawImage.name || `attachment.${fileExtForMime(rawImage.type)}`;
-    imageSize = rawImage.size;
+    image = {
+      body: Buffer.from(await rawImage.arrayBuffer()),
+      mime: rawImage.type,
+      filename: rawImage.name || `attachment.${fileExtForMime(rawImage.type)}`,
+      size: rawImage.size,
+      ext: fileExtForMime(rawImage.type),
+    };
   }
 
   // 6) Read control_no — set by the sequence default on insert, so always
@@ -521,7 +497,8 @@ export async function finaliseStructuredAction(
     .single();
   const controlNo = pre?.control_no ?? null;
 
-  // 7) Render the PDF (embedding the image when present).
+  // 7) Render the PDF (embedding the image when present) from the values
+  //    about to be written.
   const consultants = await loadConsultantSignatures();
   const performer = await resolvePerformer({
     service: { code: svc.code, kind: null },
@@ -546,7 +523,8 @@ export async function finaliseStructuredAction(
     },
     visit: { visit_number: visit.visit_number },
     controlNo,
-    finalisedAt: new Date(),
+    finalisedAt: finalisedNow,
+    ageAsOf: finalisedNow,
     medtech: medtech
       ? {
           full_name: medtech.full_name,
@@ -556,78 +534,36 @@ export async function finaliseStructuredAction(
       : null,
     performer,
     consultantPathologist: consultants.pathologist,
-    imageAttachment:
-      imageBuffer && imageMime && imageFilename
-        ? {
-            data: new Uint8Array(imageBuffer),
-            mime: imageMime,
-            filename: imageFilename,
-          }
-        : undefined,
+    imageAttachment: image
+      ? { data: new Uint8Array(image.body), mime: image.mime, filename: image.filename }
+      : undefined,
   };
 
   const pdf = await renderResultPdf(docInput);
 
-  // 8) Upload the source image to the `result-images` bucket BEFORE the
-  //    PDF — easier to clean up if the PDF upload then fails (we just remove
-  //    the image). Done here for imaging-report layouts only.
-  if (isImaging && imageBuffer && imageMime) {
-    imagePath = `${ctx.patientId}/${ctx.visitId}/${ctx.testRequestId}.${fileExtForMime(imageMime)}`;
-    const { error: imgErr } = await admin.storage
-      .from("result-images")
-      .upload(imagePath, imageBuffer, {
-        contentType: imageMime,
-        upsert: true,
-      });
-    if (imgErr) {
-      return { ok: false, error: `Image upload failed: ${imgErr.message}` };
-    }
-  }
-
-  // 9) Upload the rendered PDF.
-  const path = `${ctx.patientId}/${ctx.visitId}/${ctx.testRequestId}.pdf`;
-  const { error: upErr } = await admin.storage
-    .from("results")
-    .upload(path, pdf, { contentType: "application/pdf", upsert: true });
-  if (upErr) {
-    // Roll back the image upload so we don't orphan it.
-    if (imagePath) {
-      await admin.storage.from("result-images").remove([imagePath]);
-    }
-    return { ok: false, error: `PDF upload failed: ${upErr.message}` };
-  }
-
-  // 10) Mark the row finalised. The trigger advances test_requests.status when
-  //     finalised_at transitions NULL → not-NULL. For imaging reports, write
-  //     all image_* columns at once — the all-or-nothing CHECK constraint
-  //     enforces that they travel together.
-  const nowIso = new Date().toISOString();
-  const { error: finErr } = await admin
-    .from("results")
-    .update({
-      storage_path: path,
-      file_size_bytes: pdf.byteLength,
-      finalised_at: nowIso,
-      uploaded_by: session.user_id,
-      ...(isImaging && imagePath && imageMime && imageFilename
-        ? {
-            image_storage_path: imagePath,
-            image_filename: imageFilename,
-            image_mime_type: imageMime,
-            image_size_bytes: imageSize,
-            image_uploaded_at: nowIso,
-            image_uploaded_by: session.user_id,
-          }
-        : {}),
-    })
-    .eq("id", ctx.resultId);
-  if (finErr) {
-    await admin.storage.from("results").remove([path]);
-    if (imagePath) {
-      await admin.storage.from("result-images").remove([imagePath]);
-    }
-    return { ok: false, error: `Finalise failed: ${finErr.message}` };
-  }
+  // 8) Upload (attempt-unique paths) and commit values + PDF pointer +
+  //    finalised_at + image + critical alerts in ONE transaction (0172
+  //    result_finalise_commit). Writing finalised_at fires the status flip
+  //    inside it, so the test advances together with its PDF or not at all.
+  //    The notification bell subscribes to critical_alerts inserts, so
+  //    pathologists + admins are paged the moment this commits.
+  const alerts = detectCrossings(
+    completeRows,
+    new Map(visibleParams.map((p) => [p.id, p])),
+    patientForRanges,
+    () => testRequestId,
+  );
+  const committed = await commitResultFinalise({
+    resultId: ctx.resultId,
+    finaliserId: session.user_id,
+    base: `${ctx.patientId}/${ctx.visitId}/${ctx.testRequestId}`,
+    pdf,
+    finalisedAt: finalisedNow,
+    values: completeRows,
+    image,
+    alerts,
+  });
+  if (!committed.ok) return { ok: false, error: committed.error };
 
   const h = await headers();
   await audit({
@@ -640,15 +576,16 @@ export async function finaliseStructuredAction(
       test_request_id: testRequestId,
       visit_id: ctx.visitId,
       control_no: controlNo,
-      param_count: Object.keys(payload.values).length,
-      abnormal_count: Object.values(values).filter((v) => v.flag).length,
+      param_count: completeRows.length,
+      abnormal_count: completeRows.filter((v) => v.flag).length,
       pdf_size_bytes: pdf.byteLength,
+      storage_path: committed.data.storagePath,
     },
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),
   });
 
-  if (isImaging && imagePath && imageMime) {
+  if (image && committed.data.imagePath) {
     await audit({
       actor_id: session.user_id,
       actor_type: "staff",
@@ -657,80 +594,35 @@ export async function finaliseStructuredAction(
       resource_id: ctx.resultId,
       metadata: {
         test_request_id: testRequestId,
-        image_storage_path: imagePath,
-        image_mime_type: imageMime,
-        image_size_bytes: imageSize,
+        image_storage_path: committed.data.imagePath,
+        image_mime_type: image.mime,
+        image_size_bytes: image.size,
       },
       ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
       user_agent: h.get("user-agent"),
     });
   }
 
-  // 11) Critical-value detection. For each param with a numeric value
-  //    that crosses a configured critical threshold (per-band
-  //    critical_low_si / critical_high_si), insert a critical_alerts
-  //    row. The notification bell subscribes to inserts on this table
-  //    so pathologists + admins are paged in real time.
-  const alerts: Array<{
-    result_id: string;
-    test_request_id: string;
-    parameter_id: string;
-    parameter_name: string;
-    direction: "low" | "high";
-    observed_value_si: number;
-    threshold_si: number;
-    patient_id: string;
-    patient_drm_id: string;
-  }> = [];
-  for (const param of visibleParams) {
-    if (param.is_section_header) continue;
-    const v = values[param.id];
-    if (!v) continue;
-    const range = pickRangeForPatient(param, patientSex, patientAgeMonths);
-    const hit = detectCritical(param, range, v);
-    if (hit) {
-      alerts.push({
-        result_id: ctx.resultId,
+  if (committed.data.alertsAdded.length > 0) {
+    await audit({
+      actor_id: session.user_id,
+      actor_type: "staff",
+      patient_id: ctx.patientId,
+      action: "result.critical_value_detected",
+      resource_type: "result",
+      resource_id: ctx.resultId,
+      metadata: {
         test_request_id: testRequestId,
-        parameter_id: param.id,
-        parameter_name: param.parameter_name,
-        direction: hit.direction,
-        observed_value_si: hit.observed_si,
-        threshold_si: hit.threshold_si,
-        patient_id: ctx.patientId,
-        patient_drm_id: patient.drm_id,
-      });
-    }
-  }
-  if (alerts.length > 0) {
-    const { error: alertErr } = await admin
-      .from("critical_alerts")
-      .insert(alerts);
-    if (alertErr) {
-      // Don't fail the finalise — the PDF + result row are already
-      // committed. Surface in the audit log so the gap is investigatable.
-      console.error("critical_alerts insert failed", alertErr);
-    } else {
-      await audit({
-        actor_id: session.user_id,
-        actor_type: "staff",
-        patient_id: ctx.patientId,
-        action: "result.critical_value_detected",
-        resource_type: "result",
-        resource_id: ctx.resultId,
-        metadata: {
-          test_request_id: testRequestId,
-          alerts: alerts.map((a) => ({
-            parameter: a.parameter_name,
-            direction: a.direction,
-            observed: a.observed_value_si,
-            threshold: a.threshold_si,
-          })),
-        },
-        ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
-        user_agent: h.get("user-agent"),
-      });
-    }
+        alerts: committed.data.alertsAdded.map((a) => ({
+          parameter: a.parameter_name,
+          direction: a.direction,
+          observed: a.observed_value_si,
+          threshold: a.threshold_si,
+        })),
+      },
+      ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+      user_agent: h.get("user-agent"),
+    });
   }
 
   revalidatePath(`/staff/queue`);
@@ -952,11 +844,23 @@ async function isSharedReport(
   return (count ?? 0) > 1;
 }
 
+// The form carries the amendment_count it was opened on; result_edit_commit
+// refuses the save (P0065) when someone else edited the result since.
+function parseExpectedAmendmentCount(formData: FormData): number | null {
+  const raw = (formData.get("expected_amendment_count") ?? "").toString();
+  if (!/^\d+$/.test(raw)) return null;
+  const n = Number(raw);
+  return Number.isSafeInteger(n) ? n : null;
+}
+
+const MISSING_VERSION_ERROR =
+  "This form is out of date. Reload the page and make your change again.";
+
 // Amend an already-released (or result_uploaded / ready_for_release)
-// result. Snapshots the prior version into result_amendments and
-// replaces results.storage_path with the new file. Original PDF is
-// retained at its old path — never overwritten — so the audit trail
-// can serve historical versions if needed later.
+// result by replacing its PDF (uploaded send-out PDFs). The prior version is
+// snapshotted and kept at its old path — never overwritten — and the new file
+// commits through result_edit_commit (0172): version check, snapshot and
+// pointer swap in one transaction.
 export async function amendResultAction(
   testRequestId: string,
   formData: FormData,
@@ -973,23 +877,18 @@ export async function amendResultAction(
   if (file.size > MAX_BYTES) {
     return { ok: false, error: "PDF must be 10 MB or less." };
   }
-  const reason = (formData.get("reason") ?? "").toString().trim();
-  if (reason.length < 5) {
-    return {
-      ok: false,
-      error: "Please describe the reason for amendment (5+ characters).",
-    };
-  }
-  if (reason.length > 2000) {
-    return { ok: false, error: "Reason is too long (2000 char max)." };
-  }
+  const reasonCheck = validateEditReason(formData.get("reason"));
+  if (!reasonCheck.ok) return reasonCheck;
+  const reason = reasonCheck.reason;
+  const expected = parseExpectedAmendmentCount(formData);
+  if (expected == null) return { ok: false, error: MISSING_VERSION_ERROR };
 
   const admin = createAdminClient();
 
   // Load the current result + parent test_request + visit context.
   const { data: resultLink } = await admin
     .from("result_test_requests")
-    .select("result_id, results!inner(id, storage_path, file_size_bytes, uploaded_by, uploaded_at, notes, amendment_count, report_group_id)")
+    .select("result_id, results!inner(id, storage_path, amendment_count, report_group_id)")
     .eq("test_request_id", testRequestId)
     .maybeSingle();
   const result = resultLink
@@ -1037,73 +936,31 @@ export async function amendResultAction(
 
   // Allowed amendment statuses: anything past the medtech editing stage
   // — including released. Tests still in progress should be edited via
-  // the normal workflow, not amended.
-  const allowed = new Set([
-    "result_uploaded",
-    "ready_for_release",
-    "released",
-  ]);
-  if (!allowed.has(testRow.status)) {
+  // the normal workflow, not amended. result_edit_commit re-checks (P0066).
+  if (!isEditableStatus(testRow.status)) {
     return {
       ok: false,
       error: `Test status is ${testRow.status} — amend only applies after a result has been recorded.`,
     };
   }
-
-  const nextSeq = (result.amendment_count ?? 0) + 1;
-  const newPath = `${visit.patient_id}/${visit.id}/${testRow.id}.v${nextSeq + 1}.pdf`;
-
-  // Upload new file BEFORE writing the snapshot, so a failed upload
-  // doesn't leave a half-amended row.
-  const buffer = Buffer.from(await file.arrayBuffer());
-  const { error: uploadErr } = await admin.storage
-    .from("results")
-    .upload(newPath, buffer, {
-      contentType: "application/pdf",
-      upsert: false,
-    });
-  if (uploadErr) {
-    return { ok: false, error: `Upload failed: ${uploadErr.message}` };
+  // Fast answer for a stale form; the RPC is the real check.
+  if ((result.amendment_count ?? 0) !== expected) {
+    return { ok: false, error: translatePgError({ code: "P0065" }) };
   }
 
-  // Snapshot the prior version into result_amendments.
-  const { error: snapErr } = await admin.from("result_amendments").insert({
-    result_id: result.id,
-    test_request_id: testRow.id,
-    prior_storage_path: result.storage_path,
-    prior_uploaded_by: result.uploaded_by,
-    prior_uploaded_at: result.uploaded_at,
-    prior_file_size_bytes: result.file_size_bytes,
-    prior_notes: result.notes,
+  const committed = await commitResultEdit({
+    resultId: result.id,
+    expectedAmendmentCount: expected,
+    currentStoragePath: result.storage_path,
+    editorId: session.user_id,
     reason,
-    amended_by: session.user_id,
-    amendment_seq: nextSeq,
+    anchorTestRequestId: testRow.id,
+    pdf: Buffer.from(await file.arrayBuffer()),
+    values: null,
+    newImage: null,
+    alerts: null,
   });
-  if (snapErr) {
-    // Roll back the new upload so the storage doesn't orphan.
-    await admin.storage.from("results").remove([newPath]);
-    return { ok: false, error: snapErr.message };
-  }
-
-  // Swap the canonical row over to the new file.
-  const nowIso = new Date().toISOString();
-  const { error: updErr } = await admin
-    .from("results")
-    .update({
-      storage_path: newPath,
-      file_size_bytes: file.size,
-      uploaded_by: session.user_id,
-      uploaded_at: nowIso,
-      amended_at: nowIso,
-      amendment_count: nextSeq,
-    })
-    .eq("id", result.id);
-  if (updErr) {
-    // The snapshot row exists but pointer didn't move; surface the
-    // error so the operator knows the state is inconsistent and can
-    // retry.
-    return { ok: false, error: updErr.message };
-  }
+  if (!committed.ok) return committed;
 
   const h = await headers();
   await audit({
@@ -1115,10 +972,11 @@ export async function amendResultAction(
     metadata: {
       test_request_id: testRow.id,
       visit_id: visit.id,
-      amendment_seq: nextSeq,
+      amendment_seq: committed.data.amendmentSeq,
       reason,
-      prior_storage_path: result.storage_path,
-      new_storage_path: newPath,
+      prior_storage_path: committed.data.priorStoragePath,
+      new_storage_path: committed.data.newStoragePath,
+      replayed: committed.data.replayed,
     },
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),
@@ -1134,13 +992,14 @@ export async function amendResultAction(
 // ---------------------------------------------------------------------------
 // When a finalised structured result needs correction, the medtech re-opens
 // the structured form pre-filled with the current values, edits, and
-// submits with a reason. The amendment snapshots the prior values + prior
-// PDF + prior image into result_amendments, regenerates the PDF from the
-// new values, and re-uploads as .v{N+1}.pdf. The prior PDF stays at the
-// original storage_path for historical access via prior_storage_path.
+// submits with a reason. The new PDF is rendered from the new values and the
+// whole edit — snapshot of the prior values / PDF / image, the new values,
+// the new PDF pointer, critical-alert reconciliation — commits in one
+// transaction through result_edit_commit (0172). The prior PDF stays at its
+// path for the history panel's "View replaced version" link.
 //
-// Distinct from amendResultAction (PDF-replace) which is unchanged — that
-// path remains for generation_kind = 'uploaded' results (send-out PDFs).
+// Distinct from amendResultAction (PDF-replace), which remains for
+// generation_kind = 'uploaded' results (send-out PDFs).
 export async function amendStructuredResultAction(
   testRequestId: string,
   formData: FormData,
@@ -1167,30 +1026,25 @@ export async function amendStructuredResultAction(
     return { ok: false, error: "Could not parse values payload." };
   }
 
-  const reason = (formData.get("reason") ?? "").toString().trim();
-  if (reason.length < 5) {
-    return {
-      ok: false,
-      error: "Please describe the reason for amendment (5+ characters).",
-    };
-  }
-  if (reason.length > 2000) {
-    return { ok: false, error: "Reason is too long (2000 char max)." };
-  }
+  const reasonCheck = validateEditReason(formData.get("reason"));
+  if (!reasonCheck.ok) return reasonCheck;
+  const reason = reasonCheck.reason;
+  const expected = parseExpectedAmendmentCount(formData);
+  if (expected == null) return { ok: false, error: MISSING_VERSION_ERROR };
 
   const session = await requireActiveStaff();
   const admin = createAdminClient();
 
   // 2) Load the result + parent test_request + visit context. Status must
   //    be past medtech editing AND generation_kind must be 'structured'
-  //    (PDF-only results use the legacy amendResultAction path).
+  //    (PDF-only results use the amendResultAction path).
   const { data: resultLink } = await admin
     .from("result_test_requests")
     .select(
       `result_id, results!inner(
-        id, storage_path, file_size_bytes, uploaded_by, uploaded_at, notes,
-        amendment_count, generation_kind, finalised_at, report_group_id,
-        image_storage_path, image_filename, image_mime_type, image_size_bytes
+        id, storage_path, amendment_count, generation_kind, finalised_at,
+        report_group_id, control_no,
+        image_storage_path, image_filename, image_mime_type
       )`,
     )
     .eq("test_request_id", testRequestId)
@@ -1248,73 +1102,40 @@ export async function amendStructuredResultAction(
     return { ok: false, error: SHARED_REPORT_AMEND_ERROR };
   }
 
-  const allowed = new Set([
-    "result_uploaded",
-    "ready_for_release",
-    "released",
-  ]);
-  if (!allowed.has(testRow.status)) {
+  if (!isEditableStatus(testRow.status)) {
     return {
       ok: false,
       error: `Test status is ${testRow.status} — amend only applies after a result has been recorded.`,
     };
   }
+  if ((result.amendment_count ?? 0) !== expected) {
+    return { ok: false, error: translatePgError({ code: "P0065" }) };
+  }
 
-  // 3) Load template + restrict payload to template params (mirrors the
-  //    paramIds guard in prepareStructured).
+  // 3) Load the ACTIVE template + restrict payload to its params (mirrors
+  //    the paramIds guard in prepareStructured). Without is_active a
+  //    deactivated per-service template could be picked up.
   const { data: tpl } = await admin
     .from("result_templates")
     .select("id, layout, header_notes, footer_notes")
     .eq("service_id", testRow.service_id)
+    .eq("is_active", true)
     .maybeSingle();
   if (!tpl) {
     return { ok: false, error: "No template configured for this service." };
   }
-
-  const { data: paramRows } = await admin
-    .from("result_template_params")
-    .select("id")
-    .eq("template_id", tpl.id);
-  const paramIds = new Set((paramRows ?? []).map((r) => r.id));
+  const params = await loadTemplateParams(admin, tpl.id);
+  const paramsById = new Map(params.map((p) => [p.id, p]));
   for (const k of Object.keys(payload.values)) {
-    if (!paramIds.has(k)) {
+    if (!paramsById.has(k)) {
       return { ok: false, error: "Unknown parameter in payload." };
     }
   }
 
-  // 4) Snapshot the prior values BEFORE we touch anything. Join in the
-  //    parameter_name so the JSON snapshot is self-describing — a future
-  //    diff renderer doesn't have to chase the template-params table.
-  const { data: priorValueRows } = await admin
-    .from("result_values")
-    .select(
-      `parameter_id, numeric_value_si, numeric_value_conv, text_value,
-       select_value, flag, is_blank,
-       result_template_params!inner ( parameter_name )`,
-    )
-    .eq("result_id", result.id);
-
-  const priorValuesSnapshot = (priorValueRows ?? []).map((r) => {
-    const p = Array.isArray(r.result_template_params)
-      ? r.result_template_params[0]
-      : r.result_template_params;
-    return {
-      parameter_id: r.parameter_id,
-      parameter_name: p?.parameter_name ?? null,
-      numeric_value_si: r.numeric_value_si,
-      numeric_value_conv: r.numeric_value_conv,
-      text_value: r.text_value,
-      select_value: r.select_value,
-      flag: r.flag,
-      is_blank: r.is_blank,
-    };
-  });
-
-  const nextSeq = (result.amendment_count ?? 0) + 1;
-
-  // 5) Load template params + patient sex/age so upsertValues can compute
-  //    flags. Same load loadParamsAndPatient does for finalise.
-  const params = await loadTemplateParams(admin, tpl.id);
+  // 4) Patient. An edited report keeps its ORIGINAL date, and the age band
+  //    behind every range, flag and critical threshold is taken on that
+  //    date too — a correction after a birthday cannot move the band.
+  const reportDate = new Date(result.finalised_at);
   const { data: pat } = await admin
     .from("patients")
     .select("drm_id, first_name, last_name, sex, birthdate")
@@ -1324,46 +1145,29 @@ export async function amendStructuredResultAction(
     return { ok: false, error: "Patient record not found." };
   }
   const patientSex = normalisePatientSex(pat.sex);
-  const patientAgeMonths = calculateAgeMonths(pat.birthdate);
+  const patientForRanges = {
+    sex: patientSex,
+    ageMonths: calculateAgeMonths(pat.birthdate, reportDate),
+  };
 
   // Validate visible params have values — same shape as finalise. We do
   // this BEFORE any storage / DB writes so the user sees the error early.
   const visibleParams = filterParamsForPatient(params, patientSex);
-  const missing = visibleParams
-    .filter((p) => !p.is_section_header)
-    .filter((p) => {
-      const v = payload.values[p.id];
-      if (!v) return true;
-      if (v.is_blank) return false;
-      if (p.input_type === "numeric") {
-        return v.numeric_value_si == null && v.numeric_value_conv == null;
-      }
-      if (p.input_type === "select") {
-        return !v.select_value;
-      }
-      return !v.text_value || !v.text_value.trim();
-    });
+  const missing = missingParams(visibleParams, payload.values);
   if (missing.length > 0) {
-    return {
-      ok: false,
-      error: `Missing values for: ${missing
-        .slice(0, 5)
-        .map((p) => p.parameter_name)
-        .join(", ")}${missing.length > 5 ? "…" : ""}. Mark blank if you didn't run the sub-test.`,
-    };
+    return { ok: false, error: missingParamsError(missing) };
   }
 
-  // 6) Imaging branch — optional new image. If absent, we re-use the
-  //    existing image (download bytes for the PDF embed; leave image_*
-  //    columns untouched). If present, validate and upload to the
-  //    versioned path BEFORE doing any DB writes.
-  const isImaging = tpl.layout === "imaging_report";
-  let newImageBuffer: Buffer | null = null;
-  let newImageMime: string | null = null;
-  let newImageFilename: string | null = null;
-  let newImageSize = 0;
-  let newImagePath: string | null = null;
+  // The edit REPLACES the value set: a parameter the form no longer sends
+  // is removed (the prior rows are kept in the amendment's snapshot).
+  const newRows = buildValueRows(payload.values, paramsById, patientForRanges);
+  const values = valueRowsToDocValues(newRows);
 
+  // 5) Imaging branch — optional new image. If absent, the current image is
+  //    re-downloaded for the PDF embed and its columns stay untouched.
+  const isImaging = tpl.layout === "imaging_report";
+  let newImage: { body: Buffer; mime: string; filename: string; size: number; ext: string } | null =
+    null;
   if (isImaging) {
     const rawImage = formData.get("image");
     if (rawImage instanceof File && rawImage.size > 0) {
@@ -1377,143 +1181,50 @@ export async function amendStructuredResultAction(
       if (rawImage.size > IMAGING_MAX_BYTES) {
         return { ok: false, error: "Image must be 25 MB or less." };
       }
-      newImageBuffer = Buffer.from(await rawImage.arrayBuffer());
-      newImageMime = rawImage.type;
-      newImageFilename =
-        rawImage.name || `attachment.${fileExtForMime(rawImage.type)}`;
-      newImageSize = rawImage.size;
-      newImagePath = `${visit.patient_id}/${visit.id}/${testRow.id}.v${nextSeq + 1}.${fileExtForMime(newImageMime)}`;
+      newImage = {
+        body: Buffer.from(await rawImage.arrayBuffer()),
+        mime: rawImage.type,
+        filename: rawImage.name || `attachment.${fileExtForMime(rawImage.type)}`,
+        size: rawImage.size,
+        ext: fileExtForMime(rawImage.type),
+      };
     }
   }
 
-  // Decide which image (if any) the regenerated PDF embeds. If a new
-  // image was supplied, use those bytes. Otherwise re-download the
-  // existing one so the regenerated PDF still includes it.
-  let pdfImageBytes: Uint8Array | null = null;
-  let pdfImageMime: string | null = null;
-  let pdfImageFilename: string | null = null;
-  if (isImaging) {
-    if (newImageBuffer && newImageMime && newImageFilename) {
-      pdfImageBytes = new Uint8Array(newImageBuffer);
-      pdfImageMime = newImageMime;
-      pdfImageFilename = newImageFilename;
-    } else if (result.image_storage_path && result.image_mime_type) {
-      const { data: dl, error: dlErr } = await admin.storage
-        .from("result-images")
-        .download(result.image_storage_path);
-      if (dlErr || !dl) {
-        return {
-          ok: false,
-          error: `Could not load existing image: ${dlErr?.message ?? "unknown"}`,
-        };
-      }
-      const buf = Buffer.from(await dl.arrayBuffer());
-      pdfImageBytes = new Uint8Array(buf);
-      pdfImageMime = result.image_mime_type;
-      pdfImageFilename = result.image_filename ?? "attachment";
-    }
-  }
-
-  // 7) Upload the new image FIRST (if any). Easier to roll back storage
-  //    than DB rows — if anything downstream fails, we remove the file.
-  if (isImaging && newImageBuffer && newImageMime && newImagePath) {
-    const { error: imgErr } = await admin.storage
+  let pdfImage: { data: Uint8Array; mime: string; filename: string } | undefined;
+  if (newImage) {
+    pdfImage = { data: new Uint8Array(newImage.body), mime: newImage.mime, filename: newImage.filename };
+  } else if (isImaging && result.image_storage_path && result.image_mime_type) {
+    const { data: dl, error: dlErr } = await admin.storage
       .from("result-images")
-      .upload(newImagePath, newImageBuffer, {
-        contentType: newImageMime,
-        upsert: false,
-      });
-    if (imgErr) {
-      return { ok: false, error: `Image upload failed: ${imgErr.message}` };
+      .download(result.image_storage_path);
+    if (dlErr || !dl) {
+      return {
+        ok: false,
+        error: `Could not load existing image: ${dlErr?.message ?? "unknown"}`,
+      };
     }
-  }
-
-  // 8) Insert the result_amendments snapshot row. Captures both the
-  //    prior PDF metadata and prior values + prior image. Done before
-  //    we mutate result_values, so the snapshot is faithful.
-  const { error: snapErr } = await admin.from("result_amendments").insert({
-    result_id: result.id,
-    test_request_id: testRow.id,
-    prior_storage_path: result.storage_path,
-    prior_uploaded_by: result.uploaded_by,
-    prior_uploaded_at: result.uploaded_at,
-    prior_file_size_bytes: result.file_size_bytes,
-    prior_notes: result.notes,
-    prior_values_json: priorValuesSnapshot,
-    prior_image_storage_path: result.image_storage_path,
-    prior_image_filename: result.image_filename,
-    prior_image_mime_type: result.image_mime_type,
-    prior_image_size_bytes: result.image_size_bytes,
-    reason,
-    amended_by: session.user_id,
-    amendment_seq: nextSeq,
-  });
-  if (snapErr) {
-    if (newImagePath) {
-      await admin.storage.from("result-images").remove([newImagePath]);
-    }
-    return { ok: false, error: snapErr.message };
-  }
-
-  // 9) Wipe + reinsert result_values. Using DELETE + upsertValues (instead
-  //    of upsert-only) so amendments that DROP a previously-recorded
-  //    parameter actually remove it from the live row set; the prior
-  //    rows are preserved in prior_values_json on the amendment.
-  const { error: delErr } = await admin
-    .from("result_values")
-    .delete()
-    .eq("result_id", result.id);
-  if (delErr) {
-    if (newImagePath) {
-      await admin.storage.from("result-images").remove([newImagePath]);
-    }
-    return { ok: false, error: `Could not clear prior values: ${delErr.message}` };
-  }
-
-  const ups = await upsertValues(
-    result.id,
-    payload,
-    params,
-    patientSex,
-    patientAgeMonths,
-  );
-  if (!ups.ok) {
-    if (newImagePath) {
-      await admin.storage.from("result-images").remove([newImagePath]);
-    }
-    return ups;
-  }
-
-  // 10) Re-read the persisted values (with computed flags) for the PDF
-  //     render. Mirrors finaliseStructuredAction step 3.
-  const { data: valueRows } = await admin
-    .from("result_values")
-    .select(
-      "parameter_id, numeric_value_si, numeric_value_conv, text_value, select_value, flag, is_blank",
-    )
-    .eq("result_id", result.id);
-
-  const values: Record<string, ParamValue> = {};
-  for (const r of valueRows ?? []) {
-    values[r.parameter_id] = {
-      numeric_value_si: r.numeric_value_si,
-      numeric_value_conv: r.numeric_value_conv,
-      text_value: r.text_value,
-      select_value: r.select_value,
-      flag: r.flag as ParamValue["flag"],
-      is_blank: r.is_blank,
+    pdfImage = {
+      data: new Uint8Array(await dl.arrayBuffer()),
+      mime: result.image_mime_type,
+      filename: result.image_filename ?? "attachment",
     };
   }
 
-  // 11) Load medtech profile for the PDF footer (same staff member who
-  //     amended; matches finaliseStructuredAction).
+  // 6) Prior values, for the audit's change count only — the authoritative
+  //    snapshot is taken by result_edit_commit under the row lock.
+  const { data: priorRows } = await admin
+    .from("result_values")
+    .select("parameter_id, numeric_value_si, numeric_value_conv, text_value, select_value, is_blank")
+    .eq("result_id", result.id);
+
+  // 7) Render the new PDF. It signs as the editor (owner decision
+  //    2026-09-24) and keeps the control number and the original date.
   const { data: medtech } = await admin
     .from("staff_profiles")
     .select("full_name, prc_license_kind, prc_license_no")
     .eq("id", session.user_id)
     .single();
-
-  // 12) Render the new PDF.
   const amendConsultants = await loadConsultantSignatures();
   const amendPerformer = await resolvePerformer({
     service: { code: svc.code, kind: null },
@@ -1537,8 +1248,9 @@ export async function amendStructuredResultAction(
       birthdate: pat.birthdate,
     },
     visit: { visit_number: visit.visit_number },
-    controlNo: null, // re-read below from existing row so we keep the same
-    finalisedAt: new Date(),
+    controlNo: result.control_no ?? null,
+    finalisedAt: reportDate,
+    ageAsOf: reportDate,
     medtech: medtech
       ? {
           full_name: medtech.full_name,
@@ -1548,102 +1260,47 @@ export async function amendStructuredResultAction(
       : null,
     performer: amendPerformer,
     consultantPathologist: amendConsultants.pathologist,
-    imageAttachment:
-      pdfImageBytes && pdfImageMime && pdfImageFilename
-        ? {
-            data: pdfImageBytes,
-            mime: pdfImageMime,
-            filename: pdfImageFilename,
-          }
-        : undefined,
+    imageAttachment: pdfImage,
   };
-  // Preserve the original control_no on the regenerated PDF.
-  const { data: ctrl } = await admin
-    .from("results")
-    .select("control_no")
-    .eq("id", result.id)
-    .single();
-  docInput.controlNo = ctrl?.control_no ?? null;
-
   const pdf = await renderResultPdf(docInput);
 
-  // 13) Upload the new PDF to the versioned path. Matches the .v{N+1}.pdf
-  //     convention used by the PDF-only amendResultAction.
-  const newPdfPath = `${visit.patient_id}/${visit.id}/${testRow.id}.v${nextSeq + 1}.pdf`;
-  const { error: upErr } = await admin.storage
-    .from("results")
-    .upload(newPdfPath, pdf, {
-      contentType: "application/pdf",
-      upsert: false,
-    });
-  if (upErr) {
-    if (newImagePath) {
-      await admin.storage.from("result-images").remove([newImagePath]);
-    }
-    return { ok: false, error: `PDF upload failed: ${upErr.message}` };
-  }
-
-  // 14) Update the results row to point at the new PDF + (optionally)
-  //     swap in the new image fields. The all-or-nothing image CHECK
-  //     constraint forces us to write all six together when present.
-  const nowIso = new Date().toISOString();
-  const { error: updErr } = await admin
-    .from("results")
-    .update({
-      storage_path: newPdfPath,
-      file_size_bytes: pdf.byteLength,
-      uploaded_by: session.user_id,
-      uploaded_at: nowIso,
-      amended_at: nowIso,
-      amendment_count: nextSeq,
-      ...(isImaging && newImagePath && newImageMime && newImageFilename
-        ? {
-            image_storage_path: newImagePath,
-            image_filename: newImageFilename,
-            image_mime_type: newImageMime,
-            image_size_bytes: newImageSize,
-            image_uploaded_at: nowIso,
-            image_uploaded_by: session.user_id,
-          }
-        : {}),
-    })
-    .eq("id", result.id);
-  if (updErr) {
-    // Roll back both storage uploads — DB state is unchanged from before
-    // this update (the snapshot row + values change still stand; surface
-    // the error so the operator can retry).
-    await admin.storage.from("results").remove([newPdfPath]);
-    if (newImagePath) {
-      await admin.storage.from("result-images").remove([newImagePath]);
-    }
-    return { ok: false, error: `Amend failed: ${updErr.message}` };
-  }
-
-  // 15) Audit. Count rows that materially changed vs the prior snapshot
-  //     so the log gives a quick sense of scope.
-  const priorById = new Map(
-    priorValuesSnapshot.map((p) => [p.parameter_id, p]),
+  // 8) Commit. Critical alerts follow the NEW values: a new crossing pages,
+  //    an unacknowledged alert the correction removed is withdrawn, an
+  //    acknowledged one is never touched.
+  const alerts = detectCrossings(
+    newRows,
+    new Map(visibleParams.map((p) => [p.id, p])),
+    patientForRanges,
+    () => testRow.id,
   );
-  let valueChangeCount = 0;
-  for (const [paramId, v] of Object.entries(values)) {
-    const before = priorById.get(paramId);
-    if (
-      !before ||
-      before.numeric_value_si !== v.numeric_value_si ||
-      before.numeric_value_conv !== v.numeric_value_conv ||
-      before.text_value !== v.text_value ||
-      before.select_value !== v.select_value ||
-      before.is_blank !== v.is_blank
-    ) {
-      valueChangeCount += 1;
-    }
-  }
-  // Also count rows that were dropped (in prior but not in new).
-  for (const paramId of priorById.keys()) {
-    if (!(paramId in values)) valueChangeCount += 1;
-  }
+  const committed = await commitResultEdit({
+    resultId: result.id,
+    expectedAmendmentCount: expected,
+    currentStoragePath: result.storage_path,
+    editorId: session.user_id,
+    reason,
+    anchorTestRequestId: testRow.id,
+    pdf,
+    values: newRows,
+    newImage: newImage
+      ? {
+          ...newImage,
+          currentImagePath: result.image_storage_path,
+          fallbackBase: `${visit.patient_id}/${visit.id}/${testRow.id}`,
+        }
+      : null,
+    alerts,
+  });
+  if (!committed.ok) return committed;
 
+  // 9) Audit.
+  const valueChangeCount = countValueChanges(
+    new Map((priorRows ?? []).map((r) => [r.parameter_id, r])),
+    new Map(newRows.map((r) => [r.parameter_id, r])),
+  );
   const h = await headers();
+  const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+  const ua = h.get("user-agent");
   await audit({
     actor_id: session.user_id,
     actor_type: "staff",
@@ -1653,20 +1310,29 @@ export async function amendStructuredResultAction(
     metadata: {
       test_request_id: testRow.id,
       visit_id: visit.id,
-      amendment_seq: nextSeq,
+      amendment_seq: committed.data.amendmentSeq,
       reason,
-      prior_storage_path: result.storage_path,
-      new_storage_path: newPdfPath,
+      prior_storage_path: committed.data.priorStoragePath,
+      new_storage_path: committed.data.newStoragePath,
       value_change_count: valueChangeCount,
+      replayed: committed.data.replayed,
     },
-    ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
-    user_agent: h.get("user-agent"),
+    ip_address: ip,
+    user_agent: ua,
+  });
+  await auditAlertChanges(committed.data, {
+    actorId: session.user_id,
+    patientId: visit.patient_id,
+    resultId: result.id,
+    testRequestIds: [testRow.id],
+    ip,
+    ua,
   });
 
   revalidatePath(`/staff/queue`);
   revalidatePath(`/staff/queue/${testRow.id}`);
   revalidatePath(`/staff/visits/${visit.id}`);
-  return { ok: true, resultId: result.id, controlNo: ctrl?.control_no ?? null };
+  return { ok: true, resultId: result.id, controlNo: result.control_no ?? null };
 }
 
 export async function getResultDownloadUrl(
