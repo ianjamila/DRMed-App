@@ -14,18 +14,19 @@
  * HOW
  * ---
  * It replays `supabase/migrations/` in order with a small SQL lexer (string,
- * quoted-identifier, dollar-quote and comment aware, so a `;` or `--` inside a
- * literal cannot cut a statement short) and keeps the LATEST definition of
+ * quoted-identifier, dollar-quote and nested-comment aware, so a `;` or `--`
+ * inside a literal cannot cut a statement short) and keeps the LATEST definition of
  * every view, function and procedure: a later `create or replace` supersedes
  * an earlier one, `drop` removes it (per overload — functions are keyed by
- * name AND argument count), `alter … rename to` / `set schema` move it. That
+ * name AND argument TYPES), `alter … rename to` / `set schema` move it. That
  * is the set live on the database once every migration has run. A definition
  * the replay cannot read (a `begin atomic` body, a function or view created
  * inside a `do` block that touches the journal) FAILS rather than vanishing.
  *
- * Each body is then split into query units — every plpgsql statement, and
- * every parenthesised `select`/`with` (subqueries, CTEs, derived tables) —
- * and each unit is judged by its OWN filters, not a sibling's.
+ * Each body is then split into query units — every plpgsql statement, every
+ * parenthesised `select`/`with` (subqueries, CTEs, derived tables), and each
+ * arm of a `union`/`intersect`/`except` — and each is judged by its OWN
+ * filters, not a sibling's. CTE names resolve by lexical scope.
  *
  * Checked against prod on 2026-09-25 (head 0177): `pg_proc`/`pg_class` list
  * 31 functions + 3 views whose definition mentions a journal table; the
@@ -38,9 +39,10 @@
  * ----------------
  *   1. POSTED-ONLY READS. A unit that reads journal data with a posted-only
  *      predicate — `status = 'posted'` (also `::text` casts, the operands
- *      swapped, `= any(array['posted'])`, `in ('posted')`) or the negative
- *      spellings `<> 'reversed'`, `!= 'reversed'`, `not in ('reversed')`,
- *      `is distinct from 'reversed'` — must sit in an object named in
+ *      swapped, and any `in (…)` / `= any(array[…])` list whose values are
+ *      only 'posted' — `in ('posted', 'posted')` included) or the negative
+ *      spellings `<> 'reversed'`, `!= 'reversed'`, a `not in (…)` list of
+ *      only 'reversed', `is distinct from 'reversed'` — must sit in an object named in
  *      `SQL_LOOKUPS` with a reason. A qualified predicate is exempt only when
  *      its qualifier is PROVEN to be another base table (`bills b` →
  *      `b.status`); a CTE, a derived table, a journal-reading view, a record
@@ -49,14 +51,19 @@
  *      testing its own row).
  *   2. JOURNAL SUMS. A unit that calls `sum(` over journal data — read
  *      directly, or through a subquery, CTE or journal-reading view — must
- *      filter `status in ('posted', 'reversed')` itself, or every journal
- *      source it reads must. Unless `SQL_AGGREGATE_EXEMPT` says why not.
+ *      filter status to exactly {posted, reversed} itself (a `filter (where …)`
+ *      clause counts only for the aggregate it is attached to), or every
+ *      journal source it reads must. Unless `SQL_AGGREGATE_EXEMPT` says why.
  *   3. No stale allowlist entries, and no overloaded journal function (the
  *      allowlists key by name).
  *
- * NOT covered: SQL built at runtime (`execute format(…)`), and a plpgsql
+ * NOT covered: SQL built at runtime (`execute format(…)`); a plpgsql
  * row-by-row total (`for r in … loop t := t + r.debit_php`) that has no
- * status filter at all — rule 1 still catches one that filters posted-only.
+ * status filter at all (rule 1 still catches one that filters posted-only);
+ * and SQL written to evade a regex-level reader. This is a lexer plus
+ * heuristics, not a Postgres parser — it errs toward flagging, and the
+ * allowlists absorb the false alarms. The probe tests below pin every shape
+ * two review rounds (Fable, Astra) raised.
  *
  * FIXING A FAILURE
  * ----------------
@@ -184,8 +191,18 @@ function lex(sql: string): { clean: string; mask: string } {
       blank(i, j);
       i = j;
     } else if (c === "/" && d === "*") {
-      const e = sql.indexOf("*/", i + 2);
-      const j = e < 0 ? n : e + 2;
+      // Postgres block comments nest: `/* a /* b */ still a comment */`.
+      let depth = 0;
+      let j = i;
+      while (j < n) {
+        if (sql[j] === "/" && sql[j + 1] === "*") {
+          depth++;
+          j += 2;
+        } else if (sql[j] === "*" && sql[j + 1] === "/") {
+          j += 2;
+          if (--depth === 0) break;
+        } else j++;
+      }
       blank(i, j);
       i = j;
     } else if (c === "'") {
@@ -253,7 +270,7 @@ function splitTopLevel(mask: string, sep: string, from = 0, to = mask.length): [
 // ---------------------------------------------------------------------------
 
 interface LiveObject {
-  /** `function:name/arity` or `view:name` — overload-exact. */
+  /** `function:name(argtypes)` or `view:name` — overload-exact. */
   id: string;
   /** `function:name` or `view:name` — what the allowlists key by. */
   label: string;
@@ -270,13 +287,39 @@ const QNAME = String.raw`((?:"[^"]*"|\w+)(?:\s*\.\s*(?:"[^"]*"|\w+))?)`;
 const unquote = (q: string) => q.split(".").pop()!.trim().replace(/"/g, "").toLowerCase();
 const isPublic = (q: string) => !q.includes(".") || /^\s*"?public"?\s*\./i.test(q);
 
-/** Argument count of a signature's `(…)` contents, OUT arguments excluded. */
-function arity(argsMask: string): number {
-  if (!argsMask.trim()) return 0;
-  return splitTopLevel(argsMask, ",").filter(([a, b]) => {
-    const item = argsMask.slice(a, b).trim();
-    return item && !/^out\s/i.test(item);
-  }).length;
+const TYPE_ALIASES: Record<string, string> = {
+  int: "integer", int4: "integer", int8: "bigint", int2: "smallint", bool: "boolean",
+  varchar: "character varying", decimal: "numeric", float8: "double precision", float4: "real",
+  timestamptz: "timestamp with time zone", timestamp: "timestamp without time zone",
+  timetz: "time with time zone", time: "time without time zone",
+};
+const MULTIWORD_TYPE =
+  /^(double precision|character varying|bit varying|(?:timestamp|time)\s+with(?:out)?\s+time\s+zone)\b/;
+
+/**
+ * A signature's argument TYPES, normalised the way Postgres identifies an
+ * overload: argument names, defaults and OUT arguments dropped, typmods
+ * (`numeric(14,2)`) ignored, common aliases (`int`, `timestamptz`) folded.
+ * So `f(p_day date default null)` and `drop function f(date)` name the same
+ * function, and `f(date)` / `f(uuid)` stay two.
+ */
+function signature(argsClean: string, argsMask: string): string {
+  if (!argsMask.trim()) return "";
+  return splitTopLevel(argsMask, ",")
+    .map(([a, b]) => {
+      let t = argsClean.slice(a, b).toLowerCase().replace(/\s+/g, " ").trim();
+      t = t.replace(/\s+(?:default\b|=)[\s\S]*$/, "").trim();
+      const mode = /^(in|out|inout|variadic)\s+/.exec(t);
+      if (mode) t = t.slice(mode[0].length);
+      if (mode?.[1] === "out") return null;
+      if (!MULTIWORD_TYPE.test(t) && /^\S+\s+\S/.test(t)) t = t.replace(/^\S+\s+/, "");
+      t = t.replace(/"/g, "").replace(/^public\./, "").replace(/\(\s*\d+\s*(?:,\s*\d+\s*)?\)/g, "").trim();
+      const array = /\[\]$/.test(t) ? "[]" : "";
+      const base = t.replace(/\s*\[\]$/, "").trim();
+      return (TYPE_ALIASES[base] ?? base) + array;
+    })
+    .filter((t): t is string => t !== null)
+    .join(",");
 }
 
 function replay(files: { file: string; sql: string }[]): {
@@ -286,13 +329,11 @@ function replay(files: { file: string; sql: string }[]): {
   const live = new Map<string, LiveObject>();
   const unsupported: Unsupported[] = [];
 
-  const dropFunction = (name: string, n: number | null) => {
-    for (const id of [...live.keys()]) {
-      if (id === `function:${name}/${n}` || (n === null && id.startsWith(`function:${name}/`))) {
-        live.delete(id);
-      }
-    }
-  };
+  /** Live function ids named by `name` — one overload, or all when no signature is given. */
+  const functionIds = (name: string, sig: string | null) =>
+    [...live.keys()].filter(
+      (id) => id === `function:${name}(${sig})` || (sig === null && id.startsWith(`function:${name}(`)),
+    );
 
   for (const { file, sql } of files) {
     const { clean, mask } = lex(sql);
@@ -338,7 +379,7 @@ function replay(files: { file: string; sql: string }[]): {
           unsupported.push({ file, what: `function ${name}: no readable body (begin atomic?)` });
           continue;
         }
-        const id = `function:${name}/${arity(sm.slice(open + 1, close))}`;
+        const id = `function:${name}(${signature(st.slice(open + 1, close), sm.slice(open + 1, close))})`;
         live.set(id, { id, label: `function:${name}`, file, body });
         continue;
       }
@@ -369,7 +410,8 @@ function replay(files: { file: string; sql: string }[]): {
             continue;
           }
           const open = item[2] ? a + item[0].length - 1 : -1;
-          dropFunction(name, open < 0 ? null : arity(mask.slice(open + 1, closeParen(mask, open))));
+          const sig = open < 0 ? null : signature(clean.slice(open + 1, closeParen(mask, open)), mask.slice(open + 1, closeParen(mask, open)));
+          for (const id of functionIds(name, sig)) live.delete(id);
         }
         continue;
       }
@@ -383,27 +425,25 @@ function replay(files: { file: string; sql: string }[]): {
         const isFn = /function|procedure/i.test(alter[1]!);
         const name = unquote(alter[2]!);
         let rest = off + alter[0].length;
-        let n: number | null = null;
+        let sig: string | null = null;
         if (sm[rest] === "(") {
           const close = closeParen(sm, rest);
-          n = arity(sm.slice(rest + 1, close));
+          sig = signature(st.slice(rest + 1, close), sm.slice(rest + 1, close));
           rest = close + 1;
         }
         const action = sm.slice(rest);
         const rename = /^\s*rename\s+to\s+"?(\w+)"?/i.exec(action);
         const moved = /^\s*set\s+schema\s+"?(\w+)"?/i.exec(action);
         if (!rename && !(moved && moved[1]!.toLowerCase() !== "public")) continue;
-        const matches = [...live.values()].filter((o) =>
-          isFn
-            ? o.id === `function:${name}/${n}` || (n === null && o.id.startsWith(`function:${name}/`))
-            : o.id === `view:${name}`,
-        );
+        const matches = (isFn ? functionIds(name, sig) : [`view:${name}`])
+          .map((id) => live.get(id))
+          .filter((o): o is LiveObject => !!o);
         for (const o of matches) {
           live.delete(o.id);
           if (!rename) continue;
           const to = rename[1]!.toLowerCase();
           const kind = isFn ? "function" : "view";
-          const id = isFn ? `function:${to}/${o.id.split("/")[1]}` : `view:${to}`;
+          const id = isFn ? `function:${to}(${o.id.slice(o.id.indexOf("(") + 1, -1)})` : `view:${to}`;
           live.set(id, { ...o, id, label: `${kind}:${to}` });
         }
         continue;
@@ -485,9 +525,103 @@ function own(a: Analysed, u: Unit, which: "clean" | "mask" = "clean"): string {
 
 /** `from|join|update` sources in a unit's own text: alias → source name. */
 function sources(a: Analysed, u: Unit): Map<string, string> {
+  return sourcesOf(own(a, u, "mask"), u.children);
+}
+
+const ancestors = (u: Unit): Unit[] => (u.parent ? [u.parent, ...ancestors(u.parent)] : []);
+const rootOf = (u: Unit): Unit => (u.parent ? rootOf(u.parent) : u);
+
+/**
+ * Does this text filter status to EXACTLY {posted, reversed}? Read as a set,
+ * so `in ('posted', 'posted')` — posted-only in disguise — does not count,
+ * and neither does a list that also admits drafts.
+ */
+function countsBoth(text: string): boolean {
+  const lists = [
+    ...text.matchAll(/\bstatus(?:\s*::\s*\w+)?\s+in\s*\(([^()]*)\)/gi),
+    ...text.matchAll(/\bstatus(?:\s*::\s*\w+)?\s*=\s*any\s*\(\s*(?:array\s*)?\[([^\]]*)\]/gi),
+  ];
+  return lists.some((m) => {
+    const values = new Set([...m[1]!.matchAll(/'(\w+)'/g)].map((v) => v[1]!.toLowerCase()));
+    return values.size === 2 && values.has("posted") && values.has("reversed");
+  });
+}
+
+const q = String.raw`\b(?:(\w+)\.)?`;
+const cast = String.raw`(?:\s*::\s*\w+)?`;
+const POSTED_ONLY = [
+  new RegExp(String.raw`${q}status${cast}\s*=\s*'posted'`, "gi"),
+  new RegExp(String.raw`'posted'${cast}\s*=\s*${q}status\b`, "gi"),
+  new RegExp(String.raw`${q}status${cast}\s*(?:<>|!=)\s*'reversed'`, "gi"),
+  new RegExp(String.raw`${q}status${cast}\s+is\s+distinct\s+from\s+'reversed'`, "gi"),
+];
+
+/**
+ * List predicates, judged by their VALUE SET: `in (…)` / `= any(array[…])`
+ * admitting only 'posted', or `not in (…)` / `<> all(array[…])` excluding
+ * only 'reversed' — so `in ('posted', 'posted')` is posted-only too.
+ */
+const STATUS_LISTS = new RegExp(
+  String.raw`${q}status${cast}\s+(not\s+)?in\s*\(([^()]*)\)|${q}status${cast}\s*(=\s*any|<>\s*all)\s*\(\s*(?:array\s*)?\[([^\]]*)\]`,
+  "gi",
+);
+
+function isPostedOnlyList(m: RegExpMatchArray): boolean {
+  const negated = !!m[2] || /all/i.test(m[5] ?? "");
+  const values = new Set([...(m[3] ?? m[6] ?? "").matchAll(/'(\w+)'/g)].map((v) => v[1]!.toLowerCase()));
+  const only = (v: string) => values.size === 1 && values.has(v);
+  return negated ? only("reversed") : only("posted");
+}
+
+/** Is the text ending here inside an UPDATE's SET list? */
+function inSetClause(before: string): boolean {
+  const lastOf = (re: RegExp) => Math.max(-1, ...[...before.matchAll(re)].map((m) => m.index));
+  return lastOf(/\bset\b/gi) > lastOf(/\b(where|from|join|on|select|returning|having|when|if|and|or|then)\b/gi);
+}
+
+/** One arm of a set operation (`union`, `intersect`, `except`) in a unit's own text. */
+interface Branch {
+  unit: Unit;
+  text: string;
+  mask: string;
+  /** The unit's child units that sit inside this branch. */
+  children: Unit[];
+}
+
+/** A unit's own text split on top-level set operators — each arm is judged alone. */
+function branches(a: Analysed, u: Unit): Branch[] {
+  const text = own(a, u);
+  const mask = own(a, u, "mask");
+  const cuts: [number, number][] = [];
+  let depth = 0;
+  let start = 0;
+  const setOp = /(?:union(?:\s+all|\s+distinct)?|intersect|except)\b/iy;
+  for (let k = 0; k < mask.length; k++) {
+    if (mask[k] === "(") depth++;
+    else if (mask[k] === ")") depth--;
+    else if (depth === 0 && (k === 0 || !/\w/.test(mask[k - 1]!))) {
+      setOp.lastIndex = k;
+      const m = setOp.exec(mask);
+      if (m) {
+        cuts.push([start, k]);
+        start = k + m[0].length;
+        k = start - 1;
+      }
+    }
+  }
+  cuts.push([start, mask.length]);
+  return cuts.map(([from, to]) => ({
+    unit: u,
+    text: text.slice(from, to),
+    mask: mask.slice(from, to),
+    children: u.children.filter((c) => c.start >= u.start + from && c.start < u.start + to),
+  }));
+}
+
+/** `from|join|update` sources in masked text: alias → source name, plus derived aliases. */
+function sourcesOf(mask: string, children: Unit[]): Map<string, string> {
   const out = new Map<string, string>();
-  const text = own(a, u, "mask");
-  for (const m of text.matchAll(
+  for (const m of mask.matchAll(
     /\b(?:from|join|update)\s+(?:only\s+)?(?:(?:public|"public")\s*\.\s*)?"?(\w+)"?(?:\s+(?:as\s+)?(\w+))?/gi,
   )) {
     const name = m[1]!.toLowerCase();
@@ -496,33 +630,33 @@ function sources(a: Analysed, u: Unit): Map<string, string> {
     const alias = m[2]?.toLowerCase();
     if (alias && !KEYWORDS.has(alias)) out.set(alias, name);
   }
-  for (const c of u.children) if (c.alias) out.set(c.alias, `(derived:${c.start})`);
+  for (const c of children) if (c.alias) out.set(c.alias, `(derived:${c.start})`);
   return out;
 }
 
-const ancestors = (u: Unit): Unit[] => (u.parent ? [u.parent, ...ancestors(u.parent)] : []);
-const descendants = (u: Unit): Unit[] => u.children.flatMap((c) => [c, ...descendants(c)]);
-const rootOf = (u: Unit): Unit => (u.parent ? rootOf(u.parent) : u);
+/** The branch text with every `filter (where …)` clause blanked. */
+function withoutFilterClauses(b: Branch): string {
+  const text = b.text.split("");
+  for (const m of b.mask.matchAll(/\bfilter\s*\(/gi)) {
+    const open = m.index + m[0].length - 1;
+    for (let k = m.index; k <= closeParen(b.mask, open) && k < text.length; k++) text[k] = " ";
+  }
+  return text.join("");
+}
 
-const COUNTS_BOTH =
-  /\bstatus(?:\s*::\s*\w+)?\s+in\s*\(\s*'(?:posted|reversed)'(?:\s*::\s*\w+)?\s*,\s*'(?:posted|reversed)'(?:\s*::\s*\w+)?\s*\)|\bstatus(?:\s*::\s*\w+)?\s*=\s*any\s*\(\s*(?:array\s*)?\[\s*'(?:posted|reversed)'\s*,\s*'(?:posted|reversed)'\s*\]/i;
-
-const q = String.raw`\b(?:(\w+)\.)?`;
-const cast = String.raw`(?:\s*::\s*\w+)?`;
-const POSTED_ONLY = [
-  new RegExp(String.raw`${q}status${cast}\s*=\s*'posted'`, "gi"),
-  new RegExp(String.raw`'posted'${cast}\s*=\s*${q}status\b`, "gi"),
-  new RegExp(String.raw`${q}status${cast}\s*=\s*any\s*\(\s*(?:array\s*)?\[\s*'posted'${cast}\s*\]`, "gi"),
-  new RegExp(String.raw`${q}status${cast}\s+in\s*\(\s*'posted'${cast}\s*\)`, "gi"),
-  new RegExp(String.raw`${q}status${cast}\s*(?:<>|!=)\s*'reversed'`, "gi"),
-  new RegExp(String.raw`${q}status${cast}\s+not\s+in\s*\(\s*'reversed'${cast}\s*\)`, "gi"),
-  new RegExp(String.raw`${q}status${cast}\s+is\s+distinct\s+from\s+'reversed'`, "gi"),
-];
-
-/** Is the text ending here inside an UPDATE's SET list? */
-function inSetClause(before: string): boolean {
-  const lastOf = (re: RegExp) => Math.max(-1, ...[...before.matchAll(re)].map((m) => m.index));
-  return lastOf(/\bset\b/gi) > lastOf(/\b(where|from|join|on|select|returning|having|when|if|and|or|then)\b/gi);
+/** How many `sum(…)` in the branch lack their OWN `filter (where status in (posted, reversed))`. */
+function sumsWithoutOwnFilter(b: Branch): number {
+  let loose = 0;
+  for (const m of b.mask.matchAll(/\bsum\s*\(/gi)) {
+    const close = closeParen(b.mask, m.index + m[0].length - 1);
+    const filter = /^\s*filter\s*\(/i.exec(b.mask.slice(close + 1));
+    if (filter) {
+      const open = close + 1 + filter[0].length - 1;
+      if (countsBoth(b.text.slice(open, closeParen(b.mask, open) + 1))) continue;
+    }
+    loose++;
+  }
+  return loose;
 }
 
 class Journal {
@@ -552,9 +686,17 @@ class Journal {
     name === "journal_entries" || name === "journal_lines" || this.views.has(name);
 
   /** CTE units visible from `u` (defined anywhere in its root statement). */
-  private ctes(a: Analysed, u: Unit): Map<string, Unit> {
-    const root = rootOf(u);
-    return new Map(descendants(root).filter((c) => c.cte).map((c) => [c.cte!, c]));
+  /**
+   * CTEs visible from `u`, by lexical scope: those defined by `u` itself or
+   * by an enclosing unit, innermost first — so a CTE nested inside a sibling
+   * cannot shadow the outer one of the same name.
+   */
+  private ctes(_a: Analysed, u: Unit): Map<string, Unit> {
+    const out = new Map<string, Unit>();
+    for (const scope of [u, ...ancestors(u)]) {
+      for (const c of scope.children) if (c.cte && !out.has(c.cte)) out.set(c.cte, c);
+    }
+    return out;
   }
 
   /** Does this unit (with its subqueries and the CTEs it names) read journal data? */
@@ -577,14 +719,18 @@ class Journal {
     const found: string[] = [];
     for (const u of a.units) {
       const text = own(a, u);
-      for (const re of POSTED_ONLY) {
-        for (const m of text.matchAll(re)) {
-          const qualifier = m[1]?.toLowerCase();
-          if (qualifier === "new" || qualifier === "old") continue;
-          if (inSetClause(text.slice(0, m.index))) continue;
-          if (!this.predicateIsJournal(a, u, qualifier)) continue;
-          found.push(m[0].replace(/\s+/g, " "));
-        }
+      const matches = [
+        ...POSTED_ONLY.flatMap((re) => [...text.matchAll(re)].map((m) => ({ m, qualifier: m[1] }))),
+        ...[...text.matchAll(STATUS_LISTS)]
+          .filter(isPostedOnlyList)
+          .map((m) => ({ m, qualifier: m[1] ?? m[4] })),
+      ];
+      for (const { m, qualifier: raw } of matches) {
+        const qualifier = raw?.toLowerCase();
+        if (qualifier === "new" || qualifier === "old") continue;
+        if (inSetClause(text.slice(0, m.index))) continue;
+        if (!this.predicateIsJournal(a, u, qualifier)) continue;
+        found.push(m[0].replace(/\s+/g, " "));
       }
     }
     return found;
@@ -613,52 +759,68 @@ class Journal {
     return true; // a record variable, a parameter, anything unresolved
   }
 
-  /** Units that sum journal data without counting posted + reversed. */
+  /** Branches that sum journal data without counting posted + reversed. */
   uncountedSums(o: LiveObject): string[] {
     if (!this.readsJournal(o.body)) return [];
     const a = analyse(o.body);
     const out: string[] = [];
     for (const u of a.units) {
-      const text = own(a, u);
-      if (!/\bsum\s*\(/i.test(text) || COUNTS_BOTH.test(text)) continue;
-      const journalSources = this.journalSources(a, u);
-      if (journalSources.length === 0) continue;
-      if (journalSources.every((src) => src.countsBoth)) continue;
-      out.push(text.replace(/\s+/g, " ").trim().slice(0, 120));
+      for (const b of branches(a, u)) {
+        const loose = sumsWithoutOwnFilter(b);
+        if (loose === 0 || countsBoth(withoutFilterClauses(b))) continue;
+        const sourcesRead = this.branchSources(a, b, new Set());
+        if (sourcesRead.length === 0 || sourcesRead.every((src) => src)) continue;
+        out.push(b.text.replace(/\s+/g, " ").trim().slice(0, 120));
+      }
     }
     return out;
   }
 
-  /** Every journal source a unit reads, and whether it counts both statuses itself. */
-  private journalSources(a: Analysed, u: Unit, seen = new Set<Unit>()): { countsBoth: boolean }[] {
+  /** Does every journal source this unit reads count both statuses? One entry per source. */
+  private unitSources(a: Analysed, u: Unit, seen: Set<Unit>): boolean[] {
     if (seen.has(u)) return [];
     seen.add(u);
-    const out: { countsBoth: boolean }[] = [];
-    const ownText = own(a, u);
-    const ctes = this.ctes(a, u);
-    for (const name of new Set(sources(a, u).values())) {
-      if (name === "journal_entries" || name === "journal_lines") {
-        out.push({ countsBoth: COUNTS_BOTH.test(ownText) });
-      } else if (this.views.has(name)) {
-        const view = this.objects.get(`view:${name}`);
-        out.push({ countsBoth: COUNTS_BOTH.test(ownText) || (!!view && COUNTS_BOTH.test(view.body)) });
-      } else {
+    return branches(a, u).flatMap((b) => this.branchSources(a, b, seen));
+  }
+
+  /**
+   * One boolean per journal source a branch reads: does it count posted +
+   * reversed — in its own filter, or in this branch's (outside any
+   * `filter (where …)` clause, which constrains only its own aggregate)?
+   */
+  private branchSources(a: Analysed, b: Branch, seen: Set<Unit>): boolean[] {
+    const pair = countsBoth(withoutFilterClauses(b));
+    const ctes = this.ctes(a, b.unit);
+    const out: boolean[] = [];
+    for (const name of new Set(sourcesOf(b.mask, []).values())) {
+      if (name === "journal_entries" || name === "journal_lines") out.push(pair);
+      else if (this.views.has(name)) out.push(pair || this.viewCountsBoth(name));
+      else {
         const cte = ctes.get(name);
-        if (cte && cte !== u) {
-          out.push(
-            ...this.journalSources(a, cte, seen).map((s) => ({
-              countsBoth: s.countsBoth || COUNTS_BOTH.test(ownText),
-            })),
-          );
-        }
+        if (cte && cte !== b.unit) out.push(...this.unitSources(a, cte, seen).map((x) => x || pair));
       }
     }
-    for (const c of u.children) {
-      out.push(
-        ...this.journalSources(a, c, seen).map((s) => ({ countsBoth: s.countsBoth || COUNTS_BOTH.test(ownText) })),
-      );
-    }
+    for (const c of b.children) out.push(...this.unitSources(a, c, seen).map((x) => x || pair));
     return out;
+  }
+
+  private readonly viewVerdicts = new Map<string, boolean>();
+
+  /** Does a journal view count both statuses for every journal source it reads? */
+  private viewCountsBoth(name: string): boolean {
+    const known = this.viewVerdicts.get(name);
+    if (known !== undefined) return known;
+    this.viewVerdicts.set(name, false); // cycle guard
+    const view = this.objects.get(`view:${name}`);
+    let verdict = false;
+    if (view) {
+      const a = analyse(view.body);
+      verdict = a.units
+        .filter((u) => !u.parent)
+        .every((u) => this.unitSources(a, u, new Set()).every((x) => x));
+    }
+    this.viewVerdicts.set(name, verdict);
+    return verdict;
   }
 }
 
@@ -786,15 +948,15 @@ describe("the SQL replay", () => {
       `create function public.g() returns numeric language sql as '${TOTAL} where je.status = ''posted''';`,
       "create procedure public.h() language plpgsql as $p$ begin perform 1 from journal_entries where status = 'posted'; end $p$;",
     );
-    expect(p.ids.sort()).toEqual(["function:f/0", "function:g/0", "function:h/0"]);
-    expect(p.posted("function:g/0")).toHaveLength(1);
+    expect(p.ids.sort()).toEqual(["function:f()", "function:g()", "function:h()"]);
+    expect(p.posted("function:g()")).toHaveLength(1);
   });
 
   it("takes the body from AS, not from a dollar-quoted argument default", () => {
     const p = probe(
       `create function public.f(p text default $d$x$d$) returns numeric language sql as $$ ${TOTAL} where je.status = 'posted' $$;`,
     );
-    expect(p.posted("function:f/1")).toHaveLength(1);
+    expect(p.posted("function:f(text)")).toHaveLength(1);
   });
 
   it("keeps overloads apart and drops only the one named", () => {
@@ -804,7 +966,7 @@ describe("the SQL replay", () => {
       "drop function public.f(uuid, uuid);",
       "drop function if exists public.f();",
     );
-    expect(p.ids).toEqual(["function:f/1"]);
+    expect(p.ids).toEqual(["function:f(date)"]);
   });
 
   it("forgets a dropped function, including one in a multi-name drop", () => {
@@ -824,8 +986,8 @@ describe("the SQL replay", () => {
       "create view public.v as select 1 from journal_entries;",
       "alter view public.v set schema archive;",
     );
-    expect(p.ids.sort()).toEqual(["function:f/0", "function:g/0"]);
-    expect(p.posted("function:g/0")).toHaveLength(1);
+    expect(p.ids.sort()).toEqual(["function:f()", "function:g()"]);
+    expect(p.posted("function:g()")).toHaveLength(1);
   });
 
   it("fails loudly on a body it cannot read, and on a do-block that creates a journal object", () => {
@@ -840,7 +1002,7 @@ describe("the SQL replay", () => {
     const p = probe(
       "create function public.f() returns int language sql as $$\n  -- was: where je.status = 'posted'\n  select 1 from journal_entries je where je.status in ('posted','reversed')\n$$;",
     );
-    expect(p.posted("function:f/0")).toEqual([]);
+    expect(p.posted("function:f()")).toEqual([]);
   });
 });
 
@@ -853,7 +1015,7 @@ describe("the posted-only rule", () => {
         update public.journal_entries set posted_at = now(), status = 'reversed' where id = v_id;
         update public.journal_entries set notes = 'x' where status = 'posted';
       end $$;`);
-    expect(p.posted("function:f/0")).toEqual(["status = 'posted'"]);
+    expect(p.posted("function:f()")).toEqual(["status = 'posted'"]);
   });
 
   it("catches every posted-only spelling", () => {
@@ -866,7 +1028,7 @@ describe("the posted-only rule", () => {
       union all select 1 from journal_entries e where e.status = any(array['posted'])
       union all select 1 from journal_entries e where e.status not in ('reversed')
     $$;`);
-    expect(p.posted("function:f/0")).toHaveLength(7);
+    expect(p.posted("function:f()")).toHaveLength(7);
   });
 
   it("ignores another base table's status, but not a CTE or derived alias of the journal", () => {
@@ -885,10 +1047,10 @@ describe("the posted-only rule", () => {
         begin for r in select je.status, jl.debit_php from journal_lines jl join journal_entries je on je.id = jl.entry_id loop
           if r.status = 'posted' then t := t + r.debit_php; end if; end loop; return t; end $$;`,
     );
-    expect(p.posted("function:a/0")).toEqual([]);
-    expect(p.posted("function:b/0")).toHaveLength(1);
-    expect(p.posted("function:c/0")).toHaveLength(1);
-    expect(p.posted("function:d/0")).toHaveLength(1);
+    expect(p.posted("function:a()")).toEqual([]);
+    expect(p.posted("function:b()")).toHaveLength(1);
+    expect(p.posted("function:c()")).toHaveLength(1);
+    expect(p.posted("function:d()")).toHaveLength(1);
   });
 
   it("follows a view built on a journal view", () => {
@@ -909,7 +1071,7 @@ describe("the journal-sum rule", () => {
           where je.status in ('posted', 'reversed')),
         (select sum(jl.credit_php) from journal_lines jl join journal_entries je on je.id = jl.entry_id)
     $$;`);
-    expect(p.sums("function:f/0")).toHaveLength(1);
+    expect(p.sums("function:f()")).toHaveLength(1);
   });
 
   it("follows a sum through a CTE, and accepts the filter on either side", () => {
@@ -925,15 +1087,96 @@ describe("the journal-sum rule", () => {
         with l as (select je.status, jl.debit_php as amount from journal_lines jl join journal_entries je on je.id = jl.entry_id)
         select sum(amount) from l where l.status in ('posted', 'reversed') $$;`,
     );
-    expect(p.sums("function:bad/0")).toHaveLength(1);
-    expect(p.sums("function:inner_ok/0")).toEqual([]);
-    expect(p.sums("function:outer_ok/0")).toEqual([]);
+    expect(p.sums("function:bad()")).toHaveLength(1);
+    expect(p.sums("function:inner_ok()")).toEqual([]);
+    expect(p.sums("function:outer_ok()")).toEqual([]);
   });
 
   it("does not treat a sum over another table as a journal total", () => {
     const p = probe(`create function public.f() returns numeric language sql as $$
       select sum(tr.final_price_php) from test_requests tr
       where exists (select 1 from journal_entries je where je.source_id = tr.id and je.status in ('posted', 'reversed')) $$;`);
-    expect(p.sums("function:f/0")).toEqual([]);
+    expect(p.sums("function:f()")).toEqual([]);
+  });
+});
+
+describe("second-round review reproducers", () => {
+  it("judges each arm of a UNION alone", () => {
+    const p = probe(`create function public.f() returns numeric language sql as $$
+      ${TOTAL} where je.status in ('posted', 'reversed')
+      union all
+      ${TOTAL}
+    $$;`);
+    expect(p.sums("function:f()")).toHaveLength(1);
+  });
+
+  it("does not let a FILTER clause on another aggregate vouch for a sum", () => {
+    const p = probe(
+      `create function public.bad() returns table (s numeric, n bigint) language sql as $$
+        select sum(jl.debit_php), count(*) filter (where je.status in ('posted', 'reversed'))
+        from journal_lines jl join journal_entries je on je.id = jl.entry_id $$;`,
+      `create function public.ok() returns numeric language sql as $$
+        select sum(jl.debit_php) filter (where je.status in ('posted', 'reversed'))
+        from journal_lines jl join journal_entries je on je.id = jl.entry_id $$;`,
+    );
+    expect(p.sums("function:bad()")).toHaveLength(1);
+    expect(p.sums("function:ok()")).toEqual([]);
+  });
+
+  it("resolves a CTE name by lexical scope, not from a nested sibling", () => {
+    const p = probe(`create function public.f() returns numeric language sql as $$
+      with e as (select je.status, jl.debit_php from journal_lines jl join journal_entries je on je.id = jl.entry_id
+                 where je.status in ('posted', 'reversed')),
+           n as (with e as (select status from bills) select count(*) from e)
+      select sum(e.debit_php) from e where e.status = 'posted'
+    $$;`);
+    expect(p.posted("function:f()")).toHaveLength(1);
+  });
+
+  it("keeps same-arity overloads apart by argument type", () => {
+    const p = probe(
+      `create function public.f(p_day date default null) returns numeric language sql as $$ ${TOTAL} where je.status = 'posted' $$;`,
+      "create function public.f(p_id uuid) returns int language sql as $$ select 1 $$;",
+      "drop function if exists public.f(uuid);",
+    );
+    expect(p.ids).toEqual(["function:f(date)"]);
+    expect(p.posted("function:f(date)")).toHaveLength(1);
+  });
+
+  it("normalises aliases, typmods and multi-word types in a signature", () => {
+    const p = probe(
+      "create function public.f(a int, b numeric(14,2), c timestamptz, d double precision) returns int language sql as $$ select 1 $$;",
+      "drop function public.f(integer, numeric, timestamp with time zone, double precision);",
+    );
+    expect(p.ids).toEqual([]);
+  });
+
+  it("reads a repeated value as posted-only, not as both statuses", () => {
+    const p = probe(
+      `create function public.f() returns numeric language sql as $$ ${TOTAL} where je.status in ('posted', 'posted') $$;`,
+    );
+    expect(p.posted("function:f()")).toHaveLength(1);
+    expect(p.sums("function:f()")).toHaveLength(1);
+  });
+
+  it("does not let a nested block comment hide a definition", () => {
+    const p = probe(
+      `/* outer /* inner */ still outer */ create view public.v_x as ${TOTAL} where je.status = 'posted';`,
+    );
+    expect(p.ids).toEqual(["view:v_x"]);
+    expect(p.posted("view:v_x")).toHaveLength(1);
+  });
+
+  it("accepts a total built through a chain of views that count both statuses", () => {
+    const p = probe(
+      `create view public.v_lines as select je.status, jl.debit_php from journal_lines jl
+         join journal_entries je on je.id = jl.entry_id where je.status in ('posted', 'reversed');`,
+      "create view public.v_amounts as select debit_php from v_lines;",
+      "create view public.v_total as select sum(debit_php) from v_amounts;",
+      "create view public.v_leaky as select je.status, jl.debit_php from journal_lines jl join journal_entries je on je.id = jl.entry_id;",
+      "create view public.v_leaky_total as select sum(debit_php) from v_leaky;",
+    );
+    expect(p.sums("view:v_total")).toEqual([]);
+    expect(p.sums("view:v_leaky_total")).toHaveLength(1);
   });
 });
