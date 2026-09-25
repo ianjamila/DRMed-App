@@ -131,6 +131,49 @@ export function visitDeletability(
   return { ok: true };
 }
 
+/**
+ * What the visit page offers in place of the header's Delete button.
+ *
+ * - `none`: this role never deletes visits — render nothing.
+ * - `delete`: the ordinary Delete.
+ * - `sample`: admin only, and released results are the ONLY blocker — offer
+ *   "Delete sample visit" (deleteSampleVisitAction undoes the releases, then
+ *   deletes). Re-running the rule without the released statuses means a
+ *   later blocker (an open HMO claim) is reported rather than hidden behind
+ *   "released".
+ * - `blocked`: say why, instead of hiding the button.
+ */
+export type VisitDeleteAffordance =
+  | { kind: "none" }
+  | { kind: "delete" }
+  | { kind: "sample" }
+  | { kind: "blocked"; hint: string };
+
+export const RELEASED_ASK_ADMIN_HINT =
+  "Has a released result — ask an admin to delete it.";
+
+export function withoutReleased(visit: VisitDeleteShape): VisitDeleteShape {
+  return {
+    ...visit,
+    test_statuses: visit.test_statuses.filter((s) => s !== "released"),
+  };
+}
+
+export function visitDeleteAffordance(
+  role: string,
+  visit: VisitDeleteShape,
+): VisitDeleteAffordance {
+  const d = visitDeletability(role, visit);
+  if (d.ok) return { kind: "delete" };
+  if (d.reason === "role") return { kind: "none" };
+  if (d.reason !== "released") return { kind: "blocked", hint: d.hint };
+  const rest = visitDeletability(role, withoutReleased(visit));
+  if (!rest.ok) return { kind: "blocked", hint: rest.hint };
+  return role === "admin"
+    ? { kind: "sample" }
+    : { kind: "blocked", hint: RELEASED_ASK_ADMIN_HINT };
+}
+
 export interface TestDeleteShape {
   status: string;
   deleted_at: string | null;

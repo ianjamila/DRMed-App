@@ -56,7 +56,10 @@ export default async function PatientStatementPage({ params }: Props) {
           ← Visit
         </Link>
         <div className="flex flex-wrap items-start justify-end gap-2">
-          <PatientEmailStatementButton visitId={data.visit.id} email={data.patient.email} />
+          {/* A sample visit (0181) is never emailed; the server refuses too. */}
+          {data.visit.is_sample ? null : (
+            <PatientEmailStatementButton visitId={data.visit.id} email={data.patient.email} />
+          )}
           <PatientStatementPrintButton visitId={data.visit.id} />
         </div>
       </div>
